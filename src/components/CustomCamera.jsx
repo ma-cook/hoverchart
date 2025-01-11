@@ -15,7 +15,7 @@ const CustomCamera = forwardRef((props, ref) => {
     }),
     []
   );
-  ghelo;
+
   return (
     <>
       <PerspectiveCamera
