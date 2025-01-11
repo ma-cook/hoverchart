@@ -5,13 +5,13 @@ import { useThree } from '@react-three/fiber';
 const CustomCamera = forwardRef((props, ref) => {
   const { gl } = useThree();
   const cameraRef = useRef();
-  const orbitRef = useRef();
+  const controlsRef = useRef();
 
   useImperativeHandle(
     ref,
     () => ({
       ...cameraRef.current,
-      orbitControls: orbitRef.current,
+      orbitControls: controlsRef.current,
     }),
     []
   );
@@ -28,18 +28,15 @@ const CustomCamera = forwardRef((props, ref) => {
         aspect={window.innerWidth / window.innerHeight}
       />
       <OrbitControls
-        ref={orbitRef}
+        ref={controlsRef}
         args={[cameraRef.current, gl.domElement]}
         enableZoom={true}
         enablePan={true}
         enableRotate={true}
-        enableDamping={true}
-        dampingFactor={0.1}
-        rotateSpeed={0.5}
-        minPolarAngle={Math.PI / 4}
-        maxPolarAngle={Math.PI / 1.5}
+        enableDamping={false}
         minDistance={5}
         maxDistance={100}
+        rotateSpeed={0.5}
       />
     </>
   );

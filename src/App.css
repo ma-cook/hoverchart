@@ -88,6 +88,12 @@ canvas {
   background: #f0f0f0;
 }
 
+.object-tool-button.active {
+  background-color: #e3f2fd;
+  border-color: #2196f3;
+  color: #1976d2;
+}
+
 .object-ui-container {
   pointer-events: all !important;
   user-select: none;

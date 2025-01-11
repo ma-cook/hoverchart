@@ -1,9 +1,29 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { TransformControls as DreiTransform } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 
 const TransformControls = ({ object, onDrag }) => {
-  const { scene, camera } = useThree();
+  const { camera, scene } = useThree();
+
+  useEffect(() => {
+    const orbitControls = scene?.orbitControls;
+    if (!orbitControls) return;
+
+    const handleTransformStarting = () => {
+      orbitControls.enabled = false;
+    };
+
+    const handleTransformEnded = () => {
+      orbitControls.enabled = true;
+    };
+
+    // Cleanup orbit controls state when component unmounts
+    return () => {
+      if (orbitControls) {
+        orbitControls.enabled = true;
+      }
+    };
+  }, [scene]);
 
   if (!object) return null;
 
@@ -12,19 +32,21 @@ const TransformControls = ({ object, onDrag }) => {
       object={object}
       mode="translate"
       camera={camera}
-      onChange={() => {
-        if (onDrag) {
-          const position = object.position;
-          onDrag({
-            x: position.x,
-            y: position.y,
-            z: position.z,
-          });
+      onMouseDown={(e) => {
+        if (scene.orbitControls) {
+          scene.orbitControls.enabled = false;
         }
       }}
-      onDragging={({ value }) => {
+      onMouseUp={(e) => {
         if (scene.orbitControls) {
-          scene.orbitControls.enabled = !value;
+          scene.orbitControls.enabled = true;
+        }
+      }}
+      onObjectChange={(e) => {
+        if (onDrag) {
+          requestAnimationFrame(() => {
+            onDrag(e.target.object.position);
+          });
         }
       }}
     />
