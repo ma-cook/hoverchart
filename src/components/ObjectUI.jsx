@@ -1,14 +1,23 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Html } from '@react-three/drei';
 
-const ObjectUI = ({ position, onTransformToggle, showTransform = false }) => {
-  useEffect(() => {
-    console.log('ObjectUI mounted');
-    return () => console.log('ObjectUI unmounted');
-  }, []);
-
+const ObjectUI = ({
+  position,
+  onTransformToggle,
+  onHeaderToggle,
+  showTransform = false,
+  showHeader = false,
+}) => {
   const tools = [
-    { name: 'header', icon: 'H' },
+    {
+      name: 'header',
+      icon: 'H',
+      active: showHeader,
+      onClick: () => {
+        console.log('Header button clicked');
+        onHeaderToggle?.();
+      },
+    },
     { name: 'text', icon: 'T' },
     { name: 'arrow', icon: '↗' },
     { name: 'paint', icon: '🎨' },
@@ -23,7 +32,7 @@ const ObjectUI = ({ position, onTransformToggle, showTransform = false }) => {
 
   return (
     <Html
-      position={[0, 10, 0]}
+      position={position}
       style={{
         background: 'white',
         pointerEvents: 'auto',

@@ -31,9 +31,6 @@ const CustomCamera = forwardRef((props, ref) => {
         ref={controlsRef}
         args={[cameraRef.current, gl.domElement]}
         makeDefault
-        enableZoom={true}
-        enablePan={true}
-        enableRotate={true}
         enableDamping={false}
         screenSpacePanning={true}
         minPolarAngle={Math.PI / 4}

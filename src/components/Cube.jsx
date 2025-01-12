@@ -4,20 +4,16 @@ import * as THREE from 'three';
 import ObjectUI from './ObjectUI';
 import FaceUI from './FaceUI';
 import TransformControls from './TransformControls';
+import HeaderInput from './HeaderInput';
+import TextSprite from './TextSprite';
 
 const Cube = ({ position, selected, onClick, onMove }) => {
   const groupRef = useRef();
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
-
-  // Reset selectedFace when cube is deselected
-  useEffect(() => {
-    if (!selected) {
-      setSelectedFace(null);
-    }
-  }, [selected]);
-
-  const size = 5; // Half-size since points are from center
+  const [showHeader, setShowHeader] = useState(false);
+  const [headerText, setHeaderText] = useState('');
+  const contentRef = useRef();
 
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
@@ -37,6 +33,18 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   const handleTransformToggle = () => {
     setShowTransform(!showTransform);
   };
+
+  const handleHeaderToggle = () => {
+    console.log('Header toggle clicked');
+    setShowHeader(!showHeader);
+  };
+
+  const handleHeaderSubmit = (text) => {
+    setHeaderText(text);
+    setShowHeader(false);
+  };
+
+  const size = 5; // Half-size since points are from center
 
   // Define cube vertices (corners)
   const points = [
@@ -88,9 +96,8 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   });
 
   return (
-    <group position={position}>
-      <group ref={groupRef}>
-        {/* Invisible box for cube selection */}
+    <group>
+      <group ref={contentRef} position={position}>
         <mesh
           onClick={(e) => {
             e.stopPropagation();
@@ -101,7 +108,6 @@ const Cube = ({ position, selected, onClick, onMove }) => {
           <meshBasicMaterial visible={false} />
         </mesh>
 
-        {/* Only show faces when cube is selected */}
         {selected && (
           <>
             {/* Front face */}
@@ -195,28 +201,30 @@ const Cube = ({ position, selected, onClick, onMove }) => {
           lineWidth={1}
           segments={true}
         />
+
+        {selected && showHeader && (
+          <HeaderInput
+            position={[0, 12, 0]}
+            onTextSubmit={handleHeaderSubmit}
+          />
+        )}
+
+        {headerText && <TextSprite text={headerText} position={[0, 12, 0]} />}
+
+        {/* Move ObjectUI inside content group */}
+        {selected && (
+          <ObjectUI
+            position={[0, 15, 0]}
+            onTransformToggle={handleTransformToggle}
+            onHeaderToggle={handleHeaderToggle}
+            showTransform={showTransform}
+            showHeader={showHeader}
+          />
+        )}
       </group>
 
-      {selected && showTransform && (
-        <TransformControls
-          object={groupRef.current}
-          onDrag={(pos) => {
-            if (onMove) {
-              onMove({
-                x: pos.x,
-                y: pos.y,
-                z: pos.z,
-              });
-            }
-          }}
-        />
-      )}
-
-      {selected && (
-        <ObjectUI
-          onTransformToggle={handleTransformToggle}
-          showTransform={showTransform}
-        />
+      {selected && showTransform && contentRef.current && (
+        <TransformControls object={contentRef.current} onDrag={handleDrag} />
       )}
     </group>
   );

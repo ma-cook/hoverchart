@@ -3,7 +3,7 @@ import { TransformControls as DreiTransform } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 
 const TransformControls = ({ object, onDrag }) => {
-  const { camera } = useThree();
+  const { camera, gl, invalidate } = useThree();
 
   if (!object) return null;
 
@@ -12,20 +12,23 @@ const TransformControls = ({ object, onDrag }) => {
       object={object}
       mode="translate"
       camera={camera}
-      space="world"
-      onDragging={({ value }) => {
-        const orbitControls = object?.parent?.parent?.orbitControls;
-        if (orbitControls) {
-          orbitControls.enabled = !value;
+      domElement={gl.domElement}
+      onObjectChange={(e) => {
+        if (onDrag && e.target.object) {
+          onDrag(e.target.object.position);
+          invalidate();
         }
       }}
-      onChange={(event) => {
-        if (onDrag && event?.target?.object?.position) {
-          const pos = event.target.object.position;
-          requestAnimationFrame(() => {
-            onDrag(pos);
-          });
-        }
+      onChange={() => {
+        invalidate();
+      }}
+      onMouseDown={(e) => {
+        const orbitControls = object?.parent?.parent?.orbitControls;
+        if (orbitControls) orbitControls.enabled = false;
+      }}
+      onMouseUp={(e) => {
+        const orbitControls = object?.parent?.parent?.orbitControls;
+        if (orbitControls) orbitControls.enabled = true;
       }}
     />
   );
