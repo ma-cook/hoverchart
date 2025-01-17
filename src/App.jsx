@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { useRef, useState, useCallback } from 'react';
 import './App.css';
 import CustomCamera from './components/CustomCamera';
-
 import UIOverlay from './components/UIOverlay';
 import { Canvas } from '@react-three/fiber';
 import Cube from './components/Cube';
@@ -27,7 +26,7 @@ function App() {
     );
     const direction = new THREE.Vector3(0, 0, -1).applyEuler(euler);
 
-    cameraPos.add(direction.multiplyScalar(90));
+    cameraPos.add(direction.multiplyScalar(50));
 
     setObjects((prevObjects) => [
       ...prevObjects,
@@ -73,7 +72,8 @@ function App() {
       >
         <fog attach="fog" args={[backgroundColor, 200, 400]} />
         <CustomCamera ref={cameraRef} />
-        <group onClick={(e) => e.stopPropagation()}>
+        {/* Removed onClick handler to allow event propagation */}
+        <group>
           {objects.map((obj) => {
             if (obj.type === 'cube') {
               return (
@@ -91,6 +91,7 @@ function App() {
             if (obj.type === 'sphere') {
               return <Sphere key={obj.id} position={obj.position} />;
             }
+            return null; // Add a fallback to prevent undefined returns
           })}
         </group>
       </Canvas>

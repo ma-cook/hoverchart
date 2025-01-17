@@ -1,9 +1,11 @@
-import { useRef, useState } from 'react';
-import { Line } from '@react-three/drei';
+import { useRef, useState, useEffect } from 'react';
+import {
+  Line,
+  TransformControls as DreiTransformControls,
+} from '@react-three/drei';
 import * as THREE from 'three';
 import ObjectUI from './ObjectUI';
 import FaceUI from './FaceUI';
-import TransformControls from './TransformControls';
 import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 
@@ -13,6 +15,14 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   const [showHeader, setShowHeader] = useState(false);
   const [headerText, setHeaderText] = useState('');
   const contentRef = useRef();
+
+  // Reset selectedFace and showTransform when the cube is deselected
+  useEffect(() => {
+    if (!selected) {
+      setSelectedFace(null);
+      setShowTransform(false); // Ensure TransformControls are hidden
+    }
+  }, [selected]);
 
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
@@ -220,11 +230,22 @@ const Cube = ({ position, selected, onClick, onMove }) => {
       </group>
 
       {selected && showTransform && contentRef.current && (
-        <TransformControls object={contentRef.current} onDrag={handleDrag} />
+        <DreiTransformControls
+          object={contentRef.current}
+          onDrag={handleDrag}
+          onPointerDown={(e) => {
+            e.stopPropagation(); // Prevent event bubbling from TransformControls
+            // Optional: Add any additional logic here if needed
+          }}
+          onPointerUp={(e) => {
+            e.stopPropagation(); // Prevent event bubbling from TransformControls
+            // Optional: Add any additional logic here if needed
+          }}
+        />
       )}
     </group>
   );
 };
 
-Cube.displayName = 'Cube'; // <-- Add this line
+Cube.displayName = 'Cube';
 export default Cube;
