@@ -10,7 +10,7 @@ const CustomCamera = forwardRef((props, ref) => {
   useImperativeHandle(
     ref,
     () => ({
-      ...cameraRef.current,
+      camera: cameraRef.current, // Ensure camera reference is exposed
       orbitControls: controlsRef.current,
     }),
     []

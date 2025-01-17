@@ -97,6 +97,8 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   return (
     <group>
       <group ref={contentRef} position={position}>
+        {' '}
+        {/* Ensure position prop is used */}
         <mesh
           onClick={(e) => {
             e.stopPropagation();
@@ -106,7 +108,6 @@ const Cube = ({ position, selected, onClick, onMove }) => {
           <boxGeometry args={[10, 10, 10]} />
           <meshBasicMaterial visible={false} />
         </mesh>
-
         {selected && (
           <>
             {/* Front face */}
@@ -193,23 +194,19 @@ const Cube = ({ position, selected, onClick, onMove }) => {
             </mesh>
           </>
         )}
-
         <Line
           points={points}
           color={selected ? 'blue' : 'black'}
           lineWidth={1}
           segments={true}
         />
-
         {selected && showHeader && (
           <HeaderInput
             position={[0, 12, 0]}
             onTextSubmit={handleHeaderSubmit}
           />
         )}
-
         {headerText && <TextSprite text={headerText} position={[0, 12, 0]} />}
-
         {/* Move ObjectUI inside content group */}
         {selected && (
           <ObjectUI

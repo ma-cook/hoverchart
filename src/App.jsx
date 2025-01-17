@@ -15,27 +15,28 @@ function App() {
   const cameraRef = useRef();
 
   const handleCreateObject = (type) => {
-    const camera = cameraRef.current;
-    if (camera && camera.orbitControls) {
-      // Get the actual PerspectiveCamera from OrbitControls
-      const perspCamera = camera.orbitControls.object;
-      const direction = new THREE.Vector3();
-      const position = new THREE.Vector3();
-
-      perspCamera.getWorldPosition(position);
-      direction.set(0, 0, -1).applyQuaternion(perspCamera.quaternion);
-
-      position.add(direction.multiplyScalar(50));
-
-      setObjects([
-        ...objects,
-        {
-          type,
-          position: [position.x, position.y, position.z],
-          id: Date.now(),
-        },
-      ]);
+    // Ensure cameraRef.current and cameraRef.current.camera are defined
+    if (!cameraRef.current || !cameraRef.current.camera) {
+      console.warn('Camera ref or camera object not ready; aborting.');
+      return;
     }
+
+    const cameraPos = cameraRef.current.camera.position.clone();
+    const euler = new THREE.Euler().setFromQuaternion(
+      cameraRef.current.camera.quaternion
+    );
+    const direction = new THREE.Vector3(0, 0, -1).applyEuler(euler);
+
+    cameraPos.add(direction.multiplyScalar(90));
+
+    setObjects((prevObjects) => [
+      ...prevObjects,
+      {
+        type,
+        position: [cameraPos.x, cameraPos.y, cameraPos.z],
+        id: Date.now(),
+      },
+    ]);
   };
 
   const handleObjectClick = (id) => {
