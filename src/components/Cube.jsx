@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import ObjectUI from './ObjectUI';
@@ -8,7 +8,6 @@ import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 
 const Cube = ({ position, selected, onClick, onMove }) => {
-  const groupRef = useRef();
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
@@ -230,4 +229,5 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   );
 };
 
+Cube.displayName = 'Cube'; // <-- Add this line
 export default Cube;

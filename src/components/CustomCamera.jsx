@@ -1,4 +1,4 @@
-import React, { useRef, forwardRef, useImperativeHandle, memo } from 'react';
+import { useRef, forwardRef, useImperativeHandle, memo } from 'react';
 import { PerspectiveCamera, OrbitControls } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 

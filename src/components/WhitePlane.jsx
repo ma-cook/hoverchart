@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import { MeshReflectorMaterial } from '@react-three/drei';
-import * as THREE from 'three';
 
 const WhitePlane = React.memo(() => {
   const planeWidth = 3000;
@@ -32,4 +31,5 @@ const WhitePlane = React.memo(() => {
   );
 });
 
+WhitePlane.displayName = 'WhitePlane'; // <-- Add this line
 export default WhitePlane;

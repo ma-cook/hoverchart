@@ -1,7 +1,6 @@
-import React from 'react';
 import { Html } from '@react-three/drei';
 
-const FaceUI = ({ position, normal }) => {
+const FaceUI = ({ position }) => {
   const tools = [
     { name: 'text', icon: 'T' },
     { name: 'arrow', icon: '↗' },

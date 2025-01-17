@@ -1,23 +1,15 @@
 import * as THREE from 'three';
-import React, {
-  useRef,
-  useEffect,
-  useState,
-  useCallback,
-  useMemo,
-  Suspense,
-  lazy,
-} from 'react';
+import { useRef, useState, useCallback } from 'react';
 import './App.css';
 import CustomCamera from './components/CustomCamera';
-import WhitePlane from './components/WhitePlane';
+
 import UIOverlay from './components/UIOverlay';
-import { useFrame, Canvas } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import Cube from './components/Cube';
 import Sphere from './components/Sphere';
 
 function App() {
-  const [backgroundColor, setBackgroundColor] = useState('white');
+  const [backgroundColor] = useState('white');
   const [objects, setObjects] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const cameraRef = useRef();

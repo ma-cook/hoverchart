@@ -1,5 +1,3 @@
-import React from 'react';
-
 const UIOverlay = ({ onCreateObject, onClick }) => {
   const shapes = [
     { name: 'cube', icon: '⬛' },
@@ -29,4 +27,5 @@ const UIOverlay = ({ onCreateObject, onClick }) => {
   );
 };
 
+UIOverlay.displayName = 'UIOverlay';
 export default UIOverlay;
