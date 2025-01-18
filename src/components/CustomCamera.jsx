@@ -36,7 +36,7 @@ const CustomCamera = forwardRef((props, ref) => {
         minPolarAngle={Math.PI / 4}
         maxPolarAngle={Math.PI / 1.5}
         minDistance={5}
-        maxDistance={100}
+        maxDistance={1000}
       />
     </>
   );

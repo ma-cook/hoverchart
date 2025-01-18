@@ -4,6 +4,7 @@ const ObjectUI = ({
   position,
   onTransformToggle,
   onHeaderToggle,
+  onResizeToggle, // Added onResizeToggle prop
   showTransform = false,
   showHeader = false,
 }) => {
@@ -26,6 +27,16 @@ const ObjectUI = ({
       icon: '↕',
       active: showTransform,
       onClick: () => onTransformToggle?.(),
+    },
+    // Added Resize Button
+    {
+      name: 'resize',
+      icon: '↔',
+      active: false, // Optional: manage active state if needed
+      onClick: () => {
+        console.log('Resize button clicked');
+        onResizeToggle?.();
+      },
     },
   ];
 

@@ -13,6 +13,19 @@ function App() {
   const [selectedId, setSelectedId] = useState(null);
   const cameraRef = useRef();
 
+  // Add functions to disable and enable OrbitControls
+  const disableOrbitControls = useCallback(() => {
+    if (cameraRef.current && cameraRef.current.orbitControls) {
+      cameraRef.current.orbitControls.enabled = false;
+    }
+  }, [cameraRef]);
+
+  const enableOrbitControls = useCallback(() => {
+    if (cameraRef.current && cameraRef.current.orbitControls) {
+      cameraRef.current.orbitControls.enabled = true;
+    }
+  }, [cameraRef]);
+
   const handleCreateObject = (type) => {
     // Ensure cameraRef.current and cameraRef.current.camera are defined
     if (!cameraRef.current || !cameraRef.current.camera) {
@@ -26,7 +39,7 @@ function App() {
     );
     const direction = new THREE.Vector3(0, 0, -1).applyEuler(euler);
 
-    cameraPos.add(direction.multiplyScalar(50));
+    cameraPos.add(direction.multiplyScalar(75));
 
     setObjects((prevObjects) => [
       ...prevObjects,
@@ -85,6 +98,8 @@ function App() {
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
+                  disableOrbitControls={disableOrbitControls} // Pass disable function
+                  enableOrbitControls={enableOrbitControls} // Pass enable function
                 />
               );
             }

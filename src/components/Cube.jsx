@@ -8,13 +8,23 @@ import ObjectUI from './ObjectUI';
 import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
+import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
 
-const Cube = ({ position, selected, onClick, onMove }) => {
+const Cube = ({
+  position,
+  selected,
+  onClick,
+  onMove,
+  disableOrbitControls, // Receive disable function
+  enableOrbitControls, // Receive enable function
+}) => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
   const [headerText, setHeaderText] = useState('');
   const contentRef = useRef();
+  const [scale, setScale] = useState([1, 1, 1]); // Existing scale state
+  const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -51,6 +61,25 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   const handleHeaderSubmit = (text) => {
     setHeaderText(text);
     setShowHeader(false);
+  };
+
+  const handleResizeToggle = () => {
+    setIsResizing(!isResizing);
+    if (isResizing) {
+      // Exiting resize mode
+      console.log('Exited resize mode');
+    } else {
+      // Entering resize mode
+      console.log('Entered resize mode');
+    }
+  };
+
+  const handleResize = (axis, delta) => {
+    const axisIndex = { x: 0, y: 1, z: 2 }[axis];
+    const newScale = [...scale];
+    newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1); // Prevent scale from becoming too small
+    setScale(newScale);
+    console.log(`Resized along ${axis}-axis. New scale:`, newScale);
   };
 
   const size = 5; // Half-size since points are from center
@@ -105,7 +134,9 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   });
 
   return (
-    <group>
+    <group scale={scale}>
+      {' '}
+      {/* Apply scale to the group */}
       <group ref={contentRef} position={position}>
         {' '}
         {/* Ensure position prop is used */}
@@ -191,7 +222,7 @@ const Cube = ({ position, selected, onClick, onMove }) => {
 
             {/* Left face */}
             <mesh
-              position={[-5.01, 0, 0]}
+              position={[-5.01, 0]}
               rotation={[0, -Math.PI / 2, 0]}
               onClick={(e) => handleFaceClick(e, 'left')}
               renderOrder={1}
@@ -217,18 +248,26 @@ const Cube = ({ position, selected, onClick, onMove }) => {
           />
         )}
         {headerText && <TextSprite text={headerText} position={[0, 12, 0]} />}
-        {/* Move ObjectUI inside content group */}
-        {selected && (
+        {/* Conditionally render ObjectUI only when not editing header */}
+        {selected && !showHeader && (
           <ObjectUI
             position={[0, 15, 0]}
             onTransformToggle={handleTransformToggle}
             onHeaderToggle={handleHeaderToggle}
+            onResizeToggle={handleResizeToggle} // Passed handleResizeToggle to ObjectUI
             showTransform={showTransform}
             showHeader={showHeader}
           />
         )}
+        {/* Render ResizeArrows when in resize mode */}
+        {selected && isResizing && (
+          <ResizeArrows
+            onResize={handleResize}
+            disableOrbitControls={disableOrbitControls} // Pass disable function
+            enableOrbitControls={enableOrbitControls} // Pass enable function
+          />
+        )}
       </group>
-
       {selected && showTransform && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}

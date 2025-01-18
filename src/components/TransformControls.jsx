@@ -1,4 +1,3 @@
-import React from 'react';
 import { TransformControls as DreiTransform } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 
@@ -22,11 +21,11 @@ const TransformControls = ({ object, onDrag }) => {
       onChange={() => {
         invalidate();
       }}
-      onMouseDown={(e) => {
+      onMouseDown={() => {
         const orbitControls = object?.parent?.parent?.orbitControls;
         if (orbitControls) orbitControls.enabled = false;
       }}
-      onMouseUp={(e) => {
+      onMouseUp={() => {
         const orbitControls = object?.parent?.parent?.orbitControls;
         if (orbitControls) orbitControls.enabled = true;
       }}
