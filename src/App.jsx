@@ -110,7 +110,14 @@ function App() {
               );
             }
             if (obj.type === 'sphere') {
-              return <Sphere key={obj.id} position={obj.position} />;
+              return (
+                <Sphere
+                  key={obj.id}
+                  position={obj.position}
+                  selected={selectedId === obj.id}
+                  onClick={() => handleObjectClick(obj.id)}
+                />
+              );
             }
             return null; // Add a fallback to prevent undefined returns
           })}

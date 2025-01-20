@@ -136,6 +136,39 @@ const Cube = ({ position, selected, onClick, onMove }) => {
     opacity: selectedFace === faceName ? 0.5 : 0.1,
   });
 
+  // Calculate header position relative to cube's top edge
+  const getHeaderPosition = () => {
+    const cubeHeight = 10 * scale[1]; // cube height * y-scale
+    const topEdgeOffset = cubeHeight / 2; // half height since cube is centered
+    return [
+      position[0], // x
+      position[1] + topEdgeOffset + 15, // y (15 units above top edge)
+      position[2], // z
+    ];
+  };
+
+  // Calculate UI position relative to cube's top edge
+  const getUIPosition = () => {
+    const cubeHeight = 10 * scale[1]; // cube height * y-scale
+    const topEdgeOffset = cubeHeight / 2; // half height since cube is centered
+    return [
+      position[0], // x
+      position[1] + topEdgeOffset + 20, // y (20 units above top edge)
+      position[2], // z
+    ];
+  };
+
+  // Calculate header input position relative to cube's top edge
+  const getHeaderInputPosition = () => {
+    const cubeHeight = 10 * scale[1];
+    const topEdgeOffset = cubeHeight / 2;
+    return [
+      position[0],
+      position[1] + topEdgeOffset + 10, // 10 units above top edge
+      position[2],
+    ];
+  };
+
   return (
     <>
       <group>
@@ -242,28 +275,34 @@ const Cube = ({ position, selected, onClick, onMove }) => {
               lineWidth={1}
               segments={true}
             />
-            {selected && showHeader && (
-              <HeaderInput
-                position={[0, 12, 0]}
-                onTextSubmit={handleHeaderSubmit}
-              />
-            )}
-            {headerText && (
-              <TextSprite text={headerText} position={[0, 12, 0]} />
-            )}
-            {/* Conditionally render ObjectUI only when not editing header */}
-            {selected && !showHeader && (
-              <ObjectUI
-                position={[0, 10, 0]}
-                onTransformToggle={handleTransformToggle}
-                onHeaderToggle={handleHeaderToggle}
-                onResizeToggle={handleResizeToggle} // Passed handleResizeToggle to ObjectUI
-                showTransform={showTransform}
-                showHeader={showHeader}
-              />
-            )}
           </group>
-          {/* Pass contentRef.current to ResizeArrows */}
+          {/* Move ObjectUI outside scaled group and update position */}
+          {selected && !showHeader && (
+            <ObjectUI
+              position={getUIPosition()}
+              onTransformToggle={handleTransformToggle}
+              onHeaderToggle={handleHeaderToggle}
+              onResizeToggle={handleResizeToggle} // Passed handleResizeToggle to ObjectUI
+              showTransform={showTransform}
+              showHeader={showHeader}
+              followTarget={contentRef}
+            />
+          )}
+          {/* Update header elements positions */}
+          {selected && showHeader && (
+            <HeaderInput
+              position={getHeaderInputPosition()}
+              onTextSubmit={handleHeaderSubmit}
+              followTarget={contentRef}
+            />
+          )}
+          {headerText && (
+            <TextSprite
+              text={headerText}
+              position={getHeaderPosition()}
+              followTarget={contentRef}
+            />
+          )}
           {selected && isResizing && contentRef.current && (
             <ResizeArrows onResize={handleResize} object={contentRef.current} />
           )}

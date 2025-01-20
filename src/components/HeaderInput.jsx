@@ -1,8 +1,28 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Html } from '@react-three/drei';
 
-const HeaderInput = ({ position, onTextSubmit }) => {
+import { useFrame } from '@react-three/fiber';
+const HeaderInput = ({ position, onTextSubmit, followTarget }) => {
   const [headerText, setHeaderText] = useState('');
+  const groupRef = useRef();
+
+  useFrame(({ camera }) => {
+    if (groupRef.current && followTarget?.current) {
+      const targetScale = followTarget.current.scale;
+      const cubeHeight = 10 * targetScale.y;
+      const topEdgeOffset = cubeHeight;
+      const targetPos = followTarget.current.position;
+
+      groupRef.current.position.set(
+        targetPos.x,
+        targetPos.y + topEdgeOffset + 10,
+        targetPos.z
+      );
+
+      // Keep input facing camera
+      groupRef.current.quaternion.copy(camera.quaternion);
+    }
+  });
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter') {
@@ -12,29 +32,30 @@ const HeaderInput = ({ position, onTextSubmit }) => {
   };
 
   return (
-    <Html
-      position={position}
-      center
-      style={{
-        background: 'white',
-        padding: '4px',
-        borderRadius: '4px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-        pointerEvents: 'auto',
-        transform: 'translate(-50%, -50%)',
-      }}
-    >
-      <input
-        type="text"
-        value={headerText}
-        onChange={(e) => setHeaderText(e.target.value)}
-        onKeyPress={handleKeyPress}
-        placeholder="Enter header text..."
-        className="header-input"
-        onClick={(e) => e.stopPropagation()}
-        autoFocus
-      />
-    </Html>
+    <group ref={groupRef} position={position}>
+      <Html
+        center
+        style={{
+          background: 'white',
+          padding: '4px',
+          borderRadius: '4px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          pointerEvents: 'auto',
+          transform: 'translate(-50%, -50%)',
+        }}
+      >
+        <input
+          type="text"
+          value={headerText}
+          onChange={(e) => setHeaderText(e.target.value)}
+          onKeyPress={handleKeyPress}
+          placeholder="Enter header text..."
+          className="header-input"
+          onClick={(e) => e.stopPropagation()}
+          autoFocus
+        />
+      </Html>
+    </group>
   );
 };
 

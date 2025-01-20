@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Line } from '@react-three/drei';
+import ObjectUI from './ObjectUI';
 
-const Sphere = ({ position }) => {
+const Sphere = ({ position, selected, onClick }) => {
+  const contentRef = useRef();
   const points = React.useMemo(() => {
     const temp = [];
     // Create latitude lines
@@ -36,9 +38,28 @@ const Sphere = ({ position }) => {
 
   return (
     <group position={position}>
-      {points.map((linePoints, idx) => (
-        <Line key={idx} points={linePoints} color="black" lineWidth={1} />
-      ))}
+      <group ref={contentRef}>
+        <mesh
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick();
+          }}
+        >
+          <sphereGeometry args={[5, 32, 32]} />
+          <meshBasicMaterial visible={false} />
+        </mesh>
+        {points.map((linePoints, idx) => (
+          <Line
+            key={idx}
+            points={linePoints}
+            color={selected ? 'blue' : 'black'}
+            lineWidth={1}
+          />
+        ))}
+        {selected && (
+          <ObjectUI position={[0, 10, 0]} followTarget={contentRef} />
+        )}
+      </group>
     </group>
   );
 };
