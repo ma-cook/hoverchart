@@ -18,7 +18,7 @@ function App() {
     if (cameraRef.current?.orbitControls) {
       window.orbitControls = cameraRef.current.orbitControls;
     }
-  }, [cameraRef.current]);
+  }, []);
 
   // Add functions to disable and enable OrbitControls
   const disableOrbitControls = useCallback(() => {

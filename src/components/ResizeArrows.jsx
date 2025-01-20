@@ -1,23 +1,33 @@
 import { ArrowHelper } from 'three';
+
 import { extend, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useRef } from 'react';
 
 extend({ ArrowHelper });
 
 const ResizeArrows = ({ onResize }) => {
   const { scene } = useThree();
+  const accumDelta = useRef(0);
 
   const handlePointerDown = (axis) => {
-    // Access controls directly from scene
     if (scene.orbitControls) scene.orbitControls.enabled = false;
+    accumDelta.current = 0;
 
     const handleMove = (e) => {
-      const delta = e.movementX || e.movementY || 0;
-      onResize(axis, delta * 0.01);
+      const movementX = e.movementX || 0;
+      const movementY = e.movementY || 0;
+
+      // Accumulate delta for smoother scaling
+      accumDelta.current +=
+        Math.abs(movementX) > Math.abs(movementY) ? movementX : -movementY;
+
+      onResize(axis, accumDelta.current * 0.005);
     };
 
     const handleUp = () => {
       if (scene.orbitControls) scene.orbitControls.enabled = true;
+      accumDelta.current = 0;
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', handleUp);
     };
