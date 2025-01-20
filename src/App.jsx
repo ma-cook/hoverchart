@@ -90,7 +90,6 @@ function App() {
         antialias="true"
         onPointerMissed={() => setSelectedId(null)}
       >
-        <fog attach="fog" args={[backgroundColor, 200, 400]} />
         <CustomCamera ref={cameraRef} />
         {/* Removed onClick handler to allow event propagation */}
         <group>

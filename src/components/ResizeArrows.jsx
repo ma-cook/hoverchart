@@ -2,32 +2,35 @@ import { ArrowHelper } from 'three';
 
 import { extend, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useRef } from 'react';
 
 extend({ ArrowHelper });
 
-const ResizeArrows = ({ onResize }) => {
+const ResizeArrows = ({ onResize, object }) => {
   const { scene } = useThree();
-  const accumDelta = useRef(0);
+
+  // Get current position from the object
+  const position = object
+    ? [object.position.x, object.position.y, object.position.z]
+    : [0, 0, 0];
 
   const handlePointerDown = (axis) => {
     if (scene.orbitControls) scene.orbitControls.enabled = false;
-    accumDelta.current = 0;
 
     const handleMove = (e) => {
+      // Calculate delta from mouse movement
       const movementX = e.movementX || 0;
       const movementY = e.movementY || 0;
 
-      // Accumulate delta for smoother scaling
-      accumDelta.current +=
+      // Use the dominant movement direction
+      const currentDelta =
         Math.abs(movementX) > Math.abs(movementY) ? movementX : -movementY;
 
-      onResize(axis, accumDelta.current * 0.005);
+      // Only send the difference from last frame
+      onResize(axis, currentDelta * 0.005);
     };
 
     const handleUp = () => {
       if (scene.orbitControls) scene.orbitControls.enabled = true;
-      accumDelta.current = 0;
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', handleUp);
     };
@@ -37,7 +40,7 @@ const ResizeArrows = ({ onResize }) => {
   };
 
   return (
-    <>
+    <group position={position}>
       {['x', 'y', 'z'].map((axis) => (
         <arrowHelper
           key={axis}
@@ -50,17 +53,19 @@ const ResizeArrows = ({ onResize }) => {
                 : [0, 0, 1])
             ),
             new THREE.Vector3(0, 0, 0),
-            10,
+            15, // Increased from 10 to 15 for larger arrows
             new THREE.Color(
               axis === 'x' ? 'red' : axis === 'y' ? 'green' : 'blue'
             ),
+            3, // headLength (added)
+            2, // headWidth (added)
           ]}
           onPointerDown={(e) => handlePointerDown(axis, e)}
           cursor="pointer"
           pointerEvents="auto"
         />
       ))}
-    </>
+    </group>
   );
 };
 

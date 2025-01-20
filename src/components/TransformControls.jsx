@@ -9,18 +9,18 @@ const TransformControls = ({ object, onDrag }) => {
   return (
     <DreiTransform
       object={object}
-      mode="translate"
       camera={camera}
       domElement={gl.domElement}
+      mode="translate"
+      space="world"
+      size={1}
       onObjectChange={(e) => {
         if (onDrag && e.target.object) {
           onDrag(e.target.object.position);
           invalidate();
         }
       }}
-      onChange={() => {
-        invalidate();
-      }}
+      onChange={invalidate}
       onMouseDown={() => {
         const controls = scene.userData.controls;
         if (controls) controls.enabled = false;
