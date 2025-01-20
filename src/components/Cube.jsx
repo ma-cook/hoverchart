@@ -9,20 +9,103 @@ import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
+import { useThree } from '@react-three/fiber'; // Import useThree
 
 const FaceIndicator = ({ position, rotation, onClick }) => {
+  const { scene, camera, gl } = useThree(); // Add gl to destructuring
+  const isDragging = useRef(false);
+  const [arrowEnd, setArrowEnd] = useState(null);
+  const meshRef = useRef();
+  const groupRef = useRef();
+  const startPosRef = useRef(null);
+
+  const handlePointerDown = (e) => {
+    e.stopPropagation();
+    isDragging.current = true;
+    if (scene.orbitControls) scene.orbitControls.enabled = false;
+
+    // Get the indicator's actual world position
+    const startPos = new THREE.Vector3();
+    meshRef.current.getWorldPosition(startPos);
+
+    // Store the position for drawing the arrow
+    startPosRef.current = startPos.clone();
+    setArrowEnd({
+      start: startPos.clone(),
+      end: startPos.clone(),
+    });
+
+    const handlePointerMove = (event) => {
+      if (!startPosRef.current) return;
+
+      const rect = gl.domElement.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      // Create end position
+      const endPos = new THREE.Vector3(x, y, 0.5);
+      endPos.unproject(camera);
+      endPos.sub(camera.position).normalize();
+
+      const distance = camera.position.distanceTo(startPosRef.current);
+      endPos.multiplyScalar(distance).add(camera.position);
+
+      // Validate end position
+      if (isNaN(endPos.x) || isNaN(endPos.y) || isNaN(endPos.z)) {
+        console.warn('Invalid end position:', endPos);
+        return;
+      }
+
+      setArrowEnd({
+        start: startPosRef.current.clone(),
+        end: endPos,
+      });
+    };
+
+    const handlePointerUp = () => {
+      isDragging.current = false;
+      setArrowEnd(null);
+      startPosRef.current = null;
+      if (scene.orbitControls) scene.orbitControls.enabled = true;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+
   return (
-    <mesh
-      position={position}
-      rotation={rotation}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick(e);
-      }}
-    >
-      <boxGeometry args={[1, 1, 1]} />
-      <meshBasicMaterial color="blue" opacity={0.8} transparent />
-    </mesh>
+    <group ref={groupRef}>
+      <mesh
+        ref={meshRef}
+        position={position}
+        rotation={rotation}
+        onClick={(e) => {
+          if (!isDragging.current) {
+            onClick(e);
+          }
+        }}
+        onPointerDown={handlePointerDown}
+      >
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="blue" opacity={0.8} transparent />
+      </mesh>
+      {arrowEnd && arrowEnd.start && arrowEnd.end && (
+        <group>
+          <Line
+            points={[arrowEnd.start.toArray(), arrowEnd.end.toArray()]}
+            color="blue"
+            lineWidth={2}
+            segments // Use segments prop for better performance
+          />
+          <mesh position={arrowEnd.end.toArray()}>
+            <sphereGeometry args={[0.2]} />
+            <meshBasicMaterial color="blue" />
+          </mesh>
+        </group>
+      )}
+    </group>
   );
 };
 
