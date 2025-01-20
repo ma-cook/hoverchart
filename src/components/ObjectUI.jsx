@@ -24,7 +24,7 @@ const ObjectUI = ({
       // Calculate new position
       const newPos = new THREE.Vector3(
         targetPos.x,
-        targetPos.y + topEdgeOffset + 20,
+        targetPos.y + topEdgeOffset + 10,
         targetPos.z
       );
 

@@ -10,6 +10,22 @@ import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
 
+const FaceIndicator = ({ position, rotation, onClick }) => {
+  return (
+    <mesh
+      position={position}
+      rotation={rotation}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
+    >
+      <boxGeometry args={[1, 1, 1]} />
+      <meshBasicMaterial color="blue" opacity={0.8} transparent />
+    </mesh>
+  );
+};
+
 const Cube = ({ position, selected, onClick, onMove }) => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
@@ -134,6 +150,7 @@ const Cube = ({ position, selected, onClick, onMove }) => {
         ? new THREE.Color('#99ccff')
         : new THREE.Color('#ffffff'),
     opacity: selectedFace === faceName ? 0.5 : 0.1,
+    depthWrite: false,
   });
 
   // Calculate header position relative to cube's top edge
@@ -169,6 +186,28 @@ const Cube = ({ position, selected, onClick, onMove }) => {
     ];
   };
 
+  const getFaceIndicatorProps = (faceName) => {
+    const props = {
+      front: { position: [0, 0, 5], rotation: [0, 0, 0] },
+      back: { position: [0, 0, -5], rotation: [0, Math.PI, 0] },
+      top: { position: [0, 5, 0], rotation: [-Math.PI / 2, 0, 0] },
+      bottom: { position: [0, -5, 0], rotation: [Math.PI / 2, 0, 0] },
+      right: { position: [5, 0, 0], rotation: [0, Math.PI / 2, 0] },
+      left: { position: [-5, 0, 0], rotation: [0, -Math.PI / 2, 0] },
+    }[faceName];
+
+    return props || { position: [0, 0, 0], rotation: [0, 0, 0] };
+  };
+
+  const faces = [
+    { name: 'front', normal: [0, 0, 1] },
+    { name: 'back', normal: [0, 0, -1] },
+    { name: 'top', normal: [0, 1, 0] },
+    { name: 'bottom', normal: [0, -1, 0] },
+    { name: 'right', normal: [1, 0, 0] },
+    { name: 'left', normal: [-1, 0, 0] },
+  ];
+
   return (
     <>
       <group>
@@ -185,93 +224,41 @@ const Cube = ({ position, selected, onClick, onMove }) => {
             </mesh>
             {selected && (
               <>
-                {/* Front face */}
-                <mesh
-                  position={[0, 0, 5.01]}
-                  onClick={(e) => handleFaceClick(e, 'front')}
-                  renderOrder={1}
-                >
-                  <planeGeometry args={[10.2, 10.2]} />
-                  <meshBasicMaterial {...getFaceMaterial('front')} />
-                  {selectedFace === 'front' && (
-                    <FaceUI position={[0, 6, 0]} normal={[0, 0, 1]} />
-                  )}
-                </mesh>
-
-                {/* Back face */}
-                <mesh
-                  position={[0, 0, -5.01]}
-                  rotation={[0, Math.PI, 0]}
-                  onClick={(e) => handleFaceClick(e, 'back')}
-                  renderOrder={1}
-                >
-                  <planeGeometry args={[10.2, 10.2]} />
-                  <meshBasicMaterial {...getFaceMaterial('back')} />
-                  {selectedFace === 'back' && (
-                    <FaceUI position={[0, 6, 0]} normal={[0, 0, -1]} />
-                  )}
-                </mesh>
-
-                {/* Top face */}
-                <mesh
-                  position={[0, 5.01, 0]}
-                  rotation={[-Math.PI / 2, 0, 0]}
-                  onClick={(e) => handleFaceClick(e, 'top')}
-                  renderOrder={1}
-                >
-                  <planeGeometry args={[10.2, 10.2]} />
-                  <meshBasicMaterial {...getFaceMaterial('top')} />
-                  {selectedFace === 'top' && (
-                    <FaceUI position={[0, 0, -6]} normal={[0, 1, 0]} />
-                  )}
-                </mesh>
-
-                {/* Bottom face */}
-                <mesh
-                  position={[0, -5.01, 0]}
-                  rotation={[Math.PI / 2, 0, 0]}
-                  onClick={(e) => handleFaceClick(e, 'bottom')}
-                  renderOrder={1}
-                >
-                  <planeGeometry args={[10.2, 10.2]} />
-                  <meshBasicMaterial {...getFaceMaterial('bottom')} />
-                  {selectedFace === 'bottom' && (
-                    <FaceUI position={[0, 0, -6]} normal={[0, -1, 0]} />
-                  )}
-                </mesh>
-
-                {/* Right face */}
-                <mesh
-                  position={[5.01, 0, 0]}
-                  rotation={[0, Math.PI / 2, 0]}
-                  onClick={(e) => handleFaceClick(e, 'right')}
-                  renderOrder={1}
-                >
-                  <planeGeometry args={[10.2, 10.2]} />
-                  <meshBasicMaterial {...getFaceMaterial('right')} />
-                  {selectedFace === 'right' && (
-                    <FaceUI position={[0, 6, 0]} normal={[1, 0, 0]} />
-                  )}
-                </mesh>
-
-                {/* Left face */}
-                <mesh
-                  position={[-5.01, 0]}
-                  rotation={[0, -Math.PI / 2, 0]}
-                  onClick={(e) => handleFaceClick(e, 'left')}
-                  renderOrder={1}
-                >
-                  <planeGeometry args={[10.2, 10.2]} />
-                  <meshBasicMaterial {...getFaceMaterial('left')} />
-                  {selectedFace === 'left' && (
-                    <FaceUI position={[0, 6, 0]} normal={[-1, 0, 0]} />
-                  )}
-                </mesh>
+                {faces.map(({ name, normal }) => {
+                  const { position: facePos, rotation } =
+                    getFaceIndicatorProps(name);
+                  return (
+                    <mesh
+                      key={name}
+                      position={[facePos[0], facePos[1], facePos[2]]}
+                      rotation={rotation}
+                      onClick={(e) => handleFaceClick(e, name)}
+                      renderOrder={2} // Increased render order
+                    >
+                      <boxGeometry args={[10.4, 10.4, 0.2]} />{' '}
+                      {/* Changed to box with small depth */}
+                      <meshBasicMaterial {...getFaceMaterial(name)} />
+                      {selectedFace === name && (
+                        <>
+                          <FaceUI position={[0, 6, 0]} normal={normal} />
+                          <FaceIndicator
+                            position={[0, 0, 0.2]} // Moved slightly outward
+                            rotation={[0, 0, 0]}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              console.log(`Indicator clicked on ${name} face`);
+                            }}
+                          />
+                        </>
+                      )}
+                    </mesh>
+                  );
+                })}
               </>
             )}
             <Line
               points={points}
-              color={selected ? 'blue' : 'black'}
+              color={selected ? 'blue' : 'white'}
               lineWidth={1}
               segments={true}
             />

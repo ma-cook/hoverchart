@@ -41,7 +41,7 @@ const ResizeArrows = ({ onResize, object }) => {
           }
 
           arrow.setDirection(direction);
-          arrow.setLength(2 * scale, 1 * scale, 0.5 * scale);
+          arrow.setLength(3 * scale, 1 * scale, 0.5 * scale);
         }
       });
     }

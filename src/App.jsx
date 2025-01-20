@@ -8,7 +8,7 @@ import Cube from './components/Cube';
 import Sphere from './components/Sphere';
 
 function App() {
-  const [backgroundColor] = useState('white');
+  const [backgroundColor] = useState('black');
   const [objects, setObjects] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const cameraRef = useRef();

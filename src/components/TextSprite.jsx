@@ -10,13 +10,13 @@ const TextSprite = ({ text, position, followTarget }) => {
       // Update position if following a target
       if (followTarget?.current) {
         const targetScale = followTarget.current.scale;
-        const cubeHeight = 10 * targetScale.y;
+        const cubeHeight = 10 * targetScale.y + 5;
         const topEdgeOffset = cubeHeight / 2;
         const targetPos = followTarget.current.position;
 
         textRef.current.position.set(
           targetPos.x,
-          targetPos.y + topEdgeOffset + 15,
+          targetPos.y + topEdgeOffset,
           targetPos.z
         );
       }
@@ -41,10 +41,10 @@ const TextSprite = ({ text, position, followTarget }) => {
       ref={textRef}
       position={position}
       fontSize={0.5}
-      color="black"
+      color="white"
       anchorX="center"
       anchorY="middle"
-      outlineWidth={0.03}
+      outlineWidth={0.01}
       outlineColor="white"
       billboard
     >
