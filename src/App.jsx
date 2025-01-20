@@ -1,17 +1,54 @@
 import * as THREE from 'three';
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Line } from '@react-three/drei'; // Add this import
 import './App.css';
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
-import { Canvas } from '@react-three/fiber';
 import Cube from './components/Cube';
 import Sphere from './components/Sphere';
 
-function App() {
+// New component to handle connection updates
+const ConnectionUpdater = ({
+  connections,
+  setConnections,
+  calculateFacePosition,
+}) => {
+  useFrame(() => {
+    if (connections.length > 0) {
+      setConnections((prev) =>
+        prev.map((conn) => ({
+          ...conn,
+          start: {
+            ...conn.start,
+            position: calculateFacePosition(conn.start),
+          },
+          end: {
+            ...conn.end,
+            position: calculateFacePosition(conn.end),
+          },
+        }))
+      );
+    }
+  });
+  return null;
+};
+
+const App = () => {
   const [backgroundColor] = useState('black');
   const [objects, setObjects] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const cameraRef = useRef();
+
+  const [showAllCubesIndicators, setShowAllCubesIndicators] = useState(false);
+  const [activeIndicator, setActiveIndicator] = useState(null);
+  const [indicatorMode, setIndicatorMode] = useState('none'); // 'none', 'single', 'all'
+  const [connections, setConnections] = useState([]);
+  const [selectedIndicators, setSelectedIndicators] = useState([]);
+
+  // Add ref to store connection updates
+  const connectionsRef = useRef(connections);
+  connectionsRef.current = connections;
 
   useEffect(() => {
     // Once cameraRef is ready, store it in a global variable
@@ -63,18 +100,88 @@ function App() {
     setSelectedId(id);
   };
 
+  // Helper function to calculate face position
+  const calculateFacePosition = (indicator) => {
+    const cube = indicator.cube;
+    if (!cube) return [0, 0, 0];
+
+    const worldPos = new THREE.Vector3();
+    cube.getWorldPosition(worldPos);
+    const worldScale = new THREE.Vector3();
+    cube.getWorldScale(worldScale);
+
+    // Get offset based on face name and apply world scale
+    const getScaledOffset = (faceName) => {
+      const baseScale = 5;
+      switch (faceName) {
+        case 'front':
+          return [0, 0, baseScale * worldScale.z];
+        case 'back':
+          return [0, 0, -baseScale * worldScale.z];
+        case 'top':
+          return [0, baseScale * worldScale.y, 0];
+        case 'bottom':
+          return [0, -baseScale * worldScale.y, 0];
+        case 'right':
+          return [baseScale * worldScale.x, 0, 0];
+        case 'left':
+          return [-baseScale * worldScale.x, 0, 0];
+        default:
+          return [0, 0, 0];
+      }
+    };
+
+    const offset = getScaledOffset(indicator.face);
+    return [
+      worldPos.x + offset[0],
+      worldPos.y + offset[1],
+      worldPos.z + offset[2],
+    ];
+  };
+
+  // Update connection positions after cube moves
   const handleObjectMove = useCallback((id, newPosition) => {
     setObjects((prev) =>
       prev.map((obj) =>
         obj.id === id
-          ? {
-              ...obj,
-              position: [newPosition.x, newPosition.y, newPosition.z],
-            }
+          ? { ...obj, position: [newPosition.x, newPosition.y, newPosition.z] }
           : obj
       )
     );
   }, []);
+
+  const handleFaceIndicatorClick = (indicator) => {
+    if (selectedIndicators.length === 0) {
+      setSelectedIndicators([indicator]);
+      setShowAllCubesIndicators(true);
+      setIndicatorMode('all');
+    } else if (selectedIndicators.length === 1) {
+      const startIndicator = selectedIndicators[0];
+
+      const startPos = calculateFacePosition(startIndicator);
+      const endPos = calculateFacePosition(indicator);
+
+      setConnections((prev) => [
+        ...prev,
+        {
+          start: { ...startIndicator, position: startPos },
+          end: { ...indicator, position: endPos },
+          id: Date.now(),
+        },
+      ]);
+
+      setSelectedIndicators([]);
+      setShowAllCubesIndicators(false);
+      setIndicatorMode('connections');
+    }
+  };
+
+  const handleFaceClick = (faceInfo) => {
+    // When face is clicked, only show that face's indicator
+    setIndicatorMode('single');
+    setActiveIndicator(faceInfo);
+    setShowAllCubesIndicators(false);
+  };
 
   return (
     <>
@@ -93,6 +200,21 @@ function App() {
         <CustomCamera ref={cameraRef} />
         {/* Removed onClick handler to allow event propagation */}
         <group>
+          <ConnectionUpdater
+            connections={connections}
+            setConnections={setConnections}
+            calculateFacePosition={calculateFacePosition}
+          />
+          {/* Render connections */}
+          {connections.map((connection) => (
+            <Line
+              key={connection.id}
+              points={[connection.start.position, connection.end.position]}
+              color="blue"
+              lineWidth={2}
+            />
+          ))}
+
           {objects.map((obj) => {
             if (obj.type === 'cube') {
               return (
@@ -106,6 +228,13 @@ function App() {
                   }
                   disableOrbitControls={disableOrbitControls} // Pass disable function
                   enableOrbitControls={enableOrbitControls} // Pass enable function
+                  onFaceIndicatorClick={handleFaceIndicatorClick}
+                  onFaceClick={handleFaceClick}
+                  showAllIndicators={showAllCubesIndicators}
+                  activeIndicator={activeIndicator}
+                  indicatorMode={indicatorMode}
+                  connections={connections}
+                  selectedIndicators={selectedIndicators}
                 />
               );
             }
@@ -126,6 +255,6 @@ function App() {
       <UIOverlay onCreateObject={handleCreateObject} />
     </>
   );
-}
+};
 
 export default App;
