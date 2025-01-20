@@ -1,20 +1,32 @@
-import { useRef, forwardRef, useImperativeHandle, memo } from 'react';
+import {
+  useRef,
+  forwardRef,
+  useImperativeHandle,
+  memo,
+  useEffect,
+} from 'react';
 import { PerspectiveCamera, OrbitControls } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 
 const CustomCamera = forwardRef((props, ref) => {
-  const { gl } = useThree();
+  const { gl, scene } = useThree();
   const cameraRef = useRef();
   const controlsRef = useRef();
 
   useImperativeHandle(
     ref,
     () => ({
-      camera: cameraRef.current, // Ensure camera reference is exposed
+      camera: cameraRef.current,
       orbitControls: controlsRef.current,
     }),
     []
   );
+
+  useEffect(() => {
+    if (controlsRef.current) {
+      scene.orbitControls = controlsRef.current;
+    }
+  }, [scene]);
 
   return (
     <>
@@ -28,7 +40,12 @@ const CustomCamera = forwardRef((props, ref) => {
         aspect={window.innerWidth / window.innerHeight}
       />
       <OrbitControls
-        ref={controlsRef}
+        ref={(controls) => {
+          controlsRef.current = controls;
+          if (controls) {
+            scene.orbitControls = controls;
+          }
+        }}
         args={[cameraRef.current, gl.domElement]}
         makeDefault
         enableDamping={false}

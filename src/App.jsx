@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import './App.css';
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
@@ -13,18 +13,25 @@ function App() {
   const [selectedId, setSelectedId] = useState(null);
   const cameraRef = useRef();
 
+  useEffect(() => {
+    // Once cameraRef is ready, store it in a global variable
+    if (cameraRef.current?.orbitControls) {
+      window.orbitControls = cameraRef.current.orbitControls;
+    }
+  }, [cameraRef.current]);
+
   // Add functions to disable and enable OrbitControls
   const disableOrbitControls = useCallback(() => {
-    if (cameraRef.current && cameraRef.current.orbitControls) {
+    if (cameraRef.current?.orbitControls) {
       cameraRef.current.orbitControls.enabled = false;
     }
-  }, [cameraRef]);
+  }, []);
 
   const enableOrbitControls = useCallback(() => {
-    if (cameraRef.current && cameraRef.current.orbitControls) {
+    if (cameraRef.current?.orbitControls) {
       cameraRef.current.orbitControls.enabled = true;
     }
-  }, [cameraRef]);
+  }, []);
 
   const handleCreateObject = (type) => {
     // Ensure cameraRef.current and cameraRef.current.camera are defined

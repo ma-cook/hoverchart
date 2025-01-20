@@ -10,14 +10,7 @@ import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
 
-const Cube = ({
-  position,
-  selected,
-  onClick,
-  onMove,
-  disableOrbitControls, // Receive disable function
-  enableOrbitControls, // Receive enable function
-}) => {
+const Cube = ({ position, selected, onClick, onMove }) => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
@@ -33,6 +26,13 @@ const Cube = ({
       setShowTransform(false); // Ensure TransformControls are hidden
     }
   }, [selected]);
+
+  // Store orbitControls in the mesh's userData when mounted
+  useEffect(() => {
+    if (contentRef.current && window.orbitControls) {
+      contentRef.current.orbitControls = window.orbitControls;
+    }
+  }, []);
 
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
@@ -259,15 +259,9 @@ const Cube = ({
             showHeader={showHeader}
           />
         )}
-        {/* Render ResizeArrows when in resize mode */}
-        {selected && isResizing && (
-          <ResizeArrows
-            onResize={handleResize}
-            disableOrbitControls={disableOrbitControls} // Pass disable function
-            enableOrbitControls={enableOrbitControls} // Pass enable function
-          />
-        )}
       </group>
+      {selected && isResizing && <ResizeArrows onResize={handleResize} />}
+      {/* TransformControls is here as a sibling to the main group */}
       {selected && showTransform && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}

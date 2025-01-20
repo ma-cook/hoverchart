@@ -2,7 +2,7 @@ import { TransformControls as DreiTransform } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 
 const TransformControls = ({ object, onDrag }) => {
-  const { camera, gl, invalidate } = useThree();
+  const { camera, gl, scene, invalidate } = useThree();
 
   if (!object) return null;
 
@@ -22,12 +22,12 @@ const TransformControls = ({ object, onDrag }) => {
         invalidate();
       }}
       onMouseDown={() => {
-        const orbitControls = object?.parent?.parent?.orbitControls;
-        if (orbitControls) orbitControls.enabled = false;
+        const controls = scene.userData.controls;
+        if (controls) controls.enabled = false;
       }}
       onMouseUp={() => {
-        const orbitControls = object?.parent?.parent?.orbitControls;
-        if (orbitControls) orbitControls.enabled = true;
+        const controls = scene.userData.controls;
+        if (controls) controls.enabled = true;
       }}
     />
   );
