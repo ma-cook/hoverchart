@@ -9,71 +9,23 @@ import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
-import { useThree } from '@react-three/fiber'; // Import useThree
 
-const FaceIndicator = ({ position, rotation, onClick }) => {
-  const { scene, camera, gl } = useThree(); // Add gl to destructuring
-  const isDragging = useRef(false);
-  const [arrowEnd, setArrowEnd] = useState(null);
+const FaceIndicator = ({
+  position,
+  rotation,
+  onClick,
+  parentScale = [1, 1, 1],
+  isActive,
+}) => {
   const meshRef = useRef();
   const groupRef = useRef();
-  const startPosRef = useRef(null);
 
-  const handlePointerDown = (e) => {
-    e.stopPropagation();
-    isDragging.current = true;
-    if (scene.orbitControls) scene.orbitControls.enabled = false;
-
-    // Get the indicator's actual world position
-    const startPos = new THREE.Vector3();
-    meshRef.current.getWorldPosition(startPos);
-
-    // Store the position for drawing the arrow
-    startPosRef.current = startPos.clone();
-    setArrowEnd({
-      start: startPos.clone(),
-      end: startPos.clone(),
-    });
-
-    const handlePointerMove = (event) => {
-      if (!startPosRef.current) return;
-
-      const rect = gl.domElement.getBoundingClientRect();
-      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-      // Create end position
-      const endPos = new THREE.Vector3(x, y, 0.5);
-      endPos.unproject(camera);
-      endPos.sub(camera.position).normalize();
-
-      const distance = camera.position.distanceTo(startPosRef.current);
-      endPos.multiplyScalar(distance).add(camera.position);
-
-      // Validate end position
-      if (isNaN(endPos.x) || isNaN(endPos.y) || isNaN(endPos.z)) {
-        console.warn('Invalid end position:', endPos);
-        return;
-      }
-
-      setArrowEnd({
-        start: startPosRef.current.clone(),
-        end: endPos,
-      });
-    };
-
-    const handlePointerUp = () => {
-      isDragging.current = false;
-      setArrowEnd(null);
-      startPosRef.current = null;
-      if (scene.orbitControls) scene.orbitControls.enabled = true;
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp);
-  };
+  // Calculate inverse scale to counter parent scaling
+  const inverseScale = [
+    1 / parentScale[0],
+    1 / parentScale[1],
+    1 / parentScale[2],
+  ];
 
   return (
     <group ref={groupRef}>
@@ -81,35 +33,36 @@ const FaceIndicator = ({ position, rotation, onClick }) => {
         ref={meshRef}
         position={position}
         rotation={rotation}
+        scale={inverseScale}
         onClick={(e) => {
-          if (!isDragging.current) {
-            onClick(e);
-          }
+          e.stopPropagation();
+          onClick(e);
         }}
-        onPointerDown={handlePointerDown}
       >
         <boxGeometry args={[1, 1, 1]} />
-        <meshBasicMaterial color="blue" opacity={0.8} transparent />
+        <meshBasicMaterial
+          color={isActive ? '#4488ff' : 'blue'}
+          opacity={0.8}
+          transparent
+        />
       </mesh>
-      {arrowEnd && arrowEnd.start && arrowEnd.end && (
-        <group>
-          <Line
-            points={[arrowEnd.start.toArray(), arrowEnd.end.toArray()]}
-            color="blue"
-            lineWidth={2}
-            segments // Use segments prop for better performance
-          />
-          <mesh position={arrowEnd.end.toArray()}>
-            <sphereGeometry args={[0.2]} />
-            <meshBasicMaterial color="blue" />
-          </mesh>
-        </group>
-      )}
     </group>
   );
 };
 
-const Cube = ({ position, selected, onClick, onMove }) => {
+const Cube = ({
+  position,
+  selected,
+  onClick,
+  onMove,
+  onFaceIndicatorClick,
+  onFaceClick,
+  showAllIndicators,
+  activeIndicator,
+  indicatorMode,
+  connections,
+  selectedIndicators,
+}) => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
@@ -138,6 +91,7 @@ const Cube = ({ position, selected, onClick, onMove }) => {
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
     setSelectedFace(selectedFace === faceName ? null : faceName);
+    onFaceClick?.({ cube: contentRef.current, face: faceName });
   };
 
   const handleDrag = (newPosition) => {
@@ -182,6 +136,11 @@ const Cube = ({ position, selected, onClick, onMove }) => {
       newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
       return newScale;
     });
+  };
+
+  const handleIndicatorClick = (e, faceName) => {
+    e.stopPropagation();
+    onFaceIndicatorClick?.({ cube: contentRef.current, face: faceName });
   };
 
   const size = 5; // Half-size since points are from center
@@ -291,6 +250,40 @@ const Cube = ({ position, selected, onClick, onMove }) => {
     { name: 'left', normal: [-1, 0, 0] },
   ];
 
+  // Helper function to check if this indicator is active
+  const isIndicatorActive = (faceName) => {
+    return selectedIndicators.some(
+      (indicator) =>
+        indicator.cube === contentRef.current && indicator.face === faceName
+    );
+  };
+
+  const isIndicatorConnected = (faceName) => {
+    return connections.some(
+      (conn) =>
+        (conn.start.cube === contentRef.current &&
+          conn.start.face === faceName) ||
+        (conn.end.cube === contentRef.current && conn.end.face === faceName)
+    );
+  };
+
+  // Helper function to determine if indicator should be shown
+  const shouldShowIndicator = (faceName) => {
+    switch (indicatorMode) {
+      case 'all':
+        return showAllIndicators;
+      case 'connections':
+        return isIndicatorConnected(faceName);
+      case 'single':
+        return (
+          activeIndicator?.cube === contentRef.current &&
+          activeIndicator?.face === faceName
+        );
+      default:
+        return false;
+    }
+  };
+
   return (
     <>
       <group>
@@ -305,7 +298,7 @@ const Cube = ({ position, selected, onClick, onMove }) => {
               <boxGeometry args={[10, 10, 10]} />
               <meshBasicMaterial visible={false} />
             </mesh>
-            {selected && (
+            {(selected || showAllIndicators) && (
               <>
                 {faces.map(({ name, normal }) => {
                   const { position: facePos, rotation } =
@@ -321,18 +314,17 @@ const Cube = ({ position, selected, onClick, onMove }) => {
                       <boxGeometry args={[10.4, 10.4, 0.2]} />{' '}
                       {/* Changed to box with small depth */}
                       <meshBasicMaterial {...getFaceMaterial(name)} />
-                      {selectedFace === name && (
-                        <>
-                          <FaceUI position={[0, 6, 0]} normal={normal} />
-                          <FaceIndicator
-                            position={[0, 0, 0.2]} // Moved slightly outward
-                            rotation={[0, 0, 0]}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log(`Indicator clicked on ${name} face`);
-                            }}
-                          />
-                        </>
+                      {selectedFace === name && selected && (
+                        <FaceUI position={[0, 6, 0]} normal={normal} />
+                      )}
+                      {shouldShowIndicator(name) && (
+                        <FaceIndicator
+                          position={[0, 0, 0.2]} // Moved slightly outward
+                          rotation={[0, 0, 0]}
+                          onClick={(e) => handleIndicatorClick(e, name)}
+                          parentScale={scale}
+                          isActive={isIndicatorActive(name)}
+                        />
                       )}
                     </mesh>
                   );
