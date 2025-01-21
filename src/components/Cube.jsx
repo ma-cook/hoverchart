@@ -63,6 +63,8 @@ const Cube = ({
   indicatorMode,
   connections,
   selectedIndicators,
+  activeTextStyleUI,
+  setActiveTextStyleUI,
 }) => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
@@ -80,7 +82,6 @@ const Cube = ({
     right: null,
     left: null,
   });
-  const [showTextStyleUI, setShowTextStyleUI] = useState(false);
   const [textStyle, setTextStyle] = useState({
     fontSize: 'medium',
     color: 'white',
@@ -92,6 +93,7 @@ const Cube = ({
     if (!selected) {
       setSelectedFace(null);
       setShowTransform(false); // Ensure TransformControls are hidden
+      setActiveTextStyleUI(false); // Add this line to close TextStyleUI
     }
   }, [selected]);
 
@@ -167,7 +169,9 @@ const Cube = ({
 
   const handleTextClick = (e) => {
     e.stopPropagation();
-    setShowTextStyleUI(!showTextStyleUI);
+    setActiveTextStyleUI(
+      activeTextStyleUI === contentRef.current ? null : contentRef.current
+    );
   };
 
   const handleStyleChange = (newStyle) => {
@@ -176,6 +180,16 @@ const Cube = ({
       ...newStyle,
     }));
   };
+
+  // Remove the global click handler effect since it won't work reliably
+  // with Three.js events
+  useEffect(() => {
+    if (!selected) {
+      setSelectedFace(null);
+      setShowTransform(false);
+      setActiveTextStyleUI(false);
+    }
+  }, [selected]);
 
   const size = 5; // Half-size since points are from center
 
@@ -338,8 +352,9 @@ const Cube = ({
             <mesh
               onClick={(e) => {
                 e.stopPropagation();
-                onClick();
+                onClick(); // Just call onClick directly
               }}
+              userData={{ isCube: true }} // Add this to identify cube clicks
             >
               <boxGeometry args={[10, 10, 10]} />
               <meshBasicMaterial visible={false} />
@@ -486,7 +501,7 @@ const Cube = ({
                 onClick={handleTextClick}
                 style={textStyle}
               />
-              {showTextStyleUI && (
+              {activeTextStyleUI === contentRef.current && (
                 <TextStyleUI
                   position={getHeaderPosition()}
                   followTarget={contentRef}

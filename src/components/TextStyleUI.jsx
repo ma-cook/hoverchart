@@ -1,9 +1,10 @@
 import { Html } from '@react-three/drei';
-import { useRef } from 'react'; // Remove useState since we don't need it
+import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 
 const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
   const groupRef = useRef();
+  const [showColorPicker, setShowColorPicker] = useState(false);
 
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
@@ -21,13 +22,14 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
     }
   });
 
-  const colors = ['white', 'red', 'blue', 'green', 'yellow'];
-
   const handleSizeChange = (size) => {
     onStyleChange({ fontSize: size });
   };
 
-  // Handle wheel event for scrolling through sizes
+  const handleColorChange = (e) => {
+    onStyleChange({ color: e.target.value });
+  };
+
   const handleWheel = (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -42,57 +44,100 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
     handleSizeChange(sizes[newIndex]);
   };
 
+  const handleButtonClick = (e, action) => {
+    e.stopPropagation();
+    e.nativeEvent?.preventDefault?.();
+    action();
+  };
+
   return (
     <group ref={groupRef} position={position}>
       <Html
         style={{
-          background: 'rgba(0,0,0,0.8)',
-          padding: '10px',
-          borderRadius: '5px',
-          color: 'white',
+          pointerEvents: 'auto',
+          zIndex: 999999,
         }}
         center
+        className="object-ui-container"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.nativeEvent?.preventDefault?.();
+        }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-          <div>
-            <select
-              onChange={(e) => handleSizeChange(Number(e.target.value))}
-              onWheel={handleWheel}
-              style={{
-                width: '100%',
-                background: 'rgba(0,0,0,0.8)',
-                color: 'white',
-                border: '1px solid white',
-                padding: '5px',
-                cursor: 'pointer',
-              }}
-            >
-              {Array.from({ length: 10 }, (_, i) => (
-                <option key={i + 1} value={i + 1}>
-                  Size {i + 1}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            {colors.map((color) => (
-              <button
-                key={color}
-                onClick={() => onStyleChange({ color })}
-                style={{
-                  margin: '0 5px',
-                  backgroundColor: color,
-                  width: '20px',
-                  height: '20px',
-                }}
-              />
-            ))}
-          </div>
-          <button
-            onClick={() => onStyleChange({ underline: true })}
-            style={{ margin: '5px 0' }}
+        <div
+          className="object-ui-content"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.nativeEvent?.preventDefault?.();
+          }}
+        >
+          <select
+            onChange={(e) =>
+              handleButtonClick(e, () =>
+                handleSizeChange(Number(e.target.value))
+              )
+            }
+            onWheel={handleWheel}
+            className="object-tool-button"
+            style={{ width: '36px', padding: '2px 2px' }}
           >
-            Underline
+            {Array.from({ length: 10 }, (_, i) => (
+              <option key={i + 1} value={i + 1}>
+                {i + 1}
+              </option>
+            ))}
+          </select>
+
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={(e) =>
+                handleButtonClick(e, () => setShowColorPicker(!showColorPicker))
+              }
+              className="object-tool-button"
+            >
+              🎨
+            </button>
+            {showColorPicker && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: '0',
+                  marginTop: '5px',
+                  zIndex: 1000,
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.nativeEvent?.preventDefault?.();
+                }}
+              >
+                <input
+                  type="color"
+                  onChange={(e) =>
+                    handleButtonClick(e, () => handleColorChange(e))
+                  }
+                  onBlur={(e) =>
+                    handleButtonClick(e, () => setShowColorPicker(false))
+                  }
+                  style={{
+                    width: '28px',
+                    height: '28px',
+                    padding: 0,
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={(e) =>
+              handleButtonClick(e, () => onStyleChange({ underline: true }))
+            }
+            className="object-tool-button"
+          >
+            U̲
           </button>
         </div>
       </Html>

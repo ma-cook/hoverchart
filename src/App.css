@@ -94,6 +94,25 @@ canvas {
   color: #1976d2;
 }
 
+.object-tool-button select {
+  background: white;
+  color: black;
+  border: none;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.object-tool-button select:focus {
+  outline: none;
+}
+
+.object-tool-button select option {
+  background: white;
+  color: black;
+}
+
 .object-ui-container {
   pointer-events: all !important;
   user-select: none;

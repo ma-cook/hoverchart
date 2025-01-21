@@ -50,6 +50,8 @@ const App = () => {
   const connectionsRef = useRef(connections);
   connectionsRef.current = connections;
 
+  const [activeTextStyleUI, setActiveTextStyleUI] = useState(null);
+
   useEffect(() => {
     // Once cameraRef is ready, store it in a global variable
     if (cameraRef.current?.orbitControls) {
@@ -188,6 +190,14 @@ const App = () => {
     // setShowAllCubesIndicators(false);
   };
 
+  const handleCanvasClick = (event) => {
+    // Close TextStyleUI when clicking empty space
+    if (!event.object) {
+      setActiveTextStyleUI(null);
+    }
+    setSelectedId(null);
+  };
+
   return (
     <>
       <Canvas
@@ -200,7 +210,7 @@ const App = () => {
           left: 0,
         }}
         antialias="true"
-        onPointerMissed={() => setSelectedId(null)}
+        onPointerMissed={handleCanvasClick} // Updated handler
       >
         <CustomCamera ref={cameraRef} />
         {/* Removed onClick handler to allow event propagation */}
@@ -240,6 +250,8 @@ const App = () => {
                   indicatorMode={indicatorMode}
                   connections={connections}
                   selectedIndicators={selectedIndicators}
+                  activeTextStyleUI={activeTextStyleUI}
+                  setActiveTextStyleUI={setActiveTextStyleUI}
                 />
               );
             }
