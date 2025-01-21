@@ -87,6 +87,7 @@ const Cube = ({
     color: 'white',
     underline: false,
   });
+  const [showObjectUI, setShowObjectUI] = useState(true); // Add this state
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -108,7 +109,13 @@ const Cube = ({
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
     setSelectedFace(selectedFace === faceName ? null : faceName);
+    setShowObjectUI(false); // Hide ObjectUI when face is clicked
     onFaceClick?.({ cube: contentRef.current, face: faceName });
+  };
+
+  const handleSceneClick = () => {
+    setShowObjectUI(true); // Show ObjectUI when cube body is clicked
+    onClick();
   };
 
   const handleDrag = (newPosition) => {
@@ -133,6 +140,7 @@ const Cube = ({
   const handleHeaderSubmit = (text) => {
     setHeaderText(text);
     setShowHeader(false);
+    setShowObjectUI(false); // Hide ObjectUI after header text is submitted
   };
 
   const handleResizeToggle = () => {
@@ -172,6 +180,8 @@ const Cube = ({
     setActiveTextStyleUI(
       activeTextStyleUI === contentRef.current ? null : contentRef.current
     );
+    setShowObjectUI(false); // Hide ObjectUI
+    setSelectedFace(null); // Clear selected face to close FaceUI
   };
 
   const handleStyleChange = (newStyle) => {
@@ -352,7 +362,7 @@ const Cube = ({
             <mesh
               onClick={(e) => {
                 e.stopPropagation();
-                onClick(); // Just call onClick directly
+                handleSceneClick();
               }}
               userData={{ isCube: true }} // Add this to identify cube clicks
             >
@@ -373,7 +383,7 @@ const Cube = ({
                   onClick={(e) => {
                     e.stopPropagation();
                     // Handle both cube selection and face selection
-                    onClick();
+                    handleSceneClick();
                     handleFaceClick(e, name);
                   }}
                   renderOrder={1}
@@ -473,7 +483,7 @@ const Cube = ({
             />
           </group>
           {/* Move ObjectUI outside scaled group and update position */}
-          {selected && !showHeader && (
+          {selected && !showHeader && showObjectUI && (
             <ObjectUI
               position={getUIPosition()}
               onTransformToggle={handleTransformToggle}

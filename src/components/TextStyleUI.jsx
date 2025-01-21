@@ -15,7 +15,7 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
 
       groupRef.current.position.set(
         targetPos.x,
-        targetPos.y + topEdgeOffset + 15,
+        targetPos.y + topEdgeOffset + 10,
         targetPos.z
       );
       groupRef.current.quaternion.copy(camera.quaternion);
