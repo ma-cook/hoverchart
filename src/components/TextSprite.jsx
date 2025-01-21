@@ -13,6 +13,10 @@ const TextSprite = ({
   const lastScale = React.useRef(1);
 
   const getFontSize = (size) => {
+    if (typeof size === 'number') {
+      return size * 0.7; // Scale the numeric size (0.7 is the previous 'large' size)
+    }
+    // Maintain backward compatibility with string sizes
     switch (size) {
       case 'small':
         return 0.3;

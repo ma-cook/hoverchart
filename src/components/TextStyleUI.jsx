@@ -1,5 +1,5 @@
 import { Html } from '@react-three/drei';
-import { useRef } from 'react';
+import { useRef } from 'react'; // Remove useState since we don't need it
 import { useFrame } from '@react-three/fiber';
 
 const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
@@ -21,8 +21,26 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
     }
   });
 
-  const fontSizes = ['small', 'medium', 'large'];
   const colors = ['white', 'red', 'blue', 'green', 'yellow'];
+
+  const handleSizeChange = (size) => {
+    onStyleChange({ fontSize: size });
+  };
+
+  // Handle wheel event for scrolling through sizes
+  const handleWheel = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const delta = Math.sign(e.deltaY);
+    const sizes = Array.from({ length: 10 }, (_, i) => i + 1);
+    const currentSize = e.currentTarget.value;
+    const currentIndex = sizes.indexOf(Number(currentSize));
+    const newIndex = Math.min(
+      Math.max(0, currentIndex + delta),
+      sizes.length - 1
+    );
+    handleSizeChange(sizes[newIndex]);
+  };
 
   return (
     <group ref={groupRef} position={position}>
@@ -37,15 +55,24 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
           <div>
-            {fontSizes.map((size) => (
-              <button
-                key={size}
-                onClick={() => onStyleChange({ fontSize: size })}
-                style={{ margin: '0 5px' }}
-              >
-                {size}
-              </button>
-            ))}
+            <select
+              onChange={(e) => handleSizeChange(Number(e.target.value))}
+              onWheel={handleWheel}
+              style={{
+                width: '100%',
+                background: 'rgba(0,0,0,0.8)',
+                color: 'white',
+                border: '1px solid white',
+                padding: '5px',
+                cursor: 'pointer',
+              }}
+            >
+              {Array.from({ length: 10 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  Size {i + 1}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             {colors.map((color) => (
