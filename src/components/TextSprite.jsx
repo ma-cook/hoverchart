@@ -11,6 +11,9 @@ const TextSprite = ({
 }) => {
   const textRef = React.useRef();
   const lastScale = React.useRef(1);
+  const MINIMUM_DISTANCE = 2; // Minimum distance from cube top
+  const TEXT_HEIGHT = 0.7; // Approximate height of largest text
+  const ZOOM_OFFSET_FACTOR = 0.1; // Controls how much text moves up when zooming out
 
   const getFontSize = (size) => {
     if (typeof size === 'number') {
@@ -28,35 +31,44 @@ const TextSprite = ({
   };
 
   useFrame(({ camera }) => {
-    if (textRef.current) {
-      // Update position if following a target
-      if (followTarget?.current) {
-        const targetScale = followTarget.current.scale;
-        const cubeHeight = 10 * targetScale.y + 5;
-        const topEdgeOffset = cubeHeight / 2;
-        const targetPos = followTarget.current.position;
+    if (textRef.current && followTarget?.current) {
+      // Get target position and scale
+      const targetPos = followTarget.current.position;
+      const targetScale = followTarget.current.scale;
 
-        textRef.current.position.set(
-          targetPos.x,
-          targetPos.y + topEdgeOffset,
-          targetPos.z
-        );
-      }
+      // Calculate base heights and distances
+      const cubeHeight = 10 * targetScale.y;
+      const topEdgeOffset = cubeHeight / 5;
+      const fontSize = getFontSize(style.fontSize);
+      const scaledTextHeight =
+        fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
+      const scaledMinDistance =
+        MINIMUM_DISTANCE * Math.max(...targetScale.toArray());
 
-      // Calculate distance-based scale
-      const distanceToCamera = camera.position.distanceTo(
-        textRef.current.position
+      // Calculate camera-dependent offset
+      const distanceToCamera = camera.position.distanceTo(targetPos);
+      const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
+
+      // Set position with zoom-adjusted height
+      textRef.current.position.set(
+        targetPos.x,
+        targetPos.y +
+          topEdgeOffset +
+          scaledMinDistance +
+          scaledTextHeight +
+          zoomOffset,
+        targetPos.z
       );
-      const baseSize = 1; // Reduced from 5 to 1 for better initial size
+
+      // Calculate and apply scale
+      const baseSize = Math.max(...targetScale.toArray());
       const scaleFactor = Math.max(distanceToCamera * 0.02, baseSize);
 
-      // Only update scale if it has changed significantly
       if (Math.abs(lastScale.current - scaleFactor) > 0.01) {
         textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
         lastScale.current = scaleFactor;
       }
 
-      // Keep text facing camera
       textRef.current.quaternion.copy(camera.quaternion);
     }
   });
