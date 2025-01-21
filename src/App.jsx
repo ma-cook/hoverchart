@@ -152,12 +152,14 @@ const App = () => {
 
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
+      // When first indicator is selected, show all indicators on all cubes
       setSelectedIndicators([indicator]);
       setShowAllCubesIndicators(true);
       setIndicatorMode('all');
     } else if (selectedIndicators.length === 1) {
       const startIndicator = selectedIndicators[0];
 
+      // Create the connection
       const startPos = calculateFacePosition(startIndicator);
       const endPos = calculateFacePosition(indicator);
 
@@ -170,17 +172,20 @@ const App = () => {
         },
       ]);
 
+      // Reset selection state but keep connections visible
       setSelectedIndicators([]);
       setShowAllCubesIndicators(false);
       setIndicatorMode('connections');
     }
   };
 
+  // Update handleFaceClick to not hide other indicators
   const handleFaceClick = (faceInfo) => {
-    // When face is clicked, only show that face's indicator
+    // When face is clicked, only highlight that face's indicator
     setIndicatorMode('single');
     setActiveIndicator(faceInfo);
-    setShowAllCubesIndicators(false);
+    // Remove this line to keep indicators visible
+    // setShowAllCubesIndicators(false);
   };
 
   return (
@@ -210,7 +215,7 @@ const App = () => {
             <Line
               key={connection.id}
               points={[connection.start.position, connection.end.position]}
-              color="blue"
+              color="white"
               lineWidth={2}
             />
           ))}

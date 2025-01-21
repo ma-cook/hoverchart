@@ -283,13 +283,24 @@ const Cube = ({
     );
   };
 
-  // Helper function to determine if indicator should be shown
+  // Modify shouldShowIndicator to prioritize connections
   const shouldShowIndicator = (faceName) => {
+    // Always show indicators for connected faces
+    if (isIndicatorConnected(faceName)) {
+      return true;
+    }
+
+    // Show all indicators when any indicator is selected
+    if (selectedIndicators.length > 0) {
+      return true;
+    }
+
+    // For other cases, maintain existing logic
+    if (!selected) return false;
+
     switch (indicatorMode) {
       case 'all':
         return showAllIndicators;
-      case 'connections':
-        return isIndicatorConnected(faceName);
       case 'single':
         return (
           activeIndicator?.cube === contentRef.current &&
@@ -333,31 +344,50 @@ const Cube = ({
                   }}
                   renderOrder={1}
                 >
-                  <boxGeometry args={[10.4, 10.4, 0.2]} />
+                  <boxGeometry args={[9.8, 9.9, 0.2]} />
                   <meshBasicMaterial
                     color={faceColors[name]}
                     opacity={1.0}
                     transparent={false}
                     depthWrite={true}
                   />
-                  {selectedFace === name && selected && (
-                    <FaceUI
-                      position={[0, 6, 0]}
-                      normal={normal}
-                      onColorChange={handleColorChange}
-                      face={name}
-                    />
+                  {selected && ( // Only render these when cube is selected
+                    <>
+                      {selectedFace === name && (
+                        <FaceUI
+                          position={[0, 6, 0]}
+                          normal={normal}
+                          onColorChange={handleColorChange}
+                          face={name}
+                        />
+                      )}
+                    </>
                   )}
-                  {shouldShowIndicator(name) && (
+                </mesh>
+              );
+            })}
+
+            {/* Render all face indicators in a separate pass */}
+            {faces.map(({ name }) => {
+              const { position: facePos, rotation } =
+                getFaceIndicatorProps(name);
+              return (
+                shouldShowIndicator(name) && (
+                  <mesh
+                    key={`indicator-${name}`}
+                    position={[facePos[0], facePos[1], facePos[2]]}
+                    rotation={rotation}
+                    renderOrder={3}
+                  >
                     <FaceIndicator
-                      position={[0, 0, 0.2]}
+                      position={[0, 0, 0.3]}
                       rotation={[0, 0, 0]}
                       onClick={(e) => handleIndicatorClick(e, name)}
                       parentScale={scale}
                       isActive={isIndicatorActive(name)}
                     />
-                  )}
-                </mesh>
+                  </mesh>
+                )
               );
             })}
 
