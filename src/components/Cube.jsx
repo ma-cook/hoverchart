@@ -9,6 +9,7 @@ import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
+import TextStyleUI from './TextStyleUI';
 
 const FaceIndicator = ({
   position,
@@ -78,6 +79,12 @@ const Cube = ({
     bottom: null,
     right: null,
     left: null,
+  });
+  const [showTextStyleUI, setShowTextStyleUI] = useState(false);
+  const [textStyle, setTextStyle] = useState({
+    fontSize: 'medium',
+    color: 'white',
+    underline: false,
   });
 
   // Reset selectedFace and showTransform when the cube is deselected
@@ -155,6 +162,18 @@ const Cube = ({
     setFaceColors((prev) => ({
       ...prev,
       [face]: color,
+    }));
+  };
+
+  const handleTextClick = (e) => {
+    e.stopPropagation();
+    setShowTextStyleUI(!showTextStyleUI);
+  };
+
+  const handleStyleChange = (newStyle) => {
+    setTextStyle((prev) => ({
+      ...prev,
+      ...newStyle,
     }));
   };
 
@@ -459,11 +478,22 @@ const Cube = ({
             />
           )}
           {headerText && (
-            <TextSprite
-              text={headerText}
-              position={getHeaderPosition()}
-              followTarget={contentRef}
-            />
+            <>
+              <TextSprite
+                text={headerText}
+                position={getHeaderPosition()}
+                followTarget={contentRef}
+                onClick={handleTextClick}
+                style={textStyle}
+              />
+              {showTextStyleUI && (
+                <TextStyleUI
+                  position={getHeaderPosition()}
+                  followTarget={contentRef}
+                  onStyleChange={handleStyleChange}
+                />
+              )}
+            </>
           )}
           {selected && isResizing && contentRef.current && (
             <ResizeArrows onResize={handleResize} object={contentRef.current} />

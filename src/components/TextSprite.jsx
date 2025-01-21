@@ -2,8 +2,26 @@ import React from 'react';
 import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 
-const TextSprite = ({ text, position, followTarget }) => {
+const TextSprite = ({
+  text,
+  position,
+  followTarget,
+  onClick,
+  style = { fontSize: 'medium', color: 'white', underline: false },
+}) => {
   const textRef = React.useRef();
+  const lastScale = React.useRef(1);
+
+  const getFontSize = (size) => {
+    switch (size) {
+      case 'small':
+        return 0.3;
+      case 'large':
+        return 0.7;
+      default:
+        return 0.5;
+    }
+  };
 
   useFrame(({ camera }) => {
     if (textRef.current) {
@@ -21,15 +39,18 @@ const TextSprite = ({ text, position, followTarget }) => {
         );
       }
 
-      // Calculate fixed scale based on camera distance
+      // Calculate distance-based scale
       const distanceToCamera = camera.position.distanceTo(
         textRef.current.position
       );
-      const baseSize = 5; // Base size for text
-      const scaleFactor = Math.max(distanceToCamera * 0.03, baseSize); // Ensure minimum size
+      const baseSize = 1; // Reduced from 5 to 1 for better initial size
+      const scaleFactor = Math.max(distanceToCamera * 0.02, baseSize);
 
-      // Set absolute scale instead of accumulating
-      textRef.current.scale.setScalar(scaleFactor);
+      // Only update scale if it has changed significantly
+      if (Math.abs(lastScale.current - scaleFactor) > 0.01) {
+        textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
+        lastScale.current = scaleFactor;
+      }
 
       // Keep text facing camera
       textRef.current.quaternion.copy(camera.quaternion);
@@ -37,19 +58,35 @@ const TextSprite = ({ text, position, followTarget }) => {
   });
 
   return (
-    <Text
-      ref={textRef}
-      position={position}
-      fontSize={0.5}
-      color="white"
-      anchorX="center"
-      anchorY="middle"
-      outlineWidth={0.01}
-      outlineColor="white"
-      billboard
-    >
-      {text}
-    </Text>
+    <group onClick={onClick}>
+      {style.underline && (
+        <Text
+          position={[0, -0.1, 0]}
+          fontSize={getFontSize(style.fontSize)}
+          color={style.color}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.01}
+          outlineColor={style.color}
+          billboard
+        >
+          _________________
+        </Text>
+      )}
+      <Text
+        ref={textRef}
+        position={position}
+        fontSize={getFontSize(style.fontSize)}
+        color={style.color}
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.01}
+        outlineColor={style.color}
+        billboard
+      >
+        {text}
+      </Text>
+    </group>
   );
 };
 

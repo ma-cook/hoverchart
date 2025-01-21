@@ -79,7 +79,7 @@ const ObjectUI = ({
       <Html
         // Remove position prop from Html since we're controlling it via the group
         style={{
-          background: 'white',
+          background: 'black',
           pointerEvents: 'auto',
           zIndex: 999999,
         }}
