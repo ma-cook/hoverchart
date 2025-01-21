@@ -71,6 +71,14 @@ const Cube = ({
   const nonScaledRef = useRef(); // New ref for non-scaled elements
   const [scale, setScale] = useState([1, 1, 1]); // Existing scale state
   const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
+  const [faceColors, setFaceColors] = useState({
+    front: null,
+    back: null,
+    top: null,
+    bottom: null,
+    right: null,
+    left: null,
+  });
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -143,6 +151,13 @@ const Cube = ({
     onFaceIndicatorClick?.({ cube: contentRef.current, face: faceName });
   };
 
+  const handleColorChange = (color, face) => {
+    setFaceColors((prev) => ({
+      ...prev,
+      [face]: color,
+    }));
+  };
+
   const size = 5; // Half-size since points are from center
 
   // Define cube vertices (corners)
@@ -187,12 +202,13 @@ const Cube = ({
 
   const getFaceMaterial = (faceName) => ({
     ...faceMaterialProps,
-    color:
-      selectedFace === faceName
-        ? new THREE.Color('#99ccff')
-        : new THREE.Color('#ffffff'),
-    opacity: selectedFace === faceName ? 0.5 : 0.1,
-    depthWrite: false,
+    color: faceColors[faceName]
+      ? new THREE.Color(faceColors[faceName])
+      : selectedFace === faceName
+      ? new THREE.Color('#99ccff')
+      : new THREE.Color('#ffffff'),
+    opacity: faceColors[faceName] ? 1.0 : selectedFace === faceName ? 0.5 : 0.1,
+    depthWrite: !!faceColors[faceName],
   });
 
   // Calculate header position relative to cube's top edge
@@ -298,28 +314,81 @@ const Cube = ({
               <boxGeometry args={[10, 10, 10]} />
               <meshBasicMaterial visible={false} />
             </mesh>
+
+            {/* Always render colored faces */}
+            {faces.map(({ name, normal }) => {
+              if (!faceColors[name]) return null; // Only render if face has color
+              const { position: facePos, rotation } =
+                getFaceIndicatorProps(name);
+              return (
+                <mesh
+                  key={`colored-${name}`}
+                  position={[facePos[0], facePos[1], facePos[2]]}
+                  rotation={rotation}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // Handle both cube selection and face selection
+                    onClick();
+                    handleFaceClick(e, name);
+                  }}
+                  renderOrder={1}
+                >
+                  <boxGeometry args={[10.4, 10.4, 0.2]} />
+                  <meshBasicMaterial
+                    color={faceColors[name]}
+                    opacity={1.0}
+                    transparent={false}
+                    depthWrite={true}
+                  />
+                  {selectedFace === name && selected && (
+                    <FaceUI
+                      position={[0, 6, 0]}
+                      normal={normal}
+                      onColorChange={handleColorChange}
+                      face={name}
+                    />
+                  )}
+                  {shouldShowIndicator(name) && (
+                    <FaceIndicator
+                      position={[0, 0, 0.2]}
+                      rotation={[0, 0, 0]}
+                      onClick={(e) => handleIndicatorClick(e, name)}
+                      parentScale={scale}
+                      isActive={isIndicatorActive(name)}
+                    />
+                  )}
+                </mesh>
+              );
+            })}
+
+            {/* Render selection-dependent faces and UI */}
             {(selected || showAllIndicators) && (
               <>
                 {faces.map(({ name, normal }) => {
+                  if (faceColors[name]) return null; // Skip if face is colored
                   const { position: facePos, rotation } =
                     getFaceIndicatorProps(name);
                   return (
                     <mesh
-                      key={name}
+                      key={`ui-${name}`}
                       position={[facePos[0], facePos[1], facePos[2]]}
                       rotation={rotation}
                       onClick={(e) => handleFaceClick(e, name)}
-                      renderOrder={2} // Increased render order
+                      renderOrder={2}
                     >
-                      <boxGeometry args={[10.4, 10.4, 0.2]} />{' '}
-                      {/* Changed to box with small depth */}
+                      <boxGeometry args={[10.4, 10.4, 0.2]} />
                       <meshBasicMaterial {...getFaceMaterial(name)} />
                       {selectedFace === name && selected && (
-                        <FaceUI position={[0, 6, 0]} normal={normal} />
+                        <FaceUI
+                          position={[0, 6, 0]}
+                          normal={normal}
+                          onColorChange={handleColorChange}
+                          face={name}
+                        />
                       )}
                       {shouldShowIndicator(name) && (
                         <FaceIndicator
-                          position={[0, 0, 0.2]} // Moved slightly outward
+                          position={[0, 0, 0.2]}
                           rotation={[0, 0, 0]}
                           onClick={(e) => handleIndicatorClick(e, name)}
                           parentScale={scale}
@@ -331,6 +400,7 @@ const Cube = ({
                 })}
               </>
             )}
+
             <Line
               points={points}
               color={selected ? 'blue' : 'white'}

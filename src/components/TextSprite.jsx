@@ -25,7 +25,7 @@ const TextSprite = ({ text, position, followTarget }) => {
       const distanceToCamera = camera.position.distanceTo(
         textRef.current.position
       );
-      const baseSize = 0.15; // Base size for text
+      const baseSize = 5; // Base size for text
       const scaleFactor = Math.max(distanceToCamera * 0.03, baseSize); // Ensure minimum size
 
       // Set absolute scale instead of accumulating
