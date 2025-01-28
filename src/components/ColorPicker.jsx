@@ -1,51 +1,65 @@
+import { useEffect, useRef } from 'react';
+import { HexColorPicker } from 'react-colorful';
+
 const ColorPicker = ({ onColorSelect, onClose }) => {
-  const colors = [
-    '#ff0000',
-    '#00ff00',
-    '#0000ff',
-    '#ffff00',
-    '#ff00ff',
-    '#00ffff',
-    '#ffffff',
-    '#808080',
-    '#000000',
-  ];
+  const pickerRef = useRef();
+
+  useEffect(() => {
+    if (window.orbitControls) {
+      window.orbitControls.enabled = false;
+    }
+    return () => {
+      if (window.orbitControls) {
+        window.orbitControls.enabled = true;
+      }
+    };
+  }, []);
+
+  const handleContainerEvents = (e) => {
+    e.stopPropagation();
+  };
 
   return (
     <div
+      ref={pickerRef}
       style={{
         position: 'absolute',
-        top: '100%',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        marginTop: '8px',
-        background: 'white',
-        padding: '8px',
-        borderRadius: '4px',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: '4px',
-        boxShadow: '0 0 10px rgba(0,0,0,0.2)',
+        background: '#333',
+        padding: '12px',
+        borderRadius: '8px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        alignItems: 'center',
         zIndex: 1000,
       }}
+      onClick={handleContainerEvents}
+      onPointerDown={handleContainerEvents}
     >
-      {colors.map((color) => (
-        <div
-          key={color}
-          onClick={() => {
-            onColorSelect(color);
-            onClose();
-          }}
-          style={{
-            width: '24px',
-            height: '24px',
-            backgroundColor: color,
-            cursor: 'pointer',
-            border: '1px solid #ccc',
-            borderRadius: '2px',
-          }}
+      <div>
+        <HexColorPicker
+          color="#ffffff"
+          onChange={onColorSelect}
+          style={{ width: '200px', height: '200px' }}
         />
-      ))}
+      </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        style={{
+          padding: '4px 8px',
+          borderRadius: '4px',
+          background: '#444',
+          color: 'white',
+          border: 'none',
+          cursor: 'pointer',
+          marginTop: '8px',
+        }}
+      >
+        Close
+      </button>
     </div>
   );
 };

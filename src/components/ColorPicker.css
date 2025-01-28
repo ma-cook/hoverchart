@@ -1,0 +1,38 @@
+.color-picker-wrapper {
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.react-colorful {
+  width: 200px !important;
+  height: 200px !important;
+  touch-action: none !important;
+  pointer-events: auto !important;
+}
+
+.react-colorful__saturation,
+.react-colorful__hue {
+  touch-action: none !important;
+  pointer-events: auto !important;
+}
+
+.react-colorful__saturation {
+  border-radius: 4px 4px 0 0;
+}
+
+.react-colorful__hue {
+  height: 20px !important;
+  border-radius: 0 0 4px 4px;
+}
+
+.react-colorful__pointer {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+/* Ensure the interactive areas receive events */
+.react-colorful__interactive {
+  pointer-events: auto !important;
+}

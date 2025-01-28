@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 import {
   Line,
   TransformControls as DreiTransformControls,
+  Text, // Add this import
 } from '@react-three/drei';
 import * as THREE from 'three';
 import ObjectUI from './ObjectUI';
@@ -10,6 +11,7 @@ import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
 import TextStyleUI from './TextStyleUI';
+import FaceTextInput from './FaceTextInput';
 
 const FaceIndicator = ({
   position,
@@ -88,6 +90,15 @@ const Cube = ({
     underline: false,
   });
   const [showObjectUI, setShowObjectUI] = useState(true); // Add this state
+  const [showFaceTextInput, setShowFaceTextInput] = useState(false);
+  const [faceTexts, setFaceTexts] = useState({
+    front: '',
+    back: '',
+    top: '',
+    bottom: '',
+    right: '',
+    left: '',
+  });
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -189,6 +200,19 @@ const Cube = ({
       ...prev,
       ...newStyle,
     }));
+  };
+
+  const handleFaceTextSubmit = (text) => {
+    setFaceTexts((prev) => ({
+      ...prev,
+      [selectedFace]: text,
+    }));
+    setShowFaceTextInput(false);
+    setSelectedFace(null);
+  };
+
+  const handleFaceTextClick = () => {
+    setShowFaceTextInput(true);
   };
 
   // Remove the global click handler effect since it won't work reliably
@@ -435,6 +459,32 @@ const Cube = ({
               );
             })}
 
+            {/* Move face text rendering outside the selected condition */}
+            {faces.map(({ name }) => {
+              const { position: facePos, rotation } =
+                getFaceIndicatorProps(name);
+              return (
+                faceTexts[name] && (
+                  <mesh
+                    key={`text-${name}`}
+                    position={[facePos[0], facePos[1] + 1, facePos[2]]}
+                    rotation={rotation}
+                    renderOrder={4}
+                  >
+                    <Text
+                      position={[0, 0, 0.2]}
+                      fontSize={0.5}
+                      color="white"
+                      anchorX="center"
+                      anchorY="middle"
+                    >
+                      {faceTexts[name]}
+                    </Text>
+                  </mesh>
+                )
+              );
+            })}
+
             {/* Render selection-dependent faces and UI */}
             {(selected || showAllIndicators) && (
               <>
@@ -452,12 +502,21 @@ const Cube = ({
                     >
                       <boxGeometry args={[10.4, 10.4, 0.2]} />
                       <meshBasicMaterial {...getFaceMaterial(name)} />
-                      {selectedFace === name && selected && (
-                        <FaceUI
+                      {selectedFace === name &&
+                        selected &&
+                        !showFaceTextInput && (
+                          <FaceUI
+                            position={[0, 6, 0]}
+                            normal={normal}
+                            onColorChange={handleColorChange}
+                            face={name}
+                            onTextClick={handleFaceTextClick}
+                          />
+                        )}
+                      {showFaceTextInput && selectedFace === name && (
+                        <FaceTextInput
                           position={[0, 6, 0]}
-                          normal={normal}
-                          onColorChange={handleColorChange}
-                          face={name}
+                          onTextSubmit={handleFaceTextSubmit}
                         />
                       )}
                       {shouldShowIndicator(name) && (

@@ -1,6 +1,7 @@
 import { Html } from '@react-three/drei';
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
+import ColorPicker from './ColorPicker';
 
 const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
   const groupRef = useRef();
@@ -26,10 +27,6 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
     onStyleChange({ fontSize: size });
   };
 
-  const handleColorChange = (e) => {
-    onStyleChange({ color: e.target.value });
-  };
-
   const handleWheel = (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -48,6 +45,10 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
     e.stopPropagation();
     e.nativeEvent?.preventDefault?.();
     action();
+  };
+
+  const handleColorSelect = (color) => {
+    onStyleChange({ color });
   };
 
   return (
@@ -111,21 +112,9 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
                   e.nativeEvent?.preventDefault?.();
                 }}
               >
-                <input
-                  type="color"
-                  onChange={(e) =>
-                    handleButtonClick(e, () => handleColorChange(e))
-                  }
-                  onBlur={(e) =>
-                    handleButtonClick(e, () => setShowColorPicker(false))
-                  }
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    padding: 0,
-                    border: 'none',
-                    cursor: 'pointer',
-                  }}
+                <ColorPicker
+                  onColorSelect={handleColorSelect}
+                  onClose={() => setShowColorPicker(false)}
                 />
               </div>
             )}

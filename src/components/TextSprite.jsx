@@ -11,9 +11,10 @@ const TextSprite = ({
 }) => {
   const textRef = React.useRef();
   const lastScale = React.useRef(1);
-  const MINIMUM_DISTANCE = 2; // Minimum distance from cube top
+  const MINIMUM_DISTANCE = 1; // Minimum distance from cube top
   const TEXT_HEIGHT = 0.7; // Approximate height of largest text
-  const ZOOM_OFFSET_FACTOR = 0.1; // Controls how much text moves up when zooming out
+  const ZOOM_OFFSET_FACTOR = 0.05; // Controls how much text moves up when zooming out
+  const MIN_CUBE_DISTANCE = 2; // Minimum distance from cube top
 
   const getFontSize = (size) => {
     if (typeof size === 'number') {
@@ -42,8 +43,10 @@ const TextSprite = ({
       const fontSize = getFontSize(style.fontSize);
       const scaledTextHeight =
         fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
-      const scaledMinDistance =
-        MINIMUM_DISTANCE * Math.max(...targetScale.toArray());
+      const scaledMinDistance = Math.max(
+        MINIMUM_DISTANCE * Math.max(...targetScale.toArray()),
+        MIN_CUBE_DISTANCE // Ensure minimum 2 units from cube top
+      );
 
       // Calculate camera-dependent offset
       const distanceToCamera = camera.position.distanceTo(targetPos);
