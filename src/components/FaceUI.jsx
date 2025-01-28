@@ -62,7 +62,6 @@ const FaceUI = ({ position, onColorChange, face, onTextClick }) => {
           <ColorPicker
             onColorSelect={(color) => {
               onColorChange(color, face);
-              handleClose();
             }}
             onClose={handleClose}
           />
