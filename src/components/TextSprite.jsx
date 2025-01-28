@@ -7,7 +7,12 @@ const TextSprite = ({
   position,
   followTarget,
   onClick,
-  style = { fontSize: 'medium', color: 'white', underline: false },
+  style = {
+    fontSize: 'medium',
+    color: 'white',
+    underline: false,
+    fixedSize: false,
+  },
 }) => {
   const textRef = React.useRef();
   const lastScale = React.useRef(1);
@@ -32,62 +37,71 @@ const TextSprite = ({
   };
 
   useFrame(({ camera }) => {
-    if (textRef.current && followTarget?.current) {
-      // Get target position and scale
-      const targetPos = followTarget.current.position;
-      const targetScale = followTarget.current.scale;
+    if (textRef.current) {
+      if (followTarget?.current) {
+        // Get target position and scale
+        const targetPos = followTarget.current.position;
+        const targetScale = followTarget.current.scale;
 
-      // Calculate base heights and distances
-      const cubeHeight = 10 * targetScale.y;
-      const topEdgeOffset = cubeHeight / 5;
-      const fontSize = getFontSize(style.fontSize);
-      const scaledTextHeight =
-        fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
-      const scaledMinDistance = Math.max(
-        MINIMUM_DISTANCE * Math.max(...targetScale.toArray()),
-        MIN_CUBE_DISTANCE // Ensure minimum 2 units from cube top
-      );
+        // Calculate base heights and distances
+        const cubeHeight = 10 * targetScale.y;
+        const topEdgeOffset = cubeHeight / 5;
+        const fontSize = getFontSize(style.fontSize);
+        const scaledTextHeight =
+          fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
+        const scaledMinDistance = Math.max(
+          MINIMUM_DISTANCE * Math.max(...targetScale.toArray()),
+          MIN_CUBE_DISTANCE // Ensure minimum 2 units from cube top
+        );
 
-      // Calculate camera-dependent offset
-      const distanceToCamera = camera.position.distanceTo(targetPos);
-      const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
+        // Calculate camera-dependent offset
+        const distanceToCamera = camera.position.distanceTo(targetPos);
+        const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
 
-      // Set position with zoom-adjusted height
-      textRef.current.position.set(
-        targetPos.x,
-        targetPos.y +
-          topEdgeOffset +
-          scaledMinDistance +
-          scaledTextHeight +
-          zoomOffset,
-        targetPos.z
-      );
+        // Set position with zoom-adjusted height
+        textRef.current.position.set(
+          targetPos.x,
+          targetPos.y +
+            topEdgeOffset +
+            scaledMinDistance +
+            scaledTextHeight +
+            zoomOffset,
+          targetPos.z
+        );
 
-      // Calculate and apply scale
-      const baseSize = Math.max(...targetScale.toArray());
-      const scaleFactor = Math.max(distanceToCamera * 0.02, baseSize);
+        // Calculate and apply scale
+        const baseSize = Math.max(...targetScale.toArray());
+        const scaleFactor = Math.max(distanceToCamera * 0.02, baseSize);
 
-      if (Math.abs(lastScale.current - scaleFactor) > 0.01) {
-        textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
-        lastScale.current = scaleFactor;
+        if (Math.abs(lastScale.current - scaleFactor) > 0.01) {
+          textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          lastScale.current = scaleFactor;
+        }
+
+        textRef.current.quaternion.copy(camera.quaternion);
+      } else if (!style.fixedSize) {
+        // Only rotate to face camera if not fixed size
+        textRef.current.quaternion.copy(camera.quaternion);
       }
-
-      textRef.current.quaternion.copy(camera.quaternion);
     }
   });
+
+  const fontSize = style.fixedSize
+    ? style.fontSize
+    : getFontSize(style.fontSize);
 
   return (
     <group onClick={onClick}>
       {style.underline && (
         <Text
           position={[0, -0.1, 0]}
-          fontSize={getFontSize(style.fontSize)}
+          fontSize={fontSize}
           color={style.color}
           anchorX="center"
           anchorY="middle"
           outlineWidth={0.01}
           outlineColor={style.color}
-          billboard
+          billboard={!style.fixedSize}
         >
           _________________
         </Text>
@@ -95,13 +109,13 @@ const TextSprite = ({
       <Text
         ref={textRef}
         position={position}
-        fontSize={getFontSize(style.fontSize)}
+        fontSize={fontSize}
         color={style.color}
         anchorX="center"
         anchorY="middle"
         outlineWidth={0.01}
         outlineColor={style.color}
-        billboard
+        billboard={!style.fixedSize}
       >
         {text}
       </Text>

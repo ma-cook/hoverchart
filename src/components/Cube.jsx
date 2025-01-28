@@ -2,7 +2,6 @@ import { useRef, useState, useEffect } from 'react';
 import {
   Line,
   TransformControls as DreiTransformControls,
-  Text, // Add this import
 } from '@react-three/drei';
 import * as THREE from 'three';
 import ObjectUI from './ObjectUI';
@@ -99,6 +98,15 @@ const Cube = ({
     right: '',
     left: '',
   });
+  const [faceTextStyles, setFaceTextStyles] = useState({
+    front: { fontSize: 0.5, color: 'white', underline: false },
+    back: { fontSize: 0.5, color: 'white', underline: false },
+    top: { fontSize: 0.5, color: 'white', underline: false },
+    bottom: { fontSize: 0.5, color: 'white', underline: false },
+    right: { fontSize: 5, color: 'white', underline: false },
+    left: { fontSize: 0.5, color: 'white', underline: false },
+  });
+  const [activeTextFace, setActiveTextFace] = useState(null);
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -196,10 +204,14 @@ const Cube = ({
   };
 
   const handleStyleChange = (newStyle) => {
-    setTextStyle((prev) => ({
-      ...prev,
-      ...newStyle,
-    }));
+    if (activeTextFace) {
+      setFaceTextStyles((prev) => ({
+        ...prev,
+        [activeTextFace]: { ...prev[activeTextFace], ...newStyle },
+      }));
+    } else {
+      setTextStyle((prev) => ({ ...prev, ...newStyle }));
+    }
   };
 
   const handleFaceTextSubmit = (text) => {
@@ -213,6 +225,16 @@ const Cube = ({
 
   const handleFaceTextClick = () => {
     setShowFaceTextInput(true);
+  };
+
+  const handleFaceTextStyleClick = (e, faceName) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    setActiveTextFace(faceName);
+    setActiveTextStyleUI(contentRef.current);
+    setShowObjectUI(false);
+    setSelectedFace(null);
   };
 
   // Remove the global click handler effect since it won't work reliably
@@ -465,22 +487,22 @@ const Cube = ({
                 getFaceIndicatorProps(name);
               return (
                 faceTexts[name] && (
-                  <mesh
+                  <group
                     key={`text-${name}`}
-                    position={[facePos[0], facePos[1] + 1, facePos[2]]}
+                    position={[facePos[0], facePos[1], facePos[2]]}
                     rotation={rotation}
-                    renderOrder={4}
                   >
-                    <Text
-                      position={[0, 0, 0.2]}
-                      fontSize={0.5}
-                      color="white"
-                      anchorX="center"
-                      anchorY="middle"
-                    >
-                      {faceTexts[name]}
-                    </Text>
-                  </mesh>
+                    <TextSprite
+                      text={faceTexts[name]}
+                      position={[0, 1, 0.2]} // Changed Y position from 0 to 1
+                      followTarget={null} // Set to null to prevent auto-positioning
+                      onClick={(e) => handleFaceTextStyleClick(e, name)}
+                      style={{
+                        ...faceTextStyles[name],
+                        fixedSize: true, // Add this prop to TextSprite
+                      }}
+                    />
+                  </group>
                 )
               );
             })}
@@ -562,22 +584,20 @@ const Cube = ({
             />
           )}
           {headerText && (
-            <>
-              <TextSprite
-                text={headerText}
-                position={getHeaderPosition()}
-                followTarget={contentRef}
-                onClick={handleTextClick}
-                style={textStyle}
-              />
-              {activeTextStyleUI === contentRef.current && (
-                <TextStyleUI
-                  position={getHeaderPosition()}
-                  followTarget={contentRef}
-                  onStyleChange={handleStyleChange}
-                />
-              )}
-            </>
+            <TextSprite
+              text={headerText}
+              position={getHeaderPosition()}
+              followTarget={contentRef}
+              onClick={handleTextClick}
+              style={textStyle}
+            />
+          )}
+          {activeTextStyleUI === contentRef.current && (
+            <TextStyleUI
+              position={getHeaderPosition()}
+              followTarget={contentRef}
+              onStyleChange={handleStyleChange}
+            />
           )}
           {selected && isResizing && contentRef.current && (
             <ResizeArrows onResize={handleResize} object={contentRef.current} />

@@ -15,21 +15,11 @@ const FaceUI = ({ position, onColorChange, face, onTextClick }) => {
   const handleToolClick = (tool, e) => {
     e.stopPropagation();
     if (tool.name === 'paint') {
-      if (window.orbitControls) {
-        window.orbitControls.enabled = false;
-      }
       setShowColorPicker(true);
     } else if (tool.name === 'text') {
-      onTextClick();
+      onTextClick(face);
     }
     console.log(`Face ${tool.name} clicked`);
-  };
-
-  const handleClose = () => {
-    if (window.orbitControls) {
-      window.orbitControls.enabled = true;
-    }
-    setShowColorPicker(false);
   };
 
   return (
@@ -63,7 +53,7 @@ const FaceUI = ({ position, onColorChange, face, onTextClick }) => {
             onColorSelect={(color) => {
               onColorChange(color, face);
             }}
-            onClose={handleClose}
+            onClose={() => setShowColorPicker(false)}
           />
         </div>
       )}
