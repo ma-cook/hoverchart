@@ -235,6 +235,7 @@ const Cube = ({
     setActiveTextStyleUI(contentRef.current);
     setShowObjectUI(false);
     setSelectedFace(null);
+    setShowFaceTextInput(false); // Add this to close text input if open
   };
 
   // Remove the global click handler effect since it won't work reliably
@@ -433,7 +434,6 @@ const Cube = ({
                   rotation={rotation}
                   onClick={(e) => {
                     e.stopPropagation();
-                    // Handle both cube selection and face selection
                     handleSceneClick();
                     handleFaceClick(e, name);
                   }}
@@ -448,12 +448,19 @@ const Cube = ({
                   />
                   {selected && ( // Only render these when cube is selected
                     <>
-                      {selectedFace === name && (
+                      {selectedFace === name && !showFaceTextInput && (
                         <FaceUI
                           position={[0, 6, 0]}
                           normal={normal}
                           onColorChange={handleColorChange}
                           face={name}
+                          onTextClick={handleFaceTextClick}
+                        />
+                      )}
+                      {showFaceTextInput && selectedFace === name && (
+                        <FaceTextInput
+                          position={[0, 6, 0]}
+                          onTextSubmit={handleFaceTextSubmit}
                         />
                       )}
                     </>
@@ -620,6 +627,17 @@ const Cube = ({
           space="world"
           size={1}
           position={position}
+        />
+      )}
+      {/* Add TextStyleUI for face text */}
+      {activeTextFace && activeTextStyleUI === contentRef.current && (
+        <TextStyleUI
+          position={[0, 6, 0]}
+          onStyleChange={handleStyleChange}
+          onClose={() => {
+            setActiveTextFace(null);
+            setActiveTextStyleUI(null);
+          }}
         />
       )}
     </>

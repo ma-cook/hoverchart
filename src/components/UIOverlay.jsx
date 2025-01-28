@@ -27,6 +27,13 @@ const UIOverlay = ({ onCreateObject, onToggleIndicators }) => {
       </button>
       <button
         className="shape-button"
+        onClick={() => onCreateObject('plane')} // Add plane button
+        title="Add Plane"
+      >
+        ▭
+      </button>
+      <button
+        className="shape-button"
         onClick={handleArrowClick}
         title="Connect Faces"
       >

@@ -7,6 +7,7 @@ import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
 import Cube from './components/Cube';
 import Sphere from './components/Sphere';
+import Plane from './components/Plane'; // Add this import
 
 // New component to handle connection updates
 const ConnectionUpdater = ({
@@ -271,6 +272,16 @@ const App = () => {
             if (obj.type === 'sphere') {
               return (
                 <Sphere
+                  key={obj.id}
+                  position={obj.position}
+                  selected={selectedId === obj.id}
+                  onClick={() => handleObjectClick(obj.id)}
+                />
+              );
+            }
+            if (obj.type === 'plane') {
+              return (
+                <Plane
                   key={obj.id}
                   position={obj.position}
                   selected={selectedId === obj.id}

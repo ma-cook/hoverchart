@@ -16,7 +16,7 @@ const FaceUI = ({ position, onColorChange, face, onTextClick }) => {
     e.stopPropagation();
     if (tool.name === 'paint') {
       setShowColorPicker(true);
-    } else if (tool.name === 'text') {
+    } else if (tool.name === 'text' && typeof onTextClick === 'function') {
       onTextClick(face);
     }
     console.log(`Face ${tool.name} clicked`);
