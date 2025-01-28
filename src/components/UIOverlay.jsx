@@ -1,37 +1,37 @@
-const UIOverlay = ({ onCreateObject, onClick }) => {
-  const shapes = [
-    { name: 'cube', icon: '⬛' },
-    { name: 'sphere', icon: '⚪' },
-    { name: 'plane', icon: '▭' },
-    { name: 'arrows', icon: '↔' },
-  ];
+const UIOverlay = ({ onCreateObject, onToggleIndicators }) => {
+  const handleArrowClick = () => {
+    // Sets up the indicators for connection mode immediately
+    onToggleIndicators('connection');
+  };
 
   return (
     <div
       className="ui-overlay"
       onClick={(e) => {
         e.stopPropagation();
-        onClick?.();
       }}
     >
       <button
-        key="cube"
         className="shape-button"
-        onClick={() => onCreateObject('cube')} // Ensure 'cube' is passed as the type
+        onClick={() => onCreateObject('cube')}
+        title="Add Cube"
       >
-        ⬛
+        □
       </button>
-      {shapes
-        .filter((shape) => shape.name !== 'cube')
-        .map((shape) => (
-          <button
-            key={shape.name}
-            className="shape-button"
-            onClick={() => onCreateObject(shape.name)}
-          >
-            {shape.icon}
-          </button>
-        ))}
+      <button
+        className="shape-button"
+        onClick={() => onCreateObject('sphere')}
+        title="Add Sphere"
+      >
+        ○
+      </button>
+      <button
+        className="shape-button"
+        onClick={handleArrowClick}
+        title="Connect Faces"
+      >
+        ↗
+      </button>
     </div>
   );
 };

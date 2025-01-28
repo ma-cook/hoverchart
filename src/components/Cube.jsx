@@ -384,6 +384,11 @@ const Cube = ({
       return true;
     }
 
+    // Show all indicators when in indicators mode
+    if (indicatorMode === 'indicators') {
+      return true;
+    }
+
     // For other cases, maintain existing logic
     if (!selected) return false;
 
@@ -584,20 +589,22 @@ const Cube = ({
             />
           )}
           {headerText && (
-            <TextSprite
-              text={headerText}
-              position={getHeaderPosition()}
-              followTarget={contentRef}
-              onClick={handleTextClick}
-              style={textStyle}
-            />
-          )}
-          {activeTextStyleUI === contentRef.current && (
-            <TextStyleUI
-              position={getHeaderPosition()}
-              followTarget={contentRef}
-              onStyleChange={handleStyleChange}
-            />
+            <>
+              <TextSprite
+                text={headerText}
+                position={getHeaderPosition()}
+                followTarget={contentRef}
+                onClick={handleTextClick}
+                style={textStyle}
+              />
+              {activeTextStyleUI === contentRef.current && (
+                <TextStyleUI
+                  position={getHeaderPosition()}
+                  followTarget={contentRef}
+                  onStyleChange={handleStyleChange}
+                />
+              )}
+            </>
           )}
           {selected && isResizing && contentRef.current && (
             <ResizeArrows onResize={handleResize} object={contentRef.current} />

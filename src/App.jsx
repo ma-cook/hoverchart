@@ -198,6 +198,19 @@ const App = () => {
     setSelectedId(null);
   };
 
+  const handleToggleIndicators = (mode = 'all') => {
+    if (mode === 'connection') {
+      // Set up for connection mode
+      setShowAllCubesIndicators(true);
+      setIndicatorMode('indicators'); // Changed from 'all' to 'indicators'
+      setSelectedId(null); // Deselect any selected cube
+      setSelectedIndicators([]); // Clear any existing selections
+    } else {
+      setShowAllCubesIndicators((prev) => !prev);
+      setIndicatorMode((prev) => (prev === 'all' ? 'none' : 'all'));
+    }
+  };
+
   return (
     <>
       <Canvas
@@ -269,7 +282,10 @@ const App = () => {
           })}
         </group>
       </Canvas>
-      <UIOverlay onCreateObject={handleCreateObject} />
+      <UIOverlay
+        onCreateObject={handleCreateObject}
+        onToggleIndicators={handleToggleIndicators}
+      />
     </>
   );
 };
