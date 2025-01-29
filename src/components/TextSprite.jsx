@@ -45,14 +45,17 @@ const TextSprite = ({
         const targetScale = followTarget.current.scale;
 
         if (style.isHeaderText) {
-          // For header text: maintain constant distance from cube top
           const cubeHeight = 10 * targetScale.y;
           const distanceToCamera = camera.position.distanceTo(targetPos);
+          const fontSize = getFontSize(style.fontSize);
 
-          // Position header text 1 unit above cube
+          // Calculate text offset based on font size
+          const textHeight = fontSize * TEXT_HEIGHT;
+          const headerOffset = 2 + textHeight; // Keep 2 units above cube plus text height
+
           textRef.current.position.set(
             targetPos.x,
-            targetPos.y + cubeHeight / 2 + 1,
+            targetPos.y + cubeHeight / 2 + headerOffset,
             targetPos.z
           );
 
