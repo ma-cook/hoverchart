@@ -1,6 +1,6 @@
 import { Line } from '@react-three/drei';
 import { Vector3 } from 'three';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceUI from './FaceUI';
 import TextSprite from './TextSprite';
@@ -36,6 +36,22 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     }
   });
 
+  // Add deselection effect
+  useEffect(() => {
+    if (!selected) {
+      setShowTextStyleUI(false);
+      setShowUI(false);
+      setShowTextInput(false);
+    }
+  }, [selected]);
+
+  // Create a utility function to close all UIs
+  const closeAllUIs = () => {
+    setShowTextStyleUI(false);
+    setShowUI(false);
+    setShowTextInput(false);
+  };
+
   const handleColorChange = (newColor) => {
     setColor(newColor);
   };
@@ -43,17 +59,18 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const handleClick = (e) => {
     e.stopPropagation();
     onClick();
-    setShowUI(true);
+    closeAllUIs(); // Close all UIs first
+    setShowUI(true); // Then show the main UI
   };
 
   const handleTextClick = () => {
+    closeAllUIs(); // Close all UIs first
     setShowTextInput(true);
-    setShowUI(false);
   };
 
   const handleTextSubmit = (newText) => {
     setText(newText);
-    setShowTextInput(false);
+    closeAllUIs();
   };
 
   const handleTextStyleChange = (newStyle) => {
@@ -62,8 +79,8 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
 
   const handleTextSpriteClick = (e) => {
     e.stopPropagation();
+    closeAllUIs(); // Close all UIs first
     setShowTextStyleUI(true);
-    setShowUI(false);
   };
 
   return (
@@ -106,7 +123,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
         <TextStyleUI
           position={[0, 6, 0]}
           onStyleChange={handleTextStyleChange}
-          onClose={() => setShowTextStyleUI(false)}
+          onClose={() => closeAllUIs()} // Use closeAllUIs here
         />
       )}
     </group>

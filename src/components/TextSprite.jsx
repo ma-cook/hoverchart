@@ -12,10 +12,12 @@ const TextSprite = ({
     color: 'white',
     underline: false,
     fixedSize: false,
+    isFaceText: false,
+    isHeaderText: false,
   },
 }) => {
   const textRef = React.useRef();
-  const lastScale = React.useRef(1);
+
   const MINIMUM_DISTANCE = 1; // Minimum distance from cube top
   const TEXT_HEIGHT = 0.7; // Approximate height of largest text
   const ZOOM_OFFSET_FACTOR = 0.05; // Controls how much text moves up when zooming out
@@ -39,49 +41,68 @@ const TextSprite = ({
   useFrame(({ camera }) => {
     if (textRef.current) {
       if (followTarget?.current) {
-        // Get target position and scale
         const targetPos = followTarget.current.position;
         const targetScale = followTarget.current.scale;
 
-        // Calculate base heights and distances
-        const cubeHeight = 10 * targetScale.y;
-        const topEdgeOffset = cubeHeight / 5;
-        const fontSize = getFontSize(style.fontSize);
-        const scaledTextHeight =
-          fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
-        const scaledMinDistance = Math.max(
-          MINIMUM_DISTANCE * Math.max(...targetScale.toArray()),
-          MIN_CUBE_DISTANCE // Ensure minimum 2 units from cube top
-        );
+        if (style.isHeaderText) {
+          // For header text: maintain constant distance from cube top
+          const cubeHeight = 10 * targetScale.y;
+          const distanceToCamera = camera.position.distanceTo(targetPos);
 
-        // Calculate camera-dependent offset
-        const distanceToCamera = camera.position.distanceTo(targetPos);
-        const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
+          // Position header text 1 unit above cube
+          textRef.current.position.set(
+            targetPos.x,
+            targetPos.y + cubeHeight / 2 + 1,
+            targetPos.z
+          );
 
-        // Set position with zoom-adjusted height
-        textRef.current.position.set(
-          targetPos.x,
-          targetPos.y +
-            topEdgeOffset +
-            scaledMinDistance +
-            scaledTextHeight +
-            zoomOffset,
-          targetPos.z
-        );
-
-        // Calculate and apply scale
-        const baseSize = Math.max(...targetScale.toArray());
-        const scaleFactor = Math.max(distanceToCamera * 0.02, baseSize);
-
-        if (Math.abs(lastScale.current - scaleFactor) > 0.01) {
+          // Scale based on camera distance only
+          const scaleFactor = distanceToCamera * 0.02;
           textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
-          lastScale.current = scaleFactor;
-        }
+        } else {
+          // Calculate base heights and distances without scale influence
+          const cubeHeight = 10; // Remove scale influence
+          const topEdgeOffset = cubeHeight / 5;
+          const fontSize = getFontSize(style.fontSize);
+          const scaledTextHeight =
+            fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
+          const scaledMinDistance = Math.max(
+            MINIMUM_DISTANCE, // Remove scale factor for minimum distance
+            MIN_CUBE_DISTANCE
+          );
 
+          // Calculate camera-dependent offset without scale influence
+          const distanceToCamera = camera.position.distanceTo(targetPos);
+          const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
+
+          // Update position but maintain constant text size
+          textRef.current.position.set(
+            targetPos.x,
+            targetPos.y +
+              topEdgeOffset +
+              scaledMinDistance +
+              scaledTextHeight +
+              zoomOffset,
+            targetPos.z
+          );
+
+          // Use constant scale for fixed size text
+          const baseScale = style.fixedSize
+            ? 1
+            : Math.max(distanceToCamera * 0.02, 1);
+          textRef.current.scale.set(baseScale, baseScale, baseScale);
+        }
         textRef.current.quaternion.copy(camera.quaternion);
-      } else if (!style.fixedSize) {
-        // Only rotate to face camera if not fixed size
-        textRef.current.quaternion.copy(camera.quaternion);
+      } else {
+        // Handle face text differently
+        if (style.isFaceText) {
+          textRef.current.scale.set(1, 1, 1); // Keep constant size
+          if (!style.fixedSize) {
+            textRef.current.quaternion.copy(camera.quaternion);
+          }
+        } else if (!style.fixedSize) {
+          textRef.current.quaternion.copy(camera.quaternion);
+        }
       }
     }
   });

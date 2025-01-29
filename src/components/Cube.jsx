@@ -107,6 +107,7 @@ const Cube = ({
     left: { fontSize: 0.5, color: 'white', underline: false },
   });
   const [activeTextFace, setActiveTextFace] = useState(null);
+  const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -196,11 +197,11 @@ const Cube = ({
 
   const handleTextClick = (e) => {
     e.stopPropagation();
-    setActiveTextStyleUI(
-      activeTextStyleUI === contentRef.current ? null : contentRef.current
-    );
-    setShowObjectUI(false); // Hide ObjectUI
-    setSelectedFace(null); // Clear selected face to close FaceUI
+    setShowHeaderTextStyleUI(true);
+    setActiveTextFace(null);
+    setActiveTextStyleUI(contentRef.current);
+    setShowObjectUI(false);
+    setSelectedFace(null);
   };
 
   const handleStyleChange = (newStyle) => {
@@ -231,11 +232,12 @@ const Cube = ({
     if (e) {
       e.stopPropagation();
     }
+    setShowHeaderTextStyleUI(false);
     setActiveTextFace(faceName);
     setActiveTextStyleUI(contentRef.current);
     setShowObjectUI(false);
     setSelectedFace(null);
-    setShowFaceTextInput(false); // Add this to close text input if open
+    setShowFaceTextInput(false);
   };
 
   // Remove the global click handler effect since it won't work reliably
@@ -303,12 +305,10 @@ const Cube = ({
 
   // Calculate header position relative to cube's top edge
   const getHeaderPosition = () => {
-    const cubeHeight = 10 * scale[1]; // cube height * y-scale
-    const topEdgeOffset = cubeHeight / 2; // half height since cube is centered
     return [
-      position[0], // x
-      position[1] + topEdgeOffset + 15, // y (15 units above top edge)
-      position[2], // z
+      position[0],
+      position[1], // Base position, offset handled in TextSprite
+      position[2],
     ];
   };
 
@@ -406,6 +406,18 @@ const Cube = ({
     }
   };
 
+  // Add a handler for colored face clicks
+  const handleColoredFaceClick = (e, name) => {
+    e.stopPropagation();
+    // Only handle face click if cube is already selected
+    if (selected) {
+      handleFaceClick(e, name);
+    } else {
+      // If cube isn't selected, handle as a cube click first
+      handleSceneClick();
+    }
+  };
+
   return (
     <>
       <group>
@@ -432,11 +444,7 @@ const Cube = ({
                   key={`colored-${name}`}
                   position={[facePos[0], facePos[1], facePos[2]]}
                   rotation={rotation}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSceneClick();
-                    handleFaceClick(e, name);
-                  }}
+                  onClick={(e) => handleColoredFaceClick(e, name)}
                   renderOrder={1}
                 >
                   <boxGeometry args={[9.8, 9.9, 0.2]} />
@@ -506,14 +514,27 @@ const Cube = ({
                   >
                     <TextSprite
                       text={faceTexts[name]}
-                      position={[0, 1, 0.2]} // Changed Y position from 0 to 1
-                      followTarget={null} // Set to null to prevent auto-positioning
+                      position={[0, 1, 0.2]} // Use fixed offset instead of scale-based
+                      followTarget={null}
                       onClick={(e) => handleFaceTextStyleClick(e, name)}
                       style={{
                         ...faceTextStyles[name],
-                        fixedSize: true, // Add this prop to TextSprite
+                        fixedSize: true,
+                        isFaceText: true, // Add new prop to identify face text
                       }}
                     />
+                    {/* Add TextStyleUI directly in the face group */}
+                    {activeTextFace === name &&
+                      activeTextStyleUI === contentRef.current && (
+                        <TextStyleUI
+                          position={[0, 6, 0]}
+                          onStyleChange={handleStyleChange}
+                          onClose={() => {
+                            setActiveTextFace(null);
+                            setActiveTextStyleUI(null);
+                          }}
+                        />
+                      )}
                   </group>
                 )
               );
@@ -602,15 +623,24 @@ const Cube = ({
                 position={getHeaderPosition()}
                 followTarget={contentRef}
                 onClick={handleTextClick}
-                style={textStyle}
+                style={{
+                  ...textStyle,
+                  isHeaderText: true, // Add this prop
+                  fixedSize: false, // Allow camera-based scaling
+                }}
               />
-              {activeTextStyleUI === contentRef.current && (
-                <TextStyleUI
-                  position={getHeaderPosition()}
-                  followTarget={contentRef}
-                  onStyleChange={handleStyleChange}
-                />
-              )}
+              {showHeaderTextStyleUI &&
+                activeTextStyleUI === contentRef.current && (
+                  <TextStyleUI
+                    position={getHeaderPosition()}
+                    followTarget={contentRef}
+                    onStyleChange={handleStyleChange}
+                    onClose={() => {
+                      setShowHeaderTextStyleUI(false);
+                      setActiveTextStyleUI(null);
+                    }}
+                  />
+                )}
             </>
           )}
           {selected && isResizing && contentRef.current && (
@@ -627,17 +657,6 @@ const Cube = ({
           space="world"
           size={1}
           position={position}
-        />
-      )}
-      {/* Add TextStyleUI for face text */}
-      {activeTextFace && activeTextStyleUI === contentRef.current && (
-        <TextStyleUI
-          position={[0, 6, 0]}
-          onStyleChange={handleStyleChange}
-          onClose={() => {
-            setActiveTextFace(null);
-            setActiveTextStyleUI(null);
-          }}
         />
       )}
     </>
