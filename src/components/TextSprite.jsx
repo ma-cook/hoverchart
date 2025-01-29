@@ -49,18 +49,20 @@ const TextSprite = ({
           const distanceToCamera = camera.position.distanceTo(targetPos);
           const fontSize = getFontSize(style.fontSize);
 
-          // Calculate text offset based on font size
-          const textHeight = fontSize * TEXT_HEIGHT;
-          const headerOffset = 2 + textHeight; // Keep 2 units above cube plus text height
+          // Calculate scale factor based on camera distance
+          const scaleFactor = distanceToCamera * 0.02;
 
+          // Calculate text height considering scale factor
+          const textHeight = fontSize * TEXT_HEIGHT * scaleFactor;
+
+          // Position text above cube considering both base offset and scaled text height
           textRef.current.position.set(
             targetPos.x,
-            targetPos.y + cubeHeight / 2 + headerOffset,
+            targetPos.y + cubeHeight / 2 + 2 + textHeight / 2, // Keep text bottom 2 units above cube
             targetPos.z
           );
 
-          // Scale based on camera distance only
-          const scaleFactor = distanceToCamera * 0.02;
+          // Apply camera-based scaling
           textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
         } else {
           // Calculate base heights and distances without scale influence
