@@ -418,6 +418,14 @@ const Cube = ({
     }
   };
 
+  // Add helper function to calculate text offset based on font size
+  const getFaceTextOffset = (fontSize) => {
+    const baseOffset = 1; // Base distance from face
+    const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
+    const textHeight = fontSizeMultiplier * 0.7; // Match TEXT_HEIGHT from TextSprite
+    return baseOffset + textHeight / 2; // Add half text height to keep bottom at base offset
+  };
+
   return (
     <>
       <group>
@@ -501,29 +509,34 @@ const Cube = ({
               );
             })}
 
-            {/* Move face text rendering outside the selected condition */}
+            {/* Update face text rendering with dynamic positioning */}
             {faces.map(({ name }) => {
               const { position: facePos, rotation } =
                 getFaceIndicatorProps(name);
+              const inverseScale = scale.map((s) => 1 / s);
+              // Calculate base position without scale
+              const basePosition = [facePos[0], facePos[1], facePos[2]];
+              const textStyle = faceTextStyles[name];
+              const yOffset = getFaceTextOffset(textStyle.fontSize);
               return (
                 faceTexts[name] && (
                   <group
                     key={`text-${name}`}
-                    position={[facePos[0], facePos[1], facePos[2]]}
+                    position={basePosition}
                     rotation={rotation}
+                    scale={inverseScale}
                   >
                     <TextSprite
                       text={faceTexts[name]}
-                      position={[0, 1, 0.2]} // Use fixed offset instead of scale-based
+                      position={[0, yOffset, 0.2]} // Keep offset constant relative to face
                       followTarget={null}
                       onClick={(e) => handleFaceTextStyleClick(e, name)}
                       style={{
-                        ...faceTextStyles[name],
+                        ...textStyle,
                         fixedSize: true,
-                        isFaceText: true, // Add new prop to identify face text
+                        isFaceText: true,
                       }}
                     />
-                    {/* Add TextStyleUI directly in the face group */}
                     {activeTextFace === name &&
                       activeTextStyleUI === contentRef.current && (
                         <TextStyleUI
