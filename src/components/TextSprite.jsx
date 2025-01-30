@@ -15,6 +15,7 @@ const TextSprite = ({
     isFaceText: false,
     isHeaderText: false,
   },
+  billboard = true, // New prop, defaults to true
 }) => {
   const textRef = React.useRef();
 
@@ -97,15 +98,17 @@ const TextSprite = ({
             : Math.max(distanceToCamera * 0.02, 1);
           textRef.current.scale.set(baseScale, baseScale, baseScale);
         }
-        textRef.current.quaternion.copy(camera.quaternion);
+        if (billboard) {
+          textRef.current.quaternion.copy(camera.quaternion);
+        }
       } else {
         // Handle face text differently
         if (style.isFaceText) {
           textRef.current.scale.set(1, 1, 1); // Keep constant size
-          if (!style.fixedSize) {
+          if (!style.fixedSize && billboard) {
             textRef.current.quaternion.copy(camera.quaternion);
           }
-        } else if (!style.fixedSize) {
+        } else if (!style.fixedSize && billboard) {
           textRef.current.quaternion.copy(camera.quaternion);
         }
       }
@@ -141,7 +144,7 @@ const TextSprite = ({
         anchorY="middle"
         outlineWidth={0.01}
         outlineColor={style.color}
-        billboard={!style.fixedSize}
+        billboard={billboard}
       >
         {text}
       </Text>

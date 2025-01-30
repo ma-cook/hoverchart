@@ -116,6 +116,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
           style={textStyle}
           fixedSize={true}
           onClick={handleTextSpriteClick}
+          billboard={false}
         />
       )}
 
