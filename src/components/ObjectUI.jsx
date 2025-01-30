@@ -58,7 +58,7 @@ const ObjectUI = ({
     { name: 'opacity', icon: '○' },
     {
       name: 'transform',
-      icon: '↕',
+      icon: '✥',
       active: showTransform,
       onClick: () => onTransformToggle?.(),
     },

@@ -6,6 +6,7 @@ import FaceUI from './FaceUI';
 import TextSprite from './TextSprite';
 import FaceTextInput from './FaceTextInput';
 import TextStyleUI from './TextStyleUI'; // Add this import
+import { TransformControls } from '@react-three/drei'; // Add this import
 
 const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const groupRef = useRef();
@@ -21,6 +22,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     underline: false,
   });
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
+  const [showTransform, setShowTransform] = useState(false);
 
   const points = [
     new Vector3(-size, -size, 0),
@@ -36,20 +38,40 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     }
   });
 
-  // Add deselection effect
+  // Update deselection effect to include TextStyleUI
   useEffect(() => {
     if (!selected) {
-      setShowTextStyleUI(false);
-      setShowUI(false);
-      setShowTextInput(false);
+      closeAllUIs();
     }
   }, [selected]);
+
+  // Close TextStyleUI when clicking anywhere else
+  useEffect(() => {
+    const handleGlobalClick = (e) => {
+      // Check if click is outside the TextStyleUI and the text
+      const isTextStyleUIClick = e.target.closest('.text-style-ui');
+      const isTextClick = e.target.closest('.text-sprite');
+
+      if (!isTextStyleUIClick && !isTextClick) {
+        setShowTextStyleUI(false);
+      }
+    };
+
+    if (showTextStyleUI) {
+      window.addEventListener('click', handleGlobalClick);
+    }
+
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+    };
+  }, [showTextStyleUI]);
 
   // Create a utility function to close all UIs
   const closeAllUIs = () => {
     setShowTextStyleUI(false);
     setShowUI(false);
     setShowTextInput(false);
+    setShowTransform(false); // Also close transform controls
   };
 
   const handleColorChange = (newColor) => {
@@ -59,7 +81,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const handleClick = (e) => {
     e.stopPropagation();
     onClick();
-    closeAllUIs(); // Close all UIs first
+    closeAllUIs(); // This will close TextStyleUI as well
     setShowUI(true); // Then show the main UI
   };
 
@@ -83,51 +105,80 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     setShowTextStyleUI(true);
   };
 
+  const handleTransformToggle = () => {
+    setShowTransform((prev) => !prev);
+    setShowUI(false); // Hide UI when transform is active
+  };
+
+  const handleDrag = (e) => {
+    // Update position from transform controls
+    if (groupRef.current) {
+      const newPos = e.target.object.position;
+      groupRef.current.position.copy(newPos);
+    }
+  };
+
   return (
-    <group ref={groupRef} position={position}>
-      <mesh onClick={handleClick}>
-        <planeGeometry args={[10, 10]} />
-        <meshBasicMaterial
-          color={color || (selected ? '#99ccff' : 'white')}
-          transparent
-          opacity={color ? 1 : selected ? 0.5 : 0.1}
-          depthWrite={!!color}
+    <>
+      <group ref={groupRef} position={position}>
+        <mesh onClick={handleClick}>
+          <planeGeometry args={[10, 10]} />
+          <meshBasicMaterial
+            color={color || (selected ? '#99ccff' : 'white')}
+            transparent
+            opacity={color ? 1 : selected ? 0.5 : 0.1}
+            depthWrite={!!color}
+          />
+        </mesh>
+        <Line
+          points={points}
+          color={selected ? 'blue' : 'white'}
+          lineWidth={1}
         />
-      </mesh>
-      <Line points={points} color={selected ? 'blue' : 'white'} lineWidth={1} />
 
-      {selected && showUI && (
-        <FaceUI
-          position={[0, 6, 0]}
-          onColorChange={handleColorChange}
-          face="front"
-          onTextClick={() => handleTextClick()} // Pass the function directly
+        {selected && showUI && (
+          <FaceUI
+            position={[0, 6, 0]}
+            onColorChange={handleColorChange}
+            face="front"
+            onTextClick={handleTextClick}
+            isPlane={true} // Add this prop
+            onTransformToggle={handleTransformToggle} // Add this prop
+          />
+        )}
+
+        {showTextInput && (
+          <FaceTextInput position={[0, 6, 0]} onTextSubmit={handleTextSubmit} />
+        )}
+
+        {text && (
+          <TextSprite
+            text={text}
+            position={[0, 0, 0.1]}
+            style={textStyle}
+            fixedSize={true}
+            onClick={handleTextSpriteClick}
+            billboard={false}
+          />
+        )}
+
+        {showTextStyleUI && (
+          <TextStyleUI
+            position={[0, 6, 0]}
+            onStyleChange={handleTextStyleChange}
+            onClose={() => closeAllUIs()} // Use closeAllUIs here
+          />
+        )}
+      </group>
+      {/* Add TransformControls outside the group */}
+      {selected && showTransform && groupRef.current && (
+        <TransformControls
+          object={groupRef.current}
+          mode="translate"
+          onObjectChange={handleDrag}
         />
       )}
-
-      {showTextInput && (
-        <FaceTextInput position={[0, 6, 0]} onTextSubmit={handleTextSubmit} />
-      )}
-
-      {text && (
-        <TextSprite
-          text={text}
-          position={[0, 0, 0.1]}
-          style={textStyle}
-          fixedSize={true}
-          onClick={handleTextSpriteClick}
-          billboard={false}
-        />
-      )}
-
-      {showTextStyleUI && (
-        <TextStyleUI
-          position={[0, 6, 0]}
-          onStyleChange={handleTextStyleChange}
-          onClose={() => closeAllUIs()} // Use closeAllUIs here
-        />
-      )}
-    </group>
+    </>
   );
 };
 

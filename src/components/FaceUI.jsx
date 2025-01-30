@@ -2,15 +2,28 @@ import { Html } from '@react-three/drei';
 import { useState } from 'react';
 import ColorPicker from './ColorPicker';
 
-const FaceUI = ({ position, onColorChange, face, onTextClick }) => {
+const FaceUI = ({
+  position,
+  onColorChange,
+  face,
+  onTextClick,
+  isPlane = false, // Add this prop
+  onTransformToggle, // Add this prop
+}) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
 
-  const tools = [
+  // Create base tools array
+  const baseTools = [
     { name: 'text', icon: 'T' },
     { name: 'arrow', icon: '↗' },
     { name: 'paint', icon: '🎨' },
     { name: 'opacity', icon: '○' },
   ];
+
+  // Add transform tool conditionally
+  const tools = isPlane
+    ? [...baseTools, { name: 'transform', icon: '✥' }]
+    : baseTools;
 
   const handleToolClick = (tool, e) => {
     e.stopPropagation();
@@ -18,6 +31,11 @@ const FaceUI = ({ position, onColorChange, face, onTextClick }) => {
       setShowColorPicker(true);
     } else if (tool.name === 'text' && typeof onTextClick === 'function') {
       onTextClick(face);
+    } else if (
+      tool.name === 'transform' &&
+      typeof onTransformToggle === 'function'
+    ) {
+      onTransformToggle();
     }
     console.log(`Face ${tool.name} clicked`);
   };
