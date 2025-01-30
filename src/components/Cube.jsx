@@ -426,6 +426,17 @@ const Cube = ({
     return baseOffset + textHeight / 2; // Add half text height to keep bottom at base offset
   };
 
+  // Add helper function to calculate arrow positions
+  const getArrowOffset = () => {
+    const baseSize = 5; // Half of the cube's base size (10)
+    const offset = 1.5; // Additional offset from cube face
+    return {
+      x: baseSize * scale[0] + offset,
+      y: baseSize * scale[1] + offset,
+      z: baseSize * scale[2] + offset,
+    };
+  };
+
   return (
     <>
       <group>

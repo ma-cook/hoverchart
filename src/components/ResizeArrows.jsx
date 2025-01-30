@@ -14,34 +14,49 @@ const ResizeArrows = ({ onResize, object }) => {
     z: useRef(),
   };
 
+  const ARROW_BASE_LENGTH = 10;
+  const ARROW_HEAD_LENGTH = 3;
+  const ARROW_HEAD_WIDTH = 1.5;
+  const SCALE_FACTOR = 0.5; // Add scale dampening factor
+  const MAX_HEAD_LENGTH = 3;
+  const MAX_HEAD_WIDTH = 2;
+
   useFrame(() => {
     if (groupRef.current && object) {
       groupRef.current.position.copy(object.position);
-      const distance = camera.position.distanceTo(groupRef.current.position);
-      const scale = distance * 0.03;
 
-      // Get relative camera position
-      const localCameraPos = new THREE.Vector3()
-        .copy(camera.position)
-        .sub(groupRef.current.position);
-
-      // Check camera position relative to each axis and flip arrows if needed
       ['x', 'y', 'z'].forEach((axis) => {
         if (arrowRefs[axis].current) {
           const arrow = arrowRefs[axis].current;
+
+          // Apply dampening to scale
+          const axisScale = 1 + (object.scale[axis] - 1) * SCALE_FACTOR;
+
           const direction = new THREE.Vector3(
             axis === 'x' ? 1 : 0,
             axis === 'y' ? 1 : 0,
             axis === 'z' ? 1 : 0
           );
 
-          // Flip direction if camera is on the negative side of the axis
-          if (localCameraPos[axis] < 0) {
+          if (camera.position[axis] < groupRef.current.position[axis]) {
             direction.multiplyScalar(-1);
           }
 
+          const scaledHeadLength = Math.min(
+            ARROW_HEAD_LENGTH * axisScale,
+            MAX_HEAD_LENGTH
+          );
+          const scaledHeadWidth = Math.min(
+            ARROW_HEAD_WIDTH * axisScale,
+            MAX_HEAD_WIDTH
+          );
+
           arrow.setDirection(direction);
-          arrow.setLength(3 * scale, 1 * scale, 0.5 * scale);
+          arrow.setLength(
+            ARROW_BASE_LENGTH * axisScale,
+            scaledHeadLength,
+            scaledHeadWidth
+          );
         }
       });
     }
@@ -88,12 +103,10 @@ const ResizeArrows = ({ onResize, object }) => {
                 : [0, 0, 1])
             ),
             new THREE.Vector3(0, 0, 0),
-            25, // Base length
+            1, // Increased base length by 3 units (from 10 to 13)
             new THREE.Color(
               axis === 'x' ? 'red' : axis === 'y' ? 'green' : 'blue'
             ),
-            5, // Base head length
-            2, // Base head width
           ]}
           onPointerDown={(e) => handlePointerDown(axis, e)}
           cursor="pointer"
