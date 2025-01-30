@@ -149,7 +149,13 @@ const Cube = ({
   };
 
   const handleTransformToggle = () => {
-    setShowTransform(!showTransform);
+    setShowTransform((prev) => {
+      // If enabling transform controls, disable resize mode
+      if (!prev) {
+        setIsResizing(false);
+      }
+      return !prev;
+    });
   };
 
   const handleHeaderToggle = () => {
@@ -164,14 +170,13 @@ const Cube = ({
   };
 
   const handleResizeToggle = () => {
-    setIsResizing(!isResizing);
-    if (isResizing) {
-      // Exiting resize mode
-      console.log('Exited resize mode');
-    } else {
-      // Entering resize mode
-      console.log('Entered resize mode');
-    }
+    setIsResizing((prev) => {
+      // If enabling resize mode, disable transform controls
+      if (!prev) {
+        setShowTransform(false);
+      }
+      return !prev;
+    });
   };
 
   const handleResize = (axis, delta) => {
@@ -424,17 +429,6 @@ const Cube = ({
     const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
     const textHeight = fontSizeMultiplier * 0.7; // Match TEXT_HEIGHT from TextSprite
     return baseOffset + textHeight / 2; // Add half text height to keep bottom at base offset
-  };
-
-  // Add helper function to calculate arrow positions
-  const getArrowOffset = () => {
-    const baseSize = 5; // Half of the cube's base size (10)
-    const offset = 1.5; // Additional offset from cube face
-    return {
-      x: baseSize * scale[0] + offset,
-      y: baseSize * scale[1] + offset,
-      z: baseSize * scale[2] + offset,
-    };
   };
 
   return (
