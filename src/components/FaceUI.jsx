@@ -9,6 +9,7 @@ const FaceUI = ({
   onTextClick,
   isPlane = false, // Add this prop
   onTransformToggle, // Add this prop
+  onResizeToggle, // Add this prop
 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
 
@@ -20,9 +21,13 @@ const FaceUI = ({
     { name: 'opacity', icon: '○' },
   ];
 
-  // Add transform tool conditionally
+  // Add transform and resize tools conditionally
   const tools = isPlane
-    ? [...baseTools, { name: 'transform', icon: '✥' }]
+    ? [
+        ...baseTools,
+        { name: 'transform', icon: '✥' },
+        { name: 'resize', icon: '↔' }, // Add resize button
+      ]
     : baseTools;
 
   const handleToolClick = (tool, e) => {
@@ -36,6 +41,8 @@ const FaceUI = ({
       typeof onTransformToggle === 'function'
     ) {
       onTransformToggle();
+    } else if (tool.name === 'resize' && typeof onResizeToggle === 'function') {
+      onResizeToggle();
     }
     console.log(`Face ${tool.name} clicked`);
   };

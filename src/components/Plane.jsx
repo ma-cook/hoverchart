@@ -7,6 +7,7 @@ import TextSprite from './TextSprite';
 import FaceTextInput from './FaceTextInput';
 import TextStyleUI from './TextStyleUI'; // Add this import
 import { TransformControls } from '@react-three/drei'; // Add this import
+import ResizeArrows from './ResizeArrows'; // Fix import statement to use default import
 
 const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const groupRef = useRef();
@@ -23,6 +24,8 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   });
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
   const [showTransform, setShowTransform] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [scale, setScale] = useState([1, 1, 1]);
 
   const points = [
     new Vector3(-size, -size, 0),
@@ -72,6 +75,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     setShowUI(false);
     setShowTextInput(false);
     setShowTransform(false); // Also close transform controls
+    setIsResizing(false); // Also close resizing
   };
 
   const handleColorChange = (newColor) => {
@@ -110,6 +114,27 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     setShowUI(false); // Hide UI when transform is active
   };
 
+  const handleResizeToggle = () => {
+    setIsResizing((prev) => {
+      if (!prev) {
+        setShowTransform(false); // Disable transform when enabling resize
+      }
+      return !prev;
+    });
+    setShowUI(false);
+  };
+
+  const handleResize = (axis, delta) => {
+    const axisIndex = { x: 0, y: 1 }[axis]; // Only allow x and y resize for plane
+    if (axisIndex !== undefined) {
+      setScale((prevScale) => {
+        const newScale = [...prevScale];
+        newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
+        return newScale;
+      });
+    }
+  };
+
   const handleDrag = (e) => {
     // Update position from transform controls
     if (groupRef.current) {
@@ -121,29 +146,32 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   return (
     <>
       <group ref={groupRef} position={position}>
-        <mesh onClick={handleClick}>
-          <planeGeometry args={[10, 10]} />
-          <meshBasicMaterial
-            color={color || (selected ? '#99ccff' : 'white')}
-            transparent
-            opacity={color ? 1 : selected ? 0.5 : 0.1}
-            depthWrite={!!color}
+        <group scale={scale}>
+          <mesh onClick={handleClick}>
+            <planeGeometry args={[10, 10]} />
+            <meshBasicMaterial
+              color={color || (selected ? '#99ccff' : 'white')}
+              transparent
+              opacity={color ? 1 : selected ? 0.5 : 0.1}
+              depthWrite={!!color}
+            />
+          </mesh>
+          <Line
+            points={points}
+            color={selected ? 'blue' : 'white'}
+            lineWidth={1}
           />
-        </mesh>
-        <Line
-          points={points}
-          color={selected ? 'blue' : 'white'}
-          lineWidth={1}
-        />
+        </group>
 
         {selected && showUI && (
           <FaceUI
-            position={[0, 6, 0]}
+            position={[0, 10, 0]}
             onColorChange={handleColorChange}
             face="front"
             onTextClick={handleTextClick}
             isPlane={true} // Add this prop
             onTransformToggle={handleTransformToggle} // Add this prop
+            onResizeToggle={handleResizeToggle} // Add this prop
           />
         )}
 
@@ -167,6 +195,15 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
             position={[0, 6, 0]}
             onStyleChange={handleTextStyleChange}
             onClose={() => closeAllUIs()} // Use closeAllUIs here
+          />
+        )}
+
+        {/* Add ResizeArrows when resizing */}
+        {selected && isResizing && groupRef.current && (
+          <ResizeArrows
+            onResize={handleResize}
+            object={groupRef.current}
+            planeMode={true} // Optional: add this prop to ResizeArrows to only show x/y arrows
           />
         )}
       </group>
