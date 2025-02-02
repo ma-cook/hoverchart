@@ -11,23 +11,25 @@ import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
 import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
+import { useFrame } from '@react-three/fiber';
 
-const FaceIndicator = ({
-  position,
-  rotation,
-  onClick,
-  parentScale = [1, 1, 1],
-  isActive,
-}) => {
+const FaceIndicator = ({ position, rotation, onClick, isActive }) => {
   const meshRef = useRef();
   const groupRef = useRef();
 
-  // Calculate inverse scale to counter parent scaling
-  const inverseScale = [
-    1 / parentScale[0],
-    1 / parentScale[1],
-    1 / parentScale[2],
-  ];
+  // Remove parentScale prop and update scale on every frame
+  useFrame(() => {
+    if (meshRef.current && groupRef.current) {
+      const worldScale = new THREE.Vector3();
+      groupRef.current.getWorldScale(worldScale);
+      // Set inverse scale to cancel parent's scaling
+      meshRef.current.scale.set(
+        1 / worldScale.x,
+        1 / worldScale.y,
+        1 / worldScale.z
+      );
+    }
+  });
 
   return (
     <group ref={groupRef}>
@@ -35,7 +37,6 @@ const FaceIndicator = ({
         ref={meshRef}
         position={position}
         rotation={rotation}
-        scale={inverseScale}
         onClick={(e) => {
           e.stopPropagation();
           onClick(e);
@@ -506,7 +507,6 @@ const Cube = ({
                       position={[0, 0, 0.3]}
                       rotation={[0, 0, 0]}
                       onClick={(e) => handleIndicatorClick(e, name)}
-                      parentScale={scale}
                       isActive={isIndicatorActive(name)}
                     />
                   </mesh>
@@ -597,7 +597,6 @@ const Cube = ({
                           position={[0, 0, 0.2]}
                           rotation={[0, 0, 0]}
                           onClick={(e) => handleIndicatorClick(e, name)}
-                          parentScale={scale}
                           isActive={isIndicatorActive(name)}
                         />
                       )}
