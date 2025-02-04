@@ -9,26 +9,43 @@ import Cube from './components/Cube';
 import Sphere from './components/Sphere';
 import Plane from './components/Plane';
 import LineUI from './components/LineUI';
+import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
 
 const ConnectionUpdater = ({
   connections,
   setConnections,
   calculateFacePosition,
 }) => {
-  useFrame(() => {
+  useFrame((state, delta) => {
     if (connections.length > 0) {
       setConnections((prev) =>
-        prev.map((conn) => ({
-          ...conn,
-          start: {
-            ...conn.start,
-            position: calculateFacePosition(conn.start),
-          },
-          end: {
-            ...conn.end,
-            position: calculateFacePosition(conn.end),
-          },
-        }))
+        prev.map((conn) => {
+          if (conn.lineStyle === 'dashed') {
+            if (conn.dashDirection === 'left') {
+              return {
+                ...conn,
+                dashOffset: (conn.dashOffset || 0) - delta * 2,
+              };
+            }
+            if (conn.dashDirection === 'right') {
+              return {
+                ...conn,
+                dashOffset: (conn.dashOffset || 0) + delta * 2,
+              };
+            }
+          }
+          return {
+            ...conn,
+            start: {
+              ...conn.start,
+              position: calculateFacePosition(conn.start),
+            },
+            end: {
+              ...conn.end,
+              position: calculateFacePosition(conn.end),
+            },
+          };
+        })
       );
     }
   });
@@ -213,11 +230,41 @@ const App = () => {
   };
 
   const handleLineStyleChange = (connectionId, styleType) => {
-    setConnections((prev) =>
-      prev.map((conn) =>
-        conn.id === connectionId ? { ...conn, lineStyle: styleType } : conn
-      )
-    );
+    if (styleType === 'left') {
+      setConnections((prev) =>
+        prev.map((conn) =>
+          conn.id === connectionId
+            ? {
+                ...conn,
+                lineStyle: 'dashed',
+                dashDirection: 'left',
+                dashOffset: 0,
+              }
+            : conn
+        )
+      );
+    } else if (styleType === 'right') {
+      setConnections((prev) =>
+        prev.map((conn) =>
+          conn.id === connectionId
+            ? {
+                ...conn,
+                lineStyle: 'dashed',
+                dashDirection: 'right',
+                dashOffset: 0,
+              }
+            : conn
+        )
+      );
+    } else {
+      setConnections((prev) =>
+        prev.map((conn) =>
+          conn.id === connectionId
+            ? { ...conn, lineStyle: styleType, dashDirection: null }
+            : conn
+        )
+      );
+    }
   };
 
   return (
@@ -234,6 +281,7 @@ const App = () => {
         onPointerMissed={handleCanvasClick}
         gl={{
           antialias: true,
+          samples: 16, // Updated MSAA sample count from 8 to 16
           alpha: true,
           stencil: true,
           depth: true,
@@ -267,9 +315,10 @@ const App = () => {
                     connection.lineStyle === 'dotted'
                   }
                   // Increased dash spacing for dashed lines
-                  dashScale={connection.lineStyle === 'dotted' ? 2 : 1}
-                  dashSize={connection.lineStyle === 'dotted' ? 0.1 : 4}
+                  dashScale={connection.lineStyle === 'dotted' ? 1 : 0.5}
+                  dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
                   gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
+                  dashOffset={connection.dashOffset || 0} // <-- New: animate dash offset
                 />
                 <Line
                   points={[connection.start.position, connection.end.position]}
@@ -353,6 +402,9 @@ const App = () => {
             return null;
           })}
         </group>
+        <EffectComposer>
+          <SMAA />
+        </EffectComposer>
       </Canvas>
       <UIOverlay
         onCreateObject={handleCreateObject}

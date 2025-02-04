@@ -296,6 +296,9 @@ const Cube = ({
     opacity: 0.1,
     side: THREE.DoubleSide,
     depthTest: false,
+    polygonOffset: true, // <-- New: enable polygon offset
+    polygonOffsetFactor: -1, // <-- New: push face slightly back
+    polygonOffsetUnits: -4, // <-- New: fine tune the offset
   };
 
   const getFaceMaterial = (faceName) => ({
@@ -467,6 +470,9 @@ const Cube = ({
                     opacity={1.0}
                     transparent={false}
                     depthWrite={true}
+                    polygonOffset={true} // <-- Enable polygon offset
+                    polygonOffsetFactor={-1} // <-- Push face slightly back
+                    polygonOffsetUnits={-4} // <-- Fine tune offset
                   />
                   {selected && ( // Only render these when cube is selected
                     <>
@@ -611,6 +617,9 @@ const Cube = ({
               color={selected ? 'blue' : 'white'}
               lineWidth={1}
               segments={true}
+              polygonOffset // <-- Enable polygon offset for the edge lines
+              polygonOffsetFactor={1} // <-- Bring lines forward
+              polygonOffsetUnits={1} // <-- Fine tune the offset
             />
           </group>
           {/* Move ObjectUI outside scaled group and update position */}

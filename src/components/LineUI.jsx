@@ -5,6 +5,7 @@ import ColorPicker from './ColorPicker';
 const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showLineStyles, setShowLineStyles] = useState(false);
+  const [showArrowDropdown, setShowArrowDropdown] = useState(false); // <-- New state
 
   const tools = [
     { name: 'text', icon: 'T' },
@@ -24,21 +25,38 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
       case 'paint':
         setShowColorPicker(true);
         setShowLineStyles(false);
+        setShowArrowDropdown(false);
         break;
       case 'text':
         onTextClick?.();
         setShowLineStyles(false);
+        setShowArrowDropdown(false);
         break;
       case 'dotted':
         setShowLineStyles(!showLineStyles);
         setShowColorPicker(false);
+        setShowArrowDropdown(false);
         break;
     }
   };
 
   const handleLineStyleClick = (style, e) => {
     e.stopPropagation();
-    onToggleDashed?.(style.name);
+    if (style.name === 'dashed') {
+      // Change to dashed style immediately and show arrow dropdown for further options
+      onToggleDashed?.('dashed');
+      setShowArrowDropdown(true);
+    } else {
+      onToggleDashed?.(style.name);
+      setShowLineStyles(false);
+      setShowArrowDropdown(false);
+    }
+  };
+
+  const handleArrowClick = (direction, e) => {
+    e.stopPropagation();
+    onToggleDashed?.(direction); // Pass 'left' or 'right'
+    setShowArrowDropdown(false);
     setShowLineStyles(false);
   };
 
@@ -111,6 +129,47 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
                 {style.icon}
               </button>
             ))}
+          </div>
+        )}
+
+        {showArrowDropdown && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'white',
+              borderRadius: '4px',
+              padding: '4px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
+            }}
+          >
+            <button
+              onClick={(e) => handleArrowClick('left', e)}
+              style={{
+                padding: '4px 8px',
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+            >
+              ←
+            </button>
+            <button
+              onClick={(e) => handleArrowClick('right', e)}
+              style={{
+                padding: '4px 8px',
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+            >
+              →
+            </button>
           </div>
         )}
       </div>
