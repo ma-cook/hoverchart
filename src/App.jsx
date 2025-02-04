@@ -74,7 +74,7 @@ const App = () => {
     if (cameraRef.current?.orbitControls) {
       window.orbitControls = cameraRef.current.orbitControls;
     }
-  }, []);
+  }, [cameraRef.current?.orbitControls]); // Updated dependencies
 
   const disableOrbitControls = useCallback(() => {
     if (cameraRef.current?.orbitControls) {

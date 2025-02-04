@@ -21,6 +21,42 @@ const ResizeArrows = ({ onResize, object }) => {
   const MAX_HEAD_LENGTH = 3;
   const MAX_HEAD_WIDTH = 2;
 
+  const renderArrow = (axis, arrowRef) => (
+    <group>
+      {/* Invisible hit area */}
+      <mesh
+        onPointerDown={() => handlePointerDown(axis)}
+        // Increase hit area surface by using a larger plane
+        geometry={
+          new THREE.PlaneGeometry(
+            ARROW_BASE_LENGTH * SCALE_FACTOR * 2,
+            ARROW_BASE_LENGTH * SCALE_FACTOR * 2
+          )
+        }
+        material={new THREE.MeshBasicMaterial({ visible: false })}
+      />
+      {/* Original arrow */}
+      <primitive
+        object={
+          new THREE.ArrowHelper(
+            new THREE.Vector3(
+              axis === 'x' ? 1 : 0,
+              axis === 'y' ? 1 : 0,
+              axis === 'z' ? 1 : 0
+            ),
+            new THREE.Vector3(0, 0, 0),
+            ARROW_BASE_LENGTH,
+            0xffff00,
+            ARROW_HEAD_LENGTH,
+            ARROW_HEAD_WIDTH
+          )
+        }
+        ref={arrowRef}
+        onPointerDown={() => handlePointerDown(axis)}
+      />
+    </group>
+  );
+
   useFrame(() => {
     if (groupRef.current && object) {
       groupRef.current.position.copy(object.position);
@@ -90,29 +126,9 @@ const ResizeArrows = ({ onResize, object }) => {
 
   return (
     <group ref={groupRef}>
-      {['x', 'y', 'z'].map((axis) => (
-        <arrowHelper
-          key={axis}
-          ref={arrowRefs[axis]}
-          args={[
-            new THREE.Vector3(
-              ...(axis === 'x'
-                ? [1, 0, 0]
-                : axis === 'y'
-                ? [0, 1, 0]
-                : [0, 0, 1])
-            ),
-            new THREE.Vector3(0, 0, 0),
-            1, // Increased base length by 3 units (from 10 to 13)
-            new THREE.Color(
-              axis === 'x' ? 'red' : axis === 'y' ? 'green' : 'blue'
-            ),
-          ]}
-          onPointerDown={(e) => handlePointerDown(axis, e)}
-          cursor="pointer"
-          pointerEvents="auto"
-        />
-      ))}
+      {renderArrow('x', arrowRefs.x)}
+      {renderArrow('y', arrowRefs.y)}
+      {renderArrow('z', arrowRefs.z)}
     </group>
   );
 };

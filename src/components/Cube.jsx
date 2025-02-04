@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import {
   Line,
   TransformControls as DreiTransformControls,
@@ -11,47 +11,8 @@ import TextSprite from './TextSprite';
 import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
 import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
-import { useFrame } from '@react-three/fiber';
-
-const FaceIndicator = ({ position, rotation, onClick, isActive }) => {
-  const meshRef = useRef();
-  const groupRef = useRef();
-
-  // Remove parentScale prop and update scale on every frame
-  useFrame(() => {
-    if (meshRef.current && groupRef.current) {
-      const worldScale = new THREE.Vector3();
-      groupRef.current.getWorldScale(worldScale);
-      // Set inverse scale to cancel parent's scaling
-      meshRef.current.scale.set(
-        1 / worldScale.x,
-        1 / worldScale.y,
-        1 / worldScale.z
-      );
-    }
-  });
-
-  return (
-    <group ref={groupRef}>
-      <mesh
-        ref={meshRef}
-        position={position}
-        rotation={rotation}
-        onClick={(e) => {
-          e.stopPropagation();
-          onClick(e);
-        }}
-      >
-        <boxGeometry args={[1, 1, 1]} />
-        <meshBasicMaterial
-          color={isActive ? '#4488ff' : 'blue'}
-          opacity={0.8}
-          transparent
-        />
-      </mesh>
-    </group>
-  );
-};
+import FaceIndicator from './FaceIndicator'; // <-- New import
+import { getFaceIndicatorProps, faces, faceMaterialProps } from './cubeHelpers'; // <-- New import
 
 const Cube = ({
   position,
@@ -109,6 +70,12 @@ const Cube = ({
   });
   const [activeTextFace, setActiveTextFace] = useState(null);
   const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
+  const [lineColor, setLineColor] = useState('white');
+
+  const handleLineColorChange = useCallback((color) => {
+    console.log('Changing line color to:', color); // Add logging
+    setLineColor(color);
+  }, []);
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -117,15 +84,18 @@ const Cube = ({
       setShowTransform(false); // Ensure TransformControls are hidden
       setActiveTextStyleUI(false); // Add this line to close TextStyleUI
     }
-  }, [selected]);
+  }, [selected, setSelectedFace, setShowTransform, setActiveTextStyleUI]); // Added missing dependencies
 
   // Store orbitControls in the mesh's userData when mounted
   useEffect(() => {
     if (contentRef.current && window.orbitControls) {
       contentRef.current.orbitControls = window.orbitControls;
-      nonScaledRef.current.orbitControls = window.orbitControls;
+      if (nonScaledRef.current) {
+        // Ensure nonScaledRef.current exists
+        nonScaledRef.current.orbitControls = window.orbitControls;
+      }
     }
-  }, []);
+  }, [contentRef, nonScaledRef]); // Added refs as dependencies
 
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
@@ -291,16 +261,6 @@ const Cube = ({
     [size, size, size],
   ];
 
-  const faceMaterialProps = {
-    transparent: true,
-    opacity: 0.1,
-    side: THREE.DoubleSide,
-    depthTest: false,
-    polygonOffset: true, // <-- New: enable polygon offset
-    polygonOffsetFactor: -1, // <-- New: push face slightly back
-    polygonOffsetUnits: -4, // <-- New: fine tune the offset
-  };
-
   const getFaceMaterial = (faceName) => ({
     ...faceMaterialProps,
     color: faceColors[faceName]
@@ -343,29 +303,6 @@ const Cube = ({
     ];
   };
 
-  const getFaceIndicatorProps = (faceName) => {
-    const props = {
-      front: { position: [0, 0, 5], rotation: [0, 0, 0] },
-      back: { position: [0, 0, -5], rotation: [0, Math.PI, 0] },
-      top: { position: [0, 5, 0], rotation: [-Math.PI / 2, 0, 0] },
-      bottom: { position: [0, -5, 0], rotation: [Math.PI / 2, 0, 0] },
-      right: { position: [5, 0, 0], rotation: [0, Math.PI / 2, 0] },
-      left: { position: [-5, 0, 0], rotation: [0, -Math.PI / 2, 0] },
-    }[faceName];
-
-    return props || { position: [0, 0, 0], rotation: [0, 0, 0] };
-  };
-
-  const faces = [
-    { name: 'front', normal: [0, 0, 1] },
-    { name: 'back', normal: [0, 0, -1] },
-    { name: 'top', normal: [0, 1, 0] },
-    { name: 'bottom', normal: [0, -1, 0] },
-    { name: 'right', normal: [1, 0, 0] },
-    { name: 'left', normal: [-1, 0, 0] },
-  ];
-
-  // Helper function to check if this indicator is active
   const isIndicatorActive = (faceName) => {
     return selectedIndicators.some(
       (indicator) =>
@@ -614,7 +551,7 @@ const Cube = ({
 
             <Line
               points={points}
-              color={selected ? 'blue' : 'white'}
+              color={lineColor} // Remove the selected condition, always use lineColor
               lineWidth={1}
               segments={true}
               polygonOffset // <-- Enable polygon offset for the edge lines
@@ -629,6 +566,7 @@ const Cube = ({
               onTransformToggle={handleTransformToggle}
               onHeaderToggle={handleHeaderToggle}
               onResizeToggle={handleResizeToggle} // Passed handleResizeToggle to ObjectUI
+              onLineColorChange={handleLineColorChange} // <-- New prop
               showTransform={showTransform}
               showHeader={showHeader}
               followTarget={contentRef}

@@ -1,18 +1,21 @@
 import { Html } from '@react-three/drei';
-import { useRef } from 'react';
+import ColorPicker from './ColorPicker';
+import { useState, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
 const ObjectUI = ({
   onTransformToggle,
   onHeaderToggle,
-  onResizeToggle, // Added onResizeToggle prop
+  onResizeToggle,
+  onLineColorChange, // <-- New prop
   showTransform = false,
   showHeader = false,
   followTarget,
 }) => {
   const groupRef = useRef();
   const lastPosition = useRef(null);
+  const [showColorPicker, setShowColorPicker] = useState(false);
 
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
@@ -54,7 +57,6 @@ const ObjectUI = ({
     },
     { name: 'text', icon: 'T' },
     { name: 'arrow', icon: '↗' },
-    { name: 'paint', icon: '🎨' },
     { name: 'opacity', icon: '○' },
     {
       name: 'transform',
@@ -72,7 +74,25 @@ const ObjectUI = ({
         onResizeToggle?.();
       },
     },
+    { name: 'color', icon: '🎨' }, // <-- New color tool
   ];
+
+  const handleToolClick = (tool) => {
+    switch (tool.name) {
+      case 'transform':
+        onTransformToggle();
+        break;
+      case 'header':
+        onHeaderToggle();
+        break;
+      case 'resize':
+        onResizeToggle();
+        break;
+      case 'color':
+        setShowColorPicker(true);
+        break;
+    }
+  };
 
   return (
     <group ref={groupRef}>
@@ -97,6 +117,7 @@ const ObjectUI = ({
                   tool.onClick();
                 } else {
                   console.log(`${tool.name} button clicked`);
+                  handleToolClick(tool);
                 }
               }}
             >
@@ -104,6 +125,17 @@ const ObjectUI = ({
             </button>
           ))}
         </div>
+        {showColorPicker && (
+          <ColorPicker
+            onColorSelect={(color) => {
+              if (onLineColorChange) {
+                onLineColorChange(color);
+              }
+              setShowColorPicker(false);
+            }}
+            onClose={() => setShowColorPicker(false)}
+          />
+        )}
       </Html>
     </group>
   );

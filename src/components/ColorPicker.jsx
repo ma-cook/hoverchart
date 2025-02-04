@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { HexColorPicker } from 'react-colorful';
 
 const ColorPicker = ({ onColorSelect, onClose }) => {
+  const [currentColor, setCurrentColor] = useState('#ffffff');
   const pickerRef = useRef();
 
   useEffect(() => {
@@ -15,8 +16,18 @@ const ColorPicker = ({ onColorSelect, onClose }) => {
     };
   }, []);
 
-  const handleContainerEvents = (e) => {
+  const handleColorChange = (color) => {
+    setCurrentColor(color);
+  };
+
+  const handleContainerClick = (e) => {
     e.stopPropagation();
+  };
+
+  const handleApplyColor = (e) => {
+    e.stopPropagation();
+    onColorSelect?.(currentColor);
+    onClose();
   };
 
   return (
@@ -33,33 +44,47 @@ const ColorPicker = ({ onColorSelect, onClose }) => {
         alignItems: 'center',
         zIndex: 1000,
       }}
-      onClick={handleContainerEvents}
-      onPointerDown={handleContainerEvents}
+      onClick={handleContainerClick}
+      onPointerDown={handleContainerClick}
     >
-      <div>
+      <div onClick={handleContainerClick}>
         <HexColorPicker
-          color="#ffffff"
-          onChange={onColorSelect}
+          color={currentColor}
+          onChange={handleColorChange}
           style={{ width: '200px', height: '200px' }}
         />
       </div>
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        style={{
-          padding: '4px 8px',
-          borderRadius: '4px',
-          background: '#444',
-          color: 'white',
-          border: 'none',
-          cursor: 'pointer',
-          marginTop: '8px',
-        }}
-      >
-        Close
-      </button>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button
+          onClick={handleApplyColor}
+          style={{
+            padding: '4px 8px',
+            borderRadius: '4px',
+            background: '#444',
+            color: 'white',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+        >
+          Apply
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          style={{
+            padding: '4px 8px',
+            borderRadius: '4px',
+            background: '#444',
+            color: 'white',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import { Line } from '@react-three/drei';
 import { Vector3 } from 'three';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceUI from './FaceUI';
 import TextSprite from './TextSprite';
@@ -11,8 +11,11 @@ import ResizeArrows from './ResizeArrows'; // Fix import statement to use defaul
 
 const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const groupRef = useRef();
+  const meshRef = useRef(); // Add meshRef
   const { camera } = useThree();
   const size = 5;
+  const width = 10,
+    height = 10; // dimensions used in planeGeometry
   const [color, setColor] = useState(null);
   const [showUI, setShowUI] = useState(false);
   const [text, setText] = useState('');
@@ -26,6 +29,15 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const [showTransform, setShowTransform] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [scale, setScale] = useState([1, 1, 1]);
+
+  // Wrap closeAllUIs in useCallback and declare it before it’s used
+  const closeAllUIs = useCallback(() => {
+    setShowTextStyleUI(false);
+    setShowUI(false);
+    setShowTextInput(false);
+    setShowTransform(false);
+    setIsResizing(false);
+  }, []); // No dependencies as setters are stable
 
   const points = [
     new Vector3(-size, -size, 0),
@@ -46,7 +58,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     if (!selected) {
       closeAllUIs();
     }
-  }, [selected]);
+  }, [selected, closeAllUIs]); // Added closeAllUIs as dependency
 
   // Close TextStyleUI when clicking anywhere else
   useEffect(() => {
@@ -68,15 +80,6 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
       window.removeEventListener('click', handleGlobalClick);
     };
   }, [showTextStyleUI]);
-
-  // Create a utility function to close all UIs
-  const closeAllUIs = () => {
-    setShowTextStyleUI(false);
-    setShowUI(false);
-    setShowTextInput(false);
-    setShowTransform(false); // Also close transform controls
-    setIsResizing(false); // Also close resizing
-  };
 
   const handleColorChange = (newColor) => {
     setColor(newColor);
@@ -135,6 +138,14 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     }
   };
 
+  // Compute margin offset so arrows appear outside the plane edges
+  const arrowMargin = 1; // extra unit margin
+  const computedArrowOffset = {
+    x: (width / 2) * scale[0] + arrowMargin,
+    y: (height / 2) * scale[1] + arrowMargin,
+    z: 0,
+  };
+
   const handleDrag = (e) => {
     // Update position from transform controls
     if (groupRef.current) {
@@ -147,7 +158,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     <>
       <group ref={groupRef} position={position}>
         <group scale={scale}>
-          <mesh onClick={handleClick}>
+          <mesh ref={meshRef} onClick={handleClick}>
             <planeGeometry args={[10, 10]} />
             <meshBasicMaterial
               color={color || (selected ? '#99ccff' : 'white')}
@@ -199,11 +210,12 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
         )}
 
         {/* Add ResizeArrows when resizing */}
-        {selected && isResizing && groupRef.current && (
+        {selected && isResizing && meshRef.current && (
           <ResizeArrows
             onResize={handleResize}
-            object={groupRef.current}
+            object={meshRef.current}
             planeMode={true} // Optional: add this prop to ResizeArrows to only show x/y arrows
+            arrowOffset={computedArrowOffset} // Pass computed offset
           />
         )}
       </group>
