@@ -9,6 +9,9 @@ import Cube from './components/Cube';
 import Sphere from './components/Sphere';
 import Plane from './components/Plane';
 import LineUI from './components/LineUI';
+import HeaderInput from './components/HeaderInput';
+import TextSprite from './components/TextSprite';
+import TextStyleUI from './components/TextStyleUI';
 import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
 
 const ConnectionUpdater = ({
@@ -69,6 +72,10 @@ const App = () => {
 
   const [activeTextStyleUI, setActiveTextStyleUI] = useState(null);
   const [selectedConnection, setSelectedConnection] = useState(null);
+  const [lineTexts, setLineTexts] = useState({}); // Add state for line texts
+  const [showLineTextInput, setShowLineTextInput] = useState(null); // Add state for text input
+  const [lineTextStyles, setLineTextStyles] = useState({});
+  const [showLineTextStyleUI, setShowLineTextStyleUI] = useState(null);
 
   useEffect(() => {
     if (cameraRef.current?.orbitControls) {
@@ -113,8 +120,9 @@ const App = () => {
   };
 
   const handleObjectClick = (id) => {
-    console.log('Clicking object with id:', id);
     setSelectedId(id);
+    setShowLineTextStyleUI(null); // Add this line
+    setSelectedConnection(null);
   };
 
   const calculateFacePosition = (indicator) => {
@@ -199,6 +207,7 @@ const App = () => {
     if (!event.object) {
       setActiveTextStyleUI(null);
       setSelectedConnection(null);
+      setShowLineTextStyleUI(null); // Add this line
     }
     setSelectedId(null);
   };
@@ -218,6 +227,7 @@ const App = () => {
   const handleConnectionClick = (e, connectionId) => {
     e.stopPropagation();
     setSelectedConnection(connectionId);
+    setShowLineTextStyleUI(null); // Add this line
     setSelectedId(null);
   };
 
@@ -271,6 +281,28 @@ const App = () => {
     setConnections((prev) =>
       prev.map((conn) => (conn.id === connectionId ? { ...conn, color } : conn))
     );
+  };
+
+  const handleLineTextSubmit = (connectionId, text) => {
+    setLineTexts((prev) => ({
+      ...prev,
+      [connectionId]: text,
+    }));
+    setShowLineTextInput(null);
+  };
+
+  const handleLineTextStyleChange = (connectionId, newStyle) => {
+    setLineTextStyles((prev) => ({
+      ...prev,
+      [connectionId]: { ...(prev[connectionId] || {}), ...newStyle },
+    }));
+  };
+
+  // Add click handler for text sprite
+  const handleLineTextClick = (e, connectionId) => {
+    e.stopPropagation();
+    setShowLineTextStyleUI(connectionId);
+    setShowLineTextInput(null);
   };
 
   return (
@@ -343,6 +375,39 @@ const App = () => {
                   transparent
                   opacity={0}
                 />
+                {lineTexts[connection.id] && (
+                  <TextSprite
+                    text={lineTexts[connection.id]}
+                    position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
+                    style={
+                      lineTextStyles[connection.id] || {
+                        fontSize: 1,
+                        color: 'white',
+                      }
+                    }
+                    onClick={(e) => handleLineTextClick(e, connection.id)}
+                  />
+                )}
+
+                {showLineTextInput === connection.id && (
+                  <HeaderInput
+                    position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
+                    onTextSubmit={(text) =>
+                      handleLineTextSubmit(connection.id, text)
+                    }
+                  />
+                )}
+
+                {showLineTextStyleUI === connection.id && (
+                  <TextStyleUI
+                    position={[midpoint[0], midpoint[1] + 8, midpoint[2]]}
+                    onStyleChange={(style) =>
+                      handleLineTextStyleChange(connection.id, style)
+                    }
+                    onClose={() => setShowLineTextStyleUI(null)}
+                  />
+                )}
+
                 {selectedConnection === connection.id && (
                   <LineUI
                     position={midpoint}
@@ -353,7 +418,7 @@ const App = () => {
                       handleLineStyleChange(connection.id, styleType);
                     }}
                     onTextClick={() => {
-                      console.log('Text clicked');
+                      setShowLineTextInput(connection.id);
                     }}
                   />
                 )}

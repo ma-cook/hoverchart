@@ -23,13 +23,14 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
   const handleToolClick = (tool, e) => {
     e.stopPropagation();
     switch (tool.name) {
-      case 'paint':
-        setShowColorPicker(true);
-        setShowLineStyles(false);
-        setShowArrowDropdown(false);
-        break;
       case 'text':
         onTextClick?.();
+        setShowLineStyles(false);
+        setShowArrowDropdown(false);
+        setShowColorPicker(false);
+        break;
+      case 'paint':
+        setShowColorPicker(true);
         setShowLineStyles(false);
         setShowArrowDropdown(false);
         break;

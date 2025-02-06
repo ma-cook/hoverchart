@@ -80,8 +80,7 @@ const ObjectUI = ({
       },
     },
     { name: 'text', icon: 'T' },
-    { name: 'arrow', icon: '↗' },
-    { name: 'opacity', icon: '○' },
+
     {
       name: 'transform',
       icon: '✥',
