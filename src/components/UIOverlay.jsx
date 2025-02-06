@@ -39,6 +39,13 @@ const UIOverlay = ({ onCreateObject, onToggleIndicators }) => {
       >
         ↗
       </button>
+      <button
+        className="shape-button"
+        onClick={() => onCreateObject('text')}
+        title="Add Text"
+      >
+        T
+      </button>
     </div>
   );
 };

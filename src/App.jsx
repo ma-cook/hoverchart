@@ -13,6 +13,7 @@ import HeaderInput from './components/HeaderInput';
 import TextSprite from './components/TextSprite';
 import TextStyleUI from './components/TextStyleUI';
 import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
+import TextObject from './components/TextObject';
 
 const ConnectionUpdater = ({
   connections,
@@ -107,13 +108,15 @@ const App = () => {
     );
     const direction = new THREE.Vector3(0, 0, -1).applyEuler(euler);
 
-    cameraPos.add(direction.multiplyScalar(75));
+    // Place objects at different distances based on type
+    const distance = type === 'text' ? 50 : 75;
+    const position = cameraPos.add(direction.multiplyScalar(distance));
 
     setObjects((prevObjects) => [
       ...prevObjects,
       {
         type,
-        position: [cameraPos.x, cameraPos.y, cameraPos.z],
+        position: [position.x, position.y, position.z],
         id: Date.now(),
       },
     ]);
@@ -464,6 +467,16 @@ const App = () => {
             if (obj.type === 'plane') {
               return (
                 <Plane
+                  key={obj.id}
+                  position={obj.position}
+                  selected={selectedId === obj.id}
+                  onClick={() => handleObjectClick(obj.id)}
+                />
+              );
+            }
+            if (obj.type === 'text') {
+              return (
+                <TextObject
                   key={obj.id}
                   position={obj.position}
                   selected={selectedId === obj.id}
