@@ -31,8 +31,8 @@ const FaceIndicator = ({ position, rotation, onClick, isActive }) => {
       >
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial
-          color={isActive ? '#4488ff' : 'blue'}
-          opacity={0.8}
+          color={isActive ? '#4488ff' : 'white'}
+          opacity={0.9}
           transparent
         />
       </mesh>

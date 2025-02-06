@@ -1,7 +1,7 @@
 import { Html } from '@react-three/drei';
 import ColorPicker from './ColorPicker';
 import { useState, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber'; // <-- New import
 import * as THREE from 'three';
 
 const ObjectUI = ({
@@ -16,6 +16,7 @@ const ObjectUI = ({
   const groupRef = useRef();
   const lastPosition = useRef(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const { camera } = useThree(); // <-- Get camera from Three.js context
 
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
@@ -44,6 +45,29 @@ const ObjectUI = ({
       groupRef.current.quaternion.copy(camera.quaternion);
     }
   });
+
+  // Updated handler for the eye tool click: use followTarget and force camera update
+  const handleEyeClick = () => {
+    if (followTarget?.current) {
+      // Get the world position of the selected object
+      const worldPosition = new THREE.Vector3();
+      followTarget.current.getWorldPosition(worldPosition);
+
+      // Set up the camera position at an offset from the object
+      const offset = new THREE.Vector3(20, 20, 20);
+      const cameraPosition = worldPosition.clone().add(offset);
+
+      // Update camera
+      camera.position.copy(cameraPosition);
+
+      // Make camera and orbit controls look at the object
+      camera.lookAt(worldPosition);
+      if (window.orbitControls) {
+        window.orbitControls.target.copy(worldPosition);
+        window.orbitControls.update();
+      }
+    }
+  };
 
   const tools = [
     {
@@ -75,6 +99,11 @@ const ObjectUI = ({
       },
     },
     { name: 'color', icon: '🎨' }, // <-- New color tool
+    {
+      name: 'eye',
+      icon: '👁', // <-- Eye icon
+      onClick: handleEyeClick, // <-- Added eye tool handler
+    },
   ];
 
   const handleToolClick = (tool) => {

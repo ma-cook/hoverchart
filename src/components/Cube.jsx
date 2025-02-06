@@ -268,7 +268,11 @@ const Cube = ({
       : selectedFace === faceName
       ? new THREE.Color('#99ccff')
       : new THREE.Color('#ffffff'),
-    opacity: faceColors[faceName] ? 1.0 : selectedFace === faceName ? 0.5 : 0.1,
+    opacity: faceColors[faceName]
+      ? 1.0
+      : selectedFace === faceName
+      ? 0.1
+      : 0.05,
     depthWrite: !!faceColors[faceName],
   });
 
@@ -560,8 +564,9 @@ const Cube = ({
             />
           </group>
           {/* Move ObjectUI outside scaled group and update position */}
-          {selected && !showHeader && showObjectUI && (
+          {selected && !showHeader && showObjectUI && contentRef.current && (
             <ObjectUI
+              key={contentRef.current.uuid} // <-- New: force remount when cube selection changes
               position={getUIPosition()}
               onTransformToggle={handleTransformToggle}
               onHeaderToggle={handleHeaderToggle}
@@ -570,6 +575,7 @@ const Cube = ({
               showTransform={showTransform}
               showHeader={showHeader}
               followTarget={contentRef}
+              objectId={contentRef.current.uuid} // Add this prop
             />
           )}
           {/* Update header elements positions */}

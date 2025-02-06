@@ -163,14 +163,14 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
             <meshBasicMaterial
               color={color || (selected ? '#99ccff' : 'white')}
               transparent
-              opacity={color ? 1 : selected ? 0.5 : 0.1}
+              opacity={color ? 1 : selected ? 0.1 : 0}
               depthWrite={!!color}
             />
           </mesh>
           <Line
             points={points}
             color={selected ? 'blue' : 'white'}
-            lineWidth={1}
+            lineWidth={2}
           />
         </group>
 
