@@ -20,7 +20,7 @@ const ConnectionUpdater = ({
     if (connections.length > 0) {
       setConnections((prev) =>
         prev.map((conn) => {
-          if (conn.lineStyle === 'dashed') {
+          if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
             if (conn.dashDirection === 'left') {
               return {
                 ...conn,
@@ -230,27 +230,27 @@ const App = () => {
   };
 
   const handleLineStyleChange = (connectionId, styleType) => {
-    if (styleType === 'left') {
+    if (styleType === 'dotted-left' || styleType === 'dotted-right') {
       setConnections((prev) =>
         prev.map((conn) =>
           conn.id === connectionId
             ? {
                 ...conn,
-                lineStyle: 'dashed',
-                dashDirection: 'left',
+                lineStyle: 'dotted',
+                dashDirection: styleType.split('-')[1],
                 dashOffset: 0,
               }
             : conn
         )
       );
-    } else if (styleType === 'right') {
+    } else if (styleType === 'dashed-left' || styleType === 'dashed-right') {
       setConnections((prev) =>
         prev.map((conn) =>
           conn.id === connectionId
             ? {
                 ...conn,
                 lineStyle: 'dashed',
-                dashDirection: 'right',
+                dashDirection: styleType.split('-')[1],
                 dashOffset: 0,
               }
             : conn
@@ -265,6 +265,12 @@ const App = () => {
         )
       );
     }
+  };
+
+  const handleLineColorChange = (connectionId, color) => {
+    setConnections((prev) =>
+      prev.map((conn) => (conn.id === connectionId ? { ...conn, color } : conn))
+    );
   };
 
   return (
@@ -307,7 +313,8 @@ const App = () => {
                 <Line
                   points={[connection.start.position, connection.end.position]}
                   color={
-                    selectedConnection === connection.id ? '#ffff00' : 'white'
+                    connection.color ||
+                    (selectedConnection === connection.id ? '#ffff00' : 'white')
                   }
                   lineWidth={selectedConnection === connection.id ? 4 : 2}
                   dashed={
@@ -339,9 +346,9 @@ const App = () => {
                 {selectedConnection === connection.id && (
                   <LineUI
                     position={midpoint}
-                    onColorChange={(color) => {
-                      console.log('Color changed to:', color);
-                    }}
+                    onColorChange={(color) =>
+                      handleLineColorChange(connection.id, color)
+                    }
                     onToggleDashed={(styleType) => {
                       handleLineStyleChange(connection.id, styleType);
                     }}

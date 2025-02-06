@@ -6,6 +6,7 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showLineStyles, setShowLineStyles] = useState(false);
   const [showArrowDropdown, setShowArrowDropdown] = useState(false); // <-- New state
+  const [currentLineStyle, setCurrentLineStyle] = useState('straight'); // Add this state
 
   const tools = [
     { name: 'text', icon: 'T' },
@@ -42,9 +43,9 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
 
   const handleLineStyleClick = (style, e) => {
     e.stopPropagation();
-    if (style.name === 'dashed') {
-      // Change to dashed style immediately and show arrow dropdown for further options
-      onToggleDashed?.('dashed');
+    setCurrentLineStyle(style.name);
+    if (style.name === 'dashed' || style.name === 'dotted') {
+      onToggleDashed?.(style.name);
       setShowArrowDropdown(true);
     } else {
       onToggleDashed?.(style.name);
@@ -55,7 +56,8 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
 
   const handleArrowClick = (direction, e) => {
     e.stopPropagation();
-    onToggleDashed?.(direction); // Pass 'left' or 'right'
+    // Use currentLineStyle to determine which animation to trigger
+    onToggleDashed?.(`${currentLineStyle}-${direction}`);
     setShowArrowDropdown(false);
     setShowLineStyles(false);
   };
