@@ -26,7 +26,13 @@ const TextSprite = ({
 
   const getFontSize = (size) => {
     if (typeof size === 'number') {
-      return size * 0.7; // Scale the numeric size (0.7 is the previous 'large' size)
+      if (style.isHeaderText) {
+        // More gradual size increase for header text
+        const baseSize = 1; // Starting size
+        const increment = 0.05; // Size increment per unit
+        return baseSize + (size - 1) * increment;
+      }
+      return size * 0.7; // Keep existing scale for other text
     }
     // Maintain backward compatibility with string sizes
     switch (size) {
@@ -50,8 +56,10 @@ const TextSprite = ({
           const distanceToCamera = camera.position.distanceTo(targetPos);
           const fontSize = getFontSize(style.fontSize);
 
-          // Calculate scale factor based on camera distance
-          const scaleFactor = distanceToCamera * 0.02;
+          // Adjusted scale factor calculation for better visibility
+          const baseScale = 0.5; // Minimum scale
+          const zoomFactor = 0.02; // How much zoom affects scale
+          const scaleFactor = baseScale + distanceToCamera * zoomFactor;
 
           // Calculate text height considering scale factor
           const textHeight = fontSize * TEXT_HEIGHT * scaleFactor;

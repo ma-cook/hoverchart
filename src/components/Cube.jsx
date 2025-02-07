@@ -492,7 +492,7 @@ const Cube = ({
                     {activeTextFace === name &&
                       activeTextStyleUI === contentRef.current && (
                         <TextStyleUI
-                          position={[0, 6, 0]}
+                          position={[0, 30, 0]}
                           onStyleChange={handleStyleChange}
                           onClose={() => {
                             setActiveTextFace(null);

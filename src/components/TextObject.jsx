@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useLayoutEffect, useEffect } from 'react'; // Updated: import useLayoutEffect
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { TextStyleUIContent } from './TextStyleUI'; // Remove TextStyleUI import
@@ -10,13 +10,42 @@ const TextObject = ({ position, selected, onClick }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [textStyle, setTextStyle] = useState({});
   const [menuDistance, setMenuDistance] = useState(50);
+  const textAreaRef = useRef();
+  const displayRef = useRef(); // <-- New ref for non-editing display
 
   const [scale] = useState([15, 10, 1]); // Default size for the text plane
   const conversionFactor = 30; // Increase conversion factor for larger HTML size
 
+  // Adjust the height of the textarea based on its content
+  const adjustHeight = () => {
+    if (textAreaRef.current) {
+      textAreaRef.current.style.height = 'auto';
+      textAreaRef.current.style.height = `${textAreaRef.current.scrollHeight}px`;
+    }
+  };
+
   const handleTextChange = (e) => {
     setText(e.target.value);
+    adjustHeight();
   };
+
+  // Replace the existing useLayoutEffect:
+  useLayoutEffect(() => {
+    if (isEditing) {
+      requestAnimationFrame(adjustHeight);
+    } else {
+      adjustDisplayHeight();
+    }
+  }, [text, isEditing]);
+
+  // New effect to recalculate height when font size changes:
+  useLayoutEffect(() => {
+    if (isEditing) {
+      requestAnimationFrame(adjustHeight);
+    } else {
+      adjustDisplayHeight();
+    }
+  }, [textStyle.fontSize]);
 
   const handleTextClick = (e) => {
     e.stopPropagation();
@@ -44,22 +73,21 @@ const TextObject = ({ position, selected, onClick }) => {
   const getTextAreaStyle = () => ({
     autoWrap: 'wrap',
     width: '100%',
-    height: '100%',
+    height: 'auto', // <-- Changed from '100%'
     background: 'rgba(0,0,0,0.5)',
     color: 'white',
     border: 'none',
     padding: '8px',
     margin: '0',
     resize: 'none',
-    fontSize: '32px',
+    fontSize: textStyle.fontSize ? `${textStyle.fontSize}px` : '32px',
     fontFamily: 'Arial',
-    overflow: 'auto',
     whiteSpace: 'pre-wrap',
-    wordWrap: 'break-word', // <-- New: ensure long words wrap in div
-    overflowWrap: 'break-word', // <-- New: additional support for wrapping
+    wordWrap: 'break-word', // ensures long words wrap
+    overflowWrap: 'break-word', // additional support for wrapping
     boxSizing: 'border-box',
     outline: selected ? '1px solid #99ccff' : 'none',
-    ...textStyle,
+    overflow: 'hidden', // Keep only this overflow property
   });
 
   const getContainerStyle = () => ({
@@ -67,6 +95,14 @@ const TextObject = ({ position, selected, onClick }) => {
     height: `${scale[1] * 1.3 * conversionFactor}px`, // Adjusted multiplier
     position: 'relative',
   });
+
+  // New: Adjust the display div height when not editing
+  const adjustDisplayHeight = () => {
+    if (displayRef.current) {
+      displayRef.current.style.height = 'auto';
+      displayRef.current.style.height = `${displayRef.current.scrollHeight}px`;
+    }
+  };
 
   // Add useFrame hook to update rotation so that TextObject always faces the camera
   useFrame(({ camera }) => {
@@ -111,6 +147,7 @@ const TextObject = ({ position, selected, onClick }) => {
             )}
             {isEditing ? (
               <textarea
+                ref={textAreaRef}
                 value={text}
                 onChange={handleTextChange}
                 onBlur={handleBlur} // Updated onBlur handler
@@ -120,6 +157,7 @@ const TextObject = ({ position, selected, onClick }) => {
               />
             ) : (
               <div
+                ref={displayRef} // <-- New: attach ref for auto resize
                 onClick={handleTextClick}
                 style={{
                   ...getTextAreaStyle(),

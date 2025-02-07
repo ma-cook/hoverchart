@@ -2,9 +2,10 @@ import { Html } from '@react-three/drei';
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
+import * as THREE from 'three'; // Add this import
 
 // Add export to the TextStyleUIContent component
-export const TextStyleUIContent = ({ onStyleChange, distance = 50 }) => {
+export const TextStyleUIContent = ({ onStyleChange }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleSizeChange = (size) => {
@@ -46,10 +47,6 @@ export const TextStyleUIContent = ({ onStyleChange, distance = 50 }) => {
       onClick={(e) => {
         e.stopPropagation();
         e.nativeEvent?.preventDefault?.();
-      }}
-      style={{
-        transform: `scale(${distance / 50})`,
-        transformOrigin: 'center top',
       }}
     >
       <select
@@ -111,27 +108,31 @@ export const TextStyleUIContent = ({ onStyleChange, distance = 50 }) => {
 // R3F wrapper component
 const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
   const groupRef = useRef();
-  const [distance, setDistance] = useState(50);
+  const lastPosition = useRef(null);
 
   useFrame(({ camera }) => {
-    if (groupRef.current) {
-      if (followTarget && followTarget.current) {
-        const targetScale = followTarget.current.scale;
-        const cubeHeight = 10 * targetScale.y;
-        const topEdgeOffset = cubeHeight / 2;
-        const targetPos = followTarget.current.position;
-        groupRef.current.position.set(
-          targetPos.x,
-          targetPos.y + topEdgeOffset + 10,
-          targetPos.z
-        );
-      }
-      // Always face the camera
-      groupRef.current.quaternion.copy(camera.quaternion);
+    if (groupRef.current && followTarget?.current) {
+      const targetPos = followTarget.current.position;
+      const targetScale = followTarget.current.scale;
+      const cubeHeight = 10 * targetScale.y;
+      const distanceToCamera = camera.position.distanceTo(targetPos);
 
-      // Calculate distance for UI scaling
-      const newDistance = camera.position.distanceTo(groupRef.current.position);
-      setDistance(newDistance);
+      // Match the TextSprite positioning logic for header text
+      const newPos = new THREE.Vector3(
+        targetPos.x,
+        targetPos.y + cubeHeight / 2 + 2, // Position just above the cube
+        targetPos.z
+      );
+
+      if (
+        !lastPosition.current ||
+        lastPosition.current.distanceTo(newPos) > 0.001
+      ) {
+        groupRef.current.position.copy(newPos);
+        lastPosition.current = newPos.clone();
+      }
+
+      groupRef.current.quaternion.copy(camera.quaternion);
     }
   });
 
@@ -145,7 +146,7 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
         center
         className="object-ui-container"
       >
-        <TextStyleUIContent onStyleChange={onStyleChange} distance={distance} />
+        <TextStyleUIContent onStyleChange={onStyleChange} />
       </Html>
     </group>
   );
