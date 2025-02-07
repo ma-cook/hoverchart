@@ -8,7 +8,7 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleSizeChange = (size) => {
-    onStyleChange({ fontSize: size });
+    onStyleChange({ fontSize: size * 20 }); // Multiply by 3 so that default 1 becomes 3
   };
 
   const handleWheel = (e) => {
@@ -35,6 +35,11 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
     onStyleChange({ color });
   };
 
+  const handleSelectChange = (e) => {
+    e.stopPropagation();
+    handleSizeChange(Number(e.target.value));
+  };
+
   return (
     <div
       className="object-ui-content"
@@ -44,9 +49,7 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
       }}
     >
       <select
-        onChange={(e) =>
-          handleButtonClick(e, () => handleSizeChange(Number(e.target.value)))
-        }
+        onChange={handleSelectChange}
         onWheel={handleWheel}
         className="object-tool-button"
         style={{ width: '36px', padding: '2px 2px' }}
@@ -105,21 +108,20 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
 const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
   const groupRef = useRef();
 
-  // Move useFrame outside of condition and handle the condition inside
   useFrame(({ camera }) => {
-    if (!followTarget) return; // Early return if no followTarget
-
-    if (groupRef.current && followTarget?.current) {
-      const targetScale = followTarget.current.scale;
-      const cubeHeight = 10 * targetScale.y;
-      const topEdgeOffset = cubeHeight / 2;
-      const targetPos = followTarget.current.position;
-
-      groupRef.current.position.set(
-        targetPos.x,
-        targetPos.y + topEdgeOffset + 10,
-        targetPos.z
-      );
+    if (groupRef.current) {
+      if (followTarget && followTarget.current) {
+        const targetScale = followTarget.current.scale;
+        const cubeHeight = 10 * targetScale.y;
+        const topEdgeOffset = cubeHeight / 2;
+        const targetPos = followTarget.current.position;
+        groupRef.current.position.set(
+          targetPos.x,
+          targetPos.y + topEdgeOffset + 10,
+          targetPos.z
+        );
+      }
+      // Always face the camera
       groupRef.current.quaternion.copy(camera.quaternion);
     }
   });

@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react';
 import { Html } from '@react-three/drei';
+import { useFrame } from '@react-three/fiber';
 import { TextStyleUIContent } from './TextStyleUI'; // Add this import
 
 const TextObject = ({ position, selected, onClick }) => {
   const groupRef = useRef();
+  const uiMenuRef = useRef(null); // New ref for UI menu
   const [text, setText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [textStyle, setTextStyle] = useState({});
@@ -26,7 +28,15 @@ const TextObject = ({ position, selected, onClick }) => {
     onClick();
   };
 
-  const handleBlur = () => {
+  // Modified onBlur: do not close if focus moves to a child of the UI menu
+  const handleBlur = (e) => {
+    if (
+      uiMenuRef.current &&
+      e.relatedTarget &&
+      uiMenuRef.current.contains(e.relatedTarget)
+    ) {
+      return;
+    }
     setIsEditing(false);
   };
 
@@ -39,7 +49,7 @@ const TextObject = ({ position, selected, onClick }) => {
     padding: '8px',
     margin: '0',
     resize: 'none',
-    fontSize: '16px',
+    fontSize: '32px',
     fontFamily: 'Arial',
     overflow: 'auto',
     whiteSpace: 'pre-wrap',
@@ -54,6 +64,13 @@ const TextObject = ({ position, selected, onClick }) => {
     position: 'relative',
   });
 
+  // Add useFrame hook to update rotation so that TextObject always faces the camera
+  useFrame(({ camera }) => {
+    if (groupRef.current) {
+      groupRef.current.quaternion.copy(camera.quaternion);
+    }
+  });
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -64,7 +81,7 @@ const TextObject = ({ position, selected, onClick }) => {
           <meshBasicMaterial
             color={selected ? '#99ccff' : '#ffffff'}
             transparent
-            opacity={0.1}
+            opacity={0}
           />
         </mesh>
 
@@ -73,6 +90,7 @@ const TextObject = ({ position, selected, onClick }) => {
           <div style={getContainerStyle()}>
             {isEditing && (
               <div
+                ref={uiMenuRef} // Attach ref here
                 style={{
                   position: 'absolute',
                   top: '-60px',
@@ -92,7 +110,7 @@ const TextObject = ({ position, selected, onClick }) => {
               <textarea
                 value={text}
                 onChange={handleTextChange}
-                onBlur={handleBlur}
+                onBlur={handleBlur} // Updated onBlur handler
                 style={getTextAreaStyle()}
                 autoFocus
                 placeholder="Click to edit text..."
