@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
-import { TextStyleUIContent } from './TextStyleUI'; // Add this import
+import { TextStyleUIContent } from './TextStyleUI'; // Remove TextStyleUI import
 
 const TextObject = ({ position, selected, onClick }) => {
   const groupRef = useRef();
@@ -9,6 +9,7 @@ const TextObject = ({ position, selected, onClick }) => {
   const [text, setText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [textStyle, setTextStyle] = useState({});
+  const [menuDistance, setMenuDistance] = useState(50);
 
   const [scale] = useState([15, 10, 1]); // Default size for the text plane
   const conversionFactor = 30; // Increase conversion factor for larger HTML size
@@ -41,6 +42,7 @@ const TextObject = ({ position, selected, onClick }) => {
   };
 
   const getTextAreaStyle = () => ({
+    autoWrap: 'wrap',
     width: '100%',
     height: '100%',
     background: 'rgba(0,0,0,0.5)',
@@ -53,6 +55,8 @@ const TextObject = ({ position, selected, onClick }) => {
     fontFamily: 'Arial',
     overflow: 'auto',
     whiteSpace: 'pre-wrap',
+    wordWrap: 'break-word', // <-- New: ensure long words wrap in div
+    overflowWrap: 'break-word', // <-- New: additional support for wrapping
     boxSizing: 'border-box',
     outline: selected ? '1px solid #99ccff' : 'none',
     ...textStyle,
@@ -68,6 +72,8 @@ const TextObject = ({ position, selected, onClick }) => {
   useFrame(({ camera }) => {
     if (groupRef.current) {
       groupRef.current.quaternion.copy(camera.quaternion);
+      const distance = camera.position.distanceTo(groupRef.current.position);
+      setMenuDistance(distance * 3); // Increased from 0.06 to 0.15
     }
   });
 
@@ -75,28 +81,25 @@ const TextObject = ({ position, selected, onClick }) => {
     <>
       <group ref={groupRef} position={position}>
         {/* Background plane - only handles selection */}
-        <mesh onClick={handlePlaneClick}>
-          <planeGeometry args={[scale[0] * 1, scale[1] * 1]} />{' '}
-          {/* Match with container size */}
-          <meshBasicMaterial
-            color={selected ? '#99ccff' : '#ffffff'}
-            transparent
-            opacity={0}
-          />
-        </mesh>
 
         {/* Text area - handles both editing and selection */}
         <Html transform position={[0, 0, 0.1]} center>
           <div style={getContainerStyle()}>
             {isEditing && (
               <div
-                ref={uiMenuRef} // Attach ref here
+                ref={uiMenuRef}
                 style={{
                   position: 'absolute',
-                  top: '-60px',
+                  top: 0,
                   left: 0,
-                  right: 0,
+                  width: '100%',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  transform: `translateY(-100%) scale(${menuDistance / 50})`,
+                  transformOrigin: 'bottom center',
+                  marginBottom: '10px',
                   zIndex: 2,
+                  transition: 'transform 0.1s ease-out', // <-- New: smooth scaling transition
                 }}
               >
                 <TextStyleUIContent

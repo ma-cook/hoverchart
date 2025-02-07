@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
 
 // Add export to the TextStyleUIContent component
-export const TextStyleUIContent = ({ onStyleChange }) => {
+export const TextStyleUIContent = ({ onStyleChange, distance = 50 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleSizeChange = (size) => {
@@ -46,6 +46,10 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
       onClick={(e) => {
         e.stopPropagation();
         e.nativeEvent?.preventDefault?.();
+      }}
+      style={{
+        transform: `scale(${distance / 50})`,
+        transformOrigin: 'center top',
       }}
     >
       <select
@@ -107,6 +111,7 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
 // R3F wrapper component
 const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
   const groupRef = useRef();
+  const [distance, setDistance] = useState(50);
 
   useFrame(({ camera }) => {
     if (groupRef.current) {
@@ -123,6 +128,10 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
       }
       // Always face the camera
       groupRef.current.quaternion.copy(camera.quaternion);
+
+      // Calculate distance for UI scaling
+      const newDistance = camera.position.distanceTo(groupRef.current.position);
+      setDistance(newDistance);
     }
   });
 
@@ -136,7 +145,7 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
         center
         className="object-ui-container"
       >
-        <TextStyleUIContent onStyleChange={onStyleChange} />
+        <TextStyleUIContent onStyleChange={onStyleChange} distance={distance} />
       </Html>
     </group>
   );
