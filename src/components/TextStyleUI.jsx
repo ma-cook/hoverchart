@@ -12,6 +12,7 @@ export const TextStyleUIContent = ({
 }) => {
   // added uiType prop
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showResizeMode, setShowResizeMode] = useState(false); // Add this state
 
   const handleSizeChange = (size) => {
     const multiplier = uiType === 'textObject' ? 32 : 0.7; // if textObject, size 1 => 32px; otherwise use 0.7
@@ -79,6 +80,26 @@ export const TextStyleUIContent = ({
           </option>
         ))}
       </select>
+
+      {/* Add resize button only for textObject */}
+      {uiType === 'textObject' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            e.nativeEvent?.preventDefault?.();
+            onStyleChange({ showResizeHandles: !showResizeMode });
+            setShowResizeMode(!showResizeMode);
+          }}
+          className="object-tool-button"
+          style={{
+            backgroundColor: showResizeMode
+              ? 'rgba(255,255,255,0.2)'
+              : 'transparent',
+          }}
+        >
+          ↔
+        </button>
+      )}
 
       <div style={{ position: 'relative' }}>
         <button

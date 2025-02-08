@@ -1,10 +1,11 @@
-import { useRef, useState, useLayoutEffect } from 'react';
+import { useRef, useState, useLayoutEffect, useEffect } from 'react';
 import {
   Html,
   TransformControls as DreiTransformControls,
 } from '@react-three/drei'; // <-- Added TransformControls import
 import { useFrame } from '@react-three/fiber';
-import { TextStyleUIContent } from './TextStyleUI';
+
+import TextObjectUI from './TextObjectUI';
 
 const TextObject = ({ position, selected, onClick }) => {
   const groupRef = useRef();
@@ -12,7 +13,6 @@ const TextObject = ({ position, selected, onClick }) => {
   const [text, setText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [textStyle, setTextStyle] = useState({});
-  const [menuDistance, setMenuDistance] = useState(50);
   const [showTransform, setShowTransform] = useState(false); // <-- New state for transform mode
   const textAreaRef = useRef();
   const displayRef = useRef(); // <-- New ref for non-editing display
@@ -107,10 +107,15 @@ const TextObject = ({ position, selected, onClick }) => {
   useFrame(({ camera }) => {
     if (groupRef.current) {
       groupRef.current.quaternion.copy(camera.quaternion);
-      const distance = camera.position.distanceTo(groupRef.current.position);
-      setMenuDistance(distance * 3); // Increased from 0.06 to 0.15
     }
   });
+
+  // Add effect to close transform controls on deselect
+  useEffect(() => {
+    if (!selected) {
+      setShowTransform(false);
+    }
+  }, [selected]);
 
   return (
     <>
@@ -120,47 +125,6 @@ const TextObject = ({ position, selected, onClick }) => {
         {/* Text area - handles both editing and selection */}
         <Html transform position={[0, 0, 0.1]} center>
           <div style={getContainerStyle()}>
-            {isEditing && (
-              <div
-                ref={uiMenuRef}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: '50%', // changed from 0 to center horizontally
-                  transform: `translate(-50%, -140%) scale(${Math.max(
-                    menuDistance / 50,
-                    1
-                  )})`, // changed translateY from -100% to -110%
-                  display: 'flex',
-                  justifyContent: 'center', // center content horizontally
-                  alignItems: 'center',
-                  gap: '8px',
-                  marginBottom: '10px',
-                  zIndex: 2,
-                  transition: 'transform 0.1s ease-out',
-                  // ...other unchanged styles...
-                }}
-              >
-                <TextStyleUIContent
-                  uiType="textObject" // indicate text object usage for proper scaling
-                  onStyleChange={(newStyle) =>
-                    setTextStyle((prev) => ({ ...prev, ...newStyle }))
-                  }
-                />
-                <button
-                  style={{
-                    padding: '4px 8px',
-                    cursor: 'pointer',
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowTransform((prev) => !prev);
-                  }}
-                >
-                  ✥
-                </button>
-              </div>
-            )}
             {isEditing ? (
               <textarea
                 ref={textAreaRef}
@@ -187,6 +151,19 @@ const TextObject = ({ position, selected, onClick }) => {
           </div>
         </Html>
       </group>
+
+      {/* Add the new UI outside the main group */}
+      {isEditing && (
+        <TextObjectUI
+          onStyleChange={(newStyle) =>
+            setTextStyle((prev) => ({ ...prev, ...newStyle }))
+          }
+          followTarget={groupRef}
+          menuRef={uiMenuRef} // pass the ref to keep the menu open on focus
+          onTransformToggle={() => setShowTransform(true)} // new transform toggle callback
+        />
+      )}
+
       {showTransform && groupRef.current && (
         <DreiTransformControls
           object={groupRef.current}
