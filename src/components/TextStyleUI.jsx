@@ -115,7 +115,6 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
       const targetPos = followTarget.current.position;
       const targetScale = followTarget.current.scale;
       const cubeHeight = 10 * targetScale.y;
-      const distanceToCamera = camera.position.distanceTo(targetPos);
 
       // Match the TextSprite positioning logic for header text
       const newPos = new THREE.Vector3(

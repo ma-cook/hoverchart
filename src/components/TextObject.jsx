@@ -1,7 +1,10 @@
-import { useRef, useState, useLayoutEffect, useEffect } from 'react'; // Updated: import useLayoutEffect
-import { Html } from '@react-three/drei';
+import { useRef, useState, useLayoutEffect, useEffect } from 'react';
+import {
+  Html,
+  TransformControls as DreiTransformControls,
+} from '@react-three/drei'; // <-- Added TransformControls import
 import { useFrame } from '@react-three/fiber';
-import { TextStyleUIContent } from './TextStyleUI'; // Remove TextStyleUI import
+import { TextStyleUIContent } from './TextStyleUI';
 
 const TextObject = ({ position, selected, onClick }) => {
   const groupRef = useRef();
@@ -10,6 +13,7 @@ const TextObject = ({ position, selected, onClick }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [textStyle, setTextStyle] = useState({});
   const [menuDistance, setMenuDistance] = useState(50);
+  const [showTransform, setShowTransform] = useState(false); // <-- New state for transform mode
   const textAreaRef = useRef();
   const displayRef = useRef(); // <-- New ref for non-editing display
 
@@ -53,11 +57,6 @@ const TextObject = ({ position, selected, onClick }) => {
     setIsEditing(true);
   };
 
-  const handlePlaneClick = (e) => {
-    e.stopPropagation();
-    onClick();
-  };
-
   // Modified onBlur: do not close if focus moves to a child of the UI menu
   const handleBlur = (e) => {
     if (
@@ -75,7 +74,7 @@ const TextObject = ({ position, selected, onClick }) => {
     width: '100%',
     height: 'auto', // <-- Changed from '100%'
     background: 'rgba(0,0,0,0.5)',
-    color: 'white',
+    color: textStyle.color || 'white', // <-- Use picked color from state
     border: 'none',
     padding: '8px',
     margin: '0',
@@ -113,6 +112,13 @@ const TextObject = ({ position, selected, onClick }) => {
     }
   });
 
+  // New effect to close transformControls when deselected
+  useEffect(() => {
+    if (!selected) {
+      setShowTransform(false);
+    }
+  }, [selected]);
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -130,7 +136,9 @@ const TextObject = ({ position, selected, onClick }) => {
                   left: 0,
                   width: '100%',
                   display: 'flex',
-                  justifyContent: 'center',
+                  justifyContent: 'flex-start', // Changed from space-between
+                  alignItems: 'center',
+                  gap: '8px', // Added gap for spacing between items
                   transform: `translateY(-100%) scale(${menuDistance / 50})`,
                   transformOrigin: 'bottom center',
                   marginBottom: '10px',
@@ -143,6 +151,18 @@ const TextObject = ({ position, selected, onClick }) => {
                     setTextStyle((prev) => ({ ...prev, ...newStyle }))
                   }
                 />
+                <button
+                  style={{
+                    padding: '4px 8px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowTransform((prev) => !prev);
+                  }}
+                >
+                  ✥
+                </button>
               </div>
             )}
             {isEditing ? (
@@ -171,6 +191,13 @@ const TextObject = ({ position, selected, onClick }) => {
           </div>
         </Html>
       </group>
+      {showTransform && groupRef.current && (
+        <DreiTransformControls
+          object={groupRef.current}
+          mode="translate"
+          onDragEnd={() => setShowTransform(false)}
+        />
+      )}
     </>
   );
 };
