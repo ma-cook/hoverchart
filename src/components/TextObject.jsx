@@ -1,4 +1,4 @@
-import { useRef, useState, useLayoutEffect, useEffect } from 'react';
+import { useRef, useState, useLayoutEffect } from 'react';
 import {
   Html,
   TransformControls as DreiTransformControls,
@@ -112,13 +112,6 @@ const TextObject = ({ position, selected, onClick }) => {
     }
   });
 
-  // New effect to close transformControls when deselected
-  useEffect(() => {
-    if (!selected) {
-      setShowTransform(false);
-    }
-  }, [selected]);
-
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -133,20 +126,23 @@ const TextObject = ({ position, selected, onClick }) => {
                 style={{
                   position: 'absolute',
                   top: 0,
-                  left: 0,
-                  width: '100%',
+                  left: '50%', // changed from 0 to center horizontally
+                  transform: `translate(-50%, -140%) scale(${Math.max(
+                    menuDistance / 50,
+                    1
+                  )})`, // changed translateY from -100% to -110%
                   display: 'flex',
-                  justifyContent: 'flex-start', // Changed from space-between
+                  justifyContent: 'center', // center content horizontally
                   alignItems: 'center',
-                  gap: '8px', // Added gap for spacing between items
-                  transform: `translateY(-100%) scale(${menuDistance / 50})`,
-                  transformOrigin: 'bottom center',
+                  gap: '8px',
                   marginBottom: '10px',
                   zIndex: 2,
-                  transition: 'transform 0.1s ease-out', // <-- New: smooth scaling transition
+                  transition: 'transform 0.1s ease-out',
+                  // ...other unchanged styles...
                 }}
               >
                 <TextStyleUIContent
+                  uiType="textObject" // indicate text object usage for proper scaling
                   onStyleChange={(newStyle) =>
                     setTextStyle((prev) => ({ ...prev, ...newStyle }))
                   }

@@ -46,7 +46,7 @@ const Cube = ({
     left: null,
   });
   const [textStyle, setTextStyle] = useState({
-    fontSize: 'medium',
+    fontSize: 1.5, // Changed from 'medium' to numeric value
     color: 'white',
     underline: false,
   });
@@ -136,6 +136,11 @@ const Cube = ({
 
   const handleHeaderSubmit = (text) => {
     setHeaderText(text);
+    // Ensure new headers start with the default larger size
+    setTextStyle((prev) => ({
+      ...prev,
+      fontSize: 1.5,
+    }));
     setShowHeader(false);
     setShowObjectUI(false); // Hide ObjectUI after header text is submitted
   };
@@ -492,7 +497,7 @@ const Cube = ({
                     {activeTextFace === name &&
                       activeTextStyleUI === contentRef.current && (
                         <TextStyleUI
-                          position={[0, 30, 0]}
+                          position={[0, 6, 0]}
                           onStyleChange={handleStyleChange}
                           onClose={() => {
                             setActiveTextFace(null);

@@ -2,14 +2,20 @@ import { Html } from '@react-three/drei';
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
-import * as THREE from 'three'; // Add this import
+import * as THREE from 'three';
 
 // Add export to the TextStyleUIContent component
-export const TextStyleUIContent = ({ onStyleChange }) => {
+export const TextStyleUIContent = ({
+  onStyleChange,
+  distance = 50,
+  uiType,
+}) => {
+  // added uiType prop
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleSizeChange = (size) => {
-    onStyleChange({ fontSize: size * 20 }); // Multiply by 3 so that default 1 becomes 3
+    const multiplier = uiType === 'textObject' ? 32 : 0.7; // if textObject, size 1 => 32px; otherwise use 0.7
+    onStyleChange({ fontSize: size * multiplier });
   };
 
   const handleWheel = (e) => {
@@ -41,12 +47,24 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
     handleSizeChange(Number(e.target.value));
   };
 
+  // Calculate a more balanced scale that doesn't get too big or too small
+  const getUIScale = (distance) => {
+    const minScale = 1; // Won't get smaller than half size
+    const maxScale = 1; // Won't get bigger than double size
+    const baseScale = distance / 100; // Changed from /50 to /100 for less dramatic scaling
+    return Math.min(Math.max(baseScale, minScale), maxScale);
+  };
+
   return (
     <div
       className="object-ui-content"
       onClick={(e) => {
         e.stopPropagation();
         e.nativeEvent?.preventDefault?.();
+      }}
+      style={{
+        transform: `scale(${getUIScale(distance)})`,
+        transformOrigin: 'center top',
       }}
     >
       <select
@@ -108,30 +126,39 @@ export const TextStyleUIContent = ({ onStyleChange }) => {
 // R3F wrapper component
 const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
   const groupRef = useRef();
-  const lastPosition = useRef(null);
+  const [distance, setDistance] = useState(50);
 
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
-      const targetPos = followTarget.current.position;
       const targetScale = followTarget.current.scale;
       const cubeHeight = 10 * targetScale.y;
+      const topEdgeOffset = cubeHeight / 2;
+      const targetPos = followTarget.current.position;
 
-      // Match the TextSprite positioning logic for header text
-      const newPos = new THREE.Vector3(
+      // Get the header text's world position and size
+      const headerText = followTarget.current.children?.find(
+        (child) => child.type === 'Text'
+      );
+
+      let yOffset = 3; // Default offset
+      if (headerText) {
+        const box = new THREE.Box3().setFromObject(headerText);
+        const height = box.max.y - box.min.y;
+        yOffset = height + 3; // Add 3 units above the text's height
+      }
+
+      groupRef.current.position.set(
         targetPos.x,
-        targetPos.y + cubeHeight / 2 + 2, // Position just above the cube
+        targetPos.y + topEdgeOffset + yOffset,
         targetPos.z
       );
 
-      if (
-        !lastPosition.current ||
-        lastPosition.current.distanceTo(newPos) > 0.001
-      ) {
-        groupRef.current.position.copy(newPos);
-        lastPosition.current = newPos.clone();
-      }
-
+      // Keep UI facing camera
       groupRef.current.quaternion.copy(camera.quaternion);
+
+      // Calculate distance for UI scaling
+      const newDistance = camera.position.distanceTo(groupRef.current.position);
+      setDistance(newDistance);
     }
   });
 
@@ -145,7 +172,7 @@ const TextStyleUI = ({ onStyleChange, position, followTarget }) => {
         center
         className="object-ui-container"
       >
-        <TextStyleUIContent onStyleChange={onStyleChange} />
+        <TextStyleUIContent onStyleChange={onStyleChange} distance={distance} />
       </Html>
     </group>
   );

@@ -26,22 +26,16 @@ const TextSprite = ({
 
   const getFontSize = (size) => {
     if (typeof size === 'number') {
-      if (style.isHeaderText) {
-        // More gradual size increase for header text
-        const baseSize = 1; // Starting size
-        const increment = 0.05; // Size increment per unit
-        return baseSize + (size - 1) * increment;
-      }
-      return size * 0.7; // Keep existing scale for other text
+      return size; // Remove the * 0.7 multiplier since we're now handling raw values
     }
     // Maintain backward compatibility with string sizes
     switch (size) {
       case 'small':
         return 0.3;
       case 'large':
-        return 0.7;
+        return 1.5;
       default:
-        return 0.5;
+        return 1.0;
     }
   };
 
@@ -56,22 +50,23 @@ const TextSprite = ({
           const distanceToCamera = camera.position.distanceTo(targetPos);
           const fontSize = getFontSize(style.fontSize);
 
-          // Adjusted scale factor calculation for better visibility
-          const baseScale = 0.5; // Minimum scale
-          const zoomFactor = 0.02; // How much zoom affects scale
-          const scaleFactor = baseScale + distanceToCamera * zoomFactor;
+          // Calculate a consistent offset that scales with the cube
+          const baseOffset = 2 * targetScale.y; // Base offset that scales with cube
+          const textOffset = fontSize * 0.5; // Additional offset based on text size
 
-          // Calculate text height considering scale factor
-          const textHeight = fontSize * TEXT_HEIGHT * scaleFactor;
-
-          // Position text above cube considering both base offset and scaled text height
+          // Position text above cube with consistent spacing
           textRef.current.position.set(
             targetPos.x,
-            targetPos.y + cubeHeight / 2 + 2 + textHeight / 2, // Keep text bottom 2 units above cube
+            targetPos.y + cubeHeight / 2 + baseOffset + textOffset,
             targetPos.z
           );
 
-          // Apply camera-based scaling
+          // Scale text based on distance but with tighter bounds
+          const minScale = 0.8;
+          const maxScale = 10;
+          const baseScale = distanceToCamera * 0.008; // Reduced factor for more subtle scaling
+          const scaleFactor = Math.min(Math.max(baseScale, minScale), maxScale);
+
           textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
         } else {
           // Calculate base heights and distances without scale influence
