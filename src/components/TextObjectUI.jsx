@@ -9,6 +9,7 @@ const TextObjectUI = ({
   followTarget,
   menuRef,
   onTransformToggle,
+  onResizeToggle, // Add the onResizeToggle prop
 }) => {
   const groupRef = useRef();
   const lastPosition = useRef(null);
@@ -44,7 +45,7 @@ const TextObjectUI = ({
         style={{
           background: 'black',
           padding: '4px',
-          borderRadius: '2px',
+          borderRadius: '1px',
           pointerEvents: 'auto',
           zIndex: 999999,
           transform: 'translate(-50%, -100%)',
@@ -57,17 +58,9 @@ const TextObjectUI = ({
           <TextStyleUIContent
             uiType="textObject"
             onStyleChange={onStyleChange}
+            onTransformToggle={onTransformToggle} // Pass down the transform toggle prop
+            onResizeToggle={onResizeToggle} // Pass down the onResizeToggle prop
           />
-          <button
-            className="object-tool-button"
-            style={{ alignSelf: 'center' }} // added to vertically center the button
-            onClick={(e) => {
-              e.stopPropagation();
-              onTransformToggle && onTransformToggle();
-            }}
-          >
-            ⇄
-          </button>
         </div>
       </Html>
     </group>

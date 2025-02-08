@@ -14,6 +14,7 @@ const TextObject = ({ position, selected, onClick }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [textStyle, setTextStyle] = useState({});
   const [showTransform, setShowTransform] = useState(false); // <-- New state for transform mode
+  const [showResizeArrow, setShowResizeArrow] = useState(false);
   const textAreaRef = useRef();
   const displayRef = useRef(); // <-- New ref for non-editing display
 
@@ -119,12 +120,16 @@ const TextObject = ({ position, selected, onClick }) => {
 
   return (
     <>
-      <group ref={groupRef} position={position}>
+      <group
+        ref={groupRef}
+        position={position}
+        userData={{ type: 'textObject' }}
+      >
         {/* Background plane - only handles selection */}
 
         {/* Text area - handles both editing and selection */}
         <Html transform position={[0, 0, 0.1]} center>
-          <div style={getContainerStyle()}>
+          <div style={getContainerStyle()} className="text-object-container">
             {isEditing ? (
               <textarea
                 ref={textAreaRef}
@@ -148,6 +153,15 @@ const TextObject = ({ position, selected, onClick }) => {
                 {text || 'Click to edit text...'}
               </div>
             )}
+            {/* Render the integrated resize arrow only if toggled on */}
+            {showResizeArrow && (
+              <div
+                className="resize-arrow"
+                onClick={() => console.log('Resize arrow clicked')}
+              >
+                →
+              </div>
+            )}
           </div>
         </Html>
       </group>
@@ -161,6 +175,7 @@ const TextObject = ({ position, selected, onClick }) => {
           followTarget={groupRef}
           menuRef={uiMenuRef} // pass the ref to keep the menu open on focus
           onTransformToggle={() => setShowTransform(true)} // new transform toggle callback
+          onResizeToggle={() => setShowResizeArrow((prev) => !prev)}
         />
       )}
 

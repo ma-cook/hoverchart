@@ -9,10 +9,11 @@ export const TextStyleUIContent = ({
   onStyleChange,
   distance = 50,
   uiType,
+  onTransformToggle, // added new prop
+  onResizeToggle, // added new prop
 }) => {
   // added uiType prop
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showResizeMode, setShowResizeMode] = useState(false); // Add this state
 
   const handleSizeChange = (size) => {
     const multiplier = uiType === 'textObject' ? 32 : 0.7; // if textObject, size 1 => 32px; otherwise use 0.7
@@ -81,21 +82,29 @@ export const TextStyleUIContent = ({
         ))}
       </select>
 
-      {/* Add resize button only for textObject */}
+      {/* NEW: Transform button moved from TextObjectUI */}
+      {uiType === 'textObject' && onTransformToggle && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onTransformToggle();
+          }}
+          className="object-tool-button"
+        >
+          ⇄
+        </button>
+      )}
+
+      {/* Replace the old resize button with this new one */}
       {uiType === 'textObject' && (
         <button
           onClick={(e) => {
             e.stopPropagation();
             e.nativeEvent?.preventDefault?.();
-            onStyleChange({ showResizeHandles: !showResizeMode });
-            setShowResizeMode(!showResizeMode);
+            console.log('Resize toggle clicked'); // Add debug log
+            onResizeToggle?.();
           }}
           className="object-tool-button"
-          style={{
-            backgroundColor: showResizeMode
-              ? 'rgba(255,255,255,0.2)'
-              : 'transparent',
-          }}
         >
           ↔
         </button>

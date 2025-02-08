@@ -187,3 +187,26 @@ canvas {
 .arrow-helper {
   pointer-events: auto !important;
 }
+
+.text-object-container {
+  position: relative;
+}
+
+/* New CSS for the integrated resize arrow */
+.resize-arrow {
+  position: absolute;
+  right: -20px; /* adjust as needed */
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  color: yellow;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  border-radius: 4px;
+  caret-color: transparent;
+}
