@@ -195,14 +195,14 @@ canvas {
 /* New CSS for the integrated resize arrow */
 .resize-arrow {
   position: absolute;
-  right: -20px; /* adjust as needed */
-  top: 50%;
+  right: -35px; /* increased from -20px */
+  top: 20%;
   transform: translateY(-50%);
-  width: 20px;
-  height: 20px;
+  width: 5px; /* increased from 20px */
+  height: 5px; /* increased from 20px */
   background: rgba(0, 0, 0, 0.5);
   color: yellow;
-  font-size: 20px;
+  font-size: 34px; /* increased from 20px */
   display: flex;
   align-items: center;
   justify-content: center;

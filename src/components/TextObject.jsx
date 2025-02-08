@@ -18,8 +18,12 @@ const TextObject = ({ position, selected, onClick }) => {
   const textAreaRef = useRef();
   const displayRef = useRef(); // <-- New ref for non-editing display
 
-  const [scale] = useState([15, 10, 1]); // Default size for the text plane
+  const [scale, setScale] = useState([15, 10, 1]); // Default size for the text plane
   const conversionFactor = 30; // Increase conversion factor for larger HTML size
+
+  // New refs for tracking drag start
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(scale[0]);
 
   // Adjust the height of the textarea based on its content
   const adjustHeight = () => {
@@ -118,6 +122,35 @@ const TextObject = ({ position, selected, onClick }) => {
     }
   }, [selected]);
 
+  // New pointer event handlers for resizing width
+  const handlePointerDown = (e) => {
+    e.stopPropagation();
+    startXRef.current = e.clientX;
+    startWidthRef.current = scale[0];
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+
+  const handlePointerMove = (e) => {
+    const dx = e.clientX - startXRef.current;
+    // Adjust the scaling factor to make resizing more responsive
+    const scalingFactor = 0.1; // Make this smaller for finer control
+    const newWidth = startWidthRef.current + dx * scalingFactor;
+
+    // Set minimum and maximum width constraints
+    const minWidth = 5;
+    const maxWidth = 200;
+
+    if (newWidth >= minWidth && newWidth <= maxWidth) {
+      setScale([newWidth, scale[1], scale[2]]);
+    }
+  };
+
+  const handlePointerUp = () => {
+    window.removeEventListener('pointermove', handlePointerMove);
+    window.removeEventListener('pointerup', handlePointerUp);
+  };
+
   return (
     <>
       <group
@@ -157,7 +190,8 @@ const TextObject = ({ position, selected, onClick }) => {
             {showResizeArrow && (
               <div
                 className="resize-arrow"
-                onClick={() => console.log('Resize arrow clicked')}
+                onPointerDown={handlePointerDown}
+                style={{ cursor: 'ew-resize' }}
               >
                 →
               </div>
