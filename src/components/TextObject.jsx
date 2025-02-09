@@ -17,6 +17,7 @@ const TextObject = ({ position, selected, onClick }) => {
   const [showResizeArrow, setShowResizeArrow] = useState(false);
   const textAreaRef = useRef();
   const displayRef = useRef(); // <-- New ref for non-editing display
+  const [bulletPointMode, setBulletPointMode] = useState(false); // New state for bullet point mode
 
   const [scale, setScale] = useState([15, 10, 1]); // Default size for the text plane
   const conversionFactor = 30; // Increase conversion factor for larger HTML size
@@ -151,6 +152,24 @@ const TextObject = ({ position, selected, onClick }) => {
     window.removeEventListener('pointerup', handlePointerUp);
   };
 
+  // Add new handler for bullet points
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && bulletPointMode) {
+      e.preventDefault();
+      const cursorPosition = e.target.selectionStart;
+      const textBeforeCursor = text.slice(0, cursorPosition);
+      const textAfterCursor = text.slice(cursorPosition);
+      const newText = textBeforeCursor + '\n• ' + textAfterCursor;
+      setText(newText);
+
+      // Set cursor position after bullet point
+      setTimeout(() => {
+        e.target.selectionStart = cursorPosition + 3;
+        e.target.selectionEnd = cursorPosition + 3;
+      }, 0);
+    }
+  };
+
   return (
     <>
       <group
@@ -171,7 +190,8 @@ const TextObject = ({ position, selected, onClick }) => {
                 onBlur={handleBlur} // Updated onBlur handler
                 style={getTextAreaStyle()}
                 autoFocus
-                placeholder="Click to edit text..."
+                onKeyDown={handleKeyDown} // New onKeyDown handler
+                placeholder={bulletPointMode ? '• ' : 'Click to edit text...'} // Updated placeholder
               />
             ) : (
               <div
@@ -203,9 +223,15 @@ const TextObject = ({ position, selected, onClick }) => {
       {/* Add the new UI outside the main group */}
       {isEditing && (
         <TextObjectUI
-          onStyleChange={(newStyle) =>
-            setTextStyle((prev) => ({ ...prev, ...newStyle }))
-          }
+          onStyleChange={(newStyle) => {
+            if ('bulletPointMode' in newStyle) {
+              setBulletPointMode(newStyle.bulletPointMode);
+              if (newStyle.bulletPointMode && !text.startsWith('• ')) {
+                setText('• ' + text);
+              }
+            }
+            setTextStyle((prev) => ({ ...prev, ...newStyle }));
+          }}
           followTarget={groupRef}
           menuRef={uiMenuRef} // pass the ref to keep the menu open on focus
           onTransformToggle={() => setShowTransform(true)} // new transform toggle callback

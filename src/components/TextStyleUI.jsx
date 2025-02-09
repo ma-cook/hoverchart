@@ -14,6 +14,7 @@ export const TextStyleUIContent = ({
 }) => {
   // added uiType prop
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [bulletPointMode, setBulletPointMode] = useState(false);
 
   const handleSizeChange = (size) => {
     const multiplier = uiType === 'textObject' ? 32 : 0.7; // if textObject, size 1 => 32px; otherwise use 0.7
@@ -148,6 +149,20 @@ export const TextStyleUIContent = ({
         className="object-tool-button"
       >
         U̲
+      </button>
+
+      {/* Add new bullet point button */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          setBulletPointMode(!bulletPointMode);
+          onStyleChange({ bulletPointMode: !bulletPointMode });
+        }}
+        className={`object-tool-button ${bulletPointMode ? 'active' : ''}`}
+        title="Toggle bullet points"
+      >
+        •
       </button>
     </div>
   );
