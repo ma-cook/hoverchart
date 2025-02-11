@@ -14,6 +14,9 @@ import TextSprite from './components/TextSprite';
 import TextStyleUI from './components/TextStyleUI';
 import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
 import TextObject from './components/TextObject';
+import { auth } from './firebase';
+import { signInUser, observeAuthState } from './services/authService';
+import { saveObjects, loadObjects } from './services/objectsService';
 
 const ConnectionUpdater = ({
   connections,
@@ -77,6 +80,8 @@ const App = () => {
   const [showLineTextInput, setShowLineTextInput] = useState(null); // Add state for text input
   const [lineTextStyles, setLineTextStyles] = useState({});
   const [showLineTextStyleUI, setShowLineTextStyleUI] = useState(null);
+  const [user, setUser] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
     if (cameraRef.current?.orbitControls) {
@@ -95,6 +100,43 @@ const App = () => {
       cameraRef.current.orbitControls.enabled = true;
     }
   }, []);
+
+  const handleLogin = () => {
+    signInUser();
+  };
+
+  // Replace the redirect result effect with auth state observer
+  useEffect(() => {
+    const unsubscribe = observeAuthState((user) => {
+      console.log('Auth state changed:', user, auth.currentUser); // Debug log
+      setUser(user);
+      setIsAuthReady(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      console.log('Loading objects for user:', user.uid); // Debug log
+      const loadUserObjects = async () => {
+        const savedObjects = await loadObjects(user.uid);
+        if (savedObjects) {
+          setObjects(savedObjects);
+        }
+      };
+      loadUserObjects();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user && objects.length > 0) {
+      const saveTimeout = setTimeout(() => {
+        saveObjects(user.uid, objects);
+      }, 1000); // Debounce saves to avoid too many writes
+      return () => clearTimeout(saveTimeout);
+    }
+  }, [objects, user]);
 
   const handleCreateObject = (type) => {
     if (!cameraRef.current || !cameraRef.current.camera) {
@@ -118,6 +160,11 @@ const App = () => {
         type,
         position: [position.x, position.y, position.z],
         id: Date.now(),
+        scale: [1, 1, 1],
+        color: '#ffffff',
+        faceColors: {},
+        faceTexts: {},
+        headerPosition: { x: 0, y: 0, z: 0 },
       },
     ]);
   };
@@ -308,6 +355,11 @@ const App = () => {
     setShowLineTextInput(null);
   };
 
+  // Return loading state while auth is initializing
+  if (!isAuthReady) {
+    return <div>Loading...</div>;
+  }
+
   return (
     <>
       <Canvas
@@ -494,6 +546,9 @@ const App = () => {
       <UIOverlay
         onCreateObject={handleCreateObject}
         onToggleIndicators={handleToggleIndicators}
+        user={user}
+        onLogin={handleLogin}
+        isAuthReady={isAuthReady}
       />
     </>
   );
