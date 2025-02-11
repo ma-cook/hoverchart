@@ -73,11 +73,25 @@ const Cube = ({
   const [scale, setScale] = useState(initialScale); // Existing scale state
   const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
   const [faceColors, setFaceColors] = useState(initialFaceColors);
-  const [textStyle, setTextStyle] = useState(initialTextStyle);
+  const [textStyle, setTextStyle] = useState(() => ({
+    fontSize: 1.5,
+    color: 'white',
+    underline: false,
+    ...initialTextStyle, // Immediately apply any provided styles
+  }));
+
+  const [faceTextStyles, setFaceTextStyles] = useState(() => ({
+    front: { fontSize: 0.5, color: 'white', underline: false },
+    back: { fontSize: 0.5, color: 'white', underline: false },
+    top: { fontSize: 0.5, color: 'white', underline: false },
+    bottom: { fontSize: 0.5, color: 'white', underline: false },
+    right: { fontSize: 0.5, color: 'white', underline: false },
+    left: { fontSize: 0.5, color: 'white', underline: false },
+    ...initialFaceTextStyles, // Immediately apply any provided styles
+  }));
   const [showObjectUI, setShowObjectUI] = useState(true); // Add this state
   const [showFaceTextInput, setShowFaceTextInput] = useState(false);
   const [faceTexts, setFaceTexts] = useState(initialFaceTexts);
-  const [faceTextStyles, setFaceTextStyles] = useState(initialFaceTextStyles);
   const [activeTextFace, setActiveTextFace] = useState(null);
   const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
   const [color, setColor] = useState(initialColor);
@@ -94,12 +108,27 @@ const Cube = ({
 
   // Add effects to update states when props change
   useEffect(() => {
-    setTextStyle(initialTextStyle);
+    if (
+      initialTextStyle &&
+      JSON.stringify(textStyle) !== JSON.stringify(initialTextStyle)
+    ) {
+      setTextStyle(initialTextStyle);
+    }
   }, [initialTextStyle]);
 
   useEffect(() => {
-    setFaceTextStyles(initialFaceTextStyles);
+    if (
+      initialFaceTextStyles &&
+      JSON.stringify(faceTextStyles) !== JSON.stringify(initialFaceTextStyles)
+    ) {
+      setFaceTextStyles(initialFaceTextStyles);
+    }
   }, [initialFaceTextStyles]);
+
+  // Add effect to update headerText when prop changes
+  useEffect(() => {
+    setHeaderText(initialHeaderText);
+  }, [initialHeaderText]);
 
   const handleLineColorChange = useCallback(
     (newColor) => {
@@ -191,11 +220,19 @@ const Cube = ({
 
   const handleHeaderSubmit = (text) => {
     setHeaderText(text);
-    // Ensure new headers start with the default larger size
-    setTextStyle((prev) => ({
-      ...prev,
-      fontSize: 1.5,
-    }));
+    if (onUpdate) {
+      onUpdate(id, {
+        color,
+        headerText: text, // Pass the new header text
+        scale,
+        position,
+        faceColors,
+        faceTexts,
+        faceTextStyles,
+        textStyle,
+        type: 'cube',
+      });
+    }
     setShowHeader(false);
     setShowObjectUI(false); // Hide ObjectUI after header text is submitted
   };
@@ -242,12 +279,40 @@ const Cube = ({
 
   const handleStyleChange = (newStyle) => {
     if (activeTextFace) {
-      setFaceTextStyles((prev) => ({
-        ...prev,
-        [activeTextFace]: { ...prev[activeTextFace], ...newStyle },
-      }));
+      const updatedFaceTextStyles = {
+        ...faceTextStyles,
+        [activeTextFace]: { ...faceTextStyles[activeTextFace], ...newStyle },
+      };
+      setFaceTextStyles(updatedFaceTextStyles);
+      if (onUpdate) {
+        onUpdate(id, {
+          color,
+          headerText,
+          scale,
+          position,
+          faceColors,
+          faceTexts,
+          faceTextStyles: updatedFaceTextStyles,
+          textStyle,
+          type: 'cube',
+        });
+      }
     } else {
-      setTextStyle((prev) => ({ ...prev, ...newStyle }));
+      const updatedTextStyle = { ...textStyle, ...newStyle };
+      setTextStyle(updatedTextStyle);
+      if (onUpdate) {
+        onUpdate(id, {
+          color,
+          headerText,
+          scale,
+          position,
+          faceColors,
+          faceTexts,
+          faceTextStyles,
+          textStyle: updatedTextStyle,
+          type: 'cube',
+        });
+      }
     }
   };
 

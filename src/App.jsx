@@ -16,7 +16,8 @@ import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use S
 import TextObject from './components/TextObject';
 import { auth } from './firebase';
 import { signInUser, observeAuthState } from './services/authService';
-import { saveObjects, loadObjects } from './services/objectsService';
+import { saveObjects, subscribeToObjects } from './services/objectsService';
+import isEqual from 'lodash/isEqual'; // Add this import
 
 const ConnectionUpdater = ({
   connections,
@@ -116,30 +117,33 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
+  // Replace the existing loadObjects effect with a subscription
   useEffect(() => {
     if (user) {
-      const loadUserObjects = async () => {
-        try {
-          console.log('Loading objects for user:', user.uid);
-          const savedObjects = await loadObjects(user.uid);
-          if (savedObjects && savedObjects.length > 0) {
-            console.log('Loaded objects with face texts:', savedObjects);
-            setObjects(savedObjects);
-          }
-        } catch (error) {
-          console.error('Error loading objects:', error);
-        }
+      console.log('Setting up real-time subscription for user:', user.uid);
+      const unsubscribe = subscribeToObjects(user.uid, (loadedObjects) => {
+        console.log('Received real-time update:', loadedObjects);
+        setObjects(loadedObjects);
+      });
+
+      return () => {
+        console.log('Cleaning up subscription');
+        unsubscribe();
       };
-      loadUserObjects();
     }
   }, [user]);
 
   // Add debounced save effect
+  const lastSavedRef = useRef(null);
+
   useEffect(() => {
     if (user && objects.length > 0) {
       const saveTimeout = setTimeout(() => {
-        console.log('Saving objects:', objects); // Debug log
-        saveObjects(user.uid, objects);
+        // Only save if objects have actually changed
+        if (!isEqual(lastSavedRef.current, objects)) {
+          lastSavedRef.current = JSON.parse(JSON.stringify(objects));
+          saveObjects(user.uid, objects);
+        }
       }, 1000);
       return () => clearTimeout(saveTimeout);
     }
@@ -169,8 +173,16 @@ const App = () => {
         id: Date.now(),
         scale: [1, 1, 1],
         color: '#ffffff',
+        headerText: '', // Add explicit headerText initialization
         faceColors: {},
-        faceTexts: {},
+        faceTexts: {
+          front: '',
+          back: '',
+          top: '',
+          bottom: '',
+          right: '',
+          left: '',
+        },
         textStyle: {
           fontSize: 1.5,
           color: 'white',
@@ -515,7 +527,7 @@ const App = () => {
                   id={obj.id}
                   position={obj.position}
                   color={obj.color}
-                  headerText={obj.headerText}
+                  headerText={obj.headerText || ''} // Ensure headerText is passed with fallback
                   scale={obj.scale}
                   faceColors={obj.faceColors}
                   faceTexts={
@@ -528,8 +540,35 @@ const App = () => {
                       left: '',
                     }
                   }
-                  textStyle={obj.textStyle}
-                  faceTextStyles={obj.faceTextStyles}
+                  textStyle={
+                    obj.textStyle || {
+                      fontSize: 1.5,
+                      color: 'white',
+                      underline: false,
+                    }
+                  }
+                  faceTextStyles={
+                    obj.faceTextStyles || {
+                      front: {
+                        fontSize: 0.5,
+                        color: 'white',
+                        underline: false,
+                      },
+                      back: { fontSize: 0.5, color: 'white', underline: false },
+                      top: { fontSize: 0.5, color: 'white', underline: false },
+                      bottom: {
+                        fontSize: 0.5,
+                        color: 'white',
+                        underline: false,
+                      },
+                      right: {
+                        fontSize: 0.5,
+                        color: 'white',
+                        underline: false,
+                      },
+                      left: { fontSize: 0.5, color: 'white', underline: false },
+                    }
+                  }
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
                   onMove={(newPosition) =>
