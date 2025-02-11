@@ -69,6 +69,12 @@ const ObjectUI = ({
     }
   };
 
+  const handleColorPick = (color) => {
+    console.log('Color picked:', color); // Add debug log
+    onLineColorChange?.(color); // Ensure we call the prop function
+    setShowColorPicker(false);
+  };
+
   const tools = [
     {
       name: 'header',
@@ -155,12 +161,7 @@ const ObjectUI = ({
         </div>
         {showColorPicker && (
           <ColorPicker
-            onColorSelect={(color) => {
-              if (onLineColorChange) {
-                onLineColorChange(color);
-              }
-              setShowColorPicker(false);
-            }}
+            onColorSelect={handleColorPick}
             onClose={() => setShowColorPicker(false)}
           />
         )}

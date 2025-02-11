@@ -118,22 +118,29 @@ const App = () => {
 
   useEffect(() => {
     if (user) {
-      console.log('Loading objects for user:', user.uid); // Debug log
       const loadUserObjects = async () => {
-        const savedObjects = await loadObjects(user.uid);
-        if (savedObjects) {
-          setObjects(savedObjects);
+        try {
+          console.log('Loading objects for user:', user.uid);
+          const savedObjects = await loadObjects(user.uid);
+          if (savedObjects && savedObjects.length > 0) {
+            console.log('Loaded objects:', savedObjects);
+            setObjects(savedObjects);
+          }
+        } catch (error) {
+          console.error('Error loading objects:', error);
         }
       };
       loadUserObjects();
     }
   }, [user]);
 
+  // Add debounced save effect
   useEffect(() => {
     if (user && objects.length > 0) {
       const saveTimeout = setTimeout(() => {
+        console.log('Saving objects:', objects); // Debug log
         saveObjects(user.uid, objects);
-      }, 1000); // Debounce saves to avoid too many writes
+      }, 1000);
       return () => clearTimeout(saveTimeout);
     }
   }, [objects, user]);
@@ -219,6 +226,12 @@ const App = () => {
           ? { ...obj, position: [newPosition.x, newPosition.y, newPosition.z] }
           : obj
       )
+    );
+  }, []);
+
+  const handleObjectUpdate = useCallback((id, updates) => {
+    setObjects((prev) =>
+      prev.map((obj) => (obj.id === id ? { ...obj, ...updates } : obj))
     );
   }, []);
 
@@ -486,12 +499,21 @@ const App = () => {
               return (
                 <Cube
                   key={obj.id}
+                  id={obj.id}
                   position={obj.position}
+                  color={obj.color}
+                  headerText={obj.headerText}
+                  scale={obj.scale}
+                  faceColors={obj.faceColors}
+                  faceTexts={obj.faceTexts}
+                  faceTextStyles={obj.faceTextStyles}
+                  textStyle={obj.textStyle}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
+                  onUpdate={handleObjectUpdate}
                   disableOrbitControls={disableOrbitControls}
                   enableOrbitControls={enableOrbitControls}
                   onFaceIndicatorClick={handleFaceIndicatorClick}

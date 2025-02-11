@@ -28,23 +28,30 @@ const Cube = ({
   selectedIndicators,
   activeTextStyleUI,
   setActiveTextStyleUI,
-}) => {
-  const [selectedFace, setSelectedFace] = useState(null);
-  const [showTransform, setShowTransform] = useState(false);
-  const [showHeader, setShowHeader] = useState(false);
-  const [headerText, setHeaderText] = useState('');
-  const contentRef = useRef();
-  const nonScaledRef = useRef(); // New ref for non-scaled elements
-  const [scale, setScale] = useState([1, 1, 1]); // Existing scale state
-  const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
-  const [faceColors, setFaceColors] = useState({
+  onUpdate,
+  id,
+  // Add default values for optional props
+  headerText: initialHeaderText = '',
+  scale: initialScale = [1, 1, 1],
+  color: initialColor = 'white',
+  faceColors: initialFaceColors = {
     front: null,
     back: null,
     top: null,
     bottom: null,
     right: null,
     left: null,
-  });
+  },
+}) => {
+  const [selectedFace, setSelectedFace] = useState(null);
+  const [showTransform, setShowTransform] = useState(false);
+  const [showHeader, setShowHeader] = useState(false);
+  const [headerText, setHeaderText] = useState(initialHeaderText);
+  const contentRef = useRef();
+  const nonScaledRef = useRef(); // New ref for non-scaled elements
+  const [scale, setScale] = useState(initialScale); // Existing scale state
+  const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
+  const [faceColors, setFaceColors] = useState(initialFaceColors);
   const [textStyle, setTextStyle] = useState({
     fontSize: 1.5, // Changed from 'medium' to numeric value
     color: 'white',
@@ -70,12 +77,43 @@ const Cube = ({
   });
   const [activeTextFace, setActiveTextFace] = useState(null);
   const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
-  const [lineColor, setLineColor] = useState('white');
+  const [color, setColor] = useState(initialColor);
 
-  const handleLineColorChange = useCallback((color) => {
-    console.log('Changing line color to:', color); // Add logging
-    setLineColor(color);
-  }, []);
+  // Update color when prop changes
+  useEffect(() => {
+    setColor(initialColor);
+  }, [initialColor]);
+
+  const handleLineColorChange = useCallback(
+    (newColor) => {
+      console.log('Changing color to:', newColor); // Add debug log
+      setColor(newColor);
+      if (onUpdate) {
+        onUpdate(id, {
+          color: newColor,
+          headerText,
+          scale,
+          position,
+          faceColors,
+          faceTexts,
+          faceTextStyles,
+          textStyle,
+          type: 'cube',
+        });
+      }
+    },
+    [
+      id,
+      onUpdate,
+      headerText,
+      scale,
+      position,
+      faceColors,
+      faceTexts,
+      faceTextStyles,
+      textStyle,
+    ]
+  );
 
   // Reset selectedFace and showTransform when the cube is deselected
   useEffect(() => {
@@ -230,6 +268,34 @@ const Cube = ({
       setActiveTextStyleUI(false);
     }
   }, [selected]);
+
+  // Add useEffect to persist state changes
+  useEffect(() => {
+    if (onUpdate && id) {
+      onUpdate(id, {
+        color,
+        headerText,
+        scale,
+        position,
+        faceColors,
+        faceTexts,
+        faceTextStyles,
+        textStyle,
+        type: 'cube',
+      });
+    }
+  }, [
+    id,
+    color,
+    headerText,
+    scale,
+    position,
+    faceColors,
+    faceTexts,
+    faceTextStyles,
+    textStyle,
+    onUpdate,
+  ]);
 
   const size = 5; // Half-size since points are from center
 
@@ -560,7 +626,7 @@ const Cube = ({
 
             <Line
               points={points}
-              color={lineColor} // Remove the selected condition, always use lineColor
+              color={color} // Use color instead of lineColor
               lineWidth={1}
               segments={true}
               polygonOffset // <-- Enable polygon offset for the edge lines

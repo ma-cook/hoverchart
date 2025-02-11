@@ -17,17 +17,21 @@ export const saveObjects = async (userId, objects) => {
 };
 
 export const loadObjects = async (userId) => {
-  // Validate the userId to avoid a bad Firestore request
   if (!userId) {
     console.error('loadObjects: Received invalid userId', userId);
     return [];
   }
+
   try {
     const docRef = doc(db, 'users', userId);
     const docSnap = await getDoc(docRef);
+
     if (docSnap.exists()) {
-      return docSnap.data().objects || [];
+      const data = docSnap.data();
+      console.log('Loaded data from Firestore:', data);
+      return data.objects || [];
     }
+    console.log('No data found for user:', userId);
     return [];
   } catch (error) {
     console.error('Error loading objects:', error);
