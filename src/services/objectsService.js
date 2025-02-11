@@ -1,14 +1,5 @@
 import { db } from '../firebase';
-import {
-  collection,
-  addDoc,
-  getDoc,
-  updateDoc,
-  doc,
-  deleteDoc,
-  setDoc,
-  Timestamp,
-} from 'firebase/firestore';
+import { getDoc, doc, setDoc, Timestamp } from 'firebase/firestore';
 
 export const saveObjects = async (userId, objects) => {
   if (!userId) {
