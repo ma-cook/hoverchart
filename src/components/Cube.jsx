@@ -42,6 +42,27 @@ const Cube = ({
     right: null,
     left: null,
   },
+  faceTexts: initialFaceTexts = {
+    front: '',
+    back: '',
+    top: '',
+    bottom: '',
+    right: '',
+    left: '',
+  },
+  textStyle: initialTextStyle = {
+    fontSize: 1.5,
+    color: 'white',
+    underline: false,
+  },
+  faceTextStyles: initialFaceTextStyles = {
+    front: { fontSize: 0.5, color: 'white', underline: false },
+    back: { fontSize: 0.5, color: 'white', underline: false },
+    top: { fontSize: 0.5, color: 'white', underline: false },
+    bottom: { fontSize: 0.5, color: 'white', underline: false },
+    right: { fontSize: 0.5, color: 'white', underline: false },
+    left: { fontSize: 0.5, color: 'white', underline: false },
+  },
 }) => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
@@ -52,29 +73,11 @@ const Cube = ({
   const [scale, setScale] = useState(initialScale); // Existing scale state
   const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
   const [faceColors, setFaceColors] = useState(initialFaceColors);
-  const [textStyle, setTextStyle] = useState({
-    fontSize: 1.5, // Changed from 'medium' to numeric value
-    color: 'white',
-    underline: false,
-  });
+  const [textStyle, setTextStyle] = useState(initialTextStyle);
   const [showObjectUI, setShowObjectUI] = useState(true); // Add this state
   const [showFaceTextInput, setShowFaceTextInput] = useState(false);
-  const [faceTexts, setFaceTexts] = useState({
-    front: '',
-    back: '',
-    top: '',
-    bottom: '',
-    right: '',
-    left: '',
-  });
-  const [faceTextStyles, setFaceTextStyles] = useState({
-    front: { fontSize: 0.5, color: 'white', underline: false },
-    back: { fontSize: 0.5, color: 'white', underline: false },
-    top: { fontSize: 0.5, color: 'white', underline: false },
-    bottom: { fontSize: 0.5, color: 'white', underline: false },
-    right: { fontSize: 5, color: 'white', underline: false },
-    left: { fontSize: 0.5, color: 'white', underline: false },
-  });
+  const [faceTexts, setFaceTexts] = useState(initialFaceTexts);
+  const [faceTextStyles, setFaceTextStyles] = useState(initialFaceTextStyles);
   const [activeTextFace, setActiveTextFace] = useState(null);
   const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
   const [color, setColor] = useState(initialColor);
@@ -83,6 +86,20 @@ const Cube = ({
   useEffect(() => {
     setColor(initialColor);
   }, [initialColor]);
+
+  // Add useEffect to update faceTexts when props change
+  useEffect(() => {
+    setFaceTexts(initialFaceTexts);
+  }, [initialFaceTexts]);
+
+  // Add effects to update states when props change
+  useEffect(() => {
+    setTextStyle(initialTextStyle);
+  }, [initialTextStyle]);
+
+  useEffect(() => {
+    setFaceTextStyles(initialFaceTextStyles);
+  }, [initialFaceTextStyles]);
 
   const handleLineColorChange = useCallback(
     (newColor) => {
@@ -235,10 +252,24 @@ const Cube = ({
   };
 
   const handleFaceTextSubmit = (text) => {
-    setFaceTexts((prev) => ({
-      ...prev,
+    const updatedTexts = {
+      ...faceTexts,
       [selectedFace]: text,
-    }));
+    };
+    setFaceTexts(updatedTexts);
+    if (onUpdate) {
+      onUpdate(id, {
+        color,
+        headerText,
+        scale,
+        position,
+        faceColors,
+        faceTexts: updatedTexts, // Pass the updated texts
+        faceTextStyles,
+        textStyle,
+        type: 'cube',
+      });
+    }
     setShowFaceTextInput(false);
     setSelectedFace(null);
   };

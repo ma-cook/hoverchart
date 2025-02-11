@@ -123,7 +123,7 @@ const App = () => {
           console.log('Loading objects for user:', user.uid);
           const savedObjects = await loadObjects(user.uid);
           if (savedObjects && savedObjects.length > 0) {
-            console.log('Loaded objects:', savedObjects);
+            console.log('Loaded objects with face texts:', savedObjects);
             setObjects(savedObjects);
           }
         } catch (error) {
@@ -171,6 +171,19 @@ const App = () => {
         color: '#ffffff',
         faceColors: {},
         faceTexts: {},
+        textStyle: {
+          fontSize: 1.5,
+          color: 'white',
+          underline: false,
+        },
+        faceTextStyles: {
+          front: { fontSize: 0.5, color: 'white', underline: false },
+          back: { fontSize: 0.5, color: 'white', underline: false },
+          top: { fontSize: 0.5, color: 'white', underline: false },
+          bottom: { fontSize: 0.5, color: 'white', underline: false },
+          right: { fontSize: 0.5, color: 'white', underline: false },
+          left: { fontSize: 0.5, color: 'white', underline: false },
+        },
         headerPosition: { x: 0, y: 0, z: 0 },
       },
     ]);
@@ -505,9 +518,18 @@ const App = () => {
                   headerText={obj.headerText}
                   scale={obj.scale}
                   faceColors={obj.faceColors}
-                  faceTexts={obj.faceTexts}
-                  faceTextStyles={obj.faceTextStyles}
+                  faceTexts={
+                    obj.faceTexts || {
+                      front: '',
+                      back: '',
+                      top: '',
+                      bottom: '',
+                      right: '',
+                      left: '',
+                    }
+                  }
                   textStyle={obj.textStyle}
+                  faceTextStyles={obj.faceTextStyles}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
                   onMove={(newPosition) =>
