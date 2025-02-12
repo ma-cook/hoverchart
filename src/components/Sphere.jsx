@@ -270,42 +270,24 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
   const getFaceUIPosition = () => {
     if (activeFace === null || !contentRef.current) return [0, 0, 0];
 
-    // Get all vertices of the active face
-    const positions = geometry[activeFace].attributes.position.array;
+    const faceGeometry = geometry[activeFace];
+    const positions = faceGeometry.attributes.position.array;
 
-    // Calculate center of the face using the first five vertices
+    // Calculate center of the face
     let centerX = 0,
-      centerY = 80,
-      centerZ = -200;
-    let count = 0;
-
-    for (let i = 3; i < 15; i += 3) {
-      // Start at 3 to skip center vertex
+      centerY = 0,
+      centerZ = 0;
+    for (let i = 0; i < positions.length; i += 3) {
       centerX += positions[i];
       centerY += positions[i + 1];
       centerZ += positions[i + 2];
-      count++;
     }
-
-    centerX /= count;
-    centerY /= count;
-    centerZ /= count;
-
-    // Calculate normal vector for the face
-    const p1 = new THREE.Vector3(positions[3], positions[4], positions[5]);
-    const p2 = new THREE.Vector3(positions[6], positions[7], positions[8]);
-    const p3 = new THREE.Vector3(positions[9], positions[10], positions[11]);
-
-    const v1 = p2.clone().sub(p1);
-    const v2 = p3.clone().sub(p1);
-    const normal = v1.cross(v2).normalize();
-
-    const offset = 2;
+    const vertexCount = positions.length / 3;
 
     return [
-      position[0] + (centerX + normal.x * offset) * scale[0],
-      position[1] + (centerY + normal.y * offset) * scale[1],
-      position[2] + (centerZ + normal.z * offset) * scale[2],
+      centerX / vertexCount,
+      centerY / vertexCount + 2, // Add small offset above face
+      centerZ / vertexCount,
     ];
   };
 
@@ -361,7 +343,11 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
 
         {selected && showFaceUI && activeFace !== null && (
           <FaceUI
-            position={getFaceUIPosition()}
+            position={(() => {
+              const pos = getFaceUIPosition();
+              pos[1] += 10; // Only modify the z coordinate
+              return pos;
+            })()}
             onColorChange={(color) => {
               // Handle face color change
             }}
@@ -369,6 +355,7 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
             onTextClick={() => {
               // Handle face text click
             }}
+            followTarget={contentRef} // Add this prop
           />
         )}
 

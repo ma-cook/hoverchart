@@ -1,6 +1,8 @@
 import { Html } from '@react-three/drei';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
+import * as THREE from 'three';
 
 const FaceUI = ({
   position,
@@ -10,8 +12,28 @@ const FaceUI = ({
   isPlane = false, // Add this prop
   onTransformToggle, // Add this prop
   onResizeToggle, // Add this prop
+  followTarget, // Add this prop
 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const groupRef = useRef();
+  const lastPosition = useRef(null);
+
+  useFrame(({ camera }) => {
+    if (groupRef.current && followTarget?.current) {
+      // Keep UI facing camera
+      groupRef.current.quaternion.copy(camera.quaternion);
+
+      // Only update position if it has changed significantly
+      const newPos = new THREE.Vector3(...position);
+      if (
+        !lastPosition.current ||
+        lastPosition.current.distanceTo(newPos) > 0.001
+      ) {
+        groupRef.current.position.copy(newPos);
+        lastPosition.current = newPos.clone();
+      }
+    }
+  });
 
   // Create base tools array
   const baseTools = [
@@ -48,41 +70,42 @@ const FaceUI = ({
   };
 
   return (
-    <Html
-      position={position}
-      style={{ background: 'white', pointerEvents: 'auto' }}
-      center
-      className="face-ui-container"
-    >
-      <div className="face-ui-content">
-        {tools.map((tool) => (
-          <button
-            key={tool.name}
-            className="face-tool-button"
-            onClick={(e) => handleToolClick(tool, e)}
-          >
-            {tool.icon}
-          </button>
-        ))}
-      </div>
-      {showColorPicker && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: '50%',
-            transform: 'translateX(-50%)',
-          }}
-        >
-          <ColorPicker
-            onColorSelect={(color) => {
-              onColorChange(color, face);
-            }}
-            onClose={() => setShowColorPicker(false)}
-          />
+    <group ref={groupRef}>
+      <Html
+        style={{ background: 'white', pointerEvents: 'auto' }}
+        center
+        className="face-ui-container"
+      >
+        <div className="face-ui-content">
+          {tools.map((tool) => (
+            <button
+              key={tool.name}
+              className="face-tool-button"
+              onClick={(e) => handleToolClick(tool, e)}
+            >
+              {tool.icon}
+            </button>
+          ))}
         </div>
-      )}
-    </Html>
+        {showColorPicker && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <ColorPicker
+              onColorSelect={(color) => {
+                onColorChange(color, face);
+              }}
+              onClose={() => setShowColorPicker(false)}
+            />
+          </div>
+        )}
+      </Html>
+    </group>
   );
 };
 
