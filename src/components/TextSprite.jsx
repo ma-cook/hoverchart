@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
 
 const TextSprite = ({
   text,
@@ -17,6 +18,7 @@ const TextSprite = ({
     isDodecahedronHeader: false, // Add this new property
   },
   billboard = true, // New prop, defaults to true
+  normal, // Add normal prop for face orientation
 }) => {
   const textRef = React.useRef();
 
@@ -42,7 +44,17 @@ const TextSprite = ({
 
   useFrame(({ camera }) => {
     if (textRef.current) {
-      if (followTarget?.current) {
+      if (style.isFaceText && normal) {
+        // Orient text to lie flat on the face
+        const up = new THREE.Vector3(...normal);
+        const matrix = new THREE.Matrix4();
+        matrix.lookAt(
+          new THREE.Vector3(0, 0, 0),
+          up,
+          new THREE.Vector3(0, 1, 0)
+        );
+        textRef.current.setRotationFromMatrix(matrix);
+      } else if (followTarget?.current) {
         const targetPos = followTarget.current.position;
         const targetScale = followTarget.current.scale;
 

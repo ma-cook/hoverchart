@@ -8,6 +8,7 @@ import HeaderInput from './HeaderInput';
 import ResizeArrows from './ResizeArrows';
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
+import FaceTextInput from './FaceTextInput';
 
 const Sphere = ({ position, selected, onClick, onMove }) => {
   const [showTransform, setShowTransform] = useState(false);
@@ -26,6 +27,11 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
   const [activeFace, setActiveFace] = useState(null);
   const [showFaceUI, setShowFaceUI] = useState(false);
   const [showObjectUI, setShowObjectUI] = useState(true);
+  const [faceTexts, setFaceTexts] = useState({});
+  const [showFaceTextInput, setShowFaceTextInput] = useState(false);
+  const [faceTextStyles, setFaceTextStyles] = useState({}); // Add new state for face text styles
+  const [activeFaceText, setActiveFaceText] = useState(null); // Add state to track which face text is being edited
+  const [showFaceTextStyleMenu, setShowFaceTextStyleMenu] = useState(false); // Add state for style menu visibility
   const contentRef = useRef();
   const points = React.useMemo(() => {
     // Golden ratio for dodecahedron calculations
@@ -173,6 +179,8 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
     if (!selected) {
       setShowTransform(false);
       setHighlightedFaces(new Set()); // Clear highlighted faces when deselected
+      setShowFaceTextStyleMenu(false); // Add this line
+      setActiveFaceText(null); // Add this line
     }
   }, [selected]);
 
@@ -182,6 +190,21 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
       contentRef.current.orbitControls = window.orbitControls;
     }
   }, []);
+
+  // Add effect for handling global clicks
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      if (showFaceTextStyleMenu) {
+        setShowFaceTextStyleMenu(false);
+        setActiveFaceText(null);
+      }
+    };
+
+    window.addEventListener('click', handleGlobalClick);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+    };
+  }, [showFaceTextStyleMenu]);
 
   const handleTransformToggle = () => {
     setShowTransform(!showTransform);
@@ -226,6 +249,8 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
     setActiveFace(faceIndex);
     setShowFaceUI(true);
     setShowObjectUI(false); // Hide ObjectUI when face is clicked
+    setShowFaceTextStyleMenu(false); // Close text style menu when clicking a different face
+    setActiveFaceText(null); // Clear active face text
   };
 
   const handleHeaderClick = (e) => {
@@ -243,11 +268,50 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
 
   const handleBackgroundClick = (e) => {
     e.stopPropagation();
+    e.nativeEvent?.stopPropagation?.();
     onClick();
     setHighlightedFaces(new Set());
     setActiveFace(null);
     setShowFaceUI(false);
     setShowObjectUI(true);
+    setShowFaceTextStyleMenu(false); // Add this line
+    setActiveFaceText(null); // Add this line
+  };
+
+  const handleFaceTextSubmit = (text) => {
+    if (activeFace !== null) {
+      setFaceTexts((prev) => ({
+        ...prev,
+        [activeFace]: text,
+      }));
+      setShowFaceTextInput(false);
+    }
+  };
+
+  const handleFaceTextButtonClick = () => {
+    setShowFaceTextInput(true);
+    setShowFaceTextStyleMenu(false); // Hide style menu when adding new text
+  };
+
+  // Update text click handler to distinguish between clicking text vs button
+  const handleFaceTextClick = (faceIndex, e) => {
+    e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation(); // Add this line to prevent global click
+    setActiveFaceText(faceIndex);
+    setShowFaceTextStyleMenu(true);
+    setShowFaceTextInput(false);
+  };
+
+  const handleFaceTextStyleChange = (newStyle) => {
+    if (activeFaceText !== null) {
+      setFaceTextStyles((prev) => ({
+        ...prev,
+        [activeFaceText]: {
+          ...(prev[activeFaceText] || {}),
+          ...newStyle,
+        },
+      }));
+    }
   };
 
   // Calculate positions relative to sphere's scale
@@ -291,13 +355,77 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
     ];
   };
 
+  // Modify getFaceTextPosition to include normal vector for orientation
+  const getFaceTextPosition = (faceIndex) => {
+    const faceGeometry = geometry[faceIndex];
+    const positions = faceGeometry.attributes.position.array;
+    const normals = faceGeometry.attributes.normal.array;
+
+    // Calculate center of the face
+    let centerX = 0,
+      centerY = 0,
+      centerZ = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      centerX += positions[i];
+      centerY += positions[i + 1];
+      centerZ += positions[i + 2];
+    }
+    const vertexCount = positions.length / 3;
+
+    // Get face normal (using first normal from geometry)
+    const normalX = normals[0];
+    const normalY = normals[1];
+    const normalZ = normals[2];
+
+    // Create offset vector from normal
+    const OFFSET_DISTANCE = 0.2; // Adjust this value to control how far text floats
+    const offsetX = normalX * OFFSET_DISTANCE;
+    const offsetY = normalY * OFFSET_DISTANCE;
+    const offsetZ = normalZ * OFFSET_DISTANCE;
+
+    return {
+      position: [
+        centerX / vertexCount + offsetX,
+        centerY / vertexCount + offsetY,
+        centerZ / vertexCount + offsetZ,
+      ],
+      normal: [normalX, normalY, normalZ],
+    };
+  };
+
   return (
     <>
       <group position={position}>
         <group ref={contentRef} scale={scale}>
-          <mesh onClick={handleBackgroundClick}>
-            <dodecahedronGeometry args={[5]} />
-            <meshBasicMaterial visible={false} />
+          {/* Add invisible hit sphere for better click detection */}
+          <mesh
+            onClick={handleBackgroundClick}
+            onPointerDown={(e) => e.stopPropagation()}
+            renderOrder={-1} // Render before other meshes
+          >
+            <sphereGeometry args={[7]} />{' '}
+            {/* Larger than dodecahedron to ensure good hit detection */}
+            <meshBasicMaterial
+              visible={false}
+              side={THREE.DoubleSide}
+              transparent={false}
+              opacity={1}
+            />
+          </mesh>
+
+          {/* Original background mesh */}
+          <mesh
+            onClick={handleBackgroundClick}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <dodecahedronGeometry args={[5.1]} />{' '}
+            {/* Slightly larger than face geometries */}
+            <meshBasicMaterial
+              visible={false}
+              side={THREE.DoubleSide}
+              transparent={false}
+              opacity={1}
+            />
           </mesh>
 
           {/* Only render clickable faces when selected */}
@@ -326,6 +454,47 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
               lineWidth={1}
             />
           ))}
+
+          {/* Add face texts - modified for double-sided visibility */}
+          {Object.entries(faceTexts).map(([faceIndex, text]) => {
+            const { position, normal } = getFaceTextPosition(Number(faceIndex));
+            const textStyle = faceTextStyles[faceIndex] || {
+              fontSize: 0.5,
+              color: 'white',
+              underline: false,
+            };
+
+            return (
+              <group key={`face-text-${faceIndex}`}>
+                {/* Outside facing text */}
+                <TextSprite
+                  text={text}
+                  position={position}
+                  style={{
+                    ...textStyle,
+                    fixedSize: true,
+                    isFaceText: true,
+                  }}
+                  onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
+                  billboard={false}
+                  normal={normal}
+                />
+                {/* Inside facing text */}
+                <TextSprite
+                  text={text}
+                  position={position}
+                  style={{
+                    ...textStyle,
+                    fixedSize: true,
+                    isFaceText: true,
+                  }}
+                  onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
+                  billboard={false}
+                  normal={normal.map((n) => -n)}
+                />
+              </group>
+            );
+          })}
         </group>
 
         {selected && showObjectUI && !showHeader && (
@@ -345,16 +514,14 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
           <FaceUI
             position={(() => {
               const pos = getFaceUIPosition();
-              pos[1] += 10; // Only modify the z coordinate
+              pos[1] += 5; // Only modify the z coordinate
               return pos;
             })()}
             onColorChange={(color) => {
               // Handle face color change
             }}
             face={activeFace}
-            onTextClick={() => {
-              // Handle face text click
-            }}
+            onTextClick={handleFaceTextButtonClick} // Changed to use new handler
             followTarget={contentRef} // Add this prop
           />
         )}
@@ -391,6 +558,26 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
 
         {selected && isResizing && contentRef.current && (
           <ResizeArrows onResize={handleResize} object={contentRef.current} />
+        )}
+
+        {selected && showFaceTextInput && activeFace !== null && (
+          <FaceTextInput
+            position={getFaceUIPosition()}
+            onTextSubmit={handleFaceTextSubmit}
+          />
+        )}
+
+        {/* Add TextStyleUI for face text */}
+        {showFaceTextStyleMenu && activeFaceText !== null && (
+          <TextStyleUI
+            position={(() => {
+              const { position } = getFaceTextPosition(activeFaceText);
+              return [position[0], position[1] + 2, position[2]];
+            })()}
+            followTarget={contentRef}
+            onStyleChange={handleFaceTextStyleChange}
+            uiType="faceText" // Add this prop to show limited options
+          />
         )}
       </group>
 

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 export const TextStyleUIContent = ({
   onStyleChange,
   distance = 50,
-  uiType,
+  uiType = 'header', // Add uiType prop with default value
   onTransformToggle, // added new prop
   onResizeToggle, // added new prop
 }) => {
@@ -58,6 +58,15 @@ export const TextStyleUIContent = ({
     return Math.min(Math.max(baseScale, minScale), maxScale);
   };
 
+  // Only show relevant tools based on uiType
+  const showTools = {
+    header: ['size', 'color', 'underline', 'transform', 'resize'],
+    faceText: ['size', 'color', 'underline'],
+    textObject: ['size', 'color', 'underline', 'transform', 'resize'],
+  };
+
+  const tools = showTools[uiType] || showTools.header;
+
   return (
     <div
       className="object-ui-content"
@@ -70,34 +79,80 @@ export const TextStyleUIContent = ({
         transformOrigin: 'center top',
       }}
     >
-      <select
-        onChange={handleSelectChange}
-        onWheel={handleWheel}
-        className="object-tool-button"
-        style={{ width: '36px', padding: '2px 2px' }}
-      >
-        {Array.from({ length: 10 }, (_, i) => (
-          <option key={i + 1} value={i + 1}>
-            {i + 1}
-          </option>
-        ))}
-      </select>
+      {tools.includes('size') && (
+        <select
+          onChange={handleSelectChange}
+          onWheel={handleWheel}
+          className="object-tool-button"
+          style={{ width: '36px', padding: '2px 2px' }}
+        >
+          {Array.from({ length: 10 }, (_, i) => (
+            <option key={i + 1} value={i + 1}>
+              {i + 1}
+            </option>
+          ))}
+        </select>
+      )}
 
-      {/* NEW: Transform button moved from TextObjectUI */}
-      {uiType === 'textObject' && onTransformToggle && (
+      {tools.includes('color') && (
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={(e) =>
+              handleButtonClick(e, () => setShowColorPicker(!showColorPicker))
+            }
+            className="object-tool-button"
+          >
+            🎨
+          </button>
+          {showColorPicker && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: '0',
+                marginTop: '5px',
+                zIndex: 1000,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.nativeEvent?.preventDefault?.();
+              }}
+            >
+              <ColorPicker
+                onColorSelect={handleColorSelect}
+                onClose={() => setShowColorPicker(false)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {tools.includes('underline') && (
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onTransformToggle();
-          }}
+          onClick={(e) =>
+            handleButtonClick(e, () => onStyleChange({ underline: true }))
+          }
           className="object-tool-button"
         >
-          ⇄
+          U̲
         </button>
       )}
 
-      {/* Replace the old resize button with this new one */}
-      {uiType === 'textObject' && (
+      {tools.includes('transform') &&
+        uiType === 'textObject' &&
+        onTransformToggle && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onTransformToggle();
+            }}
+            className="object-tool-button"
+          >
+            ⇄
+          </button>
+        )}
+
+      {tools.includes('resize') && uiType === 'textObject' && (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -110,46 +165,6 @@ export const TextStyleUIContent = ({
           ↔
         </button>
       )}
-
-      <div style={{ position: 'relative' }}>
-        <button
-          onClick={(e) =>
-            handleButtonClick(e, () => setShowColorPicker(!showColorPicker))
-          }
-          className="object-tool-button"
-        >
-          🎨
-        </button>
-        {showColorPicker && (
-          <div
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: '0',
-              marginTop: '5px',
-              zIndex: 1000,
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              e.nativeEvent?.preventDefault?.();
-            }}
-          >
-            <ColorPicker
-              onColorSelect={handleColorSelect}
-              onClose={() => setShowColorPicker(false)}
-            />
-          </div>
-        )}
-      </div>
-
-      <button
-        onClick={(e) =>
-          handleButtonClick(e, () => onStyleChange({ underline: true }))
-        }
-        className="object-tool-button"
-      >
-        U̲
-      </button>
 
       {/* Add new bullet point button */}
       <button
