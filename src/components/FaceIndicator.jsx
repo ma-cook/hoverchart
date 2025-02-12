@@ -25,8 +25,10 @@ const FaceIndicator = ({ position, rotation, onClick, isActive }) => {
         position={position}
         rotation={rotation}
         onClick={(e) => {
-          e.stopPropagation();
-          onClick(e);
+          if (e) {
+            e.stopPropagation();
+          }
+          onClick && onClick(e);
         }}
       >
         <boxGeometry args={[1, 1, 1]} />

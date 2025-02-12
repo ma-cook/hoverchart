@@ -84,6 +84,20 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
+  // Add global indicator state
+  const [globalIndicatorSelected, setGlobalIndicatorSelected] = useState(false);
+
+  // Add handlers for indicator state
+  const handleIndicatorSelected = () => {
+    setShowAllCubesIndicators(true);
+    setGlobalIndicatorSelected(true);
+  };
+
+  const handleIndicatorDeselected = () => {
+    setShowAllCubesIndicators(false);
+    setGlobalIndicatorSelected(false);
+  };
+
   useEffect(() => {
     if (cameraRef.current?.orbitControls) {
       window.orbitControls = cameraRef.current.orbitControls;
@@ -216,6 +230,18 @@ const App = () => {
     const worldScale = new THREE.Vector3();
     cube.getWorldScale(worldScale);
 
+    if (indicator.type === 'sphere') {
+      // For dodecahedron, use the face's center position
+      const localFacePos = new THREE.Vector3(...indicator.faceCenter);
+      localFacePos.multiply(worldScale);
+      return [
+        worldPos.x + localFacePos.x,
+        worldPos.y + localFacePos.y,
+        worldPos.z + localFacePos.z,
+      ];
+    }
+
+    // Original cube face position calculation
     const getScaledOffset = (faceName) => {
       const baseScale = 5;
       switch (faceName) {
@@ -596,6 +622,14 @@ const App = () => {
                   position={obj.position}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
+                  showAllIndicators={showAllCubesIndicators}
+                  onIndicatorSelected={handleIndicatorSelected}
+                  onIndicatorDeselected={handleIndicatorDeselected}
+                  globalIndicatorSelected={globalIndicatorSelected}
+                  onFaceIndicatorClick={handleFaceIndicatorClick}
+                  onMove={(newPosition) =>
+                    handleObjectMove(obj.id, newPosition)
+                  }
                 />
               );
             }

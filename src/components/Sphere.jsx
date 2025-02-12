@@ -9,8 +9,19 @@ import ResizeArrows from './ResizeArrows';
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
 import FaceTextInput from './FaceTextInput';
+import FaceIndicator from './FaceIndicator'; // Add this import
 
-const Sphere = ({ position, selected, onClick, onMove }) => {
+const Sphere = ({
+  position,
+  selected,
+  onClick,
+  onMove,
+  showAllIndicators, // Make sure this prop is passed
+  onIndicatorSelected,
+  onIndicatorDeselected,
+  globalIndicatorSelected,
+  onFaceIndicatorClick, // Add this prop
+}) => {
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
   const [headerText, setHeaderText] = useState('');
@@ -32,6 +43,7 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
   const [faceTextStyles, setFaceTextStyles] = useState({}); // Add new state for face text styles
   const [activeFaceText, setActiveFaceText] = useState(null); // Add state to track which face text is being edited
   const [showFaceTextStyleMenu, setShowFaceTextStyleMenu] = useState(false); // Add state for style menu visibility
+  const [faceColors, setFaceColors] = useState({}); // Add new state for face colors
   const contentRef = useRef();
   const points = React.useMemo(() => {
     // Golden ratio for dodecahedron calculations
@@ -242,6 +254,7 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
     }
   };
 
+  // Split face click into two separate handlers
   const handleFaceClick = (faceIndex, e) => {
     if (!selected) return; // Ignore clicks if not selected
     e.stopPropagation();
@@ -251,6 +264,24 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
     setShowObjectUI(false); // Hide ObjectUI when face is clicked
     setShowFaceTextStyleMenu(false); // Close text style menu when clicking a different face
     setActiveFaceText(null); // Clear active face text
+  };
+
+  // New handler for indicator clicks
+  const handleIndicatorClick = (faceIndex, e) => {
+    if (!selected) return;
+    if (e && e.stopPropagation) {
+      e.stopPropagation();
+    }
+    // Get the face center position
+    const { center } = getFaceInfo(faceIndex);
+
+    // Include the face center in the indicator info
+    onFaceIndicatorClick({
+      cube: contentRef.current,
+      face: faceIndex,
+      type: 'sphere',
+      faceCenter: center,
+    });
   };
 
   const handleHeaderClick = (e) => {
@@ -276,6 +307,7 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
     setShowObjectUI(true);
     setShowFaceTextStyleMenu(false); // Add this line
     setActiveFaceText(null); // Add this line
+    onIndicatorDeselected();
   };
 
   const handleFaceTextSubmit = (text) => {
@@ -393,6 +425,46 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
     };
   };
 
+  // Add function to calculate face center and normal
+  const getFaceInfo = (faceIndex) => {
+    const faceGeometry = geometry[faceIndex];
+    const positions = faceGeometry.attributes.position.array;
+    const normals = faceGeometry.attributes.normal.array;
+
+    let centerX = 0,
+      centerY = 0,
+      centerZ = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      centerX += positions[i];
+      centerY += positions[i + 1];
+      centerZ += positions[i + 2];
+    }
+    const vertexCount = positions.length / 3;
+
+    return {
+      center: [
+        centerX / vertexCount,
+        centerY / vertexCount,
+        centerZ / vertexCount,
+      ],
+      normal: [normals[0], normals[1], normals[2]],
+    };
+  };
+
+  // Add getFaceRotation function
+  const getFaceRotation = (faceIndex) => {
+    const { normal } = getFaceInfo(faceIndex);
+    const rotationMatrix = new THREE.Matrix4();
+    rotationMatrix.lookAt(
+      new THREE.Vector3(...normal),
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 1, 0)
+    );
+    const rotation = new THREE.Euler();
+    rotation.setFromRotationMatrix(rotationMatrix);
+    return rotation;
+  };
+
   return (
     <>
       <group position={position}>
@@ -428,22 +500,32 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
             />
           </mesh>
 
-          {/* Only render clickable faces when selected */}
-          {selected &&
-            geometry.map((faceGeometry, idx) => (
-              <mesh
-                key={`face-${idx}`}
-                geometry={faceGeometry}
-                onClick={(e) => handleFaceClick(idx, e)}
-              >
-                <meshBasicMaterial
-                  color={highlightedFaces.has(idx) ? '#0066ff' : '#ffffff'}
-                  transparent
-                  opacity={highlightedFaces.has(idx) ? 0.3 : 0.1}
-                  side={THREE.DoubleSide}
-                />
-              </mesh>
-            ))}
+          {/* Modified face rendering to handle colors correctly */}
+          {geometry.map((faceGeometry, idx) => (
+            <mesh
+              key={`face-${idx}`}
+              geometry={faceGeometry}
+              onClick={(e) => selected && handleFaceClick(idx, e)}
+            >
+              <meshBasicMaterial
+                color={
+                  faceColors[idx] || // Custom color if set
+                  (selected && highlightedFaces.has(idx) ? '#0066ff' : 'white') // Only show highlight when selected
+                }
+                transparent
+                opacity={
+                  selected
+                    ? highlightedFaces.has(idx)
+                      ? 0.3
+                      : 0.1
+                    : faceColors[idx]
+                    ? 0.3
+                    : 0 // Hide faces without custom colors when not selected
+                }
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          ))}
 
           {/* Wireframe lines */}
           {points.map((linePoints, idx) => (
@@ -495,6 +577,35 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
               </group>
             );
           })}
+
+          {/* Add FaceIndicators */}
+          {selected && activeFace !== null && (
+            <FaceIndicator
+              key={`main-indicator-${activeFace}`}
+              position={getFaceInfo(activeFace).center}
+              rotation={getFaceRotation(activeFace)}
+              onClick={(e) => handleIndicatorClick(activeFace, e)}
+              isActive={globalIndicatorSelected}
+            />
+          )}
+
+          {/* Show all indicators only after indicator is selected */}
+          {selected &&
+            (showAllIndicators || globalIndicatorSelected) &&
+            geometry.map((_, idx) => {
+              const { center } = getFaceInfo(idx);
+              const rotation = getFaceRotation(idx);
+
+              return (
+                <FaceIndicator
+                  key={`indicator-${idx}`}
+                  position={center}
+                  rotation={rotation}
+                  onClick={(e) => handleIndicatorClick(idx, e)}
+                  isActive={globalIndicatorSelected}
+                />
+              );
+            })}
         </group>
 
         {selected && showObjectUI && !showHeader && (
@@ -518,7 +629,10 @@ const Sphere = ({ position, selected, onClick, onMove }) => {
               return pos;
             })()}
             onColorChange={(color) => {
-              // Handle face color change
+              setFaceColors((prev) => ({
+                ...prev,
+                [activeFace]: color,
+              }));
             }}
             face={activeFace}
             onTextClick={handleFaceTextButtonClick} // Changed to use new handler
