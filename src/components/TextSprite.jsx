@@ -14,6 +14,7 @@ const TextSprite = ({
     fixedSize: false,
     isFaceText: false,
     isHeaderText: false,
+    isDodecahedronHeader: false, // Add this new property
   },
   billboard = true, // New prop, defaults to true
 }) => {
@@ -50,11 +51,12 @@ const TextSprite = ({
           const distanceToCamera = camera.position.distanceTo(targetPos);
           const fontSize = getFontSize(style.fontSize);
 
-          // Calculate a consistent offset that scales with the cube
-          const baseOffset = 2 * targetScale.y; // Base offset that scales with cube
-          const textOffset = fontSize * 0.5; // Additional offset based on text size
+          // Different offset based on shape type
+          const baseOffset = style.isDodecahedronHeader
+            ? 8 * targetScale.y // Keep dodecahedron header high
+            : 4 * targetScale.y; // Lower offset for cube header
+          const textOffset = fontSize * 0.5;
 
-          // Position text above cube with consistent spacing
           textRef.current.position.set(
             targetPos.x,
             targetPos.y + cubeHeight / 2 + baseOffset + textOffset,
