@@ -20,6 +20,7 @@ const Sphere = ({
   onIndicatorDeselected,
   globalIndicatorSelected,
   onFaceIndicatorClick, // Add this prop
+  onIndicatorSelected, // Add this prop
 }) => {
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
@@ -43,6 +44,8 @@ const Sphere = ({
   const [activeFaceText, setActiveFaceText] = useState(null); // Add state to track which face text is being edited
   const [showFaceTextStyleMenu, setShowFaceTextStyleMenu] = useState(false); // Add state for style menu visibility
   const [faceColors, setFaceColors] = useState({}); // Add new state for face colors
+  const [selectedIndicator, setSelectedIndicator] = useState(null); // Add new state for indicator selection
+  const [isConnected, setIsConnected] = useState(false); // Add new state to track if this dodecahedron is part of a connection
   const contentRef = useRef();
   const points = React.useMemo(() => {
     // Golden ratio for dodecahedron calculations
@@ -192,6 +195,7 @@ const Sphere = ({
       setHighlightedFaces(new Set()); // Clear highlighted faces when deselected
       setShowFaceTextStyleMenu(false); // Add this line
       setActiveFaceText(null); // Add this line
+      // Don't reset selectedIndicator here
     }
   }, [selected]);
 
@@ -265,16 +269,18 @@ const Sphere = ({
     setActiveFaceText(null); // Clear active face text
   };
 
-  // New handler for indicator clicks
+  // Add a handler to receive connection state from parent
   const handleIndicatorClick = (faceIndex, e) => {
     if (!selected) return;
     if (e && e.stopPropagation) {
       e.stopPropagation();
     }
-    // Get the face center position
-    const { center } = getFaceInfo(faceIndex);
 
-    // Include the face center in the indicator info
+    // First, show all indicators
+    onIndicatorSelected(); // Now this function will be defined
+    setSelectedIndicator(faceIndex);
+
+    const { center } = getFaceInfo(faceIndex);
     onFaceIndicatorClick({
       cube: contentRef.current,
       face: faceIndex,
@@ -306,7 +312,11 @@ const Sphere = ({
     setShowObjectUI(true);
     setShowFaceTextStyleMenu(false); // Add this line
     setActiveFaceText(null); // Add this line
-    onIndicatorDeselected();
+    // Clear indicator state if connected
+    if (isConnected) {
+      setSelectedIndicator(null);
+      onIndicatorDeselected();
+    }
   };
 
   const handleFaceTextSubmit = (text) => {
@@ -464,6 +474,10 @@ const Sphere = ({
     return rotation;
   };
 
+  // Update the shouldShowIndicators condition to consider connection state
+  const shouldShowIndicators =
+    selected || globalIndicatorSelected || selectedIndicator !== null;
+
   return (
     <>
       <group position={position}>
@@ -577,31 +591,33 @@ const Sphere = ({
             );
           })}
 
-          {/* Add FaceIndicators */}
+          {/* Main face indicator for active face */}
           {selected && activeFace !== null && (
             <FaceIndicator
               key={`main-indicator-${activeFace}`}
               position={getFaceInfo(activeFace).center}
               rotation={getFaceRotation(activeFace)}
               onClick={(e) => handleIndicatorClick(activeFace, e)}
-              isActive={globalIndicatorSelected}
+              isActive={selectedIndicator === activeFace} // Now highlights only on indicator click
             />
           )}
 
-          {/* Update the condition for showing indicators */}
-          {selected &&
+          {/* Update indicator cubes rendering */}
+          {shouldShowIndicators &&
             geometry.map((_, idx) => {
               const { center } = getFaceInfo(idx);
               const rotation = getFaceRotation(idx);
-              // Show indicators when either local or global state is true
-              const shouldShow = showAllIndicators || globalIndicatorSelected;
+              const shouldShow =
+                showAllIndicators ||
+                globalIndicatorSelected ||
+                selectedIndicator !== null;
               return shouldShow ? (
                 <FaceIndicator
                   key={`indicator-${idx}`}
                   position={center}
                   rotation={rotation}
                   onClick={(e) => handleIndicatorClick(idx, e)}
-                  isActive={true}
+                  isActive={selectedIndicator === idx} // Highlight only if explicitly clicked
                 />
               ) : null;
             })}

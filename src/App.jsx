@@ -6,7 +6,7 @@ import './App.css';
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
 import Cube from './components/Cube';
-import Sphere from './components/Sphere';
+import Sphere from './components/Dodecahedron';
 import Plane from './components/Plane';
 import LineUI from './components/LineUI';
 import HeaderInput from './components/HeaderInput';
@@ -91,6 +91,7 @@ const App = () => {
   const handleIndicatorSelected = () => {
     setShowAllCubesIndicators(true);
     setGlobalIndicatorSelected(true);
+    setIndicatorMode('all'); // Add this to ensure all indicators are visible
   };
 
   const handleIndicatorDeselected = () => {
@@ -289,11 +290,10 @@ const App = () => {
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
       setSelectedIndicators([indicator]);
-      setShowAllCubesIndicators(true);
-      setIndicatorMode('all');
+      // Don't set indicators here since it's already done in the component
     } else if (selectedIndicators.length === 1) {
+      // Create connection...
       const startIndicator = selectedIndicators[0];
-
       const startPos = calculateFacePosition(startIndicator);
       const endPos = calculateFacePosition(indicator);
 
@@ -306,9 +306,11 @@ const App = () => {
         },
       ]);
 
+      // Reset states after connection
       setSelectedIndicators([]);
       setShowAllCubesIndicators(false);
-      setIndicatorMode('connections');
+      setGlobalIndicatorSelected(false);
+      setIndicatorMode('none');
     }
   };
 
@@ -328,10 +330,8 @@ const App = () => {
 
   const handleToggleIndicators = (mode = 'all') => {
     if (mode === 'connection') {
-      // Force all indicators to show for connection mode
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
-      handleIndicatorSelected(); // Add this call
       setIndicatorMode('indicators');
       setSelectedId(null);
       setSelectedIndicators([]);
