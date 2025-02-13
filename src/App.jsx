@@ -91,7 +91,8 @@ const App = () => {
   const handleIndicatorSelected = () => {
     setShowAllCubesIndicators(true);
     setGlobalIndicatorSelected(true);
-    setIndicatorMode('all'); // Add this to ensure all indicators are visible
+    setIndicatorMode('indicators'); // Change this to 'indicators' instead of 'all'
+    // Don't clear selectedId to maintain selection state
   };
 
   const handleIndicatorDeselected = () => {
@@ -290,7 +291,9 @@ const App = () => {
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
       setSelectedIndicators([indicator]);
-      // Don't set indicators here since it's already done in the component
+      // Keep indicators visible on all objects
+      setShowAllCubesIndicators(true);
+      setGlobalIndicatorSelected(true);
     } else if (selectedIndicators.length === 1) {
       // Create connection...
       const startIndicator = selectedIndicators[0];

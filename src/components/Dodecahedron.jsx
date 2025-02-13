@@ -271,22 +271,23 @@ const Sphere = ({
 
   // Add a handler to receive connection state from parent
   const handleIndicatorClick = (faceIndex, e) => {
-    if (!selected) return;
     if (e && e.stopPropagation) {
       e.stopPropagation();
     }
 
-    // First, show all indicators
-    onIndicatorSelected(); // Now this function will be defined
-    setSelectedIndicator(faceIndex);
-
     const { center } = getFaceInfo(faceIndex);
-    onFaceIndicatorClick({
+    const indicator = {
       cube: contentRef.current,
       face: faceIndex,
       type: 'sphere',
       faceCenter: center,
-    });
+      position: center, // Add this to match cube indicator format
+    };
+
+    // Show all indicators globally
+    onIndicatorSelected();
+    setSelectedIndicator(faceIndex);
+    onFaceIndicatorClick(indicator);
   };
 
   const handleHeaderClick = (e) => {
@@ -474,9 +475,9 @@ const Sphere = ({
     return rotation;
   };
 
-  // Update the shouldShowIndicators condition to consider connection state
+  // Update shouldShowIndicators condition to ignore selection state
   const shouldShowIndicators =
-    selected || globalIndicatorSelected || selectedIndicator !== null;
+    globalIndicatorSelected || showAllIndicators || selectedIndicator !== null;
 
   return (
     <>
