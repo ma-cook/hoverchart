@@ -21,6 +21,7 @@ const Sphere = ({
   globalIndicatorSelected,
   onFaceIndicatorClick, // Add this prop
   onIndicatorSelected, // Add this prop
+  connections, // Add this prop
 }) => {
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
@@ -46,6 +47,7 @@ const Sphere = ({
   const [faceColors, setFaceColors] = useState({}); // Add new state for face colors
   const [selectedIndicator, setSelectedIndicator] = useState(null); // Add new state for indicator selection
   const [isConnected, setIsConnected] = useState(false); // Add new state to track if this dodecahedron is part of a connection
+  const [connectedFaces, setConnectedFaces] = useState(new Set()); // Add new state for connected faces
   const contentRef = useRef();
   const points = React.useMemo(() => {
     // Golden ratio for dodecahedron calculations
@@ -221,6 +223,34 @@ const Sphere = ({
     };
   }, [showFaceTextStyleMenu]);
 
+  // Update connected faces when connections change
+  useEffect(() => {
+    const connected = new Set();
+    connections?.forEach((conn) => {
+      if (conn.start.cube === contentRef.current) {
+        connected.add(conn.start.face);
+      }
+      if (conn.end.cube === contentRef.current) {
+        connected.add(conn.end.face);
+      }
+    });
+    setConnectedFaces(connected);
+    setIsConnected(connected.size > 0);
+  }, [connections]);
+
+  // Add an effect to reset selectedIndicator when connections change
+  useEffect(() => {
+    if (connections?.length > 0) {
+      // If this dodecahedron's selected indicator is part of a connection, reset it
+      if (
+        selectedIndicator !== null &&
+        isIndicatorConnected(selectedIndicator)
+      ) {
+        setSelectedIndicator(null);
+      }
+    }
+  }, [connections, selectedIndicator]);
+
   const handleTransformToggle = () => {
     setShowTransform(!showTransform);
   };
@@ -284,10 +314,14 @@ const Sphere = ({
       position: center, // Add this to match cube indicator format
     };
 
-    // Show all indicators globally
     onIndicatorSelected();
     setSelectedIndicator(faceIndex);
     onFaceIndicatorClick(indicator);
+
+    // Reset highlight if this indicator is already connected
+    if (isIndicatorConnected(faceIndex)) {
+      setSelectedIndicator(null);
+    }
   };
 
   const handleHeaderClick = (e) => {
@@ -475,9 +509,37 @@ const Sphere = ({
     return rotation;
   };
 
-  // Update shouldShowIndicators condition to ignore selection state
+  // Add function to check if a face is connected
+  const isIndicatorConnected = (faceIndex) => {
+    return connections?.some(
+      (conn) =>
+        (conn.start.cube === contentRef.current &&
+          conn.start.face === faceIndex) ||
+        (conn.end.cube === contentRef.current && conn.end.face === faceIndex)
+    );
+  };
+
+  // Update shouldShowIndicators logic
   const shouldShowIndicators =
     globalIndicatorSelected || showAllIndicators || selectedIndicator !== null;
+
+  // Update indicator visibility logic
+  const shouldShowFaceIndicator = (faceIndex) => {
+    // Always show connected faces' indicators
+    if (connectedFaces.has(faceIndex)) {
+      return true;
+    }
+
+    // Hide unconnected indicators after any connection is made
+    if (connectedFaces.size > 0) {
+      return false;
+    }
+
+    // Show all indicators when in global indicator mode
+    return (
+      globalIndicatorSelected || showAllIndicators || selectedIndicator !== null
+    );
+  };
 
   return (
     <>
@@ -604,24 +666,19 @@ const Sphere = ({
           )}
 
           {/* Update indicator cubes rendering */}
-          {shouldShowIndicators &&
-            geometry.map((_, idx) => {
-              const { center } = getFaceInfo(idx);
-              const rotation = getFaceRotation(idx);
-              const shouldShow =
-                showAllIndicators ||
-                globalIndicatorSelected ||
-                selectedIndicator !== null;
-              return shouldShow ? (
-                <FaceIndicator
-                  key={`indicator-${idx}`}
-                  position={center}
-                  rotation={rotation}
-                  onClick={(e) => handleIndicatorClick(idx, e)}
-                  isActive={selectedIndicator === idx} // Highlight only if explicitly clicked
-                />
-              ) : null;
-            })}
+          {geometry.map((_, idx) => {
+            const { center } = getFaceInfo(idx);
+            const rotation = getFaceRotation(idx);
+            return shouldShowFaceIndicator(idx) ? (
+              <FaceIndicator
+                key={`indicator-${idx}`}
+                position={center}
+                rotation={rotation}
+                onClick={(e) => handleIndicatorClick(idx, e)}
+                isActive={selectedIndicator === idx}
+              />
+            ) : null;
+          })}
         </group>
 
         {selected && showObjectUI && !showHeader && (

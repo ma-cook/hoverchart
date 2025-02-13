@@ -640,6 +640,7 @@ const App = () => {
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
+                  connections={connections} // Add this prop
                 />
               );
             }
