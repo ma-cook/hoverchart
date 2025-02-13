@@ -28,30 +28,33 @@ const ConnectionUpdater = ({
     if (connections.length > 0) {
       setConnections((prev) =>
         prev.map((conn) => {
+          // Calculate new positions regardless of line style
+          const newStartPos = calculateFacePosition(conn.start);
+          const newEndPos = calculateFacePosition(conn.end);
+
+          // Update dash offset if line is animated
+          let newDashOffset = conn.dashOffset;
           if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
             if (conn.dashDirection === 'left') {
-              return {
-                ...conn,
-                dashOffset: (conn.dashOffset || 0) - delta * 2,
-              };
+              newDashOffset = (conn.dashOffset || 0) - delta * 2;
             }
             if (conn.dashDirection === 'right') {
-              return {
-                ...conn,
-                dashOffset: (conn.dashOffset || 0) + delta * 2,
-              };
+              newDashOffset = (conn.dashOffset || 0) + delta * 2;
             }
           }
+
+          // Return updated connection with new positions and dash offset
           return {
             ...conn,
             start: {
               ...conn.start,
-              position: calculateFacePosition(conn.start),
+              position: newStartPos,
             },
             end: {
               ...conn.end,
-              position: calculateFacePosition(conn.end),
+              position: newEndPos,
             },
+            dashOffset: newDashOffset,
           };
         })
       );
