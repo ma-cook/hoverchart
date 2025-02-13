@@ -54,6 +54,13 @@ const TextSprite = ({
           new THREE.Vector3(0, 1, 0)
         );
         textRef.current.setRotationFromMatrix(matrix);
+        // NEW: Reapply position with upward offset for dodecahedron faces
+        const upwardOffset = 1; // Adjust offset as needed
+        textRef.current.position.set(
+          position[0],
+          position[1] + upwardOffset,
+          position[2]
+        );
       } else if (followTarget?.current) {
         const targetPos = followTarget.current.position;
         const targetScale = followTarget.current.scale;

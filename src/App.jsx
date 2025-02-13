@@ -328,12 +328,19 @@ const App = () => {
 
   const handleToggleIndicators = (mode = 'all') => {
     if (mode === 'connection') {
+      // Force all indicators to show for connection mode
       setShowAllCubesIndicators(true);
+      setGlobalIndicatorSelected(true);
+      handleIndicatorSelected(); // Add this call
       setIndicatorMode('indicators');
       setSelectedId(null);
       setSelectedIndicators([]);
     } else {
-      setShowAllCubesIndicators((prev) => !prev);
+      setShowAllCubesIndicators((prev) => {
+        const newValue = !prev;
+        setGlobalIndicatorSelected(newValue); // Sync both states
+        return newValue;
+      });
       setIndicatorMode((prev) => (prev === 'all' ? 'none' : 'all'));
     }
   };

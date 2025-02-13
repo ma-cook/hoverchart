@@ -17,7 +17,6 @@ const Sphere = ({
   onClick,
   onMove,
   showAllIndicators, // Make sure this prop is passed
-  onIndicatorSelected,
   onIndicatorDeselected,
   globalIndicatorSelected,
   onFaceIndicatorClick, // Add this prop
@@ -589,22 +588,22 @@ const Sphere = ({
             />
           )}
 
-          {/* Show all indicators only after indicator is selected */}
+          {/* Update the condition for showing indicators */}
           {selected &&
-            (showAllIndicators || globalIndicatorSelected) &&
             geometry.map((_, idx) => {
               const { center } = getFaceInfo(idx);
               const rotation = getFaceRotation(idx);
-
-              return (
+              // Show indicators when either local or global state is true
+              const shouldShow = showAllIndicators || globalIndicatorSelected;
+              return shouldShow ? (
                 <FaceIndicator
                   key={`indicator-${idx}`}
                   position={center}
                   rotation={rotation}
                   onClick={(e) => handleIndicatorClick(idx, e)}
-                  isActive={globalIndicatorSelected}
+                  isActive={true}
                 />
-              );
+              ) : null;
             })}
         </group>
 
