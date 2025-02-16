@@ -336,15 +336,16 @@ const App = () => {
 
   const handleToggleIndicators = (mode = 'all') => {
     if (mode === 'connection') {
+      // Reset all indicator states before showing all indicators
+      setSelectedIndicators([]);
+      setIndicatorMode('indicators');
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
-      setIndicatorMode('indicators');
       setSelectedId(null);
-      setSelectedIndicators([]);
     } else {
       setShowAllCubesIndicators((prev) => {
         const newValue = !prev;
-        setGlobalIndicatorSelected(newValue); // Sync both states
+        setGlobalIndicatorSelected(newValue);
         return newValue;
       });
       setIndicatorMode((prev) => (prev === 'all' ? 'none' : 'all'));
@@ -632,7 +633,21 @@ const App = () => {
               return (
                 <Sphere
                   key={obj.id}
+                  id={obj.id}
                   position={obj.position}
+                  scale={obj.scale || [1, 1, 1]}
+                  headerText={obj.headerText || ''}
+                  headerStyle={
+                    obj.headerStyle || {
+                      fontSize: 'medium',
+                      color: 'white',
+                      underline: false,
+                    }
+                  }
+                  lineColor={obj.lineColor || 'white'}
+                  faceColors={obj.faceColors || {}}
+                  faceTexts={obj.faceTexts || {}}
+                  faceTextStyles={obj.faceTextStyles || {}}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
                   showAllIndicators={showAllCubesIndicators}
@@ -643,7 +658,8 @@ const App = () => {
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
-                  connections={connections} // Add this prop
+                  connections={connections}
+                  onUpdate={handleObjectUpdate} // Add this prop
                 />
               );
             }
