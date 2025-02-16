@@ -2,24 +2,13 @@ import { useState, useRef } from 'react';
 import { Html } from '@react-three/drei';
 
 import { useFrame } from '@react-three/fiber';
-const HeaderInput = ({ position, onTextSubmit, followTarget }) => {
+const HeaderInput = ({ position, onTextSubmit }) => {
   const [headerText, setHeaderText] = useState('');
   const groupRef = useRef();
 
   useFrame(({ camera }) => {
-    if (groupRef.current && followTarget?.current) {
-      const targetScale = followTarget.current.scale;
-      const cubeHeight = 10 * targetScale.y;
-      const topEdgeOffset = cubeHeight;
-      const targetPos = followTarget.current.position;
-
-      groupRef.current.position.set(
-        targetPos.x,
-        targetPos.y + topEdgeOffset + 10,
-        targetPos.z
-      );
-
-      // Keep input facing camera
+    if (groupRef.current) {
+      // Only handle rotation, maintain original position
       groupRef.current.quaternion.copy(camera.quaternion);
     }
   });

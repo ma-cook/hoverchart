@@ -16,6 +16,7 @@ const TextSprite = ({
     isFaceText: false,
     isHeaderText: false,
     isDodecahedronHeader: false, // Add this new property
+    fixedPosition: false, // Add this new property
   },
   billboard = true, // New prop, defaults to true
   normal, // Add normal prop for face orientation
@@ -65,7 +66,27 @@ const TextSprite = ({
         const targetPos = followTarget.current.position;
         const targetScale = followTarget.current.scale;
 
-        if (style.isHeaderText) {
+        if (style.isHeaderText && style.isPlaneHeader) {
+          // If fixedPosition is true, do not override the provided position.
+          if (!style.fixedPosition) {
+            const [x, y, z] = position;
+            textRef.current.position.set(
+              targetPos.x + x,
+              targetPos.y + y,
+              targetPos.z + z
+            );
+          }
+          // Always update rotation (billboard) and scale.
+          textRef.current.quaternion.copy(camera.quaternion);
+          const distanceToCamera = camera.position.distanceTo(
+            textRef.current.position
+          );
+          const scaleValue = Math.min(
+            Math.max(distanceToCamera * 0.01, 0.5),
+            2
+          );
+          textRef.current.scale.set(scaleValue, scaleValue, scaleValue);
+        } else if (style.isHeaderText) {
           const cubeHeight = 10 * targetScale.y;
           const distanceToCamera = camera.position.distanceTo(targetPos);
           const fontSize = getFontSize(style.fontSize);

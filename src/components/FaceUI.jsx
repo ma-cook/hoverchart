@@ -13,6 +13,7 @@ const FaceUI = ({
   onTransformToggle, // Add this prop
   onResizeToggle, // Add this prop
   followTarget, // Add this prop
+  onHeaderToggle, // Add this prop
 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const groupRef = useRef();
@@ -86,6 +87,18 @@ const FaceUI = ({
               {tool.icon}
             </button>
           ))}
+          {/* Add header button for planes */}
+          {isPlane && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onHeaderToggle?.();
+              }}
+              className="face-tool-button"
+            >
+              H
+            </button>
+          )}
         </div>
         {showColorPicker && (
           <div

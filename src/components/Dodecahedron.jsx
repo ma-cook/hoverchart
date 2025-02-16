@@ -832,7 +832,7 @@ const Sphere = ({
 
         {selected && showHeader && (
           <HeaderInput
-            position={getHeaderPosition()}
+            position={[0, 10, 0]}
             onTextSubmit={handleHeaderSubmit}
             followTarget={contentRef}
           />

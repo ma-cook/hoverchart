@@ -8,6 +8,7 @@ import FaceTextInput from './FaceTextInput';
 import TextStyleUI from './TextStyleUI'; // Add this import
 import { TransformControls } from '@react-three/drei'; // Add this import
 import ResizeArrows from './ResizeArrows'; // Fix import statement to use default import
+import HeaderInput from './HeaderInput';
 
 const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const groupRef = useRef();
@@ -29,6 +30,14 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const [showTransform, setShowTransform] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [scale, setScale] = useState([1, 1, 1]);
+  const [headerText, setHeaderText] = useState('');
+  const [showHeader, setShowHeader] = useState(false);
+  const [headerStyle, setHeaderStyle] = useState({
+    fontSize: 1.5,
+    color: 'white',
+    underline: false,
+  });
+  const [showHeaderStyleUI, setShowHeaderStyleUI] = useState(false);
 
   // Wrap closeAllUIs in useCallback and declare it before it’s used
   const closeAllUIs = useCallback(() => {
@@ -37,6 +46,8 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     setShowTextInput(false);
     setShowTransform(false);
     setIsResizing(false);
+    setShowHeader(false);
+    setShowHeaderStyleUI(false);
   }, []); // No dependencies as setters are stable
 
   const points = [
@@ -154,6 +165,45 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     }
   };
 
+  const handleHeaderToggle = () => {
+    closeAllUIs();
+    setShowHeader(true);
+  };
+
+  const handleHeaderSubmit = (text) => {
+    setHeaderText(text);
+    setShowHeader(false);
+  };
+
+  const handleHeaderTextClick = (e) => {
+    e.stopPropagation();
+    closeAllUIs();
+    setShowHeaderStyleUI(true);
+  };
+
+  const handleHeaderStyleChange = (newStyle) => {
+    setHeaderStyle((prev) => ({ ...prev, ...newStyle }));
+  };
+
+  // Add function to calculate absolute positions
+  const getUIPositions = () => {
+    const planeHeight = 10 * scale[1];
+    const verticalOffset = planeHeight / 2;
+
+    return {
+      headerInput: [
+        position[0],
+        position[1] + verticalOffset + 15,
+        position[2] + 1,
+      ],
+      headerText: [
+        position[0],
+        position[1] + verticalOffset + 12,
+        position[2] + 1,
+      ],
+    };
+  };
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -183,6 +233,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
             isPlane={true} // Add this prop
             onTransformToggle={handleTransformToggle} // Add this prop
             onResizeToggle={handleResizeToggle} // Add this prop
+            onHeaderToggle={handleHeaderToggle} // Add this line
           />
         )}
 
@@ -219,6 +270,41 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
           />
         )}
       </group>
+
+      {/* Move header elements outside main group to prevent inheritance */}
+      {showHeader && (
+        <HeaderInput
+          position={getUIPositions().headerInput}
+          onTextSubmit={handleHeaderSubmit}
+          followTarget={groupRef}
+        />
+      )}
+
+      {headerText && (
+        <TextSprite
+          text={headerText}
+          position={getUIPositions().headerText}
+          followTarget={groupRef}
+          onClick={handleHeaderTextClick}
+          style={{
+            ...headerStyle,
+            isHeaderText: true,
+            fixedSize: true,
+          }}
+          billboard={true}
+        />
+      )}
+
+      {/* Add header style UI */}
+      {showHeaderStyleUI && (
+        <TextStyleUI
+          position={[0, 12, 0]}
+          onStyleChange={handleHeaderStyleChange}
+          onClose={() => setShowHeaderStyleUI(false)}
+          followTarget={groupRef}
+        />
+      )}
+
       {/* Add TransformControls outside the group */}
       {selected && showTransform && groupRef.current && (
         <TransformControls

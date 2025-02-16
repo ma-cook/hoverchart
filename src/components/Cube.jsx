@@ -464,15 +464,6 @@ const Cube = ({
   };
 
   // Calculate header input position relative to cube's top edge
-  const getHeaderInputPosition = () => {
-    const cubeHeight = 10 * scale[1];
-    const topEdgeOffset = cubeHeight / 2;
-    return [
-      position[0],
-      position[1] + topEdgeOffset + 10, // 10 units above top edge
-      position[2],
-    ];
-  };
 
   const isIndicatorActive = (faceName) => {
     return selectedIndicators.some(
@@ -748,7 +739,7 @@ const Cube = ({
           {/* Update header elements positions */}
           {selected && showHeader && (
             <HeaderInput
-              position={getHeaderInputPosition()}
+              position={[0, 10, 0]}
               onTextSubmit={handleHeaderSubmit}
               followTarget={contentRef}
             />
