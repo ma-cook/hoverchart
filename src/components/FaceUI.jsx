@@ -14,8 +14,11 @@ const FaceUI = ({
   onResizeToggle, // Add this prop
   followTarget, // Add this prop
   onHeaderToggle, // Add this prop
+  onBorderToggle, // Update this to handle more options
 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showBorderMenu, setShowBorderMenu] = useState(false); // Add this state
+  const [isBorderColor, setIsBorderColor] = useState(false); // Add this state
   const groupRef = useRef();
   const lastPosition = useRef(null);
 
@@ -36,6 +39,34 @@ const FaceUI = ({
     }
   });
 
+  const handleBorderStyleClick = (style) => {
+    onBorderToggle?.({ type: 'style', value: style });
+    setShowBorderMenu(false);
+  };
+
+  const handleBorderColorClick = (e) => {
+    e.stopPropagation();
+    setIsBorderColor(true);
+    setShowColorPicker(true);
+  };
+
+  const handleLineThicknessClick = (e) => {
+    e.stopPropagation();
+    onBorderToggle?.({ type: 'thickness' });
+  };
+
+  const handleColorSelect = (color) => {
+    if (isBorderColor) {
+      // Pass color directly to parent for border color change
+      onBorderToggle?.({ type: 'color', value: color });
+      setIsBorderColor(false);
+      setShowBorderMenu(false);
+    } else {
+      onColorChange?.(color, face);
+    }
+    setShowColorPicker(false);
+  };
+
   // Create base tools array
   const baseTools = [
     { name: 'text', icon: 'T' },
@@ -50,22 +81,29 @@ const FaceUI = ({
         ...baseTools,
         { name: 'transform', icon: '✥' },
         { name: 'resize', icon: '↔' }, // Add resize button
+        { name: 'border', icon: '▢' }, // Add border tool for planes
       ]
     : baseTools;
 
   const handleToolClick = (tool, e) => {
     e.stopPropagation();
-    if (tool.name === 'paint') {
-      setShowColorPicker(true);
-    } else if (tool.name === 'text' && typeof onTextClick === 'function') {
-      onTextClick(face);
-    } else if (
-      tool.name === 'transform' &&
-      typeof onTransformToggle === 'function'
-    ) {
-      onTransformToggle();
-    } else if (tool.name === 'resize' && typeof onResizeToggle === 'function') {
-      onResizeToggle();
+    switch (tool.name) {
+      case 'paint':
+        setShowColorPicker(true);
+        break;
+      case 'text':
+        onTextClick?.(face);
+        break;
+      case 'transform':
+        onTransformToggle?.();
+        break;
+      case 'resize':
+        onResizeToggle?.();
+        break;
+      case 'border':
+        setShowBorderMenu((prev) => !prev);
+        setShowColorPicker(false);
+        break;
     }
     console.log(`Face ${tool.name} clicked`);
   };
@@ -73,7 +111,7 @@ const FaceUI = ({
   return (
     <group ref={groupRef}>
       <Html
-        style={{ background: 'white', pointerEvents: 'auto' }}
+        style={{ background: 'black', pointerEvents: 'auto' }}
         center
         className="face-ui-container"
       >
@@ -99,6 +137,42 @@ const FaceUI = ({
               H
             </button>
           )}
+          {/* Add border menu dropdown */}
+          {showBorderMenu && (
+            <div className="border-menu">
+              <button
+                className="border-menu-item"
+                onClick={() => handleBorderStyleClick('solid')}
+              >
+                ─────
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={() => handleBorderStyleClick('dashed')}
+              >
+                ── ── ──
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={() => handleBorderStyleClick('dotted')}
+              >
+                ∙∙∙∙∙∙∙
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={handleBorderColorClick} // Updated handler
+              >
+                🎨
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={handleLineThicknessClick}
+                title="Toggle line thickness"
+              >
+                ▂▃▄
+              </button>
+            </div>
+          )}
         </div>
         {showColorPicker && (
           <div
@@ -110,10 +184,12 @@ const FaceUI = ({
             }}
           >
             <ColorPicker
-              onColorSelect={(color) => {
-                onColorChange(color, face);
+              onColorSelect={handleColorSelect}
+              onClose={() => {
+                setShowColorPicker(false);
+                setIsBorderColor(false);
+                setShowBorderMenu(false);
               }}
-              onClose={() => setShowColorPicker(false)}
             />
           </div>
         )}

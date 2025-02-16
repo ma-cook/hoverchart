@@ -38,6 +38,10 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     underline: false,
   });
   const [showHeaderStyleUI, setShowHeaderStyleUI] = useState(false);
+  const [showBorder, setShowBorder] = useState(true);
+  const [borderStyle, setBorderStyle] = useState('solid');
+  const [borderColor, setBorderColor] = useState('white');
+  const [lineThickness, setLineThickness] = useState(1);
 
   // Wrap closeAllUIs in useCallback and declare it before it’s used
   const closeAllUIs = useCallback(() => {
@@ -185,12 +189,27 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     setHeaderStyle((prev) => ({ ...prev, ...newStyle }));
   };
 
+  // Update border toggle handler
+  const handleBorderToggle = (option) => {
+    if (option.type === 'style') {
+      setBorderStyle(option.value);
+    } else if (option.type === 'color') {
+      console.log('Setting border color:', option.value); // Add debug log
+      setBorderColor(option.value);
+      setShowBorder(true); // Ensure border is visible when color is changed
+    } else if (option.type === 'thickness') {
+      setLineThickness((prev) => (prev >= 6 ? 1 : prev + 2));
+    }
+  };
+
   // Add function to calculate absolute positions
   const getUIPositions = () => {
     const planeHeight = 10 * scale[1];
     const verticalOffset = planeHeight / 2;
+    const zOffset = 5; // Offset for UI elements in front of plane
 
     return {
+      faceUI: [0, verticalOffset + 2, zOffset], // Position for FaceUI above plane
       headerInput: [
         position[0],
         position[1] + verticalOffset + 15,
@@ -217,16 +236,23 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
               depthWrite={!!color}
             />
           </mesh>
-          <Line
-            points={points}
-            color={selected ? 'blue' : 'white'}
-            lineWidth={2}
-          />
+          {/* Only render border Line when showBorder is true */}
+          {showBorder && (
+            <Line
+              points={points}
+              color={selected ? 'blue' : borderColor}
+              lineWidth={lineThickness}
+              dashed={borderStyle !== 'solid'}
+              dashScale={borderStyle === 'dotted' ? 1 : 2}
+              dashSize={borderStyle === 'dotted' ? 0.1 : 1}
+              gapSize={borderStyle === 'dotted' ? 0.1 : 0.5}
+            />
+          )}
         </group>
 
         {selected && showUI && (
           <FaceUI
-            position={[0, 10, 0]}
+            position={getUIPositions().faceUI}
             onColorChange={handleColorChange}
             face="front"
             onTextClick={handleTextClick}
@@ -234,6 +260,8 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
             onTransformToggle={handleTransformToggle} // Add this prop
             onResizeToggle={handleResizeToggle} // Add this prop
             onHeaderToggle={handleHeaderToggle} // Add this line
+            onBorderToggle={handleBorderToggle} // Add this prop
+            followTarget={groupRef} // Add this prop
           />
         )}
 

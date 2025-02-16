@@ -210,3 +210,36 @@ canvas {
   border-radius: 4px;
   caret-color: transparent;
 }
+
+.border-menu {
+  position: absolute;
+  top: 100%;
+  left: 73.5%;
+  background: black;
+  border-radius: 4px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.border-menu-item {
+  width: 28px; /* Match face-tool-button width */
+  height: 28px; /* Match face-tool-button height */
+  padding: 4px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  color: black;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-family: monospace;
+}
+
+.border-menu-item:hover {
+  background: #f0f0f0;
+}
