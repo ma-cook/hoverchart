@@ -16,7 +16,7 @@ import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use S
 import TextObject from './components/TextObject';
 import { auth } from './firebase';
 import { signInUser, observeAuthState } from './services/authService';
-import { saveObjects, subscribeToObjects } from './services/objectsService';
+import { saveObject, subscribeToObjects } from './services/objectsService';
 import isEqual from 'lodash/isEqual'; // Add this import
 
 const ConnectionUpdater = ({
@@ -136,19 +136,40 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // Replace the existing loadObjects effect with a subscription
+  // Replace loadObjects effect with new subscription handler
+  const lastUpdateRef = useRef({});
+
+  // Replace subscription effect with debounced version
   useEffect(() => {
     if (user) {
-      console.log('Setting up real-time subscription for user:', user.uid);
-      const unsubscribe = subscribeToObjects(user.uid, (loadedObjects) => {
-        console.log('Received real-time update:', loadedObjects);
-        setObjects(loadedObjects);
+      const unsubscribe = subscribeToObjects(user.uid, (change) => {
+        console.log('Received object change:', change);
+        setObjects((prev) => {
+          switch (change.type) {
+            case 'added':
+              if (!prev.find((obj) => obj.id === change.id)) {
+                return [...prev, change.object];
+              }
+              return prev;
+            case 'modified':
+              // Only update if the object data has actually changed
+              if (!isEqual(lastUpdateRef.current[change.id], change.object)) {
+                lastUpdateRef.current[change.id] = change.object;
+                return prev.map((obj) =>
+                  obj.id.toString() === change.id ? change.object : obj
+                );
+              }
+              return prev;
+            case 'removed':
+              delete lastUpdateRef.current[change.id];
+              return prev.filter((obj) => obj.id.toString() !== change.id);
+            default:
+              return prev;
+          }
+        });
       });
 
-      return () => {
-        console.log('Cleaning up subscription');
-        unsubscribe();
-      };
+      return () => unsubscribe();
     }
   }, [user]);
 
@@ -161,7 +182,10 @@ const App = () => {
         // Only save if objects have actually changed
         if (!isEqual(lastSavedRef.current, objects)) {
           lastSavedRef.current = JSON.parse(JSON.stringify(objects));
-          saveObjects(user.uid, objects);
+          // Save each object individually
+          objects.forEach((obj) => {
+            saveObject(user.uid, obj);
+          });
         }
       }, 1000);
       return () => clearTimeout(saveTimeout);
@@ -169,10 +193,7 @@ const App = () => {
   }, [objects, user]);
 
   const handleCreateObject = (type) => {
-    if (!cameraRef.current || !cameraRef.current.camera) {
-      console.warn('Camera ref or camera object not ready; aborting.');
-      return;
-    }
+    if (!cameraRef.current?.camera || !user) return;
 
     const cameraPos = cameraRef.current.camera.position.clone();
     const euler = new THREE.Euler().setFromQuaternion(
@@ -184,40 +205,40 @@ const App = () => {
     const distance = type === 'text' ? 50 : 75;
     const position = cameraPos.add(direction.multiplyScalar(distance));
 
-    setObjects((prevObjects) => [
-      ...prevObjects,
-      {
-        type,
-        position: [position.x, position.y, position.z],
-        id: Date.now(),
-        scale: [1, 1, 1],
-        color: '#ffffff',
-        headerText: '', // Add explicit headerText initialization
-        faceColors: {},
-        faceTexts: {
-          front: '',
-          back: '',
-          top: '',
-          bottom: '',
-          right: '',
-          left: '',
-        },
-        textStyle: {
-          fontSize: 1.5,
-          color: 'white',
-          underline: false,
-        },
-        faceTextStyles: {
-          front: { fontSize: 0.5, color: 'white', underline: false },
-          back: { fontSize: 0.5, color: 'white', underline: false },
-          top: { fontSize: 0.5, color: 'white', underline: false },
-          bottom: { fontSize: 0.5, color: 'white', underline: false },
-          right: { fontSize: 0.5, color: 'white', underline: false },
-          left: { fontSize: 0.5, color: 'white', underline: false },
-        },
-        headerPosition: { x: 0, y: 0, z: 0 },
+    const newObject = {
+      type,
+      position: [position.x, position.y, position.z],
+      id: Date.now(),
+      scale: [1, 1, 1],
+      color: '#ffffff',
+      headerText: '', // Add explicit headerText initialization
+      faceColors: {},
+      faceTexts: {
+        front: '',
+        back: '',
+        top: '',
+        bottom: '',
+        right: '',
+        left: '',
       },
-    ]);
+      textStyle: {
+        fontSize: 1.5,
+        color: 'white',
+        underline: false,
+      },
+      faceTextStyles: {
+        front: { fontSize: 0.5, color: 'white', underline: false },
+        back: { fontSize: 0.5, color: 'white', underline: false },
+        top: { fontSize: 0.5, color: 'white', underline: false },
+        bottom: { fontSize: 0.5, color: 'white', underline: false },
+        right: { fontSize: 0.5, color: 'white', underline: false },
+        left: { fontSize: 0.5, color: 'white', underline: false },
+      },
+      headerPosition: { x: 0, y: 0, z: 0 },
+    };
+
+    // Save single object
+    saveObject(user.uid, newObject);
   };
 
   const handleObjectClick = (id) => {
@@ -285,11 +306,29 @@ const App = () => {
     );
   }, []);
 
-  const handleObjectUpdate = useCallback((id, updates) => {
-    setObjects((prev) =>
-      prev.map((obj) => (obj.id === id ? { ...obj, ...updates } : obj))
-    );
-  }, []);
+  // Update handleObjectUpdate to use debouncing and prevent unnecessary updates
+  const handleObjectUpdate = useCallback(
+    (id, updates) => {
+      if (!user || !id) return;
+
+      setObjects((prev) => {
+        const updatedObjects = prev.map((obj) => {
+          if (obj.id === id) {
+            const newObj = { ...obj, ...updates };
+            // Only save if the object has actually changed
+            if (!isEqual(lastUpdateRef.current[id], newObj)) {
+              lastUpdateRef.current[id] = newObj;
+              saveObject(user.uid, newObj);
+            }
+            return newObj;
+          }
+          return obj;
+        });
+        return updatedObjects;
+      });
+    },
+    [user]
+  );
 
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
