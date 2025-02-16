@@ -9,6 +9,7 @@ import TextStyleUI from './TextStyleUI'; // Add this import
 import { TransformControls } from '@react-three/drei'; // Add this import
 import ResizeArrows from './ResizeArrows'; // Fix import statement to use default import
 import HeaderInput from './HeaderInput';
+import FaceIndicator from './FaceIndicator'; // Add this import
 
 const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const groupRef = useRef();
@@ -223,6 +224,15 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     };
   };
 
+  // Add function to get indicator positions
+  const getIndicatorPositions = () => {
+    const planeHeight = 10;
+
+    return {
+      bottom: [0, -planeHeight / 2 - 1, 0],
+    };
+  };
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -247,6 +257,17 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
               dashSize={borderStyle === 'dotted' ? 0.1 : 1}
               gapSize={borderStyle === 'dotted' ? 0.1 : 0.5}
             />
+          )}
+
+          {/* Add indicators when plane is selected */}
+          {selected && (
+            <>
+              <FaceIndicator
+                position={getIndicatorPositions().bottom}
+                rotation={[0, 0, 0]}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </>
           )}
         </group>
 

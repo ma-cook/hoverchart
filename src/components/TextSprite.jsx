@@ -45,23 +45,29 @@ const TextSprite = ({
 
   useFrame(({ camera }) => {
     if (textRef.current) {
-      if (style.isFaceText && normal) {
-        // Orient text to lie flat on the face
-        const up = new THREE.Vector3(...normal);
-        const matrix = new THREE.Matrix4();
-        matrix.lookAt(
-          new THREE.Vector3(0, 0, 0),
-          up,
-          new THREE.Vector3(0, 1, 0)
+      if (style.isFaceText) {
+        // Get the world scale of the parent face
+        const worldScale = new THREE.Vector3();
+        textRef.current.parent?.getWorldScale(worldScale);
+
+        // Apply inverse scale to maintain constant size
+        const inverseScale = new THREE.Vector3(
+          1 / Math.max(0.0001, worldScale.x),
+          1 / Math.max(0.0001, worldScale.y),
+          1 / Math.max(0.0001, worldScale.z)
         );
-        textRef.current.setRotationFromMatrix(matrix);
-        // NEW: Reapply position with upward offset for dodecahedron faces
-        const upwardOffset = 1; // Adjust offset as needed
-        textRef.current.position.set(
-          position[0],
-          position[1] + upwardOffset,
-          position[2]
-        );
+        textRef.current.scale.copy(inverseScale);
+
+        // Orient text if normal is provided
+        if (normal) {
+          const matrix = new THREE.Matrix4();
+          matrix.lookAt(
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(...normal),
+            new THREE.Vector3(0, 1, 0)
+          );
+          textRef.current.setRotationFromMatrix(matrix);
+        }
       } else if (followTarget?.current) {
         const targetPos = followTarget.current.position;
         const targetScale = followTarget.current.scale;

@@ -10,7 +10,6 @@ import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
 import FaceTextInput from './FaceTextInput';
 import FaceIndicator from './FaceIndicator'; // Add this import
-import isEqual from 'lodash/isEqual';
 
 const Sphere = ({
   position,
@@ -23,41 +22,29 @@ const Sphere = ({
   onFaceIndicatorClick, // Add this prop
   onIndicatorSelected, // Add this prop
   connections, // Add this prop
-  onUpdate, // Add this prop
-  id, // Add this prop
-  // Add default values for props
-  headerText: initialHeaderText = '',
-  scale: initialScale = [1, 1, 1],
-  lineColor: initialLineColor = 'white',
-  faceColors: initialFaceColors = {},
-  faceTexts: initialFaceTexts = {},
-  faceTextStyles: initialFaceTextStyles = {},
-  headerStyle: initialHeaderStyle = {
-    fontSize: 'medium',
-    color: 'white',
-    underline: false,
-  },
 }) => {
-  // Initialize state with props instead of default values
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
-  const [headerText, setHeaderText] = useState(initialHeaderText);
-  const [scale, setScale] = useState(() => [...initialScale]); // Initialize with function to ensure deep copy
+  const [headerText, setHeaderText] = useState('');
+  const [scale, setScale] = useState([1, 1, 1]);
   const [isResizing, setIsResizing] = useState(false);
   const [highlightedFaces, setHighlightedFaces] = useState(new Set());
   const [showStyleMenu, setShowStyleMenu] = useState(false);
-  const [headerStyle, setHeaderStyle] = useState(initialHeaderStyle);
-  const [lineColor, setLineColor] = useState(initialLineColor);
-  const [faceColors, setFaceColors] = useState(initialFaceColors);
-  const [faceTexts, setFaceTexts] = useState(initialFaceTexts);
-  const [faceTextStyles, setFaceTextStyles] = useState(initialFaceTextStyles);
-
+  const [headerStyle, setHeaderStyle] = useState({
+    fontSize: 'medium',
+    color: 'white',
+    underline: false,
+  });
+  const [lineColor, setLineColor] = useState('white');
   const [activeFace, setActiveFace] = useState(null);
   const [showFaceUI, setShowFaceUI] = useState(false);
   const [showObjectUI, setShowObjectUI] = useState(true);
+  const [faceTexts, setFaceTexts] = useState({});
   const [showFaceTextInput, setShowFaceTextInput] = useState(false);
+  const [faceTextStyles, setFaceTextStyles] = useState({}); // Add new state for face text styles
   const [activeFaceText, setActiveFaceText] = useState(null); // Add state to track which face text is being edited
   const [showFaceTextStyleMenu, setShowFaceTextStyleMenu] = useState(false); // Add state for style menu visibility
+  const [faceColors, setFaceColors] = useState({}); // Add new state for face colors
   const [selectedIndicator, setSelectedIndicator] = useState(null); // Add new state for indicator selection
   const [isConnected, setIsConnected] = useState(false); // Add new state to track if this dodecahedron is part of a connection
   const [connectedFaces, setConnectedFaces] = useState(new Set()); // Add new state for connected faces
@@ -264,82 +251,6 @@ const Sphere = ({
     }
   }, [connections, selectedIndicator]);
 
-  // Combine all update effects into one
-  useEffect(() => {
-    if (onUpdate && id) {
-      const currentState = {
-        type: 'sphere',
-        position,
-        scale,
-        headerText,
-        headerStyle,
-        lineColor,
-        faceColors,
-        faceTexts,
-        faceTextStyles,
-      };
-
-      // Only update if something has changed
-      const lastUpdate = contentRef.current?.lastUpdate;
-      if (!lastUpdate || !isEqual(lastUpdate, currentState)) {
-        contentRef.current.lastUpdate = currentState;
-        onUpdate(id, currentState);
-      }
-    }
-  }, [
-    id,
-    position,
-    scale,
-    headerText,
-    headerStyle,
-    lineColor,
-    faceColors,
-    faceTexts,
-    faceTextStyles,
-    onUpdate,
-  ]);
-
-  // Replace individual prop update effects with a single effect
-  useEffect(() => {
-    const updates = {
-      headerText: initialHeaderText,
-      scale: initialScale,
-      lineColor: initialLineColor,
-      faceColors: initialFaceColors,
-      faceTexts: initialFaceTexts,
-      faceTextStyles: initialFaceTextStyles,
-      headerStyle: initialHeaderStyle,
-    };
-
-    // Only update states that have changed
-    if (!isEqual(headerText, updates.headerText))
-      setHeaderText(updates.headerText);
-    if (!isEqual(scale, updates.scale)) setScale(updates.scale);
-    if (!isEqual(lineColor, updates.lineColor)) setLineColor(updates.lineColor);
-    if (!isEqual(faceColors, updates.faceColors))
-      setFaceColors(updates.faceColors);
-    if (!isEqual(faceTexts, updates.faceTexts)) setFaceTexts(updates.faceTexts);
-    if (!isEqual(faceTextStyles, updates.faceTextStyles))
-      setFaceTextStyles(updates.faceTextStyles);
-    if (!isEqual(headerStyle, updates.headerStyle))
-      setHeaderStyle(updates.headerStyle);
-  }, [
-    initialHeaderText,
-    initialScale,
-    initialLineColor,
-    initialFaceColors,
-    initialFaceTexts,
-    initialFaceTextStyles,
-    initialHeaderStyle,
-  ]);
-
-  // Update the scale effect to use deep comparison
-  useEffect(() => {
-    if (!isEqual(scale, initialScale)) {
-      setScale([...initialScale]);
-    }
-  }, [initialScale]);
-
   const handleTransformToggle = () => {
     setShowTransform(!showTransform);
   };
@@ -362,15 +273,6 @@ const Sphere = ({
     setScale((prevScale) => {
       const newScale = [...prevScale];
       newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
-
-      // Update the contentRef's lastUpdate to prevent unnecessary updates
-      if (contentRef.current) {
-        contentRef.current.lastUpdate = {
-          ...contentRef.current.lastUpdate,
-          scale: newScale,
-        };
-      }
-
       return newScale;
     });
   };
@@ -387,8 +289,11 @@ const Sphere = ({
 
   // Split face click into two separate handlers
   const handleFaceClick = (faceIndex, e) => {
-    if (!selected) return; // Ignore clicks if not selected
     e.stopPropagation();
+    if (!selected) {
+      handleBackgroundClick(e); // Select dodecahedron first
+      return;
+    }
     setHighlightedFaces(new Set([faceIndex]));
     setActiveFace(faceIndex);
     setShowFaceUI(true);
@@ -399,7 +304,7 @@ const Sphere = ({
 
   // Add a handler to receive connection state from parent
   const handleIndicatorClick = (faceIndex, e) => {
-    if (e && e.stopPropagation) {
+    if (e) {
       e.stopPropagation();
     }
 
@@ -409,16 +314,14 @@ const Sphere = ({
       face: faceIndex,
       type: 'sphere',
       faceCenter: center,
-      position: center, // Add this to match cube indicator format
+      position: center,
     };
 
-    onIndicatorSelected();
-    setSelectedIndicator(faceIndex);
-    onFaceIndicatorClick(indicator);
-
-    // Reset highlight if this indicator is already connected
-    if (isIndicatorConnected(faceIndex)) {
-      setSelectedIndicator(null);
+    // Don't change selection if the face is already connected
+    if (!isIndicatorConnected(faceIndex)) {
+      setSelectedIndicator(faceIndex);
+      onIndicatorSelected();
+      onFaceIndicatorClick(indicator);
     }
   };
 
@@ -438,7 +341,7 @@ const Sphere = ({
   const handleBackgroundClick = (e) => {
     e.stopPropagation();
     e.nativeEvent?.stopPropagation?.();
-    onClick();
+    onClick(); // Select the dodecahedron first
     setHighlightedFaces(new Set());
     setActiveFace(null);
     setShowFaceUI(false);
@@ -532,13 +435,6 @@ const Sphere = ({
   // Modify getFaceTextPosition to include normal vector for orientation
   const getFaceTextPosition = (faceIndex) => {
     const faceGeometry = geometry[faceIndex];
-    if (!faceGeometry || !faceGeometry.attributes) {
-      return {
-        position: [0, 0, 0],
-        normal: [0, 1, 0],
-      };
-    }
-
     const positions = faceGeometry.attributes.position.array;
     const normals = faceGeometry.attributes.normal.array;
 
@@ -577,13 +473,6 @@ const Sphere = ({
   // Add function to calculate face center and normal
   const getFaceInfo = (faceIndex) => {
     const faceGeometry = geometry[faceIndex];
-    if (!faceGeometry || !faceGeometry.attributes) {
-      return {
-        center: [0, 0, 0],
-        normal: [0, 1, 0],
-      };
-    }
-
     const positions = faceGeometry.attributes.position.array;
     const normals = faceGeometry.attributes.normal.array;
 
@@ -631,26 +520,26 @@ const Sphere = ({
     );
   };
 
-  // Update indicator visibility logic
+  // Update shouldShowFaceIndicator logic
   const shouldShowFaceIndicator = (faceIndex) => {
-    // Show all indicators if global mode is active
-    if (globalIndicatorSelected || showAllIndicators) {
+    // Always show indicators when in global mode
+    if (showAllIndicators || globalIndicatorSelected) {
       return true;
     }
 
-    // Show connected faces' indicators
+    // Show indicators for connected faces
     if (connectedFaces.has(faceIndex)) {
       return true;
     }
 
-    // Show selected indicator
+    // Show indicator if it's selected
     if (selectedIndicator === faceIndex) {
       return true;
     }
 
-    // Hide unconnected indicators if we have any connections
-    if (connectedFaces.size > 0) {
-      return false;
+    // Show all indicators if this dodecahedron has any selected indicator
+    if (selectedIndicator !== null) {
+      return true;
     }
 
     return false;
@@ -660,20 +549,11 @@ const Sphere = ({
     <>
       <group position={position}>
         <group ref={contentRef} scale={scale}>
-          {/* Add invisible hit sphere for better click detection */}
-          <mesh
-            onClick={handleBackgroundClick}
-            onPointerDown={(e) => e.stopPropagation()}
-            renderOrder={-1} // Render before other meshes
-          >
-            <sphereGeometry args={[7]} />{' '}
-            {/* Larger than dodecahedron to ensure good hit detection */}
-            <meshBasicMaterial
-              visible={false}
-              side={THREE.DoubleSide}
-              transparent={false}
-              opacity={1}
-            />
+          {/* Add invisible helper mesh for better click detection */}
+          <mesh onClick={handleBackgroundClick} visible={false}>
+            <sphereGeometry args={[6, 32, 32]} />{' '}
+            {/* Slightly larger than dodecahedron */}
+            <meshBasicMaterial transparent opacity={0} />
           </mesh>
 
           {/* Original background mesh */}
@@ -696,7 +576,20 @@ const Sphere = ({
             <mesh
               key={`face-${idx}`}
               geometry={faceGeometry}
-              onClick={(e) => selected && handleFaceClick(idx, e)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!selected) {
+                  handleBackgroundClick(e);
+                } else {
+                  handleFaceClick(idx, e);
+                }
+              }}
+              onPointerOver={(e) => {
+                document.body.style.cursor = 'pointer';
+              }}
+              onPointerOut={(e) => {
+                document.body.style.cursor = 'auto';
+              }}
             >
               <meshBasicMaterial
                 color={
@@ -714,6 +607,8 @@ const Sphere = ({
                     : 0 // Hide faces without custom colors when not selected
                 }
                 side={THREE.DoubleSide}
+                polygonOffset
+                polygonOffsetFactor={-1}
               />
             </mesh>
           ))}
@@ -730,7 +625,6 @@ const Sphere = ({
 
           {/* Add face texts - modified for double-sided visibility */}
           {Object.entries(faceTexts).map(([faceIndex, text]) => {
-            if (!geometry[faceIndex]) return null;
             const { position, normal } = getFaceTextPosition(Number(faceIndex));
             const textStyle = faceTextStyles[faceIndex] || {
               fontSize: 0.5,
@@ -782,8 +676,7 @@ const Sphere = ({
           )}
 
           {/* Update indicator cubes rendering */}
-          {geometry.map((faceGeometry, idx) => {
-            if (!faceGeometry || !faceGeometry.attributes) return null;
+          {geometry.map((_, idx) => {
             const { center } = getFaceInfo(idx);
             const rotation = getFaceRotation(idx);
             return shouldShowFaceIndicator(idx) ? (
@@ -792,7 +685,9 @@ const Sphere = ({
                 position={center}
                 rotation={rotation}
                 onClick={(e) => handleIndicatorClick(idx, e)}
-                isActive={selectedIndicator === idx}
+                isActive={
+                  selectedIndicator === idx || isIndicatorConnected(idx)
+                }
               />
             ) : null;
           })}
@@ -832,7 +727,7 @@ const Sphere = ({
 
         {selected && showHeader && (
           <HeaderInput
-            position={[0, 10, 0]}
+            position={getHeaderPosition()}
             onTextSubmit={handleHeaderSubmit}
             followTarget={contentRef}
           />

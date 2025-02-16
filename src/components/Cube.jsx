@@ -684,7 +684,7 @@ const Cube = ({
                         selected &&
                         !showFaceTextInput && (
                           <FaceUI
-                            position={[0, 6, 0]}
+                            position={[0, 16, 0]}
                             normal={normal}
                             onColorChange={handleColorChange}
                             face={name}
