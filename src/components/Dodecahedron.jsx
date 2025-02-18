@@ -22,6 +22,7 @@ const Sphere = ({
   onFaceIndicatorClick, // Add this prop
   onIndicatorSelected, // Add this prop
   connections, // Add this prop
+  selectedIndicators, // Add this prop
 }) => {
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
@@ -304,10 +305,7 @@ const Sphere = ({
 
   // Add a handler to receive connection state from parent
   const handleIndicatorClick = (faceIndex, e) => {
-    if (e) {
-      e.stopPropagation();
-    }
-
+    if (e) e.stopPropagation();
     const { center } = getFaceInfo(faceIndex);
     const indicator = {
       cube: contentRef.current,
@@ -316,13 +314,10 @@ const Sphere = ({
       faceCenter: center,
       position: center,
     };
-
-    // Don't change selection if the face is already connected
-    if (!isIndicatorConnected(faceIndex)) {
-      setSelectedIndicator(faceIndex);
-      onIndicatorSelected();
-      onFaceIndicatorClick(indicator);
-    }
+    // Persist activation by setting global indicator state.
+    onIndicatorSelected?.();
+    onFaceIndicatorClick?.(indicator);
+    // Omit any local toggle so the indicator remains active.
   };
 
   const handleHeaderClick = (e) => {
@@ -522,26 +517,11 @@ const Sphere = ({
 
   // Update shouldShowFaceIndicator logic
   const shouldShowFaceIndicator = (faceIndex) => {
-    // Always show indicators when in global mode
-    if (showAllIndicators || globalIndicatorSelected) {
-      return true;
-    }
-
-    // Show indicators for connected faces
-    if (connectedFaces.has(faceIndex)) {
-      return true;
-    }
-
-    // Show indicator if it's selected
-    if (selectedIndicator === faceIndex) {
-      return true;
-    }
-
-    // Show all indicators if this dodecahedron has any selected indicator
-    if (selectedIndicator !== null) {
-      return true;
-    }
-
+    // Show when any indicator is selected globally
+    if (selectedIndicators?.length > 0) return true;
+    if (showAllIndicators || globalIndicatorSelected) return true;
+    if (connectedFaces.has(faceIndex)) return true;
+    if (selectedIndicator === faceIndex) return true;
     return false;
   };
 

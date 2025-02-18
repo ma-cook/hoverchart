@@ -248,6 +248,31 @@ const App = () => {
   };
 
   const calculateFacePosition = (indicator) => {
+    // Handle plane indicators
+    if (indicator.type === 'plane') {
+      const plane = indicator.plane;
+      if (!plane) return [0, 0, 0];
+
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      const worldScale = new THREE.Vector3();
+
+      plane.getWorldPosition(worldPos);
+      plane.getWorldQuaternion(worldQuat);
+      plane.getWorldScale(worldScale);
+
+      // Get local offset and apply transformations
+      const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
+      localOffset.applyQuaternion(worldQuat);
+
+      return [
+        worldPos.x + localOffset.x,
+        worldPos.y + localOffset.y,
+        worldPos.z + localOffset.z,
+      ];
+    }
+
+    // Handle cube and sphere indicators
     const cube = indicator.cube;
     if (!cube) return [0, 0, 0];
 
@@ -333,11 +358,11 @@ const App = () => {
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
       setSelectedIndicators([indicator]);
-      // Keep indicators visible on all objects
+      // Maintain indicator visibility
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
+      setIndicatorMode('indicators');
     } else if (selectedIndicators.length === 1) {
-      // Create connection...
       const startIndicator = selectedIndicators[0];
       const startPos = calculateFacePosition(startIndicator);
       const endPos = calculateFacePosition(indicator);
@@ -351,11 +376,10 @@ const App = () => {
         },
       ]);
 
-      // Reset states after connection
+      // Only reset selection state, keep indicators visible
       setSelectedIndicators([]);
-      setShowAllCubesIndicators(false);
-      setGlobalIndicatorSelected(false);
-      setIndicatorMode('none');
+      setIndicatorMode('indicators');
+      // Don't reset showAllCubesIndicators or globalIndicatorSelected here
     }
   };
 
@@ -375,19 +399,16 @@ const App = () => {
 
   const handleToggleIndicators = (mode = 'all') => {
     if (mode === 'connection') {
-      // Reset all indicator states before showing all indicators
       setSelectedIndicators([]);
       setIndicatorMode('indicators');
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
-      setSelectedId(null);
+      // Don't reset selectedId here anymore
     } else {
-      setShowAllCubesIndicators((prev) => {
-        const newValue = !prev;
-        setGlobalIndicatorSelected(newValue);
-        return newValue;
-      });
-      setIndicatorMode((prev) => (prev === 'all' ? 'none' : 'all'));
+      const newValue = !showAllCubesIndicators;
+      setShowAllCubesIndicators(newValue);
+      setGlobalIndicatorSelected(newValue);
+      setIndicatorMode(newValue ? 'all' : 'none');
     }
   };
 
@@ -699,6 +720,7 @@ const App = () => {
                   }
                   connections={connections}
                   onUpdate={handleObjectUpdate} // Add this prop
+                  selectedIndicators={selectedIndicators} // Add this prop
                 />
               );
             }
@@ -709,6 +731,16 @@ const App = () => {
                   position={obj.position}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
+                  showAllIndicators={showAllCubesIndicators}
+                  onIndicatorSelected={handleIndicatorSelected}
+                  onIndicatorDeselected={handleIndicatorDeselected}
+                  globalIndicatorSelected={globalIndicatorSelected}
+                  onFaceIndicatorClick={handleFaceIndicatorClick}
+                  onMove={(newPosition) =>
+                    handleObjectMove(obj.id, newPosition)
+                  }
+                  connections={connections}
+                  selectedIndicators={selectedIndicators} // Add this prop
                 />
               );
             }

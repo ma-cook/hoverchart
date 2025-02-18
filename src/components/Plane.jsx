@@ -9,9 +9,21 @@ import TextStyleUI from './TextStyleUI'; // Add this import
 import { TransformControls } from '@react-three/drei'; // Add this import
 import ResizeArrows from './ResizeArrows'; // Fix import statement to use default import
 import HeaderInput from './HeaderInput';
-import FaceIndicator from './FaceIndicator'; // Add this import
+import FaceIndicator from './FaceIndicator'; // Keep this import
+import * as THREE from 'three';
 
-const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
+const Plane = ({
+  position = [0, 0, 0],
+  selected,
+  onClick,
+  onIndicatorSelected,
+  onIndicatorDeselected,
+  onFaceIndicatorClick,
+  showAllIndicators,
+  globalIndicatorSelected,
+  connections,
+  selectedIndicators, // Add this prop
+}) => {
   const groupRef = useRef();
   const meshRef = useRef(); // Add meshRef
   const { camera } = useThree();
@@ -43,6 +55,7 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   const [borderStyle, setBorderStyle] = useState('solid');
   const [borderColor, setBorderColor] = useState('white');
   const [lineThickness, setLineThickness] = useState(1);
+  const [indicatorSelected, setIndicatorSelected] = useState(false);
 
   // Wrap closeAllUIs in useCallback and declare it before it’s used
   const closeAllUIs = useCallback(() => {
@@ -73,8 +86,10 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
   useEffect(() => {
     if (!selected) {
       closeAllUIs();
+      setIndicatorSelected(false);
+      onIndicatorDeselected?.();
     }
-  }, [selected, closeAllUIs]); // Added closeAllUIs as dependency
+  }, [selected, closeAllUIs, onIndicatorDeselected]); // Added closeAllUIs as dependency
 
   // Close TextStyleUI when clicking anywhere else
   useEffect(() => {
@@ -233,6 +248,65 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
     };
   };
 
+  // New function to get world position for plane indicator
+  const calculateIndicatorPosition = () => {
+    const worldMatrix = new THREE.Matrix4();
+    const localPos = new THREE.Vector3(...getIndicatorPositions().bottom);
+    const scaleMatrix = new THREE.Matrix4();
+
+    if (groupRef.current) {
+      // Get the plane's world matrix
+      groupRef.current.updateWorldMatrix(true, false);
+      worldMatrix.copy(groupRef.current.matrixWorld);
+
+      // Apply scale
+      scaleMatrix.makeScale(...scale);
+      worldMatrix.multiply(scaleMatrix);
+
+      // Transform the local position to world space
+      localPos.applyMatrix4(worldMatrix);
+    }
+
+    return [localPos.x, localPos.y, localPos.z];
+  };
+
+  // Update indicator click handler to use the new function
+  const handleIndicatorClick = (e) => {
+    e.stopPropagation();
+    const indicator = {
+      plane: groupRef.current,
+      type: 'plane',
+      position: calculateIndicatorPosition(),
+    };
+
+    // Call parent handlers first to show all indicators
+    onIndicatorSelected?.();
+    onFaceIndicatorClick?.(indicator);
+
+    // Then update local state
+    setIndicatorSelected(true);
+  };
+
+  // Add helper to check if indicator is connected
+  const isIndicatorConnected = () => {
+    return connections?.some(
+      (conn) =>
+        conn.start.plane === groupRef.current ||
+        conn.end.plane === groupRef.current
+    );
+  };
+
+  // Update shouldShowIndicator to check global selectedIndicators state
+  const shouldShowIndicator = () => {
+    // Show when any indicator is selected globally
+    if (selectedIndicators?.length > 0) return true;
+    if (showAllIndicators || globalIndicatorSelected) return true;
+    if (isIndicatorConnected()) return true;
+    if (indicatorSelected) return true;
+    if (selected) return true;
+    return false;
+  };
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -258,16 +332,14 @@ const Plane = ({ position = [0, 0, 0], selected, onClick }) => {
               gapSize={borderStyle === 'dotted' ? 0.1 : 0.5}
             />
           )}
-
-          {/* Add indicators when plane is selected */}
-          {selected && (
-            <>
-              <FaceIndicator
-                position={getIndicatorPositions().bottom}
-                rotation={[0, 0, 0]}
-                onClick={(e) => e.stopPropagation()}
-              />
-            </>
+          edr {/* Replace the old indicator cube with FaceIndicator */}
+          {shouldShowIndicator() && (
+            <FaceIndicator
+              position={getIndicatorPositions().bottom}
+              rotation={[0, 0, 0]}
+              onClick={handleIndicatorClick}
+              isActive={indicatorSelected || isIndicatorConnected()}
+            />
           )}
         </group>
 
