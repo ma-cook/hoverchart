@@ -23,6 +23,7 @@ const Sphere = ({
   onIndicatorSelected, // Add this prop
   connections, // Add this prop
   selectedIndicators, // Add this prop
+  indicatorMode,
 }) => {
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
@@ -519,9 +520,15 @@ const Sphere = ({
   const shouldShowFaceIndicator = (faceIndex) => {
     // Show when any indicator is selected globally
     if (selectedIndicators?.length > 0) return true;
+
+    // Show all indicators when in indicators mode and no connections exist
+    if (indicatorMode === 'indicators') {
+      return true;
+    }
     if (showAllIndicators || globalIndicatorSelected) return true;
     if (connectedFaces.has(faceIndex)) return true;
     if (selectedIndicator === faceIndex) return true;
+
     return false;
   };
 

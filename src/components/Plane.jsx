@@ -23,6 +23,7 @@ const Plane = ({
   globalIndicatorSelected,
   connections,
   selectedIndicators, // Add this prop
+  indicatorMode,
 }) => {
   const groupRef = useRef();
   const meshRef = useRef(); // Add meshRef
@@ -300,6 +301,9 @@ const Plane = ({
   const shouldShowIndicator = () => {
     // Show when any indicator is selected globally
     if (selectedIndicators?.length > 0) return true;
+    if (indicatorMode === 'indicators') {
+      return true;
+    }
     if (showAllIndicators || globalIndicatorSelected) return true;
     if (isIndicatorConnected()) return true;
     if (indicatorSelected) return true;

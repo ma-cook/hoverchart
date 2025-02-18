@@ -355,10 +355,10 @@ const App = () => {
     [user]
   );
 
+  // Fix handleFaceIndicatorClick to only clear states after connection is made
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
       setSelectedIndicators([indicator]);
-      // Maintain indicator visibility
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
       setIndicatorMode('indicators');
@@ -367,6 +367,7 @@ const App = () => {
       const startPos = calculateFacePosition(startIndicator);
       const endPos = calculateFacePosition(indicator);
 
+      // Create the connection first
       setConnections((prev) => [
         ...prev,
         {
@@ -376,10 +377,11 @@ const App = () => {
         },
       ]);
 
-      // Only reset selection state, keep indicators visible
+      // Then reset selection states after connection is made
       setSelectedIndicators([]);
-      setIndicatorMode('indicators');
-      // Don't reset showAllCubesIndicators or globalIndicatorSelected here
+      setShowAllCubesIndicators(false);
+      setGlobalIndicatorSelected(false);
+      setIndicatorMode('none');
     }
   };
 
@@ -399,11 +401,10 @@ const App = () => {
 
   const handleToggleIndicators = (mode = 'all') => {
     if (mode === 'connection') {
-      setSelectedIndicators([]);
+      // Only set indicator mode and show indicators, don't reset selections
       setIndicatorMode('indicators');
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
-      // Don't reset selectedId here anymore
     } else {
       const newValue = !showAllCubesIndicators;
       setShowAllCubesIndicators(newValue);
@@ -715,6 +716,7 @@ const App = () => {
                   onIndicatorDeselected={handleIndicatorDeselected}
                   globalIndicatorSelected={globalIndicatorSelected}
                   onFaceIndicatorClick={handleFaceIndicatorClick}
+                  indicatorMode={indicatorMode}
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
@@ -736,6 +738,7 @@ const App = () => {
                   onIndicatorDeselected={handleIndicatorDeselected}
                   globalIndicatorSelected={globalIndicatorSelected}
                   onFaceIndicatorClick={handleFaceIndicatorClick}
+                  indicatorMode={indicatorMode}
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
