@@ -26,11 +26,13 @@ const Plane = ({
   indicatorMode,
   id,
   onUpdate,
-  scale: initialScale = [1, 1, 1],
-  headerText: initialHeaderText = '',
-  borderStyle: initialBorderStyle = 'solid',
-  borderColor: initialBorderColor = 'white',
-  lineThickness: initialLineThickness = 1,
+  scale,
+  color,
+  headerText,
+  borderStyle,
+  borderColor,
+  lineThickness,
+  headerStyle,
 }) => {
   const groupRef = useRef();
   const meshRef = useRef(); // Add meshRef
@@ -38,7 +40,6 @@ const Plane = ({
   const size = 5;
   const width = 10,
     height = 10; // dimensions used in planeGeometry
-  const [color, setColor] = useState(null);
   const [showUI, setShowUI] = useState(false);
   const [text, setText] = useState('');
   const [showTextInput, setShowTextInput] = useState(false);
@@ -50,19 +51,17 @@ const Plane = ({
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
   const [showTransform, setShowTransform] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
-  const [scale, setScale] = useState(initialScale);
-  const [headerText, setHeaderText] = useState(initialHeaderText);
+  const [currentScale, setCurrentScale] = useState(scale);
+  const [currentColor, setCurrentColor] = useState(color);
+  const [currentHeaderText, setCurrentHeaderText] = useState(headerText);
   const [showHeader, setShowHeader] = useState(false);
-  const [headerStyle, setHeaderStyle] = useState({
-    fontSize: 1.5,
-    color: 'white',
-    underline: false,
-  });
+  const [currentHeaderStyle, setCurrentHeaderStyle] = useState(headerStyle);
   const [showHeaderStyleUI, setShowHeaderStyleUI] = useState(false);
   const [showBorder, setShowBorder] = useState(true);
-  const [borderStyle, setBorderStyle] = useState(initialBorderStyle);
-  const [borderColor, setBorderColor] = useState(initialBorderColor);
-  const [lineThickness, setLineThickness] = useState(initialLineThickness);
+  const [currentBorderStyle, setCurrentBorderStyle] = useState(borderStyle);
+  const [currentBorderColor, setCurrentBorderColor] = useState(borderColor);
+  const [currentLineThickness, setCurrentLineThickness] =
+    useState(lineThickness);
   const [indicatorSelected, setIndicatorSelected] = useState(false);
 
   // Wrap closeAllUIs in useCallback and declare it before it’s used
@@ -120,8 +119,36 @@ const Plane = ({
     };
   }, [showTextStyleUI]);
 
+  useEffect(() => {
+    if (scale !== undefined) setCurrentScale(scale);
+  }, [scale]);
+
+  useEffect(() => {
+    if (color !== undefined) setCurrentColor(color);
+  }, [color]);
+
+  useEffect(() => {
+    if (headerText !== undefined) setCurrentHeaderText(headerText);
+  }, [headerText]);
+
+  useEffect(() => {
+    if (borderStyle !== undefined) setCurrentBorderStyle(borderStyle);
+  }, [borderStyle]);
+
+  useEffect(() => {
+    if (borderColor !== undefined) setCurrentBorderColor(borderColor);
+  }, [borderColor]);
+
+  useEffect(() => {
+    if (lineThickness !== undefined) setCurrentLineThickness(lineThickness);
+  }, [lineThickness]);
+
+  useEffect(() => {
+    if (headerStyle !== undefined) setCurrentHeaderStyle(headerStyle);
+  }, [headerStyle]);
+
   const handleColorChange = (newColor) => {
-    setColor(newColor);
+    setCurrentColor(newColor);
   };
 
   const handleClick = (e) => {
@@ -169,17 +196,17 @@ const Plane = ({
   const handleResize = (axis, delta) => {
     const axisIndex = { x: 0, y: 1 }[axis]; // Only allow x and y resize for plane
     if (axisIndex !== undefined) {
-      const newScale = [...scale];
+      const newScale = [...currentScale];
       newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
-      setScale(newScale);
+      setCurrentScale(newScale);
       if (onUpdate) {
         onUpdate(id, {
           scale: newScale,
           position,
-          headerText,
-          borderStyle,
-          borderColor,
-          lineThickness,
+          headerText: currentHeaderText,
+          borderStyle: currentBorderStyle,
+          borderColor: currentBorderColor,
+          lineThickness: currentLineThickness,
           type: 'plane',
         });
       }
@@ -189,8 +216,8 @@ const Plane = ({
   // Compute margin offset so arrows appear outside the plane edges
   const arrowMargin = 1; // extra unit margin
   const computedArrowOffset = {
-    x: (width / 2) * scale[0] + arrowMargin,
-    y: (height / 2) * scale[1] + arrowMargin,
+    x: (width / 2) * currentScale[0] + arrowMargin,
+    y: (height / 2) * currentScale[1] + arrowMargin,
     z: 0,
   };
 
@@ -208,16 +235,16 @@ const Plane = ({
   };
 
   const handleHeaderSubmit = (text) => {
-    setHeaderText(text);
+    setCurrentHeaderText(text);
     setShowHeader(false);
     if (onUpdate) {
       onUpdate(id, {
         headerText: text,
         position,
-        scale,
-        borderStyle,
-        borderColor,
-        lineThickness,
+        scale: currentScale,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
         type: 'plane',
       });
     }
@@ -230,59 +257,42 @@ const Plane = ({
   };
 
   const handleHeaderStyleChange = (newStyle) => {
-    setHeaderStyle((prev) => ({ ...prev, ...newStyle }));
+    setCurrentHeaderStyle((prev) => ({ ...prev, ...newStyle }));
   };
 
   // Update border toggle handler
   const handleBorderToggle = (option) => {
+    if (!onUpdate || !id) return;
+
+    const updates = {
+      position,
+      scale: currentScale,
+      headerText: currentHeaderText,
+      color: currentColor,
+      headerStyle: currentHeaderStyle,
+      type: 'plane',
+    };
+
     if (option.type === 'style') {
-      setBorderStyle(option.value);
-      if (onUpdate) {
-        onUpdate(id, {
-          borderStyle: option.value,
-          position,
-          scale,
-          headerText,
-          borderColor,
-          lineThickness,
-          type: 'plane',
-        });
-      }
+      setCurrentBorderStyle(option.value);
+      updates.borderStyle = option.value;
     } else if (option.type === 'color') {
       console.log('Setting border color:', option.value); // Add debug log
-      setBorderColor(option.value);
-      setShowBorder(true); // Ensure border is visible when color is changed
-      if (onUpdate) {
-        onUpdate(id, {
-          borderColor: option.value,
-          position,
-          scale,
-          headerText,
-          borderStyle,
-          lineThickness,
-          type: 'plane',
-        });
-      }
+      setCurrentBorderColor(option.value);
+      updates.borderColor = option.value;
     } else if (option.type === 'thickness') {
-      const newThickness = lineThickness >= 6 ? 1 : lineThickness + 2;
-      setLineThickness(newThickness);
-      if (onUpdate) {
-        onUpdate(id, {
-          lineThickness: newThickness,
-          position,
-          scale,
-          headerText,
-          borderStyle,
-          borderColor,
-          type: 'plane',
-        });
-      }
+      const newThickness =
+        currentLineThickness >= 6 ? 1 : currentLineThickness + 2;
+      setCurrentLineThickness(newThickness);
+      updates.lineThickness = newThickness;
     }
+
+    onUpdate(id, updates);
   };
 
   // Add function to calculate absolute positions
   const getUIPositions = () => {
-    const planeHeight = 10 * scale[1];
+    const planeHeight = 10 * currentScale[1];
     const verticalOffset = planeHeight / 2;
     const zOffset = 5; // Offset for UI elements in front of plane
 
@@ -322,7 +332,7 @@ const Plane = ({
       worldMatrix.copy(groupRef.current.matrixWorld);
 
       // Apply scale
-      scaleMatrix.makeScale(...scale);
+      scaleMatrix.makeScale(...currentScale);
       worldMatrix.multiply(scaleMatrix);
 
       // Transform the local position to world space
@@ -375,26 +385,26 @@ const Plane = ({
   return (
     <>
       <group ref={groupRef} position={position}>
-        <group scale={scale}>
+        <group scale={currentScale}>
           <mesh ref={meshRef} onClick={handleClick}>
             <planeGeometry args={[10, 10]} />
             <meshBasicMaterial
-              color={color || (selected ? '#99ccff' : 'white')}
+              color={currentColor || (selected ? '#99ccff' : 'white')}
               transparent
-              opacity={color ? 1 : selected ? 0.1 : 0}
-              depthWrite={!!color}
+              opacity={currentColor ? 1 : selected ? 0.1 : 0}
+              depthWrite={!!currentColor}
             />
           </mesh>
           {/* Only render border Line when showBorder is true */}
           {showBorder && (
             <Line
               points={points}
-              color={selected ? 'blue' : borderColor}
-              lineWidth={lineThickness}
-              dashed={borderStyle !== 'solid'}
-              dashScale={borderStyle === 'dotted' ? 1 : 2}
-              dashSize={borderStyle === 'dotted' ? 0.1 : 1}
-              gapSize={borderStyle === 'dotted' ? 0.1 : 0.5}
+              color={selected ? 'blue' : currentBorderColor}
+              lineWidth={currentLineThickness}
+              dashed={currentBorderStyle !== 'solid'}
+              dashScale={currentBorderStyle === 'dotted' ? 1 : 2}
+              dashSize={currentBorderStyle === 'dotted' ? 0.1 : 1}
+              gapSize={currentBorderStyle === 'dotted' ? 0.1 : 0.5}
             />
           )}
           edr {/* Replace the old indicator cube with FaceIndicator */}
@@ -466,14 +476,14 @@ const Plane = ({
         />
       )}
 
-      {headerText && (
+      {currentHeaderText && (
         <TextSprite
-          text={headerText}
+          text={currentHeaderText}
           position={getUIPositions().headerText}
           followTarget={groupRef}
           onClick={handleHeaderTextClick}
           style={{
-            ...headerStyle,
+            ...currentHeaderStyle,
             isHeaderText: true,
             fixedSize: true,
           }}

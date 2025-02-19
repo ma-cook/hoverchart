@@ -192,6 +192,7 @@ const App = () => {
     }
   }, [objects, user]);
 
+  // Update handleCreateObject to include all potential plane properties
   const handleCreateObject = (type) => {
     if (!cameraRef.current?.camera || !user) return;
 
@@ -235,6 +236,19 @@ const App = () => {
         left: { fontSize: 0.5, color: 'white', underline: false },
       },
       headerPosition: { x: 0, y: 0, z: 0 },
+      // Only set required defaults for plane
+      ...(type === 'plane' && {
+        borderStyle: 'solid',
+        borderColor: 'white',
+        lineThickness: 1,
+        color: null,
+        headerText: '',
+        headerStyle: {
+          fontSize: 1.5,
+          color: 'white',
+          underline: false,
+        },
+      }),
     };
 
     // Save single object
@@ -746,12 +760,14 @@ const App = () => {
                   selectedIndicators={selectedIndicators} // Add this prop
                   id={obj.id}
                   onUpdate={handleObjectUpdate}
+                  // Pass stored values without defaults
+                  scale={obj.scale}
                   color={obj.color}
-                  scale={obj.scale || [1, 1, 1]}
-                  headerText={obj.headerText || ''}
-                  borderStyle={obj.borderStyle || 'solid'}
-                  borderColor={obj.borderColor || 'white'}
-                  lineThickness={obj.lineThickness || 1}
+                  headerText={obj.headerText}
+                  borderStyle={obj.borderStyle}
+                  borderColor={obj.borderColor}
+                  lineThickness={obj.lineThickness}
+                  headerStyle={obj.headerStyle}
                 />
               );
             }

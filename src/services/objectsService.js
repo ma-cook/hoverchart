@@ -18,26 +18,32 @@ export const saveObject = async (userId, object) => {
 
   const objectId = object.id.toString();
   const objectRef = doc(db, 'users', userId, 'objects', objectId);
-  const currentData = objectsCache.get(objectId);
+  const cachedData = objectsCache.get(objectId);
 
   // Clear any pending save timeout for this object
   if (saveTimeouts.has(objectId)) {
     clearTimeout(saveTimeouts.get(objectId));
   }
 
-  // Only update if data has changed, with debouncing
-  if (!currentData || !isEqual(currentData, object)) {
+  // Deep clone the object to prevent reference issues
+  const newData = JSON.parse(JSON.stringify(object));
+
+  // Only update if data has actually changed
+  if (!cachedData || !isEqual(cachedData, newData)) {
     saveTimeouts.set(
       objectId,
       setTimeout(async () => {
         try {
+          // Update cache before saving to prevent race conditions
+          objectsCache.set(objectId, newData);
           await setDoc(objectRef, {
-            ...object,
+            ...newData,
             lastUpdated: Timestamp.fromDate(new Date()),
           });
-          objectsCache.set(objectId, object);
         } catch (error) {
           console.error('Error saving object:', error);
+          // Remove from cache if save failed
+          objectsCache.delete(objectId);
         }
         saveTimeouts.delete(objectId);
       }, 1000) // 1 second debounce
@@ -68,25 +74,18 @@ export const subscribeToObjects = (userId, callback) => {
       const data = change.doc.data();
       const objectId = change.doc.id;
 
-      switch (change.type) {
-        case 'added':
-        case 'modified':
-          if (!isEqual(objectsCache.get(objectId), data)) {
-            objectsCache.set(objectId, data);
-            callback({
-              type: change.type,
-              id: objectId,
-              object: data,
-            });
-          }
-          break;
-        case 'removed':
-          objectsCache.delete(objectId);
-          callback({
-            type: 'removed',
-            id: objectId,
-          });
-          break;
+      // Deep compare the data before triggering any updates
+      const cachedData = objectsCache.get(objectId);
+      const hasChanged = !cachedData || !isEqual(cachedData, data);
+
+      if (hasChanged) {
+        // Only update cache and trigger callback if data actually changed
+        objectsCache.set(objectId, JSON.parse(JSON.stringify(data))); // Store deep copy
+        callback({
+          type: change.type,
+          id: objectId,
+          object: data,
+        });
       }
     });
   });
