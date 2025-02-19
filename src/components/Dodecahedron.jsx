@@ -696,6 +696,7 @@ const Sphere = ({
 
           {/* Add face texts - modified for double-sided visibility */}
           {Object.entries(faceTexts).map(([faceIndex, text]) => {
+            if (!text) return null;
             const { position, normal } = getFaceTextPosition(Number(faceIndex));
             const textStyle = faceTextStyles[faceIndex] || {
               fontSize: 0.5,
@@ -704,34 +705,15 @@ const Sphere = ({
             };
 
             return (
-              <group key={`face-text-${faceIndex}`}>
-                {/* Outside facing text */}
-                <TextSprite
-                  text={text}
-                  position={position}
-                  style={{
-                    ...textStyle,
-                    fixedSize: true,
-                    isFaceText: true,
-                  }}
-                  onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
-                  billboard={false}
-                  normal={normal}
-                />
-                {/* Inside facing text */}
-                <TextSprite
-                  text={text}
-                  position={position}
-                  style={{
-                    ...textStyle,
-                    fixedSize: true,
-                    isFaceText: true,
-                  }}
-                  onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
-                  billboard={false}
-                  normal={normal.map((n) => -n)}
-                />
-              </group>
+              <TextSprite
+                key={`face-text-${faceIndex}`}
+                text={text}
+                position={position}
+                style={{ ...textStyle, fixedSize: true, isFaceText: true }}
+                onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
+                billboard={false}
+                normal={normal}
+              />
             );
           })}
 

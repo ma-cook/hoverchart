@@ -45,12 +45,10 @@ const TextSprite = ({
 
   useFrame(({ camera }) => {
     if (textRef.current) {
-      if (style.isFaceText) {
-        // Get the world scale of the parent face
+      if (style.isFaceText && normal) {
+        // Get parent's world scale for size compensation
         const worldScale = new THREE.Vector3();
         textRef.current.parent?.getWorldScale(worldScale);
-
-        // Apply inverse scale to maintain constant size
         const inverseScale = new THREE.Vector3(
           1 / Math.max(0.0001, worldScale.x),
           1 / Math.max(0.0001, worldScale.y),
@@ -58,16 +56,35 @@ const TextSprite = ({
         );
         textRef.current.scale.copy(inverseScale);
 
-        // Orient text if normal is provided
-        if (normal) {
-          const matrix = new THREE.Matrix4();
-          matrix.lookAt(
-            new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(...normal),
-            new THREE.Vector3(0, 1, 0)
-          );
-          textRef.current.setRotationFromMatrix(matrix);
+        // Compute world-space normal from the provided face normal:
+        const worldNormal = new THREE.Vector3(...normal);
+        if (textRef.current.parent) {
+          const rotationMatrix = new THREE.Matrix4();
+          textRef.current.parent.updateWorldMatrix(true, false);
+          rotationMatrix.extractRotation(textRef.current.parent.matrixWorld);
+          worldNormal.applyMatrix4(rotationMatrix);
         }
+
+        // Determine direction from camera to text's world position.
+        const textWorldPos = new THREE.Vector3();
+        textRef.current.getWorldPosition(textWorldPos);
+        const viewDir = textWorldPos.clone().sub(camera.position).normalize();
+
+        // Build the rotation so that the text faces the provided normal.
+        const matrix = new THREE.Matrix4();
+        matrix.lookAt(
+          new THREE.Vector3(0, 0, 0),
+          worldNormal,
+          new THREE.Vector3(0, 1, 0)
+        );
+
+        // If the camera is behind the face (dot > 0), flip rotation by 180°.
+        if (worldNormal.dot(viewDir) < 0) {
+          const flipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
+          matrix.multiply(flipMatrix);
+        }
+        textRef.current.setRotationFromMatrix(matrix);
+        textRef.current.visible = true;
       } else if (followTarget?.current) {
         const targetPos = followTarget.current.position;
         const targetScale = followTarget.current.scale;

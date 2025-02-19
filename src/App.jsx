@@ -263,11 +263,23 @@ const App = () => {
           }
         : type === 'plane'
         ? {
-            color: null,
-            headerText: '',
             borderStyle: 'solid',
             borderColor: 'white',
             lineThickness: 1,
+            color: null,
+            headerText: '',
+            headerStyle: {
+              fontSize: 1.5,
+              color: 'white',
+              underline: false,
+            },
+            faceText: '', // Add this
+            faceTextStyle: {
+              // Add this
+              fontSize: 0.5,
+              color: 'white',
+              underline: false,
+            },
           }
         : {}), // default empty object for other types
     };
@@ -740,7 +752,9 @@ const App = () => {
               return (
                 <Plane
                   key={obj.id}
+                  id={obj.id} // Ensure id is passed
                   position={obj.position}
+                  scale={obj.scale || [1, 1, 1]}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
                   showAllIndicators={showAllCubesIndicators}
@@ -752,6 +766,17 @@ const App = () => {
                     handleObjectMove(obj.id, newPosition)
                   }
                   connections={connections}
+                  selectedIndicators={selectedIndicators}
+                  indicatorMode={indicatorMode}
+                  onUpdate={handleObjectUpdate} // Add this line
+                  color={obj.color}
+                  headerText={obj.headerText}
+                  borderStyle={obj.borderStyle}
+                  borderColor={obj.borderColor}
+                  lineThickness={obj.lineThickness}
+                  headerStyle={obj.headerStyle}
+                  faceText={obj.faceText}
+                  faceTextStyle={obj.faceTextStyle}
                 />
               );
             }

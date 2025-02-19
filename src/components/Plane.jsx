@@ -11,6 +11,7 @@ import ResizeArrows from './ResizeArrows'; // Fix import statement to use defaul
 import HeaderInput from './HeaderInput';
 import FaceIndicator from './FaceIndicator'; // Keep this import
 import * as THREE from 'three';
+import isEqual from 'lodash/isEqual';
 
 const Plane = ({
   position = [0, 0, 0],
@@ -24,15 +25,25 @@ const Plane = ({
   connections,
   selectedIndicators, // Add this prop
   indicatorMode,
-  id,
-  onUpdate,
-  scale,
-  color,
-  headerText,
-  borderStyle,
-  borderColor,
-  lineThickness,
-  headerStyle,
+  id, // Add id prop
+  onUpdate, // Add onUpdate prop
+  scale: initialScale = [1, 1, 1],
+  color: initialColor = null,
+  headerText: initialHeaderText = '',
+  borderStyle: initialBorderStyle = 'solid',
+  borderColor: initialBorderColor = 'white',
+  lineThickness: initialLineThickness = 1,
+  headerStyle: initialHeaderStyle = {
+    fontSize: 1.5,
+    color: 'white',
+    underline: false,
+  },
+  faceText: initialFaceText = '',
+  faceTextStyle: initialFaceTextStyle = {
+    fontSize: 0.5,
+    color: 'white',
+    underline: false,
+  },
 }) => {
   const groupRef = useRef();
   const meshRef = useRef(); // Add meshRef
@@ -40,29 +51,80 @@ const Plane = ({
   const size = 5;
   const width = 10,
     height = 10; // dimensions used in planeGeometry
+
   const [showUI, setShowUI] = useState(false);
-  const [text, setText] = useState('');
+
   const [showTextInput, setShowTextInput] = useState(false);
-  const [textStyle, setTextStyle] = useState({
-    fontSize: 0.5,
-    color: 'white',
-    underline: false,
-  });
+
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
   const [showTransform, setShowTransform] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
-  const [currentScale, setCurrentScale] = useState(scale);
-  const [currentColor, setCurrentColor] = useState(color);
-  const [currentHeaderText, setCurrentHeaderText] = useState(headerText);
+  const [scale, setScale] = useState([1, 1, 1]);
+
   const [showHeader, setShowHeader] = useState(false);
-  const [currentHeaderStyle, setCurrentHeaderStyle] = useState(headerStyle);
+
   const [showHeaderStyleUI, setShowHeaderStyleUI] = useState(false);
-  const [showBorder, setShowBorder] = useState(true);
-  const [currentBorderStyle, setCurrentBorderStyle] = useState(borderStyle);
-  const [currentBorderColor, setCurrentBorderColor] = useState(borderColor);
-  const [currentLineThickness, setCurrentLineThickness] =
-    useState(lineThickness);
+
   const [indicatorSelected, setIndicatorSelected] = useState(false);
+
+  // Replace direct state with "current" prefixed state
+  const [currentScale, setCurrentScale] = useState(initialScale);
+  const [currentColor, setCurrentColor] = useState(initialColor);
+  const [currentHeaderText, setCurrentHeaderText] = useState(initialHeaderText);
+  const [currentHeaderStyle, setCurrentHeaderStyle] =
+    useState(initialHeaderStyle);
+  const [currentBorderStyle, setCurrentBorderStyle] =
+    useState(initialBorderStyle);
+  const [currentBorderColor, setCurrentBorderColor] =
+    useState(initialBorderColor);
+  const [currentLineThickness, setCurrentLineThickness] =
+    useState(initialLineThickness);
+  const [currentFaceText, setCurrentFaceText] = useState(initialFaceText);
+  const [currentFaceTextStyle, setCurrentFaceTextStyle] =
+    useState(initialFaceTextStyle);
+
+  // Add useEffect hooks to sync with props
+  useEffect(() => {
+    if (initialScale !== undefined) setCurrentScale(initialScale);
+  }, [initialScale]);
+
+  useEffect(() => {
+    if (initialColor !== undefined) setCurrentColor(initialColor);
+  }, [initialColor]);
+
+  useEffect(() => {
+    if (initialHeaderText !== undefined)
+      setCurrentHeaderText(initialHeaderText);
+  }, [initialHeaderText]);
+
+  useEffect(() => {
+    if (initialBorderStyle !== undefined)
+      setCurrentBorderStyle(initialBorderStyle);
+  }, [initialBorderStyle]);
+
+  useEffect(() => {
+    if (initialBorderColor !== undefined)
+      setCurrentBorderColor(initialBorderColor);
+  }, [initialBorderColor]);
+
+  useEffect(() => {
+    if (initialLineThickness !== undefined)
+      setCurrentLineThickness(initialLineThickness);
+  }, [initialLineThickness]);
+
+  useEffect(() => {
+    if (initialHeaderStyle !== undefined)
+      setCurrentHeaderStyle(initialHeaderStyle);
+  }, [initialHeaderStyle]);
+
+  useEffect(() => {
+    if (initialFaceText !== undefined) setCurrentFaceText(initialFaceText);
+  }, [initialFaceText]);
+
+  useEffect(() => {
+    if (initialFaceTextStyle !== undefined)
+      setCurrentFaceTextStyle(initialFaceTextStyle);
+  }, [initialFaceTextStyle]);
 
   // Wrap closeAllUIs in useCallback and declare it before it’s used
   const closeAllUIs = useCallback(() => {
@@ -119,36 +181,23 @@ const Plane = ({
     };
   }, [showTextStyleUI]);
 
-  useEffect(() => {
-    if (scale !== undefined) setCurrentScale(scale);
-  }, [scale]);
-
-  useEffect(() => {
-    if (color !== undefined) setCurrentColor(color);
-  }, [color]);
-
-  useEffect(() => {
-    if (headerText !== undefined) setCurrentHeaderText(headerText);
-  }, [headerText]);
-
-  useEffect(() => {
-    if (borderStyle !== undefined) setCurrentBorderStyle(borderStyle);
-  }, [borderStyle]);
-
-  useEffect(() => {
-    if (borderColor !== undefined) setCurrentBorderColor(borderColor);
-  }, [borderColor]);
-
-  useEffect(() => {
-    if (lineThickness !== undefined) setCurrentLineThickness(lineThickness);
-  }, [lineThickness]);
-
-  useEffect(() => {
-    if (headerStyle !== undefined) setCurrentHeaderStyle(headerStyle);
-  }, [headerStyle]);
-
   const handleColorChange = (newColor) => {
     setCurrentColor(newColor);
+    if (onUpdate && id) {
+      onUpdate(id, {
+        type: 'plane',
+        position,
+        scale: currentScale,
+        color: newColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
+      });
+    }
   };
 
   const handleClick = (e) => {
@@ -164,12 +213,43 @@ const Plane = ({
   };
 
   const handleTextSubmit = (newText) => {
-    setText(newText);
+    setCurrentFaceText(newText);
     closeAllUIs();
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'plane',
+        position,
+        scale: currentScale,
+        color: currentColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: newText,
+        faceTextStyle: currentFaceTextStyle,
+      });
+    }
   };
 
   const handleTextStyleChange = (newStyle) => {
-    setTextStyle((prev) => ({ ...prev, ...newStyle }));
+    const updatedStyle = { ...currentFaceTextStyle, ...newStyle };
+    setCurrentFaceTextStyle(updatedStyle);
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'plane',
+        position,
+        scale: currentScale,
+        color: currentColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: updatedStyle,
+      });
+    }
   };
 
   const handleTextSpriteClick = (e) => {
@@ -208,6 +288,8 @@ const Plane = ({
           borderColor: currentBorderColor,
           lineThickness: currentLineThickness,
           type: 'plane',
+          faceText: currentFaceText,
+          faceTextStyle: currentFaceTextStyle,
         });
       }
     }
@@ -216,8 +298,8 @@ const Plane = ({
   // Compute margin offset so arrows appear outside the plane edges
   const arrowMargin = 1; // extra unit margin
   const computedArrowOffset = {
-    x: (width / 2) * currentScale[0] + arrowMargin,
-    y: (height / 2) * currentScale[1] + arrowMargin,
+    x: (width / 2) * scale[0] + arrowMargin,
+    y: (height / 2) * scale[1] + arrowMargin,
     z: 0,
   };
 
@@ -226,6 +308,21 @@ const Plane = ({
     if (groupRef.current) {
       const newPos = e.target.object.position;
       groupRef.current.position.copy(newPos);
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'plane',
+          position: [newPos.x, newPos.y, newPos.z],
+          scale: currentScale,
+          color: currentColor,
+          headerText: currentHeaderText,
+          headerStyle: currentHeaderStyle,
+          borderStyle: currentBorderStyle,
+          borderColor: currentBorderColor,
+          lineThickness: currentLineThickness,
+          faceText: currentFaceText,
+          faceTextStyle: currentFaceTextStyle,
+        });
+      }
     }
   };
 
@@ -239,13 +336,17 @@ const Plane = ({
     setShowHeader(false);
     if (onUpdate) {
       onUpdate(id, {
-        headerText: text,
+        type: 'plane',
         position,
         scale: currentScale,
+        color: currentColor,
+        headerText: text,
+        headerStyle: currentHeaderStyle,
         borderStyle: currentBorderStyle,
         borderColor: currentBorderColor,
         lineThickness: currentLineThickness,
-        type: 'plane',
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
       });
     }
   };
@@ -257,7 +358,23 @@ const Plane = ({
   };
 
   const handleHeaderStyleChange = (newStyle) => {
-    setCurrentHeaderStyle((prev) => ({ ...prev, ...newStyle }));
+    const updatedStyle = { ...currentHeaderStyle, ...newStyle };
+    setCurrentHeaderStyle(updatedStyle);
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'plane',
+        position,
+        scale: currentScale,
+        color: currentColor,
+        headerText: currentHeaderText,
+        headerStyle: updatedStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
+      });
+    }
   };
 
   // Update border toggle handler
@@ -265,26 +382,30 @@ const Plane = ({
     if (!onUpdate || !id) return;
 
     const updates = {
+      type: 'plane',
       position,
       scale: currentScale,
-      headerText: currentHeaderText,
       color: currentColor,
+      headerText: currentHeaderText,
       headerStyle: currentHeaderStyle,
-      type: 'plane',
+      borderStyle: currentBorderStyle,
+      borderColor: currentBorderColor,
+      lineThickness: currentLineThickness,
+      faceText: currentFaceText,
+      faceTextStyle: currentFaceTextStyle,
     };
 
     if (option.type === 'style') {
-      setCurrentBorderStyle(option.value);
       updates.borderStyle = option.value;
+      setCurrentBorderStyle(option.value);
     } else if (option.type === 'color') {
-      console.log('Setting border color:', option.value); // Add debug log
-      setCurrentBorderColor(option.value);
       updates.borderColor = option.value;
+      setCurrentBorderColor(option.value);
     } else if (option.type === 'thickness') {
       const newThickness =
         currentLineThickness >= 6 ? 1 : currentLineThickness + 2;
-      setCurrentLineThickness(newThickness);
       updates.lineThickness = newThickness;
+      setCurrentLineThickness(newThickness);
     }
 
     onUpdate(id, updates);
@@ -292,7 +413,7 @@ const Plane = ({
 
   // Add function to calculate absolute positions
   const getUIPositions = () => {
-    const planeHeight = 10 * currentScale[1];
+    const planeHeight = 10 * scale[1];
     const verticalOffset = planeHeight / 2;
     const zOffset = 5; // Offset for UI elements in front of plane
 
@@ -332,7 +453,7 @@ const Plane = ({
       worldMatrix.copy(groupRef.current.matrixWorld);
 
       // Apply scale
-      scaleMatrix.makeScale(...currentScale);
+      scaleMatrix.makeScale(...scale);
       worldMatrix.multiply(scaleMatrix);
 
       // Transform the local position to world space
@@ -382,6 +503,91 @@ const Plane = ({
     return false;
   };
 
+  // Add an effect to update database when any relevant state changes
+  useEffect(() => {
+    if (onUpdate && id) {
+      const currentState = {
+        type: 'plane',
+        position,
+        scale: currentScale,
+        color: currentColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
+      };
+
+      // Only update if the state has changed
+      if (
+        !groupRef.current?.lastUpdate ||
+        !isEqual(groupRef.current.lastUpdate, currentState)
+      ) {
+        groupRef.current.lastUpdate = currentState;
+        onUpdate(id, currentState);
+      }
+    }
+  }, [
+    id,
+    onUpdate,
+    position,
+    currentScale,
+    currentColor,
+    currentHeaderText,
+    currentHeaderStyle,
+    currentBorderStyle,
+    currentBorderColor,
+    currentLineThickness,
+    currentFaceText,
+    currentFaceTextStyle,
+  ]);
+
+  // Add lastUpdateRef to track changes
+  const lastUpdateRef = useRef(null);
+
+  // Update database whenever relevant state changes
+  useEffect(() => {
+    if (!onUpdate || !id) return;
+
+    const currentState = {
+      type: 'plane',
+      position,
+      scale: currentScale,
+      color: currentColor,
+      headerText: currentHeaderText,
+      headerStyle: currentHeaderStyle,
+      borderStyle: currentBorderStyle,
+      borderColor: currentBorderColor,
+      lineThickness: currentLineThickness,
+      faceText: currentFaceText,
+      faceTextStyle: currentFaceTextStyle,
+    };
+
+    // Only update if state has changed
+    if (
+      !lastUpdateRef.current ||
+      !isEqual(lastUpdateRef.current, currentState)
+    ) {
+      lastUpdateRef.current = currentState;
+      onUpdate(id, currentState);
+    }
+  }, [
+    id,
+    onUpdate,
+    position,
+    currentScale,
+    currentColor,
+    currentHeaderText,
+    currentHeaderStyle,
+    currentBorderStyle,
+    currentBorderColor,
+    currentLineThickness,
+    currentFaceText,
+    currentFaceTextStyle,
+  ]);
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -396,17 +602,15 @@ const Plane = ({
             />
           </mesh>
           {/* Only render border Line when showBorder is true */}
-          {showBorder && (
-            <Line
-              points={points}
-              color={selected ? 'blue' : currentBorderColor}
-              lineWidth={currentLineThickness}
-              dashed={currentBorderStyle !== 'solid'}
-              dashScale={currentBorderStyle === 'dotted' ? 1 : 2}
-              dashSize={currentBorderStyle === 'dotted' ? 0.1 : 1}
-              gapSize={currentBorderStyle === 'dotted' ? 0.1 : 0.5}
-            />
-          )}
+          <Line
+            points={points}
+            color={selected ? 'blue' : currentBorderColor}
+            lineWidth={currentLineThickness}
+            dashed={currentBorderStyle !== 'solid'}
+            dashScale={currentBorderStyle === 'dotted' ? 1 : 2}
+            dashSize={currentBorderStyle === 'dotted' ? 0.1 : 1}
+            gapSize={currentBorderStyle === 'dotted' ? 0.1 : 0.5}
+          />
           edr {/* Replace the old indicator cube with FaceIndicator */}
           {shouldShowIndicator() && (
             <FaceIndicator
@@ -437,12 +641,14 @@ const Plane = ({
           <FaceTextInput position={[0, 6, 0]} onTextSubmit={handleTextSubmit} />
         )}
 
-        {text && (
+        {currentFaceText && (
           <TextSprite
-            text={text}
+            text={currentFaceText}
             position={[0, 0, 0.1]}
-            style={textStyle}
-            fixedSize={true}
+            style={{
+              ...currentFaceTextStyle,
+              fixedSize: true,
+            }}
             onClick={handleTextSpriteClick}
             billboard={false}
           />
