@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
@@ -10,6 +10,7 @@ import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
 import FaceTextInput from './FaceTextInput';
 import FaceIndicator from './FaceIndicator'; // Add this import
+import isEqual from 'lodash/isEqual';
 
 const Sphere = ({
   position,
@@ -24,29 +25,40 @@ const Sphere = ({
   connections, // Add this prop
   selectedIndicators, // Add this prop
   indicatorMode,
-}) => {
-  const [showTransform, setShowTransform] = useState(false);
-  const [showHeader, setShowHeader] = useState(false);
-  const [headerText, setHeaderText] = useState('');
-  const [scale, setScale] = useState([1, 1, 1]);
-  const [isResizing, setIsResizing] = useState(false);
-  const [highlightedFaces, setHighlightedFaces] = useState(new Set());
-  const [showStyleMenu, setShowStyleMenu] = useState(false);
-  const [headerStyle, setHeaderStyle] = useState({
+  onUpdate, // Add this prop
+  id, // Add this prop
+  // Add default values for props
+  headerText: initialHeaderText = '',
+  scale: initialScale = [1, 1, 1],
+  lineColor: initialLineColor = 'white',
+  faceColors: initialFaceColors = {},
+  faceTexts: initialFaceTexts = {},
+  faceTextStyles: initialFaceTextStyles = {},
+  headerStyle: initialHeaderStyle = {
     fontSize: 'medium',
     color: 'white',
     underline: false,
-  });
-  const [lineColor, setLineColor] = useState('white');
+  },
+}) => {
+  // Initialize state with props instead of defaults
+  const [headerText, setHeaderText] = useState(initialHeaderText);
+  const [scale, setScale] = useState(() => [...initialScale]);
+  const [headerStyle, setHeaderStyle] = useState(initialHeaderStyle);
+  const [lineColor, setLineColor] = useState(initialLineColor);
+  const [faceColors, setFaceColors] = useState(initialFaceColors);
+  const [faceTexts, setFaceTexts] = useState(initialFaceTexts);
+  const [faceTextStyles, setFaceTextStyles] = useState(initialFaceTextStyles);
+  const [showTransform, setShowTransform] = useState(false);
+  const [showHeader, setShowHeader] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [highlightedFaces, setHighlightedFaces] = useState(new Set());
+  const [showStyleMenu, setShowStyleMenu] = useState(false);
   const [activeFace, setActiveFace] = useState(null);
   const [showFaceUI, setShowFaceUI] = useState(false);
   const [showObjectUI, setShowObjectUI] = useState(true);
-  const [faceTexts, setFaceTexts] = useState({});
   const [showFaceTextInput, setShowFaceTextInput] = useState(false);
-  const [faceTextStyles, setFaceTextStyles] = useState({}); // Add new state for face text styles
   const [activeFaceText, setActiveFaceText] = useState(null); // Add state to track which face text is being edited
   const [showFaceTextStyleMenu, setShowFaceTextStyleMenu] = useState(false); // Add state for style menu visibility
-  const [faceColors, setFaceColors] = useState({}); // Add new state for face colors
   const [selectedIndicator, setSelectedIndicator] = useState(null); // Add new state for indicator selection
   const [isConnected, setIsConnected] = useState(false); // Add new state to track if this dodecahedron is part of a connection
   const [connectedFaces, setConnectedFaces] = useState(new Set()); // Add new state for connected faces
@@ -192,7 +204,20 @@ const Sphere = ({
     });
   }, []);
 
-  // Reset states when deselected
+  // Move isIndicatorConnected function definition before the effects
+  const isIndicatorConnected = useCallback(
+    (faceIndex) => {
+      return connections?.some(
+        (conn) =>
+          (conn.start.cube === contentRef.current &&
+            conn.start.face === faceIndex) ||
+          (conn.end.cube === contentRef.current && conn.end.face === faceIndex)
+      );
+    },
+    [connections]
+  );
+
+  // Now the effects can use isIndicatorConnected
   useEffect(() => {
     if (!selected) {
       setShowTransform(false);
@@ -251,7 +276,67 @@ const Sphere = ({
         setSelectedIndicator(null);
       }
     }
-  }, [connections, selectedIndicator]);
+  }, [connections, selectedIndicator, isIndicatorConnected]);
+
+  // Add useCallback for updating database
+  const updateDatabase = useCallback(() => {
+    if (!onUpdate || !id) return;
+
+    const currentState = {
+      type: 'sphere',
+      position,
+      scale,
+      lineColor,
+      headerText,
+      headerStyle,
+      // Map numeric indices for 12 faces
+      faceColors: Object.fromEntries(
+        Array(12)
+          .fill(null)
+          .map((_, idx) => [idx, faceColors[idx] || null])
+      ),
+      faceTexts: Object.fromEntries(
+        Array(12)
+          .fill('')
+          .map((_, idx) => [idx, faceTexts[idx] || ''])
+      ),
+      faceTextStyles: Object.fromEntries(
+        Array(12)
+          .fill(null)
+          .map((_, idx) => [
+            idx,
+            faceTextStyles[idx] || {
+              fontSize: 0.5,
+              color: 'white',
+              underline: false,
+            },
+          ])
+      ),
+    };
+
+    // Only update if something has changed
+    const lastUpdate = contentRef.current?.lastUpdate;
+    if (!lastUpdate || !isEqual(lastUpdate, currentState)) {
+      contentRef.current.lastUpdate = currentState;
+      onUpdate(id, currentState);
+    }
+  }, [
+    id,
+    position,
+    scale,
+    lineColor,
+    headerText,
+    headerStyle,
+    faceColors,
+    faceTexts,
+    faceTextStyles,
+    onUpdate,
+  ]);
+
+  // Add effect to trigger updates
+  useEffect(() => {
+    updateDatabase();
+  }, [updateDatabase]);
 
   const handleTransformToggle = () => {
     setShowTransform(!showTransform);
@@ -275,6 +360,13 @@ const Sphere = ({
     setScale((prevScale) => {
       const newScale = [...prevScale];
       newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
+      // Update the contentRef's lastUpdate
+      if (contentRef.current) {
+        contentRef.current.lastUpdate = {
+          ...contentRef.current.lastUpdate,
+          scale: newScale,
+        };
+      }
       return newScale;
     });
   };
@@ -358,6 +450,7 @@ const Sphere = ({
         [activeFace]: text,
       }));
       setShowFaceTextInput(false);
+      updateDatabase();
     }
   };
 
@@ -384,6 +477,7 @@ const Sphere = ({
           ...newStyle,
         },
       }));
+      updateDatabase();
     }
   };
 
@@ -506,16 +600,6 @@ const Sphere = ({
     return rotation;
   };
 
-  // Add function to check if a face is connected
-  const isIndicatorConnected = (faceIndex) => {
-    return connections?.some(
-      (conn) =>
-        (conn.start.cube === contentRef.current &&
-          conn.start.face === faceIndex) ||
-        (conn.end.cube === contentRef.current && conn.end.face === faceIndex)
-    );
-  };
-
   // Update shouldShowFaceIndicator logic
   const shouldShowFaceIndicator = (faceIndex) => {
     // Show when any indicator is selected globally
@@ -571,10 +655,10 @@ const Sphere = ({
                   handleFaceClick(idx, e);
                 }
               }}
-              onPointerOver={(e) => {
+              onPointerOver={() => {
                 document.body.style.cursor = 'pointer';
               }}
-              onPointerOut={(e) => {
+              onPointerOut={() => {
                 document.body.style.cursor = 'auto';
               }}
             >

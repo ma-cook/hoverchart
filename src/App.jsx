@@ -192,7 +192,6 @@ const App = () => {
     }
   }, [objects, user]);
 
-  // Update handleCreateObject to include all potential plane properties
   const handleCreateObject = (type) => {
     if (!cameraRef.current?.camera || !user) return;
 
@@ -202,7 +201,6 @@ const App = () => {
     );
     const direction = new THREE.Vector3(0, 0, -1).applyEuler(euler);
 
-    // Place objects at different distances based on type
     const distance = type === 'text' ? 50 : 75;
     const position = cameraPos.add(direction.multiplyScalar(distance));
 
@@ -211,47 +209,69 @@ const App = () => {
       position: [position.x, position.y, position.z],
       id: Date.now(),
       scale: [1, 1, 1],
-      color: '#ffffff',
-      headerText: '', // Add explicit headerText initialization
-      faceColors: {},
-      faceTexts: {
-        front: '',
-        back: '',
-        top: '',
-        bottom: '',
-        right: '',
-        left: '',
-      },
-      textStyle: {
-        fontSize: 1.5,
-        color: 'white',
-        underline: false,
-      },
-      faceTextStyles: {
-        front: { fontSize: 0.5, color: 'white', underline: false },
-        back: { fontSize: 0.5, color: 'white', underline: false },
-        top: { fontSize: 0.5, color: 'white', underline: false },
-        bottom: { fontSize: 0.5, color: 'white', underline: false },
-        right: { fontSize: 0.5, color: 'white', underline: false },
-        left: { fontSize: 0.5, color: 'white', underline: false },
-      },
-      headerPosition: { x: 0, y: 0, z: 0 },
-      // Only set required defaults for plane
-      ...(type === 'plane' && {
-        borderStyle: 'solid',
-        borderColor: 'white',
-        lineThickness: 1,
-        color: null,
-        headerText: '',
-        headerStyle: {
-          fontSize: 1.5,
-          color: 'white',
-          underline: false,
-        },
-      }),
+
+      ...(type === 'sphere'
+        ? {
+            lineColor: 'white',
+            headerText: '',
+            headerStyle: {
+              fontSize: 1.5,
+              color: 'white',
+              underline: false,
+            },
+            faceColors: Array(12)
+              .fill(null)
+              .reduce((acc, _, idx) => {
+                acc[idx] = null;
+                return acc;
+              }, {}),
+            faceTexts: Array(12)
+              .fill('')
+              .reduce((acc, _, idx) => {
+                acc[idx] = '';
+                return acc;
+              }, {}),
+            faceTextStyles: Array(12)
+              .fill(null)
+              .reduce((acc, _, idx) => {
+                acc[idx] = {
+                  fontSize: 0.5,
+                  color: 'white',
+                  underline: false,
+                };
+                return acc;
+              }, {}),
+          }
+        : type === 'cube'
+        ? {
+            color: '#ffffff',
+            headerText: '',
+            faceColors: {},
+            faceTexts: {
+              front: '',
+              back: '',
+              top: '',
+              bottom: '',
+              right: '',
+              left: '',
+            },
+            textStyle: {
+              fontSize: 1.5,
+              color: 'white',
+              underline: false,
+            },
+          }
+        : type === 'plane'
+        ? {
+            color: null,
+            headerText: '',
+            borderStyle: 'solid',
+            borderColor: 'white',
+            lineThickness: 1,
+          }
+        : {}), // default empty object for other types
     };
 
-    // Save single object
     saveObject(user.uid, newObject);
   };
 
@@ -262,31 +282,6 @@ const App = () => {
   };
 
   const calculateFacePosition = (indicator) => {
-    // Handle plane indicators
-    if (indicator.type === 'plane') {
-      const plane = indicator.plane;
-      if (!plane) return [0, 0, 0];
-
-      const worldPos = new THREE.Vector3();
-      const worldQuat = new THREE.Quaternion();
-      const worldScale = new THREE.Vector3();
-
-      plane.getWorldPosition(worldPos);
-      plane.getWorldQuaternion(worldQuat);
-      plane.getWorldScale(worldScale);
-
-      // Get local offset and apply transformations
-      const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
-      localOffset.applyQuaternion(worldQuat);
-
-      return [
-        worldPos.x + localOffset.x,
-        worldPos.y + localOffset.y,
-        worldPos.z + localOffset.z,
-      ];
-    }
-
-    // Handle cube and sphere indicators
     const cube = indicator.cube;
     if (!cube) return [0, 0, 0];
 
@@ -369,19 +364,18 @@ const App = () => {
     [user]
   );
 
-  // Fix handleFaceIndicatorClick to only clear states after connection is made
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
       setSelectedIndicators([indicator]);
+      // Keep indicators visible on all objects
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
-      setIndicatorMode('indicators');
     } else if (selectedIndicators.length === 1) {
+      // Create connection...
       const startIndicator = selectedIndicators[0];
       const startPos = calculateFacePosition(startIndicator);
       const endPos = calculateFacePosition(indicator);
 
-      // Create the connection first
       setConnections((prev) => [
         ...prev,
         {
@@ -391,7 +385,7 @@ const App = () => {
         },
       ]);
 
-      // Then reset selection states after connection is made
+      // Reset states after connection
       setSelectedIndicators([]);
       setShowAllCubesIndicators(false);
       setGlobalIndicatorSelected(false);
@@ -415,15 +409,19 @@ const App = () => {
 
   const handleToggleIndicators = (mode = 'all') => {
     if (mode === 'connection') {
-      // Only set indicator mode and show indicators, don't reset selections
+      // Reset all indicator states before showing all indicators
+      setSelectedIndicators([]);
       setIndicatorMode('indicators');
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
+      setSelectedId(null);
     } else {
-      const newValue = !showAllCubesIndicators;
-      setShowAllCubesIndicators(newValue);
-      setGlobalIndicatorSelected(newValue);
-      setIndicatorMode(newValue ? 'all' : 'none');
+      setShowAllCubesIndicators((prev) => {
+        const newValue = !prev;
+        setGlobalIndicatorSelected(newValue);
+        return newValue;
+      });
+      setIndicatorMode((prev) => (prev === 'all' ? 'none' : 'all'));
     }
   };
 
@@ -730,13 +728,11 @@ const App = () => {
                   onIndicatorDeselected={handleIndicatorDeselected}
                   globalIndicatorSelected={globalIndicatorSelected}
                   onFaceIndicatorClick={handleFaceIndicatorClick}
-                  indicatorMode={indicatorMode}
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
                   connections={connections}
                   onUpdate={handleObjectUpdate} // Add this prop
-                  selectedIndicators={selectedIndicators} // Add this prop
                 />
               );
             }
@@ -752,22 +748,10 @@ const App = () => {
                   onIndicatorDeselected={handleIndicatorDeselected}
                   globalIndicatorSelected={globalIndicatorSelected}
                   onFaceIndicatorClick={handleFaceIndicatorClick}
-                  indicatorMode={indicatorMode}
                   onMove={(newPosition) =>
                     handleObjectMove(obj.id, newPosition)
                   }
                   connections={connections}
-                  selectedIndicators={selectedIndicators} // Add this prop
-                  id={obj.id}
-                  onUpdate={handleObjectUpdate}
-                  // Pass stored values without defaults
-                  scale={obj.scale}
-                  color={obj.color}
-                  headerText={obj.headerText}
-                  borderStyle={obj.borderStyle}
-                  borderColor={obj.borderColor}
-                  lineThickness={obj.lineThickness}
-                  headerStyle={obj.headerStyle}
                 />
               );
             }
