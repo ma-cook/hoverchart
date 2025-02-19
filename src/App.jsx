@@ -744,6 +744,14 @@ const App = () => {
                   }
                   connections={connections}
                   selectedIndicators={selectedIndicators} // Add this prop
+                  id={obj.id}
+                  onUpdate={handleObjectUpdate}
+                  color={obj.color}
+                  scale={obj.scale || [1, 1, 1]}
+                  headerText={obj.headerText || ''}
+                  borderStyle={obj.borderStyle || 'solid'}
+                  borderColor={obj.borderColor || 'white'}
+                  lineThickness={obj.lineThickness || 1}
                 />
               );
             }

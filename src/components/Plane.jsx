@@ -24,6 +24,13 @@ const Plane = ({
   connections,
   selectedIndicators, // Add this prop
   indicatorMode,
+  id,
+  onUpdate,
+  scale: initialScale = [1, 1, 1],
+  headerText: initialHeaderText = '',
+  borderStyle: initialBorderStyle = 'solid',
+  borderColor: initialBorderColor = 'white',
+  lineThickness: initialLineThickness = 1,
 }) => {
   const groupRef = useRef();
   const meshRef = useRef(); // Add meshRef
@@ -43,8 +50,8 @@ const Plane = ({
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
   const [showTransform, setShowTransform] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
-  const [scale, setScale] = useState([1, 1, 1]);
-  const [headerText, setHeaderText] = useState('');
+  const [scale, setScale] = useState(initialScale);
+  const [headerText, setHeaderText] = useState(initialHeaderText);
   const [showHeader, setShowHeader] = useState(false);
   const [headerStyle, setHeaderStyle] = useState({
     fontSize: 1.5,
@@ -53,9 +60,9 @@ const Plane = ({
   });
   const [showHeaderStyleUI, setShowHeaderStyleUI] = useState(false);
   const [showBorder, setShowBorder] = useState(true);
-  const [borderStyle, setBorderStyle] = useState('solid');
-  const [borderColor, setBorderColor] = useState('white');
-  const [lineThickness, setLineThickness] = useState(1);
+  const [borderStyle, setBorderStyle] = useState(initialBorderStyle);
+  const [borderColor, setBorderColor] = useState(initialBorderColor);
+  const [lineThickness, setLineThickness] = useState(initialLineThickness);
   const [indicatorSelected, setIndicatorSelected] = useState(false);
 
   // Wrap closeAllUIs in useCallback and declare it before it’s used
@@ -162,11 +169,20 @@ const Plane = ({
   const handleResize = (axis, delta) => {
     const axisIndex = { x: 0, y: 1 }[axis]; // Only allow x and y resize for plane
     if (axisIndex !== undefined) {
-      setScale((prevScale) => {
-        const newScale = [...prevScale];
-        newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
-        return newScale;
-      });
+      const newScale = [...scale];
+      newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
+      setScale(newScale);
+      if (onUpdate) {
+        onUpdate(id, {
+          scale: newScale,
+          position,
+          headerText,
+          borderStyle,
+          borderColor,
+          lineThickness,
+          type: 'plane',
+        });
+      }
     }
   };
 
@@ -194,6 +210,17 @@ const Plane = ({
   const handleHeaderSubmit = (text) => {
     setHeaderText(text);
     setShowHeader(false);
+    if (onUpdate) {
+      onUpdate(id, {
+        headerText: text,
+        position,
+        scale,
+        borderStyle,
+        borderColor,
+        lineThickness,
+        type: 'plane',
+      });
+    }
   };
 
   const handleHeaderTextClick = (e) => {
@@ -210,12 +237,46 @@ const Plane = ({
   const handleBorderToggle = (option) => {
     if (option.type === 'style') {
       setBorderStyle(option.value);
+      if (onUpdate) {
+        onUpdate(id, {
+          borderStyle: option.value,
+          position,
+          scale,
+          headerText,
+          borderColor,
+          lineThickness,
+          type: 'plane',
+        });
+      }
     } else if (option.type === 'color') {
       console.log('Setting border color:', option.value); // Add debug log
       setBorderColor(option.value);
       setShowBorder(true); // Ensure border is visible when color is changed
+      if (onUpdate) {
+        onUpdate(id, {
+          borderColor: option.value,
+          position,
+          scale,
+          headerText,
+          borderStyle,
+          lineThickness,
+          type: 'plane',
+        });
+      }
     } else if (option.type === 'thickness') {
-      setLineThickness((prev) => (prev >= 6 ? 1 : prev + 2));
+      const newThickness = lineThickness >= 6 ? 1 : lineThickness + 2;
+      setLineThickness(newThickness);
+      if (onUpdate) {
+        onUpdate(id, {
+          lineThickness: newThickness,
+          position,
+          scale,
+          headerText,
+          borderStyle,
+          borderColor,
+          type: 'plane',
+        });
+      }
     }
   };
 
