@@ -366,6 +366,7 @@ const Plane = ({
     e.stopPropagation();
     closeAllUIs();
     setShowHeaderStyleUI(true);
+    setShowUI(false); // Add this to hide the main UI when showing header style UI
   };
 
   const handleHeaderStyleChange = (newStyle) => {
@@ -430,16 +431,8 @@ const Plane = ({
 
     return {
       faceUI: [0, verticalOffset + 2, zOffset], // Position for FaceUI above plane
-      headerInput: [
-        position[0],
-        position[1] + verticalOffset + 15,
-        position[2] + 1,
-      ],
-      headerText: [
-        position[0],
-        position[1] + verticalOffset + 12,
-        position[2] + 1,
-      ],
+      headerInput: [position[0], position[1] + verticalOffset + 4, position[2]],
+      headerText: [position[0], position[1] + verticalOffset + 4, position[2]],
     };
   };
 
@@ -489,7 +482,6 @@ const Plane = ({
 
     // Then update local state
     setIndicatorSelected(true);
-    setShowUI(false); // Hide UI when indicator is selected
   };
 
   // Add helper to check if indicator is connected
@@ -668,7 +660,7 @@ const Plane = ({
 
         {showTextStyleUI && (
           <TextStyleUI
-            position={[0, 6, 0]}
+            position={[0, 10, 0]}
             onStyleChange={handleTextStyleChange}
             onClose={() => closeAllUIs()} // Use closeAllUIs here
           />
@@ -703,7 +695,9 @@ const Plane = ({
           style={{
             ...currentHeaderStyle,
             isHeaderText: true,
+            isPlaneHeader: true, // Add this to identify plane headers
             fixedSize: true,
+            fixedPosition: true, // Add this to maintain position
           }}
           billboard={true}
         />
@@ -714,8 +708,12 @@ const Plane = ({
         <TextStyleUI
           position={[0, 12, 0]}
           onStyleChange={handleHeaderStyleChange}
-          onClose={() => setShowHeaderStyleUI(false)}
+          onClose={() => {
+            setShowHeaderStyleUI(false);
+            setShowUI(true); // Show main UI when closing header style UI
+          }}
           followTarget={groupRef}
+          uiType="header" // Add this to specify UI type
         />
       )}
 
