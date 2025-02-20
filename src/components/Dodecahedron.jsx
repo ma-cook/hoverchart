@@ -493,7 +493,7 @@ const Sphere = ({
     const topEdgeOffset = sphereHeight / 2;
     return [
       position[0],
-      position[1] + topEdgeOffset + 100 * scale[1], // Increased offset and made it scale-dependent
+      position[1] + topEdgeOffset + 10 * scale[1], // Increased offset and made it scale-dependent
       position[2],
     ];
   };
@@ -748,7 +748,7 @@ const Sphere = ({
 
         {selected && showObjectUI && !showHeader && (
           <ObjectUI
-            position={getUIPosition()}
+            position={[getUIPosition()]}
             onTransformToggle={handleTransformToggle}
             onHeaderToggle={handleHeaderToggle}
             onResizeToggle={handleResizeToggle}
@@ -780,7 +780,7 @@ const Sphere = ({
 
         {selected && showHeader && (
           <HeaderInput
-            position={getHeaderPosition()}
+            position={[0, 20, 0]}
             onTextSubmit={handleHeaderSubmit}
             followTarget={contentRef}
           />

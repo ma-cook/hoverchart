@@ -157,8 +157,13 @@ const Plane = ({
       closeAllUIs();
       setIndicatorSelected(false);
       onIndicatorDeselected?.();
+    } else {
+      // When selected, show UI unless an indicator is selected
+      if (!indicatorSelected) {
+        setShowUI(true);
+      }
     }
-  }, [selected, closeAllUIs, onIndicatorDeselected]); // Added closeAllUIs as dependency
+  }, [selected, closeAllUIs, onIndicatorDeselected, indicatorSelected]); // Added closeAllUIs as dependency
 
   // Close TextStyleUI when clicking anywhere else
   useEffect(() => {
@@ -203,8 +208,14 @@ const Plane = ({
   const handleClick = (e) => {
     e.stopPropagation();
     onClick();
-    closeAllUIs(); // This will close TextStyleUI as well
-    setShowUI(true); // Then show the main UI
+    // Only reset UI state if not already selected
+    if (!selected) {
+      closeAllUIs();
+      setShowUI(true);
+    } else {
+      // If already selected, just toggle UI visibility
+      setShowUI(true);
+    }
   };
 
   const handleTextClick = () => {
@@ -478,6 +489,7 @@ const Plane = ({
 
     // Then update local state
     setIndicatorSelected(true);
+    setShowUI(false); // Hide UI when indicator is selected
   };
 
   // Add helper to check if indicator is connected

@@ -294,6 +294,31 @@ const App = () => {
   };
 
   const calculateFacePosition = (indicator) => {
+    // Handle plane indicators
+    if (indicator.type === 'plane') {
+      const plane = indicator.plane;
+      if (!plane) return [0, 0, 0];
+
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      const worldScale = new THREE.Vector3();
+
+      plane.getWorldPosition(worldPos);
+      plane.getWorldQuaternion(worldQuat);
+      plane.getWorldScale(worldScale);
+
+      // Get local offset and apply transformations
+      const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
+      localOffset.applyQuaternion(worldQuat);
+
+      return [
+        worldPos.x + localOffset.x,
+        worldPos.y + localOffset.y,
+        worldPos.z + localOffset.z,
+      ];
+    }
+
+    // Handle other indicators (cube/sphere)
     const cube = indicator.cube;
     if (!cube) return [0, 0, 0];
 

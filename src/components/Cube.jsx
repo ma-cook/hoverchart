@@ -725,7 +725,7 @@ const Cube = ({
           {selected && !showHeader && showObjectUI && contentRef.current && (
             <ObjectUI
               key={contentRef.current.uuid} // <-- New: force remount when cube selection changes
-              position={getUIPosition()}
+              position={[getUIPosition()]}
               onTransformToggle={handleTransformToggle}
               onHeaderToggle={handleHeaderToggle}
               onResizeToggle={handleResizeToggle} // Passed handleResizeToggle to ObjectUI
