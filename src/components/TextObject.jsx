@@ -4,10 +4,23 @@ import {
   TransformControls as DreiTransformControls,
 } from '@react-three/drei'; // <-- Added TransformControls import
 import { useFrame } from '@react-three/fiber';
-
+import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
+import * as THREE from 'three';
 
-const TextObject = ({ position, selected, onClick }) => {
+const TextObject = ({
+  position,
+  selected,
+  onClick,
+  onIndicatorSelected,
+
+  onFaceIndicatorClick,
+  showAllIndicators,
+  globalIndicatorSelected,
+  connections,
+  selectedIndicators, // Add this prop
+  indicatorMode,
+}) => {
   const groupRef = useRef();
   const uiMenuRef = useRef(null); // New ref for UI menu
   const [text, setText] = useState('');
@@ -18,7 +31,7 @@ const TextObject = ({ position, selected, onClick }) => {
   const textAreaRef = useRef();
   const displayRef = useRef(); // <-- New ref for non-editing display
   const [bulletPointMode, setBulletPointMode] = useState(false); // New state for bullet point mode
-
+  const [indicatorSelected, setIndicatorSelected] = useState(false);
   const [scale, setScale] = useState([15, 10, 1]); // Default size for the text plane
   const conversionFactor = 30; // Increase conversion factor for larger HTML size
 
@@ -37,6 +50,72 @@ const TextObject = ({ position, selected, onClick }) => {
   const handleTextChange = (e) => {
     setText(e.target.value);
     adjustHeight();
+  };
+
+  const getIndicatorPositions = () => {
+    const textObjectHeight = 10;
+
+    return {
+      bottom: [0, -textObjectHeight / 2 - 1, 0],
+    };
+  };
+
+  const calculateIndicatorPosition = () => {
+    const worldMatrix = new THREE.Matrix4();
+    const localPos = new THREE.Vector3(...getIndicatorPositions().bottom);
+    const scaleMatrix = new THREE.Matrix4();
+
+    if (groupRef.current) {
+      // Get the plane's world matrix
+      groupRef.current.updateWorldMatrix(true, false);
+      worldMatrix.copy(groupRef.current.matrixWorld);
+
+      // Apply scale
+      scaleMatrix.makeScale(...scale);
+      worldMatrix.multiply(scaleMatrix);
+
+      // Transform the local position to world space
+      localPos.applyMatrix4(worldMatrix);
+    }
+
+    return [localPos.x, localPos.y, localPos.z];
+  };
+
+  const shouldShowIndicator = () => {
+    // Show when any indicator is selected globally
+    if (selectedIndicators?.length > 0) return true;
+    if (indicatorMode === 'indicators') {
+      return true;
+    }
+    if (showAllIndicators || globalIndicatorSelected) return true;
+    if (isIndicatorConnected()) return true;
+    if (indicatorSelected) return true;
+    if (selected) return true;
+    return false;
+  };
+
+  const handleIndicatorClick = (e) => {
+    e.stopPropagation();
+    const indicator = {
+      plane: groupRef.current,
+      type: 'plane',
+      position: calculateIndicatorPosition(),
+    };
+
+    // Call parent handlers first to show all indicators
+    onIndicatorSelected?.();
+    onFaceIndicatorClick?.(indicator);
+
+    // Then update local state
+    setIndicatorSelected(true);
+  };
+
+  const isIndicatorConnected = () => {
+    return connections?.some(
+      (conn) =>
+        conn.start.plane === groupRef.current ||
+        conn.end.plane === groupRef.current
+    );
   };
 
   // Replace the existing useLayoutEffect:
@@ -218,6 +297,14 @@ const TextObject = ({ position, selected, onClick }) => {
             )}
           </div>
         </Html>
+        {shouldShowIndicator() && (
+          <FaceIndicator
+            position={getIndicatorPositions().bottom}
+            rotation={[0, 0, 0]}
+            onClick={handleIndicatorClick}
+            isActive={indicatorSelected || isIndicatorConnected()}
+          />
+        )}
       </group>
 
       {/* Add the new UI outside the main group */}

@@ -98,11 +98,6 @@ const App = () => {
     // Don't clear selectedId to maintain selection state
   };
 
-  const handleIndicatorDeselected = () => {
-    setShowAllCubesIndicators(false);
-    setGlobalIndicatorSelected(false);
-  };
-
   useEffect(() => {
     if (cameraRef.current?.orbitControls) {
       window.orbitControls = cameraRef.current.orbitControls;
@@ -762,7 +757,6 @@ const App = () => {
                   onClick={() => handleObjectClick(obj.id)}
                   showAllIndicators={showAllCubesIndicators}
                   onIndicatorSelected={handleIndicatorSelected}
-                  onIndicatorDeselected={handleIndicatorDeselected}
                   globalIndicatorSelected={globalIndicatorSelected}
                   onFaceIndicatorClick={handleFaceIndicatorClick}
                   onMove={(newPosition) =>
@@ -777,14 +771,13 @@ const App = () => {
               return (
                 <Plane
                   key={obj.id}
-                  id={obj.id} // Ensure id is passed
+                  id={obj.id}
                   position={obj.position}
                   scale={obj.scale || [1, 1, 1]}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
                   showAllIndicators={showAllCubesIndicators}
                   onIndicatorSelected={handleIndicatorSelected}
-                  onIndicatorDeselected={handleIndicatorDeselected}
                   globalIndicatorSelected={globalIndicatorSelected}
                   onFaceIndicatorClick={handleFaceIndicatorClick}
                   onMove={(newPosition) =>
@@ -793,7 +786,7 @@ const App = () => {
                   connections={connections}
                   selectedIndicators={selectedIndicators}
                   indicatorMode={indicatorMode}
-                  onUpdate={handleObjectUpdate} // Add this line
+                  onUpdate={handleObjectUpdate}
                   color={obj.color}
                   headerText={obj.headerText}
                   borderStyle={obj.borderStyle}
@@ -802,6 +795,8 @@ const App = () => {
                   headerStyle={obj.headerStyle}
                   faceText={obj.faceText}
                   faceTextStyle={obj.faceTextStyle}
+                  activeTextStyleUI={activeTextStyleUI} // Add this
+                  setActiveTextStyleUI={setActiveTextStyleUI} // Add this
                 />
               );
             }
@@ -812,6 +807,13 @@ const App = () => {
                   position={obj.position}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
+                  showAllIndicators={showAllCubesIndicators}
+                  onIndicatorSelected={handleIndicatorSelected}
+                  globalIndicatorSelected={globalIndicatorSelected}
+                  onFaceIndicatorClick={handleFaceIndicatorClick}
+                  connections={connections}
+                  selectedIndicators={selectedIndicators}
+                  indicatorMode={indicatorMode}
                 />
               );
             }
