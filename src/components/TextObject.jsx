@@ -305,22 +305,25 @@ const TextObject = ({
   };
 
   // Update transform handler
-  const handleDrag = (e) => {
-    if (groupRef.current) {
-      const newPos = e.target.object.position;
-      groupRef.current.position.copy(newPos);
+  const handleDrag = useCallback(
+    (e) => {
+      if (groupRef.current) {
+        const newPos = e.target.object.position;
+        groupRef.current.position.copy(newPos);
 
-      // Save to database
-      onUpdate?.(id, {
-        position: [newPos.x, newPos.y, newPos.z],
-        type: 'text',
-        scale,
-        text,
-        textStyle,
-        bulletPointMode,
-      });
-    }
-  };
+        // Save to database
+        onUpdate?.(id, {
+          position: [newPos.x, newPos.y, newPos.z],
+          type: 'text',
+          scale,
+          text,
+          textStyle,
+          bulletPointMode,
+        });
+      }
+    },
+    [id, onUpdate, scale, text, textStyle, bulletPointMode]
+  );
 
   return (
     <>

@@ -481,20 +481,20 @@ const Cube = ({
     );
   };
 
-  // Modify shouldShowIndicator to prioritize connections
+  // Update shouldShowIndicator to hide unconnected indicators after connection
   const shouldShowIndicator = (faceName) => {
     // Always show indicators for connected faces
     if (isIndicatorConnected(faceName)) {
       return true;
     }
 
-    // Show all indicators when any indicator is selected
-    if (selectedIndicators.length > 0) {
+    // Show all indicators when in connection mode and no connection exists yet
+    if (selectedIndicators.length > 0 && !isIndicatorConnected(faceName)) {
       return true;
     }
 
-    // Show all indicators when in indicators mode
-    if (indicatorMode === 'indicators') {
+    // Show all indicators when in indicators mode and no connections exist
+    if (indicatorMode === 'indicators' && connections.length === 0) {
       return true;
     }
 
@@ -725,7 +725,7 @@ const Cube = ({
           {selected && !showHeader && showObjectUI && contentRef.current && (
             <ObjectUI
               key={contentRef.current.uuid} // <-- New: force remount when cube selection changes
-              position={getUIPosition()}
+              position={[getUIPosition()]}
               onTransformToggle={handleTransformToggle}
               onHeaderToggle={handleHeaderToggle}
               onResizeToggle={handleResizeToggle} // Passed handleResizeToggle to ObjectUI

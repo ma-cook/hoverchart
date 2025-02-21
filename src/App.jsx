@@ -241,6 +241,7 @@ const App = () => {
         ? {
             color: '#ffffff',
             headerText: '',
+
             faceColors: {},
             faceTexts: {
               front: '',

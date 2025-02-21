@@ -321,17 +321,7 @@ const Plane = ({
       groupRef.current.position.copy(newPos);
       if (onUpdate) {
         onUpdate(id, {
-          type: 'plane',
           position: [newPos.x, newPos.y, newPos.z],
-          scale: currentScale,
-          color: currentColor,
-          headerText: currentHeaderText,
-          headerStyle: currentHeaderStyle,
-          borderStyle: currentBorderStyle,
-          borderColor: currentBorderColor,
-          lineThickness: currentLineThickness,
-          faceText: currentFaceText,
-          faceTextStyle: currentFaceTextStyle,
         });
       }
     }
