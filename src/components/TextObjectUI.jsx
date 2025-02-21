@@ -1,18 +1,22 @@
 import { Html } from '@react-three/drei';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { TextStyleUIContent } from './TextStyleUI';
 import * as THREE from 'three';
+import ColorPicker from './ColorPicker';
 
 const TextObjectUI = ({
   onStyleChange,
+  onBorderChange, // Add this prop
   followTarget,
   menuRef,
   onTransformToggle,
-  onResizeToggle, // Add the onResizeToggle prop
+  onResizeToggle,
 }) => {
   const groupRef = useRef();
   const lastPosition = useRef(null);
+  const [showBorderMenu, setShowBorderMenu] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
 
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
@@ -61,6 +65,65 @@ const TextObjectUI = ({
             onTransformToggle={onTransformToggle} // Pass down the transform toggle prop
             onResizeToggle={onResizeToggle} // Pass down the onResizeToggle prop
           />
+          <button
+            className="ui-button"
+            onClick={() => setShowBorderMenu(!showBorderMenu)}
+          >
+            ▢
+          </button>
+          {showBorderMenu && (
+            <div className="border-menu">
+              <button
+                className="border-menu-item"
+                onClick={() =>
+                  onBorderChange({ type: 'style', value: 'solid' })
+                }
+              >
+                ─────
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={() =>
+                  onBorderChange({ type: 'style', value: 'dashed' })
+                }
+              >
+                ── ── ──
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={() =>
+                  onBorderChange({ type: 'style', value: 'dotted' })
+                }
+              >
+                ∙∙∙∙∙∙∙
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={() => {
+                  setShowColorPicker(true);
+                  setShowBorderMenu(false);
+                }}
+              >
+                🎨
+              </button>
+              <button
+                className="border-menu-item"
+                onClick={() => onBorderChange({ type: 'thickness' })}
+                title="Toggle line thickness"
+              >
+                ▂▃▄
+              </button>
+            </div>
+          )}
+          {showColorPicker && (
+            <ColorPicker
+              onColorSelect={(color) => {
+                onBorderChange({ type: 'color', value: color });
+                setShowColorPicker(false);
+              }}
+              onClose={() => setShowColorPicker(false)}
+            />
+          )}
         </div>
       </Html>
     </group>

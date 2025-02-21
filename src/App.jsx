@@ -362,15 +362,39 @@ const App = () => {
     ];
   };
 
-  const handleObjectMove = useCallback((id, newPosition) => {
-    setObjects((prev) =>
-      prev.map((obj) =>
-        obj.id === id
-          ? { ...obj, position: [newPosition.x, newPosition.y, newPosition.z] }
-          : obj
-      )
-    );
-  }, []);
+  const handleObjectMove = useCallback(
+    (id, newPosition) => {
+      // Update local state
+      setObjects((prev) =>
+        prev.map((obj) =>
+          obj.id === id
+            ? {
+                ...obj,
+                position: [newPosition.x, newPosition.y, newPosition.z],
+              }
+            : obj
+        )
+      );
+
+      // Immediate database update
+      if (user && id) {
+        const object = objects.find((obj) => obj.id === id);
+        if (object) {
+          const updatedObject = {
+            ...object,
+            position: [newPosition.x, newPosition.y, newPosition.z],
+          };
+
+          // Save to database immediately
+          saveObject(user.uid, updatedObject);
+
+          // Update last saved reference
+          lastUpdateRef.current[id] = updatedObject;
+        }
+      }
+    },
+    [user, objects]
+  );
 
   // Update handleObjectUpdate to use debouncing and prevent unnecessary updates
   const handleObjectUpdate = useCallback(
@@ -381,10 +405,18 @@ const App = () => {
         const updatedObjects = prev.map((obj) => {
           if (obj.id === id) {
             const newObj = { ...obj, ...updates };
-            // Only save if the object has actually changed
-            if (!isEqual(lastUpdateRef.current[id], newObj)) {
-              lastUpdateRef.current[id] = newObj;
+
+            // Check if position has changed
+            if (updates.position && !isEqual(obj.position, updates.position)) {
+              // Save immediately for position changes
               saveObject(user.uid, newObj);
+              lastUpdateRef.current[id] = newObj;
+            } else {
+              // Normal debounced save for other changes
+              if (!isEqual(lastUpdateRef.current[id], newObj)) {
+                lastUpdateRef.current[id] = newObj;
+                saveObject(user.uid, newObj);
+              }
             }
             return newObj;
           }
@@ -804,6 +836,7 @@ const App = () => {
               return (
                 <TextObject
                   key={obj.id}
+                  id={obj.id}
                   position={obj.position}
                   selected={selectedId === obj.id}
                   onClick={() => handleObjectClick(obj.id)}
@@ -814,6 +847,12 @@ const App = () => {
                   connections={connections}
                   selectedIndicators={selectedIndicators}
                   indicatorMode={indicatorMode}
+                  onUpdate={handleObjectUpdate}
+                  initialText={obj.text || ''}
+                  initialTextStyle={
+                    obj.textStyle || { fontSize: 32, color: 'white' }
+                  }
+                  initialScale={obj.scale || [15, 10, 1]}
                 />
               );
             }

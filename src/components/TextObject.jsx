@@ -1,4 +1,10 @@
-import { useRef, useState, useLayoutEffect, useEffect } from 'react';
+import {
+  useRef,
+  useState,
+  useLayoutEffect,
+  useEffect,
+  useCallback,
+} from 'react';
 import {
   Html,
   TransformControls as DreiTransformControls,
@@ -7,32 +13,41 @@ import { useFrame } from '@react-three/fiber';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
+import isEqual from 'lodash/isEqual';
 
 const TextObject = ({
   position,
   selected,
   onClick,
   onIndicatorSelected,
-
   onFaceIndicatorClick,
   showAllIndicators,
   globalIndicatorSelected,
   connections,
   selectedIndicators, // Add this prop
   indicatorMode,
+  onUpdate, // Add this prop
+  id, // Add this prop
+  // Add initial props with defaults
+  initialText = '',
+  initialTextStyle = {
+    fontSize: 32,
+    color: 'white',
+  },
+  initialScale = [15, 10, 1],
 }) => {
   const groupRef = useRef();
   const uiMenuRef = useRef(null); // New ref for UI menu
-  const [text, setText] = useState('');
+  const [text, setText] = useState(initialText);
   const [isEditing, setIsEditing] = useState(false);
-  const [textStyle, setTextStyle] = useState({});
+  const [textStyle, setTextStyle] = useState(initialTextStyle);
   const [showTransform, setShowTransform] = useState(false); // <-- New state for transform mode
   const [showResizeArrow, setShowResizeArrow] = useState(false);
   const textAreaRef = useRef();
   const displayRef = useRef(); // <-- New ref for non-editing display
   const [bulletPointMode, setBulletPointMode] = useState(false); // New state for bullet point mode
   const [indicatorSelected, setIndicatorSelected] = useState(false);
-  const [scale, setScale] = useState([15, 10, 1]); // Default size for the text plane
+  const [scale, setScale] = useState(initialScale); // Default size for the text plane
   const conversionFactor = 30; // Increase conversion factor for larger HTML size
 
   // New refs for tracking drag start
@@ -175,7 +190,7 @@ const TextObject = ({
   });
 
   const getContainerStyle = () => ({
-    width: `${scale[0] * 1.3 * conversionFactor}px`, // Adjusted multiplier
+    width: `${scale[0] * 5.3 * conversionFactor}px`, // Adjusted multiplier
     height: `${scale[1] * 1.3 * conversionFactor}px`, // Adjusted multiplier
     position: 'relative',
   });
@@ -223,6 +238,7 @@ const TextObject = ({
 
     if (newWidth >= minWidth && newWidth <= maxWidth) {
       setScale([newWidth, scale[1], scale[2]]);
+      updateDatabase();
     }
   };
 
@@ -246,6 +262,63 @@ const TextObject = ({
         e.target.selectionStart = cursorPosition + 3;
         e.target.selectionEnd = cursorPosition + 3;
       }, 0);
+    }
+  };
+
+  // Add update handler
+  const updateDatabase = useCallback(() => {
+    if (!onUpdate || !id) return;
+
+    const currentState = {
+      type: 'text',
+      position,
+      scale,
+      text,
+      textStyle,
+      bulletPointMode,
+    };
+
+    // Only update if something has changed
+    if (
+      !groupRef.current?.lastUpdate ||
+      !isEqual(groupRef.current.lastUpdate, currentState)
+    ) {
+      groupRef.current.lastUpdate = currentState;
+      onUpdate(id, currentState);
+    }
+  }, [id, onUpdate, position, scale, text, textStyle, bulletPointMode]);
+
+  // Add effect to trigger updates
+  useEffect(() => {
+    updateDatabase();
+  }, [updateDatabase]);
+
+  // Update style change handler in TextObjectUI
+  const handleStyleChange = (newStyle) => {
+    if ('bulletPointMode' in newStyle) {
+      setBulletPointMode(newStyle.bulletPointMode);
+      if (newStyle.bulletPointMode && !text.startsWith('• ')) {
+        setText('• ' + text);
+      }
+    }
+    setTextStyle((prev) => ({ ...prev, ...newStyle }));
+  };
+
+  // Update transform handler
+  const handleDrag = (e) => {
+    if (groupRef.current) {
+      const newPos = e.target.object.position;
+      groupRef.current.position.copy(newPos);
+
+      // Save to database
+      onUpdate?.(id, {
+        position: [newPos.x, newPos.y, newPos.z],
+        type: 'text',
+        scale,
+        text,
+        textStyle,
+        bulletPointMode,
+      });
     }
   };
 
@@ -310,15 +383,7 @@ const TextObject = ({
       {/* Add the new UI outside the main group */}
       {isEditing && (
         <TextObjectUI
-          onStyleChange={(newStyle) => {
-            if ('bulletPointMode' in newStyle) {
-              setBulletPointMode(newStyle.bulletPointMode);
-              if (newStyle.bulletPointMode && !text.startsWith('• ')) {
-                setText('• ' + text);
-              }
-            }
-            setTextStyle((prev) => ({ ...prev, ...newStyle }));
-          }}
+          onStyleChange={handleStyleChange}
           followTarget={groupRef}
           menuRef={uiMenuRef} // pass the ref to keep the menu open on focus
           onTransformToggle={() => setShowTransform(true)} // new transform toggle callback
@@ -330,7 +395,8 @@ const TextObject = ({
         <DreiTransformControls
           object={groupRef.current}
           mode="translate"
-          onDragEnd={() => setShowTransform(false)}
+          onObjectChange={handleDrag}
+          onDragEnd={updateDatabase}
         />
       )}
     </>
