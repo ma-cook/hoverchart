@@ -98,6 +98,13 @@ const App = () => {
     // Don't clear selectedId to maintain selection state
   };
 
+  const handleIndicatorDeselected = useCallback(() => {
+    setShowAllCubesIndicators(false);
+    setGlobalIndicatorSelected(false);
+    setIndicatorMode('none');
+    setSelectedIndicators([]);
+  }, []);
+
   useEffect(() => {
     if (cameraRef.current?.orbitControls) {
       window.orbitControls = cameraRef.current.orbitControls;
@@ -764,6 +771,7 @@ const App = () => {
                   selectedIndicators={selectedIndicators}
                   activeTextStyleUI={activeTextStyleUI}
                   setActiveTextStyleUI={setActiveTextStyleUI}
+                  onIndicatorDeselected={handleIndicatorDeselected}
                 />
               );
             }
@@ -797,6 +805,7 @@ const App = () => {
                   }
                   connections={connections}
                   onUpdate={handleObjectUpdate} // Add this prop
+                  onIndicatorDeselected={handleIndicatorDeselected}
                 />
               );
             }

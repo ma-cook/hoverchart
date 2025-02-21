@@ -371,12 +371,31 @@ const Sphere = ({
     });
   };
 
-  const handleDrag = (newPosition) => {
+  const handleDrag = (e) => {
+    // Get new position from the transform controls event
+    const newPos = e.target.object.position;
+
+    // Save to database
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'sphere',
+        position: [newPos.x, newPos.y, newPos.z],
+        scale,
+        lineColor,
+        headerText,
+        headerStyle,
+        faceColors,
+        faceTexts,
+        faceTextStyles,
+      });
+    }
+
+    // Update UI immediately
     if (onMove) {
       onMove({
-        x: newPosition.x,
-        y: newPosition.y,
-        z: newPosition.z,
+        x: newPos.x,
+        y: newPos.y,
+        z: newPos.z,
       });
     }
   };
@@ -618,229 +637,232 @@ const Sphere = ({
 
   return (
     <>
-      <group position={position}>
-        <group ref={contentRef} scale={scale}>
-          {/* Add invisible helper mesh for better click detection */}
-          <mesh onClick={handleBackgroundClick} visible={false}>
-            <sphereGeometry args={[6, 32, 32]} />{' '}
-            {/* Slightly larger than dodecahedron */}
-            <meshBasicMaterial transparent opacity={0} />
-          </mesh>
+      {/* Remove the outer position group and apply position directly to content group */}
+      <group ref={contentRef} position={position} scale={scale}>
+        {/* Add invisible helper mesh for better click detection */}
+        <mesh onClick={handleBackgroundClick} visible={false}>
+          <sphereGeometry args={[6, 32, 32]} />{' '}
+          {/* Slightly larger than dodecahedron */}
+          <meshBasicMaterial transparent opacity={0} />
+        </mesh>
 
-          {/* Original background mesh */}
+        {/* Original background mesh */}
+        <mesh
+          onClick={handleBackgroundClick}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <dodecahedronGeometry args={[5.1]} />{' '}
+          {/* Slightly larger than face geometries */}
+          <meshBasicMaterial
+            visible={false}
+            side={THREE.DoubleSide}
+            transparent={false}
+            opacity={1}
+          />
+        </mesh>
+
+        {/* Modified face rendering to handle colors correctly */}
+        {geometry.map((faceGeometry, idx) => (
           <mesh
-            onClick={handleBackgroundClick}
-            onPointerDown={(e) => e.stopPropagation()}
+            key={`face-${idx}`}
+            geometry={faceGeometry}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!selected) {
+                handleBackgroundClick(e);
+              } else {
+                handleFaceClick(idx, e);
+              }
+            }}
+            onPointerOver={() => {
+              document.body.style.cursor = 'pointer';
+            }}
+            onPointerOut={() => {
+              document.body.style.cursor = 'auto';
+            }}
           >
-            <dodecahedronGeometry args={[5.1]} />{' '}
-            {/* Slightly larger than face geometries */}
             <meshBasicMaterial
-              visible={false}
+              color={
+                faceColors[idx] || // Custom color if set
+                (selected && highlightedFaces.has(idx) ? '#0066ff' : 'white') // Only show highlight when selected
+              }
+              transparent
+              opacity={
+                selected
+                  ? highlightedFaces.has(idx)
+                    ? 0.3
+                    : 0.1
+                  : faceColors[idx]
+                  ? 0.3
+                  : 0 // Hide faces without custom colors when not selected
+              }
               side={THREE.DoubleSide}
-              transparent={false}
-              opacity={1}
+              polygonOffset
+              polygonOffsetFactor={-1}
             />
           </mesh>
+        ))}
 
-          {/* Modified face rendering to handle colors correctly */}
-          {geometry.map((faceGeometry, idx) => (
-            <mesh
-              key={`face-${idx}`}
-              geometry={faceGeometry}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!selected) {
-                  handleBackgroundClick(e);
-                } else {
-                  handleFaceClick(idx, e);
-                }
-              }}
-              onPointerOver={() => {
-                document.body.style.cursor = 'pointer';
-              }}
-              onPointerOut={() => {
-                document.body.style.cursor = 'auto';
-              }}
-            >
-              <meshBasicMaterial
-                color={
-                  faceColors[idx] || // Custom color if set
-                  (selected && highlightedFaces.has(idx) ? '#0066ff' : 'white') // Only show highlight when selected
-                }
-                transparent
-                opacity={
-                  selected
-                    ? highlightedFaces.has(idx)
-                      ? 0.3
-                      : 0.1
-                    : faceColors[idx]
-                    ? 0.3
-                    : 0 // Hide faces without custom colors when not selected
-                }
-                side={THREE.DoubleSide}
-                polygonOffset
-                polygonOffsetFactor={-1}
-              />
-            </mesh>
-          ))}
+        {/* Wireframe lines */}
+        {points.map((linePoints, idx) => (
+          <Line key={idx} points={linePoints} color={lineColor} lineWidth={1} />
+        ))}
 
-          {/* Wireframe lines */}
-          {points.map((linePoints, idx) => (
-            <Line
-              key={idx}
-              points={linePoints}
-              color={lineColor}
-              lineWidth={1}
+        {/* Add face texts - modified for double-sided visibility */}
+        {Object.entries(faceTexts).map(([faceIndex, text]) => {
+          if (!text) return null;
+          const { position, normal } = getFaceTextPosition(Number(faceIndex));
+          const textStyle = faceTextStyles[faceIndex] || {
+            fontSize: 0.5,
+            color: 'white',
+            underline: false,
+          };
+
+          return (
+            <TextSprite
+              key={`face-text-${faceIndex}`}
+              text={text}
+              position={position}
+              style={{ ...textStyle, fixedSize: true, isFaceText: true }}
+              onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
+              billboard={false}
+              normal={normal}
             />
-          ))}
+          );
+        })}
 
-          {/* Add face texts - modified for double-sided visibility */}
-          {Object.entries(faceTexts).map(([faceIndex, text]) => {
-            if (!text) return null;
-            const { position, normal } = getFaceTextPosition(Number(faceIndex));
-            const textStyle = faceTextStyles[faceIndex] || {
-              fontSize: 0.5,
-              color: 'white',
-              underline: false,
-            };
+        {/* Main face indicator for active face */}
+        {selected && activeFace !== null && (
+          <FaceIndicator
+            key={`main-indicator-${activeFace}`}
+            position={getFaceInfo(activeFace).center}
+            rotation={getFaceRotation(activeFace)}
+            onClick={(e) => handleIndicatorClick(activeFace, e)}
+            isActive={selectedIndicator === activeFace} // Now highlights only on indicator click
+          />
+        )}
 
-            return (
-              <TextSprite
-                key={`face-text-${faceIndex}`}
-                text={text}
-                position={position}
-                style={{ ...textStyle, fixedSize: true, isFaceText: true }}
-                onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
-                billboard={false}
-                normal={normal}
-              />
-            );
-          })}
-
-          {/* Main face indicator for active face */}
-          {selected && activeFace !== null && (
+        {/* Update indicator cubes rendering */}
+        {geometry.map((_, idx) => {
+          const { center } = getFaceInfo(idx);
+          const rotation = getFaceRotation(idx);
+          return shouldShowFaceIndicator(idx) ? (
             <FaceIndicator
-              key={`main-indicator-${activeFace}`}
-              position={getFaceInfo(activeFace).center}
-              rotation={getFaceRotation(activeFace)}
-              onClick={(e) => handleIndicatorClick(activeFace, e)}
-              isActive={selectedIndicator === activeFace} // Now highlights only on indicator click
+              key={`indicator-${idx}`}
+              position={center}
+              rotation={rotation}
+              onClick={(e) => handleIndicatorClick(idx, e)}
+              isActive={selectedIndicator === idx || isIndicatorConnected(idx)}
             />
-          )}
-
-          {/* Update indicator cubes rendering */}
-          {geometry.map((_, idx) => {
-            const { center } = getFaceInfo(idx);
-            const rotation = getFaceRotation(idx);
-            return shouldShowFaceIndicator(idx) ? (
-              <FaceIndicator
-                key={`indicator-${idx}`}
-                position={center}
-                rotation={rotation}
-                onClick={(e) => handleIndicatorClick(idx, e)}
-                isActive={
-                  selectedIndicator === idx || isIndicatorConnected(idx)
-                }
-              />
-            ) : null;
-          })}
-        </group>
-
-        {selected && showObjectUI && !showHeader && (
-          <ObjectUI
-            position={[getUIPosition()]}
-            onTransformToggle={handleTransformToggle}
-            onHeaderToggle={handleHeaderToggle}
-            onResizeToggle={handleResizeToggle}
-            onLineColorChange={handleLineColorChange}
-            showTransform={showTransform}
-            showHeader={showHeader}
-            followTarget={contentRef}
-          />
-        )}
-
-        {selected && showFaceUI && activeFace !== null && (
-          <FaceUI
-            position={(() => {
-              const pos = getFaceUIPosition();
-              pos[1] += 5; // Only modify the z coordinate
-              return pos;
-            })()}
-            onColorChange={(color) => {
-              setFaceColors((prev) => ({
-                ...prev,
-                [activeFace]: color,
-              }));
-            }}
-            face={activeFace}
-            onTextClick={handleFaceTextButtonClick} // Changed to use new handler
-            followTarget={contentRef} // Add this prop
-          />
-        )}
-
-        {selected && showHeader && (
-          <HeaderInput
-            position={[0, 20, 0]}
-            onTextSubmit={handleHeaderSubmit}
-            followTarget={contentRef}
-          />
-        )}
-
-        {headerText && (
-          <TextSprite
-            text={headerText}
-            position={getHeaderPosition()}
-            followTarget={contentRef}
-            onClick={handleHeaderClick}
-            style={{
-              ...headerStyle,
-              isHeaderText: true,
-              isDodecahedronHeader: true,
-            }}
-          />
-        )}
-
-        {showStyleMenu && headerText && (
-          <TextStyleUI
-            position={getHeaderPosition()}
-            followTarget={contentRef}
-            onStyleChange={handleStyleChange}
-          />
-        )}
-
-        {selected && isResizing && contentRef.current && (
-          <ResizeArrows onResize={handleResize} object={contentRef.current} />
-        )}
-
-        {selected && showFaceTextInput && activeFace !== null && (
-          <FaceTextInput
-            position={getFaceUIPosition()}
-            onTextSubmit={handleFaceTextSubmit}
-          />
-        )}
-
-        {/* Add TextStyleUI for face text */}
-        {showFaceTextStyleMenu && activeFaceText !== null && (
-          <TextStyleUI
-            position={(() => {
-              const { position } = getFaceTextPosition(activeFaceText);
-              return [position[0], position[1] + 2, position[2]];
-            })()}
-            followTarget={contentRef}
-            onStyleChange={handleFaceTextStyleChange}
-            uiType="faceText" // Add this prop to show limited options
-          />
-        )}
+          ) : null;
+        })}
       </group>
 
+      {/* Move UI elements outside main group but keep them following contentRef */}
+      {selected && showObjectUI && !showHeader && (
+        <ObjectUI
+          position={[getUIPosition()]}
+          onTransformToggle={handleTransformToggle}
+          onHeaderToggle={handleHeaderToggle}
+          onResizeToggle={handleResizeToggle}
+          onLineColorChange={handleLineColorChange}
+          showTransform={showTransform}
+          showHeader={showHeader}
+          followTarget={contentRef}
+        />
+      )}
+
+      {selected && showFaceUI && activeFace !== null && (
+        <FaceUI
+          position={(() => {
+            const pos = getFaceUIPosition();
+            pos[1] += 5; // Only modify the z coordinate
+            return pos;
+          })()}
+          onColorChange={(color) => {
+            setFaceColors((prev) => ({
+              ...prev,
+              [activeFace]: color,
+            }));
+          }}
+          face={activeFace}
+          onTextClick={handleFaceTextButtonClick} // Changed to use new handler
+          followTarget={contentRef} // Add this prop
+        />
+      )}
+
+      {selected && showHeader && (
+        <HeaderInput
+          position={[0, 20, 0]}
+          onTextSubmit={handleHeaderSubmit}
+          followTarget={contentRef}
+        />
+      )}
+
+      {headerText && (
+        <TextSprite
+          text={headerText}
+          position={getHeaderPosition()}
+          followTarget={contentRef}
+          onClick={handleHeaderClick}
+          style={{
+            ...headerStyle,
+            isHeaderText: true,
+            isDodecahedronHeader: true,
+          }}
+        />
+      )}
+
+      {showStyleMenu && headerText && (
+        <TextStyleUI
+          position={getHeaderPosition()}
+          followTarget={contentRef}
+          onStyleChange={handleStyleChange}
+        />
+      )}
+
+      {selected && isResizing && contentRef.current && (
+        <ResizeArrows onResize={handleResize} object={contentRef.current} />
+      )}
+
+      {selected && showFaceTextInput && activeFace !== null && (
+        <FaceTextInput
+          position={getFaceUIPosition()}
+          onTextSubmit={handleFaceTextSubmit}
+        />
+      )}
+
+      {/* Add TextStyleUI for face text */}
+      {showFaceTextStyleMenu && activeFaceText !== null && (
+        <TextStyleUI
+          position={(() => {
+            const { position } = getFaceTextPosition(activeFaceText);
+            return [position[0], position[1] + 2, position[2]];
+          })()}
+          followTarget={contentRef}
+          onStyleChange={handleFaceTextStyleChange}
+          uiType="faceText" // Add this prop to show limited options
+        />
+      )}
+
+      {/* Update TransformControls to use contentRef */}
       {selected && showTransform && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
-          onDrag={handleDrag}
+          onObjectChange={handleDrag}
+          onDragStart={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = false;
+            }
+          }}
+          onDragEnd={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = true;
+            }
+          }}
           mode="translate"
           space="world"
           size={1}
-          position={position}
         />
       )}
     </>
