@@ -193,12 +193,30 @@ const Cube = ({
     onClick();
   };
 
-  const handleDrag = (newPosition) => {
+  const handleDrag = (e) => {
+    // Get new position from the transform controls event
+    const newPos = e.target.object.position;
+
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'cube',
+        position: [newPos.x, newPos.y, newPos.z],
+        scale,
+        color,
+        headerText,
+        faceColors,
+        faceTexts,
+        faceTextStyles,
+        textStyle,
+      });
+    }
+
+    // Also call onMove for immediate UI updates
     if (onMove) {
       onMove({
-        x: newPosition.x,
-        y: newPosition.y,
-        z: newPosition.z,
+        x: newPos.x,
+        y: newPos.y,
+        z: newPos.z,
       });
     }
   };
@@ -780,11 +798,20 @@ const Cube = ({
       {selected && showTransform && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
-          onDrag={handleDrag}
+          onObjectChange={handleDrag}
+          onDragStart={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = false;
+            }
+          }}
+          onDragEnd={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = true;
+            }
+          }}
           mode="translate"
           space="world"
           size={1}
-          position={position}
         />
       )}
     </>
