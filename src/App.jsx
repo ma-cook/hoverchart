@@ -18,6 +18,10 @@ import { auth } from './firebase';
 import { signInUser, observeAuthState } from './services/authService';
 import { saveObject, subscribeToObjects } from './services/objectsService';
 import isEqual from 'lodash/isEqual'; // Add this import
+import {
+  saveConnection,
+  subscribeToConnections,
+} from './services/connectionsService';
 
 const ConnectionUpdater = ({
   connections,
@@ -297,41 +301,43 @@ const App = () => {
   };
 
   const calculateFacePosition = (indicator) => {
-    // Handle plane indicators
+    // For plane indicators, use existing logic
     if (indicator.type === 'plane') {
       const plane = indicator.plane;
-      if (!plane) return [0, 0, 0];
-
-      const worldPos = new THREE.Vector3();
-      const worldQuat = new THREE.Quaternion();
-      const worldScale = new THREE.Vector3();
-
-      plane.getWorldPosition(worldPos);
-      plane.getWorldQuaternion(worldQuat);
-      plane.getWorldScale(worldScale);
-
-      // Get local offset and apply transformations
-      const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
-      localOffset.applyQuaternion(worldQuat);
-
-      return [
-        worldPos.x + localOffset.x,
-        worldPos.y + localOffset.y,
-        worldPos.z + localOffset.z,
-      ];
+      if (plane && typeof plane.getWorldPosition === 'function') {
+        const worldPos = new THREE.Vector3();
+        const worldQuat = new THREE.Quaternion();
+        const worldScale = new THREE.Vector3();
+        plane.getWorldPosition(worldPos);
+        plane.getWorldQuaternion(worldQuat);
+        plane.getWorldScale(worldScale);
+        const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
+        localOffset.applyQuaternion(worldQuat);
+        return [
+          worldPos.x + localOffset.x,
+          worldPos.y + localOffset.y,
+          worldPos.z + localOffset.z,
+        ];
+      } else {
+        return indicator.position;
+      }
     }
 
-    // Handle other indicators (cube/sphere)
-    const cube = indicator.cube;
-    if (!cube) return [0, 0, 0];
+    // For cube/sphere indicators, if the cube reference is missing or invalid, return the stored position
+    if (
+      !indicator.cube ||
+      typeof indicator.cube.getWorldPosition !== 'function'
+    ) {
+      return indicator.position;
+    }
 
+    // Proceed with regular cube face positioning
+    const cube = indicator.cube;
     const worldPos = new THREE.Vector3();
     cube.getWorldPosition(worldPos);
     const worldScale = new THREE.Vector3();
     cube.getWorldScale(worldScale);
-
     if (indicator.type === 'sphere') {
-      // For dodecahedron, use the face's center position
       const localFacePos = new THREE.Vector3(...indicator.faceCenter);
       localFacePos.multiply(worldScale);
       return [
@@ -340,8 +346,6 @@ const App = () => {
         worldPos.z + localFacePos.z,
       ];
     }
-
-    // Original cube face position calculation
     const getScaledOffset = (faceName) => {
       const baseScale = 5;
       switch (faceName) {
@@ -361,7 +365,6 @@ const App = () => {
           return [0, 0, 0];
       }
     };
-
     const offset = getScaledOffset(indicator.face);
     return [
       worldPos.x + offset[0],
@@ -439,25 +442,78 @@ const App = () => {
   const handleFaceIndicatorClick = (indicator) => {
     if (selectedIndicators.length === 0) {
       setSelectedIndicators([indicator]);
-      // Keep indicators visible on all objects
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
     } else if (selectedIndicators.length === 1) {
-      // Create connection...
       const startIndicator = selectedIndicators[0];
       const startPos = calculateFacePosition(startIndicator);
       const endPos = calculateFacePosition(indicator);
 
-      setConnections((prev) => [
-        ...prev,
-        {
-          start: { ...startIndicator, position: startPos },
-          end: { ...indicator, position: endPos },
-          id: Date.now(),
-        },
-      ]);
+      // Check for duplicate connection regardless of direction
+      const duplicate = connections.some((conn) => {
+        const sameOrder =
+          conn.start.cube === startIndicator.cube &&
+          conn.start.face === startIndicator.face &&
+          conn.end.cube === indicator.cube &&
+          conn.end.face === indicator.face;
+        const reverseOrder =
+          conn.start.cube === indicator.cube &&
+          conn.start.face === indicator.face &&
+          conn.end.cube === startIndicator.cube &&
+          conn.end.face === startIndicator.face;
+        return sameOrder || reverseOrder;
+      });
 
-      // Reset states after connection
+      if (duplicate) {
+        // Prevent duplicate line creation
+        console.log('Connection already exists.');
+        // Optionally, here you might update UI or simply return.
+        return;
+      }
+
+      // Generate a unique connection id (using timestamp and random suffix)
+      const connectionId = `${Date.now()}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+
+      const newConnection = {
+        id: connectionId,
+        start: {
+          type: startIndicator.type,
+          face: startIndicator.face,
+          position: startPos,
+          faceCenter: startIndicator.faceCenter,
+          cube: startIndicator.cube,
+          plane: startIndicator.plane,
+        },
+        end: {
+          type: indicator.type,
+          face: indicator.face,
+          position: endPos,
+          faceCenter: indicator.faceCenter,
+          cube: indicator.cube,
+          plane: indicator.plane,
+        },
+        lineStyle: 'straight',
+        color: 'white',
+        text: '',
+        textStyle: { fontSize: 1, color: 'white' },
+      };
+
+      // Update local state immediately for clickability
+      setConnections((prev) => [...prev, newConnection]);
+
+      // Save to database; if error, rollback state
+      if (user) {
+        saveConnection(user.uid, newConnection).catch((error) => {
+          console.error('Failed to save connection:', error);
+          setConnections((prev) =>
+            prev.filter((conn) => conn.id !== connectionId)
+          );
+        });
+      }
+
+      // Reset indicator selection states
       setSelectedIndicators([]);
       setShowAllCubesIndicators(false);
       setGlobalIndicatorSelected(false);
@@ -578,308 +634,388 @@ const App = () => {
     setShowLineTextInput(null);
   };
 
-  // Return loading state while auth is initializing
-  if (!isAuthReady) {
-    return <div>Loading...</div>;
-  }
+  // Add this helper function to map object IDs to references
+  const mapConnectionsToObjects = useCallback((connections, objects) => {
+    return connections.map((conn) => {
+      const startObject = objects.find(
+        (obj) => obj.id.toString() === conn.start.objectId
+      );
+      const endObject = objects.find(
+        (obj) => obj.id.toString() === conn.end.objectId
+      );
+
+      return {
+        ...conn,
+        start: {
+          ...conn.start,
+          cube: startObject?.type === 'cube' ? startObject : undefined,
+          plane: startObject?.type === 'plane' ? startObject : undefined,
+        },
+        end: {
+          ...conn.end,
+          cube: endObject?.type === 'cube' ? endObject : undefined,
+          plane: endObject?.type === 'plane' ? endObject : undefined,
+        },
+      };
+    });
+  }, []);
+
+  // Add a subscription effect for connections
+  useEffect(() => {
+    if (user) {
+      const unsubscribe = subscribeToConnections(user.uid, (change) => {
+        setConnections((prev) => {
+          let newConnections;
+          switch (change.type) {
+            case 'added':
+              if (!prev.find((conn) => conn.id === change.id)) {
+                newConnections = [...prev, change.connection];
+              } else {
+                newConnections = prev;
+              }
+              break;
+            case 'modified':
+              newConnections = prev.map((conn) =>
+                conn.id === change.id ? change.connection : conn
+              );
+              break;
+            case 'removed':
+              newConnections = prev.filter((conn) => conn.id !== change.id);
+              break;
+            default:
+              newConnections = prev;
+          }
+          // Map object references whenever connections change
+          return mapConnectionsToObjects(newConnections, objects);
+        });
+      });
+      return () => unsubscribe();
+    }
+  }, [user, objects, mapConnectionsToObjects]); // Add objects to dependencies
 
   return (
     <>
-      <Canvas
-        style={{
-          background: backgroundColor,
-          width: '100vw',
-          height: '100vh',
-          position: 'fixed',
-          top: 0,
-          left: 0,
-        }}
-        onPointerMissed={handleCanvasClick}
-        gl={{
-          antialias: true,
-          samples: 16, // Updated MSAA sample count from 8 to 16
-          alpha: true,
-          stencil: true,
-          depth: true,
-          logarithmicDepthBuffer: true,
-        }}
-        dpr={[1, 2]} // Set minimum and maximum pixel ratio
-      >
-        <CustomCamera ref={cameraRef} />
-        <group>
-          <ConnectionUpdater
-            connections={connections}
-            setConnections={setConnections}
-            calculateFacePosition={calculateFacePosition}
-          />
-          {connections.map((connection) => {
-            const midpoint = calculateMidpoint(
-              connection.start.position,
-              connection.end.position
-            );
+      {!isAuthReady ? (
+        <div>Loading...</div>
+      ) : (
+        <>
+          <Canvas
+            style={{
+              background: backgroundColor,
+              width: '100vw',
+              height: '100vh',
+              position: 'fixed',
+              top: 0,
+              left: 0,
+            }}
+            onPointerMissed={handleCanvasClick}
+            gl={{
+              antialias: true,
+              samples: 16, // Updated MSAA sample count from 8 to 16
+              alpha: true,
+              stencil: true,
+              depth: true,
+              logarithmicDepthBuffer: true,
+            }}
+            dpr={[1, 2]} // Set minimum and maximum pixel ratio
+          >
+            <CustomCamera ref={cameraRef} />
+            <group>
+              <ConnectionUpdater
+                connections={connections}
+                setConnections={setConnections}
+                calculateFacePosition={calculateFacePosition}
+              />
+              {connections.map((connection) => {
+                const midpoint = calculateMidpoint(
+                  connection.start.position,
+                  connection.end.position
+                );
 
-            return (
-              <group key={connection.id}>
-                <Line
-                  points={[connection.start.position, connection.end.position]}
-                  color={
-                    connection.color ||
-                    (selectedConnection === connection.id ? '#ffff00' : 'white')
-                  }
-                  lineWidth={selectedConnection === connection.id ? 4 : 2}
-                  dashed={
-                    connection.lineStyle === 'dashed' ||
-                    connection.lineStyle === 'dotted'
-                  }
-                  // Increased dash spacing for dashed lines
-                  dashScale={connection.lineStyle === 'dotted' ? 1 : 0.5}
-                  dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
-                  gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
-                  dashOffset={connection.dashOffset || 0} // <-- New: animate dash offset
-                />
-                <Line
-                  points={[connection.start.position, connection.end.position]}
-                  color="white"
-                  lineWidth={20}
-                  onClick={(e) => handleConnectionClick(e, connection.id)}
-                  onPointerOver={(e) => {
-                    e.stopPropagation();
-                    document.body.style.cursor = 'pointer';
-                  }}
-                  onPointerOut={(e) => {
-                    e.stopPropagation();
-                    document.body.style.cursor = 'auto';
-                  }}
-                  transparent
-                  opacity={0}
-                />
-                {lineTexts[connection.id] && (
-                  <TextSprite
-                    text={lineTexts[connection.id]}
-                    position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
-                    style={
-                      lineTextStyles[connection.id] || {
-                        fontSize: 1,
-                        color: 'white',
+                return (
+                  <group key={connection.id}>
+                    <Line
+                      points={[
+                        connection.start.position,
+                        connection.end.position,
+                      ]}
+                      color={
+                        connection.color ||
+                        (selectedConnection === connection.id
+                          ? '#ffff00'
+                          : 'white')
                       }
-                    }
-                    onClick={(e) => handleLineTextClick(e, connection.id)}
-                  />
-                )}
+                      lineWidth={selectedConnection === connection.id ? 4 : 2}
+                      dashed={
+                        connection.lineStyle === 'dashed' ||
+                        connection.lineStyle === 'dotted'
+                      }
+                      // Increased dash spacing for dashed lines
+                      dashScale={connection.lineStyle === 'dotted' ? 1 : 0.5}
+                      dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
+                      gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
+                      dashOffset={connection.dashOffset || 0} // <-- New: animate dash offset
+                    />
+                    <Line
+                      points={[
+                        connection.start.position,
+                        connection.end.position,
+                      ]}
+                      color="white"
+                      lineWidth={20}
+                      onClick={(e) => handleConnectionClick(e, connection.id)}
+                      onPointerOver={(e) => {
+                        e.stopPropagation();
+                        document.body.style.cursor = 'pointer';
+                      }}
+                      onPointerOut={(e) => {
+                        e.stopPropagation();
+                        document.body.style.cursor = 'auto';
+                      }}
+                      transparent
+                      opacity={0}
+                    />
+                    {lineTexts[connection.id] && (
+                      <TextSprite
+                        text={lineTexts[connection.id]}
+                        position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
+                        style={
+                          lineTextStyles[connection.id] || {
+                            fontSize: 1,
+                            color: 'white',
+                          }
+                        }
+                        onClick={(e) => handleLineTextClick(e, connection.id)}
+                      />
+                    )}
 
-                {showLineTextInput === connection.id && (
-                  <HeaderInput
-                    position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
-                    onTextSubmit={(text) =>
-                      handleLineTextSubmit(connection.id, text)
-                    }
-                  />
-                )}
+                    {showLineTextInput === connection.id && (
+                      <HeaderInput
+                        position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
+                        onTextSubmit={(text) =>
+                          handleLineTextSubmit(connection.id, text)
+                        }
+                      />
+                    )}
 
-                {showLineTextStyleUI === connection.id && (
-                  <TextStyleUI
-                    position={[midpoint[0], midpoint[1] + 8, midpoint[2]]}
-                    onStyleChange={(style) =>
-                      handleLineTextStyleChange(connection.id, style)
-                    }
-                    onClose={() => setShowLineTextStyleUI(null)}
-                  />
-                )}
+                    {showLineTextStyleUI === connection.id && (
+                      <TextStyleUI
+                        position={[midpoint[0], midpoint[1] + 8, midpoint[2]]}
+                        onStyleChange={(style) =>
+                          handleLineTextStyleChange(connection.id, style)
+                        }
+                        onClose={() => setShowLineTextStyleUI(null)}
+                      />
+                    )}
 
-                {selectedConnection === connection.id && (
-                  <LineUI
-                    position={midpoint}
-                    onColorChange={(color) =>
-                      handleLineColorChange(connection.id, color)
-                    }
-                    onToggleDashed={(styleType) => {
-                      handleLineStyleChange(connection.id, styleType);
-                    }}
-                    onTextClick={() => {
-                      setShowLineTextInput(connection.id);
-                    }}
-                  />
-                )}
-              </group>
-            );
-          })}
+                    {selectedConnection === connection.id && (
+                      <LineUI
+                        position={midpoint}
+                        onColorChange={(color) =>
+                          handleLineColorChange(connection.id, color)
+                        }
+                        onToggleDashed={(styleType) => {
+                          handleLineStyleChange(connection.id, styleType);
+                        }}
+                        onTextClick={() => {
+                          setShowLineTextInput(connection.id);
+                        }}
+                      />
+                    )}
+                  </group>
+                );
+              })}
 
-          {objects.map((obj) => {
-            if (obj.type === 'cube') {
-              return (
-                <Cube
-                  key={obj.id}
-                  id={obj.id}
-                  position={obj.position}
-                  color={obj.color}
-                  headerText={obj.headerText || ''} // Ensure headerText is passed with fallback
-                  scale={obj.scale}
-                  faceColors={obj.faceColors}
-                  faceTexts={
-                    obj.faceTexts || {
-                      front: '',
-                      back: '',
-                      top: '',
-                      bottom: '',
-                      right: '',
-                      left: '',
-                    }
-                  }
-                  textStyle={
-                    obj.textStyle || {
-                      fontSize: 1.5,
-                      color: 'white',
-                      underline: false,
-                    }
-                  }
-                  faceTextStyles={
-                    obj.faceTextStyles || {
-                      front: {
-                        fontSize: 0.5,
-                        color: 'white',
-                        underline: false,
-                      },
-                      back: { fontSize: 0.5, color: 'white', underline: false },
-                      top: { fontSize: 0.5, color: 'white', underline: false },
-                      bottom: {
-                        fontSize: 0.5,
-                        color: 'white',
-                        underline: false,
-                      },
-                      right: {
-                        fontSize: 0.5,
-                        color: 'white',
-                        underline: false,
-                      },
-                      left: { fontSize: 0.5, color: 'white', underline: false },
-                    }
-                  }
-                  selected={selectedId === obj.id}
-                  onClick={() => handleObjectClick(obj.id)}
-                  onMove={(newPosition) =>
-                    handleObjectMove(obj.id, newPosition)
-                  }
-                  onUpdate={handleObjectUpdate}
-                  disableOrbitControls={disableOrbitControls}
-                  enableOrbitControls={enableOrbitControls}
-                  onFaceIndicatorClick={handleFaceIndicatorClick}
-                  onFaceClick={handleFaceClick}
-                  showAllIndicators={showAllCubesIndicators}
-                  activeIndicator={activeIndicator}
-                  indicatorMode={indicatorMode}
-                  connections={connections}
-                  selectedIndicators={selectedIndicators}
-                  activeTextStyleUI={activeTextStyleUI}
-                  setActiveTextStyleUI={setActiveTextStyleUI}
-                  onIndicatorDeselected={handleIndicatorDeselected}
-                />
-              );
-            }
-            if (obj.type === 'sphere') {
-              return (
-                <Sphere
-                  key={obj.id}
-                  id={obj.id}
-                  position={obj.position}
-                  scale={obj.scale || [1, 1, 1]}
-                  headerText={obj.headerText || ''}
-                  headerStyle={
-                    obj.headerStyle || {
-                      fontSize: 'medium',
-                      color: 'white',
-                      underline: false,
-                    }
-                  }
-                  lineColor={obj.lineColor || 'white'}
-                  faceColors={obj.faceColors || {}}
-                  faceTexts={obj.faceTexts || {}}
-                  faceTextStyles={obj.faceTextStyles || {}}
-                  selected={selectedId === obj.id}
-                  onClick={() => handleObjectClick(obj.id)}
-                  showAllIndicators={showAllCubesIndicators}
-                  onIndicatorSelected={handleIndicatorSelected}
-                  globalIndicatorSelected={globalIndicatorSelected}
-                  onFaceIndicatorClick={handleFaceIndicatorClick}
-                  onMove={(newPosition) =>
-                    handleObjectMove(obj.id, newPosition)
-                  }
-                  connections={connections}
-                  onUpdate={handleObjectUpdate} // Add this prop
-                  onIndicatorDeselected={handleIndicatorDeselected}
-                />
-              );
-            }
-            if (obj.type === 'plane') {
-              return (
-                <Plane
-                  key={obj.id}
-                  id={obj.id}
-                  position={obj.position}
-                  scale={obj.scale || [1, 1, 1]}
-                  selected={selectedId === obj.id}
-                  onClick={() => handleObjectClick(obj.id)}
-                  showAllIndicators={showAllCubesIndicators}
-                  onIndicatorSelected={handleIndicatorSelected}
-                  globalIndicatorSelected={globalIndicatorSelected}
-                  onFaceIndicatorClick={handleFaceIndicatorClick}
-                  onMove={(newPosition) =>
-                    handleObjectMove(obj.id, newPosition)
-                  }
-                  connections={connections}
-                  selectedIndicators={selectedIndicators}
-                  indicatorMode={indicatorMode}
-                  onUpdate={handleObjectUpdate}
-                  color={obj.color}
-                  headerText={obj.headerText}
-                  borderStyle={obj.borderStyle}
-                  borderColor={obj.borderColor}
-                  lineThickness={obj.lineThickness}
-                  headerStyle={obj.headerStyle}
-                  faceText={obj.faceText}
-                  faceTextStyle={obj.faceTextStyle}
-                  activeTextStyleUI={activeTextStyleUI} // Add this
-                  setActiveTextStyleUI={setActiveTextStyleUI} // Add this
-                />
-              );
-            }
-            if (obj.type === 'text') {
-              return (
-                <TextObject
-                  key={obj.id}
-                  id={obj.id}
-                  position={obj.position}
-                  selected={selectedId === obj.id}
-                  onClick={() => handleObjectClick(obj.id)}
-                  showAllIndicators={showAllCubesIndicators}
-                  onIndicatorSelected={handleIndicatorSelected}
-                  globalIndicatorSelected={globalIndicatorSelected}
-                  onFaceIndicatorClick={handleFaceIndicatorClick}
-                  connections={connections}
-                  selectedIndicators={selectedIndicators}
-                  indicatorMode={indicatorMode}
-                  onUpdate={handleObjectUpdate}
-                  initialText={obj.text || ''}
-                  initialTextStyle={
-                    obj.textStyle || { fontSize: 32, color: 'white' }
-                  }
-                  initialScale={obj.scale || [15, 10, 1]}
-                />
-              );
-            }
-            return null;
-          })}
-        </group>
-        <EffectComposer>
-          <SMAA />
-        </EffectComposer>
-      </Canvas>
-      <UIOverlay
-        onCreateObject={handleCreateObject}
-        onToggleIndicators={handleToggleIndicators}
-        user={user}
-        onLogin={handleLogin}
-        isAuthReady={isAuthReady}
-      />
+              {objects.map((obj) => {
+                if (obj.type === 'cube') {
+                  return (
+                    <Cube
+                      key={obj.id}
+                      id={obj.id}
+                      position={obj.position}
+                      color={obj.color}
+                      headerText={obj.headerText || ''} // Ensure headerText is passed with fallback
+                      scale={obj.scale}
+                      faceColors={obj.faceColors}
+                      faceTexts={
+                        obj.faceTexts || {
+                          front: '',
+                          back: '',
+                          top: '',
+                          bottom: '',
+                          right: '',
+                          left: '',
+                        }
+                      }
+                      textStyle={
+                        obj.textStyle || {
+                          fontSize: 1.5,
+                          color: 'white',
+                          underline: false,
+                        }
+                      }
+                      faceTextStyles={
+                        obj.faceTextStyles || {
+                          front: {
+                            fontSize: 0.5,
+                            color: 'white',
+                            underline: false,
+                          },
+                          back: {
+                            fontSize: 0.5,
+                            color: 'white',
+                            underline: false,
+                          },
+                          top: {
+                            fontSize: 0.5,
+                            color: 'white',
+                            underline: false,
+                          },
+                          bottom: {
+                            fontSize: 0.5,
+                            color: 'white',
+                            underline: false,
+                          },
+                          right: {
+                            fontSize: 0.5,
+                            color: 'white',
+                            underline: false,
+                          },
+                          left: {
+                            fontSize: 0.5,
+                            color: 'white',
+                            underline: false,
+                          },
+                        }
+                      }
+                      selected={selectedId === obj.id}
+                      onClick={() => handleObjectClick(obj.id)}
+                      onMove={(newPosition) =>
+                        handleObjectMove(obj.id, newPosition)
+                      }
+                      onUpdate={handleObjectUpdate}
+                      disableOrbitControls={disableOrbitControls}
+                      enableOrbitControls={enableOrbitControls}
+                      onFaceIndicatorClick={handleFaceIndicatorClick}
+                      onFaceClick={handleFaceClick}
+                      showAllIndicators={showAllCubesIndicators}
+                      activeIndicator={activeIndicator}
+                      indicatorMode={indicatorMode}
+                      connections={connections}
+                      selectedIndicators={selectedIndicators}
+                      activeTextStyleUI={activeTextStyleUI}
+                      setActiveTextStyleUI={setActiveTextStyleUI}
+                      onIndicatorDeselected={handleIndicatorDeselected}
+                    />
+                  );
+                }
+                if (obj.type === 'sphere') {
+                  return (
+                    <Sphere
+                      key={obj.id}
+                      id={obj.id}
+                      position={obj.position}
+                      scale={obj.scale || [1, 1, 1]}
+                      headerText={obj.headerText || ''}
+                      headerStyle={
+                        obj.headerStyle || {
+                          fontSize: 'medium',
+                          color: 'white',
+                          underline: false,
+                        }
+                      }
+                      lineColor={obj.lineColor || 'white'}
+                      faceColors={obj.faceColors || {}}
+                      faceTexts={obj.faceTexts || {}}
+                      faceTextStyles={obj.faceTextStyles || {}}
+                      selected={selectedId === obj.id}
+                      onClick={() => handleObjectClick(obj.id)}
+                      showAllIndicators={showAllCubesIndicators}
+                      onIndicatorSelected={handleIndicatorSelected}
+                      globalIndicatorSelected={globalIndicatorSelected}
+                      onFaceIndicatorClick={handleFaceIndicatorClick}
+                      onMove={(newPosition) =>
+                        handleObjectMove(obj.id, newPosition)
+                      }
+                      connections={connections}
+                      onUpdate={handleObjectUpdate} // Add this prop
+                      onIndicatorDeselected={handleIndicatorDeselected}
+                    />
+                  );
+                }
+                if (obj.type === 'plane') {
+                  return (
+                    <Plane
+                      key={obj.id}
+                      id={obj.id}
+                      position={obj.position}
+                      scale={obj.scale || [1, 1, 1]}
+                      selected={selectedId === obj.id}
+                      onClick={() => handleObjectClick(obj.id)}
+                      showAllIndicators={showAllCubesIndicators}
+                      onIndicatorSelected={handleIndicatorSelected}
+                      globalIndicatorSelected={globalIndicatorSelected}
+                      onFaceIndicatorClick={handleFaceIndicatorClick}
+                      onMove={(newPosition) =>
+                        handleObjectMove(obj.id, newPosition)
+                      }
+                      connections={connections}
+                      selectedIndicators={selectedIndicators}
+                      indicatorMode={indicatorMode}
+                      onUpdate={handleObjectUpdate}
+                      color={obj.color}
+                      headerText={obj.headerText}
+                      borderStyle={obj.borderStyle}
+                      borderColor={obj.borderColor}
+                      lineThickness={obj.lineThickness}
+                      headerStyle={obj.headerStyle}
+                      faceText={obj.faceText}
+                      faceTextStyle={obj.faceTextStyle}
+                      activeTextStyleUI={activeTextStyleUI} // Add this
+                      setActiveTextStyleUI={setActiveTextStyleUI} // Add this
+                    />
+                  );
+                }
+                if (obj.type === 'text') {
+                  return (
+                    <TextObject
+                      key={obj.id}
+                      id={obj.id}
+                      position={obj.position}
+                      selected={selectedId === obj.id}
+                      onClick={() => handleObjectClick(obj.id)}
+                      showAllIndicators={showAllCubesIndicators}
+                      onIndicatorSelected={handleIndicatorSelected}
+                      globalIndicatorSelected={globalIndicatorSelected}
+                      onFaceIndicatorClick={handleFaceIndicatorClick}
+                      connections={connections}
+                      selectedIndicators={selectedIndicators}
+                      indicatorMode={indicatorMode}
+                      onUpdate={handleObjectUpdate}
+                      initialText={obj.text || ''}
+                      initialTextStyle={
+                        obj.textStyle || { fontSize: 32, color: 'white' }
+                      }
+                      initialScale={obj.scale || [15, 10, 1]}
+                    />
+                  );
+                }
+                return null;
+              })}
+            </group>
+            <EffectComposer>
+              <SMAA />
+            </EffectComposer>
+          </Canvas>
+          <UIOverlay
+            onCreateObject={handleCreateObject}
+            onToggleIndicators={handleToggleIndicators}
+            user={user}
+            onLogin={handleLogin}
+            isAuthReady={isAuthReady}
+          />
+        </>
+      )}
     </>
   );
 };
