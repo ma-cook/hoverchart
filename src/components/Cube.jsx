@@ -552,6 +552,25 @@ const Cube = ({
     return baseOffset + textHeight / 2; // Add half text height to keep bottom at base offset
   };
 
+  const getFaceUIPosition = (faceName) => {
+    switch (faceName) {
+      case 'front':
+        return [0, 1, 0];
+      case 'back':
+        return [0, 0, 0];
+      case 'top':
+        return [0, 0, 0];
+      case 'bottom':
+        return [0, 0, 0];
+      case 'right':
+        return [0, 0, 0];
+      case 'left':
+        return [0, 0, 0];
+      default:
+        return [0, 0, 0];
+    }
+  };
+
   return (
     <>
       <group>
@@ -573,6 +592,7 @@ const Cube = ({
               if (!faceColors[name]) return null; // Only render if face has color
               const { position: facePos, rotation } =
                 getFaceIndicatorProps(name);
+              const uiPos = getFaceUIPosition(name);
               return (
                 <mesh
                   key={`colored-${name}`}
@@ -595,7 +615,7 @@ const Cube = ({
                     <>
                       {selectedFace === name && !showFaceTextInput && (
                         <FaceUI
-                          position={[0, 0, 0]}
+                          position={uiPos}
                           normal={normal}
                           onColorChange={handleColorChange}
                           face={name}
@@ -688,6 +708,7 @@ const Cube = ({
                   if (faceColors[name]) return null; // Skip if face is colored
                   const { position: facePos, rotation } =
                     getFaceIndicatorProps(name);
+                  const uiPos = getFaceUIPosition(name);
                   return (
                     <mesh
                       key={`ui-${name}`}
@@ -702,7 +723,7 @@ const Cube = ({
                         selected &&
                         !showFaceTextInput && (
                           <FaceUI
-                            position={[0, 16, 0]}
+                            position={uiPos}
                             normal={normal}
                             onColorChange={handleColorChange}
                             face={name}

@@ -63,6 +63,7 @@ const Sphere = ({
   const [isConnected, setIsConnected] = useState(false); // Add new state to track if this dodecahedron is part of a connection
   const [connectedFaces, setConnectedFaces] = useState(new Set()); // Add new state for connected faces
   const contentRef = useRef();
+  const faceUIGroupRef = useRef(); // Add this new ref for FaceUI container
   const points = React.useMemo(() => {
     // Golden ratio for dodecahedron calculations
     const phi = (1 + Math.sqrt(5)) / 2;
@@ -517,27 +518,14 @@ const Sphere = ({
     ];
   };
 
-  const getFaceUIPosition = () => {
-    if (activeFace === null || !contentRef.current) return [0, 0, 0];
+  const getFaceUIPosition = (faceIndex, offset = 3) => {
+    const { center, normal } = getFaceInfo(faceIndex);
 
-    const faceGeometry = geometry[activeFace];
-    const positions = faceGeometry.attributes.position.array;
-
-    // Calculate center of the face
-    let centerX = 0,
-      centerY = 0,
-      centerZ = 0;
-    for (let i = 0; i < positions.length; i += 3) {
-      centerX += positions[i];
-      centerY += positions[i + 1];
-      centerZ += positions[i + 2];
-    }
-    const vertexCount = positions.length / 3;
-
+    // Use the normal vector to offset the UI position from the face center
     return [
-      centerX / vertexCount,
-      centerY / vertexCount + 2, // Add small offset above face
-      centerZ / vertexCount,
+      center[0] + normal[0] + offset,
+      center[1] + normal[1] + offset,
+      center[2] + normal[2] + offset,
     ];
   };
 
@@ -633,6 +621,22 @@ const Sphere = ({
     if (selectedIndicator === faceIndex) return true;
 
     return false;
+  };
+
+  // Update the position calculations to account for object's position and scale
+  const getFaceTextInputPosition = (faceIndex) => {
+    const { center, normal } = getFaceInfo(faceIndex);
+    const offset = 6; // Offset distance from face
+    return [
+      center[0] + normal[0] * offset,
+      center[1] + normal[1] * offset,
+      center[2] + normal[2] * offset,
+    ];
+  };
+
+  const getHeaderInputPosition = () => {
+    const offset = 10; // Distance above the dodecahedron
+    return [0, offset, 0];
   };
 
   return (
@@ -773,30 +777,30 @@ const Sphere = ({
       )}
 
       {selected && showFaceUI && activeFace !== null && (
-        <FaceUI
-          position={(() => {
-            const pos = getFaceUIPosition();
-            pos[1] += 5; // Only modify the z coordinate
-            return pos;
-          })()}
-          onColorChange={(color) => {
-            setFaceColors((prev) => ({
-              ...prev,
-              [activeFace]: color,
-            }));
-          }}
-          face={activeFace}
-          onTextClick={handleFaceTextButtonClick} // Changed to use new handler
-          followTarget={contentRef} // Add this prop
-        />
+        <group ref={faceUIGroupRef} position={position} scale={scale}>
+          <FaceUI
+            position={getFaceUIPosition(activeFace)}
+            onColorChange={(color) => {
+              setFaceColors((prev) => ({
+                ...prev,
+                [activeFace]: color,
+              }));
+            }}
+            face={activeFace}
+            onTextClick={handleFaceTextButtonClick}
+            followTarget={contentRef}
+          />
+        </group>
       )}
 
       {selected && showHeader && (
-        <HeaderInput
-          position={[0, 20, 0]}
-          onTextSubmit={handleHeaderSubmit}
-          followTarget={contentRef}
-        />
+        <group position={position} scale={scale}>
+          <HeaderInput
+            position={getHeaderInputPosition()}
+            onTextSubmit={handleHeaderSubmit}
+            followTarget={contentRef}
+          />
+        </group>
       )}
 
       {headerText && (
@@ -826,10 +830,12 @@ const Sphere = ({
       )}
 
       {selected && showFaceTextInput && activeFace !== null && (
-        <FaceTextInput
-          position={getFaceUIPosition()}
-          onTextSubmit={handleFaceTextSubmit}
-        />
+        <group position={position} scale={scale}>
+          <FaceTextInput
+            position={getFaceTextInputPosition(activeFace)}
+            onTextSubmit={handleFaceTextSubmit}
+          />
+        </group>
       )}
 
       {/* Add TextStyleUI for face text */}

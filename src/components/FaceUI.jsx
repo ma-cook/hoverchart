@@ -109,13 +109,29 @@ const FaceUI = ({
   };
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} position={position}>
+      {' '}
+      {/* Add position to group */}
       <Html
-        style={{ background: 'black', pointerEvents: 'auto' }}
         center
         className="face-ui-container"
+        style={{
+          pointerEvents: 'auto',
+          transform: 'translate3d(-50%, -150%, 0)', // Move UI up by adjusting Y transform
+          background: 'transparent',
+        }}
       >
-        <div className="face-ui-content">
+        <div
+          className="face-ui-content"
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            gap: '4px',
+            padding: '4px',
+            borderRadius: '4px',
+            background: 'white',
+          }}
+        >
           {tools.map((tool) => (
             <button
               key={tool.name}
