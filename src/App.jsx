@@ -22,6 +22,7 @@ import {
   saveConnection,
   subscribeToConnections,
 } from './services/connectionsService';
+import IndicatorManager from './components/IndicatorManager';
 
 const ConnectionUpdater = ({
   connections,
@@ -569,62 +570,106 @@ const App = () => {
   };
 
   const handleLineStyleChange = (connectionId, styleType) => {
+    const updatedConnection = connections.find(
+      (conn) => conn.id === connectionId
+    );
+    if (!updatedConnection || !user) return;
+
+    let newConnection;
     if (styleType === 'dotted-left' || styleType === 'dotted-right') {
-      setConnections((prev) =>
-        prev.map((conn) =>
-          conn.id === connectionId
-            ? {
-                ...conn,
-                lineStyle: 'dotted',
-                dashDirection: styleType.split('-')[1],
-                dashOffset: 0,
-              }
-            : conn
-        )
-      );
+      newConnection = {
+        ...updatedConnection,
+        lineStyle: 'dotted',
+        dashDirection: styleType.split('-')[1],
+        dashOffset: 0,
+      };
     } else if (styleType === 'dashed-left' || styleType === 'dashed-right') {
-      setConnections((prev) =>
-        prev.map((conn) =>
-          conn.id === connectionId
-            ? {
-                ...conn,
-                lineStyle: 'dashed',
-                dashDirection: styleType.split('-')[1],
-                dashOffset: 0,
-              }
-            : conn
-        )
-      );
+      newConnection = {
+        ...updatedConnection,
+        lineStyle: 'dashed',
+        dashDirection: styleType.split('-')[1],
+        dashOffset: 0,
+      };
     } else {
-      setConnections((prev) =>
-        prev.map((conn) =>
-          conn.id === connectionId
-            ? { ...conn, lineStyle: styleType, dashDirection: null }
-            : conn
-        )
-      );
+      newConnection = {
+        ...updatedConnection,
+        lineStyle: styleType,
+        dashDirection: null,
+      };
     }
+
+    // Update local state
+    setConnections((prev) =>
+      prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
+    );
+
+    // Save to database
+    saveConnection(user.uid, newConnection);
   };
 
   const handleLineColorChange = (connectionId, color) => {
-    setConnections((prev) =>
-      prev.map((conn) => (conn.id === connectionId ? { ...conn, color } : conn))
+    const updatedConnection = connections.find(
+      (conn) => conn.id === connectionId
     );
+    if (!updatedConnection || !user) return;
+
+    const newConnection = { ...updatedConnection, color };
+
+    // Update local state
+    setConnections((prev) =>
+      prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
+    );
+
+    // Save to database
+    saveConnection(user.uid, newConnection);
   };
 
   const handleLineTextSubmit = (connectionId, text) => {
-    setLineTexts((prev) => ({
-      ...prev,
-      [connectionId]: text,
-    }));
+    const updatedConnection = connections.find(
+      (conn) => conn.id === connectionId
+    );
+    if (!updatedConnection || !user) return;
+
+    const newConnection = {
+      ...updatedConnection,
+      text,
+      textStyle: updatedConnection.textStyle || { fontSize: 1, color: 'white' },
+    };
+
+    // Update local state
+    setConnections((prev) =>
+      prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
+    );
+
+    // Save to database
+    saveConnection(user.uid, newConnection);
+
+    // Close text input
     setShowLineTextInput(null);
   };
 
   const handleLineTextStyleChange = (connectionId, newStyle) => {
+    const updatedConnection = connections.find(
+      (conn) => conn.id === connectionId
+    );
+    if (!updatedConnection || !user) return;
+
+    const newConnection = {
+      ...updatedConnection,
+      textStyle: { ...(updatedConnection.textStyle || {}), ...newStyle },
+    };
+
+    // Update local state
+    setConnections((prev) =>
+      prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
+    );
     setLineTextStyles((prev) => ({
       ...prev,
       [connectionId]: { ...(prev[connectionId] || {}), ...newStyle },
     }));
+
+    // Save to database
+    saveConnection(user.uid, newConnection);
   };
 
   // Add click handler for text sprite
@@ -692,6 +737,17 @@ const App = () => {
       return () => unsubscribe();
     }
   }, [user, objects, mapConnectionsToObjects]); // Add objects to dependencies
+
+  // Add effect to sync lineTexts with connections
+  useEffect(() => {
+    const newLineTexts = {};
+    connections.forEach((conn) => {
+      if (conn.text) {
+        newLineTexts[conn.id] = conn.text;
+      }
+    });
+    setLineTexts(newLineTexts);
+  }, [connections]);
 
   return (
     <>
@@ -775,12 +831,12 @@ const App = () => {
                       transparent
                       opacity={0}
                     />
-                    {lineTexts[connection.id] && (
+                    {(connection.text || lineTexts[connection.id]) && (
                       <TextSprite
-                        text={lineTexts[connection.id]}
+                        text={connection.text || lineTexts[connection.id]}
                         position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
                         style={
-                          lineTextStyles[connection.id] || {
+                          connection.textStyle || {
                             fontSize: 1,
                             color: 'white',
                           }
@@ -1006,6 +1062,7 @@ const App = () => {
             <EffectComposer>
               <SMAA />
             </EffectComposer>
+            <IndicatorManager userId={user?.uid} />
           </Canvas>
           <UIOverlay
             onCreateObject={handleCreateObject}

@@ -45,11 +45,11 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
   const handleLineStyleClick = (style, e) => {
     e.stopPropagation();
     setCurrentLineStyle(style.name);
+    onToggleDashed?.(style.name);
+
     if (style.name === 'dashed' || style.name === 'dotted') {
-      onToggleDashed?.(style.name);
       setShowArrowDropdown(true);
     } else {
-      onToggleDashed?.(style.name);
       setShowLineStyles(false);
       setShowArrowDropdown(false);
     }
@@ -57,7 +57,6 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
 
   const handleArrowClick = (direction, e) => {
     e.stopPropagation();
-    // Use currentLineStyle to determine which animation to trigger
     onToggleDashed?.(`${currentLineStyle}-${direction}`);
     setShowArrowDropdown(false);
     setShowLineStyles(false);
