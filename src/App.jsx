@@ -301,7 +301,7 @@ const App = () => {
     setSelectedConnection(null);
   };
 
-  const calculateFacePosition = (indicator) => {
+  const calculateFacePosition = useCallback((indicator) => {
     // For plane indicators, use existing logic
     if (indicator.type === 'plane') {
       const plane = indicator.plane;
@@ -372,7 +372,7 @@ const App = () => {
       worldPos.y + offset[1],
       worldPos.z + offset[2],
     ];
-  };
+  }, []);
 
   const handleObjectMove = useCallback(
     (id, newPosition) => {
@@ -402,10 +402,51 @@ const App = () => {
 
           // Update last saved reference
           lastUpdateRef.current[id] = updatedObject;
+
+          // Update all connections involving this object
+          const connectionsToUpdate = connections.filter(
+            (conn) => conn.start?.cube?.id === id || conn.end?.cube?.id === id
+          );
+
+          if (connectionsToUpdate.length > 0) {
+            // For each affected connection, recalculate positions
+            connectionsToUpdate.forEach((conn) => {
+              const updatedConnection = { ...conn };
+
+              // If this object is the start of the connection
+              if (conn.start?.cube?.id === id) {
+                const newStartPos = calculateFacePosition({
+                  ...conn.start,
+                  cube: updatedObject,
+                });
+
+                updatedConnection.start = {
+                  ...conn.start,
+                  position: newStartPos,
+                };
+              }
+
+              // If this object is the end of the connection
+              if (conn.end?.cube?.id === id) {
+                const newEndPos = calculateFacePosition({
+                  ...conn.end,
+                  cube: updatedObject,
+                });
+
+                updatedConnection.end = {
+                  ...conn.end,
+                  position: newEndPos,
+                };
+              }
+
+              // Save updated connection to database
+              saveConnection(user.uid, updatedConnection);
+            });
+          }
         }
       }
     },
-    [user, objects]
+    [user, objects, connections, calculateFacePosition]
   );
 
   // Update handleObjectUpdate to use debouncing and prevent unnecessary updates
@@ -453,30 +494,28 @@ const App = () => {
       // Check for duplicate connection regardless of direction
       const duplicate = connections.some((conn) => {
         const sameOrder =
-          conn.start.cube === startIndicator.cube &&
+          conn.start.objectId === startIndicator.cube?.id.toString() &&
           conn.start.face === startIndicator.face &&
-          conn.end.cube === indicator.cube &&
+          conn.end.objectId === indicator.cube?.id.toString() &&
           conn.end.face === indicator.face;
         const reverseOrder =
-          conn.start.cube === indicator.cube &&
+          conn.start.objectId === indicator.cube?.id.toString() &&
           conn.start.face === indicator.face &&
-          conn.end.cube === startIndicator.cube &&
+          conn.end.objectId === startIndicator.cube?.id.toString() &&
           conn.end.face === startIndicator.face;
         return sameOrder || reverseOrder;
       });
 
       if (duplicate) {
-        // Prevent duplicate line creation
         console.log('Connection already exists.');
-        // Optionally, here you might update UI or simply return.
         return;
       }
 
-      // Generate a unique connection id (using timestamp and random suffix)
       const connectionId = `${Date.now()}-${Math.random()
         .toString(36)
         .substr(2, 9)}`;
 
+      // Include objectId in the connection data
       const newConnection = {
         id: connectionId,
         start: {
@@ -484,7 +523,8 @@ const App = () => {
           face: startIndicator.face,
           position: startPos,
           faceCenter: startIndicator.faceCenter,
-          cube: startIndicator.cube,
+          objectId: startIndicator.cube?.id.toString(), // Store ID instead of reference
+          cube: startIndicator.cube, // Keep reference for immediate use
           plane: startIndicator.plane,
         },
         end: {
@@ -492,7 +532,8 @@ const App = () => {
           face: indicator.face,
           position: endPos,
           faceCenter: indicator.faceCenter,
-          cube: indicator.cube,
+          objectId: indicator.cube?.id.toString(), // Store ID instead of reference
+          cube: indicator.cube, // Keep reference for immediate use
           plane: indicator.plane,
         },
         lineStyle: 'straight',
@@ -562,6 +603,18 @@ const App = () => {
   };
 
   const calculateMidpoint = (start, end) => {
+    // Check if start and end are valid arrays with numeric values
+    if (
+      !start ||
+      !end ||
+      !Array.isArray(start) ||
+      !Array.isArray(end) ||
+      start.length < 3 ||
+      end.length < 3
+    ) {
+      return [0, 0, 0]; // Return a default position if inputs are invalid
+    }
+
     return [
       (start[0] + end[0]) / 2,
       (start[1] + end[1]) / 2,
@@ -682,23 +735,31 @@ const App = () => {
   // Add this helper function to map object IDs to references
   const mapConnectionsToObjects = useCallback((connections, objects) => {
     return connections.map((conn) => {
+      // Find objects by ID
       const startObject = objects.find(
-        (obj) => obj.id.toString() === conn.start.objectId
+        (obj) => obj.id.toString() === conn.start?.objectId
       );
       const endObject = objects.find(
-        (obj) => obj.id.toString() === conn.end.objectId
+        (obj) => obj.id.toString() === conn.end?.objectId
       );
 
+      // Create new connection with proper references
       return {
         ...conn,
         start: {
           ...conn.start,
-          cube: startObject?.type === 'cube' ? startObject : undefined,
+          cube:
+            startObject?.type === 'cube' || startObject?.type === 'sphere'
+              ? startObject
+              : undefined,
           plane: startObject?.type === 'plane' ? startObject : undefined,
         },
         end: {
           ...conn.end,
-          cube: endObject?.type === 'cube' ? endObject : undefined,
+          cube:
+            endObject?.type === 'cube' || endObject?.type === 'sphere'
+              ? endObject
+              : undefined,
           plane: endObject?.type === 'plane' ? endObject : undefined,
         },
       };
@@ -783,17 +844,17 @@ const App = () => {
                 calculateFacePosition={calculateFacePosition}
               />
               {connections.map((connection) => {
-                const midpoint = calculateMidpoint(
-                  connection.start.position,
-                  connection.end.position
-                );
+                const startPosition = connection.start?.position || [0, 0, 0];
+                const endPosition = connection.end?.position || [0, 0, 0];
+
+                const midpoint = calculateMidpoint(startPosition, endPosition);
 
                 return (
                   <group key={connection.id}>
                     <Line
                       points={[
-                        connection.start.position,
-                        connection.end.position,
+                        startPosition, // Use safe values here
+                        endPosition,
                       ]}
                       color={
                         connection.color ||
@@ -806,16 +867,15 @@ const App = () => {
                         connection.lineStyle === 'dashed' ||
                         connection.lineStyle === 'dotted'
                       }
-                      // Increased dash spacing for dashed lines
                       dashScale={connection.lineStyle === 'dotted' ? 1 : 0.5}
                       dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
                       gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
-                      dashOffset={connection.dashOffset || 0} // <-- New: animate dash offset
+                      dashOffset={connection.dashOffset || 0}
                     />
                     <Line
                       points={[
-                        connection.start.position,
-                        connection.end.position,
+                        startPosition, // Use safe values here too
+                        endPosition,
                       ]}
                       color="white"
                       lineWidth={20}
