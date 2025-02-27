@@ -70,6 +70,7 @@ const Cube = ({
   const [headerText, setHeaderText] = useState(initialHeaderText);
   const contentRef = useRef();
   const nonScaledRef = useRef(); // New ref for non-scaled elements
+  const positionedGroupRef = useRef(); // Add this new ref for the positioned group
   const [scale, setScale] = useState(initialScale); // Existing scale state
   const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
   const [faceColors, setFaceColors] = useState(initialFaceColors);
@@ -574,7 +575,7 @@ const Cube = ({
   return (
     <>
       <group>
-        <group position={position}>
+        <group position={position} ref={positionedGroupRef}>
           <group ref={contentRef} scale={scale}>
             <mesh
               onClick={(e) => {
@@ -816,9 +817,9 @@ const Cube = ({
         </group>
       </group>
       {/* Move TransformControls outside all groups to prevent scale inheritance */}
-      {selected && showTransform && contentRef.current && (
+      {selected && showTransform && positionedGroupRef.current && (
         <DreiTransformControls
-          object={contentRef.current}
+          object={positionedGroupRef.current}
           onObjectChange={handleDrag}
           onDragStart={() => {
             if (contentRef.current?.orbitControls) {
