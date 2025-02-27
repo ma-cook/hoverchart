@@ -70,7 +70,6 @@ const Cube = ({
   const [headerText, setHeaderText] = useState(initialHeaderText);
   const contentRef = useRef();
   const nonScaledRef = useRef(); // New ref for non-scaled elements
-  const positionedGroupRef = useRef(); // Add this new ref for the positioned group
   const [scale, setScale] = useState(initialScale); // Existing scale state
   const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
   const [faceColors, setFaceColors] = useState(initialFaceColors);
@@ -277,7 +276,33 @@ const Cube = ({
 
   const handleIndicatorClick = (e, faceName) => {
     e.stopPropagation();
-    onFaceIndicatorClick?.({ cube: contentRef.current, face: faceName });
+
+    // Get face indicator props for this face
+    const { position: facePos } = getFaceIndicatorProps(faceName);
+
+    // Calculate world position of indicator
+    const worldPos = new THREE.Vector3();
+    if (contentRef.current) {
+      const worldMatrix = contentRef.current.matrixWorld;
+      worldPos
+        .set(facePos[0], facePos[1], facePos[2])
+        .applyMatrix4(worldMatrix);
+    }
+
+    // Add proper ID reference and more data to ensure connection gets registered correctly
+    onFaceIndicatorClick?.({
+      cube: {
+        ...contentRef.current,
+        id: id, // Explicitly include the prop ID
+        userData: { ...contentRef.current?.userData, objectId: id.toString() },
+        position, // Include the position
+        scale, // Include the scale
+      },
+      face: faceName,
+      position: [worldPos.x, worldPos.y, worldPos.z], // Include world position
+      faceCenter: facePos, // Include local face position
+      type: 'cube',
+    });
   };
 
   const handleColorChange = (color, face) => {
@@ -575,14 +600,14 @@ const Cube = ({
   return (
     <>
       <group>
-        <group position={position} ref={positionedGroupRef}>
+        <group position={position}>
           <group ref={contentRef} scale={scale}>
             <mesh
               onClick={(e) => {
                 e.stopPropagation();
                 handleSceneClick();
               }}
-              userData={{ isCube: true }} // Add this to identify cube clicks
+              userData={{ isCube: true, objectId: id.toString() }} // Add stringified objectId
             >
               <boxGeometry args={[10, 10, 10]} />
               <meshBasicMaterial visible={false} />
@@ -817,9 +842,9 @@ const Cube = ({
         </group>
       </group>
       {/* Move TransformControls outside all groups to prevent scale inheritance */}
-      {selected && showTransform && positionedGroupRef.current && (
+      {selected && showTransform && contentRef.current && (
         <DreiTransformControls
-          object={positionedGroupRef.current}
+          object={contentRef.current}
           onObjectChange={handleDrag}
           onDragStart={() => {
             if (contentRef.current?.orbitControls) {

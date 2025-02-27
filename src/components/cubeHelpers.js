@@ -30,3 +30,47 @@ export const faces = [
   { name: 'right', normal: [1, 0, 0] },
   { name: 'left', normal: [-1, 0, 0] },
 ];
+
+// Calculate world position of a face on a cube
+export const calculateFaceWorldPosition = (
+  cubePosition,
+  cubeScale,
+  faceName
+) => {
+  const worldPos = Array.isArray(cubePosition)
+    ? new THREE.Vector3(cubePosition[0], cubePosition[1], cubePosition[2])
+    : new THREE.Vector3(cubePosition.x, cubePosition.y, cubePosition.z);
+
+  const worldScale = Array.isArray(cubeScale)
+    ? new THREE.Vector3(cubeScale[0], cubeScale[1], cubeScale[2])
+    : new THREE.Vector3(cubeScale.x, cubeScale.y, cubeScale.z);
+
+  const cubeSize = 5; // Half-size of cube
+  let faceOffset;
+
+  switch (faceName) {
+    case 'top':
+      faceOffset = new THREE.Vector3(0, cubeSize * worldScale.y, 0);
+      break;
+    case 'bottom':
+      faceOffset = new THREE.Vector3(0, -cubeSize * worldScale.y, 0);
+      break;
+    case 'front':
+      faceOffset = new THREE.Vector3(0, 0, cubeSize * worldScale.z);
+      break;
+    case 'back':
+      faceOffset = new THREE.Vector3(0, 0, -cubeSize * worldScale.z);
+      break;
+    case 'right':
+      faceOffset = new THREE.Vector3(cubeSize * worldScale.x, 0, 0);
+      break;
+    case 'left':
+      faceOffset = new THREE.Vector3(-cubeSize * worldScale.x, 0, 0);
+      break;
+    default:
+      faceOffset = new THREE.Vector3(0, 0, 0);
+  }
+
+  worldPos.add(faceOffset);
+  return [worldPos.x, worldPos.y, worldPos.z];
+};

@@ -23,6 +23,10 @@ import {
   subscribeToConnections,
 } from './services/connectionsService';
 import IndicatorManager from './components/IndicatorManager';
+import {
+  initializeConnectionMappings,
+  objectConnectionMap,
+} from './services/connectionManager';
 
 const ConnectionUpdater = ({
   connections,
@@ -301,82 +305,129 @@ const App = () => {
     setSelectedConnection(null);
   };
 
+  // Improved face position calculation with better offsets
   const calculateFacePosition = useCallback((indicator) => {
+    // Debug info
+    console.log('Calculating face position for:', {
+      type: indicator.type,
+      face: indicator.face,
+      objectId: indicator.objectId || indicator.cube?.id,
+      hasPosition: !!indicator.position,
+    });
+
     // For plane indicators, use existing logic
     if (indicator.type === 'plane') {
-      const plane = indicator.plane;
-      if (plane && typeof plane.getWorldPosition === 'function') {
-        const worldPos = new THREE.Vector3();
-        const worldQuat = new THREE.Quaternion();
-        const worldScale = new THREE.Vector3();
-        plane.getWorldPosition(worldPos);
-        plane.getWorldQuaternion(worldQuat);
-        plane.getWorldScale(worldScale);
-        const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
-        localOffset.applyQuaternion(worldQuat);
+      // For plane indicators, use existing logic
+      if (indicator.type === 'plane') {
+        const plane = indicator.plane;
+        if (plane && typeof plane.getWorldPosition === 'function') {
+          const worldPos = new THREE.Vector3();
+          const worldQuat = new THREE.Quaternion();
+          const worldScale = new THREE.Vector3();
+          plane.getWorldPosition(worldPos);
+          plane.getWorldQuaternion(worldQuat);
+          plane.getWorldScale(worldScale);
+          const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
+          localOffset.applyQuaternion(worldQuat);
+          return [
+            worldPos.x + localOffset.x,
+            worldPos.y + localOffset.y,
+            worldPos.z + localOffset.z,
+          ];
+        } else {
+          return indicator.position;
+        }
+      }
+    }
+
+    // For cube/sphere indicators
+    if (indicator.type === 'cube' || indicator.type === 'sphere') {
+      // Get position from the indicator if available, or from the data if stored
+      const position = indicator.cube?.position || indicator.position;
+      if (!position) {
+        console.warn('No position data available for indicator', indicator);
+        return indicator.position || [0, 0, 0];
+      }
+
+      let worldPos;
+      // Convert to Vector3 if it's an array
+      if (Array.isArray(position)) {
+        worldPos = new THREE.Vector3(position[0], position[1], position[2]);
+      } else {
+        worldPos = new THREE.Vector3(position.x, position.y, position.z);
+      }
+
+      // Get scale from the indicator if available, otherwise use default [1,1,1]
+      const scale = indicator.cube?.scale || [1, 1, 1];
+      let worldScale;
+      if (Array.isArray(scale)) {
+        worldScale = new THREE.Vector3(scale[0], scale[1], scale[2]);
+      } else {
+        worldScale = new THREE.Vector3(scale.x, scale.y, scale.z);
+      }
+
+      // Calculate the offset based on face name and cube size (5 units from center to face)
+      const cubeSize = 5; // Half-size of cube
+      let faceOffset;
+
+      if (indicator.type === 'sphere') {
+        const localFacePos = new THREE.Vector3(...indicator.faceCenter);
+        localFacePos.multiply(worldScale);
         return [
-          worldPos.x + localOffset.x,
-          worldPos.y + localOffset.y,
-          worldPos.z + localOffset.z,
+          worldPos.x + localFacePos.x,
+          worldPos.y + localFacePos.y,
+          worldPos.z + localFacePos.z,
         ];
       } else {
-        return indicator.position;
+        // Standard cube face offset calculation
+        switch (indicator.face) {
+          case 'top':
+            faceOffset = new THREE.Vector3(0, cubeSize * worldScale.y, 0);
+            break;
+          case 'bottom':
+            faceOffset = new THREE.Vector3(0, -cubeSize * worldScale.y, 0);
+            break;
+          case 'front':
+            faceOffset = new THREE.Vector3(0, 0, cubeSize * worldScale.z);
+            break;
+          case 'back':
+            faceOffset = new THREE.Vector3(0, 0, -cubeSize * worldScale.z);
+            break;
+          case 'right':
+            faceOffset = new THREE.Vector3(cubeSize * worldScale.x, 0, 0);
+            break;
+          case 'left':
+            faceOffset = new THREE.Vector3(-cubeSize * worldScale.x, 0, 0);
+            break;
+          default:
+            faceOffset = new THREE.Vector3(0, 0, 0);
+        }
       }
+
+      // Add the offset to the world position
+      worldPos.add(faceOffset);
+
+      console.log(`Face ${indicator.face} position calculated:`, [
+        worldPos.x,
+        worldPos.y,
+        worldPos.z,
+      ]);
+      return [worldPos.x, worldPos.y, worldPos.z];
     }
 
-    // For cube/sphere indicators, if the cube reference is missing or invalid, return the stored position
-    if (
-      !indicator.cube ||
-      typeof indicator.cube.getWorldPosition !== 'function'
-    ) {
-      return indicator.position;
-    }
-
-    // Proceed with regular cube face positioning
-    const cube = indicator.cube;
-    const worldPos = new THREE.Vector3();
-    cube.getWorldPosition(worldPos);
-    const worldScale = new THREE.Vector3();
-    cube.getWorldScale(worldScale);
-    if (indicator.type === 'sphere') {
-      const localFacePos = new THREE.Vector3(...indicator.faceCenter);
-      localFacePos.multiply(worldScale);
-      return [
-        worldPos.x + localFacePos.x,
-        worldPos.y + localFacePos.y,
-        worldPos.z + localFacePos.z,
-      ];
-    }
-    const getScaledOffset = (faceName) => {
-      const baseScale = 5;
-      switch (faceName) {
-        case 'front':
-          return [0, 0, baseScale * worldScale.z];
-        case 'back':
-          return [0, 0, -baseScale * worldScale.z];
-        case 'top':
-          return [0, baseScale * worldScale.y, 0];
-        case 'bottom':
-          return [0, -baseScale * worldScale.y, 0];
-        case 'right':
-          return [baseScale * worldScale.x, 0, 0];
-        case 'left':
-          return [-baseScale * worldScale.x, 0, 0];
-        default:
-          return [0, 0, 0];
-      }
-    };
-    const offset = getScaledOffset(indicator.face);
-    return [
-      worldPos.x + offset[0],
-      worldPos.y + offset[1],
-      worldPos.z + offset[2],
-    ];
+    // Fallback return the stored position
+    return indicator.position || [0, 0, 0];
   }, []);
+
+  // Add this to the App component for local connection management
+  const localConnectionUpdateRef = useRef({}); // Track last local update time
 
   const handleObjectMove = useCallback(
     (id, newPosition) => {
-      // Update local state
+      // Get string ID for consistency
+      const objectId = id.toString();
+
+      // Update local state immediately
       setObjects((prev) =>
         prev.map((obj) =>
           obj.id === id
@@ -388,65 +439,79 @@ const App = () => {
         )
       );
 
-      // Immediate database update
-      if (user && id) {
-        const object = objects.find((obj) => obj.id === id);
-        if (object) {
-          const updatedObject = {
-            ...object,
-            position: [newPosition.x, newPosition.y, newPosition.z],
-          };
+      // Find all related connections and update them immediately in the client
+      setConnections((prev) => {
+        // Find connections related to this object
+        const updatedConnections = prev.map((conn) => {
+          let updated = false;
+          let newConn = { ...conn };
 
-          // Save to database immediately
-          saveObject(user.uid, updatedObject);
-
-          // Update last saved reference
-          lastUpdateRef.current[id] = updatedObject;
-
-          // Update all connections involving this object
-          const connectionsToUpdate = connections.filter(
-            (conn) => conn.start?.cube?.id === id || conn.end?.cube?.id === id
-          );
-
-          if (connectionsToUpdate.length > 0) {
-            // For each affected connection, recalculate positions
-            connectionsToUpdate.forEach((conn) => {
-              const updatedConnection = { ...conn };
-
-              // If this object is the start of the connection
-              if (conn.start?.cube?.id === id) {
-                const newStartPos = calculateFacePosition({
-                  ...conn.start,
-                  cube: updatedObject,
-                });
-
-                updatedConnection.start = {
-                  ...conn.start,
-                  position: newStartPos,
-                };
-              }
-
-              // If this object is the end of the connection
-              if (conn.end?.cube?.id === id) {
-                const newEndPos = calculateFacePosition({
-                  ...conn.end,
-                  cube: updatedObject,
-                });
-
-                updatedConnection.end = {
-                  ...conn.end,
-                  position: newEndPos,
-                };
-              }
-
-              // Save updated connection to database
-              saveConnection(user.uid, updatedConnection);
+          // Handle start connection
+          if (conn.start?.objectId === objectId) {
+            // Calculate new position immediately
+            const newStartPos = calculateFacePosition({
+              ...conn.start,
+              cube: {
+                ...conn.start.cube,
+                position: [newPosition.x, newPosition.y, newPosition.z],
+              },
             });
+
+            newConn.start = {
+              ...conn.start,
+              position: newStartPos,
+            };
+            updated = true;
+          }
+
+          // Handle end connection
+          if (conn.end?.objectId === objectId) {
+            // Calculate new position immediately
+            const newEndPos = calculateFacePosition({
+              ...conn.end,
+              cube: {
+                ...conn.end.cube,
+                position: [newPosition.x, newPosition.y, newPosition.z],
+              },
+            });
+
+            newConn.end = {
+              ...conn.end,
+              position: newEndPos,
+            };
+            updated = true;
+          }
+
+          return updated ? newConn : conn;
+        });
+
+        return updatedConnections;
+      });
+
+      // Debounce database updates to prevent too many writes
+      const now = Date.now();
+      if (
+        !localConnectionUpdateRef.current[objectId] ||
+        now - localConnectionUpdateRef.current[objectId] > 100
+      ) {
+        localConnectionUpdateRef.current[objectId] = now;
+
+        // Now update database without affecting UI state
+        if (user) {
+          const object = objects.find((obj) => obj.id === id);
+          if (object) {
+            const updatedObject = {
+              ...object,
+              position: [newPosition.x, newPosition.y, newPosition.z],
+            };
+
+            // Save to database
+            saveObject(user.uid, updatedObject);
           }
         }
       }
     },
-    [user, objects, connections, calculateFacePosition]
+    [user, objects, calculateFacePosition]
   );
 
   // Update handleObjectUpdate to use debouncing and prevent unnecessary updates
@@ -488,8 +553,59 @@ const App = () => {
       setGlobalIndicatorSelected(true);
     } else if (selectedIndicators.length === 1) {
       const startIndicator = selectedIndicators[0];
-      const startPos = calculateFacePosition(startIndicator);
-      const endPos = calculateFacePosition(indicator);
+
+      // Debug logging to check indicator data
+      console.log('Start indicator:', {
+        type: startIndicator.type,
+        id: startIndicator.cube?.id,
+        face: startIndicator.face,
+        position: startIndicator.position,
+      });
+
+      console.log('End indicator:', {
+        type: indicator.type,
+        id: indicator.cube?.id,
+        face: indicator.face,
+        position: indicator.position,
+      });
+
+      // Find the actual objects from the objects array to ensure we have all data
+      const startObj = objects.find(
+        (obj) => obj.id.toString() === startIndicator.cube?.id?.toString()
+      );
+      const endObj = objects.find(
+        (obj) => obj.id.toString() === indicator.cube?.id?.toString()
+      );
+
+      if (!startObj || !endObj) {
+        console.error('Could not find objects for connection');
+        return;
+      }
+
+      // Create enhanced indicators with full object data
+      const enhancedStartIndicator = {
+        ...startIndicator,
+        cube: {
+          ...startIndicator.cube,
+          position: startObj.position,
+          scale: startObj.scale,
+        },
+      };
+
+      const enhancedEndIndicator = {
+        ...indicator,
+        cube: {
+          ...indicator.cube,
+          position: endObj.position,
+          scale: endObj.scale,
+        },
+      };
+
+      // Calculate positions using enhanced indicators
+      const startPos = calculateFacePosition(enhancedStartIndicator);
+      const endPos = calculateFacePosition(enhancedEndIndicator);
+
+      console.log('Calculated positions:', { startPos, endPos });
 
       // Check for duplicate connection regardless of direction
       const duplicate = connections.some((conn) => {
@@ -515,25 +631,44 @@ const App = () => {
         .toString(36)
         .substr(2, 9)}`;
 
+      // Add debug logging to see what IDs we're working with
+      console.log('Creating connection between objects:', {
+        startId: startIndicator.cube?.id,
+        endId: indicator.cube?.id,
+      });
+
+      // Ensure we're using proper ID formats
+      const startObjectId = startIndicator.cube?.id?.toString();
+      const endObjectId = indicator.cube?.id?.toString();
+
+      // Validate we have both object IDs
+      if (!startObjectId || !endObjectId) {
+        console.error('Missing object ID in connection creation', {
+          startId: startObjectId,
+          endId: endObjectId,
+        });
+        return;
+      }
+
       // Include objectId in the connection data
       const newConnection = {
         id: connectionId,
         start: {
           type: startIndicator.type,
           face: startIndicator.face,
-          position: startPos,
-          faceCenter: startIndicator.faceCenter,
-          objectId: startIndicator.cube?.id.toString(), // Store ID instead of reference
-          cube: startIndicator.cube, // Keep reference for immediate use
+          position: startPos, // Use calculated position
+          faceCenter: startIndicator.faceCenter || [0, 0, 0],
+          objectId: startObjectId,
+          cube: startIndicator.cube,
           plane: startIndicator.plane,
         },
         end: {
           type: indicator.type,
           face: indicator.face,
-          position: endPos,
-          faceCenter: indicator.faceCenter,
-          objectId: indicator.cube?.id.toString(), // Store ID instead of reference
-          cube: indicator.cube, // Keep reference for immediate use
+          position: endPos, // Use calculated position
+          faceCenter: indicator.faceCenter || [0, 0, 0],
+          objectId: endObjectId,
+          cube: indicator.cube,
           plane: indicator.plane,
         },
         lineStyle: 'straight',
@@ -809,6 +944,35 @@ const App = () => {
     });
     setLineTexts(newLineTexts);
   }, [connections]);
+
+  // Add initialization of connection mappings when user is authenticated
+  useEffect(() => {
+    if (user) {
+      console.log('Initializing connection mappings');
+      initializeConnectionMappings(user.uid)
+        .then(() => {
+          console.log('Connection mappings initialized successfully');
+          // Debug: Log current connection mappings
+          if (typeof window !== 'undefined') {
+            window.checkConnectionMap = () => {
+              console.table(
+                Array.from(objectConnectionMap.entries()).map(
+                  ([key, value]) => ({
+                    objectId: key,
+                    connections: Array.from(value).join(', '),
+                  })
+                )
+              );
+            };
+            // Check immediately
+            window.checkConnectionMap();
+          }
+        })
+        .catch((err) =>
+          console.error('Error initializing connection mappings:', err)
+        );
+    }
+  }, [user]); // Only run when user changes
 
   return (
     <>
