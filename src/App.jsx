@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import './App.css';
@@ -27,32 +27,78 @@ import {
   initializeConnectionMappings,
   objectConnectionMap,
 } from './services/connectionManager';
+import { memoize } from './utils/perfUtils'; // Add this import
 
+// Helper function to compare arrays - this is fine at the top level as it's not a hook
+const arraysEqual = (a, b) => {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    // Use small epsilon for floating point comparison
+    if (Math.abs(a[i] - b[i]) > 0.001) return false;
+  }
+  return true;
+};
+
+// Enable/disable debug logs
+const DEBUG_LOGS = false;
+
+// This component can be defined separately since it uses hooks internally
 const ConnectionUpdater = ({
   connections,
   setConnections,
   calculateFacePosition,
 }) => {
+  // Add frame skipping to reduce update frequency
+  const frameCount = useRef(0);
+  const FRAMES_TO_SKIP = 3; // Only update every 3rd frame
+
+  // Reference to track if positions changed
+  const lastPositions = useRef({});
+
   useFrame((state, delta) => {
+    // Skip frames to reduce calculation frequency
+    frameCount.current += 1;
+    if (frameCount.current % FRAMES_TO_SKIP !== 0) return;
+
     if (connections.length > 0) {
-      setConnections((prev) =>
-        prev.map((conn) => {
-          // Calculate new positions regardless of line style
-          const newStartPos = calculateFacePosition(conn.start);
-          const newEndPos = calculateFacePosition(conn.end);
+      let hasChanges = false;
+
+      // Calculate new positions without updating state immediately
+      const updatedConnections = connections.map((conn) => {
+        // Using memoized calculation to avoid redundant work
+        const newStartPos = calculateFacePosition(conn.start);
+        const newEndPos = calculateFacePosition(conn.end);
+
+        // Generate position keys
+        const startKey = `${conn.id}-start`;
+        const endKey = `${conn.id}-end`;
+
+        // Check if positions actually changed
+        const startChanged =
+          !lastPositions.current[startKey] ||
+          !arraysEqual(lastPositions.current[startKey], newStartPos);
+        const endChanged =
+          !lastPositions.current[endKey] ||
+          !arraysEqual(lastPositions.current[endKey], newEndPos);
+
+        if (startChanged || endChanged) {
+          hasChanges = true;
+
+          // Store new positions for next comparison
+          lastPositions.current[startKey] = [...newStartPos];
+          lastPositions.current[endKey] = [...newEndPos];
 
           // Update dash offset if line is animated
           let newDashOffset = conn.dashOffset;
           if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
             if (conn.dashDirection === 'left') {
               newDashOffset = (conn.dashOffset || 0) - delta * 2;
-            }
-            if (conn.dashDirection === 'right') {
+            } else if (conn.dashDirection === 'right') {
               newDashOffset = (conn.dashOffset || 0) + delta * 2;
             }
           }
 
-          // Return updated connection with new positions and dash offset
+          // Return updated connection
           return {
             ...conn,
             start: {
@@ -65,10 +111,19 @@ const ConnectionUpdater = ({
             },
             dashOffset: newDashOffset,
           };
-        })
-      );
+        }
+
+        // No change - return original connection
+        return conn;
+      });
+
+      // Only update state if there are actual changes
+      if (hasChanges) {
+        setConnections(updatedConnections);
+      }
     }
   });
+
   return null;
 };
 
@@ -305,38 +360,39 @@ const App = () => {
     setSelectedConnection(null);
   };
 
+  // Add this to the App component for local connection management
+  const localConnectionUpdateRef = useRef({}); // Track last local update time
+
   // Improved face position calculation with better offsets
   const calculateFacePosition = useCallback((indicator) => {
-    // Debug info
-    console.log('Calculating face position for:', {
-      type: indicator.type,
-      face: indicator.face,
-      objectId: indicator.objectId || indicator.cube?.id,
-      hasPosition: !!indicator.position,
-    });
+    // Only log in debug mode
+    if (DEBUG_LOGS) {
+      console.log('Calculating face position for:', {
+        type: indicator.type,
+        face: indicator.face,
+        objectId: indicator.objectId || indicator.cube?.id,
+      });
+    }
 
     // For plane indicators, use existing logic
     if (indicator.type === 'plane') {
-      // For plane indicators, use existing logic
-      if (indicator.type === 'plane') {
-        const plane = indicator.plane;
-        if (plane && typeof plane.getWorldPosition === 'function') {
-          const worldPos = new THREE.Vector3();
-          const worldQuat = new THREE.Quaternion();
-          const worldScale = new THREE.Vector3();
-          plane.getWorldPosition(worldPos);
-          plane.getWorldQuaternion(worldQuat);
-          plane.getWorldScale(worldScale);
-          const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
-          localOffset.applyQuaternion(worldQuat);
-          return [
-            worldPos.x + localOffset.x,
-            worldPos.y + localOffset.y,
-            worldPos.z + localOffset.z,
-          ];
-        } else {
-          return indicator.position;
-        }
+      const plane = indicator.plane;
+      if (plane && typeof plane.getWorldPosition === 'function') {
+        const worldPos = new THREE.Vector3();
+        const worldQuat = new THREE.Quaternion();
+        const worldScale = new THREE.Vector3();
+        plane.getWorldPosition(worldPos);
+        plane.getWorldQuaternion(worldQuat);
+        plane.getWorldScale(worldScale);
+        const localOffset = new THREE.Vector3(0, -5 * worldScale.y - 1, 0);
+        localOffset.applyQuaternion(worldQuat);
+        return [
+          worldPos.x + localOffset.x,
+          worldPos.y + localOffset.y,
+          worldPos.z + localOffset.z,
+        ];
+      } else {
+        return indicator.position;
       }
     }
 
@@ -407,11 +463,15 @@ const App = () => {
       // Add the offset to the world position
       worldPos.add(faceOffset);
 
-      console.log(`Face ${indicator.face} position calculated:`, [
-        worldPos.x,
-        worldPos.y,
-        worldPos.z,
-      ]);
+      // Log results only in debug mode
+      if (DEBUG_LOGS) {
+        console.log(`Face ${indicator.face} position calculated:`, [
+          worldPos.x,
+          worldPos.y,
+          worldPos.z,
+        ]);
+      }
+
       return [worldPos.x, worldPos.y, worldPos.z];
     }
 
@@ -419,8 +479,11 @@ const App = () => {
     return indicator.position || [0, 0, 0];
   }, []);
 
-  // Add this to the App component for local connection management
-  const localConnectionUpdateRef = useRef({}); // Track last local update time
+  // Memoized version of the calculation function - NOW INSIDE THE COMPONENT
+  const memoizedCalculateFacePosition = useMemo(
+    () => memoize(calculateFacePosition),
+    [calculateFacePosition]
+  );
 
   const handleObjectMove = useCallback(
     (id, newPosition) => {
@@ -1005,7 +1068,7 @@ const App = () => {
               <ConnectionUpdater
                 connections={connections}
                 setConnections={setConnections}
-                calculateFacePosition={calculateFacePosition}
+                calculateFacePosition={memoizedCalculateFacePosition}
               />
               {connections.map((connection) => {
                 const startPosition = connection.start?.position || [0, 0, 0];
