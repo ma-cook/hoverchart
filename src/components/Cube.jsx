@@ -96,6 +96,14 @@ const Cube = ({
   const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
   const [color, setColor] = useState(initialColor);
 
+  // Add a lastPositionRef to track real position
+  const lastPositionRef = useRef(position);
+
+  // Update position ref when position prop changes
+  useEffect(() => {
+    lastPositionRef.current = position;
+  }, [position]);
+
   // Update color when prop changes
   useEffect(() => {
     setColor(initialColor);
@@ -193,9 +201,13 @@ const Cube = ({
     onClick();
   };
 
+  // Update handleDrag to handle first drag specially
   const handleDrag = (e) => {
     // Get new position from the transform controls event
     const newPos = e.target.object.position;
+
+    // Update our position ref
+    lastPositionRef.current = [newPos.x, newPos.y, newPos.z];
 
     if (onUpdate) {
       onUpdate(id, {
@@ -221,11 +233,18 @@ const Cube = ({
     }
   };
 
+  // Add this function to detect when transform controls are attached
+  const transformControlsRef = useRef();
+
+  // Update handleTransformToggle
   const handleTransformToggle = () => {
     setShowTransform((prev) => {
       // If enabling transform controls, disable resize mode
       if (!prev) {
         setIsResizing(false);
+
+        // Don't modify position directly, the TransformControls will handle it
+        // The position is now managed by the outer group to avoid jumps
       }
       return !prev;
     });
@@ -437,6 +456,18 @@ const Cube = ({
     onUpdate,
   ]);
 
+  // Add an effect to keep contentRef position in sync when transform is active
+  useEffect(() => {
+    if (showTransform && contentRef.current) {
+      // Ensure object position matches our tracked position
+      contentRef.current.position.set(
+        lastPositionRef.current[0],
+        lastPositionRef.current[1],
+        lastPositionRef.current[2]
+      );
+    }
+  }, [showTransform]);
+
   const size = 5; // Half-size since points are from center
 
   // Define cube vertices (corners)
@@ -599,251 +630,250 @@ const Cube = ({
 
   return (
     <>
-      <group>
-        <group position={position}>
-          <group ref={contentRef} scale={scale}>
-            <mesh
-              onClick={(e) => {
-                e.stopPropagation();
-                handleSceneClick();
-              }}
-              userData={{ isCube: true, objectId: id.toString() }} // Add stringified objectId
-            >
-              <boxGeometry args={[10, 10, 10]} />
-              <meshBasicMaterial visible={false} />
-            </mesh>
+      {/* Simplify group structure - single group with position */}
+      <group ref={contentRef} position={position} scale={scale}>
+        <mesh
+          onClick={(e) => {
+            e.stopPropagation();
+            handleSceneClick();
+          }}
+          userData={{
+            isCube: true,
+            objectId: id.toString(),
+          }}
+        >
+          <boxGeometry args={[10, 10, 10]} />
+          <meshBasicMaterial visible={false} />
+        </mesh>
 
-            {/* Always render colored faces */}
+        {/* Always render colored faces */}
+        {faces.map(({ name, normal }) => {
+          if (!faceColors[name]) return null; // Only render if face has color
+          const { position: facePos, rotation } = getFaceIndicatorProps(name);
+          const uiPos = getFaceUIPosition(name);
+          return (
+            <mesh
+              key={`colored-${name}`}
+              position={[facePos[0], facePos[1], facePos[2]]}
+              rotation={rotation}
+              onClick={(e) => handleColoredFaceClick(e, name)}
+              renderOrder={1}
+            >
+              <boxGeometry args={[9.8, 9.9, 0.2]} />
+              <meshBasicMaterial
+                color={faceColors[name]}
+                opacity={1.0}
+                transparent={false}
+                depthWrite={true}
+                polygonOffset={true} // <-- Enable polygon offset
+                polygonOffsetFactor={-1} // <-- Push face slightly back
+                polygonOffsetUnits={-4} // <-- Fine tune offset
+              />
+              {selected && ( // Only render these when cube is selected
+                <>
+                  {selectedFace === name && !showFaceTextInput && (
+                    <FaceUI
+                      position={uiPos}
+                      normal={normal}
+                      onColorChange={handleColorChange}
+                      face={name}
+                      onTextClick={handleFaceTextClick}
+                    />
+                  )}
+                  {showFaceTextInput && selectedFace === name && (
+                    <FaceTextInput
+                      position={[0, 6, 0]}
+                      onTextSubmit={handleFaceTextSubmit}
+                    />
+                  )}
+                </>
+              )}
+            </mesh>
+          );
+        })}
+
+        {/* Render all face indicators in a separate pass */}
+        {faces.map(({ name }) => {
+          const { position: facePos, rotation } = getFaceIndicatorProps(name);
+          return (
+            shouldShowIndicator(name) && (
+              <mesh
+                key={`indicator-${name}`}
+                position={[facePos[0], facePos[1], facePos[2]]}
+                rotation={rotation}
+                renderOrder={3}
+              >
+                <FaceIndicator
+                  position={[0, 0, 0.3]}
+                  rotation={[0, 0, 0]}
+                  onClick={(e) => handleIndicatorClick(e, name)}
+                  isActive={isIndicatorActive(name)}
+                />
+              </mesh>
+            )
+          );
+        })}
+
+        {/* Update face text rendering with dynamic positioning */}
+        {faces.map(({ name }) => {
+          const { position: facePos, rotation } = getFaceIndicatorProps(name);
+          const inverseScale = scale.map((s) => 1 / s);
+          // Calculate base position without scale
+          const basePosition = [facePos[0], facePos[1], facePos[2]];
+          const textStyle = faceTextStyles[name];
+          const yOffset = getFaceTextOffset(textStyle.fontSize);
+          return (
+            faceTexts[name] && (
+              <group
+                key={`text-${name}`}
+                position={basePosition}
+                rotation={rotation}
+                scale={inverseScale}
+              >
+                <TextSprite
+                  text={faceTexts[name]}
+                  position={[0, yOffset, 0.2]} // Keep offset constant relative to face
+                  followTarget={null}
+                  onClick={(e) => handleFaceTextStyleClick(e, name)}
+                  style={{
+                    ...textStyle,
+                    fixedSize: true,
+                    isFaceText: true,
+                  }}
+                />
+                {activeTextFace === name &&
+                  activeTextStyleUI === contentRef.current && (
+                    <TextStyleUI
+                      position={[0, 6, 0]}
+                      onStyleChange={handleStyleChange}
+                      onClose={() => {
+                        setActiveTextFace(null);
+                        setActiveTextStyleUI(null);
+                      }}
+                    />
+                  )}
+              </group>
+            )
+          );
+        })}
+
+        {/* Render selection-dependent faces and UI */}
+        {(selected || showAllIndicators) && (
+          <>
             {faces.map(({ name, normal }) => {
-              if (!faceColors[name]) return null; // Only render if face has color
+              if (faceColors[name]) return null; // Skip if face is colored
               const { position: facePos, rotation } =
                 getFaceIndicatorProps(name);
               const uiPos = getFaceUIPosition(name);
               return (
                 <mesh
-                  key={`colored-${name}`}
+                  key={`ui-${name}`}
                   position={[facePos[0], facePos[1], facePos[2]]}
                   rotation={rotation}
-                  onClick={(e) => handleColoredFaceClick(e, name)}
-                  renderOrder={1}
+                  onClick={(e) => handleFaceClick(e, name)}
+                  renderOrder={2}
                 >
-                  <boxGeometry args={[9.8, 9.9, 0.2]} />
-                  <meshBasicMaterial
-                    color={faceColors[name]}
-                    opacity={1.0}
-                    transparent={false}
-                    depthWrite={true}
-                    polygonOffset={true} // <-- Enable polygon offset
-                    polygonOffsetFactor={-1} // <-- Push face slightly back
-                    polygonOffsetUnits={-4} // <-- Fine tune offset
-                  />
-                  {selected && ( // Only render these when cube is selected
-                    <>
-                      {selectedFace === name && !showFaceTextInput && (
-                        <FaceUI
-                          position={uiPos}
-                          normal={normal}
-                          onColorChange={handleColorChange}
-                          face={name}
-                          onTextClick={handleFaceTextClick}
-                        />
-                      )}
-                      {showFaceTextInput && selectedFace === name && (
-                        <FaceTextInput
-                          position={[0, 6, 0]}
-                          onTextSubmit={handleFaceTextSubmit}
-                        />
-                      )}
-                    </>
+                  <boxGeometry args={[10.4, 10.4, 0.2]} />
+                  <meshBasicMaterial {...getFaceMaterial(name)} />
+                  {selectedFace === name && selected && !showFaceTextInput && (
+                    <FaceUI
+                      position={uiPos}
+                      normal={normal}
+                      onColorChange={handleColorChange}
+                      face={name}
+                      onTextClick={handleFaceTextClick}
+                    />
                   )}
-                </mesh>
-              );
-            })}
-
-            {/* Render all face indicators in a separate pass */}
-            {faces.map(({ name }) => {
-              const { position: facePos, rotation } =
-                getFaceIndicatorProps(name);
-              return (
-                shouldShowIndicator(name) && (
-                  <mesh
-                    key={`indicator-${name}`}
-                    position={[facePos[0], facePos[1], facePos[2]]}
-                    rotation={rotation}
-                    renderOrder={3}
-                  >
+                  {showFaceTextInput && selectedFace === name && (
+                    <FaceTextInput
+                      position={[0, 6, 0]}
+                      onTextSubmit={handleFaceTextSubmit}
+                    />
+                  )}
+                  {shouldShowIndicator(name) && (
                     <FaceIndicator
-                      position={[0, 0, 0.3]}
+                      position={[0, 0, 0.2]}
                       rotation={[0, 0, 0]}
                       onClick={(e) => handleIndicatorClick(e, name)}
                       isActive={isIndicatorActive(name)}
                     />
-                  </mesh>
-                )
+                  )}
+                </mesh>
               );
             })}
+          </>
+        )}
 
-            {/* Update face text rendering with dynamic positioning */}
-            {faces.map(({ name }) => {
-              const { position: facePos, rotation } =
-                getFaceIndicatorProps(name);
-              const inverseScale = scale.map((s) => 1 / s);
-              // Calculate base position without scale
-              const basePosition = [facePos[0], facePos[1], facePos[2]];
-              const textStyle = faceTextStyles[name];
-              const yOffset = getFaceTextOffset(textStyle.fontSize);
-              return (
-                faceTexts[name] && (
-                  <group
-                    key={`text-${name}`}
-                    position={basePosition}
-                    rotation={rotation}
-                    scale={inverseScale}
-                  >
-                    <TextSprite
-                      text={faceTexts[name]}
-                      position={[0, yOffset, 0.2]} // Keep offset constant relative to face
-                      followTarget={null}
-                      onClick={(e) => handleFaceTextStyleClick(e, name)}
-                      style={{
-                        ...textStyle,
-                        fixedSize: true,
-                        isFaceText: true,
-                      }}
-                    />
-                    {activeTextFace === name &&
-                      activeTextStyleUI === contentRef.current && (
-                        <TextStyleUI
-                          position={[0, 6, 0]}
-                          onStyleChange={handleStyleChange}
-                          onClose={() => {
-                            setActiveTextFace(null);
-                            setActiveTextStyleUI(null);
-                          }}
-                        />
-                      )}
-                  </group>
-                )
-              );
-            })}
+        <Line
+          points={points}
+          color={color} // Use color instead of lineColor
+          lineWidth={1}
+          segments={true}
+          polygonOffset // <-- Enable polygon offset for the edge lines
+          polygonOffsetFactor={1} // <-- Bring lines forward
+          polygonOffsetUnits={1} // <-- Fine tune the offset
+        />
 
-            {/* Render selection-dependent faces and UI */}
-            {(selected || showAllIndicators) && (
-              <>
-                {faces.map(({ name, normal }) => {
-                  if (faceColors[name]) return null; // Skip if face is colored
-                  const { position: facePos, rotation } =
-                    getFaceIndicatorProps(name);
-                  const uiPos = getFaceUIPosition(name);
-                  return (
-                    <mesh
-                      key={`ui-${name}`}
-                      position={[facePos[0], facePos[1], facePos[2]]}
-                      rotation={rotation}
-                      onClick={(e) => handleFaceClick(e, name)}
-                      renderOrder={2}
-                    >
-                      <boxGeometry args={[10.4, 10.4, 0.2]} />
-                      <meshBasicMaterial {...getFaceMaterial(name)} />
-                      {selectedFace === name &&
-                        selected &&
-                        !showFaceTextInput && (
-                          <FaceUI
-                            position={uiPos}
-                            normal={normal}
-                            onColorChange={handleColorChange}
-                            face={name}
-                            onTextClick={handleFaceTextClick}
-                          />
-                        )}
-                      {showFaceTextInput && selectedFace === name && (
-                        <FaceTextInput
-                          position={[0, 6, 0]}
-                          onTextSubmit={handleFaceTextSubmit}
-                        />
-                      )}
-                      {shouldShowIndicator(name) && (
-                        <FaceIndicator
-                          position={[0, 0, 0.2]}
-                          rotation={[0, 0, 0]}
-                          onClick={(e) => handleIndicatorClick(e, name)}
-                          isActive={isIndicatorActive(name)}
-                        />
-                      )}
-                    </mesh>
-                  );
-                })}
-              </>
-            )}
+        {/* Move UI elements inside main group */}
+        {selected && !showHeader && showObjectUI && (
+          <ObjectUI
+            key={`ui-${id}`}
+            position={[0, 15, 0]} // Simplified local position
+            onTransformToggle={handleTransformToggle}
+            onHeaderToggle={handleHeaderToggle}
+            onResizeToggle={handleResizeToggle}
+            onLineColorChange={handleLineColorChange}
+            showTransform={showTransform}
+            showHeader={showHeader}
+            followTarget={contentRef}
+            objectId={id}
+          />
+        )}
 
-            <Line
-              points={points}
-              color={color} // Use color instead of lineColor
-              lineWidth={1}
-              segments={true}
-              polygonOffset // <-- Enable polygon offset for the edge lines
-              polygonOffsetFactor={1} // <-- Bring lines forward
-              polygonOffsetUnits={1} // <-- Fine tune the offset
-            />
-          </group>
-          {/* Move ObjectUI outside scaled group and update position */}
-          {selected && !showHeader && showObjectUI && contentRef.current && (
-            <ObjectUI
-              key={contentRef.current.uuid} // <-- New: force remount when cube selection changes
-              position={[getUIPosition()]}
-              onTransformToggle={handleTransformToggle}
-              onHeaderToggle={handleHeaderToggle}
-              onResizeToggle={handleResizeToggle} // Passed handleResizeToggle to ObjectUI
-              onLineColorChange={handleLineColorChange} // <-- New prop
-              showTransform={showTransform}
-              showHeader={showHeader}
+        {/* Keep other UI elements inside main group with local positions */}
+        {selected && showHeader && (
+          <HeaderInput
+            position={[0, 10, 0]}
+            onTextSubmit={handleHeaderSubmit}
+            followTarget={contentRef}
+          />
+        )}
+        {headerText && (
+          <>
+            <TextSprite
+              text={headerText}
+              position={getHeaderPosition()}
               followTarget={contentRef}
-              objectId={contentRef.current.uuid} // Add this prop
+              onClick={handleTextClick}
+              style={{
+                ...textStyle,
+                isHeaderText: true, // Add this prop
+                fixedSize: false, // Allow camera-based scaling
+              }}
             />
-          )}
-          {/* Update header elements positions */}
-          {selected && showHeader && (
-            <HeaderInput
-              position={[0, 10, 0]}
-              onTextSubmit={handleHeaderSubmit}
-              followTarget={contentRef}
-            />
-          )}
-          {headerText && (
-            <>
-              <TextSprite
-                text={headerText}
-                position={getHeaderPosition()}
-                followTarget={contentRef}
-                onClick={handleTextClick}
-                style={{
-                  ...textStyle,
-                  isHeaderText: true, // Add this prop
-                  fixedSize: false, // Allow camera-based scaling
-                }}
-              />
-              {showHeaderTextStyleUI &&
-                activeTextStyleUI === contentRef.current && (
-                  <TextStyleUI
-                    position={getHeaderPosition()}
-                    followTarget={contentRef}
-                    onStyleChange={handleStyleChange}
-                    onClose={() => {
-                      setShowHeaderTextStyleUI(false);
-                      setActiveTextStyleUI(null);
-                    }}
-                  />
-                )}
-            </>
-          )}
-          {selected && isResizing && contentRef.current && (
-            <ResizeArrows onResize={handleResize} object={contentRef.current} />
-          )}
-        </group>
+            {showHeaderTextStyleUI &&
+              activeTextStyleUI === contentRef.current && (
+                <TextStyleUI
+                  position={getHeaderPosition()}
+                  followTarget={contentRef}
+                  onStyleChange={handleStyleChange}
+                  onClose={() => {
+                    setShowHeaderTextStyleUI(false);
+                    setActiveTextStyleUI(null);
+                  }}
+                />
+              )}
+          </>
+        )}
+        {selected && isResizing && contentRef.current && (
+          <ResizeArrows onResize={handleResize} object={contentRef.current} />
+        )}
       </group>
-      {/* Move TransformControls outside all groups to prevent scale inheritance */}
+
+      {/* Update TransformControls to target the main group */}
       {selected && showTransform && contentRef.current && (
         <DreiTransformControls
+          ref={transformControlsRef}
           object={contentRef.current}
           onObjectChange={handleDrag}
           onDragStart={() => {
