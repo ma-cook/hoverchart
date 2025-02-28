@@ -2,25 +2,26 @@
 export const memoize = (fn) => {
   const cache = new Map();
 
-  return (...args) => {
-    // Create a cache key from the arguments
-    const key = JSON.stringify(args);
+  return (arg) => {
+    // Ensure arg is valid and has required properties
+    if (!arg || !arg.type || !arg.face) {
+      console.warn('Invalid argument passed to memoized function:', arg);
+      return [0, 0, 0]; // Return safe default
+    }
 
-    // Check if we have a cached result
+    const key = JSON.stringify({
+      type: arg.type,
+      face: arg.face,
+      objectId: arg?.cube?.id || arg?.plane?.id,
+      position: arg?.cube?.position || arg?.plane?.position || arg.position,
+    });
+
     if (cache.has(key)) {
       return cache.get(key);
     }
 
-    // Calculate the result and store in cache
-    const result = fn(...args);
+    const result = fn(arg);
     cache.set(key, result);
-
-    // Limit cache size to prevent memory leaks
-    if (cache.size > 100) {
-      // Remove oldest entry
-      cache.delete([...cache.keys()][0]);
-    }
-
     return result;
   };
 };

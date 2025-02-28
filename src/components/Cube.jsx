@@ -299,29 +299,36 @@ const Cube = ({
     // Get face indicator props for this face
     const { position: facePos } = getFaceIndicatorProps(faceName);
 
-    // Calculate world position of indicator
+    // Create the complete indicator data
+    const indicatorData = {
+      type: 'cube',
+      face: faceName,
+      cube: {
+        id,
+        position,
+        scale,
+        ...contentRef.current,
+        userData: {
+          ...contentRef.current?.userData,
+          objectId: id.toString(),
+        },
+      },
+      position: [0, 0, 0], // This will be calculated
+      faceCenter: facePos,
+    };
+
+    // Calculate world position
     const worldPos = new THREE.Vector3();
     if (contentRef.current) {
       const worldMatrix = contentRef.current.matrixWorld;
       worldPos
         .set(facePos[0], facePos[1], facePos[2])
         .applyMatrix4(worldMatrix);
+      indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
     }
 
-    // Add proper ID reference and more data to ensure connection gets registered correctly
-    onFaceIndicatorClick?.({
-      cube: {
-        ...contentRef.current,
-        id: id, // Explicitly include the prop ID
-        userData: { ...contentRef.current?.userData, objectId: id.toString() },
-        position, // Include the position
-        scale, // Include the scale
-      },
-      face: faceName,
-      position: [worldPos.x, worldPos.y, worldPos.z], // Include world position
-      faceCenter: facePos, // Include local face position
-      type: 'cube',
-    });
+    // Call the handler with complete data
+    onFaceIndicatorClick?.(indicatorData);
   };
 
   const handleColorChange = (color, face) => {
