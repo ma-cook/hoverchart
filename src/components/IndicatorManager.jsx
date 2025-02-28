@@ -1,53 +1,30 @@
 import { useEffect, useState } from 'react';
 import { subscribeToConnections } from '../services/connectionsService';
 import FaceIndicator from './FaceIndicator';
+import * as THREE from 'three';
 
 const IndicatorManager = ({ userId }) => {
   const [indicators, setIndicators] = useState([]);
+  const [activeConnections, setActiveConnections] = useState(new Map());
 
+  // Track connections to prevent duplicate indicators
   useEffect(() => {
     if (!userId) return;
 
     const unsubscribe = subscribeToConnections(
       userId,
-      ({ type, connection }) => {
+      ({ type, id, connection }) => {
         if (!connection) return;
 
-        setIndicators((prev) => {
-          switch (type) {
-            case 'added':
-            case 'modified': {
-              const newIndicators = prev.filter(
-                (ind) => !ind.id.startsWith(`${connection.id}-`)
-              );
-
-              // Safely add start indicator if data exists
-              if (connection.start?.position) {
-                newIndicators.push({
-                  id: `${connection.id}-start`,
-                  position: connection.start.position,
-                  isActive: true,
-                });
-              }
-
-              // Safely add end indicator if data exists
-              if (connection.end?.position) {
-                newIndicators.push({
-                  id: `${connection.id}-end`,
-                  position: connection.end.position,
-                  isActive: true,
-                });
-              }
-
-              return newIndicators;
-            }
-            case 'removed':
-              return prev.filter(
-                (ind) => !ind.id.startsWith(`${connection.id}-`)
-              );
-            default:
-              return prev;
+        // Track connections in a map for reference
+        setActiveConnections((prev) => {
+          const newMap = new Map(prev);
+          if (type === 'removed') {
+            newMap.delete(id);
+          } else {
+            newMap.set(id, connection);
           }
+          return newMap;
         });
       }
     );
@@ -55,9 +32,10 @@ const IndicatorManager = ({ userId }) => {
     return () => unsubscribe();
   }, [userId]);
 
-  return indicators.map(({ id, position, isActive }) => (
-    <FaceIndicator key={id} position={position} isActive={isActive} />
-  ));
+  // We'll now let the individual cube components handle their
+  // own indicators, so we won't render separate indicators here
+
+  return null; // Don't render duplicate indicators
 };
 
 export default IndicatorManager;

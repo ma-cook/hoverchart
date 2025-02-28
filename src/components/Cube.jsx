@@ -193,7 +193,14 @@ const Cube = ({
     e.stopPropagation();
     setSelectedFace(selectedFace === faceName ? null : faceName);
     setShowObjectUI(false); // Hide ObjectUI when face is clicked
-    onFaceClick?.({ cube: contentRef.current, face: faceName });
+
+    // When clicking a face, set indicator mode to single and make this the active indicator
+    setIndicatorMode('single');
+    onFaceClick?.({
+      cube: contentRef.current,
+      face: faceName,
+      id: id, // Explicitly include ID
+    });
   };
 
   const handleSceneClick = () => {
@@ -307,25 +314,19 @@ const Cube = ({
         id,
         position,
         scale,
-        ...contentRef.current,
-        userData: {
-          ...contentRef.current?.userData,
-          objectId: id.toString(),
-        },
+        userData: { objectId: id.toString() },
+        // Only include essential properties
       },
-      position: [0, 0, 0], // This will be calculated
+      position: position, // Use cube's position as base
       faceCenter: facePos,
     };
 
-    // Calculate world position
-    const worldPos = new THREE.Vector3();
-    if (contentRef.current) {
-      const worldMatrix = contentRef.current.matrixWorld;
-      worldPos
-        .set(facePos[0], facePos[1], facePos[2])
-        .applyMatrix4(worldMatrix);
-      indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
-    }
+    // Calculate world position (from local face position)
+    const worldPos = new THREE.Vector3(facePos[0], facePos[1], facePos[2]);
+    worldPos.applyMatrix4(
+      contentRef.current?.matrixWorld || new THREE.Matrix4()
+    );
+    indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
 
     // Call the handler with complete data
     onFaceIndicatorClick?.(indicatorData);
@@ -554,42 +555,50 @@ const Cube = ({
     );
   };
 
+  // Update the isIndicatorConnected function to be more robust
   const isIndicatorConnected = (faceName) => {
     return connections.some(
       (conn) =>
-        (conn.start.cube === contentRef.current &&
+        // Check for object ID match rather than reference equality
+        (conn.start.objectId === id.toString() &&
           conn.start.face === faceName) ||
-        (conn.end.cube === contentRef.current && conn.end.face === faceName)
+        (conn.end.objectId === id.toString() && conn.end.face === faceName)
     );
   };
 
-  // Update shouldShowIndicator to hide unconnected indicators after connection
+  // Update shouldShowIndicator to make indicators visible on face click
   const shouldShowIndicator = (faceName) => {
-    // Always show indicators for connected faces
+    // Always show indicator if the face is connected
     if (isIndicatorConnected(faceName)) {
       return true;
     }
 
-    // Show all indicators when in connection mode and no connection exists yet
-    if (selectedIndicators.length > 0 && !isIndicatorConnected(faceName)) {
+    // Show indicators when in connection creation mode
+    if (selectedIndicators.length > 0) {
       return true;
     }
 
-    // Show all indicators when in indicators mode and no connections exist
-    if (indicatorMode === 'indicators' && connections.length === 0) {
+    // Show indicator for selected face
+    if (selectedFace === faceName && selected) {
       return true;
     }
 
-    // For other cases, maintain existing logic
-    if (!selected) return false;
+    // Show all indicators when explicitly requested
+    if (showAllIndicators && selected) {
+      return true;
+    }
 
+    // Show indicators based on mode
     switch (indicatorMode) {
       case 'all':
-        return showAllIndicators;
+        return selected || showAllIndicators;
+      case 'indicators':
+        return selected || showAllIndicators;
       case 'single':
         return (
-          activeIndicator?.cube === contentRef.current &&
-          activeIndicator?.face === faceName
+          (activeIndicator?.cube?.id === id &&
+            activeIndicator?.face === faceName) ||
+          (selected && faceName === selectedFace)
         );
       default:
         return false;

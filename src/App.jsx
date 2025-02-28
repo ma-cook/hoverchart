@@ -487,10 +487,9 @@ const App = () => {
 
   const handleObjectMove = useCallback(
     (id, newPosition) => {
-      // Get string ID for consistency
       const objectId = id.toString();
 
-      // Update local state immediately
+      // Update local object state
       setObjects((prev) =>
         prev.map((obj) =>
           obj.id === id
@@ -502,79 +501,81 @@ const App = () => {
         )
       );
 
-      // Find all related connections and update them immediately in the client
+      // Find connections related to this object and update them
       setConnections((prev) => {
-        // Find connections related to this object
-        const updatedConnections = prev.map((conn) => {
-          let updated = false;
-          let newConn = { ...conn };
+        // Check if any connections need updating
+        const needsUpdate = prev.some(
+          (conn) =>
+            conn.start?.objectId === objectId || conn.end?.objectId === objectId
+        );
 
-          // Handle start connection
-          if (conn.start?.objectId === objectId) {
-            // Calculate new position immediately
-            const newStartPos = calculateFacePosition({
-              ...conn.start,
-              cube: {
-                ...conn.start.cube,
-                position: [newPosition.x, newPosition.y, newPosition.z],
-              },
-            });
+        if (!needsUpdate) return prev;
 
-            newConn.start = {
-              ...conn.start,
-              position: newStartPos,
-            };
-            updated = true;
+        // Update all related connections
+        return prev.map((conn) => {
+          // If this connection isn't related to the moved object, leave it unchanged
+          if (
+            conn.start?.objectId !== objectId &&
+            conn.end?.objectId !== objectId
+          ) {
+            return conn;
           }
 
-          // Handle end connection
-          if (conn.end?.objectId === objectId) {
-            // Calculate new position immediately
-            const newEndPos = calculateFacePosition({
-              ...conn.end,
-              cube: {
-                ...conn.end.cube,
-                position: [newPosition.x, newPosition.y, newPosition.z],
-              },
-            });
+          // Clone the connection to modify it
+          const updatedConn = { ...conn };
 
-            newConn.end = {
-              ...conn.end,
-              position: newEndPos,
-            };
-            updated = true;
+          // Update positions for relevant ends
+          if (updatedConn.start?.objectId === objectId) {
+            // Re-calculate start position based on new object position
+            const faceCenter = updatedConn.start.faceCenter || [0, 0, 0];
+            // Transform the face position to world coordinates
+            const worldPos = new THREE.Vector3(...faceCenter);
+            // Apply the object's transform
+            const worldMatrix = new THREE.Matrix4()
+              .makeScale(...(updatedConn.start.cube?.scale || [1, 1, 1]))
+              .setPosition(newPosition.x, newPosition.y, newPosition.z);
+            worldPos.applyMatrix4(worldMatrix);
+
+            // Update the position
+            updatedConn.start.position = [worldPos.x, worldPos.y, worldPos.z];
           }
 
-          return updated ? newConn : conn;
+          if (updatedConn.end?.objectId === objectId) {
+            // Similar update for end position
+            const faceCenter = updatedConn.end.faceCenter || [0, 0, 0];
+            const worldPos = new THREE.Vector3(...faceCenter);
+            const worldMatrix = new THREE.Matrix4()
+              .makeScale(...(updatedConn.end.cube?.scale || [1, 1, 1]))
+              .setPosition(newPosition.x, newPosition.y, newPosition.z);
+            worldPos.applyMatrix4(worldMatrix);
+
+            updatedConn.end.position = [worldPos.x, worldPos.y, worldPos.z];
+          }
+
+          return updatedConn;
         });
-
-        return updatedConnections;
       });
 
-      // Debounce database updates to prevent too many writes
-      const now = Date.now();
-      if (
-        !localConnectionUpdateRef.current[objectId] ||
-        now - localConnectionUpdateRef.current[objectId] > 100
-      ) {
-        localConnectionUpdateRef.current[objectId] = now;
-
-        // Now update database without affecting UI state
-        if (user) {
+      // Save updates to database
+      if (user) {
+        const now = Date.now();
+        if (
+          !localConnectionUpdateRef.current[objectId] ||
+          now - localConnectionUpdateRef.current[objectId] > 100
+        ) {
+          localConnectionUpdateRef.current[objectId] = now;
           const object = objects.find((obj) => obj.id === id);
           if (object) {
             const updatedObject = {
               ...object,
               position: [newPosition.x, newPosition.y, newPosition.z],
             };
-
-            // Save to database
             saveObject(user.uid, updatedObject);
           }
         }
       }
     },
-    [user, objects, calculateFacePosition]
+    [user, objects]
   );
 
   // Update handleObjectUpdate to use debouncing and prevent unnecessary updates
@@ -761,9 +762,23 @@ const App = () => {
     }
   };
 
+  // Update handleFaceClick to set the active indicator correctly
   const handleFaceClick = (faceInfo) => {
-    setIndicatorMode('single');
-    setActiveIndicator(faceInfo);
+    console.log('Face clicked:', faceInfo);
+
+    // Ensure the info has an ID
+    if (faceInfo.id || faceInfo.cube?.id) {
+      setActiveIndicator({
+        ...faceInfo,
+        cube: {
+          ...faceInfo.cube,
+          id: faceInfo.id || faceInfo.cube?.id,
+        },
+      });
+
+      // Set indicator mode to show face indicator
+      setIndicatorMode('single');
+    }
   };
 
   const handleCanvasClick = (event) => {

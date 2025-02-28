@@ -2,18 +2,27 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
-const FaceIndicator = ({ position, rotation, onClick, isActive }) => {
+const FaceIndicator = ({
+  position = [0, 0, 0],
+  rotation = [0, 0, 0],
+  onClick,
+  isActive,
+}) => {
   const meshRef = useRef();
   const groupRef = useRef();
+
+  // Add debug logging to see if this component is rendering
+  console.log('FaceIndicator rendering', { position, isActive });
 
   useFrame(() => {
     if (meshRef.current && groupRef.current) {
       const worldScale = new THREE.Vector3();
       groupRef.current.getWorldScale(worldScale);
+      // Make indicator size consistent regardless of parent scale
       meshRef.current.scale.set(
-        1 / worldScale.x,
-        1 / worldScale.y,
-        1 / worldScale.z
+        1 / Math.max(0.1, worldScale.x),
+        1 / Math.max(0.1, worldScale.y),
+        1 / Math.max(0.1, worldScale.z)
       );
     }
   });
@@ -28,12 +37,13 @@ const FaceIndicator = ({ position, rotation, onClick, isActive }) => {
           if (e) {
             e.stopPropagation();
           }
-          onClick && onClick(e);
+          console.log('FaceIndicator clicked');
+          onClick?.(e);
         }}
       >
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial
-          color={isActive ? '#4488ff' : 'white'}
+          color={isActive ? '#4488ff' : '#ffffff'}
           opacity={0.9}
           transparent
         />
