@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 
 // Compare arrays with a small epsilon tolerance for floating point
@@ -22,6 +22,33 @@ const ConnectionUpdater = ({
   // Reference to track if positions changed
   const lastPositions = useRef({});
 
+  // Add initialPositionSync flag to force first-frame position sync
+  const initialPositionSync = useRef(false);
+
+  // Run an immediate position calculation once
+  useEffect(() => {
+    if (!initialPositionSync.current && connections.length > 0) {
+      // Calculate all connection positions immediately
+      const updatedConnections = connections.map((conn) => {
+        const newStartPos = calculateFacePosition(conn.start);
+        const newEndPos = calculateFacePosition(conn.end);
+
+        // Store positions for comparison in frame updates
+        lastPositions.current[`${conn.id}-start`] = [...newStartPos];
+        lastPositions.current[`${conn.id}-end`] = [...newEndPos];
+
+        return {
+          ...conn,
+          start: { ...conn.start, position: newStartPos },
+          end: { ...conn.end, position: newEndPos },
+        };
+      });
+
+      setConnections(updatedConnections);
+      initialPositionSync.current = true;
+    }
+  }, [connections, calculateFacePosition, setConnections]);
+
   useFrame((state, delta) => {
     // Skip frames to reduce calculation frequency
     frameCount.current += 1;
@@ -32,6 +59,8 @@ const ConnectionUpdater = ({
 
       // Calculate new positions without updating state immediately
       const updatedConnections = connections.map((conn) => {
+        if (!conn.start || !conn.end) return conn;
+
         // Calculate new positions using the memoized function
         const newStartPos = calculateFacePosition(conn.start);
         const newEndPos = calculateFacePosition(conn.end);

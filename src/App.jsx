@@ -979,6 +979,80 @@ const App = () => {
     });
   }, []);
 
+  // Add this new function to synchronize connections with objects
+  const synchronizeConnectionPositions = useCallback(
+    (connections, objectsData) => {
+      if (!connections.length || !objectsData.length) return connections;
+
+      return connections.map((conn) => {
+        // Skip if missing required data
+        if (!conn.start?.objectId || !conn.end?.objectId) return conn;
+
+        // Find the related objects
+        const startObject = objectsData.find(
+          (obj) => obj.id.toString() === conn.start.objectId
+        );
+        const endObject = objectsData.find(
+          (obj) => obj.id.toString() === conn.end.objectId
+        );
+
+        if (!startObject || !endObject) return conn;
+
+        // Create indicators with current object data
+        const startIndicator = {
+          type: conn.start.type,
+          face: conn.start.face,
+          faceCenter: conn.start.faceCenter,
+          cube: {
+            ...conn.start.cube,
+            position: startObject.position,
+            scale: startObject.scale || [1, 1, 1],
+          },
+          objectId: conn.start.objectId,
+        };
+
+        const endIndicator = {
+          type: conn.end.type,
+          face: conn.end.face,
+          faceCenter: conn.end.faceCenter,
+          cube: {
+            ...conn.end.cube,
+            position: endObject.position,
+            scale: endObject.scale || [1, 1, 1],
+          },
+          objectId: conn.end.objectId,
+        };
+
+        // Calculate updated positions
+        const newStartPos = calculateFacePosition(startIndicator);
+        const newEndPos = calculateFacePosition(endIndicator);
+
+        return {
+          ...conn,
+          start: {
+            ...conn.start,
+            position: newStartPos,
+            cube: {
+              ...conn.start.cube,
+              position: startObject.position,
+              scale: startObject.scale,
+            },
+          },
+          end: {
+            ...conn.end,
+            position: newEndPos,
+            cube: {
+              ...conn.end.cube,
+              position: endObject.position,
+              scale: endObject.scale,
+            },
+          },
+        };
+      });
+    },
+    [calculateFacePosition]
+  );
+
   // Add a subscription effect for connections
   useEffect(() => {
     if (user) {
@@ -1004,13 +1078,30 @@ const App = () => {
             default:
               newConnections = prev;
           }
-          // Map object references whenever connections change
-          return mapConnectionsToObjects(newConnections, objects);
+
+          // Map object references
+          const withRefs = mapConnectionsToObjects(newConnections, objects);
+
+          // Immediately synchronize positions with current object positions
+          return synchronizeConnectionPositions(withRefs, objects);
         });
       });
       return () => unsubscribe();
     }
-  }, [user, objects, mapConnectionsToObjects]); // Add objects to dependencies
+  }, [user, objects, mapConnectionsToObjects, synchronizeConnectionPositions]);
+
+  // Add effect to re-synchronize connections when objects change
+  useEffect(() => {
+    if (connections.length && objects.length) {
+      const updatedConnections = synchronizeConnectionPositions(
+        connections,
+        objects
+      );
+      if (!isEqual(updatedConnections, connections)) {
+        setConnections(updatedConnections);
+      }
+    }
+  }, [objects, synchronizeConnectionPositions]);
 
   // Add effect to sync lineTexts with connections
   useEffect(() => {
