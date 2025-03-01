@@ -20,15 +20,19 @@ const ObjectUI = ({
 
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
-      const targetScale = followTarget.current.scale;
-      const cubeHeight = 10 * targetScale.y;
-      const topEdgeOffset = cubeHeight / 2;
+      // Get the target's position and scale
       const targetPos = followTarget.current.position;
+      const targetScale =
+        followTarget.current.scale || new THREE.Vector3(1, 1, 1);
 
-      // Calculate new position
+      // Calculate offset based on cube dimensions - use actual cube scale
+      const cubeHeight = 10 * (targetScale.y || 1); // 10 is the base cube height
+      const topEdgeOffset = cubeHeight / 2; // Half height since cube is centered
+
+      // Calculate the position above the cube with increased offset
       const newPos = new THREE.Vector3(
         targetPos.x,
-        targetPos.y + topEdgeOffset + 10,
+        targetPos.y + topEdgeOffset + 16, // Increased vertical offset
         targetPos.z
       );
 
