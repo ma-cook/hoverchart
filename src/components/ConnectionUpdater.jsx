@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 
-// Compare arrays with a small epsilon tolerance for floating point
+// Simplified array comparison
 const arraysEqual = (a, b) => {
   if (!a || !b || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -35,7 +35,6 @@ const ensureValidPosition = (pos, fallback = [0, 0, 0]) => {
     return [pos.x, pos.y, pos.z];
   }
 
-  console.warn('Invalid position encountered, using fallback', pos);
   return fallback;
 };
 
@@ -44,11 +43,11 @@ const ConnectionUpdater = ({
   setConnections,
   calculateFacePosition,
 }) => {
-  // Add frame skipping to reduce update frequency
+  // Simple frame skipping for better performance
   const frameCount = useRef(0);
-  const FRAMES_TO_SKIP = 5; // Increase from 3 to 5 to reduce updates
+  const FRAMES_TO_SKIP = 5;
 
-  // Add state to track if the component is mounted to prevent updates after unmount
+  // Add state to track if the component is mounted
   const isMounted = useRef(true);
 
   // Set up unmount cleanup
@@ -58,72 +57,7 @@ const ConnectionUpdater = ({
     };
   }, []);
 
-  // Reference to track if positions changed
-  const lastPositions = useRef({});
-
-  // Add initialPositionSync flag to force first-frame position sync
-  const initialPositionSync = useRef(false);
-
-  // Run an immediate position calculation once with debouncing
-  useEffect(() => {
-    // Skip if we've already done initial sync or no connections
-    if (initialPositionSync.current || !connections.length) return;
-
-    // Use a timeout to prevent multiple runs during initial render cascade
-    const timer = setTimeout(() => {
-      if (!isMounted.current) return;
-
-      try {
-        // Calculate all connection positions immediately
-        const updatedConnections = connections.map((conn) => {
-          if (!conn.start || !conn.end) return conn;
-
-          try {
-            let startPos, endPos;
-
-            // Try to get positions with error handling
-            try {
-              startPos = calculateFacePosition(conn.start);
-              startPos = ensureValidPosition(startPos, conn.start.position);
-            } catch (err) {
-              console.error('Error calculating start position:', err);
-              startPos = ensureValidPosition(conn.start.position);
-            }
-
-            try {
-              endPos = calculateFacePosition(conn.end);
-              endPos = ensureValidPosition(endPos, conn.end.position);
-            } catch (err) {
-              console.error('Error calculating end position:', err);
-              endPos = ensureValidPosition(conn.end.position);
-            }
-
-            // Store positions for comparison in frame updates
-            lastPositions.current[`${conn.id}-start`] = [...startPos];
-            lastPositions.current[`${conn.id}-end`] = [...endPos];
-
-            return {
-              ...conn,
-              start: { ...conn.start, position: startPos },
-              end: { ...conn.end, position: endPos },
-            };
-          } catch (error) {
-            console.error('Error processing connection', conn.id, error);
-            return conn;
-          }
-        });
-
-        setConnections(updatedConnections);
-      } catch (err) {
-        console.error('Error in initial position sync:', err);
-      }
-      initialPositionSync.current = true;
-    }, 200); // Add a small delay to let things settle
-
-    return () => clearTimeout(timer);
-  }, [connections, calculateFacePosition, setConnections]);
-
-  // Optimize the frame update function
+  // Run update on every frame (with skipping)
   useFrame((state, delta) => {
     // Only proceed if mounted and if connections exist
     if (!isMounted.current || connections.length === 0) return;
@@ -137,113 +71,49 @@ const ConnectionUpdater = ({
     let updatedConnections = connections;
 
     try {
-      // Calculate new positions without updating state immediately
+      // Calculate new positions without caching
       updatedConnections = connections.map((conn) => {
         if (!conn.start || !conn.end) return conn;
 
         try {
-          // Create backups of original positions for logging if there are changes
-          const originalStartPos = conn.start.position
-            ? [...conn.start.position]
-            : null;
-          const originalEndPos = conn.end.position
-            ? [...conn.end.position]
-            : null;
-
-          // Get positions with fallbacks for each potential failure point
-          let newStartPos, newEndPos;
-
-          // Handle start position calculation
-          try {
-            // For planes, use the stored worldPosition if available (most reliable)
-            if (
-              conn.start.type === 'plane' &&
-              Array.isArray(conn.start.worldPosition)
-            ) {
-              newStartPos = ensureValidPosition(conn.start.worldPosition);
-            } else {
-              // Otherwise use the standard calculation
-              newStartPos = calculateFacePosition(conn.start);
-              newStartPos = ensureValidPosition(
-                newStartPos,
-                conn.start.position
-              );
-            }
-          } catch (err) {
-            console.warn('Error calculating start position:', err);
-            newStartPos = ensureValidPosition(conn.start.position);
-          }
-
-          // Handle end position calculation
-          try {
-            // For planes, use the stored worldPosition if available
-            if (
-              conn.end.type === 'plane' &&
-              Array.isArray(conn.end.worldPosition)
-            ) {
-              newEndPos = ensureValidPosition(conn.end.worldPosition);
-            } else {
-              // Otherwise use the standard calculation
-              newEndPos = calculateFacePosition(conn.end);
-              newEndPos = ensureValidPosition(newEndPos, conn.end.position);
-            }
-          } catch (err) {
-            console.warn('Error calculating end position:', err);
-            newEndPos = ensureValidPosition(conn.end.position);
-          }
-
-          // Generate position keys
-          const startKey = `${conn.id}-start`;
-          const endKey = `${conn.id}-end`;
-
-          // Check if positions actually changed
-          const startChanged = !arraysEqual(
-            lastPositions.current[startKey],
-            newStartPos
+          // Always recalculate positions fresh
+          const newStartPos = ensureValidPosition(
+            calculateFacePosition(conn.start),
+            conn.start.position
           );
-          const endChanged = !arraysEqual(
-            lastPositions.current[endKey],
-            newEndPos
+
+          const newEndPos = ensureValidPosition(
+            calculateFacePosition(conn.end),
+            conn.end.position
           );
+
+          // Check if positions have actually changed
+          const startChanged = !arraysEqual(conn.start.position, newStartPos);
+          const endChanged = !arraysEqual(conn.end.position, newEndPos);
 
           if (startChanged || endChanged) {
             hasChanges = true;
 
-            // Log position changes for debugging
-            if (startChanged && originalStartPos) {
-              console.log(`Connection ${conn.id} start pos changed:`, {
-                from: originalStartPos,
-                to: newStartPos,
-              });
+            // Calculate dash offset animation
+            let newDashOffset = conn.dashOffset || 0;
+            if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
+              if (conn.dashDirection === 'left') {
+                newDashOffset = newDashOffset - delta * 2;
+              } else if (conn.dashDirection === 'right') {
+                newDashOffset = newDashOffset + delta * 2;
+              }
             }
-
-            if (endChanged && originalEndPos) {
-              console.log(`Connection ${conn.id} end pos changed:`, {
-                from: originalEndPos,
-                to: newEndPos,
-              });
-            }
-
-            // Store new positions for next comparison
-            lastPositions.current[startKey] = [...newStartPos];
-            lastPositions.current[endKey] = [...newEndPos];
 
             // Return updated connection with new positions
             return {
               ...conn,
-              start: {
-                ...conn.start,
-                position: newStartPos,
-              },
-              end: {
-                ...conn.end,
-                position: newEndPos,
-              },
-              dashOffset: updateDashOffset(conn, delta),
+              start: { ...conn.start, position: newStartPos },
+              end: { ...conn.end, position: newEndPos },
+              dashOffset: newDashOffset,
             };
           }
         } catch (error) {
-          console.error('Error processing connection:', error, 'conn:', conn);
+          console.error('Error processing connection:', error);
         }
 
         // No change or error - return original connection

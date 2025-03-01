@@ -315,14 +315,65 @@ const Plane = ({
     z: 0,
   };
 
+  // Add a ref to store the last valid world position
+  const lastWorldPosRef = useRef(null);
+
+  // Update effect to maintain world position
+  useEffect(() => {
+    if (groupRef.current && contentRef.current) {
+      const worldPos = new THREE.Vector3();
+      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+
+      groupRef.current.updateWorldMatrix(true, false);
+      groupRef.current.getWorldPosition(worldPos);
+
+      offset.applyQuaternion(groupRef.current.quaternion);
+      worldPos.add(offset);
+
+      // Store the world position
+      lastWorldPosRef.current = [worldPos.x, worldPos.y, worldPos.z];
+
+      // Also store matrix data
+      const worldMatrix = groupRef.current.matrixWorld.clone();
+      groupRef.current._worldMatrix = worldMatrix;
+    }
+  }, [position, currentScale]);
+
+  // Update handleDrag to better maintain worldPosition
   const handleDrag = (e) => {
-    // Update position from transform controls
     if (groupRef.current) {
       const newPos = e.target.object.position;
       groupRef.current.position.copy(newPos);
+
+      // Calculate the new world position with correct offset
+      const worldPos = new THREE.Vector3();
+      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+
+      groupRef.current.updateWorldMatrix(true, false);
+      groupRef.current.getWorldPosition(worldPos);
+
+      offset.applyQuaternion(groupRef.current.quaternion);
+      worldPos.add(offset);
+
+      // Store the calculated position in ref for immediate access
+      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
+      lastWorldPosRef.current = worldPosArray;
+
+      // Also store the world matrix for precise positioning
+      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
+
+      // Send comprehensive data to ensure connections update correctly
       if (onUpdate) {
         onUpdate(id, {
+          type: 'plane',
           position: [newPos.x, newPos.y, newPos.z],
+          worldPosition: worldPosArray,
+          planeData: {
+            worldMatrix,
+            position: [newPos.x, newPos.y, newPos.z],
+            scale: currentScale,
+            offset: [0, -5 * currentScale[1], 0],
+          },
         });
       }
     }
@@ -441,64 +492,58 @@ const Plane = ({
     e.stopPropagation();
 
     try {
-      // Store the plane's reference
       const planeRef = contentRef.current || groupRef.current;
-
-      // Ensure we have a valid plane reference
       if (!planeRef) {
         console.error('No valid plane reference found');
         return;
       }
 
-      // Calculate absolute world position for the indicator
-      const worldPos = new THREE.Vector3(0, -5 * currentScale[1], 0);
+      // Update the matrix first
       planeRef.updateWorldMatrix(true, false);
-      worldPos.applyMatrix4(planeRef.matrixWorld);
+      // Get the world matrix AFTER updating
+      const worldMatrix = planeRef.matrixWorld.clone();
 
-      // Store position as array and validate
+      // Calculate the actual world position with offset
+      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+      const worldPos = new THREE.Vector3();
+
+      planeRef.getWorldPosition(worldPos);
+      offset.applyQuaternion(planeRef.quaternion);
+      worldPos.add(offset);
+
+      // Store the calculated world position
       const positionArray = [worldPos.x, worldPos.y, worldPos.z];
-
-      // Ensure all values are valid numbers
-      if (positionArray.some((v) => typeof v !== 'number' || isNaN(v))) {
-        console.error('Invalid position calculated:', positionArray);
-        return;
-      }
-
-      // Get the matrix elements as a flat array that can be serialized
-      const worldMatrixArray = planeRef.matrixWorld.elements.slice();
 
       // Create enhanced indicator data
       const stringId = String(id);
       const indicator = {
         type: 'plane',
-        position: positionArray.slice(), // Make a copy to prevent reference issues
-        worldPosition: positionArray.slice(), // Make another copy
+        position: positionArray,
+        worldPosition: positionArray,
         face: 'bottom',
-        // Store complete plane data
         plane: planeRef,
-        scale: [...currentScale], // Clone the scale
+        scale: [...currentScale],
         planeData: {
-          position: [...position], // Clone position
-          scale: [...currentScale], // Clone scale
-          worldMatrixArray: worldMatrixArray, // Store as array instead of Matrix4 object
+          position: [...position],
+          scale: [...currentScale],
+          worldMatrix: Array.from(worldMatrix.elements), // Use the matrix we created above
+          offset: [0, -5 * currentScale[1], 0],
         },
-        // Include cube format for compatibility
+        // Include standardized data for compatibility
         cube: {
           id: stringId,
-          position: [...position], // Clone position
-          scale: [...currentScale], // Clone scale
+          position,
+          scale: currentScale,
           userData: { objectId: stringId },
         },
         id: stringId,
         objectId: stringId,
-        // Store offset for recalculation
-        offset: [0, -5 * currentScale[1], 0],
       };
 
-      console.log('Created plane indicator with data:', {
-        position: positionArray,
+      console.log('Plane indicator created:', {
         id: stringId,
-        scale: currentScale,
+        worldPosition: positionArray,
+        localPosition: position,
       });
 
       onIndicatorSelected?.();

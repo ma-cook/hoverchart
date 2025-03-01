@@ -15,14 +15,8 @@ enableIndexedDbPersistence(db).catch((err) => {
 });
 
 const serializeConnection = (connection) => {
-  // Log input to help debug
-  console.log('Serializing connection with positions:', {
-    startPos: connection.start?.position,
-    endPos: connection.end?.position,
-  });
-
-  // Create a deep copy to avoid modifying the original
-  const serialized = {
+  // Create a simplified serialized object without special caching logic
+  return {
     id: connection.id,
     start: {
       type: connection.start?.type || 'cube',
@@ -49,50 +43,11 @@ const serializeConnection = (connection) => {
       underline: connection.textStyle?.underline || false,
     },
   };
-
-  // Special handling for plane connections to preserve position data
-  if (connection.start?.type === 'plane') {
-    serialized.start.worldPosition =
-      connection.start.worldPosition || connection.start.position;
-    serialized.start.planeData = connection.start.planeData || {
-      position: connection.start.cube?.position || connection.start.position,
-      scale: connection.start.cube?.scale || [1, 1, 1],
-    };
-  }
-
-  if (connection.end?.type === 'plane') {
-    serialized.end.worldPosition =
-      connection.end.worldPosition || connection.end.position;
-    serialized.end.planeData = connection.end.planeData || {
-      position: connection.end.cube?.position || connection.end.position,
-      scale: connection.end.cube?.scale || [1, 1, 1],
-    };
-  }
-
-  return serialized;
 };
 
-// Create a cache to track recently saved connections
-const recentSaveCache = new Map();
-const SAVE_DEBOUNCE_TIME = 500; // ms
-
-// Add error handling to save operations
+// Save connection with simplified logic
 export const saveConnection = async (userId, connection) => {
   if (!userId || !connection?.id) return;
-
-  // Create cache key
-  const cacheKey = `${userId}_${connection.id}`;
-  const now = Date.now();
-  const lastSave = recentSaveCache.get(cacheKey);
-
-  // Debounce saves - don't save the same connection more than once every 500ms
-  if (lastSave && now - lastSave < SAVE_DEBOUNCE_TIME) {
-    console.log(`Debouncing save for connection ${connection.id}`);
-    return;
-  }
-
-  // Update last save time
-  recentSaveCache.set(cacheKey, now);
 
   try {
     const connectionRef = doc(
@@ -118,15 +73,9 @@ export const saveConnection = async (userId, connection) => {
 
     const serializedConnection = serializeConnection(connection);
     await setDoc(connectionRef, serializedConnection);
-
-    // Log success for debugging
-    console.log(`Connection ${connection.id} saved with objects:`, {
-      start: connection.start?.objectId,
-      end: connection.end?.objectId,
-    });
   } catch (error) {
     console.error('Error saving connection:', error);
-    // Implement local storage fallback
+    // Simple fallback
     const fallbackKey = `connection_${userId}_${connection.id}`;
     localStorage.setItem(fallbackKey, JSON.stringify(connection));
     throw error;
@@ -156,6 +105,7 @@ const createSubscriptionWithRetry = (
           retryCount = 0;
 
           snapshot.docChanges().forEach((change) => {
+            // Send the raw connection data without processing
             callback({
               type: change.type,
               id: change.doc.id,
