@@ -21,20 +21,21 @@ const serializeConnection = (connection) => {
     endPos: connection.end?.position,
   });
 
-  return {
+  // Create a deep copy to avoid modifying the original
+  const serialized = {
     id: connection.id,
     start: {
       type: connection.start?.type || 'cube',
       face: connection.start?.face || 0,
       objectId: connection.start?.objectId || null,
-      position: connection.start?.position || [0, 0, 0], // Preserve position data
+      position: connection.start?.position || [0, 0, 0],
       faceCenter: connection.start?.faceCenter || [0, 0, 0],
     },
     end: {
       type: connection.end?.type || 'cube',
       face: connection.end?.face || 0,
       objectId: connection.end?.objectId || null,
-      position: connection.end?.position || [0, 0, 0], // Preserve position data
+      position: connection.end?.position || [0, 0, 0],
       faceCenter: connection.end?.faceCenter || [0, 0, 0],
     },
     lineStyle: connection.lineStyle || 'straight',
@@ -48,6 +49,27 @@ const serializeConnection = (connection) => {
       underline: connection.textStyle?.underline || false,
     },
   };
+
+  // Special handling for plane connections to preserve position data
+  if (connection.start?.type === 'plane') {
+    serialized.start.worldPosition =
+      connection.start.worldPosition || connection.start.position;
+    serialized.start.planeData = connection.start.planeData || {
+      position: connection.start.cube?.position || connection.start.position,
+      scale: connection.start.cube?.scale || [1, 1, 1],
+    };
+  }
+
+  if (connection.end?.type === 'plane') {
+    serialized.end.worldPosition =
+      connection.end.worldPosition || connection.end.position;
+    serialized.end.planeData = connection.end.planeData || {
+      position: connection.end.cube?.position || connection.end.position,
+      scale: connection.end.cube?.scale || [1, 1, 1],
+    };
+  }
+
+  return serialized;
 };
 
 // Create a cache to track recently saved connections

@@ -47,6 +47,7 @@ const Plane = ({
 }) => {
   const groupRef = useRef();
   const meshRef = useRef(); // Add meshRef
+  const contentRef = useRef(); // Add contentRef
   const { camera } = useThree();
   const size = 5;
   const width = 10,
@@ -435,43 +436,76 @@ const Plane = ({
     };
   };
 
-  // New function to get world position for plane indicator
-  const calculateIndicatorPosition = () => {
-    const worldMatrix = new THREE.Matrix4();
-    const localPos = new THREE.Vector3(...getIndicatorPositions().bottom);
-    const scaleMatrix = new THREE.Matrix4();
-
-    if (groupRef.current) {
-      // Get the plane's world matrix
-      groupRef.current.updateWorldMatrix(true, false);
-      worldMatrix.copy(groupRef.current.matrixWorld);
-
-      // Apply scale
-      scaleMatrix.makeScale(...scale);
-      worldMatrix.multiply(scaleMatrix);
-
-      // Transform the local position to world space
-      localPos.applyMatrix4(worldMatrix);
-    }
-
-    return [localPos.x, localPos.y, localPos.z];
-  };
-
   // Update indicator click handler to use the new function
   const handleIndicatorClick = (e) => {
     e.stopPropagation();
-    const indicator = {
-      plane: groupRef.current,
-      type: 'plane',
-      position: calculateIndicatorPosition(),
-    };
 
-    // Call parent handlers first to show all indicators
-    onIndicatorSelected?.();
-    onFaceIndicatorClick?.(indicator);
+    try {
+      // Store the plane's reference
+      const planeRef = contentRef.current || groupRef.current;
 
-    // Then update local state
-    setIndicatorSelected(true);
+      // Ensure we have a valid plane reference
+      if (!planeRef) {
+        console.error('No valid plane reference found');
+        return;
+      }
+
+      // Calculate absolute world position for the indicator
+      const worldPos = new THREE.Vector3(0, -5 * currentScale[1], 0);
+      planeRef.updateWorldMatrix(true, false);
+      worldPos.applyMatrix4(planeRef.matrixWorld);
+
+      // Store position as array and validate
+      const positionArray = [worldPos.x, worldPos.y, worldPos.z];
+
+      // Ensure all values are valid numbers
+      if (positionArray.some((v) => typeof v !== 'number' || isNaN(v))) {
+        console.error('Invalid position calculated:', positionArray);
+        return;
+      }
+
+      // Get the matrix elements as a flat array that can be serialized
+      const worldMatrixArray = planeRef.matrixWorld.elements.slice();
+
+      // Create enhanced indicator data
+      const stringId = String(id);
+      const indicator = {
+        type: 'plane',
+        position: positionArray.slice(), // Make a copy to prevent reference issues
+        worldPosition: positionArray.slice(), // Make another copy
+        face: 'bottom',
+        // Store complete plane data
+        plane: planeRef,
+        scale: [...currentScale], // Clone the scale
+        planeData: {
+          position: [...position], // Clone position
+          scale: [...currentScale], // Clone scale
+          worldMatrixArray: worldMatrixArray, // Store as array instead of Matrix4 object
+        },
+        // Include cube format for compatibility
+        cube: {
+          id: stringId,
+          position: [...position], // Clone position
+          scale: [...currentScale], // Clone scale
+          userData: { objectId: stringId },
+        },
+        id: stringId,
+        objectId: stringId,
+        // Store offset for recalculation
+        offset: [0, -5 * currentScale[1], 0],
+      };
+
+      console.log('Created plane indicator with data:', {
+        position: positionArray,
+        id: stringId,
+        scale: currentScale,
+      });
+
+      onIndicatorSelected?.();
+      onFaceIndicatorClick?.(indicator);
+    } catch (error) {
+      console.error('Error in handleIndicatorClick:', error);
+    }
   };
 
   // Add helper to check if indicator is connected
@@ -585,7 +619,7 @@ const Plane = ({
   return (
     <>
       <group ref={groupRef} position={position}>
-        <group scale={currentScale}>
+        <group ref={contentRef} scale={currentScale}>
           <mesh ref={meshRef} onClick={handleClick}>
             <planeGeometry args={[10, 10]} />
             <meshBasicMaterial

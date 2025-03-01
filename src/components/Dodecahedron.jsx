@@ -420,17 +420,36 @@ const Sphere = ({
   const handleIndicatorClick = (faceIndex, e) => {
     if (e) e.stopPropagation();
     const { center } = getFaceInfo(faceIndex);
+
+    // Log the ID we're using to help debug
+    console.log('Dodecahedron handleIndicatorClick ID:', id, typeof id);
+
+    // Create properly formatted indicator data with all possible ID formats
+    const stringId = String(id);
     const indicator = {
-      cube: contentRef.current,
-      face: faceIndex,
       type: 'sphere',
-      faceCenter: center,
+      face: faceIndex,
+      cube: {
+        id: stringId, // Consistent string ID
+        position: position,
+        scale: scale,
+        userData: {
+          objectId: stringId, // Also include userData.objectId for consistency with Cube
+        },
+      },
       position: center,
+      faceCenter: center,
+      // Also include a direct ID reference at the top level for more robustness
+      id: stringId,
+      objectId: stringId,
     };
-    // Persist activation by setting global indicator state.
+
+    // Debug log the created indicator
+    console.log('Created dodecahedron indicator:', indicator);
+
+    // Persist activation by setting global indicator state
     onIndicatorSelected?.();
     onFaceIndicatorClick?.(indicator);
-    // Omit any local toggle so the indicator remains active.
   };
 
   const handleHeaderClick = (e) => {

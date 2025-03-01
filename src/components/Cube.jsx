@@ -195,7 +195,6 @@ const Cube = ({
     setShowObjectUI(false); // Hide ObjectUI when face is clicked
 
     // When clicking a face, set indicator mode to single and make this the active indicator
-
     onFaceClick?.({
       cube: contentRef.current,
       face: faceName,
@@ -526,35 +525,23 @@ const Cube = ({
     depthWrite: !!faceColors[faceName],
   });
 
-  // Calculate header position relative to cube's top edge
-  const getHeaderPosition = () => {
-    const cubeHeight = 10 * scale[1]; // cube height * y-scale
-    const topEdgeOffset = cubeHeight / 2; // half height since cube is centered
-    return [
-      0, // Use local coordinates since we're in the cube's group
-      topEdgeOffset + 10, // Just above the top face
-      0,
-    ];
+  // Update the position calculation functions to use consistent logic like Plane and Dodecahedron
+  const getUIPositions = () => {
+    const cubeHeight = 10 * scale[1]; // Use current scale
+    const verticalOffset = cubeHeight / 2;
+    const zOffset = 0.1; // Small z-offset to avoid z-fighting
+
+    return {
+      objectUI: [0, verticalOffset + 20, zOffset], // Position for ObjectUI above cube
+      headerInput: [0, verticalOffset + 4, zOffset],
+      headerText: [0, verticalOffset + 4, zOffset],
+      textStyleUI: [0, verticalOffset + 6, zOffset],
+    };
   };
 
-  const getFaceUIPosition = (faceName) => {
-    switch (faceName) {
-      case 'front':
-        return [0, 1, 0];
-      case 'back':
-        return [0, 1, 0];
-      case 'top':
-        return [0, 0, 0];
-      case 'bottom':
-        return [0, 0, 0];
-      case 'right':
-        return [0, 0, 0];
-      case 'left':
-        return [0, 0, 0];
-      default:
-        return [0, 0, 0];
-    }
-  };
+  // Replace the old getUIPosition function with this new implementation
+
+  // Calculate header input position relative to cube's top edge
 
   const isIndicatorActive = (faceName) => {
     return selectedIndicators.some(
@@ -633,9 +620,28 @@ const Cube = ({
     return baseOffset + textHeight / 2; // Add half text height to keep bottom at base offset
   };
 
+  const getFaceUIPosition = (faceName) => {
+    switch (faceName) {
+      case 'front':
+        return [0, 1, 0];
+      case 'back':
+        return [0, 0, 0];
+      case 'top':
+        return [0, 0, 0];
+      case 'bottom':
+        return [0, 0, 0];
+      case 'right':
+        return [0, 0, 0];
+      case 'left':
+        return [0, 0, 0];
+      default:
+        return [0, 0, 0];
+    }
+  };
+
   return (
     <>
-      {/* Main cube group with all its components */}
+      {/* Simplify group structure - single group with position */}
       <group ref={contentRef} position={position} scale={scale}>
         <mesh
           onClick={(e) => {
@@ -819,32 +825,47 @@ const Cube = ({
           polygonOffsetUnits={1} // <-- Fine tune the offset
         />
 
-        {/* Keep header input and text inside the group */}
-        {selected && showHeader && (
-          <HeaderInput
-            position={getHeaderPosition()}
-            onTextSubmit={handleHeaderSubmit}
-            followTarget={null}
+        {/* Move UI elements inside main group */}
+        {selected && !showHeader && showObjectUI && (
+          <ObjectUI
+            key={`ui-${id}`}
+            position={getUIPositions().objectUI}
+            onTransformToggle={handleTransformToggle}
+            onHeaderToggle={handleHeaderToggle}
+            onResizeToggle={handleResizeToggle}
+            onLineColorChange={handleLineColorChange}
+            showTransform={showTransform}
+            showHeader={showHeader}
+            followTarget={null} // Important: Don't set followTarget here, it's already within the group
+            objectId={id}
           />
         )}
 
+        {/* Keep other UI elements inside main group with local positions */}
+        {selected && showHeader && (
+          <HeaderInput
+            position={getUIPositions().headerInput}
+            onTextSubmit={handleHeaderSubmit}
+            followTarget={null} // Remove followTarget here too
+          />
+        )}
         {headerText && (
           <>
             <TextSprite
               text={headerText}
-              position={getHeaderPosition()}
+              position={getUIPositions().headerText}
               followTarget={null}
               onClick={handleTextClick}
               style={{
                 ...textStyle,
-                isHeaderText: true,
-                fixedSize: false,
+                isHeaderText: true, // Add this prop
+                fixedSize: false, // Allow camera-based scaling
               }}
             />
             {showHeaderTextStyleUI &&
               activeTextStyleUI === contentRef.current && (
                 <TextStyleUI
-                  position={[0, getHeaderPosition()[1] + 4, 0]}
+                  position={getUIPositions().textStyleUI}
                   followTarget={null}
                   onStyleChange={handleStyleChange}
                   onClose={() => {
@@ -855,30 +876,12 @@ const Cube = ({
               )}
           </>
         )}
-
-        {/* ResizeArrows remain inside the group */}
         {selected && isResizing && contentRef.current && (
           <ResizeArrows onResize={handleResize} object={contentRef.current} />
         )}
       </group>
 
-      {/* Move ObjectUI OUTSIDE of the cube group to prevent position inheritance */}
-      {selected && !showHeader && showObjectUI && (
-        <ObjectUI
-          key={`ui-${id}`}
-          position={[0, 0, 0]} // Position doesn't matter, followTarget will handle it
-          onTransformToggle={handleTransformToggle}
-          onHeaderToggle={handleHeaderToggle}
-          onResizeToggle={handleResizeToggle}
-          onLineColorChange={handleLineColorChange}
-          showTransform={showTransform}
-          showHeader={showHeader}
-          followTarget={contentRef} // Use contentRef to let UI calculate position
-          objectId={id}
-        />
-      )}
-
-      {/* TransformControls remain outside the group */}
+      {/* Update TransformControls to target the main group */}
       {selected && showTransform && contentRef.current && (
         <DreiTransformControls
           ref={transformControlsRef}

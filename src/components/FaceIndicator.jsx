@@ -1,6 +1,10 @@
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
+
+// Debug flag - set to false to disable console logs
+const DEBUG = false;
 
 const FaceIndicator = ({
   position = [0, 0, 0],
@@ -11,8 +15,10 @@ const FaceIndicator = ({
   const meshRef = useRef();
   const groupRef = useRef();
 
-  // Add debug logging to see if this component is rendering
-  console.log('FaceIndicator rendering', { position, isActive });
+  // Only log when DEBUG is true
+  if (DEBUG) {
+    console.log('FaceIndicator rendering', { position, isActive });
+  }
 
   useFrame(() => {
     if (meshRef.current && groupRef.current) {
@@ -37,7 +43,7 @@ const FaceIndicator = ({
           if (e) {
             e.stopPropagation();
           }
-          console.log('FaceIndicator clicked');
+          if (DEBUG) console.log('FaceIndicator clicked');
           onClick?.(e);
         }}
       >
@@ -52,4 +58,13 @@ const FaceIndicator = ({
   );
 };
 
-export default FaceIndicator;
+// Wrap the component in React.memo to prevent unnecessary re-renders
+export default React.memo(FaceIndicator, (prevProps, nextProps) => {
+  // Only re-render if active state changes or position changes
+  return (
+    prevProps.isActive === nextProps.isActive &&
+    prevProps.position[0] === nextProps.position[0] &&
+    prevProps.position[1] === nextProps.position[1] &&
+    prevProps.position[2] === nextProps.position[2]
+  );
+});
