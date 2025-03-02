@@ -363,219 +363,312 @@ const App = () => {
   const localConnectionUpdateRef = useRef({}); // Track last local update time
 
   // Improved face position calculation with better offsets
-  const calculateFacePosition = useCallback((indicator) => {
-    // Handle null/undefined indicator
-    if (!indicator) {
-      console.warn('Null indicator in calculateFacePosition');
-      return [0, 0, 0];
-    }
+  const calculateFacePosition = useCallback(
+    (indicator) => {
+      // Handle null/undefined indicator
+      if (!indicator) {
+        console.warn('Null indicator in calculateFacePosition');
+        return [0, 0, 0];
+      }
 
-    try {
-      // For plane indicators
-      if (indicator.type === 'plane') {
-        try {
-          // Store the data we're working with for debugging
+      try {
+        // Add specific handling for text object indicators
+        if (indicator.type === 'text') {
+          try {
+            // First, check if we have a valid stored position that's not [0,0,0]
+            if (
+              Array.isArray(indicator.position) &&
+              indicator.position.length === 3 &&
+              indicator.position.every(
+                (n) => typeof n === 'number' && !isNaN(n)
+              ) &&
+              !indicator.position.every((n) => n === 0)
+            ) {
+              return indicator.position;
+            }
 
-          // First, check if we have a valid stored world position
-          if (
-            Array.isArray(indicator.worldPosition) &&
-            indicator.worldPosition.length === 3 &&
-            indicator.worldPosition.every(
-              (n) => typeof n === 'number' && !isNaN(n)
-            )
-          ) {
-            return indicator.worldPosition;
+            // If we have objectId, try to find the corresponding object
+            if (indicator.objectId) {
+              const textObj = objects.find(
+                (obj) => obj.id.toString() === indicator.objectId.toString()
+              );
+
+              if (textObj) {
+                const pos = textObj.position;
+                const scale = textObj.scale || [15, 10, 1]; // Default text object scale
+
+                // Calculate position at the bottom of the text object
+                return [
+                  pos[0],
+                  pos[1] - 5 * (Array.isArray(scale) ? scale[1] : 1),
+                  pos[2],
+                ];
+              }
+            }
+
+            // Try to get position from the plane reference
+            if (indicator.plane) {
+              try {
+                // Extract world position from the group reference
+                const worldPos = new THREE.Vector3();
+                indicator.plane.updateWorldMatrix(true, false);
+                indicator.plane.getWorldPosition(worldPos);
+
+                // Get scale from indicator or use defaults
+                const scale = indicator.cube?.scale || [15, 10, 1];
+
+                // Apply offset to position at the bottom of the text plane
+                return [
+                  worldPos.x,
+                  worldPos.y - 5 * (Array.isArray(scale) ? scale[1] : 1),
+                  worldPos.z,
+                ];
+              } catch (e) {
+                console.error('Error getting position from text plane:', e);
+              }
+            }
+
+            // Last resort fallback
+            if (indicator.position) {
+              return indicator.position;
+            }
+
+            console.warn('No valid position found for text indicator');
+            return [0, 0, 0];
+          } catch (error) {
+            console.error('Error calculating text object position:', error);
+            return indicator.position || [0, 0, 0];
           }
+        }
 
-          // Second, check if we have valid stored position
-          if (
-            Array.isArray(indicator.position) &&
-            indicator.position.length === 3 &&
-            indicator.position.every((n) => typeof n === 'number' && !isNaN(n))
-          ) {
-            return indicator.position;
-          }
+        // For plane indicators
+        if (indicator.type === 'plane') {
+          try {
+            // Store the data we're working with for debugging
 
-          // Third, try to calculate from planeData
-          if (indicator.planeData) {
-            // Ensure we have valid planeData
-            const { position, scale, worldMatrixArray } = indicator.planeData;
+            // First, check if we have a valid stored world position
+            if (
+              Array.isArray(indicator.worldPosition) &&
+              indicator.worldPosition.length === 3 &&
+              indicator.worldPosition.every(
+                (n) => typeof n === 'number' && !isNaN(n)
+              )
+            ) {
+              return indicator.worldPosition;
+            }
 
-            if (Array.isArray(position) && Array.isArray(scale)) {
-              // If we have worldMatrixArray elements, use them
-              if (
-                worldMatrixArray &&
-                Array.isArray(worldMatrixArray) &&
-                worldMatrixArray.length === 16
-              ) {
-                const worldPos = new THREE.Vector3(0, -5 * scale[1], 0);
-                const matrix = new THREE.Matrix4().fromArray(worldMatrixArray);
-                worldPos.applyMatrix4(matrix);
+            // Second, check if we have valid stored position
+            if (
+              Array.isArray(indicator.position) &&
+              indicator.position.length === 3 &&
+              indicator.position.every(
+                (n) => typeof n === 'number' && !isNaN(n)
+              )
+            ) {
+              return indicator.position;
+            }
+
+            // Third, try to calculate from planeData
+            if (indicator.planeData) {
+              // Ensure we have valid planeData
+              const { position, scale, worldMatrixArray } = indicator.planeData;
+
+              if (Array.isArray(position) && Array.isArray(scale)) {
+                // If we have worldMatrixArray elements, use them
+                if (
+                  worldMatrixArray &&
+                  Array.isArray(worldMatrixArray) &&
+                  worldMatrixArray.length === 16
+                ) {
+                  const worldPos = new THREE.Vector3(0, -5 * scale[1], 0);
+                  const matrix = new THREE.Matrix4().fromArray(
+                    worldMatrixArray
+                  );
+                  worldPos.applyMatrix4(matrix);
+                  return [worldPos.x, worldPos.y, worldPos.z];
+                }
+
+                // Fallback: calculate estimated position from components
+                const worldPos = new THREE.Vector3();
+                worldPos.x = position[0];
+                worldPos.y = position[1] - 5 * scale[1]; // Apply offset directly
+                worldPos.z = position[2];
                 return [worldPos.x, worldPos.y, worldPos.z];
               }
-
-              // Fallback: calculate estimated position from components
-              const worldPos = new THREE.Vector3();
-              worldPos.x = position[0];
-              worldPos.y = position[1] - 5 * scale[1]; // Apply offset directly
-              worldPos.z = position[2];
-              return [worldPos.x, worldPos.y, worldPos.z];
             }
-          }
 
-          // Fourth, try to calculate from plane reference (live object)
-          if (
-            indicator.plane &&
-            typeof indicator.plane.getWorldPosition === 'function'
-          ) {
-            try {
-              const worldPos = new THREE.Vector3();
-              indicator.plane.updateWorldMatrix(true, false);
-              indicator.plane.getWorldPosition(worldPos);
+            // Fourth, try to calculate from plane reference (live object)
+            if (
+              indicator.plane &&
+              typeof indicator.plane.getWorldPosition === 'function'
+            ) {
+              try {
+                const worldPos = new THREE.Vector3();
+                indicator.plane.updateWorldMatrix(true, false);
+                indicator.plane.getWorldPosition(worldPos);
 
-              // Apply offset
-              const offset = indicator.offset || [
-                0,
-                -5 * (indicator.scale?.[1] || 1),
-                0,
-              ];
-              worldPos.add(new THREE.Vector3(...offset));
+                // Apply offset
+                const offset = indicator.offset || [
+                  0,
+                  -5 * (indicator.scale?.[1] || 1),
+                  0,
+                ];
+                worldPos.add(new THREE.Vector3(...offset));
 
-              return [worldPos.x, worldPos.y, worldPos.z];
-            } catch (e) {
-              console.error('Error getting position from plane reference:', e);
+                return [worldPos.x, worldPos.y, worldPos.z];
+              } catch (e) {
+                console.error(
+                  'Error getting position from plane reference:',
+                  e
+                );
+              }
             }
-          }
 
-          // Final fallback: if we have any position at all, use it
-          if (indicator.position) {
-            console.warn('Falling back to default plane position');
-            return Array.isArray(indicator.position)
-              ? indicator.position
-              : [0, 0, 0];
-          }
+            // Final fallback: if we have any position at all, use it
+            if (indicator.position) {
+              console.warn('Falling back to default plane position');
+              return Array.isArray(indicator.position)
+                ? indicator.position
+                : [0, 0, 0];
+            }
 
-          // Absolute last resort
-          if (indicator.cube?.position) {
-            const pos = indicator.cube.position;
-            const scale = indicator.cube.scale || [1, 1, 1];
-            return Array.isArray(pos)
-              ? [pos[0], pos[1] - 5 * scale[1], pos[2]]
-              : [0, 0, 0];
-          }
+            // Absolute last resort
+            if (indicator.cube?.position) {
+              const pos = indicator.cube.position;
+              const scale = indicator.cube.scale || [1, 1, 1];
+              return Array.isArray(pos)
+                ? [pos[0], pos[1] - 5 * scale[1], pos[2]]
+                : [0, 0, 0];
+            }
 
-          return [0, 0, 0];
-        } catch (error) {
-          console.error('Error calculating plane position:', error);
-          return [0, 0, 0];
-        }
-      }
-
-      // For cube or sphere indicators - with safer error handling
-      if (indicator.type === 'cube' || indicator.type === 'sphere') {
-        try {
-          // Get position data safely
-          let worldPos;
-
-          // Get position from the indicator if available, or from the data if stored
-          const position = indicator.cube?.position || indicator.position;
-
-          if (!position) {
-            console.warn('No position data for indicator');
+            return [0, 0, 0];
+          } catch (error) {
+            console.error('Error calculating plane position:', error);
             return [0, 0, 0];
           }
-
-          // Convert to Vector3 if it's an array
-          if (Array.isArray(position)) {
-            worldPos = new THREE.Vector3(
-              Number(position[0]) || 0,
-              Number(position[1]) || 0,
-              Number(position[2]) || 0
-            );
-          } else {
-            worldPos = new THREE.Vector3(
-              Number(position.x) || 0,
-              Number(position.y) || 0,
-              Number(position.z) || 0
-            );
-          }
-
-          // Get scale safely
-          const scale = indicator.cube?.scale || [1, 1, 1];
-          let worldScale;
-
-          if (Array.isArray(scale)) {
-            worldScale = new THREE.Vector3(
-              Math.max(0.1, Number(scale[0]) || 1),
-              Math.max(0.1, Number(scale[1]) || 1),
-              Math.max(0.1, Number(scale[2]) || 1)
-            );
-          } else {
-            worldScale = new THREE.Vector3(
-              Math.max(0.1, Number(scale.x) || 1),
-              Math.max(0.1, Number(scale.y) || 1),
-              Math.max(0.1, Number(scale.z) || 1)
-            );
-          }
-
-          // Calculate the offset based on face name and cube size
-          const cubeSize = 5; // Half-size of cube
-          let faceOffset;
-
-          if (
-            indicator.type === 'sphere' &&
-            Array.isArray(indicator.faceCenter)
-          ) {
-            const localFacePos = new THREE.Vector3(...indicator.faceCenter);
-            localFacePos.multiply(worldScale);
-            return [
-              worldPos.x + localFacePos.x,
-              worldPos.y + localFacePos.y,
-              worldPos.z + localFacePos.z,
-            ];
-          } else {
-            // Standard cube face offset calculation
-            switch (indicator.face) {
-              case 'top':
-                faceOffset = new THREE.Vector3(0, cubeSize * worldScale.y, 0);
-                break;
-              case 'bottom':
-                faceOffset = new THREE.Vector3(0, -cubeSize * worldScale.y, 0);
-                break;
-              case 'front':
-                faceOffset = new THREE.Vector3(0, 0, cubeSize * worldScale.z);
-                break;
-              case 'back':
-                faceOffset = new THREE.Vector3(0, 0, -cubeSize * worldScale.z);
-                break;
-              case 'right':
-                faceOffset = new THREE.Vector3(cubeSize * worldScale.x, 0, 0);
-                break;
-              case 'left':
-                faceOffset = new THREE.Vector3(-cubeSize * worldScale.x, 0, 0);
-                break;
-              default:
-                faceOffset = new THREE.Vector3(0, 0, 0);
-            }
-          }
-
-          // Add the offset to the world position
-          worldPos.add(faceOffset);
-
-          return [worldPos.x, worldPos.y, worldPos.z];
-        } catch (error) {
-          console.error('Error calculating cube/sphere position:', error);
-          return [0, 0, 0];
         }
-      }
 
-      // Fallback for unknown indicator types
-      return Array.isArray(indicator.position) ? indicator.position : [0, 0, 0];
-    } catch (error) {
-      console.error('Unhandled error in calculateFacePosition:', error);
-      return [0, 0, 0];
-    }
-  }, []);
+        // For cube or sphere indicators - with safer error handling
+        if (indicator.type === 'cube' || indicator.type === 'sphere') {
+          try {
+            // Get position data safely
+            let worldPos;
+
+            // Get position from the indicator if available, or from the data if stored
+            const position = indicator.cube?.position || indicator.position;
+
+            if (!position) {
+              console.warn('No position data for indicator');
+              return [0, 0, 0];
+            }
+
+            // Convert to Vector3 if it's an array
+            if (Array.isArray(position)) {
+              worldPos = new THREE.Vector3(
+                Number(position[0]) || 0,
+                Number(position[1]) || 0,
+                Number(position[2]) || 0
+              );
+            } else {
+              worldPos = new THREE.Vector3(
+                Number(position.x) || 0,
+                Number(position.y) || 0,
+                Number(position.z) || 0
+              );
+            }
+
+            // Get scale safely
+            const scale = indicator.cube?.scale || [1, 1, 1];
+            let worldScale;
+
+            if (Array.isArray(scale)) {
+              worldScale = new THREE.Vector3(
+                Math.max(0.1, Number(scale[0]) || 1),
+                Math.max(0.1, Number(scale[1]) || 1),
+                Math.max(0.1, Number(scale[2]) || 1)
+              );
+            } else {
+              worldScale = new THREE.Vector3(
+                Math.max(0.1, Number(scale.x) || 1),
+                Math.max(0.1, Number(scale.y) || 1),
+                Math.max(0.1, Number(scale.z) || 1)
+              );
+            }
+
+            // Calculate the offset based on face name and cube size
+            const cubeSize = 5; // Half-size of cube
+            let faceOffset;
+
+            if (
+              indicator.type === 'sphere' &&
+              Array.isArray(indicator.faceCenter)
+            ) {
+              const localFacePos = new THREE.Vector3(...indicator.faceCenter);
+              localFacePos.multiply(worldScale);
+              return [
+                worldPos.x + localFacePos.x,
+                worldPos.y + localFacePos.y,
+                worldPos.z + localFacePos.z,
+              ];
+            } else {
+              // Standard cube face offset calculation
+              switch (indicator.face) {
+                case 'top':
+                  faceOffset = new THREE.Vector3(0, cubeSize * worldScale.y, 0);
+                  break;
+                case 'bottom':
+                  faceOffset = new THREE.Vector3(
+                    0,
+                    -cubeSize * worldScale.y,
+                    0
+                  );
+                  break;
+                case 'front':
+                  faceOffset = new THREE.Vector3(0, 0, cubeSize * worldScale.z);
+                  break;
+                case 'back':
+                  faceOffset = new THREE.Vector3(
+                    0,
+                    0,
+                    -cubeSize * worldScale.z
+                  );
+                  break;
+                case 'right':
+                  faceOffset = new THREE.Vector3(cubeSize * worldScale.x, 0, 0);
+                  break;
+                case 'left':
+                  faceOffset = new THREE.Vector3(
+                    -cubeSize * worldScale.x,
+                    0,
+                    0
+                  );
+                  break;
+                default:
+                  faceOffset = new THREE.Vector3(0, 0, 0);
+              }
+            }
+
+            // Add the offset to the world position
+            worldPos.add(faceOffset);
+
+            return [worldPos.x, worldPos.y, worldPos.z];
+          } catch (error) {
+            console.error('Error calculating cube/sphere position:', error);
+            return [0, 0, 0];
+          }
+        }
+
+        // Fallback for unknown indicator types
+        return Array.isArray(indicator.position)
+          ? indicator.position
+          : [0, 0, 0];
+      } catch (error) {
+        console.error('Unhandled error in calculateFacePosition:', error);
+        return [0, 0, 0];
+      }
+    },
+    [objects]
+  );
 
   // Memoized version of the calculation function - NOW INSIDE THE COMPONENT
   const memoizedCalculateFacePosition = useMemo(
@@ -712,7 +805,7 @@ const App = () => {
     // Add more detailed debug to see exactly what's coming in
     console.log('Indicator clicked:', {
       type: indicator.type,
-      id: indicator.cube?.id || indicator.id,
+      id: indicator.cube?.id || indicator.id || indicator.objectId,
       objectId: indicator.cube?.userData?.objectId || indicator.objectId,
       face: indicator.face,
     });
@@ -729,30 +822,35 @@ const App = () => {
       // Debug logging for both indicators
       console.log('First indicator:', {
         type: startIndicator.type,
-        id: startIndicator.cube?.id || startIndicator.id,
+        id:
+          startIndicator.cube?.id ||
+          startIndicator.id ||
+          startIndicator.objectId,
         face: startIndicator.face,
         objectType: startIndicator.type,
       });
       console.log('Second indicator:', {
         type: indicator.type,
-        id: indicator.cube?.id || indicator.id,
+        id: indicator.cube?.id || indicator.id || indicator.objectId,
         face: indicator.face,
         objectType: indicator.type,
       });
 
-      // More robust ID extraction - check all possible locations
+      // More robust ID extraction - improved to handle TextObject indicators
       const startIdStr = String(
         startIndicator.cube?.id ||
           startIndicator.id ||
           startIndicator.objectId ||
-          startIndicator.cube?.userData?.objectId
+          startIndicator.cube?.userData?.objectId ||
+          (startIndicator.plane && startIndicator.plane.userData?.id) // Look for ID in plane's userData
       );
 
       const endIdStr = String(
         indicator.cube?.id ||
           indicator.id ||
           indicator.objectId ||
-          indicator.cube?.userData?.objectId
+          indicator.cube?.userData?.objectId ||
+          (indicator.plane && indicator.plane.userData?.id) // Look for ID in plane's userData
       );
 
       console.log('Looking for objects with normalized IDs:', {
@@ -832,8 +930,8 @@ const App = () => {
       });
 
       // Ensure we're using proper ID formats
-      const startObjectId = startIndicator.cube?.id?.toString();
-      const endObjectId = indicator.cube?.id?.toString();
+      const startObjectId = startIdStr;
+      const endObjectId = endIdStr;
 
       // Validate we have both object IDs
       if (!startObjectId || !endObjectId) {

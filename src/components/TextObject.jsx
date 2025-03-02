@@ -111,10 +111,28 @@ const TextObject = ({
 
   const handleIndicatorClick = (e) => {
     e.stopPropagation();
+
+    // Calculate the actual world position of the indicator
+    const indicatorPosition = calculateIndicatorPosition();
+
+    // Save detailed indicator data with explicit properties
     const indicator = {
       plane: groupRef.current,
-      type: 'plane',
-      position: calculateIndicatorPosition(),
+      type: 'text', // Proper type identification
+      position: indicatorPosition, // Pre-calculated world position
+      worldPosition: indicatorPosition, // Redundant storage for safety
+      objectId: id,
+      id: id,
+      face: 'bottom',
+      scale: scale,
+      cube: {
+        id: id,
+        userData: { id: id },
+        position: position,
+        scale: scale,
+      },
+      // Extra data for position calculation
+      offset: [0, -5 * scale[1], 0],
     };
 
     // Call parent handlers first to show all indicators
@@ -330,7 +348,7 @@ const TextObject = ({
       <group
         ref={groupRef}
         position={position}
-        userData={{ type: 'textObject' }}
+        userData={{ type: 'textObject', id: id, objectId: id }} // Add objectId to userData for access
       >
         {/* Background plane - only handles selection */}
 
@@ -379,6 +397,8 @@ const TextObject = ({
             rotation={[0, 0, 0]}
             onClick={handleIndicatorClick}
             isActive={indicatorSelected || isIndicatorConnected()}
+            objectId={id} // Pass objectId explicitly to the FaceIndicator
+            face="bottom" // Add face identifier
           />
         )}
       </group>

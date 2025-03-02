@@ -47,6 +47,9 @@ const ConnectionUpdater = ({
   const frameCount = useRef(0);
   const FRAMES_TO_SKIP = 5;
 
+  // Track last positions to avoid redundant updates
+  const lastPositions = useRef({});
+
   // Add state to track if the component is mounted
   const isMounted = useRef(true);
 
@@ -71,28 +74,62 @@ const ConnectionUpdater = ({
     let updatedConnections = connections;
 
     try {
-      // Calculate new positions without caching
+      // Calculate new positions
       updatedConnections = connections.map((conn) => {
         if (!conn.start || !conn.end) return conn;
 
         try {
-          // Always recalculate positions fresh
-          const newStartPos = ensureValidPosition(
-            calculateFacePosition(conn.start),
-            conn.start.position
-          );
+          // For 'text' type indicators, be more careful with position updates
+          // to avoid resetting to [0,0,0]
+          let newStartPos, newEndPos;
 
-          const newEndPos = ensureValidPosition(
-            calculateFacePosition(conn.end),
-            conn.end.position
-          );
+          if (
+            conn.start.type === 'text' &&
+            !arraysEqual(conn.start.position, [0, 0, 0])
+          ) {
+            // Preserve existing position for text objects that already have valid positions
+            newStartPos = conn.start.position;
+          } else {
+            // Calculate position for other types
+            newStartPos = ensureValidPosition(
+              calculateFacePosition(conn.start),
+              conn.start.position
+            );
+          }
+
+          if (
+            conn.end.type === 'text' &&
+            !arraysEqual(conn.end.position, [0, 0, 0])
+          ) {
+            // Preserve existing position for text objects that already have valid positions
+            newEndPos = conn.end.position;
+          } else {
+            // Calculate position for other types
+            newEndPos = ensureValidPosition(
+              calculateFacePosition(conn.end),
+              conn.end.position
+            );
+          }
 
           // Check if positions have actually changed
-          const startChanged = !arraysEqual(conn.start.position, newStartPos);
-          const endChanged = !arraysEqual(conn.end.position, newEndPos);
+          const startKey = `${conn.id}-start`;
+          const endKey = `${conn.id}-end`;
+
+          const startChanged = !arraysEqual(
+            lastPositions.current[startKey],
+            newStartPos
+          );
+          const endChanged = !arraysEqual(
+            lastPositions.current[endKey],
+            newEndPos
+          );
 
           if (startChanged || endChanged) {
             hasChanges = true;
+
+            // Store new positions for comparison in next frame
+            lastPositions.current[startKey] = [...newStartPos];
+            lastPositions.current[endKey] = [...newEndPos];
 
             // Calculate dash offset animation
             let newDashOffset = conn.dashOffset || 0;
