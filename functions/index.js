@@ -1,4 +1,4 @@
-import { https } from 'firebase-functions';
+import { onRequest } from 'firebase-functions/v2/https';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import express from 'express';
@@ -48,4 +48,10 @@ app.post('/verify-token', async (req, res) => {
 });
 
 // Main API exports
-export const api = https.onRequest(app);
+export const api = onRequest(
+  {
+    memory: '256MiB',
+    region: 'us-central1',
+  },
+  app
+);
