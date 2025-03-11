@@ -19,6 +19,18 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+
+// Force token refresh on init
+auth.onAuthStateChanged(async (user) => {
+  if (user) {
+    try {
+      await user.getIdToken(true);
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+    }
+  }
+});
+
 const provider = new GoogleAuthProvider();
 
 // Enable persistence
