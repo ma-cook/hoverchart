@@ -47,11 +47,18 @@ app.post('/verify-token', async (req, res) => {
   }
 });
 
-// Main API exports
-export const api = onRequest(
+// Update the export to be more specific
+export const verifyAuthToken = onRequest(
   {
     memory: '256MiB',
     region: 'us-central1',
+    cors: [
+      'https://hoverchart.web.app',
+      'https://hoverchart.firebaseapp.com',
+      'http://localhost:5173',
+      'http://localhost:5000',
+    ],
+    maxInstances: 10,
   },
   app
 );

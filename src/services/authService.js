@@ -39,7 +39,7 @@ export const observeAuthState = (callback) => {
 export const validateAuthToken = async (token) => {
   try {
     const response = await fetch(
-      'https://us-central1-hoverchart.cloudfunctions.net/api/verify-token',
+      'https://us-central1-hoverchart.cloudfunctions.net/verifyAuthToken',
       {
         method: 'POST',
         headers: {
