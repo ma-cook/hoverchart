@@ -11,58 +11,55 @@ export function useAuth() {
   });
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (user) {
-        setAuthState({
-          isAuthenticated: true,
-          isLoading: false,
-          user,
-        });
-      } else {
-        // Check for URL parameters if not already authenticated
-        const handleTokenFromURL = async () => {
-          try {
-            const params = new URLSearchParams(window.location.search);
-            const uid = params.get('uid');
-            const authToken = params.get('auth_token');
+    let unsubscribe;
 
-            if (!uid || !authToken) {
-              setAuthState({
-                isAuthenticated: false,
-                isLoading: false,
-                user: null,
-              });
-              return;
-            }
+    const handleTokenFromURL = async () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const uid = params.get('uid');
+        const authToken = params.get('auth_token');
 
-            // Validate the token
-            const customToken = await validateAuthToken(authToken);
-            if (customToken) {
-              await signInWithCustomToken(auth, customToken);
-              // onAuthStateChanged will update the state
-            } else {
-              setAuthState({
-                isAuthenticated: false,
-                isLoading: false,
-                user: null,
-              });
-            }
-          } catch (error) {
-            console.error('Authentication error:', error);
-            setAuthState({
-              isAuthenticated: false,
-              isLoading: false,
-              user: null,
-            });
+        if (uid && authToken) {
+          const customToken = await validateAuthToken(authToken);
+          if (customToken) {
+            await signInWithCustomToken(auth, customToken);
+            // Remove URL parameters after successful login
+            window.history.replaceState(
+              {},
+              document.title,
+              window.location.pathname
+            );
+            return true;
           }
-        };
-
-        handleTokenFromURL();
+        }
+        return false;
+      } catch (error) {
+        console.error('Authentication error:', error);
+        return false;
       }
-    });
+    };
 
-    // Clean up subscription
-    return () => unsubscribe();
+    const initializeAuth = async () => {
+      // First try to authenticate with URL parameters
+      const authenticatedWithURL = await handleTokenFromURL();
+
+      if (!authenticatedWithURL) {
+        // If URL auth failed or wasn't attempted, check current auth state
+        unsubscribe = auth.onAuthStateChanged((user) => {
+          setAuthState({
+            isAuthenticated: !!user,
+            isLoading: false,
+            user,
+          });
+        });
+      }
+    };
+
+    initializeAuth();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   return authState;

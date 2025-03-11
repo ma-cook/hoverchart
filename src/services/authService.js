@@ -38,23 +38,27 @@ export const observeAuthState = (callback) => {
 // New function to validate auth token received from landing page
 export const validateAuthToken = async (token) => {
   try {
-    const response = await fetch(
-      'https://us-central1-hoverchart.cloudfunctions.net/verifyAuthToken',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ token }),
+    // Check if token is already in a valid format
+    if (token && token.split('.').length === 3) {
+      const response = await fetch(
+        'https://us-central1-hoverchart.cloudfunctions.net/verifyAuthToken',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ token }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Token verification failed');
       }
-    );
 
-    if (!response.ok) {
-      throw new Error('Token verification failed');
+      const { customToken } = await response.json();
+      return customToken;
     }
-
-    const { customToken } = await response.json();
-    return customToken;
+    return null;
   } catch (error) {
     console.error('Token validation failed:', error);
     return null;
