@@ -34,3 +34,29 @@ export const observeAuthState = (callback) => {
   }
   return onAuthStateChanged(auth, callback);
 };
+
+// New function to validate auth token received from landing page
+export const validateAuthToken = async (token) => {
+  try {
+    const response = await fetch(
+      'https://us-central1-hoverchart.cloudfunctions.net/api/verify-token',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Token verification failed');
+    }
+
+    const { customToken } = await response.json();
+    return customToken;
+  } catch (error) {
+    console.error('Token validation failed:', error);
+    return null;
+  }
+};

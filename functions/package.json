@@ -1,0 +1,27 @@
+{
+  "name": "functions",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "build": "tsc",
+    "serve": "firebase emulators:start --only functions",
+    "shell": "firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^11.x.x",
+    "firebase-functions": "^4.x.x",
+    "express": "^4.x.x",
+    "cors": "^2.x.x"
+  },
+  "devDependencies": {
+    "eslint": "^8.x.x",
+    "eslint-config-google": "^0.14.0",
+    "firebase-functions-test": "^3.x.x"
+  },
+  "engines": {
+    "node": "18"
+  }
+}
