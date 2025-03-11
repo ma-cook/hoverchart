@@ -190,10 +190,11 @@ const App = () => {
     signInUser();
   };
 
-  // Replace the redirect result effect with auth state observer
+  // Replace the auth observer effect with this updated version
   useEffect(() => {
+    console.log('Setting up auth state observer');
     const unsubscribe = observeAuthState((user) => {
-      console.log('Auth state changed:', user, auth.currentUser); // Debug log
+      console.log('Auth state changed:', user ? `User: ${user.uid}` : 'null');
       setUser(user);
       setIsAuthReady(true);
     });
@@ -1718,6 +1719,7 @@ const App = () => {
             user={user}
             onLogin={handleLogin}
             isAuthReady={isAuthReady}
+            isLoading={!isAuthReady}
           />
         </>
       )}

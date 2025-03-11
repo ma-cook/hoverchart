@@ -38,6 +38,14 @@ export const observeAuthState = (callback) => {
 // New function to validate auth token received from landing page
 export const validateAuthToken = async (token) => {
   try {
+    // Skip empty tokens
+    if (!token) {
+      console.error('Empty token provided to validateAuthToken');
+      return null;
+    }
+
+    console.log(`Validating token: ${token.substring(0, 15)}...`);
+
     // Check if token is already in a valid format
     if (token && token.split('.').length === 3) {
       const response = await fetch(
@@ -51,13 +59,26 @@ export const validateAuthToken = async (token) => {
         }
       );
 
+      console.log(`Token validation response status: ${response.status}`);
+
       if (!response.ok) {
-        throw new Error('Token verification failed');
+        const errorText = await response.text();
+        console.error(
+          `Token validation failed with status ${response.status}: ${errorText}`
+        );
+        throw new Error(
+          `Token verification failed with status ${response.status}`
+        );
       }
 
-      const { customToken } = await response.json();
-      return customToken;
+      const responseData = await response.json();
+      console.log('Successfully validated token and received custom token');
+      return responseData.customToken;
     }
+
+    console.error(
+      'Invalid token format - should be JWT with 3 parts separated by dots'
+    );
     return null;
   } catch (error) {
     console.error('Token validation failed:', error);
