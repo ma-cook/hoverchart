@@ -1,110 +1,110 @@
-import { auth, provider } from '../firebase';
 import {
   signInWithPopup,
-  signInWithCredential,
-  getRedirectResult,
   GoogleAuthProvider,
-  onAuthStateChanged,
-  browserLocalPersistence,
-  setPersistence,
+  signInWithCustomToken,
 } from 'firebase/auth';
+import { auth } from '../firebase';
 
+const API_BASE_URL =
+  'https://us-central1-hoverchart.cloudfunctions.net/verifyAuthToken';
+
+/**
+ * Sign in user with Google
+ */
 export const signInUser = async () => {
+  const provider = new GoogleAuthProvider();
   try {
-    await setPersistence(auth, browserLocalPersistence);
     await signInWithPopup(auth, provider);
   } catch (error) {
-    console.error('Error during sign in:', error);
+    console.error('Error signing in:', error);
+    throw error;
   }
 };
 
-export const handleRedirectResult = async () => {
-  try {
-    const result = await getRedirectResult(auth);
-    return result?.user || null;
-  } catch (error) {
-    console.error('Error handling redirect:', error);
-    return null;
-  }
-};
-
+/**
+ * Set up auth state observer
+ */
 export const observeAuthState = (callback) => {
-  if (auth.currentUser) {
-    callback(auth.currentUser);
-  }
-  return onAuthStateChanged(auth, callback);
+  return auth.onAuthStateChanged(callback);
 };
 
+/**
+ * Validate auth token with backend service
+ */
 export const validateAuthToken = async (token) => {
   try {
-    console.log('Starting token validation...');
-
-    // Add the /verify-token path to the URL
-    const functionUrl =
-      'https://verifyauthtoken-qtk2xsi74a-uc.a.run.app/verify-token';
-
-    const response = await fetch(functionUrl, {
+    console.log('Validating token with backend service...');
+    const response = await fetch(`${API_BASE_URL}/verify-token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'application/json',
       },
       body: JSON.stringify({ token }),
     });
 
-    console.log('Validation response status:', response.status);
-
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Validation failed (${response.status}): ${text}`);
+      const errorData = await response.json();
+      console.error('Token validation error:', errorData);
+      throw new Error(errorData.details || 'Token validation failed');
     }
 
     const data = await response.json();
-    console.log('Validation response:', data);
-
-    if (!data.customToken) {
-      throw new Error('No custom token in response');
-    }
-
+    console.log('Token validation successful');
     return data.customToken;
   } catch (error) {
-    console.error('Token validation failed:', error);
+    console.error('Error validating token:', error);
     return null;
   }
 };
 
+/**
+ * Handle authentication from URL parameters
+ */
 export const handleUrlAuth = async () => {
   const params = new URLSearchParams(window.location.search);
   const uid = params.get('uid');
   const token = params.get('token');
 
-  if (!token || !uid) {
-    return false;
-  }
+  if (!uid || !token) return false;
 
   try {
-    console.log('Starting URL authentication for UID:', uid);
+    console.log('Starting URL authentication with UID:', uid);
+    // Get authentication data from backend
+    const response = await fetch(`${API_BASE_URL}/verify-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ token }),
+    });
 
-    // First try to authenticate with the token
-    const user = await validateAuthToken(token);
-
-    // Check if the authenticated user matches the expected UID
-    if (!user) {
-      console.error('Authentication failed - no user');
-      return false;
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('Token validation error:', errorData);
+      throw new Error(errorData.details || 'Token validation failed');
     }
 
-    if (user.uid !== uid) {
+    const data = await response.json();
+    console.log('Token validation successful, response:', data);
+
+    // Verify UID matches before proceeding
+    if (data.uid !== uid) {
       console.error('Authentication failed - UID mismatch', {
         expected: uid,
-        received: user.uid,
+        received: data.uid,
       });
       return false;
     }
 
+    // Sign in with the custom token
+    await signInWithCustomToken(auth, data.customToken);
+    console.log('Successfully signed in with custom token');
+
+    // Clean up URL parameters
+    window.history.replaceState({}, document.title, window.location.pathname);
     return true;
   } catch (error) {
-    console.error('URL auth failed:', error);
+    console.error('URL auth error:', error);
     return false;
   }
 };
