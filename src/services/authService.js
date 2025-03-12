@@ -40,19 +40,22 @@ export const validateAuthToken = async (token) => {
   try {
     console.log('Starting token validation...');
 
-    const response = await fetch(
-      'https://us-central1-hoverchart.cloudfunctions.net/verifyAuthToken',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ token }),
-      }
-    );
+    // Force https for production
+    const baseUrl =
+      window.location.hostname === 'localhost'
+        ? 'http://localhost:5001/hoverchart/us-central1'
+        : 'https://us-central1-hoverchart.cloudfunctions.net';
 
-    console.log('Token validation response status:', response.status);
+    const response = await fetch(`${baseUrl}/verifyAuthToken`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    console.log('Validation response status:', response.status);
 
     if (!response.ok) {
       const text = await response.text();
@@ -60,14 +63,15 @@ export const validateAuthToken = async (token) => {
     }
 
     const data = await response.json();
+    console.log('Received response:', { hasCustomToken: !!data.customToken });
+
     if (!data.customToken) {
       throw new Error('No custom token in response');
     }
 
-    console.log('Successfully received custom token');
     return data.customToken;
   } catch (error) {
     console.error('Token validation failed:', error);
-    return null;
+    throw error; // Re-throw to handle in calling code
   }
 };

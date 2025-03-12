@@ -1435,10 +1435,11 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    if (user) {
+    console.log('Auth state update:', { user: !!user, isCheckingUrlAuth });
+    if (user || !isCheckingUrlAuth) {
       setIsCheckingUrlAuth(false);
     }
-  }, [user]);
+  }, [user, isCheckingUrlAuth]);
 
   return (
     <>

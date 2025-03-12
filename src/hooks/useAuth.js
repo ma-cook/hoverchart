@@ -9,85 +9,76 @@ export function useAuth() {
     isLoading: true,
     user: null,
   });
-  const [isProcessingToken, setIsProcessingToken] = useState(false);
 
   useEffect(() => {
     let unsubscribe;
+    let hasAttemptedUrlAuth = false;
 
     const handleTokenAuth = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const uid = params.get('uid');
+      const token = params.get('token');
+
+      if (!uid || !token) return false;
+
+      console.log('Found URL auth parameters, starting validation...');
       try {
-        const params = new URLSearchParams(window.location.search);
-        const uid = params.get('uid');
-        const token = params.get('token');
-
-        if (!uid || !token) return false;
-
-        setIsProcessingToken(true);
-        console.log('Processing token auth...');
-
         const customToken = await validateAuthToken(token);
         if (!customToken) {
-          console.error('Failed to get custom token');
+          console.error('Failed to obtain custom token');
           return false;
         }
 
-        try {
-          await signInWithCustomToken(auth, customToken);
-          // Wait for auth state to update
-          const user = await new Promise((resolve) => {
-            const unsub = auth.onAuthStateChanged((u) => {
-              if (u) {
-                unsub();
-                resolve(u);
-              }
-            });
-            // Timeout after 5 seconds
-            setTimeout(() => {
-              unsub();
-              resolve(null);
-            }, 5000);
-          });
+        console.log('Got custom token, signing in...');
+        await signInWithCustomToken(auth, customToken);
 
-          if (user) {
-            console.log('Successfully authenticated with token');
-            window.history.replaceState(
-              {},
-              document.title,
-              window.location.pathname
-            );
-            return true;
-          }
-        } catch (error) {
-          console.error('Error signing in with custom token:', error);
-        }
-        return false;
+        // Wait for auth state to update
+        return new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            console.error('Auth state update timeout');
+            resolve(false);
+          }, 5000);
+
+          const unsub = auth.onAuthStateChanged((user) => {
+            if (user) {
+              console.log('Successfully signed in:', user.uid);
+              clearTimeout(timeout);
+              unsub();
+              resolve(true);
+            }
+          });
+        });
       } catch (error) {
-        console.error('Token auth error:', error);
+        console.error('Token auth failed:', error);
         return false;
-      } finally {
-        setIsProcessingToken(false);
       }
     };
 
     const setupAuthListener = () => {
+      console.log('Setting up auth listener');
       return auth.onAuthStateChanged((user) => {
-        if (!isProcessingToken) {
-          console.log('Auth state updated:', user?.uid || 'null');
-          setAuthState({
-            isAuthenticated: !!user,
-            isLoading: false,
-            user,
-          });
-        }
+        console.log('Auth state changed:', user?.uid || 'null');
+        setAuthState({
+          isAuthenticated: !!user,
+          isLoading: false,
+          user,
+        });
       });
     };
 
     const initAuth = async () => {
-      // First try the token auth
-      if (await handleTokenAuth()) {
-        console.log('Token auth successful');
-      } else {
-        console.log('Token auth failed or not attempted');
+      if (!hasAttemptedUrlAuth) {
+        hasAttemptedUrlAuth = true;
+        const success = await handleTokenAuth();
+
+        if (success) {
+          // Clear URL parameters after successful auth
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname
+          );
+        }
       }
 
       // Set up regular auth listener
@@ -95,7 +86,10 @@ export function useAuth() {
     };
 
     initAuth();
-    return () => unsubscribe?.();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   return authState;
