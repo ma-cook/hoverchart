@@ -14,17 +14,17 @@ export function useAuth() {
     let unsubscribe;
 
     const handleTokenAuth = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const uid = params.get('uid');
-      const token = params.get('token');
-
-      if (!uid || !token) {
-        console.log('No token auth parameters found');
-        return false;
-      }
-
       try {
-        console.log('Attempting token validation...');
+        const params = new URLSearchParams(window.location.search);
+        const uid = params.get('uid');
+        const token = params.get('token');
+
+        if (!uid || !token) {
+          console.log('No URL auth parameters found');
+          return false;
+        }
+
+        console.log('Starting token validation...');
         const customToken = await validateAuthToken(token);
 
         if (!customToken) {
@@ -33,15 +33,31 @@ export function useAuth() {
         }
 
         console.log('Signing in with custom token...');
-        await signInWithCustomToken(auth, customToken);
+        try {
+          await signInWithCustomToken(auth, customToken);
+          // Wait for auth state to update
+          await new Promise((resolve) => {
+            const timeout = setTimeout(() => resolve(false), 5000);
+            const unsubscribe = auth.onAuthStateChanged((user) => {
+              if (user) {
+                clearTimeout(timeout);
+                unsubscribe();
+                resolve(true);
+              }
+            });
+          });
 
-        // Clear URL parameters
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname
-        );
-        return true;
+          // Clear URL parameters
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname
+          );
+          return true;
+        } catch (signInError) {
+          console.error('Error signing in with custom token:', signInError);
+          return false;
+        }
       } catch (error) {
         console.error('Token auth failed:', error);
         return false;
@@ -49,18 +65,31 @@ export function useAuth() {
     };
 
     const initAuth = async () => {
-      // Try token auth first
-      await handleTokenAuth();
-
-      // Set up auth state listener
-      unsubscribe = auth.onAuthStateChanged((user) => {
-        console.log('Auth state changed:', user ? `User: ${user.uid}` : 'null');
+      if (auth.currentUser) {
         setAuthState({
-          isAuthenticated: !!user,
+          isAuthenticated: true,
           isLoading: false,
-          user,
+          user: auth.currentUser,
         });
-      });
+        return;
+      }
+
+      let success = false;
+      try {
+        success = await handleTokenAuth();
+      } catch (e) {
+        console.error('Error during token auth:', e);
+      }
+
+      if (!success) {
+        unsubscribe = auth.onAuthStateChanged((user) => {
+          setAuthState({
+            isAuthenticated: !!user,
+            isLoading: false,
+            user,
+          });
+        });
+      }
     };
 
     initAuth();
