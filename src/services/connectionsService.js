@@ -45,15 +45,17 @@ const serializeConnection = (connection) => {
   };
 };
 
-// Save connection with simplified logic
-export const saveConnection = async (userId, connection) => {
-  if (!userId || !connection?.id) return;
+// Modified to include spaceId parameter
+export const saveConnection = async (userId, spaceId, connection) => {
+  if (!userId || !spaceId || !connection?.id) return;
 
   try {
     const connectionRef = doc(
       db,
       'users',
       userId,
+      'spaces',
+      spaceId,
       'connections',
       connection.id.toString()
     );
@@ -76,15 +78,16 @@ export const saveConnection = async (userId, connection) => {
   } catch (error) {
     console.error('Error saving connection:', error);
     // Simple fallback
-    const fallbackKey = `connection_${userId}_${connection.id}`;
+    const fallbackKey = `connection_${userId}_${spaceId}_${connection.id}`;
     localStorage.setItem(fallbackKey, JSON.stringify(connection));
     throw error;
   }
 };
 
-// Add retry logic for subscriptions
+// Add retry logic for subscriptions with spaceId
 const createSubscriptionWithRetry = (
   userId,
+  spaceId,
   callback,
   maxRetries = 3,
   delay = 1000
@@ -92,9 +95,16 @@ const createSubscriptionWithRetry = (
   let retryCount = 0;
 
   const subscribe = () => {
-    if (!userId) return () => {};
+    if (!userId || !spaceId) return () => {};
 
-    const connectionsRef = collection(db, 'users', userId, 'connections');
+    const connectionsRef = collection(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'connections'
+    );
     const q = query(connectionsRef);
 
     try {
@@ -136,7 +146,7 @@ const createSubscriptionWithRetry = (
   return subscribe();
 };
 
-// Update the export to use the retry logic
-export const subscribeToConnections = (userId, callback) => {
-  return createSubscriptionWithRetry(userId, callback);
+// Update the export to use the retry logic and include spaceId
+export const subscribeToConnections = (userId, spaceId, callback) => {
+  return createSubscriptionWithRetry(userId, spaceId, callback);
 };

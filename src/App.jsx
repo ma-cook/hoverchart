@@ -32,6 +32,7 @@ import {
   objectConnectionMap,
 } from './services/connectionManager';
 import { memoize } from './utils/perfUtils'; // Add this import
+import { getOrCreateDefaultSpace } from './services/spacesService';
 
 // Helper function to compare arrays - this is fine at the top level as it's not a hook
 const arraysEqual = (a, b) => {
@@ -154,6 +155,7 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isCheckingUrlAuth, setIsCheckingUrlAuth] = useState(true);
+  const [currentSpaceId, setCurrentSpaceId] = useState(null);
 
   // Add global indicator state
   const [globalIndicatorSelected, setGlobalIndicatorSelected] = useState(false);
@@ -212,37 +214,41 @@ const App = () => {
 
   // Replace subscription effect with debounced version
   useEffect(() => {
-    if (user) {
-      const unsubscribe = subscribeToObjects(user.uid, (change) => {
-        console.log('Received object change:', change);
-        setObjects((prev) => {
-          switch (change.type) {
-            case 'added':
-              if (!prev.find((obj) => obj.id === change.id)) {
-                return [...prev, change.object];
-              }
-              return prev;
-            case 'modified':
-              // Only update if the object data has actually changed
-              if (!isEqual(lastUpdateRef.current[change.id], change.object)) {
-                lastUpdateRef.current[change.id] = change.object;
-                return prev.map((obj) =>
-                  obj.id.toString() === change.id ? change.object : obj
-                );
-              }
-              return prev;
-            case 'removed':
-              delete lastUpdateRef.current[change.id];
-              return prev.filter((obj) => obj.id.toString() !== change.id);
-            default:
-              return prev;
-          }
-        });
-      });
+    if (user && currentSpaceId) {
+      const unsubscribe = subscribeToObjects(
+        user.uid,
+        currentSpaceId,
+        (change) => {
+          console.log('Received object change:', change);
+          setObjects((prev) => {
+            switch (change.type) {
+              case 'added':
+                if (!prev.find((obj) => obj.id === change.id)) {
+                  return [...prev, change.object];
+                }
+                return prev;
+              case 'modified':
+                // Only update if the object data has actually changed
+                if (!isEqual(lastUpdateRef.current[change.id], change.object)) {
+                  lastUpdateRef.current[change.id] = change.object;
+                  return prev.map((obj) =>
+                    obj.id.toString() === change.id ? change.object : obj
+                  );
+                }
+                return prev;
+              case 'removed':
+                delete lastUpdateRef.current[change.id];
+                return prev.filter((obj) => obj.id.toString() !== change.id);
+              default:
+                return prev;
+            }
+          });
+        }
+      );
 
       return () => unsubscribe();
     }
-  }, [user]);
+  }, [user, currentSpaceId]);
 
   // Add debounced save effect
   const lastSavedRef = useRef(null);
@@ -255,16 +261,16 @@ const App = () => {
           lastSavedRef.current = JSON.parse(JSON.stringify(objects));
           // Save each object individually
           objects.forEach((obj) => {
-            saveObject(user.uid, obj);
+            saveObject(user.uid, currentSpaceId, obj);
           });
         }
       }, 1000);
       return () => clearTimeout(saveTimeout);
     }
-  }, [objects, user]);
+  }, [objects, user, currentSpaceId]);
 
   const handleCreateObject = (type) => {
-    if (!cameraRef.current?.camera || !user) return;
+    if (!cameraRef.current?.camera || !user || !currentSpaceId) return;
 
     const cameraPos = cameraRef.current.camera.position.clone();
     const euler = new THREE.Euler().setFromQuaternion(
@@ -356,7 +362,7 @@ const App = () => {
         : {}), // default empty object for other types
     };
 
-    saveObject(user.uid, newObject);
+    saveObject(user.uid, currentSpaceId, newObject);
   };
 
   const handleObjectClick = (id) => {
@@ -767,18 +773,18 @@ const App = () => {
               ...object,
               position: [newPosition.x, newPosition.y, newPosition.z],
             };
-            saveObject(user.uid, updatedObject);
+            saveObject(user.uid, currentSpaceId, updatedObject);
           }
         }
       }
     },
-    [user, objects]
+    [user, objects, currentSpaceId]
   );
 
   // Update handleObjectUpdate to use debouncing and prevent unnecessary updates
   const handleObjectUpdate = useCallback(
     (id, updates) => {
-      if (!user || !id) return;
+      if (!user || !id || !currentSpaceId) return;
 
       setObjects((prev) => {
         const updatedObjects = prev.map((obj) => {
@@ -788,13 +794,13 @@ const App = () => {
             // Check if position has changed
             if (updates.position && !isEqual(obj.position, updates.position)) {
               // Save immediately for position changes
-              saveObject(user.uid, newObj);
+              saveObject(user.uid, currentSpaceId, newObj);
               lastUpdateRef.current[id] = newObj;
             } else {
               // Normal debounced save for other changes
               if (!isEqual(lastUpdateRef.current[id], newObj)) {
                 lastUpdateRef.current[id] = newObj;
-                saveObject(user.uid, newObj);
+                saveObject(user.uid, currentSpaceId, newObj);
               }
             }
             return newObj;
@@ -804,7 +810,7 @@ const App = () => {
         return updatedObjects;
       });
     },
-    [user]
+    [user, currentSpaceId]
   );
 
   const handleFaceIndicatorClick = (indicator) => {
@@ -1002,12 +1008,14 @@ const App = () => {
       // Save to database; if error, rollback state
       if (user) {
         try {
-          saveConnection(user.uid, newConnection).catch((error) => {
-            console.error('Failed to save connection:', error);
-            setConnections((prev) =>
-              prev.filter((conn) => conn.id !== connectionId)
-            );
-          });
+          saveConnection(user.uid, currentSpaceId, newConnection).catch(
+            (error) => {
+              console.error('Failed to save connection:', error);
+              setConnections((prev) =>
+                prev.filter((conn) => conn.id !== connectionId)
+              );
+            }
+          );
         } catch (error) {
           console.error('Error during connection save:', error);
           setConnections((prev) =>
@@ -1132,7 +1140,7 @@ const App = () => {
     );
 
     // Save to database
-    saveConnection(user.uid, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
   };
 
   const handleLineColorChange = (connectionId, color) => {
@@ -1149,7 +1157,7 @@ const App = () => {
     );
 
     // Save to database
-    saveConnection(user.uid, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
   };
 
   const handleLineTextSubmit = (connectionId, text) => {
@@ -1170,7 +1178,7 @@ const App = () => {
     );
 
     // Save to database
-    saveConnection(user.uid, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
 
     // Close text input
     setShowLineTextInput(null);
@@ -1197,7 +1205,7 @@ const App = () => {
     }));
 
     // Save to database
-    saveConnection(user.uid, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
   };
 
   // Add click handler for text sprite
@@ -1317,40 +1325,50 @@ const App = () => {
 
   // Add a subscription effect for connections
   useEffect(() => {
-    if (user) {
-      const unsubscribe = subscribeToConnections(user.uid, (change) => {
-        setConnections((prev) => {
-          let newConnections;
-          switch (change.type) {
-            case 'added':
-              if (!prev.find((conn) => conn.id === change.id)) {
-                newConnections = [...prev, change.connection];
-              } else {
+    if (user && currentSpaceId) {
+      const unsubscribe = subscribeToConnections(
+        user.uid,
+        currentSpaceId,
+        (change) => {
+          setConnections((prev) => {
+            let newConnections;
+            switch (change.type) {
+              case 'added':
+                if (!prev.find((conn) => conn.id === change.id)) {
+                  newConnections = [...prev, change.connection];
+                } else {
+                  newConnections = prev;
+                }
+                break;
+              case 'modified':
+                newConnections = prev.map((conn) =>
+                  conn.id === change.id ? change.connection : conn
+                );
+                break;
+              case 'removed':
+                newConnections = prev.filter((conn) => conn.id !== change.id);
+                break;
+              default:
                 newConnections = prev;
-              }
-              break;
-            case 'modified':
-              newConnections = prev.map((conn) =>
-                conn.id === change.id ? change.connection : conn
-              );
-              break;
-            case 'removed':
-              newConnections = prev.filter((conn) => conn.id !== change.id);
-              break;
-            default:
-              newConnections = prev;
-          }
+            }
 
-          // Map object references
-          const withRefs = mapConnectionsToObjects(newConnections, objects);
+            // Map object references
+            const withRefs = mapConnectionsToObjects(newConnections, objects);
 
-          // Immediately synchronize positions with current object positions
-          return synchronizeConnectionPositions(withRefs, objects);
-        });
-      });
+            // Immediately synchronize positions with current object positions
+            return synchronizeConnectionPositions(withRefs, objects);
+          });
+        }
+      );
       return () => unsubscribe();
     }
-  }, [user, objects, mapConnectionsToObjects, synchronizeConnectionPositions]);
+  }, [
+    user,
+    currentSpaceId,
+    objects,
+    mapConnectionsToObjects,
+    synchronizeConnectionPositions,
+  ]);
 
   // Add effect to re-synchronize connections when objects change
   useEffect(() => {
@@ -1446,6 +1464,36 @@ const App = () => {
       setIsCheckingUrlAuth(false);
     }
   }, [user, isCheckingUrlAuth]);
+
+  // Get current space ID from session storage or URL
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchCurrentSpace = async () => {
+      // Check URL for space ID first
+      const params = new URLSearchParams(window.location.search);
+      const urlSpaceId = params.get('spaceId');
+
+      // Then check session storage
+      const storedSpaceId = sessionStorage.getItem('currentSpaceId');
+
+      // Use URL param, then session storage, then create default
+      if (urlSpaceId) {
+        setCurrentSpaceId(urlSpaceId);
+      } else if (storedSpaceId) {
+        setCurrentSpaceId(storedSpaceId);
+      } else {
+        // Get or create a default space
+        const defaultSpace = await getOrCreateDefaultSpace(user.uid);
+        if (defaultSpace) {
+          setCurrentSpaceId(defaultSpace.id);
+          sessionStorage.setItem('currentSpaceId', defaultSpace.id);
+        }
+      }
+    };
+
+    fetchCurrentSpace();
+  }, [user]);
 
   return (
     <>
