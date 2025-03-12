@@ -9,6 +9,7 @@ export function useAuth() {
     isLoading: true,
     user: null,
   });
+  const [isProcessingToken, setIsProcessingToken] = useState(false);
 
   useEffect(() => {
     let unsubscribe;
@@ -19,84 +20,82 @@ export function useAuth() {
         const uid = params.get('uid');
         const token = params.get('token');
 
-        if (!uid || !token) {
-          console.log('No URL auth parameters found');
-          return false;
-        }
+        if (!uid || !token) return false;
 
-        console.log('Starting token validation...');
+        setIsProcessingToken(true);
+        console.log('Processing token auth...');
+
         const customToken = await validateAuthToken(token);
-
         if (!customToken) {
           console.error('Failed to get custom token');
           return false;
         }
 
-        console.log('Signing in with custom token...');
         try {
           await signInWithCustomToken(auth, customToken);
           // Wait for auth state to update
-          await new Promise((resolve) => {
-            const timeout = setTimeout(() => resolve(false), 5000);
-            const unsubscribe = auth.onAuthStateChanged((user) => {
-              if (user) {
-                clearTimeout(timeout);
-                unsubscribe();
-                resolve(true);
+          const user = await new Promise((resolve) => {
+            const unsub = auth.onAuthStateChanged((u) => {
+              if (u) {
+                unsub();
+                resolve(u);
               }
             });
+            // Timeout after 5 seconds
+            setTimeout(() => {
+              unsub();
+              resolve(null);
+            }, 5000);
           });
 
-          // Clear URL parameters
-          window.history.replaceState(
-            {},
-            document.title,
-            window.location.pathname
-          );
-          return true;
-        } catch (signInError) {
-          console.error('Error signing in with custom token:', signInError);
-          return false;
+          if (user) {
+            console.log('Successfully authenticated with token');
+            window.history.replaceState(
+              {},
+              document.title,
+              window.location.pathname
+            );
+            return true;
+          }
+        } catch (error) {
+          console.error('Error signing in with custom token:', error);
         }
-      } catch (error) {
-        console.error('Token auth failed:', error);
         return false;
+      } catch (error) {
+        console.error('Token auth error:', error);
+        return false;
+      } finally {
+        setIsProcessingToken(false);
       }
     };
 
-    const initAuth = async () => {
-      if (auth.currentUser) {
-        setAuthState({
-          isAuthenticated: true,
-          isLoading: false,
-          user: auth.currentUser,
-        });
-        return;
-      }
-
-      let success = false;
-      try {
-        success = await handleTokenAuth();
-      } catch (e) {
-        console.error('Error during token auth:', e);
-      }
-
-      if (!success) {
-        unsubscribe = auth.onAuthStateChanged((user) => {
+    const setupAuthListener = () => {
+      return auth.onAuthStateChanged((user) => {
+        if (!isProcessingToken) {
+          console.log('Auth state updated:', user?.uid || 'null');
           setAuthState({
             isAuthenticated: !!user,
             isLoading: false,
             user,
           });
-        });
+        }
+      });
+    };
+
+    const initAuth = async () => {
+      // First try the token auth
+      if (await handleTokenAuth()) {
+        console.log('Token auth successful');
+      } else {
+        console.log('Token auth failed or not attempted');
       }
+
+      // Set up regular auth listener
+      unsubscribe = setupAuthListener();
     };
 
     initAuth();
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
+    return () => unsubscribe?.();
   }, []);
 
   return authState;

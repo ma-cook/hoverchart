@@ -1427,12 +1427,25 @@ const App = () => {
     checkUrlAuth();
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get('uid') && !params.get('token')) {
+      setIsCheckingUrlAuth(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      setIsCheckingUrlAuth(false);
+    }
+  }, [user]);
+
   return (
     <>
       {isCheckingUrlAuth ? (
-        <div>Authenticating...</div>
+        <div className="auth-loading">Authenticating...</div>
       ) : !isAuthReady ? (
-        <div>Loading...</div>
+        <div className="loading">Loading...</div>
       ) : (
         <>
           <Canvas
