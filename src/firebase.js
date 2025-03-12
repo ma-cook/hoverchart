@@ -20,22 +20,28 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// Force token refresh on init
-auth.onAuthStateChanged(async (user) => {
-  if (user) {
-    try {
-      await user.getIdToken(true);
-    } catch (error) {
-      console.error('Token refresh failed:', error);
-    }
-  }
-});
+// Set persistence and handle token refresh
+setPersistence(auth, browserLocalPersistence)
+  .then(() => {
+    auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        try {
+          await user.getIdToken(true);
+          console.log('Token refreshed for user:', user.uid);
+        } catch (error) {
+          console.error('Token refresh failed:', error);
+        }
+      }
+    });
+  })
+  .catch((error) => {
+    console.error('Auth persistence error:', error);
+  });
 
+// Configure Google provider with custom parameters
 const provider = new GoogleAuthProvider();
-
-// Enable persistence
-setPersistence(auth, browserLocalPersistence).catch((error) => {
-  console.error('Auth persistence error:', error);
+provider.setCustomParameters({
+  prompt: 'select_account',
 });
 
 const db = getFirestore(app);

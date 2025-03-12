@@ -15,7 +15,11 @@ import TextStyleUI from './components/TextStyleUI';
 import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
 import TextObject from './components/TextObject';
 import { auth } from './firebase';
-import { signInUser, observeAuthState } from './services/authService';
+import {
+  signInUser,
+  observeAuthState,
+  handleUrlAuth,
+} from './services/authService';
 import { saveObject, subscribeToObjects } from './services/objectsService';
 import isEqual from 'lodash/isEqual'; // Add this import
 import {
@@ -1402,6 +1406,7 @@ const App = () => {
   }, [user]); // Only run when user changes
 
   // Add this effect at the top of other effects
+  // In App.jsx
   useEffect(() => {
     const checkUrlAuth = async () => {
       const params = new URLSearchParams(window.location.search);
@@ -1409,19 +1414,20 @@ const App = () => {
       const token = params.get('token');
 
       if (uid && token) {
-        console.log('Found auth parameters in URL, attempting auth...');
         setIsCheckingUrlAuth(true);
-        // Keep checking URL auth for up to 5 seconds
-        const startTime = Date.now();
-        while (Date.now() - startTime < 5000) {
-          if (auth.currentUser) {
-            console.log('Successfully authenticated via URL params');
-            break;
+        try {
+          const success = await handleUrlAuth();
+          if (!success) {
+            console.error('Failed to authenticate with URL parameters');
           }
-          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error) {
+          console.error('Error during URL authentication:', error);
+        } finally {
+          setIsCheckingUrlAuth(false);
         }
+      } else {
+        setIsCheckingUrlAuth(false);
       }
-      setIsCheckingUrlAuth(false);
     };
 
     checkUrlAuth();

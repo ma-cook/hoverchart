@@ -1,7 +1,9 @@
 import { auth, provider } from '../firebase';
 import {
-  signInWithPopup, // Updated to use popup instead of redirect
+  signInWithPopup,
+  signInWithCredential,
   getRedirectResult,
+  GoogleAuthProvider,
   onAuthStateChanged,
   browserLocalPersistence,
   setPersistence,
@@ -9,7 +11,6 @@ import {
 
 export const signInUser = async () => {
   try {
-    // Ensure persistence is set before sign in
     await setPersistence(auth, browserLocalPersistence);
     await signInWithPopup(auth, provider);
   } catch (error) {
@@ -28,25 +29,21 @@ export const handleRedirectResult = async () => {
 };
 
 export const observeAuthState = (callback) => {
-  // Add immediate auth state check
   if (auth.currentUser) {
     callback(auth.currentUser);
   }
   return onAuthStateChanged(auth, callback);
 };
 
-// New function to validate auth token received from landing page
 export const validateAuthToken = async (token) => {
   try {
     console.log('Starting token validation...');
 
-    // Force https for production
-    const baseUrl =
-      window.location.hostname === 'localhost'
-        ? 'http://localhost:5001/hoverchart/us-central1'
-        : 'https://us-central1-hoverchart.cloudfunctions.net';
+    // Add the /verify-token path to the URL
+    const functionUrl =
+      'https://verifyauthtoken-qtk2xsi74a-uc.a.run.app/verify-token';
 
-    const response = await fetch(`${baseUrl}/verifyAuthToken`, {
+    const response = await fetch(functionUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -59,11 +56,11 @@ export const validateAuthToken = async (token) => {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Validation failed: ${text}`);
+      throw new Error(`Validation failed (${response.status}): ${text}`);
     }
 
     const data = await response.json();
-    console.log('Received response:', { hasCustomToken: !!data.customToken });
+    console.log('Validation response:', data);
 
     if (!data.customToken) {
       throw new Error('No custom token in response');
@@ -72,6 +69,42 @@ export const validateAuthToken = async (token) => {
     return data.customToken;
   } catch (error) {
     console.error('Token validation failed:', error);
-    throw error; // Re-throw to handle in calling code
+    return null;
+  }
+};
+
+export const handleUrlAuth = async () => {
+  const params = new URLSearchParams(window.location.search);
+  const uid = params.get('uid');
+  const token = params.get('token');
+
+  if (!token || !uid) {
+    return false;
+  }
+
+  try {
+    console.log('Starting URL authentication for UID:', uid);
+
+    // First try to authenticate with the token
+    const user = await validateAuthToken(token);
+
+    // Check if the authenticated user matches the expected UID
+    if (!user) {
+      console.error('Authentication failed - no user');
+      return false;
+    }
+
+    if (user.uid !== uid) {
+      console.error('Authentication failed - UID mismatch', {
+        expected: uid,
+        received: user.uid,
+      });
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('URL auth failed:', error);
+    return false;
   }
 };
