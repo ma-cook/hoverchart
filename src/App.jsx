@@ -149,6 +149,7 @@ const App = () => {
   const [showLineTextStyleUI, setShowLineTextStyleUI] = useState(null);
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isCheckingUrlAuth, setIsCheckingUrlAuth] = useState(true);
 
   // Add global indicator state
   const [globalIndicatorSelected, setGlobalIndicatorSelected] = useState(false);
@@ -1400,9 +1401,37 @@ const App = () => {
     }
   }, [user]); // Only run when user changes
 
+  // Add this effect at the top of other effects
+  useEffect(() => {
+    const checkUrlAuth = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const uid = params.get('uid');
+      const token = params.get('token');
+
+      if (uid && token) {
+        console.log('Found auth parameters in URL, attempting auth...');
+        setIsCheckingUrlAuth(true);
+        // Keep checking URL auth for up to 5 seconds
+        const startTime = Date.now();
+        while (Date.now() - startTime < 5000) {
+          if (auth.currentUser) {
+            console.log('Successfully authenticated via URL params');
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+      setIsCheckingUrlAuth(false);
+    };
+
+    checkUrlAuth();
+  }, []);
+
   return (
     <>
-      {!isAuthReady ? (
+      {isCheckingUrlAuth ? (
+        <div>Authenticating...</div>
+      ) : !isAuthReady ? (
         <div>Loading...</div>
       ) : (
         <>
@@ -1720,6 +1749,7 @@ const App = () => {
             onLogin={handleLogin}
             isAuthReady={isAuthReady}
             isLoading={!isAuthReady}
+            showLoginButton={!isCheckingUrlAuth && !user}
           />
         </>
       )}

@@ -4,6 +4,8 @@ const UIOverlay = ({
   user,
   onLogin,
   isAuthReady,
+  isLoading,
+  showLoginButton,
 }) => {
   const handleArrowClick = () => {
     onToggleIndicators('connection');
@@ -15,13 +17,15 @@ const UIOverlay = ({
 
   return (
     <div className="ui-overlay" onClick={(e) => e.stopPropagation()}>
-      {!user ? (
+      {isLoading ? (
+        <div>Loading...</div>
+      ) : !user && showLoginButton ? (
         <div className="login-container">
           <button onClick={onLogin} className="login-button">
             Login with Google
           </button>
         </div>
-      ) : (
+      ) : user ? (
         <div className="tools-container">
           <button
             className="shape-button"
@@ -59,7 +63,7 @@ const UIOverlay = ({
             T
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 };
