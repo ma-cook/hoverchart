@@ -18,11 +18,17 @@ export function useAuth() {
       try {
         const params = new URLSearchParams(window.location.search);
         const uid = params.get('uid');
-        const authToken = params.get('auth_token');
+        // Check for both parameter names
+        const authToken = params.get('auth_token') || params.get('token');
 
-        if (!uid || !authToken) return false;
+        if (!uid || !authToken) {
+          console.log('No auth parameters found in URL');
+          return false;
+        }
 
-        console.log('Starting token validation...');
+        console.log(
+          `Found auth parameters in URL for uid: ${uid.substring(0, 5)}...`
+        );
         isProcessing = true;
         setAuthState((prev) => ({ ...prev, isLoading: true }));
 

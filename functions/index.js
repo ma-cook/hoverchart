@@ -33,9 +33,11 @@ app.post('/verify-token', async (req, res) => {
   }
 
   try {
-    console.log(
-      `Verifying token starting with: ${idToken.substring(0, 10)}...`
-    );
+    console.log(`Processing token verification request`);
+
+    // Add token metadata logging
+    const tokenParts = idToken.split('.');
+    console.log(`Token format check: has ${tokenParts.length} parts`);
 
     // Verify the ID token comes from our Firebase project
     const decodedToken = await getAuth().verifyIdToken(idToken);
@@ -46,12 +48,12 @@ app.post('/verify-token', async (req, res) => {
     // Create a custom token for the user
     const customToken = await getAuth().createCustomToken(uid);
 
-    console.log(`Successfully created custom token for user: ${uid}`);
+    console.log(`Created custom token for user: ${uid}`);
 
     // Return the custom token
     res.json({ customToken, uid });
   } catch (error) {
-    console.error('Error verifying ID token:', error);
+    console.error('Error verifying ID token:', error.message);
     res.status(400).json({ error: 'Invalid ID token', message: error.message });
   }
 });
