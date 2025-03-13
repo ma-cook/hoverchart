@@ -2,6 +2,7 @@ import { db } from '../firebase';
 import { doc, setDoc, collection, onSnapshot, query } from 'firebase/firestore';
 import { enableIndexedDbPersistence } from 'firebase/firestore';
 import { registerObjectConnection } from './connectionManager';
+import { isSharedSpace } from './sharedSpacesService';
 
 // Enable offline persistence
 enableIndexedDbPersistence(db).catch((err) => {
@@ -45,15 +46,29 @@ const serializeConnection = (connection) => {
   };
 };
 
-// Modified to include spaceId parameter
+// Modified to include spaceId parameter and handle shared spaces
 export const saveConnection = async (userId, spaceId, connection) => {
   if (!userId || !spaceId || !connection?.id) return;
 
   try {
+    // Check if this is a shared space
+    const sharedStatus = await isSharedSpace(userId, spaceId);
+
+    // If it's shared but without write permission, return early
+    if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
+      console.warn(
+        'Cannot save connection: no write permission for shared space'
+      );
+      return;
+    }
+
+    // Use the owner's ID to save to the correct collection
+    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
     const connectionRef = doc(
       db,
       'users',
-      userId,
+      ownerUserId,
       'spaces',
       spaceId,
       'connections',
@@ -74,6 +89,9 @@ export const saveConnection = async (userId, spaceId, connection) => {
     }
 
     const serializedConnection = serializeConnection(connection);
+    // Add creator ID for shared spaces
+    serializedConnection.creatorId = userId;
+
     await setDoc(connectionRef, serializedConnection);
   } catch (error) {
     console.error('Error saving connection:', error);
@@ -84,7 +102,7 @@ export const saveConnection = async (userId, spaceId, connection) => {
   }
 };
 
-// Add retry logic for subscriptions with spaceId
+// Add retry logic for subscriptions with spaceId and handle shared spaces
 const createSubscriptionWithRetry = (
   userId,
   spaceId,
@@ -93,57 +111,81 @@ const createSubscriptionWithRetry = (
   delay = 1000
 ) => {
   let retryCount = 0;
+  let unsubscribe = null;
+  let isSubscribed = true;
 
-  const subscribe = () => {
+  const subscribe = async () => {
     if (!userId || !spaceId) return () => {};
 
-    const connectionsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'connections'
-    );
-    const q = query(connectionsRef);
-
     try {
-      return onSnapshot(
-        q,
-        (snapshot) => {
-          // Reset retry count on successful connection
-          retryCount = 0;
+      // Check if this is a shared space
+      const sharedStatus = await isSharedSpace(userId, spaceId);
 
-          snapshot.docChanges().forEach((change) => {
-            // Send the raw connection data without processing
-            callback({
-              type: change.type,
-              id: change.doc.id,
-              connection: change.doc.data(),
-            });
-          });
-        },
-        (error) => {
-          console.error('Firestore subscription error:', error);
+      // If we unsubscribed while waiting for the async operation, return early
+      if (!isSubscribed) return () => {};
 
-          if (retryCount < maxRetries) {
-            retryCount++;
-            console.log(`Retrying connection... Attempt ${retryCount}`);
+      // Use the owner's ID to subscribe to the correct collection
+      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
 
-            // Exponential backoff
-            setTimeout(() => {
-              subscribe();
-            }, delay * Math.pow(2, retryCount - 1));
-          }
-        }
+      const connectionsRef = collection(
+        db,
+        'users',
+        ownerUserId,
+        'spaces',
+        spaceId,
+        'connections'
       );
+      const q = query(connectionsRef);
+
+      try {
+        unsubscribe = onSnapshot(
+          q,
+          (snapshot) => {
+            // Reset retry count on successful connection
+            retryCount = 0;
+
+            snapshot.docChanges().forEach((change) => {
+              // Send the raw connection data without processing
+              callback({
+                type: change.type,
+                id: change.doc.id,
+                connection: change.doc.data(),
+              });
+            });
+          },
+          (error) => {
+            console.error('Firestore subscription error:', error);
+
+            if (retryCount < maxRetries) {
+              retryCount++;
+              console.log(`Retrying connection... Attempt ${retryCount}`);
+
+              // Exponential backoff
+              setTimeout(() => {
+                subscribe();
+              }, delay * Math.pow(2, retryCount - 1));
+            }
+          }
+        );
+        return unsubscribe;
+      } catch (error) {
+        console.error('Subscription setup error:', error);
+        return () => {};
+      }
     } catch (error) {
-      console.error('Subscription setup error:', error);
+      console.error('Error checking shared space status:', error);
       return () => {};
     }
   };
 
-  return subscribe();
+  // Start the subscription process
+  subscribe();
+
+  // Return function to unsubscribe
+  return () => {
+    isSubscribed = false;
+    if (unsubscribe) unsubscribe();
+  };
 };
 
 // Update the export to use the retry logic and include spaceId

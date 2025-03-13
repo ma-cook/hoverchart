@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { db } from '../firebase';
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
@@ -14,7 +15,11 @@ import TextSprite from './components/TextSprite';
 import TextStyleUI from './components/TextStyleUI';
 import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
 import TextObject from './components/TextObject';
-import { auth } from './firebase';
+import {
+  registerSharedSpaceFromUrl,
+  findSpaceOwner,
+} from './services/sharedSpacesService';
+
 import {
   signInUser,
   observeAuthState,
@@ -32,7 +37,8 @@ import {
   objectConnectionMap,
 } from './services/connectionManager';
 import { memoize } from './utils/perfUtils'; // Add this import
-import { getOrCreateDefaultSpace } from './services/spacesService';
+
+import { doc, getDoc, collection } from 'firebase/firestore';
 
 // Helper function to compare arrays - this is fine at the top level as it's not a hook
 const arraysEqual = (a, b) => {
@@ -945,6 +951,11 @@ const App = () => {
       const startObjectId = startIdStr;
       const endObjectId = endIdStr;
 
+      console.log('Creating connection between objects:', {
+        startId: startObjectId,
+        endId: endObjectId,
+      });
+
       // Validate we have both object IDs
       if (!startObjectId || !endObjectId) {
         console.error('Missing object ID in connection creation', {
@@ -1465,7 +1476,7 @@ const App = () => {
     }
   }, [user, isCheckingUrlAuth]);
 
-  // Get current space ID from session storage or URL
+  // Get current space ID from session storage or URL - improved lookup with thorough error handling
   useEffect(() => {
     if (!user) return;
 
@@ -1473,27 +1484,165 @@ const App = () => {
       // Check URL for space ID first
       const params = new URLSearchParams(window.location.search);
       const urlSpaceId = params.get('spaceId');
+      const isSharedParam = params.get('shared') === 'true';
+      const urlOwnerUid = params.get('ownerUid');
+      const urlUid = params.get('uid');
 
-      // Then check session storage
-      const storedSpaceId = sessionStorage.getItem('currentSpaceId');
+      // Clear any existing objects/connections when changing spaces
+      setObjects([]);
+      setConnections([]);
 
-      // Use URL param, then session storage, then create default
+      console.log('URL parameters:', {
+        spaceId: urlSpaceId,
+        isShared: isSharedParam,
+        ownerUid: urlOwnerUid,
+        uid: urlUid,
+        currentUser: user.uid,
+      });
+
+      // If we have a space ID, let's try to use it
       if (urlSpaceId) {
-        setCurrentSpaceId(urlSpaceId);
-      } else if (storedSpaceId) {
-        setCurrentSpaceId(storedSpaceId);
-      } else {
-        // Get or create a default space
-        const defaultSpace = await getOrCreateDefaultSpace(user.uid);
-        if (defaultSpace) {
-          setCurrentSpaceId(defaultSpace.id);
-          sessionStorage.setItem('currentSpaceId', defaultSpace.id);
+        console.log(
+          `URL contains spaceId: ${urlSpaceId}, attempting to use it`
+        );
+
+        try {
+          // CRITICAL CHANGE: Look directly in top-level 'spaces' collection first
+          // This is where shared spaces from landing page are stored
+          const spacesRef = collection(db, 'spaces');
+          const spaceDocRef = doc(spacesRef, urlSpaceId);
+          const spaceDoc = await getDoc(spaceDocRef);
+
+          if (spaceDoc.exists()) {
+            const spaceData = spaceDoc.data();
+            console.log(
+              'Found space directly in top-level spaces collection:',
+              spaceData
+            );
+
+            // Check if this is a shared space for current user
+            const isSharedWithCurrentUser = spaceData.sharedWith?.some(
+              (share) => share.userId === user.uid
+            );
+
+            if (isSharedWithCurrentUser || spaceData.ownerId === user.uid) {
+              // Immediately set the space ID - this is the key change
+              setCurrentSpaceId(urlSpaceId);
+              sessionStorage.setItem('currentSpaceId', urlSpaceId);
+
+              // Register as shared if current user is not owner
+              if (spaceData.ownerId !== user.uid) {
+                console.log(`Space is shared, owner: ${spaceData.ownerId}`);
+                await registerSharedSpaceFromUrl(
+                  user.uid,
+                  urlSpaceId,
+                  spaceData.ownerId
+                );
+                sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
+                sessionStorage.setItem(
+                  `sharedSpaceOwner_${urlSpaceId}`,
+                  spaceData.ownerId
+                );
+              }
+
+              return; // Exit early - we've found the space
+            }
+          }
+
+          // Fallback to previous logic - determine owner and register shared space
+          console.log('Space not found directly, trying to determine owner...');
+          let ownerId = urlOwnerUid;
+
+          if (!ownerId) {
+            console.log('No owner UID in URL, looking up owner...');
+            ownerId = await findSpaceOwner(urlSpaceId);
+            console.log(`Found owner: ${ownerId}`);
+          }
+
+          // If we found an owner and it's not the current user, it's a shared space
+          if (ownerId && ownerId !== user.uid) {
+            console.log(
+              `Space ${urlSpaceId} is owned by ${ownerId}, treating as shared space`
+            );
+
+            // Set the space ID
+            setCurrentSpaceId(urlSpaceId);
+            sessionStorage.setItem('currentSpaceId', urlSpaceId);
+
+            // Register the space as shared
+            try {
+              await registerSharedSpaceFromUrl(user.uid, urlSpaceId, ownerId);
+              sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
+              sessionStorage.setItem(`sharedSpaceOwner_${urlSpaceId}`, ownerId);
+              console.log('Successfully registered shared space');
+            } catch (err) {
+              console.error('Error registering shared space:', err);
+            }
+
+            return; // Exit early
+          }
+
+          // Final fallback - just use the space ID directly if all else fails
+          console.log('Using space ID directly without shared space logic');
+          setCurrentSpaceId(urlSpaceId);
+          sessionStorage.setItem('currentSpaceId', urlSpaceId);
+          return;
+        } catch (error) {
+          console.error('Error during space lookup:', error);
+
+          // Even if we have errors, still try to use the space ID
+          setCurrentSpaceId(urlSpaceId);
+          sessionStorage.setItem('currentSpaceId', urlSpaceId);
+          return;
         }
       }
+
+      // Check session storage if no URL space ID
+      const storedSpaceId = sessionStorage.getItem('currentSpaceId');
+      if (storedSpaceId) {
+        console.log(`Using stored space ID: ${storedSpaceId}`);
+        setCurrentSpaceId(storedSpaceId);
+        return;
+      }
+
+      // If we reach here, redirect to landing page
+      console.log('No valid space ID - redirecting to landing page');
+      setCurrentSpaceId(null);
     };
 
     fetchCurrentSpace();
   }, [user]);
+
+  // Add a new effect to handle redirection when no spaceId is available
+  useEffect(() => {
+    // Only run this after auth is ready and we know there's no current space
+    if (isAuthReady && user && currentSpaceId === null) {
+      console.log('No space ID available - redirecting to landing page');
+
+      // Allow a small delay for logging and cleanup
+      const redirectTimeout = setTimeout(() => {
+        window.location.href = 'https://volscape.web.app/';
+      }, 100);
+
+      return () => clearTimeout(redirectTimeout);
+    }
+  }, [isAuthReady, user, currentSpaceId]);
+
+  // Add another effect to redirect immediately if no user or spaceId in URL
+  useEffect(() => {
+    // Only run once when the component mounts
+    const params = new URLSearchParams(window.location.search);
+    const urlSpaceId = params.get('spaceId');
+    const urlUid = params.get('uid');
+
+    // If we have neither a user ID nor space ID in URL, and auth check is complete
+    if (!isCheckingUrlAuth && !urlSpaceId && !urlUid) {
+      console.log(
+        'No user ID or space ID in URL - redirecting to landing page'
+      );
+      window.location.href = 'https://volscape.web.app/';
+    }
+  }, [isCheckingUrlAuth]); // Only depends on auth check status
 
   return (
     <>

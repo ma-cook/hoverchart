@@ -9,19 +9,30 @@ import {
   orderBy,
   Timestamp,
 } from 'firebase/firestore';
+import { isSharedSpace } from './sharedSpacesService';
 
-// Get a space by ID
+// Get a space by ID - now handles shared spaces
 export const getSpaceById = async (userId, spaceId) => {
   if (!userId || !spaceId) return null;
 
   try {
-    const spaceRef = doc(db, 'users', userId, 'spaces', spaceId);
+    // First, check if this is a shared space
+    const sharedStatus = await isSharedSpace(userId, spaceId);
+
+    // If it's shared, use the owner's ID to access the space
+    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
+    const spaceRef = doc(db, 'users', ownerUserId, 'spaces', spaceId);
     const spaceDoc = await getDoc(spaceRef);
 
     if (spaceDoc.exists()) {
       return {
         id: spaceDoc.id,
         ...spaceDoc.data(),
+        isShared: sharedStatus.isShared,
+        ownerId: ownerUserId,
+        // Include permission information if it's a shared space
+        permissions: sharedStatus.isShared ? sharedStatus.permissions : 'owner',
       };
     }
 
@@ -53,7 +64,7 @@ export const createSpace = async (userId, spaceName) => {
   }
 };
 
-// Get or create default space
+// Modify this function to only look up spaces, not create a default one
 export const getOrCreateDefaultSpace = async (userId) => {
   if (!userId) return null;
 
@@ -75,23 +86,12 @@ export const getOrCreateDefaultSpace = async (userId) => {
       }
     } catch (permissionError) {
       console.error('Permission error accessing spaces:', permissionError);
-      // Continue to create a default space
     }
 
-    // No spaces exist, create a default one
-    const defaultSpaceId = await createSpace(userId, 'Default Space');
-    if (defaultSpaceId) {
-      return {
-        id: defaultSpaceId,
-        name: 'Default Space',
-        createdAt: Timestamp.fromDate(new Date()),
-        updatedAt: Timestamp.fromDate(new Date()),
-      };
-    }
-
+    // No spaces exist and we're not creating a default one anymore
     return null;
   } catch (error) {
-    console.error('Error getting or creating default space:', error);
+    console.error('Error getting spaces:', error);
     return null;
   }
 };
