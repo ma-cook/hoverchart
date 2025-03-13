@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { db } from '../firebase';
+import { db } from './firebase';
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
