@@ -221,8 +221,14 @@ const App = () => {
   // Replace subscription effect with debounced version
   useEffect(() => {
     if (user && currentSpaceId) {
+      // Determine the owner ID to use for subscriptions
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      console.log(
+        `Subscribing to objects with owner: ${spaceOwnerId}, space: ${currentSpaceId}`
+      );
+
       const unsubscribe = subscribeToObjects(
-        user.uid,
+        spaceOwnerId, // Use the space owner's ID instead of current user
         currentSpaceId,
         (change) => {
           console.log('Received object change:', change);
@@ -260,14 +266,18 @@ const App = () => {
   const lastSavedRef = useRef(null);
 
   useEffect(() => {
-    if (user && objects.length > 0) {
+    if (user && objects.length > 0 && currentSpaceId) {
       const saveTimeout = setTimeout(() => {
         // Only save if objects have actually changed
         if (!isEqual(lastSavedRef.current, objects)) {
           lastSavedRef.current = JSON.parse(JSON.stringify(objects));
+
+          // Get the correct owner ID for saving
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+
           // Save each object individually
           objects.forEach((obj) => {
-            saveObject(user.uid, currentSpaceId, obj);
+            saveObject(spaceOwnerId, currentSpaceId, obj);
           });
         }
       }, 1000);
@@ -368,7 +378,8 @@ const App = () => {
         : {}), // default empty object for other types
     };
 
-    saveObject(user.uid, currentSpaceId, newObject);
+    const spaceOwnerId = window.currentSpaceOwner || user.uid;
+    saveObject(spaceOwnerId, currentSpaceId, newObject);
   };
 
   const handleObjectClick = (id) => {
@@ -779,7 +790,8 @@ const App = () => {
               ...object,
               position: [newPosition.x, newPosition.y, newPosition.z],
             };
-            saveObject(user.uid, currentSpaceId, updatedObject);
+            const spaceOwnerId = window.currentSpaceOwner || user.uid;
+            saveObject(spaceOwnerId, currentSpaceId, updatedObject);
           }
         }
       }
@@ -797,16 +809,19 @@ const App = () => {
           if (obj.id === id) {
             const newObj = { ...obj, ...updates };
 
+            // Use correct owner ID
+            const spaceOwnerId = window.currentSpaceOwner || user.uid;
+
             // Check if position has changed
             if (updates.position && !isEqual(obj.position, updates.position)) {
               // Save immediately for position changes
-              saveObject(user.uid, currentSpaceId, newObj);
+              saveObject(spaceOwnerId, currentSpaceId, newObj);
               lastUpdateRef.current[id] = newObj;
             } else {
               // Normal debounced save for other changes
               if (!isEqual(lastUpdateRef.current[id], newObj)) {
                 lastUpdateRef.current[id] = newObj;
-                saveObject(user.uid, currentSpaceId, newObj);
+                saveObject(spaceOwnerId, currentSpaceId, newObj);
               }
             }
             return newObj;
@@ -1337,8 +1352,14 @@ const App = () => {
   // Add a subscription effect for connections
   useEffect(() => {
     if (user && currentSpaceId) {
+      // Use the same owner ID for connections
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      console.log(
+        `Subscribing to connections with owner: ${spaceOwnerId}, space: ${currentSpaceId}`
+      );
+
       const unsubscribe = subscribeToConnections(
-        user.uid,
+        spaceOwnerId, // Use space owner ID
         currentSpaceId,
         (change) => {
           setConnections((prev) => {
@@ -1507,94 +1528,209 @@ const App = () => {
         );
 
         try {
-          // CRITICAL CHANGE: Look directly in top-level 'spaces' collection first
-          // This is where shared spaces from landing page are stored
+          // Set space ID early to prevent redirects
+          setCurrentSpaceId(urlSpaceId);
+          sessionStorage.setItem('currentSpaceId', urlSpaceId);
+
+          let spaceOwnerId = null;
+          let isSharedSpace = false;
+
+          // Case 1: URL explicitly provides owner ID - use this first
+          if (urlOwnerUid) {
+            // Check if user is the owner
+            if (urlOwnerUid === user.uid) {
+              console.log('User is the explicit owner per URL');
+              return;
+            }
+
+            // Verify shared access with the specified owner
+            const ownerSpaceRef = doc(
+              db,
+              'users',
+              urlOwnerUid,
+              'spaces',
+              urlSpaceId
+            );
+            const ownerSpaceDoc = await getDoc(ownerSpaceRef);
+
+            if (ownerSpaceDoc.exists()) {
+              const spaceData = ownerSpaceDoc.data();
+              console.log('Found space in owner collection:', spaceData);
+
+              // Check if space is shared with current user
+              const isSharedWithMe = spaceData.sharedWith?.some(
+                (share) => share.userId === user.uid
+              );
+
+              if (isSharedWithMe) {
+                console.log(
+                  'Access confirmed: Space is shared with current user'
+                );
+                spaceOwnerId = urlOwnerUid;
+                isSharedSpace = true;
+
+                // Store info about shared space but DON'T create a duplicate
+                sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
+                sessionStorage.setItem(
+                  `sharedSpaceOwner_${urlSpaceId}`,
+                  urlOwnerUid
+                );
+
+                // Update local state for the subscription logic to use
+                window.currentSpaceOwner = urlOwnerUid; // Use a global for the service functions
+
+                console.log(
+                  `Set up for direct access to owner's (${urlOwnerUid}) space`
+                );
+                return;
+              } else {
+                console.warn('Space exists but user does not have access');
+              }
+            }
+          }
+
+          // Case 2: Check if space is in user's own collection
+          const userSpaceRef = doc(db, 'users', user.uid, 'spaces', urlSpaceId);
+          const userSpaceDoc = await getDoc(userSpaceRef);
+
+          if (userSpaceDoc.exists()) {
+            console.log("Space found in user's own collection");
+            window.currentSpaceOwner = user.uid; // User is accessing their own space
+            return;
+          }
+
+          // Case 3: Check in shared spaces collection (might contain reference info)
+          const sharedRef = doc(
+            db,
+            'users',
+            user.uid,
+            'sharedSpaces',
+            urlSpaceId
+          );
+          const sharedDoc = await getDoc(sharedRef);
+
+          if (sharedDoc.exists()) {
+            const sharedData = sharedDoc.data();
+            console.log(
+              'Found reference in shared spaces collection:',
+              sharedData
+            );
+
+            if (sharedData.ownerId) {
+              // Check the actual space in owner's collection
+              const actualSpaceRef = doc(
+                db,
+                'users',
+                sharedData.ownerId,
+                'spaces',
+                urlSpaceId
+              );
+              const actualSpaceDoc = await getDoc(actualSpaceRef);
+
+              if (actualSpaceDoc.exists()) {
+                console.log('Verified: Space exists in owner collection');
+                spaceOwnerId = sharedData.ownerId;
+                isSharedSpace = true;
+
+                sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
+                sessionStorage.setItem(
+                  `sharedSpaceOwner_${urlSpaceId}`,
+                  sharedData.ownerId
+                );
+                window.currentSpaceOwner = sharedData.ownerId;
+                return;
+              }
+            }
+          }
+
+          // Case 4: Look for space in top-level spaces collection
           const spacesRef = collection(db, 'spaces');
           const spaceDocRef = doc(spacesRef, urlSpaceId);
           const spaceDoc = await getDoc(spaceDocRef);
 
           if (spaceDoc.exists()) {
             const spaceData = spaceDoc.data();
-            console.log(
-              'Found space directly in top-level spaces collection:',
-              spaceData
-            );
+            console.log('Found in top-level spaces collection:', spaceData);
 
-            // Check if this is a shared space for current user
+            // Check if user owns this space
+            if (spaceData.ownerId === user.uid) {
+              console.log('User is the owner of this space');
+              window.currentSpaceOwner = user.uid;
+              return;
+            }
+
+            // Check if shared with current user
             const isSharedWithCurrentUser = spaceData.sharedWith?.some(
               (share) => share.userId === user.uid
             );
 
-            if (isSharedWithCurrentUser || spaceData.ownerId === user.uid) {
-              // Immediately set the space ID - this is the key change
-              setCurrentSpaceId(urlSpaceId);
-              sessionStorage.setItem('currentSpaceId', urlSpaceId);
+            if (isSharedWithCurrentUser) {
+              console.log('Space is shared with current user');
+              spaceOwnerId = spaceData.ownerId;
+              isSharedSpace = true;
 
-              // Register as shared if current user is not owner
-              if (spaceData.ownerId !== user.uid) {
-                console.log(`Space is shared, owner: ${spaceData.ownerId}`);
-                await registerSharedSpaceFromUrl(
-                  user.uid,
-                  urlSpaceId,
-                  spaceData.ownerId
-                );
-                sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
-                sessionStorage.setItem(
-                  `sharedSpaceOwner_${urlSpaceId}`,
-                  spaceData.ownerId
-                );
-              }
-
-              return; // Exit early - we've found the space
-            }
-          }
-
-          // Fallback to previous logic - determine owner and register shared space
-          console.log('Space not found directly, trying to determine owner...');
-          let ownerId = urlOwnerUid;
-
-          if (!ownerId) {
-            console.log('No owner UID in URL, looking up owner...');
-            ownerId = await findSpaceOwner(urlSpaceId);
-            console.log(`Found owner: ${ownerId}`);
-          }
-
-          // If we found an owner and it's not the current user, it's a shared space
-          if (ownerId && ownerId !== user.uid) {
-            console.log(
-              `Space ${urlSpaceId} is owned by ${ownerId}, treating as shared space`
-            );
-
-            // Set the space ID
-            setCurrentSpaceId(urlSpaceId);
-            sessionStorage.setItem('currentSpaceId', urlSpaceId);
-
-            // Register the space as shared
-            try {
-              await registerSharedSpaceFromUrl(user.uid, urlSpaceId, ownerId);
               sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
-              sessionStorage.setItem(`sharedSpaceOwner_${urlSpaceId}`, ownerId);
-              console.log('Successfully registered shared space');
-            } catch (err) {
-              console.error('Error registering shared space:', err);
+              sessionStorage.setItem(
+                `sharedSpaceOwner_${urlSpaceId}`,
+                spaceData.ownerId
+              );
+              window.currentSpaceOwner = spaceData.ownerId;
+              return;
             }
-
-            return; // Exit early
           }
 
-          // Final fallback - just use the space ID directly if all else fails
-          console.log('Using space ID directly without shared space logic');
-          setCurrentSpaceId(urlSpaceId);
-          sessionStorage.setItem('currentSpaceId', urlSpaceId);
-          return;
+          // Case 5: Last resort - try to find owner
+          console.log(
+            'Space not found in expected locations, searching for owner...'
+          );
+          try {
+            const ownerId = await findSpaceOwner(urlSpaceId);
+            if (ownerId && ownerId !== user.uid) {
+              // Verify access with found owner
+              const ownerSpaceRef = doc(
+                db,
+                'users',
+                ownerId,
+                'spaces',
+                urlSpaceId
+              );
+              const ownerSpaceDoc = await getDoc(ownerSpaceRef);
+
+              if (ownerSpaceDoc.exists()) {
+                const spaceData = ownerSpaceDoc.data();
+                const hasAccess = spaceData.sharedWith?.some(
+                  (share) => share.userId === user.uid
+                );
+
+                if (hasAccess) {
+                  console.log(
+                    `Found space with owner ${ownerId} and user has access`
+                  );
+                  // Don't create a duplicate, just set up for direct access
+                  sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
+                  sessionStorage.setItem(
+                    `sharedSpaceOwner_${urlSpaceId}`,
+                    ownerId
+                  );
+                  window.currentSpaceOwner = ownerId;
+                  return;
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Error looking up space owner:', err);
+          }
+
+          // If we get here, we didn't find a valid space or don't have access
+          console.warn(
+            'Could not verify access to this space - using best effort'
+          );
+          window.currentSpaceOwner = urlOwnerUid || user.uid;
         } catch (error) {
           console.error('Error during space lookup:', error);
-
-          // Even if we have errors, still try to use the space ID
-          setCurrentSpaceId(urlSpaceId);
-          sessionStorage.setItem('currentSpaceId', urlSpaceId);
-          return;
+          window.currentSpaceOwner = user.uid; // Fallback to user's own spaces
         }
+        return;
       }
 
       // Check session storage if no URL space ID
@@ -1602,6 +1738,20 @@ const App = () => {
       if (storedSpaceId) {
         console.log(`Using stored space ID: ${storedSpaceId}`);
         setCurrentSpaceId(storedSpaceId);
+
+        // Check if it's a shared space from storage
+        const isShared = sessionStorage.getItem(
+          `isSharedSpace_${storedSpaceId}`
+        );
+        const storedOwner = sessionStorage.getItem(
+          `sharedSpaceOwner_${storedSpaceId}`
+        );
+
+        if (isShared === 'true' && storedOwner) {
+          window.currentSpaceOwner = storedOwner;
+        } else {
+          window.currentSpaceOwner = user.uid;
+        }
         return;
       }
 
