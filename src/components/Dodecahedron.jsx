@@ -62,6 +62,7 @@ const Sphere = ({
   const [selectedIndicator, setSelectedIndicator] = useState(null); // Add new state for indicator selection
   const [isConnected, setIsConnected] = useState(false); // Add new state to track if this dodecahedron is part of a connection
   const [connectedFaces, setConnectedFaces] = useState(new Set()); // Add new state for connected faces
+  const [isScaleModified, setIsScaleModified] = useState(false);
   const contentRef = useRef();
   const faceUIGroupRef = useRef(); // Add this new ref for FaceUI container
   const points = React.useMemo(() => {
@@ -361,16 +362,18 @@ const Sphere = ({
     setScale((prevScale) => {
       const newScale = [...prevScale];
       newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
-      // Update the contentRef's lastUpdate
-      if (contentRef.current) {
-        contentRef.current.lastUpdate = {
-          ...contentRef.current.lastUpdate,
-          scale: newScale,
-        };
-      }
       return newScale;
     });
+    setIsScaleModified(true);
   };
+
+  // Add effect to update database when resize operation changes the scale
+  useEffect(() => {
+    if (isScaleModified) {
+      updateDatabase();
+      setIsScaleModified(false);
+    }
+  }, [scale, isScaleModified, updateDatabase]);
 
   const handleDrag = (e) => {
     // Get new position from the transform controls event
@@ -528,11 +531,12 @@ const Sphere = ({
   };
 
   const getHeaderPosition = () => {
-    const sphereHeight = 10 * scale[1];
-    const topEdgeOffset = sphereHeight / 2;
+    // A dodecahedron has a radius of approximately 5 units based on the geometry
+    const dodecahedronRadius = 5; // Use the actual 5-unit base radius
+    // Position exactly 10 units above the top edge of the dodecahedron
     return [
       position[0],
-      position[1] + topEdgeOffset + 10 * scale[1], // Increased offset and made it scale-dependent
+      position[1] + dodecahedronRadius + 5, // Exactly 10 units above the top
       position[2],
     ];
   };
@@ -654,8 +658,9 @@ const Sphere = ({
   };
 
   const getHeaderInputPosition = () => {
-    const offset = 10; // Distance above the dodecahedron
-    return [0, offset, 0];
+    // Since this is positioned relative to the dodecahedron's group already at scale
+    // and the parent group already has position applied, we just need to move up
+    return [0, 5 * scale[1] + 10, 0]; // 5 (radius) + 10 (offset) units up
   };
 
   return (
@@ -731,7 +736,7 @@ const Sphere = ({
           <Line key={idx} points={linePoints} color={lineColor} lineWidth={1} />
         ))}
 
-        {/* Add face texts - modified for double-sided visibility */}
+        {/* Add face texts - modified for consistent scaling regardless of dodecahedron size */}
         {Object.entries(faceTexts).map(([faceIndex, text]) => {
           if (!text) return null;
           const { position, normal } = getFaceTextPosition(Number(faceIndex));
@@ -741,16 +746,25 @@ const Sphere = ({
             underline: false,
           };
 
+          // Calculate inverse scale to counteract parent dodecahedron's scale
+          const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
+
           return (
-            <TextSprite
+            <group
               key={`face-text-${faceIndex}`}
-              text={text}
               position={position}
-              style={{ ...textStyle, fixedSize: true, isFaceText: true }}
-              onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
-              billboard={false}
-              normal={normal}
-            />
+              // Apply inverse scale to the text container to maintain consistent size
+              scale={inverseScale}
+            >
+              <TextSprite
+                text={text}
+                position={[0, 0, 0]} // Position is now relative to group
+                style={{ ...textStyle, fixedSize: true, isFaceText: true }}
+                onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
+                billboard={false}
+                normal={normal}
+              />
+            </group>
           );
         })}
 
@@ -826,12 +840,14 @@ const Sphere = ({
         <TextSprite
           text={headerText}
           position={getHeaderPosition()}
+          // If followTarget is causing issues, we can modify how it's used
           followTarget={contentRef}
           onClick={handleHeaderClick}
           style={{
             ...headerStyle,
             isHeaderText: true,
             isDodecahedronHeader: true,
+            fixedDistance: true, // Add this to ensure consistent distance if supported
           }}
         />
       )}
@@ -862,7 +878,8 @@ const Sphere = ({
         <TextStyleUI
           position={(() => {
             const { position } = getFaceTextPosition(activeFaceText);
-            return [position[0], position[1] + 2, position[2]];
+            // Apply offset in world space, not in scaled space
+            return [position[0], position[1] + 2 * (1 / scale[1]), position[2]];
           })()}
           followTarget={contentRef}
           onStyleChange={handleFaceTextStyleChange}

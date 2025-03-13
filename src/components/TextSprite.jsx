@@ -49,11 +49,16 @@ const TextSprite = ({
         // Get parent's world scale for size compensation
         const worldScale = new THREE.Vector3();
         textRef.current.parent?.getWorldScale(worldScale);
+
+        // Calculate inverse scale with a more reliable approach
+        // Set minimum scale value to avoid division by zero
         const inverseScale = new THREE.Vector3(
           1 / Math.max(0.0001, worldScale.x),
           1 / Math.max(0.0001, worldScale.y),
           1 / Math.max(0.0001, worldScale.z)
         );
+
+        // Apply inverse scale to keep text size consistent
         textRef.current.scale.copy(inverseScale);
 
         // Compute world-space normal from the provided face normal:

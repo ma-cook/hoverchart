@@ -11,15 +11,50 @@ export const faceMaterialProps = {
 };
 
 export const getFaceIndicatorProps = (faceName) => {
-  const propsMap = {
-    front: { position: [0, 0, 5], rotation: [0, 0, 0] },
-    back: { position: [0, 0, -5], rotation: [0, Math.PI, 0] },
-    top: { position: [0, 5, 0], rotation: [-Math.PI / 2, 0, 0] },
-    bottom: { position: [0, -5, 0], rotation: [Math.PI / 2, 0, 0] },
-    right: { position: [5, 0, 0], rotation: [0, Math.PI / 2, 0] },
-    left: { position: [-5, 0, 0], rotation: [0, -Math.PI / 2, 0] },
-  };
-  return propsMap[faceName] || { position: [0, 0, 0], rotation: [0, 0, 0] };
+  switch (faceName) {
+    case 'front':
+      return {
+        position: [0, 0, 5],
+        rotation: [0, 0, 0],
+        normal: [0, 0, 1],
+      };
+    case 'back':
+      return {
+        position: [0, 0, -5],
+        rotation: [0, Math.PI, 0],
+        normal: [0, 0, -1],
+      };
+    case 'top':
+      return {
+        position: [0, 5, 0],
+        rotation: [-Math.PI / 2, 0, 0],
+        normal: [0, 1, 0],
+      };
+    case 'bottom':
+      return {
+        position: [0, -5, 0],
+        rotation: [Math.PI / 2, 0, 0],
+        normal: [0, -1, 0],
+      };
+    case 'right':
+      return {
+        position: [5, 0, 0],
+        rotation: [0, Math.PI / 2, 0],
+        normal: [1, 0, 0],
+      };
+    case 'left':
+      return {
+        position: [-5, 0, 0],
+        rotation: [0, -Math.PI / 2, 0],
+        normal: [-1, 0, 0],
+      };
+    default:
+      return {
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        normal: [0, 0, 1],
+      };
+  }
 };
 
 export const faces = [

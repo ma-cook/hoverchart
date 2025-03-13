@@ -527,15 +527,15 @@ const Cube = ({
 
   // Update the position calculation functions to use consistent logic like Plane and Dodecahedron
   const getUIPositions = () => {
-    const cubeHeight = 10 * scale[1]; // Use current scale
-    const verticalOffset = cubeHeight / 2;
+    // Use the base size without scale since the group already applies scale
+    const cubeHalfSize = 5; // Fixed half-size of cube (unscaled)
     const zOffset = 0.1; // Small z-offset to avoid z-fighting
 
     return {
-      objectUI: [0, verticalOffset + 20, zOffset], // Position for ObjectUI above cube
-      headerInput: [0, verticalOffset + 4, zOffset],
-      headerText: [0, verticalOffset + 4, zOffset],
-      textStyleUI: [0, verticalOffset + 6, zOffset],
+      objectUI: [0, cubeHalfSize + 20 / scale[1], zOffset], // Divide by scale to compensate
+      headerInput: [0, cubeHalfSize + 5 / scale[1], zOffset], // Keep 5 units above cube regardless of scale
+      headerText: [0, cubeHalfSize + 5 / scale[1], zOffset], // Keep 5 units above cube regardless of scale
+      textStyleUI: [0, cubeHalfSize + 7 / scale[1], zOffset], // 7 units above for style UI
     };
   };
 
@@ -614,10 +614,11 @@ const Cube = ({
 
   // Add helper function to calculate text offset based on font size
   const getFaceTextOffset = (fontSize) => {
-    const baseOffset = 1; // Base distance from face
+    // Create a more consistent offset regardless of face size
+    const baseOffset = 0.5; // Base distance from face
     const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
     const textHeight = fontSizeMultiplier * 0.7; // Match TEXT_HEIGHT from TextSprite
-    return baseOffset + textHeight / 2; // Add half text height to keep bottom at base offset
+    return baseOffset + textHeight / 2; // Add half text height to position text better
   };
 
   const getFaceUIPosition = (faceName) => {
@@ -728,22 +729,28 @@ const Cube = ({
         {/* Update face text rendering with dynamic positioning */}
         {faces.map(({ name }) => {
           const { position: facePos, rotation } = getFaceIndicatorProps(name);
-          const inverseScale = scale.map((s) => 1 / s);
-          // Calculate base position without scale
+
+          // Calculate inverse scale for each dimension, with minimum value to prevent division by zero
+          const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
+
+          // Calculate base position that will be affected by the cube's scale
           const basePosition = [facePos[0], facePos[1], facePos[2]];
           const textStyle = faceTextStyles[name];
           const yOffset = getFaceTextOffset(textStyle.fontSize);
+
           return (
             faceTexts[name] && (
               <group
                 key={`text-${name}`}
                 position={basePosition}
                 rotation={rotation}
+                // Apply inverse scale to counteract the cube's scale
                 scale={inverseScale}
               >
                 <TextSprite
                   text={faceTexts[name]}
-                  position={[0, yOffset, 0.2]} // Keep offset constant relative to face
+                  // Keep z offset slightly larger to ensure text is visible above face
+                  position={[0, yOffset, 0.2]}
                   followTarget={null}
                   onClick={(e) => handleFaceTextStyleClick(e, name)}
                   style={{
@@ -751,6 +758,8 @@ const Cube = ({
                     fixedSize: true,
                     isFaceText: true,
                   }}
+                  // Provide face normal to help with text orientation
+                  normal={getFaceIndicatorProps(name).normal}
                 />
                 {activeTextFace === name &&
                   activeTextStyleUI === contentRef.current && (
@@ -851,29 +860,41 @@ const Cube = ({
         )}
         {headerText && (
           <>
-            <TextSprite
-              text={headerText}
-              position={getUIPositions().headerText}
-              followTarget={null}
-              onClick={handleTextClick}
-              style={{
-                ...textStyle,
-                isHeaderText: true, // Add this prop
-                fixedSize: false, // Allow camera-based scaling
-              }}
-            />
-            {showHeaderTextStyleUI &&
-              activeTextStyleUI === contentRef.current && (
-                <TextStyleUI
-                  position={getUIPositions().textStyleUI}
-                  followTarget={null}
-                  onStyleChange={handleStyleChange}
-                  onClose={() => {
-                    setShowHeaderTextStyleUI(false);
-                    setActiveTextStyleUI(null);
-                  }}
-                />
-              )}
+            {/* Calculate inverse scale to cancel out parent group scaling */}
+            {(() => {
+              // Calculate inverse scale with protection against division by zero
+              const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
+              return (
+                <group
+                  scale={inverseScale}
+                  position={getUIPositions().headerText}
+                >
+                  <TextSprite
+                    text={headerText}
+                    position={[0, 0, 0]}
+                    followTarget={null}
+                    onClick={handleTextClick}
+                    style={{
+                      ...textStyle,
+                      isHeaderText: true,
+                      fixedSize: false, // Allow camera-based scaling
+                    }}
+                  />
+                  {showHeaderTextStyleUI &&
+                    activeTextStyleUI === contentRef.current && (
+                      <TextStyleUI
+                        position={[0, 2 / scale[1], 0]} // Adjust position slightly upward
+                        followTarget={null}
+                        onStyleChange={handleStyleChange}
+                        onClose={() => {
+                          setShowHeaderTextStyleUI(false);
+                          setActiveTextStyleUI(null);
+                        }}
+                      />
+                    )}
+                </group>
+              );
+            })()}
           </>
         )}
         {selected && isResizing && contentRef.current && (
