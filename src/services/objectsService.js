@@ -34,7 +34,12 @@ export const saveObject = async (userId, spaceId, object) => {
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      console.warn('Cannot save object: no write permission for shared space');
+      console.warn(
+        `Cannot save object: no write permission for shared space. Permissions: ${
+          sharedStatus.permissions
+        }, 
+        Permission Array: ${JSON.stringify(sharedStatus.permissionsArray)}`
+      );
       return;
     }
 
@@ -57,41 +62,37 @@ export const saveObject = async (userId, spaceId, object) => {
     console.log(
       `Database path: users/${ownerUserId}/spaces/${spaceId}/objects/${objectId}`
     );
-    const cachedData = objectsCache.get(cacheKey);
-
-    // Clear any pending save timeout for this object
-    if (saveTimeouts.has(cacheKey)) {
-      clearTimeout(saveTimeouts.get(cacheKey));
-    }
 
     // Deep clone the object to prevent reference issues
     const newData = JSON.parse(JSON.stringify(object));
 
-    // Only update if data has actually changed
-    if (!cachedData || !isEqual(cachedData, newData)) {
-      saveTimeouts.set(
-        cacheKey,
-        setTimeout(async () => {
-          try {
-            // Update cache before saving to prevent race conditions
-            objectsCache.set(cacheKey, newData);
-            await setDoc(objectRef, {
-              ...newData,
-              lastUpdated: Timestamp.fromDate(new Date()),
-              // Add creator ID for shared spaces
-              creatorId: userId,
-            });
-          } catch (error) {
-            console.error('Error saving object:', error);
-            // Remove from cache if save failed
-            objectsCache.delete(cacheKey);
-          }
-          saveTimeouts.delete(cacheKey);
-        }, 1000) // 1 second debounce
-      );
-    }
+    // Add explicit metadata for tracking
+    newData.metadata = {
+      ...newData.metadata,
+      createdBy: userId,
+      lastModifiedBy: userId,
+      lastModified: new Date().toISOString(),
+      ownerUserId: ownerUserId,
+    };
+
+    // Set doc with merge option to preserve existing fields
+    await setDoc(
+      objectRef,
+      {
+        ...newData,
+        lastUpdated: Timestamp.fromDate(new Date()),
+        creatorId: userId,
+      },
+      { merge: true }
+    );
+
+    // Update cache after successful save
+    objectsCache.set(cacheKey, newData);
+
+    return true; // Successfully saved
   } catch (error) {
-    console.error('Error in saveObject:', error);
+    console.error('Error saving object:', error);
+    throw error; // Rethrow to allow caller to handle
   }
 };
 

@@ -10,22 +10,109 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
+    
+    // Fixed function to check if user is in sharedWith array
+    function isSpaceSharedWithUser(userId, spaceData) {
+      return spaceData.sharedWith != null && 
+             spaceData.sharedWith.size() > 0 &&
+             spaceData.sharedWith.where('userId', '==', userId).size() > 0;
+    }
+    
+    // Fixed function to properly check for edit permissions
+    function hasEditPermission(userId, spaceData) {
+      return spaceData.sharedWith != null && 
+             spaceData.sharedWith.size() > 0 &&
+             spaceData.sharedWith.where('userId', '==', userId).where('permissions', 'array-contains', 'edit').size() > 0;
+    }
+
+    // CRITICAL: Allow access to top-level spaces collection for sharing verification
+    match /spaces/{spaceId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && 
+                    (resource == null || 
+                     resource.data.ownerId == request.auth.uid ||
+                     (resource.data.ownerId != null && 
+                      isSpaceSharedWithUser(request.auth.uid, resource.data)));
+    }
+
+    // Allow access to sharedSpaces collection for verification
+    match /sharedSpaces/{documentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && 
+                   (resource == null || resource.data.ownerId == request.auth.uid);
+    }
 
     // User data and nested collections
     match /users/{userId} {
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAuthenticated() && request.auth.uid == userId;
+      // Allow ALL authenticated users to read other users' basic info
+      // This is essential for shared space verification
       allow read: if isAuthenticated();
       
+      // Only allow writes to your own user document
+      allow create, update: if isAuthenticated() && request.auth.uid == userId;
+      
+      // User's personal objects/connections collections (not in spaces)
       match /objects/{objectId} {
         allow read: if isAuthenticated();
         allow write: if isAuthenticated() && request.auth.uid == userId;
       }
 
-      // Add explicit rules for connections collection
       match /connections/{connectionId} {
         allow read: if isAuthenticated();
         allow write: if isAuthenticated() && request.auth.uid == userId;
+      }
+      
+      // Allow access to shared spaces collection
+      match /sharedSpaces/{spaceId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && request.auth.uid == userId;
+      }
+      
+      // CRITICAL: Allow any authenticated user to read space documents
+      // This is needed for access verification when the space is shared
+      match /spaces/{spaceId} {
+        allow read: if isAuthenticated();
+        
+        allow create: if isAuthenticated() && request.auth.uid == userId;
+        
+        allow update: if isAuthenticated() && (
+          request.auth.uid == userId || 
+          isSpaceSharedWithUser(request.auth.uid, resource.data)
+        );
+        
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
+        
+        // Objects within spaces - CRITICAL FIX FOR WRITE ACCESS
+        match /objects/{objectId} {
+          allow read: if isAuthenticated();
+          
+          // Updated to correctly check permissions for adding objects to other users' spaces
+          allow write: if isAuthenticated() && (
+            // Owner can always write
+            request.auth.uid == userId || 
+            // For shared access, the current user must have edit permission
+            (isSpaceSharedWithUser(request.auth.uid, 
+                get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data) &&
+             hasEditPermission(request.auth.uid, 
+                get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
+          );
+        }
+        
+        // Connections within spaces - CRITICAL FIX FOR WRITE ACCESS
+        match /connections/{connectionId} {
+          allow read: if isAuthenticated();
+          
+          // Updated to correctly check permissions for adding connections to other users' spaces
+          allow write: if isAuthenticated() && (
+            // Owner can always write
+            request.auth.uid == userId || 
+            // For shared access, the current user must have edit permission
+            (isSpaceSharedWithUser(request.auth.uid, 
+                get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data) &&
+             hasEditPermission(request.auth.uid, 
+                get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
+          );
+        }
       }
     }
 
