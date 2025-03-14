@@ -51,31 +51,19 @@ export const saveConnection = async (userId, spaceId, connection) => {
   if (!userId || !spaceId || !connection?.id) return;
 
   try {
-    console.log(
-      `Attempting to save connection ${connection.id} to space ${spaceId}`
-    );
-
     // Check if this is a shared space
     const sharedStatus = await isSharedSpace(userId, spaceId);
-    console.log('Connection shared status check:', sharedStatus);
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
       console.warn(
-        `Cannot save connection: no write permission for shared space. 
-        Permissions: ${sharedStatus.permissions}, 
-        Permission Array: ${JSON.stringify(
-          sharedStatus.permissionsArray || []
-        )}`
+        'Cannot save connection: no write permission for shared space'
       );
       return;
     }
 
     // Use the owner's ID to save to the correct collection
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-    console.log(
-      `Saving connection to owner's collection. Owner: ${ownerUserId}`
-    );
 
     const connectionRef = doc(
       db,
@@ -101,17 +89,10 @@ export const saveConnection = async (userId, spaceId, connection) => {
     }
 
     const serializedConnection = serializeConnection(connection);
-    // Add creator ID for shared spaces and metadata
+    // Add creator ID for shared spaces
     serializedConnection.creatorId = userId;
-    serializedConnection.metadata = {
-      createdBy: userId,
-      lastModifiedBy: userId,
-      lastModified: new Date().toISOString(),
-      ownerUserId: ownerUserId,
-    };
 
-    await setDoc(connectionRef, serializedConnection, { merge: true });
-    console.log(`Successfully saved connection ${connection.id}`);
+    await setDoc(connectionRef, serializedConnection);
   } catch (error) {
     console.error('Error saving connection:', error);
     // Simple fallback

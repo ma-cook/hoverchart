@@ -50,25 +50,32 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
         );
 
         if (userShare) {
-          console.log('Found user in sharedWith array:', userShare);
-          // Check if user has edit permission in the permissions array
-          const hasEditPermission =
-            userShare.permissions &&
-            Array.isArray(userShare.permissions) &&
-            userShare.permissions.includes('edit');
+          // Check if permissions contains write or edit privileges
+          let hasEditAccess = false;
+
+          // Check array permissions format
+          if (Array.isArray(userShare.permissions)) {
+            hasEditAccess =
+              userShare.permissions.includes('edit') ||
+              userShare.permissions.includes('write');
+          }
+          // Check string permissions format
+          else if (typeof userShare.permissions === 'string') {
+            hasEditAccess =
+              userShare.permissions === 'edit' ||
+              userShare.permissions === 'write';
+          }
 
           const result = {
             isShared: true,
             ownerId: spaceData.ownerId,
-            permissions: hasEditPermission ? 'write' : 'read', // Convert to string format
-            permissionsArray: userShare.permissions || [], // Keep raw array for debugging
+            permissions: hasEditAccess ? 'write' : 'read',
             spaceName: spaceData.name,
           };
 
           sharedSpacesCache.set(cacheKey, result);
           console.log(
-            `Space is shared with user: ${currentUserId}, owner: ${spaceData.ownerId}, permissions:`,
-            userShare.permissions
+            `Space is shared with user: ${currentUserId}, owner: ${spaceData.ownerId}, permissions: ${result.permissions}`
           );
           return result;
         }

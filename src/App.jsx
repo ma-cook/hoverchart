@@ -1034,8 +1034,7 @@ const App = () => {
       // Save to database; if error, rollback state
       if (user) {
         try {
-          const spaceOwnerId = window.currentSpaceOwner || user.uid;
-          saveConnection(spaceOwnerId, currentSpaceId, newConnection).catch(
+          saveConnection(user.uid, currentSpaceId, newConnection).catch(
             (error) => {
               console.error('Failed to save connection:', error);
               setConnections((prev) =>
@@ -1167,8 +1166,7 @@ const App = () => {
     );
 
     // Save to database
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-    saveConnection(spaceOwnerId, currentSpaceId, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
   };
 
   const handleLineColorChange = (connectionId, color) => {
@@ -1185,8 +1183,7 @@ const App = () => {
     );
 
     // Save to database
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-    saveConnection(spaceOwnerId, currentSpaceId, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
   };
 
   const handleLineTextSubmit = (connectionId, text) => {
@@ -1207,8 +1204,7 @@ const App = () => {
     );
 
     // Save to database
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-    saveConnection(spaceOwnerId, currentSpaceId, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
 
     // Close text input
     setShowLineTextInput(null);
@@ -1235,8 +1231,7 @@ const App = () => {
     }));
 
     // Save to database
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-    saveConnection(spaceOwnerId, currentSpaceId, newConnection);
+    saveConnection(user.uid, currentSpaceId, newConnection);
   };
 
   // Add click handler for text sprite
