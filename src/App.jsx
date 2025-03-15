@@ -219,6 +219,9 @@ const App = () => {
   // Replace loadObjects effect with new subscription handler
   const lastUpdateRef = useRef({});
 
+  // Add a ref to track which objects are currently being dragged
+  const draggingObjectsRef = useRef(new Set());
+
   // Replace subscription effect with debounced version
   useEffect(() => {
     if (user && currentSpaceId) {
@@ -241,7 +244,28 @@ const App = () => {
                 }
                 return prev;
               case 'modified':
-                // Only update if the object data has actually changed
+                // Skip position updates for objects that are currently being dragged
+                if (draggingObjectsRef.current.has(change.id.toString())) {
+                  console.log(
+                    'Ignoring position update for dragged object:',
+                    change.id
+                  );
+                  // Only apply non-position changes
+                  return prev.map((obj) => {
+                    if (obj.id.toString() === change.id) {
+                      const currentPosition = obj.position;
+                      const updatedObj = {
+                        ...change.object,
+                        position: currentPosition, // Keep local position during dragging
+                      };
+                      lastUpdateRef.current[change.id] = updatedObj;
+                      return updatedObj;
+                    }
+                    return obj;
+                  });
+                }
+
+                // Regular update for non-dragged objects
                 if (!isEqual(lastUpdateRef.current[change.id], change.object)) {
                   lastUpdateRef.current[change.id] = change.object;
                   return prev.map((obj) =>
@@ -390,8 +414,6 @@ const App = () => {
   };
 
   // Add this to the App component for local connection management
-  const localConnectionUpdateRef = useRef({}); // Track last local update time
-
   // Improved face position calculation with better offsets
   const calculateFacePosition = useCallback(
     (indicator) => {
@@ -707,10 +729,16 @@ const App = () => {
   );
 
   const handleObjectMove = useCallback(
-    (id, newPosition) => {
+    (id, newPosition, isDragStart = false, isDragEnd = false) => {
       const objectId = id.toString();
 
-      // Update local object state
+      if (isDragStart) {
+        // Object drag started - add to tracking set
+        draggingObjectsRef.current.add(objectId);
+        console.log('Drag started for object:', objectId);
+      }
+
+      // Update local object state immediately for smooth UI
       setObjects((prev) =>
         prev.map((obj) =>
           obj.id === id
@@ -777,22 +805,24 @@ const App = () => {
         });
       });
 
-      // Save updates to database
+      // ONLY save to database when drag ends or in special cases
       if (user) {
-        const now = Date.now();
-        if (
-          !localConnectionUpdateRef.current[objectId] ||
-          now - localConnectionUpdateRef.current[objectId] > 100
-        ) {
-          localConnectionUpdateRef.current[objectId] = now;
+        // Only save position updates when drag ENDS, not during drag
+        if (isDragEnd) {
           const object = objects.find((obj) => obj.id === id);
           if (object) {
             const updatedObject = {
               ...object,
               position: [newPosition.x, newPosition.y, newPosition.z],
             };
+
             const spaceOwnerId = window.currentSpaceOwner || user.uid;
+            console.log('Saving position after drag end:', objectId);
             saveObject(spaceOwnerId, currentSpaceId, updatedObject);
+
+            // Remove from dragging set when drag ends
+            draggingObjectsRef.current.delete(objectId);
+            console.log('Drag ended for object:', objectId);
           }
         }
       }

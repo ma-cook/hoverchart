@@ -13,6 +13,21 @@ import { isSharedSpace } from './sharedSpacesService';
 
 const objectsCache = new Map();
 const saveTimeouts = new Map();
+const updateThrottles = new Map();
+
+// Helper function for position-only comparison
+const positionsEqual = (posA, posB) => {
+  if (!posA || !posB) return false;
+  if (!Array.isArray(posA) || !Array.isArray(posB)) return false;
+  if (posA.length !== posB.length) return false;
+
+  // For positions, use a small epsilon for floating point comparison
+  const epsilon = 0.001;
+  for (let i = 0; i < posA.length; i++) {
+    if (Math.abs(posA[i] - posB[i]) > epsilon) return false;
+  }
+  return true;
+};
 
 // Modified to handle shared spaces with improved logging
 export const saveObject = async (userId, spaceId, object) => {
@@ -26,11 +41,24 @@ export const saveObject = async (userId, spaceId, object) => {
   }
 
   try {
-    console.log(`Attempting to save object ${object.id} to space ${spaceId}`);
+    const objectId = object.id.toString();
+    const cacheKey = `${spaceId}_${objectId}`;
+
+    // Enhanced throttling with separate position and non-position timers
+    const now = Date.now();
+    const lastUpdateTime = updateThrottles.get(cacheKey) || 0;
+
+    // Increase throttle time for position updates to prevent excessive saves
+    const throttleTime = object.position ? 500 : 100; // 500ms for position, 100ms for other changes
+
+    if (now - lastUpdateTime < throttleTime) {
+      return; // Skip this update, too soon after previous one
+    }
+
+    updateThrottles.set(cacheKey, now);
 
     // Check if this is a shared space
     const sharedStatus = await isSharedSpace(userId, spaceId);
-    console.log('Shared status check result:', sharedStatus);
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
@@ -40,10 +68,7 @@ export const saveObject = async (userId, spaceId, object) => {
 
     // Use the owner's ID to save to the correct collection
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-    console.log(`Saving object to owner's collection. Owner: ${ownerUserId}`);
 
-    const objectId = object.id.toString();
-    const cacheKey = `${spaceId}_${objectId}`;
     const objectRef = doc(
       db,
       'users',
@@ -54,9 +79,6 @@ export const saveObject = async (userId, spaceId, object) => {
       objectId
     );
 
-    console.log(
-      `Database path: users/${ownerUserId}/spaces/${spaceId}/objects/${objectId}`
-    );
     const cachedData = objectsCache.get(cacheKey);
 
     // Clear any pending save timeout for this object
@@ -67,29 +89,50 @@ export const saveObject = async (userId, spaceId, object) => {
     // Deep clone the object to prevent reference issues
     const newData = JSON.parse(JSON.stringify(object));
 
-    // Only update if data has actually changed
-    if (!cachedData || !isEqual(cachedData, newData)) {
-      // Don't use timeout for now to help with debugging
-      try {
-        // Update cache before saving to prevent race conditions
-        objectsCache.set(cacheKey, newData);
-        await setDoc(objectRef, {
-          ...newData,
-          lastUpdated: Timestamp.fromDate(new Date()),
-          // Add creator ID for shared spaces
-          creatorId: userId,
-        });
-        console.log(`Successfully saved object ${objectId}`);
-      } catch (error) {
-        console.error('Error saving object:', error);
-        // Remove from cache if save failed
-        objectsCache.delete(cacheKey);
-        throw error; // Re-throw to allow caller to handle
+    // Enhanced comparison logic to prevent unnecessary updates
+    if (cachedData) {
+      // Check if position has changed significantly
+      const positionChanged = !positionsEqual(
+        cachedData.position,
+        newData.position
+      );
+
+      // Check if non-position data has changed
+      const nonPositionChanged = !isEqual(
+        { ...cachedData, position: undefined },
+        { ...newData, position: undefined }
+      );
+
+      // Only update if position or other properties changed
+      if (!positionChanged && !nonPositionChanged) {
+        return;
       }
     }
+
+    // Update cache before saving to prevent race conditions
+    objectsCache.set(cacheKey, newData);
+
+    // Save with a timeout to batch frequent changes
+    // Use longer timeout for position changes to further reduce updates
+    const saveTimeout = object.position ? 300 : 150;
+
+    saveTimeouts.set(
+      cacheKey,
+      setTimeout(async () => {
+        try {
+          await setDoc(objectRef, {
+            ...newData,
+            lastUpdated: Timestamp.fromDate(new Date()),
+            creatorId: userId,
+          });
+        } catch (error) {
+          console.error('Error saving object:', error);
+          objectsCache.delete(cacheKey);
+        }
+      }, saveTimeout)
+    );
   } catch (error) {
     console.error('Error in saveObject:', error);
-    throw error;
   }
 };
 
@@ -180,9 +223,24 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
           const objectId = change.doc.id;
           const cacheKey = `${spaceId}_${objectId}`;
 
-          // Deep compare the data before triggering any updates
+          // Special handling for position updates - use position equality
           const cachedData = objectsCache.get(cacheKey);
-          const hasChanged = !cachedData || !isEqual(cachedData, data);
+          let hasChanged = false;
+
+          if (cachedData) {
+            const positionChanged = !positionsEqual(
+              cachedData.position,
+              data.position
+            );
+            const otherDataChanged = !isEqual(
+              { ...cachedData, position: undefined },
+              { ...data, position: undefined }
+            );
+
+            hasChanged = positionChanged || otherDataChanged;
+          } else {
+            hasChanged = true; // No cached data, treat as changed
+          }
 
           if (hasChanged) {
             // Only update cache and trigger callback if data actually changed
