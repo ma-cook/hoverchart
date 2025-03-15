@@ -6,6 +6,7 @@ const UIOverlay = ({
   isAuthReady,
   isLoading,
   showLoginButton,
+  isConnectMode, // Add this prop
 }) => {
   const handleArrowClick = () => {
     onToggleIndicators('connection');
@@ -49,7 +50,7 @@ const UIOverlay = ({
             ▭
           </button>
           <button
-            className="shape-button"
+            className={`shape-button ${isConnectMode ? 'active' : ''}`}
             onClick={handleArrowClick}
             title="Connect Faces"
           >

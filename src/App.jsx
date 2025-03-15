@@ -15,10 +15,7 @@ import TextSprite from './components/TextSprite';
 import TextStyleUI from './components/TextStyleUI';
 import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
 import TextObject from './components/TextObject';
-import {
-  registerSharedSpaceFromUrl,
-  findSpaceOwner,
-} from './services/sharedSpacesService';
+import { findSpaceOwner } from './services/sharedSpacesService';
 
 import {
   signInUser,
@@ -148,6 +145,7 @@ const App = () => {
   const [indicatorMode, setIndicatorMode] = useState('none');
   const [connections, setConnections] = useState([]);
   const [selectedIndicators, setSelectedIndicators] = useState([]);
+  const [isConnectMode, setIsConnectMode] = useState(false); // Add this line for connect mode state
 
   const connectionsRef = useRef(connections);
   connectionsRef.current = connections;
@@ -165,6 +163,9 @@ const App = () => {
 
   // Add global indicator state
   const [globalIndicatorSelected, setGlobalIndicatorSelected] = useState(false);
+
+  // Add this ref to track selected indicators
+  const selectedIndicatorsRef = useRef([]);
 
   // Add handlers for indicator state
   const handleIndicatorSelected = () => {
@@ -841,32 +842,33 @@ const App = () => {
       id: indicator.cube?.id || indicator.id || indicator.objectId,
       objectId: indicator.cube?.userData?.objectId || indicator.objectId,
       face: indicator.face,
+      indicatorsLength: selectedIndicatorsRef.current.length,
     });
 
-    if (selectedIndicators.length === 0) {
-      // First indicator selection - store it and set up connection mode
-      console.log('Storing first indicator:', indicator);
-      setSelectedIndicators([indicator]);
+    // If not in connect mode, enter connect mode first
+    if (!isConnectMode) {
+      console.log('Entering connect mode from indicator click');
+      setIsConnectMode(true);
+      setIndicatorMode('indicators');
       setShowAllCubesIndicators(true);
       setGlobalIndicatorSelected(true);
-    } else if (selectedIndicators.length === 1) {
-      const startIndicator = selectedIndicators[0];
+      // Store the first indicator
+      selectedIndicatorsRef.current = [indicator];
+      setSelectedIndicators([indicator]);
+      return;
+    }
 
-      // Debug logging for both indicators
-      console.log('First indicator:', {
-        type: startIndicator.type,
-        id:
-          startIndicator.cube?.id ||
-          startIndicator.id ||
-          startIndicator.objectId,
-        face: startIndicator.face,
-        objectType: startIndicator.type,
-      });
-      console.log('Second indicator:', {
-        type: indicator.type,
-        id: indicator.cube?.id || indicator.id || indicator.objectId,
-        face: indicator.face,
-        objectType: indicator.type,
+    if (selectedIndicatorsRef.current.length === 0) {
+      // First indicator selection - store it in both state and ref
+      console.log('Storing first indicator:', indicator);
+      selectedIndicatorsRef.current.push(indicator);
+      setSelectedIndicators([indicator]);
+    } else {
+      // We have the first indicator, now create a connection with the second
+      const startIndicator = selectedIndicatorsRef.current[0];
+      console.log('Creating connection between indicators:', {
+        first: startIndicator,
+        second: indicator,
       });
 
       // More robust ID extraction - improved to handle TextObject indicators
@@ -875,7 +877,7 @@ const App = () => {
           startIndicator.id ||
           startIndicator.objectId ||
           startIndicator.cube?.userData?.objectId ||
-          (startIndicator.plane && startIndicator.plane.userData?.id) // Look for ID in plane's userData
+          (startIndicator.plane && startIndicator.plane.userData?.id)
       );
 
       const endIdStr = String(
@@ -1051,6 +1053,7 @@ const App = () => {
       }
 
       // Reset indicator selection states
+      selectedIndicatorsRef.current = [];
       setSelectedIndicators([]);
       setShowAllCubesIndicators(false);
       setGlobalIndicatorSelected(false);
@@ -1088,13 +1091,31 @@ const App = () => {
 
   const handleToggleIndicators = (mode = 'all') => {
     if (mode === 'connection') {
-      // Reset all indicator states before showing all indicators
-      setSelectedIndicators([]);
-      setIndicatorMode('indicators');
-      setShowAllCubesIndicators(true);
-      setGlobalIndicatorSelected(true);
-      setSelectedId(null);
+      // Toggle connect mode based on previous state
+      setIsConnectMode((prev) => {
+        const newConnectMode = !prev;
+
+        if (newConnectMode) {
+          // Entering connect mode - clear any existing selections
+          selectedIndicatorsRef.current = [];
+          setSelectedIndicators([]);
+          setIndicatorMode('indicators');
+          setShowAllCubesIndicators(true);
+          setGlobalIndicatorSelected(true);
+          setSelectedId(null);
+        } else {
+          // Exiting connect mode - clean up
+          selectedIndicatorsRef.current = [];
+          setSelectedIndicators([]);
+          setShowAllCubesIndicators(false);
+          setGlobalIndicatorSelected(false);
+          setIndicatorMode('none');
+        }
+
+        return newConnectMode;
+      });
     } else {
+      // Original logic for other indicator modes
       setShowAllCubesIndicators((prev) => {
         const newValue = !prev;
         setGlobalIndicatorSelected(newValue);
@@ -1532,9 +1553,6 @@ const App = () => {
           setCurrentSpaceId(urlSpaceId);
           sessionStorage.setItem('currentSpaceId', urlSpaceId);
 
-          let spaceOwnerId = null;
-          let isSharedSpace = false;
-
           // Case 1: URL explicitly provides owner ID - use this first
           if (urlOwnerUid) {
             // Check if user is the owner
@@ -1563,12 +1581,6 @@ const App = () => {
               );
 
               if (isSharedWithMe) {
-                console.log(
-                  'Access confirmed: Space is shared with current user'
-                );
-                spaceOwnerId = urlOwnerUid;
-                isSharedSpace = true;
-
                 // Store info about shared space but DON'T create a duplicate
                 sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
                 sessionStorage.setItem(
@@ -1628,10 +1640,6 @@ const App = () => {
               const actualSpaceDoc = await getDoc(actualSpaceRef);
 
               if (actualSpaceDoc.exists()) {
-                console.log('Verified: Space exists in owner collection');
-                spaceOwnerId = sharedData.ownerId;
-                isSharedSpace = true;
-
                 sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
                 sessionStorage.setItem(
                   `sharedSpaceOwner_${urlSpaceId}`,
@@ -1650,11 +1658,9 @@ const App = () => {
 
           if (spaceDoc.exists()) {
             const spaceData = spaceDoc.data();
-            console.log('Found in top-level spaces collection:', spaceData);
 
             // Check if user owns this space
             if (spaceData.ownerId === user.uid) {
-              console.log('User is the owner of this space');
               window.currentSpaceOwner = user.uid;
               return;
             }
@@ -1665,10 +1671,6 @@ const App = () => {
             );
 
             if (isSharedWithCurrentUser) {
-              console.log('Space is shared with current user');
-              spaceOwnerId = spaceData.ownerId;
-              isSharedSpace = true;
-
               sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
               sessionStorage.setItem(
                 `sharedSpaceOwner_${urlSpaceId}`,
@@ -2117,6 +2119,7 @@ const App = () => {
             isAuthReady={isAuthReady}
             isLoading={!isAuthReady}
             showLoginButton={!isCheckingUrlAuth && !user}
+            isConnectMode={isConnectMode} // Pass connect mode state to UIOverlay
           />
         </>
       )}
