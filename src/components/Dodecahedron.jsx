@@ -658,9 +658,9 @@ const Sphere = ({
   };
 
   const getHeaderInputPosition = () => {
-    // Since this is positioned relative to the dodecahedron's group already at scale
-    // and the parent group already has position applied, we just need to move up
-    return [0, 5 * scale[1] + 10, 0]; // 5 (radius) + 10 (offset) units up
+    // Use absolute positioning with fixed distance from top of dodecahedron
+    // This matches the approach used in the Cube component
+    return [0, 5 + 5, 0]; // 5 (radius) + 5 (fixed offset) units up
   };
 
   return (
@@ -827,12 +827,16 @@ const Sphere = ({
       )}
 
       {selected && showHeader && (
-        <group position={position} scale={scale}>
-          <HeaderInput
-            position={getHeaderInputPosition()}
-            onTextSubmit={handleHeaderSubmit}
-            followTarget={contentRef}
-          />
+        <group position={position}>
+          <group scale={scale}>
+            <group scale={scale.map((s) => 1 / Math.max(s, 0.0001))}>
+              <HeaderInput
+                position={getHeaderInputPosition()}
+                onTextSubmit={handleHeaderSubmit}
+                followTarget={null} // Remove followTarget as it's handled by the parent group positioning
+              />
+            </group>
+          </group>
         </group>
       )}
 

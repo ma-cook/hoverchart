@@ -149,8 +149,8 @@ const ConnectionUpdater = ({
               dashOffset: newDashOffset,
             };
           }
-        } catch (error) {
-          console.error('Error processing connection:', error);
+        } catch {
+          // Remove console.error with unused error variable
         }
 
         // No change or error - return original connection
@@ -161,8 +161,9 @@ const ConnectionUpdater = ({
       if (hasChanges && isMounted.current) {
         setConnections(updatedConnections);
       }
-    } catch (err) {
-      console.error('Error in connection update frame:', err);
+    } catch {
+      // Remove console.error with unused error variable
+      // Prevent logging unused error variable
     }
   });
 

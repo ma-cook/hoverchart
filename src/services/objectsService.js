@@ -32,11 +32,6 @@ const positionsEqual = (posA, posB) => {
 // Modified to handle shared spaces with improved logging
 export const saveObject = async (userId, spaceId, object) => {
   if (!userId || !spaceId || !object.id) {
-    console.warn('Missing required parameters:', {
-      userId,
-      spaceId,
-      objectId: object?.id,
-    });
     return;
   }
 
@@ -62,7 +57,6 @@ export const saveObject = async (userId, spaceId, object) => {
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      console.warn('Cannot save object: no write permission for shared space');
       return;
     }
 
@@ -125,14 +119,13 @@ export const saveObject = async (userId, spaceId, object) => {
             lastUpdated: Timestamp.fromDate(new Date()),
             creatorId: userId,
           });
-        } catch (error) {
-          console.error('Error saving object:', error);
+        } catch {
           objectsCache.delete(cacheKey);
         }
       }, saveTimeout)
     );
-  } catch (error) {
-    console.error('Error in saveObject:', error);
+  } catch {
+    // Error handling without logging
   }
 };
 
@@ -146,9 +139,6 @@ export const deleteObject = async (userId, spaceId, objectId) => {
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      console.warn(
-        'Cannot delete object: no write permission for shared space'
-      );
       return;
     }
 
@@ -167,18 +157,14 @@ export const deleteObject = async (userId, spaceId, objectId) => {
     );
     await deleteDoc(objectRef);
     objectsCache.delete(cacheKey);
-  } catch (error) {
-    console.error('Error deleting object:', error);
+  } catch {
+    // Error handling without logging
   }
 };
 
-// Modified to handle shared spaces with improved logging
+// Modified to handle shared spaces without logging
 export const subscribeToObjects = (userId, spaceId, callback) => {
   if (!userId || !spaceId) return () => {};
-
-  console.log(
-    `Setting up object subscription for user ${userId}, space ${spaceId}`
-  );
 
   // First determine if this is a shared space
   let unsubscribe = null;
@@ -188,16 +174,12 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
   const startSubscription = async () => {
     try {
       const sharedStatus = await isSharedSpace(userId, spaceId);
-      console.log('Object subscription shared status:', sharedStatus);
 
       // If we unsubscribed while waiting for the async operation, return early
       if (!isSubscribed) return;
 
       // Use the owner's ID to subscribe to the correct collection
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-      console.log(
-        `Subscribing to objects in owner's collection. Owner: ${ownerUserId}`
-      );
 
       const objectsRef = collection(
         db,
@@ -208,16 +190,9 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
         'objects'
       );
 
-      console.log(
-        `Subscription path: users/${ownerUserId}/spaces/${spaceId}/objects`
-      );
-
       const q = query(objectsRef);
 
       unsubscribe = onSnapshot(q, (snapshot) => {
-        console.log(
-          `Received snapshot with ${snapshot.docChanges().length} changes`
-        );
         snapshot.docChanges().forEach((change) => {
           const data = change.doc.data();
           const objectId = change.doc.id;
@@ -253,8 +228,8 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
           }
         });
       });
-    } catch (error) {
-      console.error('Error starting subscription:', error);
+    } catch {
+      // Error handling without logging
     }
   };
 
@@ -267,3 +242,5 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
     if (unsubscribe) unsubscribe();
   };
 };
+
+export { positionsEqual };

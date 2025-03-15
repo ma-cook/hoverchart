@@ -204,11 +204,9 @@ const App = () => {
     signInUser();
   };
 
-  // Replace the auth observer effect with this updated version
+  // Remove all console.log statements from auth observer effects
   useEffect(() => {
-    console.log('Setting up auth state observer');
     const unsubscribe = observeAuthState((user) => {
-      console.log('Auth state changed:', user ? `User: ${user.uid}` : 'null');
       setUser(user);
       setIsAuthReady(true);
     });
@@ -216,7 +214,7 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // Replace loadObjects effect with new subscription handler
+  // Replace subscription effect with version without logs
   const lastUpdateRef = useRef({});
 
   // Add a ref to track which objects are currently being dragged
@@ -227,15 +225,11 @@ const App = () => {
     if (user && currentSpaceId) {
       // Determine the owner ID to use for subscriptions
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
-      console.log(
-        `Subscribing to objects with owner: ${spaceOwnerId}, space: ${currentSpaceId}`
-      );
 
       const unsubscribe = subscribeToObjects(
         spaceOwnerId, // Use the space owner's ID instead of current user
         currentSpaceId,
         (change) => {
-          console.log('Received object change:', change);
           setObjects((prev) => {
             switch (change.type) {
               case 'added':
@@ -246,10 +240,6 @@ const App = () => {
               case 'modified':
                 // Skip position updates for objects that are currently being dragged
                 if (draggingObjectsRef.current.has(change.id.toString())) {
-                  console.log(
-                    'Ignoring position update for dragged object:',
-                    change.id
-                  );
                   // Only apply non-position changes
                   return prev.map((obj) => {
                     if (obj.id.toString() === change.id) {
@@ -419,7 +409,6 @@ const App = () => {
     (indicator) => {
       // Handle null/undefined indicator
       if (!indicator) {
-        console.warn('Null indicator in calculateFacePosition');
         return [0, 0, 0];
       }
 
@@ -485,10 +474,8 @@ const App = () => {
               return indicator.position;
             }
 
-            console.warn('No valid position found for text indicator');
             return [0, 0, 0];
-          } catch (error) {
-            console.error('Error calculating text object position:', error);
+          } catch {
             return indicator.position || [0, 0, 0];
           }
         }
@@ -578,7 +565,6 @@ const App = () => {
 
             // Final fallback: if we have any position at all, use it
             if (indicator.position) {
-              console.warn('Falling back to default plane position');
               return Array.isArray(indicator.position)
                 ? indicator.position
                 : [0, 0, 0];
@@ -594,8 +580,7 @@ const App = () => {
             }
 
             return [0, 0, 0];
-          } catch (error) {
-            console.error('Error calculating plane position:', error);
+          } catch {
             return [0, 0, 0];
           }
         }
@@ -610,7 +595,6 @@ const App = () => {
             const position = indicator.cube?.position || indicator.position;
 
             if (!position) {
-              console.warn('No position data for indicator');
               return [0, 0, 0];
             }
 
@@ -704,8 +688,7 @@ const App = () => {
             worldPos.add(faceOffset);
 
             return [worldPos.x, worldPos.y, worldPos.z];
-          } catch (error) {
-            console.error('Error calculating cube/sphere position:', error);
+          } catch {
             return [0, 0, 0];
           }
         }
@@ -714,8 +697,7 @@ const App = () => {
         return Array.isArray(indicator.position)
           ? indicator.position
           : [0, 0, 0];
-      } catch (error) {
-        console.error('Unhandled error in calculateFacePosition:', error);
+      } catch {
         return [0, 0, 0];
       }
     },
@@ -728,6 +710,7 @@ const App = () => {
     [calculateFacePosition]
   );
 
+  // Clean up handleObjectMove callback
   const handleObjectMove = useCallback(
     (id, newPosition, isDragStart = false, isDragEnd = false) => {
       const objectId = id.toString();
@@ -735,7 +718,6 @@ const App = () => {
       if (isDragStart) {
         // Object drag started - add to tracking set
         draggingObjectsRef.current.add(objectId);
-        console.log('Drag started for object:', objectId);
       }
 
       // Update local object state immediately for smooth UI
@@ -817,12 +799,10 @@ const App = () => {
             };
 
             const spaceOwnerId = window.currentSpaceOwner || user.uid;
-            console.log('Saving position after drag end:', objectId);
             saveObject(spaceOwnerId, currentSpaceId, updatedObject);
 
             // Remove from dragging set when drag ends
             draggingObjectsRef.current.delete(objectId);
-            console.log('Drag ended for object:', objectId);
           }
         }
       }
@@ -865,19 +845,10 @@ const App = () => {
     [user, currentSpaceId]
   );
 
+  // Modify handleFaceIndicatorClick to remove logs
   const handleFaceIndicatorClick = (indicator) => {
-    // Add more detailed debug to see exactly what's coming in
-    console.log('Indicator clicked:', {
-      type: indicator.type,
-      id: indicator.cube?.id || indicator.id || indicator.objectId,
-      objectId: indicator.cube?.userData?.objectId || indicator.objectId,
-      face: indicator.face,
-      indicatorsLength: selectedIndicatorsRef.current.length,
-    });
-
     // If not in connect mode, enter connect mode first
     if (!isConnectMode) {
-      console.log('Entering connect mode from indicator click');
       setIsConnectMode(true);
       setIndicatorMode('indicators');
       setShowAllCubesIndicators(true);
@@ -890,16 +861,11 @@ const App = () => {
 
     if (selectedIndicatorsRef.current.length === 0) {
       // First indicator selection - store it in both state and ref
-      console.log('Storing first indicator:', indicator);
       selectedIndicatorsRef.current.push(indicator);
       setSelectedIndicators([indicator]);
     } else {
       // We have the first indicator, now create a connection with the second
       const startIndicator = selectedIndicatorsRef.current[0];
-      console.log('Creating connection between indicators:', {
-        first: startIndicator,
-        second: indicator,
-      });
 
       // More robust ID extraction - improved to handle TextObject indicators
       const startIdStr = String(
@@ -915,27 +881,15 @@ const App = () => {
           indicator.id ||
           indicator.objectId ||
           indicator.cube?.userData?.objectId ||
-          (indicator.plane && indicator.plane.userData?.id) // Look for ID in plane's userData
+          (indicator.plane && indicator.plane.userData?.id)
       );
-
-      console.log('Looking for objects with normalized IDs:', {
-        startIdStr,
-        endIdStr,
-      });
 
       // Find objects using normalized string comparison
       const startObj = objects.find((obj) => String(obj.id) === startIdStr);
       const endObj = objects.find((obj) => String(obj.id) === endIdStr);
 
-      // Better error logging
+      // Better error handling without logs
       if (!startObj || !endObj) {
-        console.error('Could not find objects for connection:', {
-          startIdSearch: startIdStr,
-          endIdSearch: endIdStr,
-          startObjFound: !!startObj,
-          endObjFound: !!endObj,
-          availableIds: objects.map((obj) => String(obj.id)),
-        });
         return;
       }
 
@@ -962,8 +916,6 @@ const App = () => {
       const startPos = calculateFacePosition(enhancedStartIndicator);
       const endPos = calculateFacePosition(enhancedEndIndicator);
 
-      console.log('Calculated positions for connection:', { startPos, endPos });
-
       // Check for duplicate connection regardless of direction
       const duplicate = connections.some((conn) => {
         const sameOrder =
@@ -980,7 +932,6 @@ const App = () => {
       });
 
       if (duplicate) {
-        console.log('Connection already exists.');
         return;
       }
 
@@ -988,27 +939,12 @@ const App = () => {
         .toString(36)
         .substr(2, 9)}`;
 
-      // Add debug logging to see what IDs we're working with
-      console.log('Creating connection between objects:', {
-        startId: startIndicator.cube?.id,
-        endId: indicator.cube?.id,
-      });
-
       // Ensure we're using proper ID formats
       const startObjectId = startIdStr;
       const endObjectId = endIdStr;
 
-      console.log('Creating connection between objects:', {
-        startId: startObjectId,
-        endId: endObjectId,
-      });
-
       // Validate we have both object IDs
       if (!startObjectId || !endObjectId) {
-        console.error('Missing object ID in connection creation', {
-          startId: startObjectId,
-          endId: endObjectId,
-        });
         return;
       }
 
@@ -1066,16 +1002,12 @@ const App = () => {
       // Save to database; if error, rollback state
       if (user) {
         try {
-          saveConnection(user.uid, currentSpaceId, newConnection).catch(
-            (error) => {
-              console.error('Failed to save connection:', error);
-              setConnections((prev) =>
-                prev.filter((conn) => conn.id !== connectionId)
-              );
-            }
-          );
-        } catch (error) {
-          console.error('Error during connection save:', error);
+          saveConnection(user.uid, currentSpaceId, newConnection).catch(() => {
+            setConnections((prev) =>
+              prev.filter((conn) => conn.id !== connectionId)
+            );
+          });
+        } catch {
           setConnections((prev) =>
             prev.filter((conn) => conn.id !== connectionId)
           );
@@ -1093,8 +1025,6 @@ const App = () => {
 
   // Update handleFaceClick to set the active indicator correctly
   const handleFaceClick = (faceInfo) => {
-    console.log('Face clicked:', faceInfo);
-
     // Ensure the info has an ID
     if (faceInfo.id || faceInfo.cube?.id) {
       setActiveIndicator({
@@ -1405,9 +1335,6 @@ const App = () => {
     if (user && currentSpaceId) {
       // Use the same owner ID for connections
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
-      console.log(
-        `Subscribing to connections with owner: ${spaceOwnerId}, space: ${currentSpaceId}`
-      );
 
       const unsubscribe = subscribeToConnections(
         spaceOwnerId, // Use space owner ID
@@ -1480,10 +1407,8 @@ const App = () => {
   // Add initialization of connection mappings when user is authenticated
   useEffect(() => {
     if (user) {
-      console.log('Initializing connection mappings');
       initializeConnectionMappings(user.uid)
         .then(() => {
-          console.log('Connection mappings initialized successfully');
           // Debug: Log current connection mappings
           if (typeof window !== 'undefined') {
             window.checkConnectionMap = () => {
@@ -1506,8 +1431,7 @@ const App = () => {
     }
   }, [user]); // Only run when user changes
 
-  // Add this effect at the top of other effects
-  // In App.jsx
+  // Update the URL auth effect without logs
   useEffect(() => {
     const checkUrlAuth = async () => {
       const params = new URLSearchParams(window.location.search);
@@ -1517,12 +1441,9 @@ const App = () => {
       if (uid && token) {
         setIsCheckingUrlAuth(true);
         try {
-          const success = await handleUrlAuth();
-          if (!success) {
-            console.error('Failed to authenticate with URL parameters');
-          }
-        } catch (error) {
-          console.error('Error during URL authentication:', error);
+          await handleUrlAuth();
+        } catch {
+          // Handle error silently
         } finally {
           setIsCheckingUrlAuth(false);
         }
@@ -1541,14 +1462,14 @@ const App = () => {
     }
   }, []);
 
+  // Update auth state check without logs
   useEffect(() => {
-    console.log('Auth state update:', { user: !!user, isCheckingUrlAuth });
     if (user || !isCheckingUrlAuth) {
       setIsCheckingUrlAuth(false);
     }
   }, [user, isCheckingUrlAuth]);
 
-  // Get current space ID from session storage or URL - improved lookup with thorough error handling
+  // Clean up space fetching effect
   useEffect(() => {
     if (!user) return;
 
@@ -1556,28 +1477,15 @@ const App = () => {
       // Check URL for space ID first
       const params = new URLSearchParams(window.location.search);
       const urlSpaceId = params.get('spaceId');
-      const isSharedParam = params.get('shared') === 'true';
+
       const urlOwnerUid = params.get('ownerUid');
-      const urlUid = params.get('uid');
 
       // Clear any existing objects/connections when changing spaces
       setObjects([]);
       setConnections([]);
 
-      console.log('URL parameters:', {
-        spaceId: urlSpaceId,
-        isShared: isSharedParam,
-        ownerUid: urlOwnerUid,
-        uid: urlUid,
-        currentUser: user.uid,
-      });
-
       // If we have a space ID, let's try to use it
       if (urlSpaceId) {
-        console.log(
-          `URL contains spaceId: ${urlSpaceId}, attempting to use it`
-        );
-
         try {
           // Set space ID early to prevent redirects
           setCurrentSpaceId(urlSpaceId);
@@ -1587,7 +1495,6 @@ const App = () => {
           if (urlOwnerUid) {
             // Check if user is the owner
             if (urlOwnerUid === user.uid) {
-              console.log('User is the explicit owner per URL');
               return;
             }
 
@@ -1603,7 +1510,6 @@ const App = () => {
 
             if (ownerSpaceDoc.exists()) {
               const spaceData = ownerSpaceDoc.data();
-              console.log('Found space in owner collection:', spaceData);
 
               // Check if space is shared with current user
               const isSharedWithMe = spaceData.sharedWith?.some(
@@ -1621,12 +1527,7 @@ const App = () => {
                 // Update local state for the subscription logic to use
                 window.currentSpaceOwner = urlOwnerUid; // Use a global for the service functions
 
-                console.log(
-                  `Set up for direct access to owner's (${urlOwnerUid}) space`
-                );
                 return;
-              } else {
-                console.warn('Space exists but user does not have access');
               }
             }
           }
@@ -1636,7 +1537,6 @@ const App = () => {
           const userSpaceDoc = await getDoc(userSpaceRef);
 
           if (userSpaceDoc.exists()) {
-            console.log("Space found in user's own collection");
             window.currentSpaceOwner = user.uid; // User is accessing their own space
             return;
           }
@@ -1653,10 +1553,6 @@ const App = () => {
 
           if (sharedDoc.exists()) {
             const sharedData = sharedDoc.data();
-            console.log(
-              'Found reference in shared spaces collection:',
-              sharedData
-            );
 
             if (sharedData.ownerId) {
               // Check the actual space in owner's collection
@@ -1712,9 +1608,6 @@ const App = () => {
           }
 
           // Case 5: Last resort - try to find owner
-          console.log(
-            'Space not found in expected locations, searching for owner...'
-          );
           try {
             const ownerId = await findSpaceOwner(urlSpaceId);
             if (ownerId && ownerId !== user.uid) {
@@ -1735,9 +1628,6 @@ const App = () => {
                 );
 
                 if (hasAccess) {
-                  console.log(
-                    `Found space with owner ${ownerId} and user has access`
-                  );
                   // Don't create a duplicate, just set up for direct access
                   sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
                   sessionStorage.setItem(
@@ -1749,17 +1639,13 @@ const App = () => {
                 }
               }
             }
-          } catch (err) {
-            console.error('Error looking up space owner:', err);
+          } catch {
+            // Intentionally ignored
           }
 
           // If we get here, we didn't find a valid space or don't have access
-          console.warn(
-            'Could not verify access to this space - using best effort'
-          );
           window.currentSpaceOwner = urlOwnerUid || user.uid;
-        } catch (error) {
-          console.error('Error during space lookup:', error);
+        } catch {
           window.currentSpaceOwner = user.uid; // Fallback to user's own spaces
         }
         return;
@@ -1768,7 +1654,6 @@ const App = () => {
       // Check session storage if no URL space ID
       const storedSpaceId = sessionStorage.getItem('currentSpaceId');
       if (storedSpaceId) {
-        console.log(`Using stored space ID: ${storedSpaceId}`);
         setCurrentSpaceId(storedSpaceId);
 
         // Check if it's a shared space from storage
@@ -1788,7 +1673,6 @@ const App = () => {
       }
 
       // If we reach here, redirect to landing page
-      console.log('No valid space ID - redirecting to landing page');
       setCurrentSpaceId(null);
     };
 
@@ -1799,8 +1683,6 @@ const App = () => {
   useEffect(() => {
     // Only run this after auth is ready and we know there's no current space
     if (isAuthReady && user && currentSpaceId === null) {
-      console.log('No space ID available - redirecting to landing page');
-
       // Allow a small delay for logging and cleanup
       const redirectTimeout = setTimeout(() => {
         window.location.href = 'https://volscape.web.app/';
@@ -1819,9 +1701,6 @@ const App = () => {
 
     // If we have neither a user ID nor space ID in URL, and auth check is complete
     if (!isCheckingUrlAuth && !urlSpaceId && !urlUid) {
-      console.log(
-        'No user ID or space ID in URL - redirecting to landing page'
-      );
       window.location.href = 'https://volscape.web.app/';
     }
   }, [isCheckingUrlAuth]); // Only depends on auth check status
