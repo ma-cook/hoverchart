@@ -63,6 +63,8 @@ const Cube = ({
     right: { fontSize: 0.5, color: 'white', underline: false },
     left: { fontSize: 0.5, color: 'white', underline: false },
   },
+  onTransformStart, // Add these new props
+  onTransformEnd,
 }) => {
   const [selectedFace, setSelectedFace] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
@@ -640,9 +642,83 @@ const Cube = ({
     }
   };
 
+  // Be sure to clear timeouts when component unmounts
+  useEffect(() => {
+    return () => {
+      if (contentRef.current?._scaleTimeout) {
+        clearTimeout(contentRef.current._scaleTimeout);
+      }
+    };
+  }, []);
+
+  // Add new state to track scale modifications without nested flags
+  const [isScaleModified, setIsScaleModified] = useState(false);
+
+  // Replace handleScale function with the exact implementation from Dodecahedron
+  const handleScale = (e) => {
+    if (!e.target || !e.target.object) return;
+    const newScale = [
+      e.target.object.scale.x,
+      e.target.object.scale.y,
+      e.target.object.scale.z,
+    ];
+    // Only update if the scale change is significant
+    const epsilon = 0.0001;
+    if (
+      Math.abs(newScale[0] - scale[0]) < epsilon &&
+      Math.abs(newScale[1] - scale[1]) < epsilon &&
+      Math.abs(newScale[2] - scale[2]) < epsilon
+    ) {
+      return;
+    }
+    setScale(newScale);
+    setIsScaleModified(true);
+  };
+
+  // Replace existing scale effects with this simplified version that matches Dodecahedron exactly
+  useEffect(() => {
+    if (isScaleModified) {
+      // Only update database when flag is set
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'cube',
+          position,
+          scale,
+          color,
+          headerText,
+          faceColors,
+          faceTexts,
+          faceTextStyles,
+          textStyle,
+        });
+      }
+
+      // Reset flag immediately
+      setIsScaleModified(false);
+
+      // Call transform end callback if provided
+      if (onTransformEnd) {
+        onTransformEnd(id);
+      }
+    }
+  }, [
+    isScaleModified,
+    scale,
+    onUpdate,
+    id,
+    position,
+    color,
+    headerText,
+    faceColors,
+    faceTexts,
+    faceTextStyles,
+    textStyle,
+    onTransformEnd,
+  ]);
+
   return (
     <>
-      {/* Simplify group structure - single group with position */}
+      {/* Main cube group */}
       <group ref={contentRef} position={position} scale={scale}>
         <mesh
           onClick={(e) => {
@@ -859,50 +935,38 @@ const Cube = ({
           />
         )}
         {headerText && (
-          <>
-            {/* Calculate inverse scale to cancel out parent group scaling */}
-            {(() => {
-              // Calculate inverse scale with protection against division by zero
-              const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
-              return (
-                <group
-                  scale={inverseScale}
-                  position={getUIPositions().headerText}
-                >
-                  <TextSprite
-                    text={headerText}
-                    position={[0, 0, 0]}
-                    followTarget={null}
-                    onClick={handleTextClick}
-                    style={{
-                      ...textStyle,
-                      isHeaderText: true,
-                      fixedSize: false, // Allow camera-based scaling
-                    }}
-                  />
-                  {showHeaderTextStyleUI &&
-                    activeTextStyleUI === contentRef.current && (
-                      <TextStyleUI
-                        position={[0, 2 / scale[1], 0]} // Adjust position slightly upward
-                        followTarget={null}
-                        onStyleChange={handleStyleChange}
-                        onClose={() => {
-                          setShowHeaderTextStyleUI(false);
-                          setActiveTextStyleUI(null);
-                        }}
-                      />
-                    )}
-                </group>
-              );
-            })()}
-          </>
-        )}
-        {selected && isResizing && contentRef.current && (
-          <ResizeArrows onResize={handleResize} object={contentRef.current} />
+          <group
+            scale={scale.map((s) => 1 / Math.max(0.0001, s))}
+            position={getUIPositions().headerText}
+          >
+            <TextSprite
+              text={headerText}
+              position={[0, 0, 0]}
+              followTarget={null}
+              onClick={handleTextClick}
+              style={{
+                ...textStyle,
+                isHeaderText: true,
+                fixedSize: false, // Allow camera-based scaling
+              }}
+            />
+            {showHeaderTextStyleUI &&
+              activeTextStyleUI === contentRef.current && (
+                <TextStyleUI
+                  position={[0, 2 / scale[1], 0]} // Adjust position slightly upward
+                  followTarget={null}
+                  onStyleChange={handleStyleChange}
+                  onClose={() => {
+                    setShowHeaderTextStyleUI(false);
+                    setActiveTextStyleUI(null);
+                  }}
+                />
+              )}
+          </group>
         )}
       </group>
 
-      {/* Update TransformControls to target the main group */}
+      {/* IMPORTANT: Keep the TransformControls OUTSIDE the main group, at the same level */}
       {selected && showTransform && contentRef.current && (
         <DreiTransformControls
           ref={transformControlsRef}
@@ -921,6 +985,32 @@ const Cube = ({
           mode="translate"
           space="world"
           size={1}
+        />
+      )}
+
+      {/* Scale transform controls - MUST be kept separate from the main TransformControls */}
+      {selected && isResizing && contentRef.current && (
+        <DreiTransformControls
+          object={contentRef.current}
+          onObjectChange={handleScale}
+          onDragStart={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = false;
+            }
+            if (onTransformStart) {
+              onTransformStart(id);
+            }
+          }}
+          onDragEnd={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = true;
+            }
+            // No additional processing here - it's all handled by the isScaleModified effect
+          }}
+          mode="scale"
+          space="local"
+          size={1}
+          matrixAutoUpdate={false}
         />
       )}
     </>

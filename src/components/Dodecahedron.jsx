@@ -341,7 +341,13 @@ const Sphere = ({
   }, [updateDatabase]);
 
   const handleTransformToggle = () => {
-    setShowTransform(!showTransform);
+    // When enabling transform mode, we should disable resize mode
+    setShowTransform((prev) => {
+      if (!prev) {
+        setIsResizing(false);
+      }
+      return !prev;
+    });
   };
 
   const handleHeaderToggle = () => {
@@ -354,7 +360,13 @@ const Sphere = ({
   };
 
   const handleResizeToggle = () => {
-    setIsResizing(!isResizing);
+    // When enabling resize mode, we should disable transform mode
+    setIsResizing((prev) => {
+      if (!prev) {
+        setShowTransform(false);
+      }
+      return !prev;
+    });
   };
 
   const handleResize = (axis, delta) => {
@@ -402,6 +414,20 @@ const Sphere = ({
         z: newPos.z,
       });
     }
+  };
+
+  // Add handler for scale changes from TransformControls
+  const handleScale = (e) => {
+    // Get new scale from the transform controls event
+    const newScale = [
+      e.target.object.scale.x,
+      e.target.object.scale.y,
+      e.target.object.scale.z,
+    ];
+
+    // Update scale state
+    setScale(newScale);
+    setIsScaleModified(true);
   };
 
   // Split face click into two separate handlers
@@ -865,7 +891,24 @@ const Sphere = ({
       )}
 
       {selected && isResizing && contentRef.current && (
-        <ResizeArrows onResize={handleResize} object={contentRef.current} />
+        <DreiTransformControls
+          object={contentRef.current}
+          onObjectChange={handleScale}
+          onDragStart={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = false;
+            }
+          }}
+          onDragEnd={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = true;
+            }
+          }}
+          mode="scale"
+          space="local"
+          size={1}
+          matrixAutoUpdate={false} // Add this to prevent matrix recursion
+        />
       )}
 
       {selected && showFaceTextInput && activeFace !== null && (

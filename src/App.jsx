@@ -54,16 +54,14 @@ const ConnectionUpdater = ({
   connections,
   setConnections,
   calculateFacePosition,
+  transformingObjects, // Add this prop
 }) => {
-  // Add frame skipping to reduce update frequency
   const frameCount = useRef(0);
-  const FRAMES_TO_SKIP = 3; // Only update every 3rd frame
-
-  // Reference to track if positions changed
+  const FRAMES_TO_SKIP = 3;
   const lastPositions = useRef({});
+  // Remove the transformingObjects ref from here since it's now a prop
 
   useFrame((state, delta) => {
-    // Skip frames to reduce calculation frequency
     frameCount.current += 1;
     if (frameCount.current % FRAMES_TO_SKIP !== 0) return;
 
@@ -72,6 +70,14 @@ const ConnectionUpdater = ({
 
       // Calculate new positions without updating state immediately
       const updatedConnections = connections.map((conn) => {
+        // Skip connection updates for objects that are actively being scaled
+        if (
+          transformingObjects.current.has(conn.start?.objectId) ||
+          transformingObjects.current.has(conn.end?.objectId)
+        ) {
+          return conn;
+        }
+
         // Using memoized calculation to avoid redundant work
         const newStartPos = calculateFacePosition(conn.start);
         const newEndPos = calculateFacePosition(conn.end);
@@ -124,8 +130,8 @@ const ConnectionUpdater = ({
         return conn;
       });
 
-      // Only update state if there are actual changes
-      if (hasChanges) {
+      // Only update state if there are actual changes and no active transforms
+      if (hasChanges && transformingObjects.current.size === 0) {
         setConnections(updatedConnections);
       }
     }
@@ -139,6 +145,35 @@ const App = () => {
   const [objects, setObjects] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const cameraRef = useRef();
+
+  // Move transformingObjects ref here to the App component level
+  const transformingObjects = useRef(new Set());
+
+  // Define registerTransformingObject as a callback inside the App component
+  const registerTransformingObject = useCallback((id, isTransforming) => {
+    if (isTransforming) {
+      transformingObjects.current.add(id.toString());
+    } else {
+      transformingObjects.current.delete(id.toString());
+    }
+  }, []);
+
+  // Add a specialized handler for matrix updates to break recursion loops
+  const handleObjectMatrixChanged = useCallback((id, matrixWorld) => {
+    // Store last applied matrix to detect recursion
+    if (!window._matrixUpdateMap) {
+      window._matrixUpdateMap = new Map();
+    }
+
+    const previousMatrix = window._matrixUpdateMap.get(id.toString());
+    if (previousMatrix && matrixWorld.equals(previousMatrix)) {
+      // Skip redundant updates that might cause recursion
+      return;
+    }
+
+    // Update stored matrix
+    window._matrixUpdateMap.set(id.toString(), matrixWorld.clone());
+  }, []);
 
   const [showAllCubesIndicators, setShowAllCubesIndicators] = useState(false);
   const [activeIndicator, setActiveIndicator] = useState(null);
@@ -810,11 +845,30 @@ const App = () => {
     [user, objects, currentSpaceId]
   );
 
-  // Update handleObjectUpdate to use debouncing and prevent unnecessary updates
+  // Update handleObjectUpdate to keep changes minimal during scale operations
   const handleObjectUpdate = useCallback(
     (id, updates) => {
       if (!user || !id || !currentSpaceId) return;
 
+      // Only track object ID during transform, don't manipulate matrices
+      if (updates.scale && transformingObjects.current.has(id.toString())) {
+        setObjects((prev) => {
+          const updatedObjects = prev.map((obj) => {
+            if (obj.id === id) {
+              const newObj = { ...obj, ...updates };
+              lastUpdateRef.current[id] = newObj;
+              return newObj;
+            }
+            return obj;
+          });
+          return updatedObjects;
+        });
+
+        // Let Three.js handle the matrices naturally
+        return;
+      }
+
+      // Regular update process for non-scaling changes
       setObjects((prev) => {
         const updatedObjects = prev.map((obj) => {
           if (obj.id === id) {
@@ -1739,6 +1793,7 @@ const App = () => {
                 connections={connections}
                 setConnections={setConnections}
                 calculateFacePosition={memoizedCalculateFacePosition}
+                transformingObjects={transformingObjects} // Pass the ref as a prop
               />
               {connections.map((connection) => {
                 const startPosition = connection.start?.position || [0, 0, 0];
@@ -1919,6 +1974,20 @@ const App = () => {
                       activeTextStyleUI={activeTextStyleUI}
                       setActiveTextStyleUI={setActiveTextStyleUI}
                       onIndicatorDeselected={handleIndicatorDeselected}
+                      onTransformStart={() =>
+                        registerTransformingObject(obj.id, true)
+                      }
+                      onTransformEnd={() =>
+                        registerTransformingObject(obj.id, false)
+                      }
+                      onMatrixChanged={(matrixWorld) =>
+                        handleObjectMatrixChanged(obj.id, matrixWorld)
+                      }
+                      transformControls={{
+                        matrixAutoUpdate: false, // Force consistent matrix handling
+                        coordinateSystem: 'local', // Use local coordinate system to prevent unwanted recursion
+                        stackBehavior: 'detach_on_modify', // Add custom hint for transform controls
+                      }}
                     />
                   );
                 }
