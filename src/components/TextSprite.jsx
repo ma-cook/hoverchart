@@ -51,7 +51,6 @@ const TextSprite = ({
         textRef.current.parent?.getWorldScale(worldScale);
 
         // Calculate inverse scale with a more reliable approach
-        // Set minimum scale value to avoid division by zero
         const inverseScale = new THREE.Vector3(
           1 / Math.max(0.0001, worldScale.x),
           1 / Math.max(0.0001, worldScale.y),
@@ -61,7 +60,7 @@ const TextSprite = ({
         // Apply inverse scale to keep text size consistent
         textRef.current.scale.copy(inverseScale);
 
-        // Compute world-space normal from the provided face normal:
+        // Compute world-space normal from the provided face normal
         const worldNormal = new THREE.Vector3(...normal);
         if (textRef.current.parent) {
           const rotationMatrix = new THREE.Matrix4();
@@ -70,119 +69,137 @@ const TextSprite = ({
           worldNormal.applyMatrix4(rotationMatrix);
         }
 
-        // Determine direction from camera to text's world position.
+        // Get text's world position and calculate view direction
         const textWorldPos = new THREE.Vector3();
         textRef.current.getWorldPosition(textWorldPos);
         const viewDir = textWorldPos.clone().sub(camera.position).normalize();
 
-        // Build the rotation so that the text faces the provided normal.
-        const matrix = new THREE.Matrix4();
-        matrix.lookAt(
-          new THREE.Vector3(0, 0, 0),
-          worldNormal,
-          new THREE.Vector3(0, 1, 0)
-        );
+        // Calculate dot product between normal and view direction
+        const dotProduct = worldNormal.dot(viewDir);
 
-        // If the camera is behind the face (dot > 0), flip rotation by 180°.
-        if (worldNormal.dot(viewDir) < 0) {
+        // Set visibility based on viewing angle
+        if (dotProduct < 0) {
+          // We're looking at the face from the front
+          textRef.current.visible = true;
+
+          // Build rotation matrix for text orientation
+          const matrix = new THREE.Matrix4();
+          matrix.lookAt(
+            new THREE.Vector3(0, 0, 0),
+            worldNormal,
+            new THREE.Vector3(0, 1, 0)
+          );
+
+          // Flip text 180° to face viewer
           const flipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
           matrix.multiply(flipMatrix);
-        }
-        textRef.current.setRotationFromMatrix(matrix);
-        textRef.current.visible = true;
-      } else if (followTarget?.current) {
-        const targetPos = followTarget.current.position;
-        const targetScale = followTarget.current.scale;
 
-        if (style.isHeaderText && style.isPlaneHeader) {
-          // If fixedPosition is true, do not override the provided position.
-          if (!style.fixedPosition) {
-            const [x, y, z] = position;
-            textRef.current.position.set(
-              targetPos.x + x,
-              targetPos.y + y,
-              targetPos.z + z
-            );
-          }
-          // Always update rotation (billboard) and scale.
-          textRef.current.quaternion.copy(camera.quaternion);
-          const distanceToCamera = camera.position.distanceTo(
-            textRef.current.position
-          );
-          const scaleValue = Math.min(
-            Math.max(distanceToCamera * 0.01, 0.5),
-            2
-          );
-          textRef.current.scale.set(scaleValue, scaleValue, scaleValue);
-        } else if (style.isHeaderText) {
-          const cubeHeight = 10 * targetScale.y;
-          const distanceToCamera = camera.position.distanceTo(targetPos);
-          const fontSize = getFontSize(style.fontSize);
-
-          // Different offset based on shape type
-          const baseOffset = style.isDodecahedronHeader
-            ? 8 * targetScale.y // Keep dodecahedron header high
-            : 4 * targetScale.y; // Lower offset for cube header
-          const textOffset = fontSize * 0.5;
-
-          textRef.current.position.set(
-            targetPos.x,
-            targetPos.y + cubeHeight / 2 + baseOffset + textOffset,
-            targetPos.z
-          );
-
-          // Scale text based on distance but with tighter bounds
-          const minScale = 0.8;
-          const maxScale = 10;
-          const baseScale = distanceToCamera * 0.008; // Reduced factor for more subtle scaling
-          const scaleFactor = Math.min(Math.max(baseScale, minScale), maxScale);
-
-          textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          textRef.current.setRotationFromMatrix(matrix);
         } else {
-          // Calculate base heights and distances without scale influence
-          const cubeHeight = 10; // Remove scale influence
-          const topEdgeOffset = cubeHeight / 5;
-          const fontSize = getFontSize(style.fontSize);
-          const scaledTextHeight =
-            fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
-          const scaledMinDistance = Math.max(
-            MINIMUM_DISTANCE, // Remove scale factor for minimum distance
-            MIN_CUBE_DISTANCE
-          );
-
-          // Calculate camera-dependent offset without scale influence
-          const distanceToCamera = camera.position.distanceTo(targetPos);
-          const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
-
-          // Update position but maintain constant text size
-          textRef.current.position.set(
-            targetPos.x,
-            targetPos.y +
-              topEdgeOffset +
-              scaledMinDistance +
-              scaledTextHeight +
-              zoomOffset,
-            targetPos.z
-          );
-
-          // Use constant scale for fixed size text
-          const baseScale = style.fixedSize
-            ? 1
-            : Math.max(distanceToCamera * 0.02, 1);
-          textRef.current.scale.set(baseScale, baseScale, baseScale);
-        }
-        if (billboard) {
-          textRef.current.quaternion.copy(camera.quaternion);
+          // We're looking at the face from behind
+          textRef.current.visible = false;
         }
       } else {
-        // Handle face text differently
-        if (style.isFaceText) {
-          textRef.current.scale.set(1, 1, 1); // Keep constant size
-          if (!style.fixedSize && billboard) {
+        // Non-face text is always visible
+        textRef.current.visible = true;
+
+        if (followTarget?.current) {
+          const targetPos = followTarget.current.position;
+          const targetScale = followTarget.current.scale;
+
+          if (style.isHeaderText && style.isPlaneHeader) {
+            // If fixedPosition is true, do not override the provided position.
+            if (!style.fixedPosition) {
+              const [x, y, z] = position;
+              textRef.current.position.set(
+                targetPos.x + x,
+                targetPos.y + y,
+                targetPos.z + z
+              );
+            }
+            // Always update rotation (billboard) and scale.
+            textRef.current.quaternion.copy(camera.quaternion);
+            const distanceToCamera = camera.position.distanceTo(
+              textRef.current.position
+            );
+            const scaleValue = Math.min(
+              Math.max(distanceToCamera * 0.01, 0.5),
+              2
+            );
+            textRef.current.scale.set(scaleValue, scaleValue, scaleValue);
+          } else if (style.isHeaderText) {
+            const cubeHeight = 10 * targetScale.y;
+            const distanceToCamera = camera.position.distanceTo(targetPos);
+            const fontSize = getFontSize(style.fontSize);
+
+            // Different offset based on shape type
+            const baseOffset = style.isDodecahedronHeader
+              ? 8 * targetScale.y // Keep dodecahedron header high
+              : 4 * targetScale.y; // Lower offset for cube header
+            const textOffset = fontSize * 0.5;
+
+            textRef.current.position.set(
+              targetPos.x,
+              targetPos.y + cubeHeight / 2 + baseOffset + textOffset,
+              targetPos.z
+            );
+
+            // Scale text based on distance but with tighter bounds
+            const minScale = 0.8;
+            const maxScale = 10;
+            const baseScale = distanceToCamera * 0.008; // Reduced factor for more subtle scaling
+            const scaleFactor = Math.min(
+              Math.max(baseScale, minScale),
+              maxScale
+            );
+
+            textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          } else {
+            // Calculate base heights and distances without scale influence
+            const cubeHeight = 10; // Remove scale influence
+            const topEdgeOffset = cubeHeight / 5;
+            const fontSize = getFontSize(style.fontSize);
+            const scaledTextHeight =
+              fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
+            const scaledMinDistance = Math.max(
+              MINIMUM_DISTANCE, // Remove scale factor for minimum distance
+              MIN_CUBE_DISTANCE
+            );
+
+            // Calculate camera-dependent offset without scale influence
+            const distanceToCamera = camera.position.distanceTo(targetPos);
+            const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
+
+            // Update position but maintain constant text size
+            textRef.current.position.set(
+              targetPos.x,
+              targetPos.y +
+                topEdgeOffset +
+                scaledMinDistance +
+                scaledTextHeight +
+                zoomOffset,
+              targetPos.z
+            );
+
+            // Use constant scale for fixed size text
+            const baseScale = style.fixedSize
+              ? 1
+              : Math.max(distanceToCamera * 0.02, 1);
+            textRef.current.scale.set(baseScale, baseScale, baseScale);
+          }
+          if (billboard) {
             textRef.current.quaternion.copy(camera.quaternion);
           }
-        } else if (!style.fixedSize && billboard) {
-          textRef.current.quaternion.copy(camera.quaternion);
+        } else {
+          // Handle face text differently
+          if (style.isFaceText) {
+            textRef.current.scale.set(1, 1, 1); // Keep constant size
+            if (!style.fixedSize && billboard) {
+              textRef.current.quaternion.copy(camera.quaternion);
+            }
+          } else if (!style.fixedSize && billboard) {
+            textRef.current.quaternion.copy(camera.quaternion);
+          }
         }
       }
     }
@@ -218,9 +235,10 @@ const TextSprite = ({
         outlineWidth={0.01}
         outlineColor={style.color}
         billboard={billboard}
-        depthTest={style.depthTest}
+        depthTest={true}
+        depthWrite={true}
         renderOrder={style.renderOrder || 0}
-        side={THREE.FrontSide}
+        side={style.side || THREE.FrontSide} // Use parent's side setting if provided
       >
         {text}
       </Text>

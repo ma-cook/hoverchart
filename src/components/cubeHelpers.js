@@ -3,8 +3,8 @@ import * as THREE from 'three';
 export const faceMaterialProps = {
   transparent: true,
   opacity: 0.1,
-  side: THREE.DoubleSide,
-  depthTest: false,
+  side: THREE.FrontSide,
+  depthTest: true,
   polygonOffset: true,
   polygonOffsetFactor: -1,
   polygonOffsetUnits: -4,
@@ -21,7 +21,7 @@ export const getFaceIndicatorProps = (faceName) => {
     case 'back':
       return {
         position: [0, 0, -5],
-        rotation: [0, Math.PI, 0],
+        rotation: [0, 0, 0],
         normal: [0, 0, -1],
       };
     case 'top':

@@ -759,7 +759,7 @@ const Sphere = ({
                     ? 0.3
                     : 0.1
                   : faceColors[idx]
-                  ? 0.3
+                  ? 1.0
                   : 0 // Hide faces without custom colors when not selected
               }
               side={THREE.FrontSide} // Changed from DoubleSide to FrontSide
@@ -771,7 +771,7 @@ const Sphere = ({
 
         {/* Wireframe lines */}
         {points.map((linePoints, idx) => (
-          <Line key={idx} points={linePoints} color={lineColor} lineWidth={1} />
+          <Line key={idx} points={linePoints} color={lineColor} lineWidth={3} />
         ))}
 
         {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}

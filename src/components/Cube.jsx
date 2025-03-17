@@ -495,6 +495,8 @@ const Cube = ({
     [size, size, size],
   ];
 
+  // Update the face material side condition to correctly identify which faces face outward
+  // All faces actually face outward from their local perspective
   const getFaceMaterial = (faceName) => ({
     ...faceMaterialProps,
     color: faceColors[faceName]
@@ -507,7 +509,10 @@ const Cube = ({
       : selectedFace === faceName
       ? 0.1
       : 0.05,
-    depthWrite: !!faceColors[faceName],
+    depthWrite: true, // Enable depth writing
+    side: THREE.FrontSide, // All cube faces should use FrontSide
+    transparent: true,
+    depthTest: true,
   });
 
   // Update the position calculation functions to use consistent logic like Plane and Dodecahedron
@@ -598,14 +603,21 @@ const Cube = ({
   };
 
   // Add helper function to calculate text offset based on font size
-  const getFaceTextOffset = (fontSize) => {
-    // Create a more consistent offset regardless of face size
-    const baseOffset = 0.5; // Base distance from face
-    const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
-    const textHeight = fontSizeMultiplier * 0.7; // Match TEXT_HEIGHT from TextSprite
+  const getFaceTextOffset = (fontSize, faceName) => {
+    // Base distance from face - adjusted for each face direction
+    const baseOffset =
+      faceName === 'top'
+        ? 0 // Reduced offset for top face (was 0.2)
+        : faceName === 'bottom'
+        ? 0.2 // Keep bottom face as is
+        : 0.5; // Standard offset for other faces
 
-    // Add extra z-offset to always stay above the face regardless of scale
-    const zSafetyMargin = 0.3;
+    const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
+    const textHeight = fontSizeMultiplier * 0.7;
+
+    // Reduce safety margin for top face
+    const zSafetyMargin = faceName === 'top' ? 0.1 : 0.3;
+
     return baseOffset + textHeight / 2 + zSafetyMargin;
   };
 
@@ -749,8 +761,10 @@ const Cube = ({
               <meshBasicMaterial
                 color={faceColors[name]}
                 opacity={1.0}
-                transparent={false}
+                transparent={true}
                 depthWrite={true}
+                depthTest={true}
+                side={THREE.FrontSide} // Always use FrontSide for all faces
                 polygonOffset={true} // <-- Enable polygon offset
                 polygonOffsetFactor={-1} // <-- Push face slightly back
                 polygonOffsetUnits={-4} // <-- Fine tune offset
@@ -809,25 +823,41 @@ const Cube = ({
           } = getFaceIndicatorProps(name);
           if (!faceTexts[name]) return null;
 
-          // Calculate base position that will be affected by the cube's scale
           const textStyle = faceTextStyles[name];
-          const yOffset = getFaceTextOffset(textStyle.fontSize);
+          const yOffset = getFaceTextOffset(textStyle.fontSize, name);
 
-          // Calculate slightly offset position to prevent z-fighting
+          // Adjust offset multiplier based on whether the face has a color
+          // Use a larger offset for colored faces to ensure text is visible
+          const offsetMultiplier =
+            name === 'bottom' ? 0.8 : faceColors[name] ? 0.25 : 0.05; // Increased from 0.01 to 0.05/0.25
+
+          // Calculate position with adjusted offset to prevent z-fighting
           const offsetPosition = [
-            facePos[0] + normal[0] * 0.01,
-            facePos[1] + normal[1] * 0.01,
-            facePos[2] + normal[2] * 0.01,
+            facePos[0] + normal[0] * offsetMultiplier,
+            facePos[1] + normal[1] * offsetMultiplier,
+            facePos[2] + normal[2] * offsetMultiplier,
           ];
 
-          // Calculate inverse scale for each dimension, with minimum value to prevent division by zero
+          // Calculate inverse scale for each dimension
           const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
+
+          // Special rotation adjustment for different faces
+          const adjustedRotation =
+            name === 'left'
+              ? [rotation[0], rotation[1] + Math.PI / 2, rotation[2]]
+              : name === 'right'
+              ? [rotation[0], rotation[1] - Math.PI / 2, rotation[2]]
+              : name === 'top'
+              ? [rotation[0] + Math.PI / 2, rotation[1], rotation[2]]
+              : name === 'bottom'
+              ? [rotation[0] - Math.PI / 2, rotation[1], rotation[2]]
+              : rotation;
 
           return (
             <group
               key={`text-${name}`}
               position={offsetPosition}
-              rotation={rotation}
+              rotation={adjustedRotation}
               scale={inverseScale}
             >
               <TextSprite
@@ -841,11 +871,11 @@ const Cube = ({
                   isFaceText: true,
                   renderOrder: 2,
                   depthTest: true,
-                  depthWrite: false,
+                  depthWrite: true, // Enable depth writing
                 }}
                 normal={normal}
                 billboard={false}
-                side={THREE.FrontSide}
+                side={THREE.FrontSide} // Always use FrontSide for all faces
               />
               {/* Style UI rendering */}
               {activeTextFace === name &&
@@ -883,7 +913,10 @@ const Cube = ({
                 >
                   {/* Use consistent visual depth */}
                   <boxGeometry args={[10.4, 10.4, thickness]} />
-                  <meshBasicMaterial {...getFaceMaterial(name)} />
+                  <meshBasicMaterial
+                    {...getFaceMaterial(name)}
+                    side={THREE.FrontSide} // Always use FrontSide
+                  />
                   {selectedFace === name && selected && !showFaceTextInput && (
                     <FaceUI
                       position={uiPos}
@@ -916,7 +949,7 @@ const Cube = ({
         <Line
           points={points}
           color={color} // Use color instead of lineColor
-          lineWidth={1.5}
+          lineWidth={3}
           segments={true}
           polygonOffset // <-- Enable polygon offset for the edge lines
           polygonOffsetFactor={1} // <-- Bring lines forward
