@@ -8,7 +8,6 @@ import ObjectUI from './ObjectUI';
 import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextSprite from './TextSprite';
-import ResizeArrows from './ResizeArrows'; // Ensure ResizeArrows is imported
 import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
 import FaceIndicator from './FaceIndicator'; // <-- New import
@@ -71,7 +70,6 @@ const Cube = ({
   const [showHeader, setShowHeader] = useState(false);
   const [headerText, setHeaderText] = useState(initialHeaderText);
   const contentRef = useRef();
-  const nonScaledRef = useRef(); // New ref for non-scaled elements
   const [scale, setScale] = useState(initialScale); // Existing scale state
   const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
   const [faceColors, setFaceColors] = useState(initialFaceColors);
@@ -100,6 +98,7 @@ const Cube = ({
 
   // Add a lastPositionRef to track real position
   const lastPositionRef = useRef(position);
+  const transformControlsRef = useRef();
 
   // Update position ref when position prop changes
   useEffect(() => {
@@ -142,7 +141,6 @@ const Cube = ({
 
   const handleLineColorChange = useCallback(
     (newColor) => {
-      console.log('Changing color to:', newColor); // Add debug log
       setColor(newColor);
       if (onUpdate) {
         onUpdate(id, {
@@ -184,12 +182,8 @@ const Cube = ({
   useEffect(() => {
     if (contentRef.current && window.orbitControls) {
       contentRef.current.orbitControls = window.orbitControls;
-      if (nonScaledRef.current) {
-        // Ensure nonScaledRef.current exists
-        nonScaledRef.current.orbitControls = window.orbitControls;
-      }
     }
-  }, [contentRef, nonScaledRef]); // Added refs as dependencies
+  }, [contentRef]); // Added refs as dependencies
 
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
@@ -242,7 +236,6 @@ const Cube = ({
   };
 
   // Add this function to detect when transform controls are attached
-  const transformControlsRef = useRef();
 
   // Update handleTransformToggle
   const handleTransformToggle = () => {
@@ -259,7 +252,6 @@ const Cube = ({
   };
 
   const handleHeaderToggle = () => {
-    console.log('Header toggle clicked');
     setShowHeader(!showHeader);
   };
 
@@ -289,15 +281,6 @@ const Cube = ({
         setShowTransform(false);
       }
       return !prev;
-    });
-  };
-
-  const handleResize = (axis, delta) => {
-    const axisIndex = { x: 0, y: 1, z: 2 }[axis];
-    setScale((prevScale) => {
-      const newScale = [...prevScale];
-      newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
-      return newScale;
     });
   };
 
@@ -620,7 +603,10 @@ const Cube = ({
     const baseOffset = 0.5; // Base distance from face
     const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
     const textHeight = fontSizeMultiplier * 0.7; // Match TEXT_HEIGHT from TextSprite
-    return baseOffset + textHeight / 2; // Add half text height to position text better
+
+    // Add extra z-offset to always stay above the face regardless of scale
+    const zSafetyMargin = 0.3;
+    return baseOffset + textHeight / 2 + zSafetyMargin;
   };
 
   const getFaceUIPosition = (faceName) => {
@@ -716,6 +702,12 @@ const Cube = ({
     onTransformEnd,
   ]);
 
+  // Add helper function to calculate face thickness that adjusts with scale
+  const getFaceThickness = () => {
+    // Use a very small constant thickness that won't grow excessively when scaled
+    return 0.05;
+  };
+
   return (
     <>
       {/* Main cube group */}
@@ -739,6 +731,11 @@ const Cube = ({
           if (!faceColors[name]) return null; // Only render if face has color
           const { position: facePos, rotation } = getFaceIndicatorProps(name);
           const uiPos = getFaceUIPosition(name);
+
+          // Calculate inverse scale to ensure consistent visual thickness
+
+          const thickness = getFaceThickness();
+
           return (
             <mesh
               key={`colored-${name}`}
@@ -747,7 +744,8 @@ const Cube = ({
               onClick={(e) => handleColoredFaceClick(e, name)}
               renderOrder={1}
             >
-              <boxGeometry args={[9.8, 9.9, 0.2]} />
+              {/* Use consistent visual depth by scaling the geometry */}
+              <boxGeometry args={[9.8, 9.9, thickness]} />
               <meshBasicMaterial
                 color={faceColors[name]}
                 opacity={1.0}
@@ -825,8 +823,8 @@ const Cube = ({
               >
                 <TextSprite
                   text={faceTexts[name]}
-                  // Keep z offset slightly larger to ensure text is visible above face
-                  position={[0, yOffset, 0.2]}
+                  // Increase z offset to ensure text stays visible
+                  position={[0, yOffset, 0.5]}
                   followTarget={null}
                   onClick={(e) => handleFaceTextStyleClick(e, name)}
                   style={{
@@ -861,6 +859,8 @@ const Cube = ({
               const { position: facePos, rotation } =
                 getFaceIndicatorProps(name);
               const uiPos = getFaceUIPosition(name);
+              const thickness = getFaceThickness();
+
               return (
                 <mesh
                   key={`ui-${name}`}
@@ -869,7 +869,8 @@ const Cube = ({
                   onClick={(e) => handleFaceClick(e, name)}
                   renderOrder={2}
                 >
-                  <boxGeometry args={[10.4, 10.4, 0.2]} />
+                  {/* Use consistent visual depth */}
+                  <boxGeometry args={[10.4, 10.4, thickness]} />
                   <meshBasicMaterial {...getFaceMaterial(name)} />
                   {selectedFace === name && selected && !showFaceTextInput && (
                     <FaceUI

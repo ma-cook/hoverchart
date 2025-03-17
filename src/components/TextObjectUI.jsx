@@ -65,7 +65,7 @@ const TextObjectUI = ({
             onTransformToggle={onTransformToggle} // Pass down the transform toggle prop
             onResizeToggle={onResizeToggle} // Pass down the onResizeToggle prop
           />
-          <button
+          {/* <button
             className="ui-button"
             onClick={() => setShowBorderMenu(!showBorderMenu)}
           >
@@ -114,7 +114,7 @@ const TextObjectUI = ({
                 ▂▃▄
               </button>
             </div>
-          )}
+          )} */}
           {showColorPicker && (
             <ColorPicker
               onColorSelect={(color) => {

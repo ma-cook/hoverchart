@@ -413,15 +413,6 @@ const TextObject = ({
           onResizeToggle={() => setShowResizeArrow((prev) => !prev)}
         />
       )}
-
-      {showTransform && groupRef.current && (
-        <DreiTransformControls
-          object={groupRef.current}
-          mode="translate"
-          onObjectChange={handleDrag}
-          onDragEnd={updateDatabase}
-        />
-      )}
     </>
   );
 };
