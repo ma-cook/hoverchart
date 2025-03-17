@@ -1,15 +1,16 @@
-import { Line } from '@react-three/drei';
+import {
+  Line,
+  TransformControls as DreiTransformControls,
+} from '@react-three/drei';
 import { Vector3 } from 'three';
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceUI from './FaceUI';
 import TextSprite from './TextSprite';
 import FaceTextInput from './FaceTextInput';
-import TextStyleUI from './TextStyleUI'; // Add this import
-import { TransformControls } from '@react-three/drei'; // Add this import
-import ResizeArrows from './ResizeArrows'; // Fix import statement to use default import
+import TextStyleUI from './TextStyleUI';
 import HeaderInput from './HeaderInput';
-import FaceIndicator from './FaceIndicator'; // Keep this import
+import FaceIndicator from './FaceIndicator';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 
@@ -23,10 +24,10 @@ const Plane = ({
   showAllIndicators,
   globalIndicatorSelected,
   connections,
-  selectedIndicators, // Add this prop
+  selectedIndicators,
   indicatorMode,
-  id, // Add id prop
-  onUpdate, // Add onUpdate prop
+  id,
+  onUpdate,
   scale: initialScale = [1, 1, 1],
   color: initialColor = null,
   headerText: initialHeaderText = '',
@@ -44,31 +45,24 @@ const Plane = ({
     color: 'white',
     underline: false,
   },
+  onTransformStart,
+  onTransformEnd,
 }) => {
   const groupRef = useRef();
-  const meshRef = useRef(); // Add meshRef
-  const contentRef = useRef(); // Add contentRef
+  const meshRef = useRef();
+  const contentRef = useRef();
   const { camera } = useThree();
   const size = 5;
-  const width = 10,
-    height = 10; // dimensions used in planeGeometry
 
   const [showUI, setShowUI] = useState(false);
-
   const [showTextInput, setShowTextInput] = useState(false);
-
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
   const [showTransform, setShowTransform] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
-  const [scale, setScale] = useState([1, 1, 1]);
-
   const [showHeader, setShowHeader] = useState(false);
-
   const [showHeaderStyleUI, setShowHeaderStyleUI] = useState(false);
-
   const [indicatorSelected, setIndicatorSelected] = useState(false);
 
-  // Replace direct state with "current" prefixed state
   const [currentScale, setCurrentScale] = useState(initialScale);
   const [currentColor, setCurrentColor] = useState(initialColor);
   const [currentHeaderText, setCurrentHeaderText] = useState(initialHeaderText);
@@ -83,51 +77,48 @@ const Plane = ({
   const [currentFaceText, setCurrentFaceText] = useState(initialFaceText);
   const [currentFaceTextStyle, setCurrentFaceTextStyle] =
     useState(initialFaceTextStyle);
+  const [isScaleModified, setIsScaleModified] = useState(false);
 
-  // Add useEffect hooks to sync with props
+  // Last update ref to avoid redundant database updates
+  const lastUpdateRef = useRef(null);
+  // Last world position ref for connection calculations
+  const lastWorldPosRef = useRef(null);
+
+  // Sync props to state
   useEffect(() => {
     if (initialScale !== undefined) setCurrentScale(initialScale);
   }, [initialScale]);
-
   useEffect(() => {
     if (initialColor !== undefined) setCurrentColor(initialColor);
   }, [initialColor]);
-
   useEffect(() => {
     if (initialHeaderText !== undefined)
       setCurrentHeaderText(initialHeaderText);
   }, [initialHeaderText]);
-
   useEffect(() => {
     if (initialBorderStyle !== undefined)
       setCurrentBorderStyle(initialBorderStyle);
   }, [initialBorderStyle]);
-
   useEffect(() => {
     if (initialBorderColor !== undefined)
       setCurrentBorderColor(initialBorderColor);
   }, [initialBorderColor]);
-
   useEffect(() => {
     if (initialLineThickness !== undefined)
       setCurrentLineThickness(initialLineThickness);
   }, [initialLineThickness]);
-
   useEffect(() => {
     if (initialHeaderStyle !== undefined)
       setCurrentHeaderStyle(initialHeaderStyle);
   }, [initialHeaderStyle]);
-
   useEffect(() => {
     if (initialFaceText !== undefined) setCurrentFaceText(initialFaceText);
   }, [initialFaceText]);
-
   useEffect(() => {
     if (initialFaceTextStyle !== undefined)
       setCurrentFaceTextStyle(initialFaceTextStyle);
   }, [initialFaceTextStyle]);
 
-  // Wrap closeAllUIs in useCallback and declare it before it’s used
   const closeAllUIs = useCallback(() => {
     setShowTextStyleUI(false);
     setShowUI(false);
@@ -136,7 +127,7 @@ const Plane = ({
     setIsResizing(false);
     setShowHeader(false);
     setShowHeaderStyleUI(false);
-  }, []); // No dependencies as setters are stable
+  }, []);
 
   const points = [
     new Vector3(-size, -size, 0),
@@ -146,33 +137,29 @@ const Plane = ({
     new Vector3(-size, -size, 0),
   ];
 
+  // Keep plane facing camera
   useFrame(() => {
     if (groupRef.current) {
       groupRef.current.lookAt(camera.position);
     }
   });
 
-  // Update deselection effect to include TextStyleUI
+  // Handle selection/deselection
   useEffect(() => {
     if (!selected) {
       closeAllUIs();
       setIndicatorSelected(false);
       onIndicatorDeselected?.();
-    } else {
-      // When selected, show UI unless an indicator is selected
-      if (!indicatorSelected) {
-        setShowUI(true);
-      }
+    } else if (!indicatorSelected) {
+      setShowUI(true);
     }
-  }, [selected, closeAllUIs, onIndicatorDeselected, indicatorSelected]); // Added closeAllUIs as dependency
+  }, [selected, closeAllUIs, onIndicatorDeselected, indicatorSelected]);
 
-  // Close TextStyleUI when clicking anywhere else
+  // Handle global clicks for UI elements
   useEffect(() => {
     const handleGlobalClick = (e) => {
-      // Check if click is outside the TextStyleUI and the text
       const isTextStyleUIClick = e.target.closest('.text-style-ui');
       const isTextClick = e.target.closest('.text-sprite');
-
       if (!isTextStyleUIClick && !isTextClick) {
         setShowTextStyleUI(false);
       }
@@ -181,46 +168,189 @@ const Plane = ({
     if (showTextStyleUI) {
       window.addEventListener('click', handleGlobalClick);
     }
-
-    return () => {
-      window.removeEventListener('click', handleGlobalClick);
-    };
+    return () => window.removeEventListener('click', handleGlobalClick);
   }, [showTextStyleUI]);
 
-  const handleColorChange = (newColor) => {
-    setCurrentColor(newColor);
-    if (onUpdate && id) {
-      onUpdate(id, {
-        type: 'plane',
-        position,
-        scale: currentScale,
-        color: newColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
-      });
+  // Update world position when transform changes
+  useEffect(() => {
+    if (groupRef.current && contentRef.current) {
+      const worldPos = new THREE.Vector3();
+      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+
+      groupRef.current.updateWorldMatrix(true, false);
+      groupRef.current.getWorldPosition(worldPos);
+
+      offset.applyQuaternion(groupRef.current.quaternion);
+      worldPos.add(offset);
+
+      lastWorldPosRef.current = [worldPos.x, worldPos.y, worldPos.z];
+      groupRef.current._worldMatrix = groupRef.current.matrixWorld.clone();
+    }
+  }, [position, currentScale]);
+
+  // Update database with state changes
+  useEffect(() => {
+    if (!onUpdate || !id) return;
+
+    const currentState = {
+      type: 'plane',
+      position,
+      scale: currentScale,
+      color: currentColor,
+      headerText: currentHeaderText,
+      headerStyle: currentHeaderStyle,
+      borderStyle: currentBorderStyle,
+      borderColor: currentBorderColor,
+      lineThickness: currentLineThickness,
+      faceText: currentFaceText,
+      faceTextStyle: currentFaceTextStyle,
+    };
+
+    // Only update if state has changed
+    if (
+      !lastUpdateRef.current ||
+      !isEqual(lastUpdateRef.current, currentState)
+    ) {
+      lastUpdateRef.current = currentState;
+      onUpdate(id, currentState);
+    }
+  }, [
+    id,
+    onUpdate,
+    position,
+    currentScale,
+    currentColor,
+    currentHeaderText,
+    currentHeaderStyle,
+    currentBorderStyle,
+    currentBorderColor,
+    currentLineThickness,
+    currentFaceText,
+    currentFaceTextStyle,
+  ]);
+
+  // Add a timeout ref to properly manage debounce
+  const scaleTimeoutRef = useRef(null);
+
+  // Replace the scale handling mechanism with a ref-based approach
+  const pendingScaleRef = useRef(null);
+  const isTransformingRef = useRef(false);
+
+  // Completely rewrite the handleScale function to avoid state update cycles
+  const handleScale = (e) => {
+    if (!e.target || !e.target.object) return;
+
+    // Store scale values in the ref instead of setting state immediately
+    pendingScaleRef.current = [
+      e.target.object.scale.x,
+      e.target.object.scale.y,
+      currentScale[2], // Keep Z scale unchanged
+    ];
+
+    // Flag that we're in a transform operation
+    isTransformingRef.current = true;
+
+    // Set a timeout to apply the scale change after the current render cycle
+    if (scaleTimeoutRef.current) clearTimeout(scaleTimeoutRef.current);
+
+    scaleTimeoutRef.current = setTimeout(() => {
+      if (pendingScaleRef.current) {
+        // Apply the pending scale and reset the flag
+        setCurrentScale(pendingScaleRef.current);
+        pendingScaleRef.current = null;
+      }
+    }, 50); // Very short timeout to break the render cycle
+  };
+
+  // Add effect to handle the transform end event separately from scale changes
+  useEffect(() => {
+    if (isTransformingRef.current && !pendingScaleRef.current) {
+      isTransformingRef.current = false;
+
+      // Now that we've applied the scale and we're not transforming, update the database
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'plane',
+          position,
+          scale: currentScale,
+          color: currentColor,
+          headerText: currentHeaderText,
+          headerStyle: currentHeaderStyle,
+          borderStyle: currentBorderStyle,
+          borderColor: currentBorderColor,
+          lineThickness: currentLineThickness,
+          faceText: currentFaceText,
+          faceTextStyle: currentFaceTextStyle,
+        });
+      }
+
+      // Call transform end callback
+      if (onTransformEnd) {
+        onTransformEnd(id);
+      }
+    }
+  }, [currentScale, isTransformingRef.current]);
+
+  // Add an extra cleanup step to prevent any lingering updates
+  useEffect(() => {
+    return () => {
+      if (scaleTimeoutRef.current) clearTimeout(scaleTimeoutRef.current);
+      isTransformingRef.current = false;
+      pendingScaleRef.current = null;
+    };
+  }, []);
+
+  // Handle dragging for position updates
+  const handleDrag = (e) => {
+    if (groupRef.current) {
+      const newPos = e.target.object.position;
+      groupRef.current.position.copy(newPos);
+
+      // Calculate the new world position with offset
+      const worldPos = new THREE.Vector3();
+      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+
+      groupRef.current.updateWorldMatrix(true, false);
+      groupRef.current.getWorldPosition(worldPos);
+
+      offset.applyQuaternion(groupRef.current.quaternion);
+      worldPos.add(offset);
+
+      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
+      lastWorldPosRef.current = worldPosArray;
+
+      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
+
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'plane',
+          position: [newPos.x, newPos.y, newPos.z],
+          worldPosition: worldPosArray,
+          planeData: {
+            worldMatrix,
+            position: [newPos.x, newPos.y, newPos.z],
+            scale: currentScale,
+            offset: [0, -5 * currentScale[1], 0],
+          },
+        });
+      }
     }
   };
 
+  // UI event handlers
   const handleClick = (e) => {
     e.stopPropagation();
     onClick();
-    // Only reset UI state if not already selected
     if (!selected) {
       closeAllUIs();
       setShowUI(true);
     } else {
-      // If already selected, just toggle UI visibility
       setShowUI(true);
     }
   };
 
   const handleTextClick = () => {
-    closeAllUIs(); // Close all UIs first
+    closeAllUIs();
     setShowTextInput(true);
   };
 
@@ -266,116 +396,39 @@ const Plane = ({
 
   const handleTextSpriteClick = (e) => {
     e.stopPropagation();
-    closeAllUIs(); // Close all UIs first
+    closeAllUIs();
     setShowTextStyleUI(true);
   };
 
   const handleTransformToggle = () => {
     setShowTransform((prev) => !prev);
-    setShowUI(false); // Hide UI when transform is active
+    setShowUI(false);
   };
 
   const handleResizeToggle = () => {
     setIsResizing((prev) => {
-      if (!prev) {
-        setShowTransform(false); // Disable transform when enabling resize
-      }
+      if (!prev) setShowTransform(false);
       return !prev;
     });
     setShowUI(false);
   };
 
-  const handleResize = (axis, delta) => {
-    const axisIndex = { x: 0, y: 1 }[axis]; // Only allow x and y resize for plane
-    if (axisIndex !== undefined) {
-      const newScale = [...currentScale];
-      newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
-      setCurrentScale(newScale);
-      if (onUpdate) {
-        onUpdate(id, {
-          scale: newScale,
-          position,
-          headerText: currentHeaderText,
-          borderStyle: currentBorderStyle,
-          borderColor: currentBorderColor,
-          lineThickness: currentLineThickness,
-          type: 'plane',
-          faceText: currentFaceText,
-          faceTextStyle: currentFaceTextStyle,
-        });
-      }
-    }
-  };
-
-  // Compute margin offset so arrows appear outside the plane edges
-  const arrowMargin = 1; // extra unit margin
-  const computedArrowOffset = {
-    x: (width / 2) * scale[0] + arrowMargin,
-    y: (height / 2) * scale[1] + arrowMargin,
-    z: 0,
-  };
-
-  // Add a ref to store the last valid world position
-  const lastWorldPosRef = useRef(null);
-
-  // Update effect to maintain world position
-  useEffect(() => {
-    if (groupRef.current && contentRef.current) {
-      const worldPos = new THREE.Vector3();
-      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
-
-      groupRef.current.updateWorldMatrix(true, false);
-      groupRef.current.getWorldPosition(worldPos);
-
-      offset.applyQuaternion(groupRef.current.quaternion);
-      worldPos.add(offset);
-
-      // Store the world position
-      lastWorldPosRef.current = [worldPos.x, worldPos.y, worldPos.z];
-
-      // Also store matrix data
-      const worldMatrix = groupRef.current.matrixWorld.clone();
-      groupRef.current._worldMatrix = worldMatrix;
-    }
-  }, [position, currentScale]);
-
-  // Update handleDrag to better maintain worldPosition
-  const handleDrag = (e) => {
-    if (groupRef.current) {
-      const newPos = e.target.object.position;
-      groupRef.current.position.copy(newPos);
-
-      // Calculate the new world position with correct offset
-      const worldPos = new THREE.Vector3();
-      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
-
-      groupRef.current.updateWorldMatrix(true, false);
-      groupRef.current.getWorldPosition(worldPos);
-
-      offset.applyQuaternion(groupRef.current.quaternion);
-      worldPos.add(offset);
-
-      // Store the calculated position in ref for immediate access
-      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
-      lastWorldPosRef.current = worldPosArray;
-
-      // Also store the world matrix for precise positioning
-      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
-
-      // Send comprehensive data to ensure connections update correctly
-      if (onUpdate) {
-        onUpdate(id, {
-          type: 'plane',
-          position: [newPos.x, newPos.y, newPos.z],
-          worldPosition: worldPosArray,
-          planeData: {
-            worldMatrix,
-            position: [newPos.x, newPos.y, newPos.z],
-            scale: currentScale,
-            offset: [0, -5 * currentScale[1], 0],
-          },
-        });
-      }
+  const handleColorChange = (newColor) => {
+    setCurrentColor(newColor);
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'plane',
+        position,
+        scale: currentScale,
+        color: newColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
+      });
     }
   };
 
@@ -408,7 +461,7 @@ const Plane = ({
     e.stopPropagation();
     closeAllUIs();
     setShowHeaderStyleUI(true);
-    setShowUI(false); // Add this to hide the main UI when showing header style UI
+    setShowUI(false);
   };
 
   const handleHeaderStyleChange = (newStyle) => {
@@ -431,7 +484,6 @@ const Plane = ({
     }
   };
 
-  // Update border toggle handler
   const handleBorderToggle = (option) => {
     if (!onUpdate || !id) return;
 
@@ -465,45 +517,34 @@ const Plane = ({
     onUpdate(id, updates);
   };
 
-  // Add function to calculate absolute positions
+  // Position calculation helpers
   const getUIPositions = () => {
-    const planeHeight = 10 * scale[1];
+    const planeHeight = 10 * currentScale[1];
     const verticalOffset = planeHeight / 2;
-    const zOffset = 5; // Offset for UI elements in front of plane
+    const zOffset = 5;
 
     return {
-      faceUI: [0, verticalOffset + 2, zOffset], // Position for FaceUI above plane
+      faceUI: [0, verticalOffset + 2, zOffset],
       headerInput: [position[0], position[1] + verticalOffset + 4, position[2]],
       headerText: [position[0], position[1] + verticalOffset + 4, position[2]],
     };
   };
 
-  // Add function to get indicator positions
-  const getIndicatorPositions = () => {
-    const planeHeight = 10;
+  const getIndicatorPositions = () => ({
+    bottom: [0, -5 - 1, 0], // 5 is half the plane height, -1 is offset
+  });
 
-    return {
-      bottom: [0, -planeHeight / 2 - 1, 0],
-    };
-  };
-
-  // Update indicator click handler to use the new function
+  // Connection indicator handling
   const handleIndicatorClick = (e) => {
     e.stopPropagation();
 
     try {
       const planeRef = contentRef.current || groupRef.current;
-      if (!planeRef) {
-        console.error('No valid plane reference found');
-        return;
-      }
+      if (!planeRef) return;
 
-      // Update the matrix first
       planeRef.updateWorldMatrix(true, false);
-      // Get the world matrix AFTER updating
       const worldMatrix = planeRef.matrixWorld.clone();
 
-      // Calculate the actual world position with offset
       const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
       const worldPos = new THREE.Vector3();
 
@@ -511,10 +552,8 @@ const Plane = ({
       offset.applyQuaternion(planeRef.quaternion);
       worldPos.add(offset);
 
-      // Store the calculated world position
       const positionArray = [worldPos.x, worldPos.y, worldPos.z];
 
-      // Create enhanced indicator data
       const stringId = String(id);
       const indicator = {
         type: 'plane',
@@ -526,7 +565,7 @@ const Plane = ({
         planeData: {
           position: [...position],
           scale: [...currentScale],
-          worldMatrix: Array.from(worldMatrix.elements), // Use the matrix we created above
+          worldMatrix: Array.from(worldMatrix.elements),
           offset: [0, -5 * currentScale[1], 0],
         },
         // Include standardized data for compatibility
@@ -540,12 +579,6 @@ const Plane = ({
         objectId: stringId,
       };
 
-      console.log('Plane indicator created:', {
-        id: stringId,
-        worldPosition: positionArray,
-        localPosition: position,
-      });
-
       onIndicatorSelected?.();
       onFaceIndicatorClick?.(indicator);
     } catch (error) {
@@ -553,7 +586,6 @@ const Plane = ({
     }
   };
 
-  // Add helper to check if indicator is connected
   const isIndicatorConnected = () => {
     return connections?.some(
       (conn) =>
@@ -562,104 +594,15 @@ const Plane = ({
     );
   };
 
-  // Update shouldShowIndicator to check global selectedIndicators state
   const shouldShowIndicator = () => {
-    // Show when any indicator is selected globally
     if (selectedIndicators?.length > 0) return true;
-    if (indicatorMode === 'indicators') {
-      return true;
-    }
+    if (indicatorMode === 'indicators') return true;
     if (showAllIndicators || globalIndicatorSelected) return true;
     if (isIndicatorConnected()) return true;
     if (indicatorSelected) return true;
     if (selected) return true;
     return false;
   };
-
-  // Add an effect to update database when any relevant state changes
-  useEffect(() => {
-    if (onUpdate && id) {
-      const currentState = {
-        type: 'plane',
-        position,
-        scale: currentScale,
-        color: currentColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
-      };
-
-      // Only update if the state has changed
-      if (
-        !groupRef.current?.lastUpdate ||
-        !isEqual(groupRef.current.lastUpdate, currentState)
-      ) {
-        groupRef.current.lastUpdate = currentState;
-        onUpdate(id, currentState);
-      }
-    }
-  }, [
-    id,
-    onUpdate,
-    position,
-    currentScale,
-    currentColor,
-    currentHeaderText,
-    currentHeaderStyle,
-    currentBorderStyle,
-    currentBorderColor,
-    currentLineThickness,
-    currentFaceText,
-    currentFaceTextStyle,
-  ]);
-
-  // Add lastUpdateRef to track changes
-  const lastUpdateRef = useRef(null);
-
-  // Update database whenever relevant state changes
-  useEffect(() => {
-    if (!onUpdate || !id) return;
-
-    const currentState = {
-      type: 'plane',
-      position,
-      scale: currentScale,
-      color: currentColor,
-      headerText: currentHeaderText,
-      headerStyle: currentHeaderStyle,
-      borderStyle: currentBorderStyle,
-      borderColor: currentBorderColor,
-      lineThickness: currentLineThickness,
-      faceText: currentFaceText,
-      faceTextStyle: currentFaceTextStyle,
-    };
-
-    // Only update if state has changed
-    if (
-      !lastUpdateRef.current ||
-      !isEqual(lastUpdateRef.current, currentState)
-    ) {
-      lastUpdateRef.current = currentState;
-      onUpdate(id, currentState);
-    }
-  }, [
-    id,
-    onUpdate,
-    position,
-    currentScale,
-    currentColor,
-    currentHeaderText,
-    currentHeaderStyle,
-    currentBorderStyle,
-    currentBorderColor,
-    currentLineThickness,
-    currentFaceText,
-    currentFaceTextStyle,
-  ]);
 
   return (
     <>
@@ -674,7 +617,6 @@ const Plane = ({
               depthWrite={!!currentColor}
             />
           </mesh>
-          {/* Only render border Line when showBorder is true */}
           <Line
             points={points}
             color={selected ? 'blue' : currentBorderColor}
@@ -684,7 +626,6 @@ const Plane = ({
             dashSize={currentBorderStyle === 'dotted' ? 0.1 : 1}
             gapSize={currentBorderStyle === 'dotted' ? 0.1 : 0.5}
           />
-          edr {/* Replace the old indicator cube with FaceIndicator */}
           {shouldShowIndicator() && (
             <FaceIndicator
               position={getIndicatorPositions().bottom}
@@ -701,12 +642,12 @@ const Plane = ({
             onColorChange={handleColorChange}
             face="front"
             onTextClick={handleTextClick}
-            isPlane={true} // Add this prop
-            onTransformToggle={handleTransformToggle} // Add this prop
-            onResizeToggle={handleResizeToggle} // Add this prop
-            onHeaderToggle={handleHeaderToggle} // Add this line
-            onBorderToggle={handleBorderToggle} // Add this prop
-            followTarget={groupRef} // Add this prop
+            isPlane={true}
+            onTransformToggle={handleTransformToggle}
+            onResizeToggle={handleResizeToggle}
+            onHeaderToggle={handleHeaderToggle}
+            onBorderToggle={handleBorderToggle}
+            followTarget={groupRef}
           />
         )}
 
@@ -731,22 +672,44 @@ const Plane = ({
           <TextStyleUI
             position={[0, 10, 0]}
             onStyleChange={handleTextStyleChange}
-            onClose={() => closeAllUIs()} // Use closeAllUIs here
-          />
-        )}
-
-        {/* Add ResizeArrows when resizing */}
-        {selected && isResizing && meshRef.current && (
-          <ResizeArrows
-            onResize={handleResize}
-            object={meshRef.current}
-            planeMode={true} // Optional: add this prop to ResizeArrows to only show x/y arrows
-            arrowOffset={computedArrowOffset} // Pass computed offset
+            onClose={() => closeAllUIs()}
           />
         )}
       </group>
 
-      {/* Move header elements outside main group to prevent inheritance */}
+      {selected && isResizing && contentRef.current && (
+        <DreiTransformControls
+          key={`scale-controls-${id}`} // Add a stable key
+          object={contentRef.current}
+          onObjectChange={handleScale}
+          onDragStart={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = false;
+            }
+            if (onTransformStart) {
+              onTransformStart(id);
+            }
+          }}
+          onDragEnd={() => {
+            if (contentRef.current?.orbitControls) {
+              contentRef.current.orbitControls.enabled = true;
+            }
+            // Force final update on drag end
+            if (pendingScaleRef.current) {
+              setCurrentScale(pendingScaleRef.current);
+              pendingScaleRef.current = null;
+            }
+          }}
+          mode="scale"
+          space="local"
+          size={1}
+          matrixAutoUpdate={false}
+          showX={true}
+          showY={true}
+          showZ={false}
+        />
+      )}
+
       {showHeader && (
         <HeaderInput
           position={getUIPositions().headerInput}
@@ -764,31 +727,29 @@ const Plane = ({
           style={{
             ...currentHeaderStyle,
             isHeaderText: true,
-            isPlaneHeader: true, // Add this to identify plane headers
+            isPlaneHeader: true,
             fixedSize: true,
-            fixedPosition: true, // Add this to maintain position
+            fixedPosition: true,
           }}
           billboard={true}
         />
       )}
 
-      {/* Add header style UI */}
       {showHeaderStyleUI && (
         <TextStyleUI
           position={[0, 12, 0]}
           onStyleChange={handleHeaderStyleChange}
           onClose={() => {
             setShowHeaderStyleUI(false);
-            setShowUI(true); // Show main UI when closing header style UI
+            setShowUI(true);
           }}
           followTarget={groupRef}
-          uiType="header" // Add this to specify UI type
+          uiType="header"
         />
       )}
 
-      {/* Add TransformControls outside the group */}
       {selected && showTransform && groupRef.current && (
-        <TransformControls
+        <DreiTransformControls
           object={groupRef.current}
           mode="translate"
           onObjectChange={handleDrag}
