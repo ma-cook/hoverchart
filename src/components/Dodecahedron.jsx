@@ -207,17 +207,18 @@ const Sphere = ({
     });
   }, []);
 
-  // Move isIndicatorConnected function definition before the effects
+  // Update isIndicatorConnected function to be more robust
   const isIndicatorConnected = useCallback(
     (faceIndex) => {
       return connections?.some(
         (conn) =>
-          (conn.start.cube === contentRef.current &&
-            conn.start.face === faceIndex) ||
-          (conn.end.cube === contentRef.current && conn.end.face === faceIndex)
+          (conn.start.objectId === id.toString() &&
+            parseInt(conn.start.face) === faceIndex) ||
+          (conn.end.objectId === id.toString() &&
+            parseInt(conn.end.face) === faceIndex)
       );
     },
-    [connections]
+    [connections, id]
   );
 
   // Now the effects can use isIndicatorConnected
@@ -253,20 +254,20 @@ const Sphere = ({
     };
   }, [showFaceTextStyleMenu]);
 
-  // Update connected faces when connections change
+  // Update effect for connection tracking to be more thorough
   useEffect(() => {
     const connected = new Set();
     connections?.forEach((conn) => {
-      if (conn.start.cube === contentRef.current) {
-        connected.add(conn.start.face);
+      if (conn.start.objectId === id.toString()) {
+        connected.add(parseInt(conn.start.face));
       }
-      if (conn.end.cube === contentRef.current) {
-        connected.add(conn.end.face);
+      if (conn.end.objectId === id.toString()) {
+        connected.add(parseInt(conn.end.face));
       }
     });
     setConnectedFaces(connected);
     setIsConnected(connected.size > 0);
-  }, [connections]);
+  }, [connections, id]);
 
   // Add an effect to reset selectedIndicator when connections change
   useEffect(() => {
@@ -434,6 +435,9 @@ const Sphere = ({
     setShowObjectUI(false); // Hide ObjectUI when face is clicked
     setShowFaceTextStyleMenu(false); // Close text style menu when clicking a different face
     setActiveFaceText(null); // Clear active face text
+
+    // Don't select the indicator when clicking on the face
+    // Remove any code that would set selectedIndicator here
   };
 
   // Add a handler to receive connection state from parent
@@ -441,33 +445,35 @@ const Sphere = ({
     if (e) e.stopPropagation();
     const { center } = getFaceInfo(faceIndex);
 
-    // Log the ID we're using to help debug
-    console.log('Dodecahedron handleIndicatorClick ID:', id, typeof id);
+    // Toggle indicator selection
+    if (selectedIndicator === faceIndex) {
+      // Deselect if already selected
+      setSelectedIndicator(null);
+    } else {
+      // Select this indicator
+      setSelectedIndicator(faceIndex);
+    }
 
-    // Create properly formatted indicator data with all possible ID formats
+    // Create the indicator data with consistent ID format
     const stringId = String(id);
     const indicator = {
       type: 'sphere',
       face: faceIndex,
       cube: {
-        id: stringId, // Consistent string ID
+        id: stringId,
         position: position,
         scale: scale,
         userData: {
-          objectId: stringId, // Also include userData.objectId for consistency with Cube
+          objectId: stringId,
         },
       },
       position: center,
       faceCenter: center,
-      // Also include a direct ID reference at the top level for more robustness
       id: stringId,
       objectId: stringId,
     };
 
-    // Debug log the created indicator
-    console.log('Created dodecahedron indicator:', indicator);
-
-    // Persist activation by setting global indicator state
+    // Notify parent component
     onIndicatorSelected?.();
     onFaceIndicatorClick?.(indicator);
   };
@@ -673,15 +679,17 @@ const Sphere = ({
     return rotation;
   };
 
-  // Update shouldShowFaceIndicator logic
+  // Update shouldShowFaceIndicator logic to keep indicators visible when connected
   const shouldShowFaceIndicator = (faceIndex) => {
+    // Always show indicators that are part of connections
+    if (isIndicatorConnected(faceIndex)) return true;
+
     // Show when any indicator is selected globally
     if (selectedIndicators?.length > 0) return true;
 
-    // Show all indicators when in indicators mode and no connections exist
-    if (indicatorMode === 'indicators') {
-      return true;
-    }
+    // Show all indicators when in indicators mode
+    if (indicatorMode === 'indicators') return true;
+
     if (showAllIndicators || globalIndicatorSelected) return true;
     if (connectedFaces.has(faceIndex)) return true;
     if (selectedIndicator === faceIndex) return true;
@@ -836,13 +844,20 @@ const Sphere = ({
         {geometry.map((_, idx) => {
           const { center } = getFaceInfo(idx);
           const rotation = getFaceRotation(idx);
+          const isConnected = isIndicatorConnected(idx);
+
+          // Only show indicator as selected (blue) if it was directly clicked
+          // and is not connected
+          const isSelected = selectedIndicator === idx && !isConnected;
+
           return shouldShowFaceIndicator(idx) ? (
             <FaceIndicator
               key={`indicator-${idx}`}
               position={center}
               rotation={rotation}
               onClick={(e) => handleIndicatorClick(idx, e)}
-              isActive={selectedIndicator === idx || isIndicatorConnected(idx)}
+              isActive={isSelected}
+              isConnected={isConnected}
             />
           ) : null;
         })}

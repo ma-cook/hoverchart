@@ -36,6 +36,10 @@ import {
 import { memoize } from './utils/perfUtils'; // Add this import
 
 import { doc, getDoc, collection } from 'firebase/firestore';
+import {
+  checkLineIntersection,
+  generateCurvedPath,
+} from './utils/pathfindingUtils';
 
 // Helper function to compare arrays - this is fine at the top level as it's not a hook
 const arraysEqual = (a, b) => {
@@ -1798,16 +1802,33 @@ const App = () => {
               {connections.map((connection) => {
                 const startPosition = connection.start?.position || [0, 0, 0];
                 const endPosition = connection.end?.position || [0, 0, 0];
-
                 const midpoint = calculateMidpoint(startPosition, endPosition);
+
+                // Check for intersections with objects
+                const intersections = checkLineIntersection(
+                  startPosition,
+                  endPosition,
+                  objects.filter(
+                    (obj) =>
+                      obj.id.toString() !== connection.start?.objectId &&
+                      obj.id.toString() !== connection.end?.objectId
+                  )
+                );
+
+                // Generate path points (either curved or straight)
+                const pathPoints = generateCurvedPath(
+                  startPosition,
+                  endPosition,
+                  intersections,
+                  connection.start?.objectId,
+                  connection.end?.objectId
+                );
 
                 return (
                   <group key={connection.id}>
+                    {/* Single visible line with proper depth testing - hides behind objects */}
                     <Line
-                      points={[
-                        startPosition, // Use safe values here
-                        endPosition,
-                      ]}
+                      points={pathPoints} // Use the calculated path points
                       color={
                         connection.color ||
                         (selectedConnection === connection.id
@@ -1823,14 +1844,16 @@ const App = () => {
                       dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
                       gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
                       dashOffset={connection.dashOffset || 0}
-                      renderOrder={1} // Ensure lines render after faces
-                      transparent={true} // Make lines transparent
-                      depthTest={true} // Enable depth testing
-                      depthWrite={false} // Don't write to depth buffer
-                      toneMapped={false} // Prevent tone mapping for more consistent color
+                      renderOrder={1}
+                      transparent={false}
+                      depthTest={true}
+                      depthWrite={false}
+                      toneMapped={false}
                     />
+
+                    {/* Clickable area - needs to follow the curve */}
                     <Line
-                      points={[startPosition, endPosition]}
+                      points={pathPoints} // Also use calculated path points
                       color="white"
                       lineWidth={20}
                       onClick={(e) => handleConnectionClick(e, connection.id)}
@@ -1844,14 +1867,19 @@ const App = () => {
                       }}
                       transparent
                       opacity={0}
-                      depthTest={false} // This clickable area ignores depth
-                      renderOrder={10} // Higher render order for clickable area
+                      depthTest={false}
+                      renderOrder={10}
                     />
 
+                    {/* Text and UI elements - adjust position to the midpoint of the curve */}
                     {(connection.text || lineTexts[connection.id]) && (
                       <TextSprite
                         text={connection.text || lineTexts[connection.id]}
-                        position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
+                        position={[
+                          pathPoints[Math.floor(pathPoints.length / 2)].x,
+                          pathPoints[Math.floor(pathPoints.length / 2)].y + 5,
+                          pathPoints[Math.floor(pathPoints.length / 2)].z,
+                        ]}
                         style={
                           connection.textStyle || {
                             fontSize: 1,

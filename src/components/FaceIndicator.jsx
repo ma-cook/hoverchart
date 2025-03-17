@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
@@ -10,14 +10,16 @@ const FaceIndicator = ({
   position = [0, 0, 0],
   rotation = [0, 0, 0],
   onClick,
-  isActive,
+  isActive = false,
+  isConnected = false,
 }) => {
   const meshRef = useRef();
   const groupRef = useRef();
+  const [hovered, setHovered] = useState(false);
 
   // Only log when DEBUG is true
   if (DEBUG) {
-    console.log('FaceIndicator rendering', { position, isActive });
+    console.log('FaceIndicator rendering', { position, isActive, isConnected });
   }
 
   useFrame(() => {
@@ -33,6 +35,15 @@ const FaceIndicator = ({
     }
   });
 
+  // Determine color based on state
+  const color = isConnected
+    ? '#ffffff' // White for connected indicators
+    : isActive
+    ? '#0088ff' // Blue for selected (not connected)
+    : hovered
+    ? '#aaaaaa' // Light gray for hover
+    : '#777777'; // Darker gray for normal state
+
   return (
     <group ref={groupRef}>
       <mesh
@@ -46,12 +57,25 @@ const FaceIndicator = ({
           if (DEBUG) console.log('FaceIndicator clicked');
           onClick?.(e);
         }}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          setHovered(true);
+          document.body.style.cursor = 'pointer';
+        }}
+        onPointerOut={(e) => {
+          e.stopPropagation();
+          setHovered(false);
+          document.body.style.cursor = 'auto';
+        }}
       >
         <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial
-          color={isActive ? '#4488ff' : '#ffffff'}
-          opacity={0.9}
-          transparent
+          color={color}
+          opacity={isActive || isConnected ? 1.0 : 0.6}
+          transparent={true}
+          depthTest={true}
+          depthWrite={false}
+          renderOrder={5}
         />
       </mesh>
     </group>
@@ -60,9 +84,10 @@ const FaceIndicator = ({
 
 // Wrap the component in React.memo to prevent unnecessary re-renders
 export default React.memo(FaceIndicator, (prevProps, nextProps) => {
-  // Only re-render if active state changes or position changes
+  // Re-render if active state, connected state, or position changes
   return (
     prevProps.isActive === nextProps.isActive &&
+    prevProps.isConnected === nextProps.isConnected &&
     prevProps.position[0] === nextProps.position[0] &&
     prevProps.position[1] === nextProps.position[1] &&
     prevProps.position[2] === nextProps.position[2]

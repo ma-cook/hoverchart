@@ -66,6 +66,7 @@ const Cube = ({
   onTransformEnd,
 }) => {
   const [selectedFace, setSelectedFace] = useState(null);
+  const [selectedIndicator, setSelectedIndicator] = useState(null); // Add a separate state for tracking indicator selection
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
   const [headerText, setHeaderText] = useState(initialHeaderText);
@@ -173,6 +174,7 @@ const Cube = ({
   useEffect(() => {
     if (!selected) {
       setSelectedFace(null);
+      setSelectedIndicator(null); // Also clear indicator selection
       setShowTransform(false); // Ensure TransformControls are hidden
       setActiveTextStyleUI(false); // Add this line to close TextStyleUI
     }
@@ -185,6 +187,7 @@ const Cube = ({
     }
   }, [contentRef]); // Added refs as dependencies
 
+  // Update handleFaceClick to not affect indicator selection
   const handleFaceClick = (e, faceName) => {
     e.stopPropagation();
     setSelectedFace(selectedFace === faceName ? null : faceName);
@@ -196,6 +199,9 @@ const Cube = ({
       face: faceName,
       id: id, // Explicitly include ID
     });
+
+    // Don't select the indicator when clicking on the face
+    // We should only select indicators when they're directly clicked
   };
 
   const handleSceneClick = () => {
@@ -284,8 +290,16 @@ const Cube = ({
     });
   };
 
+  // Update handleIndicatorClick to properly manage selection state
   const handleIndicatorClick = (e, faceName) => {
     e.stopPropagation();
+
+    // Toggle indicator selection state
+    if (selectedIndicator === faceName) {
+      setSelectedIndicator(null);
+    } else {
+      setSelectedIndicator(faceName);
+    }
 
     // Get face indicator props for this face
     const { position: facePos } = getFaceIndicatorProps(faceName);
@@ -299,7 +313,6 @@ const Cube = ({
         position,
         scale,
         userData: { objectId: id.toString() },
-        // Only include essential properties
       },
       position: position, // Use cube's position as base
       faceCenter: facePos,
@@ -533,18 +546,16 @@ const Cube = ({
 
   // Calculate header input position relative to cube's top edge
 
+  // Update isIndicatorActive to make it only return true for directly clicked indicators
   const isIndicatorActive = (faceName) => {
-    return selectedIndicators.some(
-      (indicator) =>
-        indicator.cube === contentRef.current && indicator.face === faceName
-    );
+    // Only return active if it's explicitly selected and not connected
+    return selectedIndicator === faceName && !isIndicatorConnected(faceName);
   };
 
-  // Update the isIndicatorConnected function to be more robust
+  // Add a helper function to check if an indicator should show as connected
   const isIndicatorConnected = (faceName) => {
     return connections.some(
       (conn) =>
-        // Check for object ID match rather than reference equality
         (conn.start.objectId === id.toString() &&
           conn.start.face === faceName) ||
         (conn.end.objectId === id.toString() && conn.end.face === faceName)
@@ -795,6 +806,11 @@ const Cube = ({
         {/* Render all face indicators in a separate pass */}
         {faces.map(({ name }) => {
           const { position: facePos, rotation } = getFaceIndicatorProps(name);
+          const isConnected = isIndicatorConnected(name);
+
+          // Only consider active if directly selected and not connected
+          const isSelected = selectedIndicator === name && !isConnected;
+
           return (
             shouldShowIndicator(name) && (
               <mesh
@@ -807,7 +823,8 @@ const Cube = ({
                   position={[0, 0, 0.3]}
                   rotation={[0, 0, 0]}
                   onClick={(e) => handleIndicatorClick(e, name)}
-                  isActive={isIndicatorActive(name)}
+                  isActive={isSelected}
+                  isConnected={isConnected}
                 />
               </mesh>
             )
