@@ -28,6 +28,7 @@ const Plane = ({
   indicatorMode,
   id,
   onUpdate,
+  onDelete, // Add this prop
   scale: initialScale = [1, 1, 1],
   color: initialColor = null,
   headerText: initialHeaderText = '',
@@ -648,6 +649,7 @@ const Plane = ({
             onHeaderToggle={handleHeaderToggle}
             onBorderToggle={handleBorderToggle}
             followTarget={groupRef}
+            onDelete={() => onDelete?.(id)} // Add this line to handle deletion
           />
         )}
 

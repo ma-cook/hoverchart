@@ -12,11 +12,19 @@ const TextObjectUI = ({
   menuRef,
   onTransformToggle,
   onResizeToggle,
+  onDelete, // Add this prop for deletion
 }) => {
   const groupRef = useRef();
   const lastPosition = useRef(null);
   const [showBorderMenu, setShowBorderMenu] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
+
+  // Handle delete with confirmation
+  const handleDeleteClick = () => {
+    if (window.confirm('Are you sure you want to delete this text object?')) {
+      onDelete?.();
+    }
+  };
 
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
@@ -65,56 +73,20 @@ const TextObjectUI = ({
             onTransformToggle={onTransformToggle} // Pass down the transform toggle prop
             onResizeToggle={onResizeToggle} // Pass down the onResizeToggle prop
           />
-          {/* <button
+
+          {/* Add delete button */}
+          <button
             className="ui-button"
-            onClick={() => setShowBorderMenu(!showBorderMenu)}
+            onClick={handleDeleteClick}
+            title="Delete text object"
           >
-            ▢
+            🗑️
           </button>
+
+          {/* Rest of existing buttons */}
           {showBorderMenu && (
-            <div className="border-menu">
-              <button
-                className="border-menu-item"
-                onClick={() =>
-                  onBorderChange({ type: 'style', value: 'solid' })
-                }
-              >
-                ─────
-              </button>
-              <button
-                className="border-menu-item"
-                onClick={() =>
-                  onBorderChange({ type: 'style', value: 'dashed' })
-                }
-              >
-                ── ── ──
-              </button>
-              <button
-                className="border-menu-item"
-                onClick={() =>
-                  onBorderChange({ type: 'style', value: 'dotted' })
-                }
-              >
-                ∙∙∙∙∙∙∙
-              </button>
-              <button
-                className="border-menu-item"
-                onClick={() => {
-                  setShowColorPicker(true);
-                  setShowBorderMenu(false);
-                }}
-              >
-                🎨
-              </button>
-              <button
-                className="border-menu-item"
-                onClick={() => onBorderChange({ type: 'thickness' })}
-                title="Toggle line thickness"
-              >
-                ▂▃▄
-              </button>
-            </div>
-          )} */}
+            <div className="border-menu">{/* ...existing code... */}</div>
+          )}
           {showColorPicker && (
             <ColorPicker
               onColorSelect={(color) => {

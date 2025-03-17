@@ -5,10 +5,7 @@ import {
   useEffect,
   useCallback,
 } from 'react';
-import {
-  Html,
-  TransformControls as DreiTransformControls,
-} from '@react-three/drei'; // <-- Added TransformControls import
+import { Html } from '@react-three/drei'; // <-- Added TransformControls import
 import { useFrame } from '@react-three/fiber';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
@@ -16,24 +13,21 @@ import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 
 const TextObject = ({
+  id,
   position,
   selected,
   onClick,
-  onIndicatorSelected,
-  onFaceIndicatorClick,
   showAllIndicators,
+  onIndicatorSelected,
   globalIndicatorSelected,
+  onFaceIndicatorClick,
   connections,
-  selectedIndicators, // Add this prop
+  selectedIndicators,
   indicatorMode,
-  onUpdate, // Add this prop
-  id, // Add this prop
-  // Add initial props with defaults
+  onUpdate,
+  onDelete, // Add this prop
   initialText = '',
-  initialTextStyle = {
-    fontSize: 32,
-    color: 'white',
-  },
+  initialTextStyle = { fontSize: 32, color: 'white' },
   initialScale = [15, 10, 1],
 }) => {
   const groupRef = useRef();
@@ -322,27 +316,6 @@ const TextObject = ({
     setTextStyle((prev) => ({ ...prev, ...newStyle }));
   };
 
-  // Update transform handler
-  const handleDrag = useCallback(
-    (e) => {
-      if (groupRef.current) {
-        const newPos = e.target.object.position;
-        groupRef.current.position.copy(newPos);
-
-        // Save to database
-        onUpdate?.(id, {
-          position: [newPos.x, newPos.y, newPos.z],
-          type: 'text',
-          scale,
-          text,
-          textStyle,
-          bulletPointMode,
-        });
-      }
-    },
-    [id, onUpdate, scale, text, textStyle, bulletPointMode]
-  );
-
   return (
     <>
       <group
@@ -411,6 +384,7 @@ const TextObject = ({
           menuRef={uiMenuRef} // pass the ref to keep the menu open on focus
           onTransformToggle={() => setShowTransform(true)} // new transform toggle callback
           onResizeToggle={() => setShowResizeArrow((prev) => !prev)}
+          onDelete={() => onDelete?.(id)} // Pass the onDelete prop
         />
       )}
     </>
