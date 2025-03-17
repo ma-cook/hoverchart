@@ -802,52 +802,64 @@ const Cube = ({
 
         {/* Update face text rendering with dynamic positioning */}
         {faces.map(({ name }) => {
-          const { position: facePos, rotation } = getFaceIndicatorProps(name);
+          const {
+            position: facePos,
+            rotation,
+            normal,
+          } = getFaceIndicatorProps(name);
+          if (!faceTexts[name]) return null;
+
+          // Calculate base position that will be affected by the cube's scale
+          const textStyle = faceTextStyles[name];
+          const yOffset = getFaceTextOffset(textStyle.fontSize);
+
+          // Calculate slightly offset position to prevent z-fighting
+          const offsetPosition = [
+            facePos[0] + normal[0] * 0.01,
+            facePos[1] + normal[1] * 0.01,
+            facePos[2] + normal[2] * 0.01,
+          ];
 
           // Calculate inverse scale for each dimension, with minimum value to prevent division by zero
           const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
 
-          // Calculate base position that will be affected by the cube's scale
-          const basePosition = [facePos[0], facePos[1], facePos[2]];
-          const textStyle = faceTextStyles[name];
-          const yOffset = getFaceTextOffset(textStyle.fontSize);
-
           return (
-            faceTexts[name] && (
-              <group
-                key={`text-${name}`}
-                position={basePosition}
-                rotation={rotation}
-                // Apply inverse scale to counteract the cube's scale
-                scale={inverseScale}
-              >
-                <TextSprite
-                  text={faceTexts[name]}
-                  // Increase z offset to ensure text stays visible
-                  position={[0, yOffset, 0.5]}
-                  followTarget={null}
-                  onClick={(e) => handleFaceTextStyleClick(e, name)}
-                  style={{
-                    ...textStyle,
-                    fixedSize: true,
-                    isFaceText: true,
-                  }}
-                  // Provide face normal to help with text orientation
-                  normal={getFaceIndicatorProps(name).normal}
-                />
-                {activeTextFace === name &&
-                  activeTextStyleUI === contentRef.current && (
-                    <TextStyleUI
-                      position={[0, 6, 0]}
-                      onStyleChange={handleStyleChange}
-                      onClose={() => {
-                        setActiveTextFace(null);
-                        setActiveTextStyleUI(null);
-                      }}
-                    />
-                  )}
-              </group>
-            )
+            <group
+              key={`text-${name}`}
+              position={offsetPosition}
+              rotation={rotation}
+              scale={inverseScale}
+            >
+              <TextSprite
+                text={faceTexts[name]}
+                position={[0, yOffset, 0]}
+                followTarget={null}
+                onClick={(e) => handleFaceTextStyleClick(e, name)}
+                style={{
+                  ...textStyle,
+                  fixedSize: true,
+                  isFaceText: true,
+                  renderOrder: 2,
+                  depthTest: true,
+                  depthWrite: false,
+                }}
+                normal={normal}
+                billboard={false}
+                side={THREE.FrontSide}
+              />
+              {/* Style UI rendering */}
+              {activeTextFace === name &&
+                activeTextStyleUI === contentRef.current && (
+                  <TextStyleUI
+                    position={[0, 6, 0]}
+                    onStyleChange={handleStyleChange}
+                    onClose={() => {
+                      setActiveTextFace(null);
+                      setActiveTextStyleUI(null);
+                    }}
+                  />
+                )}
+            </group>
           );
         })}
 
@@ -904,7 +916,7 @@ const Cube = ({
         <Line
           points={points}
           color={color} // Use color instead of lineColor
-          lineWidth={1}
+          lineWidth={1.5}
           segments={true}
           polygonOffset // <-- Enable polygon offset for the edge lines
           polygonOffsetFactor={1} // <-- Bring lines forward

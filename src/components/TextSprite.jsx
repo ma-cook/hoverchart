@@ -19,7 +19,7 @@ const TextSprite = ({
     fixedPosition: false, // Add this new property
   },
   billboard = true, // New prop, defaults to true
-  normal, // Add normal prop for face orientation
+  normal, // Add normal prop for yface orientation
 }) => {
   const textRef = React.useRef();
 
@@ -218,6 +218,9 @@ const TextSprite = ({
         outlineWidth={0.01}
         outlineColor={style.color}
         billboard={billboard}
+        depthTest={style.depthTest}
+        renderOrder={style.renderOrder || 0}
+        side={THREE.FrontSide}
       >
         {text}
       </Text>

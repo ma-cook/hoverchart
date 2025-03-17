@@ -5,7 +5,7 @@ import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import ObjectUI from './ObjectUI';
 import TextSprite from './TextSprite';
 import HeaderInput from './HeaderInput';
-import ResizeArrows from './ResizeArrows';
+
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
 import FaceTextInput from './FaceTextInput';
@@ -161,19 +161,20 @@ const Sphere = ({
     ].map((v) => v.map((coord) => coord * scale));
 
     // Define faces of the dodecahedron (pentagon vertex indices)
+    // Reverse vertex order for faces 0, 6, and 11 to fix their orientation
     const faces = [
-      [0, 8, 1, 13, 12],
+      [0, 12, 13, 1, 8], // Face 0 - reversed order
       [0, 16, 17, 3, 12],
       [0, 8, 11, 4, 16],
       [1, 19, 5, 11, 8],
       [1, 13, 2, 18, 19],
       [2, 13, 12, 3, 9],
-      [2, 18, 6, 10, 9],
+      [2, 9, 10, 6, 18], // Face 6 - reversed order
       [3, 17, 7, 10, 9],
       [4, 11, 5, 14, 15],
       [4, 15, 7, 17, 16],
       [5, 19, 18, 6, 14],
-      [6, 14, 15, 7, 10],
+      [6, 10, 7, 15, 14], // Face 11 - reversed order
     ];
 
     // Create geometries for each face
@@ -367,16 +368,6 @@ const Sphere = ({
       }
       return !prev;
     });
-  };
-
-  const handleResize = (axis, delta) => {
-    const axisIndex = { x: 0, y: 1, z: 2 }[axis];
-    setScale((prevScale) => {
-      const newScale = [...prevScale];
-      newScale[axisIndex] = Math.max(newScale[axisIndex] + delta, 0.1);
-      return newScale;
-    });
-    setIsScaleModified(true);
   };
 
   // Add effect to update database when resize operation changes the scale
@@ -645,14 +636,40 @@ const Sphere = ({
   // Add getFaceRotation function
   const getFaceRotation = (faceIndex) => {
     const { normal } = getFaceInfo(faceIndex);
-    const rotationMatrix = new THREE.Matrix4();
-    rotationMatrix.lookAt(
-      new THREE.Vector3(...normal),
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(0, 1, 0)
-    );
+
+    // Create a normalized normal vector
+    const normalVector = new THREE.Vector3(...normal).normalize();
+
+    // Create look-at matrix
+    const lookAtMatrix = new THREE.Matrix4();
+
+    // The "up" direction affects text orientation
+    // Use a consistent up vector (world Y) as a starting point
+    const upVector = new THREE.Vector3(0, 1, 0);
+
+    // Calculate a right vector that's perpendicular to normal and up
+    const rightVector = new THREE.Vector3()
+      .crossVectors(upVector, normalVector)
+      .normalize();
+
+    // If right vector is too small (normal is parallel to up), use another axis
+    if (rightVector.length() < 0.1) {
+      upVector.set(0, 0, 1); // Use Z as up instead
+      rightVector.crossVectors(upVector, normalVector).normalize();
+    }
+
+    // Calculate a corrected up vector perpendicular to both normal and right
+    const correctedUp = new THREE.Vector3()
+      .crossVectors(normalVector, rightVector)
+      .normalize();
+
+    // Set up the lookAt matrix
+    lookAtMatrix.makeBasis(rightVector, correctedUp, normalVector);
+
+    // Create Euler rotation from matrix
     const rotation = new THREE.Euler();
-    rotation.setFromRotationMatrix(rotationMatrix);
+    rotation.setFromRotationMatrix(lookAtMatrix);
+
     return rotation;
   };
 
@@ -707,12 +724,7 @@ const Sphere = ({
         >
           <dodecahedronGeometry args={[5.1]} />{' '}
           {/* Slightly larger than face geometries */}
-          <meshBasicMaterial
-            visible={false}
-            side={THREE.DoubleSide}
-            transparent={false}
-            opacity={1}
-          />
+          <meshBasicMaterial visible={false} transparent={false} opacity={1} />
         </mesh>
 
         {/* Modified face rendering to handle colors correctly */}
@@ -750,7 +762,7 @@ const Sphere = ({
                   ? 0.3
                   : 0 // Hide faces without custom colors when not selected
               }
-              side={THREE.DoubleSide}
+              side={THREE.FrontSide} // Changed from DoubleSide to FrontSide
               polygonOffset
               polygonOffsetFactor={-1}
             />
@@ -762,33 +774,48 @@ const Sphere = ({
           <Line key={idx} points={linePoints} color={lineColor} lineWidth={1} />
         ))}
 
-        {/* Add face texts - modified for consistent scaling regardless of dodecahedron size */}
+        {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}
         {Object.entries(faceTexts).map(([faceIndex, text]) => {
           if (!text) return null;
-          const { position, normal } = getFaceTextPosition(Number(faceIndex));
+          const faceIdx = Number(faceIndex);
+          const { position, normal } = getFaceTextPosition(faceIdx);
           const textStyle = faceTextStyles[faceIndex] || {
             fontSize: 0.5,
             color: 'white',
             underline: false,
           };
 
-          // Calculate inverse scale to counteract parent dodecahedron's scale
           const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
+          const faceRotation = getFaceRotation(faceIdx);
+
+          // Adjust position slightly outward along the normal to prevent z-fighting
+          const adjustedPosition = [
+            position[0] + normal[0] * 0.01,
+            position[1] + normal[1] * 0.01,
+            position[2] + normal[2] * 0.01,
+          ];
 
           return (
             <group
               key={`face-text-${faceIndex}`}
-              position={position}
-              // Apply inverse scale to the text container to maintain consistent size
+              position={adjustedPosition}
+              rotation={faceRotation}
               scale={inverseScale}
             >
               <TextSprite
                 text={text}
-                position={[0, 0, 0]} // Position is now relative to group
-                style={{ ...textStyle, fixedSize: true, isFaceText: true }}
-                onClick={(e) => handleFaceTextClick(Number(faceIndex), e)}
+                position={[0, 0, 0]}
+                style={{
+                  ...textStyle,
+                  fixedSize: true,
+                  isFaceText: true,
+                  renderOrder: 2,
+                  depthTest: true,
+                  depthWrite: false,
+                }}
+                onClick={(e) => handleFaceTextClick(faceIdx, e)}
                 billboard={false}
-                normal={normal}
+                side={THREE.FrontSide}
               />
             </group>
           );
