@@ -9,6 +9,7 @@ const ObjectUI = ({
   onHeaderToggle,
   onResizeToggle,
   onLineColorChange, // <-- New prop
+  onDelete, // Add new delete handler prop
   showTransform = false,
   showHeader = false,
   followTarget,
@@ -112,6 +113,15 @@ const ObjectUI = ({
       name: 'eye',
       icon: '👁', // <-- Eye icon
       onClick: handleEyeClick, // <-- Added eye tool handler
+    },
+    {
+      name: 'delete',
+      icon: '🗑️', // <-- Add delete button with trash icon
+      onClick: () => {
+        if (window.confirm('Are you sure you want to delete this object?')) {
+          onDelete?.();
+        }
+      },
     },
   ];
 

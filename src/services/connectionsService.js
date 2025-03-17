@@ -1,5 +1,12 @@
 import { db } from '../firebase';
-import { doc, setDoc, collection, onSnapshot, query } from 'firebase/firestore';
+import {
+  doc,
+  setDoc,
+  collection,
+  onSnapshot,
+  query,
+  deleteDoc,
+} from 'firebase/firestore';
 import { enableIndexedDbPersistence } from 'firebase/firestore';
 import { registerObjectConnection } from './connectionManager';
 import { isSharedSpace } from './sharedSpacesService';
@@ -191,4 +198,35 @@ const createSubscriptionWithRetry = (
 // Update the export to use the retry logic and include spaceId
 export const subscribeToConnections = (userId, spaceId, callback) => {
   return createSubscriptionWithRetry(userId, spaceId, callback);
+};
+
+// Add function to delete connections
+export const deleteConnection = async (userId, spaceId, connectionId) => {
+  if (!userId || !spaceId || !connectionId) return;
+
+  try {
+    // Check if this is a shared space
+    const sharedStatus = await isSharedSpace(userId, spaceId);
+
+    // If it's shared but without write permission, return early
+    if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
+      return;
+    }
+
+    // Use the owner's ID to delete from the correct collection
+    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
+    const connectionRef = doc(
+      db,
+      'users',
+      ownerUserId,
+      'spaces',
+      spaceId,
+      'connections',
+      connectionId.toString()
+    );
+    await deleteDoc(connectionRef);
+  } catch (error) {
+    // Silent error handling
+  }
 };

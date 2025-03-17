@@ -26,6 +26,7 @@ const Sphere = ({
   selectedIndicators, // Add this prop
   indicatorMode,
   onUpdate, // Add this prop
+  onDelete, // Add new prop
   id, // Add this prop
   // Add default values for props
   headerText: initialHeaderText = '',
@@ -871,6 +872,7 @@ const Sphere = ({
           onHeaderToggle={handleHeaderToggle}
           onResizeToggle={handleResizeToggle}
           onLineColorChange={handleLineColorChange}
+          onDelete={() => onDelete?.(id)} // Pass the delete handler with this object's ID
           showTransform={showTransform}
           showHeader={showHeader}
           followTarget={contentRef}

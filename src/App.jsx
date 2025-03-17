@@ -22,11 +22,16 @@ import {
   observeAuthState,
   handleUrlAuth,
 } from './services/authService';
-import { saveObject, subscribeToObjects } from './services/objectsService';
+import {
+  saveObject,
+  subscribeToObjects,
+  deleteObject,
+} from './services/objectsService';
 import isEqual from 'lodash/isEqual'; // Add this import
 import {
   saveConnection,
   subscribeToConnections,
+  deleteConnection, // Import delete connection function
 } from './services/connectionsService';
 
 import {
@@ -1763,6 +1768,49 @@ const App = () => {
     }
   }, [isCheckingUrlAuth]); // Only depends on auth check status
 
+  // Add handler for object deletion
+  const handleObjectDelete = useCallback(
+    (id) => {
+      // First, remove the object from local state immediately for responsive UI
+      setObjects((prev) => prev.filter((obj) => obj.id !== id));
+
+      // Also deselect if this was the selected object
+      if (selectedId === id) {
+        setSelectedId(null);
+      }
+
+      // Find and remove any connections related to this object
+      const relatedConnections = connections.filter(
+        (conn) =>
+          conn.start?.objectId === id.toString() ||
+          conn.end?.objectId === id.toString()
+      );
+
+      // Remove connections from local state
+      setConnections((prev) =>
+        prev.filter(
+          (conn) =>
+            conn.start?.objectId !== id.toString() &&
+            conn.end?.objectId !== id.toString()
+        )
+      );
+
+      // Then delete from database
+      if (user && currentSpaceId) {
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+
+        // Delete the object
+        deleteObject(spaceOwnerId, currentSpaceId, id);
+
+        // Delete any related connections
+        relatedConnections.forEach((conn) => {
+          deleteConnection(spaceOwnerId, currentSpaceId, conn.id);
+        });
+      }
+    },
+    [user, currentSpaceId, connections, selectedId]
+  );
+
   return (
     <>
       {isCheckingUrlAuth ? (
@@ -2021,6 +2069,7 @@ const App = () => {
                         coordinateSystem: 'local', // Use local coordinate system to prevent unwanted recursion
                         stackBehavior: 'detach_on_modify', // Add custom hint for transform controls
                       }}
+                      onDelete={handleObjectDelete}
                     />
                   );
                 }
@@ -2055,6 +2104,7 @@ const App = () => {
                       connections={connections}
                       onUpdate={handleObjectUpdate} // Add this prop
                       onIndicatorDeselected={handleIndicatorDeselected}
+                      onDelete={handleObjectDelete}
                     />
                   );
                 }
@@ -2088,6 +2138,7 @@ const App = () => {
                       faceTextStyle={obj.faceTextStyle}
                       activeTextStyleUI={activeTextStyleUI} // Add this
                       setActiveTextStyleUI={setActiveTextStyleUI} // Add this
+                      onDelete={handleObjectDelete}
                     />
                   );
                 }
@@ -2112,6 +2163,7 @@ const App = () => {
                         obj.textStyle || { fontSize: 32, color: 'white' }
                       }
                       initialScale={obj.scale || [15, 10, 1]}
+                      onDelete={handleObjectDelete}
                     />
                   );
                 }

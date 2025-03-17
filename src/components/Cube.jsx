@@ -28,6 +28,7 @@ const Cube = ({
   activeTextStyleUI,
   setActiveTextStyleUI,
   onUpdate,
+  onDelete, // Add new prop
   id,
   // Add default values for optional props
   headerText: initialHeaderText = '',
@@ -982,6 +983,7 @@ const Cube = ({
             onHeaderToggle={handleHeaderToggle}
             onResizeToggle={handleResizeToggle}
             onLineColorChange={handleLineColorChange}
+            onDelete={() => onDelete?.(id)} // Pass the delete handler with this object's ID
             showTransform={showTransform}
             showHeader={showHeader}
             followTarget={null} // Important: Don't set followTarget here, it's already within the group
