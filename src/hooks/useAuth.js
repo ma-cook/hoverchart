@@ -8,11 +8,33 @@ export function useAuth() {
     isAuthenticated: false,
     isLoading: true,
     user: null,
+    connectionState: 'unknown', // Add connection state tracking
   });
 
   useEffect(() => {
     let unsubscribe;
     let hasAttemptedUrlAuth = false;
+    let connectionMonitor = null;
+
+    // Monitor Firebase connection status
+    const monitorConnection = () => {
+      if (window.firebase && window.firebase.database) {
+        const connRef = window.firebase.database().ref('.info/connected');
+        return connRef.on('value', (snap) => {
+          const isConnected = snap.val() === true;
+          setAuthState((prev) => ({
+            ...prev,
+            connectionState: isConnected ? 'connected' : 'disconnected',
+          }));
+
+          // If we're disconnected, prepare to handle reconnection
+          if (!isConnected) {
+            console.log('Firebase connection lost, preparing for reconnection');
+          }
+        });
+      }
+      return null;
+    };
 
     const handleUrlAuth = async () => {
       const params = new URLSearchParams(window.location.search);
@@ -86,13 +108,31 @@ export function useAuth() {
           isAuthenticated: !!user,
           isLoading: false,
           user,
+          connectionState: authState.connectionState,
         });
+
+        // Initialize connection monitoring on successful auth
+        if (user && !connectionMonitor) {
+          connectionMonitor = monitorConnection();
+        }
       });
     };
 
     initAuth();
-    return () => unsubscribe?.();
-  }, []);
+
+    return () => {
+      unsubscribe?.();
+      if (connectionMonitor) {
+        // Clean up connection monitoring
+        if (window.firebase && window.firebase.database) {
+          window.firebase
+            .database()
+            .ref('.info/connected')
+            .off('value', connectionMonitor);
+        }
+      }
+    };
+  }, [authState.connectionState]);
 
   return authState;
 }

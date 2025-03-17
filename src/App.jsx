@@ -32,6 +32,9 @@ import {
   saveConnection,
   subscribeToConnections,
   deleteConnection, // Import delete connection function
+  addConnectionStateListener, // Add this import
+  forceReconnect, // Add this import
+  toggleNetwork, // Add this import
 } from './services/connectionsService';
 
 import {
@@ -1811,6 +1814,247 @@ const App = () => {
     [user, currentSpaceId, connections, selectedId]
   );
 
+  // Add connection state tracking
+  const [connectionState, setConnectionState] = useState('connected');
+  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now());
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const maxReconnectAttempts = 5;
+
+  // Add connection status UI state
+  const [showConnectionStatus, setShowConnectionStatus] = useState(false);
+  const connectionStatusTimeout = useRef(null);
+
+  // Add effect to track connection state
+  useEffect(() => {
+    const unsubscribe = addConnectionStateListener((state) => {
+      setConnectionState(state);
+
+      // Show connection status UI
+      setShowConnectionStatus(true);
+
+      // Clear any existing timeout
+      if (connectionStatusTimeout.current) {
+        clearTimeout(connectionStatusTimeout.current);
+      }
+
+      // Hide the status after a few seconds if connected
+      if (state === 'connected') {
+        connectionStatusTimeout.current = setTimeout(() => {
+          setShowConnectionStatus(false);
+        }, 3000);
+
+        // Reset reconnect attempts
+        setReconnectAttempts(0);
+      }
+    });
+
+    return () => {
+      if (connectionStatusTimeout.current) {
+        clearTimeout(connectionStatusTimeout.current);
+      }
+      unsubscribe();
+    };
+  }, []);
+
+  // Add effect to periodically check and force reconnect if needed
+  useEffect(() => {
+    // Skip if no user or space
+    if (!user || !currentSpaceId) return;
+
+    // Set up periodic connection health check
+    const healthCheckInterval = setInterval(() => {
+      // If it's been more than 30 seconds since last update, try to reconnect
+      const timeSinceLastUpdate = Date.now() - lastUpdateTime;
+
+      if (
+        timeSinceLastUpdate > 30000 &&
+        connectionState !== 'connecting' &&
+        reconnectAttempts < maxReconnectAttempts
+      ) {
+        console.log('No updates for 30+ seconds, attempting reconnect...');
+        setConnectionState('connecting');
+        setShowConnectionStatus(true);
+
+        // Increment reconnect attempts
+        setReconnectAttempts((prev) => prev + 1);
+
+        forceReconnect().then((success) => {
+          if (success) {
+            console.log('Reconnection successful');
+            setLastUpdateTime(Date.now());
+            setConnectionState('connected');
+
+            // Hide status after a delay
+            setTimeout(() => {
+              setShowConnectionStatus(false);
+            }, 3000);
+
+            // Re-fetch data after reconnection
+            if (user && currentSpaceId) {
+              // Refresh subscriptions by temporarily nulling spaceId
+              const tempSpaceId = currentSpaceId;
+              setCurrentSpaceId(null);
+
+              // Then restore it after a short delay
+              setTimeout(() => {
+                setCurrentSpaceId(tempSpaceId);
+              }, 500);
+            }
+          } else {
+            console.log('Reconnection failed');
+            setConnectionState('disconnected');
+          }
+        });
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(healthCheckInterval);
+  }, [
+    connectionState,
+    lastUpdateTime,
+    reconnectAttempts,
+    user,
+    currentSpaceId,
+  ]);
+
+  // Add handler for manual reconnection
+  const handleManualReconnect = useCallback(() => {
+    setConnectionState('connecting');
+    setShowConnectionStatus(true);
+
+    forceReconnect().then((success) => {
+      if (success) {
+        setLastUpdateTime(Date.now());
+        setConnectionState('connected');
+        setReconnectAttempts(0);
+
+        // Refresh subscriptions by temporarily nulling spaceId
+        if (user && currentSpaceId) {
+          const tempSpaceId = currentSpaceId;
+          setCurrentSpaceId(null);
+
+          // Then restore it after a short delay
+          setTimeout(() => {
+            setCurrentSpaceId(tempSpaceId);
+          }, 500);
+        }
+
+        // Hide status after a delay
+        setTimeout(() => {
+          setShowConnectionStatus(false);
+        }, 3000);
+      } else {
+        setConnectionState('disconnected');
+      }
+    });
+  }, [user, currentSpaceId]);
+
+  // Add debouncing mechanism for connection updates
+  const connectionUpdateTimeoutRef = useRef(null);
+  const lastKnownConnectionsRef = useRef({});
+
+  // Add a timestamp for last connection update
+  const lastConnectionUpdateTimeRef = useRef(Date.now());
+
+  // Replace the existing connection subscription with the enhanced version
+  useEffect(() => {
+    if (user && currentSpaceId) {
+      console.log(
+        `Setting up connection subscription for space ${currentSpaceId}`
+      );
+
+      // Use the space owner's ID for subscription
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+
+      const unsubscribe = subscribeToConnections(
+        spaceOwnerId,
+        currentSpaceId,
+        (change) => {
+          // Update last activity timestamp
+          setLastUpdateTime(Date.now());
+          lastConnectionUpdateTimeRef.current = Date.now();
+
+          // Use the debounced update approach for connections
+          if (connectionUpdateTimeoutRef.current) {
+            clearTimeout(connectionUpdateTimeoutRef.current);
+          }
+
+          // Store the change in the ref for batching
+          if (!lastKnownConnectionsRef.current[change.id]) {
+            lastKnownConnectionsRef.current[change.id] = {};
+          }
+
+          lastKnownConnectionsRef.current[change.id] = {
+            type: change.type,
+            data: change.connection,
+            timestamp: Date.now(),
+          };
+
+          // Apply updates after a short delay to batch multiple rapid changes
+          connectionUpdateTimeoutRef.current = setTimeout(() => {
+            setConnections((prev) => {
+              // Process all accumulated changes
+              const updates = { ...lastKnownConnectionsRef.current };
+              lastKnownConnectionsRef.current = {};
+
+              // Apply all updates
+              let newConnections = [...prev];
+              Object.entries(updates).forEach(([connId, update]) => {
+                switch (update.type) {
+                  case 'added':
+                    if (!newConnections.find((conn) => conn.id === connId)) {
+                      newConnections = [...newConnections, update.data];
+                    }
+                    break;
+                  case 'modified':
+                    newConnections = newConnections.map((conn) =>
+                      conn.id === connId ? update.data : conn
+                    );
+                    break;
+                  case 'removed':
+                    newConnections = newConnections.filter(
+                      (conn) => conn.id !== connId
+                    );
+                    break;
+                }
+              });
+
+              // Map object references and positions
+              const withRefs = mapConnectionsToObjects(newConnections, objects);
+              return synchronizeConnectionPositions(withRefs, objects);
+            });
+          }, 100); // Short debounce time for responsiveness
+        }
+      );
+
+      // Function to handle reconnection if needed
+      const checkConnectionHealth = setInterval(() => {
+        const timeSinceLastUpdate =
+          Date.now() - lastConnectionUpdateTimeRef.current;
+        if (timeSinceLastUpdate > 60000) {
+          // 1 minute without updates
+          console.log('Connection may be stale, forcing reconnection...');
+          forceReconnect();
+          lastConnectionUpdateTimeRef.current = Date.now(); // Reset timer
+        }
+      }, 30000);
+
+      return () => {
+        unsubscribe();
+        clearInterval(checkConnectionHealth);
+        if (connectionUpdateTimeoutRef.current) {
+          clearTimeout(connectionUpdateTimeoutRef.current);
+        }
+      };
+    }
+  }, [
+    user,
+    currentSpaceId,
+    objects,
+    mapConnectionsToObjects,
+    synchronizeConnectionPositions,
+  ]);
+
   return (
     <>
       {isCheckingUrlAuth ? (
@@ -2174,6 +2418,55 @@ const App = () => {
               <SMAA />
             </EffectComposer>
           </Canvas>
+
+          {/* Add connection status indicator */}
+          {showConnectionStatus && (
+            <div
+              className="connection-status-indicator"
+              style={{
+                position: 'fixed',
+                top: '10px',
+                right: '10px',
+                background:
+                  connectionState === 'connected'
+                    ? '#4CAF50'
+                    : connectionState === 'connecting'
+                    ? '#FFC107'
+                    : '#F44336',
+                color: 'white',
+                padding: '8px 12px',
+                borderRadius: '4px',
+                zIndex: 1000,
+                display: 'flex',
+                alignItems: 'center',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+              }}
+            >
+              <span style={{ marginRight: '8px' }}>
+                {connectionState === 'connected'
+                  ? 'Connected'
+                  : connectionState === 'connecting'
+                  ? 'Reconnecting...'
+                  : 'Disconnected'}
+              </span>
+              {connectionState === 'disconnected' && (
+                <button
+                  onClick={handleManualReconnect}
+                  style={{
+                    background: '#fff',
+                    border: 'none',
+                    borderRadius: '3px',
+                    padding: '3px 8px',
+                    cursor: 'pointer',
+                    color: '#333',
+                  }}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
+
           <UIOverlay
             onCreateObject={handleCreateObject}
             onToggleIndicators={handleToggleIndicators}
@@ -2183,6 +2476,8 @@ const App = () => {
             isLoading={!isAuthReady}
             showLoginButton={!isCheckingUrlAuth && !user}
             isConnectMode={isConnectMode} // Pass connect mode state to UIOverlay
+            connectionState={connectionState}
+            onReconnect={handleManualReconnect}
           />
         </>
       )}

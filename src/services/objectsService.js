@@ -10,10 +10,12 @@ import {
 } from 'firebase/firestore';
 import isEqual from 'lodash/isEqual';
 import { isSharedSpace } from './sharedSpacesService';
+import { forceReconnect } from './connectionsService';
 
 const objectsCache = new Map();
 const saveTimeouts = new Map();
 const updateThrottles = new Map();
+const lastReceivedObjects = new Map(); // Cache for reconnection
 
 // Helper function for position-only comparison
 const positionsEqual = (posA, posB) => {
@@ -114,18 +116,25 @@ export const saveObject = async (userId, spaceId, object) => {
       cacheKey,
       setTimeout(async () => {
         try {
-          await setDoc(objectRef, {
+          const objectToSave = {
             ...newData,
             lastUpdated: Timestamp.fromDate(new Date()),
             creatorId: userId,
-          });
-        } catch {
+          };
+
+          // Store in last received cache for reconnection scenarios
+          lastReceivedObjects.set(`${spaceId}_${objectId}`, objectToSave);
+
+          await setDoc(objectRef, objectToSave);
+        } catch (error) {
+          console.error('Error saving object:', error);
           objectsCache.delete(cacheKey);
         }
       }, saveTimeout)
     );
-  } catch {
-    // Error handling without logging
+  } catch (error) {
+    // Error handling with minimal logging
+    console.error('Error in saveObject:', error);
   }
 };
 
@@ -157,20 +166,26 @@ export const deleteObject = async (userId, spaceId, objectId) => {
     );
     await deleteDoc(objectRef);
     objectsCache.delete(cacheKey);
-  } catch {
-    // Error handling without logging
+    lastReceivedObjects.delete(cacheKey);
+  } catch (error) {
+    // Error handling with minimal logging
+    console.error('Error deleting object:', error);
   }
 };
 
-// Modified to handle shared spaces without logging
+// Enhanced subscription function with better error handling and reconnection
 export const subscribeToObjects = (userId, spaceId, callback) => {
   if (!userId || !spaceId) return () => {};
 
-  // First determine if this is a shared space
   let unsubscribe = null;
   let isSubscribed = true;
+  let retryCount = 0;
+  let maxRetries = 5;
+  let delay = 1000;
+  let lastDocumentCount = 0;
+  let reconnectTimer = null;
 
-  // Start subscription process
+  // First determine if this is a shared space
   const startSubscription = async () => {
     try {
       const sharedStatus = await isSharedSpace(userId, spaceId);
@@ -180,6 +195,13 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
 
       // Use the owner's ID to subscribe to the correct collection
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
+      // Store owner ID for future reference
+      window.currentSpaceOwner = ownerUserId;
+
+      console.log(
+        `[Objects] Setting up subscription for space ${spaceId} owned by ${ownerUserId}`
+      );
 
       const objectsRef = collection(
         db,
@@ -192,44 +214,133 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
 
       const q = query(objectsRef);
 
-      unsubscribe = onSnapshot(q, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          const data = change.doc.data();
-          const objectId = change.doc.id;
-          const cacheKey = `${spaceId}_${objectId}`;
+      unsubscribe = onSnapshot(
+        q,
+        { includeMetadataChanges: true },
+        (snapshot) => {
+          // Check if this is from cache or server
+          const source = snapshot.metadata.fromCache ? 'cache' : 'server';
+          console.log(
+            `[Objects] Got ${
+              snapshot.docChanges().length
+            } changes from ${source}`
+          );
 
-          // Special handling for position updates - use position equality
-          const cachedData = objectsCache.get(cacheKey);
-          let hasChanged = false;
+          // Reset retry count on successful connection
+          retryCount = 0;
 
-          if (cachedData) {
-            const positionChanged = !positionsEqual(
-              cachedData.position,
-              data.position
+          // Check if we got documents when expected
+          const documentCount = snapshot.docs.length;
+          if (documentCount === 0 && lastDocumentCount > 0) {
+            console.warn(
+              'Received empty object snapshot when expecting documents, may need to reconnect'
             );
-            const otherDataChanged = !isEqual(
-              { ...cachedData, position: undefined },
-              { ...data, position: undefined }
+          }
+          lastDocumentCount = documentCount;
+
+          snapshot.docChanges().forEach((change) => {
+            const data = change.doc.data();
+            const objectId = change.doc.id;
+            const cacheKey = `${spaceId}_${objectId}`;
+
+            // Update our reconnection cache
+            if (change.type !== 'removed') {
+              lastReceivedObjects.set(cacheKey, data);
+            } else {
+              lastReceivedObjects.delete(cacheKey);
+            }
+
+            // Special handling for position updates - use position equality
+            const cachedData = objectsCache.get(cacheKey);
+            let hasChanged = false;
+
+            if (cachedData) {
+              const positionChanged = !positionsEqual(
+                cachedData.position,
+                data.position
+              );
+              const otherDataChanged = !isEqual(
+                { ...cachedData, position: undefined },
+                { ...data, position: undefined }
+              );
+
+              hasChanged = positionChanged || otherDataChanged;
+            } else {
+              hasChanged = true; // No cached data, treat as changed
+            }
+
+            if (hasChanged) {
+              // Only update cache and trigger callback if data actually changed
+              objectsCache.set(cacheKey, JSON.parse(JSON.stringify(data))); // Store deep copy
+              callback({
+                type: change.type,
+                id: objectId,
+                object: data,
+              });
+            }
+          });
+        },
+        async (error) => {
+          console.error('Objects subscription error:', error);
+
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(
+              `Retrying objects subscription... Attempt ${retryCount}`
             );
 
-            hasChanged = positionChanged || otherDataChanged;
+            // Clear any existing timer
+            if (reconnectTimer) {
+              clearTimeout(reconnectTimer);
+            }
+
+            // Try force reconnect if this looks like a network issue
+            if (
+              error.code === 'unavailable' ||
+              error.code === 'failed-precondition'
+            ) {
+              await forceReconnect();
+            }
+
+            // Exponential backoff
+            reconnectTimer = setTimeout(() => {
+              if (isSubscribed) {
+                if (unsubscribe) {
+                  unsubscribe();
+                  unsubscribe = null;
+                }
+                startSubscription();
+              }
+            }, delay * Math.pow(2, retryCount - 1));
           } else {
-            hasChanged = true; // No cached data, treat as changed
-          }
+            console.error(`Failed to reconnect after ${maxRetries} attempts`);
 
-          if (hasChanged) {
-            // Only update cache and trigger callback if data actually changed
-            objectsCache.set(cacheKey, JSON.parse(JSON.stringify(data))); // Store deep copy
-            callback({
-              type: change.type,
-              id: objectId,
-              object: data,
-            });
+            // Last resort: re-deliver cached data
+            if (lastReceivedObjects.size > 0) {
+              console.log(
+                `Re-delivering ${lastReceivedObjects.size} cached objects`
+              );
+
+              // Filter to only objects for this space
+              const spacePrefix = `${spaceId}_`;
+              [...lastReceivedObjects.entries()]
+                .filter(([key]) => key.startsWith(spacePrefix))
+                .forEach(([key, data]) => {
+                  const objectId = key.substring(spacePrefix.length);
+                  callback({
+                    type: 'added',
+                    id: objectId,
+                    object: data,
+                    fromCache: true,
+                  });
+                });
+            }
           }
-        });
-      });
-    } catch {
-      // Error handling without logging
+        }
+      );
+    } catch (error) {
+      // Error handling with minimal logging
+      console.error('Error starting objects subscription:', error);
     }
   };
 
@@ -239,6 +350,10 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
   // Return a function to unsubscribe
   return () => {
     isSubscribed = false;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (unsubscribe) unsubscribe();
   };
 };

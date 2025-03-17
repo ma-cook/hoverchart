@@ -243,3 +243,45 @@ canvas {
 .border-menu-item:hover {
   background: #f0f0f0;
 }
+
+/* Connection status styles */
+.connection-status-indicator {
+  transition: all 0.3s ease;
+  animation: fadeIn 0.3s ease;
+}
+
+.connection-status-indicator.hiding {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Add pulse animation for the status dot when reconnecting */
+.status-dot {
+  transition: background-color 0.3s ease;
+}
+
+.status-dot[data-status='connecting'] {
+  animation: pulse 1s infinite alternate;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}

@@ -6,7 +6,9 @@ const UIOverlay = ({
   isAuthReady,
   isLoading,
   showLoginButton,
-  isConnectMode, // Add this prop
+  isConnectMode,
+  connectionState, // Add this prop
+  onReconnect, // Add this prop
 }) => {
   const handleArrowClick = () => {
     onToggleIndicators('connection');
@@ -63,6 +65,47 @@ const UIOverlay = ({
           >
             T
           </button>
+          <div
+            className="connection-indicator"
+            style={{
+              marginLeft: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            <div
+              className="status-dot"
+              style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background:
+                  connectionState === 'connected'
+                    ? '#4CAF50'
+                    : connectionState === 'connecting'
+                    ? '#FFC107'
+                    : '#F44336',
+                marginRight: '5px',
+              }}
+            />
+            {connectionState !== 'connected' && (
+              <button
+                onClick={onReconnect}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid #fff',
+                  borderRadius: '3px',
+                  padding: '2px 6px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  color: '#fff',
+                  marginLeft: '5px',
+                }}
+              >
+                Reconnect
+              </button>
+            )}
+          </div>
         </div>
       ) : null}
     </div>
