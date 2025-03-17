@@ -1823,12 +1823,14 @@ const App = () => {
                       dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
                       gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
                       dashOffset={connection.dashOffset || 0}
+                      renderOrder={1} // Ensure lines render after faces
+                      transparent={true} // Make lines transparent
+                      depthTest={true} // Enable depth testing
+                      depthWrite={false} // Don't write to depth buffer
+                      toneMapped={false} // Prevent tone mapping for more consistent color
                     />
                     <Line
-                      points={[
-                        startPosition, // Use safe values here too
-                        endPosition,
-                      ]}
+                      points={[startPosition, endPosition]}
                       color="white"
                       lineWidth={20}
                       onClick={(e) => handleConnectionClick(e, connection.id)}
@@ -1842,7 +1844,10 @@ const App = () => {
                       }}
                       transparent
                       opacity={0}
+                      depthTest={false} // This clickable area ignores depth
+                      renderOrder={10} // Higher render order for clickable area
                     />
+
                     {(connection.text || lineTexts[connection.id]) && (
                       <TextSprite
                         text={connection.text || lineTexts[connection.id]}
