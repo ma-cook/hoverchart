@@ -1,7 +1,17 @@
-import { useEffect, useRef, useMemo } from 'react'; // Added useMemo
+import { useEffect, useRef, useMemo, useState } from 'react'; // Added useMemo
 import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+
+// Add this helper function for position smoothing
+const lerpVector = (current, target, factor = 0.1) => {
+  if (!current || !target) return target;
+  return new THREE.Vector3(
+    current.x + (target.x - current.x) * factor,
+    current.y + (target.y - current.y) * factor,
+    current.z + (target.z - current.z) * factor
+  );
+};
 
 const TextSprite = ({
   text,
@@ -31,30 +41,58 @@ const TextSprite = ({
   const lastPathLengthRef = useRef(0);
   const isCurvedLineRef = useRef(false);
 
+  // Add a ref for smoothed position
+  const smoothedPositionRef = useRef(
+    position ? new THREE.Vector3(...position) : null
+  );
+
+  // Add state to track if we're in a dragging operation
+  const [isDragging, setIsDragging] = useState(false);
+  const dragTimeoutRef = useRef(null);
+  const lastUpdateTimeRef = useRef(Date.now());
+
+  // Add throttling mechanism
+  const updateThrottleRef = useRef(false);
+  const throttleDelayRef = useRef(100); // ms
+
   // Calculate the optimal text position based on line style and path
   const calculatedPosition = useMemo(() => {
     // Default to the provided position
     if (!position) return position;
 
-    // Add more detailed logging
-    console.log(
-      'TextSprite recalculating position.',
-      '\nLineStyle:',
-      lineStyle,
-      '\nPosition:',
-      position,
-      '\nHas pathPoints:',
-      !!pathPoints,
-      '\nPoints length:',
-      pathPoints?.length || 0,
-      '\nFirst point:',
-      pathPoints?.[0],
-      '\nMid point:',
-      pathPoints?.[Math.floor((pathPoints?.length || 0) / 2)]
-    );
+    // Throttle calculations during rapid updates
+    const now = Date.now();
+    if (now - lastUpdateTimeRef.current < 50 && updateThrottleRef.current) {
+      // Return previous calculation during throttle period
+      return lastPositionRef.current;
+    }
 
-    // Make sure we explicitly check for 'curved' line style
+    // Update the last calculation time
+    lastUpdateTimeRef.current = now;
+    updateThrottleRef.current = true;
+
+    // After throttle delay, reset the throttle flag
+    setTimeout(() => {
+      updateThrottleRef.current = false;
+    }, throttleDelayRef.current);
+
+    // Reduce logging frequency
+    if (Math.random() < 0.1) {
+      // Only log about 10% of calculations
+      console.log(
+        'TextSprite recalculating position.',
+        'LineStyle:',
+        lineStyle,
+        'Has pathPoints:',
+        !!pathPoints,
+        'Points length:',
+        pathPoints?.length || 0
+      );
+    }
+
+    // Check for 'curved' line style
     const isCurvedLine = lineStyle === 'curved';
+    isCurvedLineRef.current = isCurvedLine;
 
     // If it's not a curved line or we don't have path points, use the provided position
     if (!isCurvedLine || !pathPoints || pathPoints.length < 3) {
@@ -64,19 +102,62 @@ const TextSprite = ({
     // For curved lines with valid path points, calculate position from the path
     try {
       const midIdx = Math.floor(pathPoints.length / 2);
-      const curvedYOffset = 5; // Additional Y offset specific to curved lines
+      const curvedYOffset = 5;
 
       // Use the midpoint of the curved path with specific Y offset
-      return [
+      const newPos = [
         pathPoints[midIdx].x,
         pathPoints[midIdx].y + curvedYOffset,
         pathPoints[midIdx].z,
       ];
+
+      // Store in lastPositionRef for throttling
+      lastPositionRef.current = newPos;
+      return newPos;
     } catch (err) {
-      console.warn('Error calculating curved text position:', err);
       return position; // Fall back to provided position
     }
   }, [position, pathPoints, lineStyle]);
+
+  // Detect dragging operations based on update frequency
+  useEffect(() => {
+    // Clear any existing timeout
+    if (dragTimeoutRef.current) {
+      clearTimeout(dragTimeoutRef.current);
+    }
+
+    // If position changed, assume we might be in a drag operation
+    if (position !== lastPositionRef.current) {
+      setIsDragging(true);
+
+      // Increase throttling during dragging
+      throttleDelayRef.current = 200;
+    }
+
+    // Set timeout to detect end of dragging
+    dragTimeoutRef.current = setTimeout(() => {
+      setIsDragging(false);
+      throttleDelayRef.current = 100; // Reset throttle delay
+
+      // Force one final position update when dragging ends
+      if (textRef.current && calculatedPosition) {
+        if (Array.isArray(calculatedPosition)) {
+          smoothedPositionRef.current = new THREE.Vector3(
+            calculatedPosition[0],
+            calculatedPosition[1],
+            calculatedPosition[2]
+          );
+          textRef.current.position.copy(smoothedPositionRef.current);
+        }
+      }
+    }, 200);
+
+    return () => {
+      if (dragTimeoutRef.current) {
+        clearTimeout(dragTimeoutRef.current);
+      }
+    };
+  }, [position, calculatedPosition]);
 
   // Track changes that would require position recalculation
   useEffect(() => {
@@ -87,6 +168,19 @@ const TextSprite = ({
     lastPositionRef.current = calculatedPosition; // Use the calculated position
     pathPointsRef.current = pathPoints;
   }, [text, calculatedPosition, lineStyle, pathPoints]);
+
+  // Initialize smoothed position when component mounts or position changes significantly
+  useEffect(() => {
+    if (!isDragging && calculatedPosition) {
+      if (Array.isArray(calculatedPosition)) {
+        smoothedPositionRef.current = new THREE.Vector3(
+          calculatedPosition[0],
+          calculatedPosition[1],
+          calculatedPosition[2]
+        );
+      }
+    }
+  }, [isDragging]);
 
   const MINIMUM_DISTANCE = 1; // Minimum distance from cube top
   const TEXT_HEIGHT = 0.7; // Approximate height of largest text
@@ -110,13 +204,29 @@ const TextSprite = ({
 
   useFrame(({ camera }) => {
     if (textRef.current) {
-      // Use the calculated position which accounts for line style
-      if (calculatedPosition) {
-        textRef.current.position.set(
-          calculatedPosition[0],
-          calculatedPosition[1],
-          calculatedPosition[2]
+      // Apply smoothed position updates
+      if (calculatedPosition && smoothedPositionRef.current) {
+        // Create target vector from calculated position
+        const targetPosition = Array.isArray(calculatedPosition)
+          ? new THREE.Vector3(
+              calculatedPosition[0],
+              calculatedPosition[1],
+              calculatedPosition[2]
+            )
+          : calculatedPosition;
+
+        // Determine smoothing factor based on dragging state
+        const smoothingFactor = isDragging ? 0.05 : 0.2;
+
+        // Calculate smoothed position with lerp
+        smoothedPositionRef.current = lerpVector(
+          smoothedPositionRef.current,
+          targetPosition,
+          smoothingFactor
         );
+
+        // Apply the smoothed position
+        textRef.current.position.copy(smoothedPositionRef.current);
       }
 
       // Always ensure billboard is working
@@ -284,36 +394,48 @@ const TextSprite = ({
     }
   });
 
+  // Modify the line style change effect to use smoothing as well
   useEffect(() => {
-    // Force position update immediately when line style or path points change
     if (!textRef.current) return;
 
-    console.log(
-      'Line style changed:',
-      lineStyle,
-      'Path points:',
-      pathPoints?.length
-    );
-
-    // Specifically check for curved lines with valid path points
-    if (lineStyle === 'curved' && pathPoints?.length > 2) {
-      const midIdx = Math.floor(pathPoints.length / 2);
-
-      // Log the actual path point values to verify they're different
+    // Skip excessive logging
+    if (Math.random() < 0.1) {
       console.log(
-        'Using path point at index:',
-        midIdx,
-        'Value:',
-        pathPoints[midIdx]
+        'Line style changed:',
+        lineStyle,
+        'Path points:',
+        pathPoints?.length
       );
+    }
 
-      // Apply position directly to the text element
-      const curvedYOffset = 5;
-      textRef.current.position.set(
-        pathPoints[midIdx].x,
-        pathPoints[midIdx].y + curvedYOffset,
-        pathPoints[midIdx].z
-      );
+    // When style changes from straight to curved or vice versa, don't apply immediate position change
+    // The smoothing in useFrame will handle the transition
+    if (lineStyle !== lastLineStyleRef.current) {
+      lastLineStyleRef.current = lineStyle;
+
+      // Initialize the smoothed position with the current position first
+      if (textRef.current && !smoothedPositionRef.current) {
+        smoothedPositionRef.current = textRef.current.position.clone();
+      }
+
+      // Force-update position after a delay to ensure path points are ready
+      setTimeout(() => {
+        if (lineStyle === 'curved' && pathPoints?.length > 2) {
+          const midIdx = Math.floor(pathPoints.length / 2);
+          const curvedYOffset = 5;
+
+          // Create the target position
+          const targetPos = new THREE.Vector3(
+            pathPoints[midIdx].x,
+            pathPoints[midIdx].y + curvedYOffset,
+            pathPoints[midIdx].z
+          );
+
+          // Apply immediate position change for style changes
+          smoothedPositionRef.current = targetPos.clone();
+          textRef.current.position.copy(targetPos);
+        }
+      }, 50);
     }
   }, [lineStyle, pathPoints]);
 
