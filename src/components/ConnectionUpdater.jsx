@@ -42,6 +42,7 @@ const ConnectionUpdater = ({
   connections,
   setConnections,
   calculateFacePosition,
+  transformingObjects, // Make sure we receive this prop
 }) => {
   // Simple frame skipping for better performance
   const frameCount = useRef(0);
@@ -77,6 +78,15 @@ const ConnectionUpdater = ({
       // Calculate new positions
       updatedConnections = connections.map((conn) => {
         if (!conn.start || !conn.end) return conn;
+
+        // Skip connection updates for objects that are actively being transformed
+        if (
+          transformingObjects &&
+          (transformingObjects.current.has(conn.start?.objectId) ||
+            transformingObjects.current.has(conn.end?.objectId))
+        ) {
+          return conn;
+        }
 
         try {
           // For 'text' type indicators, be more careful with position updates
@@ -141,16 +151,27 @@ const ConnectionUpdater = ({
               }
             }
 
-            // Return updated connection with new positions
+            // IMPORTANT: Properly preserve ALL connection properties, especially text
             return {
               ...conn,
               start: { ...conn.start, position: newStartPos },
               end: { ...conn.end, position: newEndPos },
               dashOffset: newDashOffset,
+              // Explicitly preserve text and textStyle to prevent loss during updates
+              text: conn.text || '',
+              textStyle: conn.textStyle || {
+                fontSize: 1.5,
+                color: 'white',
+                underline: false,
+              },
+              // Preserve style update metadata
+              _lastStyleUpdate: conn._lastStyleUpdate || 0,
+              lineStyle: conn.lineStyle || 'straight',
+              dashDirection: conn.dashDirection,
             };
           }
-        } catch {
-          // Remove console.error with unused error variable
+        } catch (error) {
+          console.error('Error updating connection position:', error);
         }
 
         // No change or error - return original connection
@@ -161,9 +182,8 @@ const ConnectionUpdater = ({
       if (hasChanges && isMounted.current) {
         setConnections(updatedConnections);
       }
-    } catch {
-      // Remove console.error with unused error variable
-      // Prevent logging unused error variable
+    } catch (error) {
+      console.error('Error in connection updater:', error);
     }
   });
 

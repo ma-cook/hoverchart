@@ -2,6 +2,8 @@ import { db } from '../firebase';
 import {
   doc,
   setDoc,
+  getDoc,
+  getDocs,
   collection,
   onSnapshot,
   query,
@@ -10,7 +12,10 @@ import {
   disableNetwork,
 } from 'firebase/firestore';
 import { enableIndexedDbPersistence } from 'firebase/firestore';
-import { registerObjectConnection } from './connectionManager';
+import {
+  registerObjectConnection,
+  unregisterObjectConnection,
+} from './connectionManager';
 import { isSharedSpace } from './sharedSpacesService';
 
 // Enable offline persistence
@@ -24,7 +29,7 @@ enableIndexedDbPersistence(db).catch((err) => {
   }
 });
 
-// Add connection state tracking
+// Add connection state tracking - keep simple tracking but remove reconnection logic
 let isNetworkEnabled = true;
 const connectionListeners = new Set();
 
@@ -45,43 +50,30 @@ export const addConnectionStateListener = (listener) => {
   return () => connectionListeners.delete(listener);
 };
 
-// Function to toggle network state
+// Keep the toggle network function for potential future use
 export const toggleNetwork = async (enable) => {
   try {
     if (enable && !isNetworkEnabled) {
       await enableNetwork(db);
       isNetworkEnabled = true;
       notifyConnectionListeners('connected');
-      console.log('Firestore network enabled');
     } else if (!enable && isNetworkEnabled) {
       await disableNetwork(db);
       isNetworkEnabled = false;
       notifyConnectionListeners('disconnected');
-      console.log('Firestore network disabled');
     }
   } catch (error) {
     console.error('Error toggling network:', error);
   }
 };
 
-// Add reconnection logic
+// Remove the forceReconnect function or simplify it to just return true
 export const forceReconnect = async () => {
-  try {
-    await disableNetwork(db);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    await enableNetwork(db);
-    isNetworkEnabled = true;
-    notifyConnectionListeners('connected');
-    console.log('Firestore force reconnected');
-    return true;
-  } catch (error) {
-    console.error('Error during force reconnect:', error);
-    return false;
-  }
+  return true; // Simplified version that always succeeds but does nothing
 };
 
 const serializeConnection = (connection) => {
-  // Create a simplified serialized object without special caching logic
+  // Create a serialized object that explicitly handles text fields
   return {
     id: connection.id,
     start: {
@@ -102,7 +94,8 @@ const serializeConnection = (connection) => {
     dashDirection: connection.dashDirection || null,
     dashOffset: connection.dashOffset || 0,
     color: connection.color || 'white',
-    text: connection.text || '',
+    // More explicit text handling - ensure text is always a string
+    text: typeof connection.text === 'string' ? connection.text : '',
     textStyle: {
       fontSize: connection.textStyle?.fontSize || 1,
       color: connection.textStyle?.color || 'white',
@@ -110,6 +103,12 @@ const serializeConnection = (connection) => {
     },
   };
 };
+
+// Track active subscriptions to prevent duplicates
+const activeSubscriptions = new Map();
+
+// Track changes that we've already processed to avoid duplicates
+const processedChanges = new Set();
 
 // Modified to include spaceId parameter and handle shared spaces
 export const saveConnection = async (userId, spaceId, connection) => {
@@ -159,41 +158,52 @@ export const saveConnection = async (userId, spaceId, connection) => {
     serializedConnection.lastUpdated = new Date().toISOString();
 
     await setDoc(connectionRef, serializedConnection);
+    return true; // Indicate success
   } catch (error) {
     console.error('Error saving connection:', error);
     // Simple fallback
-    const fallbackKey = `connection_${userId}_${spaceId}_${connection.id}`;
-    localStorage.setItem(fallbackKey, JSON.stringify(connection));
+    try {
+      const fallbackKey = `connection_${userId}_${spaceId}_${connection.id}`;
+      localStorage.setItem(fallbackKey, JSON.stringify(connection));
+    } catch (storageErr) {
+      console.warn('Failed to save connection to localStorage:', storageErr);
+    }
     throw error;
   }
 };
 
-// Enhanced subscription with automatic reconnection logic
-const createSubscriptionWithRetry = (
-  userId,
-  spaceId,
-  callback,
-  maxRetries = 5,
-  delay = 1000
-) => {
-  let retryCount = 0;
+// Simplify the subscription logic by removing reconnection attempts
+const createSubscription = (userId, spaceId, callback) => {
+  // Create a unique key for this subscription
+  const subscriptionKey = `${userId}-${spaceId}`;
+
+  // Check if we already have an active subscription for this combination
+  if (activeSubscriptions.has(subscriptionKey)) {
+    return activeSubscriptions.get(subscriptionKey);
+  }
+
+  // Clear any previously processed changes when creating a new subscription
+  processedChanges.clear();
+
   let unsubscribe = null;
   let isSubscribed = true;
-  let lastDocumentCount = 0;
-  let reconnectTimer = null;
 
   // Store the last received data to handle reconnection
   const lastReceivedData = new Map();
 
   const subscribe = async () => {
-    if (!userId || !spaceId) return () => {};
+    if (!userId || !spaceId) {
+      return () => {};
+    }
 
     try {
       // Check if this is a shared space
       const sharedStatus = await isSharedSpace(userId, spaceId);
 
       // If we unsubscribed while waiting for the async operation, return early
-      if (!isSubscribed) return () => {};
+      if (!isSubscribed) {
+        return () => {};
+      }
 
       // Use the owner's ID to subscribe to the correct collection
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
@@ -212,132 +222,135 @@ const createSubscriptionWithRetry = (
       const q = query(connectionsRef);
 
       try {
-        console.log(
-          `[Connections] Setting up subscription for space ${spaceId} owned by ${ownerUserId}`
-        );
-
         unsubscribe = onSnapshot(
           q,
-          { includeMetadataChanges: true },
+          { includeMetadataChanges: false }, // Only interested in actual data changes
           (snapshot) => {
-            // Check if this is from cache or server
-            const source = snapshot.metadata.fromCache ? 'cache' : 'server';
-            console.log(
-              `[Connections] Got ${
-                snapshot.docChanges().length
-              } changes from ${source}`
-            );
+            // Count unique changes to actually process to reduce noise
+            const newChangesToProcess = snapshot
+              .docChanges()
+              .filter((change) => {
+                // Create a unique key that includes document data hash
+                const data = change.doc.data();
+                const dataHash = JSON.stringify(data);
+                const changeKey = `${change.type}-${change.doc.id}-${dataHash}`;
 
-            // Reset retry count on successful connection
-            retryCount = 0;
+                if (processedChanges.has(changeKey)) {
+                  return false; // We've seen this exact change before
+                }
 
-            // Check if we got documents when expected
-            const documentCount = snapshot.docs.length;
-            if (documentCount === 0 && lastDocumentCount > 0) {
-              console.warn(
-                'Received empty snapshot when expecting documents, may need to reconnect'
-              );
-              // Don't immediately reconnect as this might be legitimate (all docs deleted)
-            }
-            lastDocumentCount = documentCount;
+                // Only keep the most recent 300 processed changes to prevent memory leaks
+                if (processedChanges.size > 300) {
+                  const oldestChange = Array.from(processedChanges)[0];
+                  processedChanges.delete(oldestChange);
+                }
 
-            // Process changes
-            snapshot.docChanges().forEach((change) => {
+                processedChanges.add(changeKey);
+                return true;
+              });
+
+            // Only process changes we haven't seen before
+            newChangesToProcess.forEach((change) => {
               // Store the latest data
               if (change.type !== 'removed') {
                 lastReceivedData.set(change.doc.id, change.doc.data());
               } else {
                 lastReceivedData.delete(change.doc.id);
+
+                // If we're removing a connection, unregister it from any objects
+                const connectionData = change.doc.data();
+                if (connectionData.start?.objectId) {
+                  unregisterObjectConnection(
+                    connectionData.start.objectId,
+                    change.doc.id
+                  );
+                }
+                if (connectionData.end?.objectId) {
+                  unregisterObjectConnection(
+                    connectionData.end.objectId,
+                    change.doc.id
+                  );
+                }
               }
 
               // Send the raw connection data without processing
-              callback({
-                type: change.type,
-                id: change.doc.id,
-                connection: change.doc.data(),
-              });
+              try {
+                callback({
+                  type: change.type,
+                  id: change.doc.id,
+                  connection: change.doc.data(),
+                });
+              } catch (callbackErr) {
+                console.error('Error in connection callback:', callbackErr);
+              }
             });
           },
-          async (error) => {
+          (error) => {
             console.error('Firestore connections subscription error:', error);
-
-            if (retryCount < maxRetries) {
-              retryCount++;
-              console.log(
-                `Retrying connections subscription... Attempt ${retryCount}`
-              );
-
-              // Clear any existing timer
-              if (reconnectTimer) {
-                clearTimeout(reconnectTimer);
-              }
-
-              // Try force reconnect if this looks like a network issue
-              if (
-                error.code === 'unavailable' ||
-                error.code === 'failed-precondition'
-              ) {
-                await forceReconnect();
-              }
-
-              // Exponential backoff
-              reconnectTimer = setTimeout(() => {
-                if (isSubscribed) {
-                  if (unsubscribe) {
-                    unsubscribe();
-                    unsubscribe = null;
-                  }
-                  subscribe();
-                }
-              }, delay * Math.pow(2, retryCount - 1));
-            } else {
-              console.error(`Failed to reconnect after ${maxRetries} attempts`);
-
-              // Last resort: re-deliver cached data
-              if (lastReceivedData.size > 0) {
-                console.log(
-                  `Re-delivering ${lastReceivedData.size} cached connections`
-                );
-                lastReceivedData.forEach((data, id) => {
-                  callback({
-                    type: 'added',
-                    id,
-                    connection: data,
-                    fromCache: true,
-                  });
-                });
-              }
-            }
+            // No reconnection logic here
           }
         );
-        return unsubscribe;
+
+        const cleanupFn = () => {
+          isSubscribed = false;
+          if (unsubscribe) {
+            try {
+              unsubscribe();
+            } catch (err) {
+              console.warn('Error during unsubscribe:', err);
+            }
+          }
+          activeSubscriptions.delete(subscriptionKey);
+        };
+
+        activeSubscriptions.set(subscriptionKey, cleanupFn);
+        return cleanupFn;
       } catch (error) {
         console.error('Subscription setup error:', error);
+        activeSubscriptions.delete(subscriptionKey);
         return () => {};
       }
     } catch (error) {
       console.error('Error checking shared space status:', error);
+      activeSubscriptions.delete(subscriptionKey);
       return () => {};
     }
   };
 
-  // Start the subscription process
-  subscribe();
-
-  // Return function to unsubscribe
-  return () => {
+  // Return a function that will properly clean up the subscription
+  const unsubscribeFn = () => {
     isSubscribed = false;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
+    if (unsubscribe) {
+      try {
+        unsubscribe();
+      } catch (err) {
+        console.warn('Error during unsubscribe:', err);
+      }
     }
-    if (unsubscribe) unsubscribe();
+    activeSubscriptions.delete(subscriptionKey);
   };
+
+  // Start the subscription process
+  subscribe().catch((error) => {
+    console.error('Error in subscription process:', error);
+  });
+
+  return unsubscribeFn;
 };
 
-// Update the export to use the retry logic and include spaceId
+// Update the export to use the simplified subscription logic without retries
 export const subscribeToConnections = (userId, spaceId, callback) => {
-  return createSubscriptionWithRetry(userId, spaceId, callback);
+  if (!userId || !spaceId || !callback) {
+    console.error('Missing required parameters for subscription');
+    return () => {}; // Return a no-op function
+  }
+
+  try {
+    return createSubscription(userId, spaceId, callback);
+  } catch (error) {
+    console.error('Error creating subscription:', error);
+    return () => {}; // Always return a function
+  }
 };
 
 // Add function to delete connections
@@ -365,8 +378,114 @@ export const deleteConnection = async (userId, spaceId, connectionId) => {
       'connections',
       connectionId.toString()
     );
+
+    // Get the connection data to find object IDs
+    const connDoc = await getDoc(connectionRef);
+    if (connDoc.exists()) {
+      const connData = connDoc.data();
+      if (connData.start?.objectId) {
+        unregisterObjectConnection(connData.start.objectId, connectionId);
+      }
+      if (connData.end?.objectId) {
+        unregisterObjectConnection(connData.end.objectId, connectionId);
+      }
+    }
+
     await deleteDoc(connectionRef);
   } catch (error) {
     // Silent error handling
+  }
+};
+
+// Add a debug mode flag to control verbose logging
+window.DEBUG_CONNECTIONS = false;
+
+// Add utilities for debugging
+export const enableConnectionDebugMode = () => {
+  window.DEBUG_CONNECTIONS = true;
+  console.log('Connection debug mode enabled');
+};
+
+export const disableConnectionDebugMode = () => {
+  window.DEBUG_CONNECTIONS = false;
+  console.log('Connection debug mode disabled');
+};
+
+// Add debug utility for connection text
+export const logConnectionData = (connectionId) => {
+  return async (userId, spaceId) => {
+    if (!userId || !spaceId || !connectionId) return null;
+
+    try {
+      // Determine owner ID
+      const sharedStatus = await isSharedSpace(userId, spaceId);
+      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
+      const connectionRef = doc(
+        db,
+        'users',
+        ownerUserId,
+        'spaces',
+        spaceId,
+        'connections',
+        connectionId.toString()
+      );
+
+      const snapshot = await getDoc(connectionRef);
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        console.log('Connection data:', data);
+        return data;
+      }
+      return null;
+    } catch (e) {
+      console.error('Error fetching connection:', e);
+      return null;
+    }
+  };
+};
+
+// Add this function to help users debug connection text issues
+export const debugConnectionText = async (userId, spaceId) => {
+  if (!userId || !spaceId) return;
+
+  try {
+    // Determine owner ID
+    const sharedStatus = await isSharedSpace(userId, spaceId);
+    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
+    // Get all connections
+    const connectionsRef = collection(
+      db,
+      'users',
+      ownerUserId,
+      'spaces',
+      spaceId,
+      'connections'
+    );
+
+    const snapshot = await getDocs(connectionsRef);
+
+    console.log(`Found ${snapshot.size} connections`);
+
+    // Log all connections with text
+    let hasText = false;
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data.text && data.text.trim() !== '') {
+        hasText = true;
+        console.log(`Connection ${doc.id} has text: "${data.text}"`);
+        console.log('Full connection data:', data);
+      }
+    });
+
+    if (!hasText) {
+      console.log('No connections with text found.');
+    }
+
+    return snapshot.size;
+  } catch (e) {
+    console.error('Error debugging connections:', e);
+    return 0;
   }
 };

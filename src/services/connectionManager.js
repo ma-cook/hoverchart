@@ -1,5 +1,5 @@
 import { saveConnection } from './connectionsService';
-import { doc, getDoc, collection, getDocs } from 'firebase/firestore'; // Update imports
+import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 
 // Connection cache for performance
@@ -8,6 +8,9 @@ const connectionCache = new Map();
 // Track which connections are linked to which objects
 // Export this map to make it available for other components
 export const objectConnectionMap = new Map();
+
+// Track which connections have already been registered to avoid duplicates
+const registeredConnections = new Set();
 
 // Register a connection with an object - ensure IDs are strings
 export const registerObjectConnection = (objectId, connectionId) => {
@@ -21,27 +24,47 @@ export const registerObjectConnection = (objectId, connectionId) => {
   const objIdStr = objectId.toString();
   const connIdStr = connectionId.toString();
 
-  // Check if this connection is already registered with this object
-  if (
-    objectConnectionMap.has(objIdStr) &&
-    objectConnectionMap.get(objIdStr).has(connIdStr)
-  ) {
-    // Skip duplicate registrations
+  // Create a unique registration key to track this specific relationship
+  const registrationKey = `${objIdStr}:${connIdStr}`;
+
+  // Skip if this exact connection is already registered with this object
+  if (registeredConnections.has(registrationKey)) {
     return;
   }
+
+  // Add to our tracking set
+  registeredConnections.add(registrationKey);
 
   if (!objectConnectionMap.has(objIdStr)) {
     objectConnectionMap.set(objIdStr, new Set());
   }
   objectConnectionMap.get(objIdStr).add(connIdStr);
-  console.log(`Registered connection ${connIdStr} with object ${objIdStr}`);
+
+  // Make this logging conditional on debug mode to reduce noise
+  if (window.DEBUG_CONNECTIONS) {
+    console.log(`Registered connection ${connIdStr} with object ${objIdStr}`);
+  }
 };
 
 // Unregister a connection from an object
 export const unregisterObjectConnection = (objectId, connectionId) => {
-  if (objectConnectionMap.has(objectId)) {
-    objectConnectionMap.get(objectId).delete(connectionId);
+  const objIdStr = objectId?.toString();
+  const connIdStr = connectionId?.toString();
+
+  if (!objIdStr || !connIdStr) return;
+
+  // Remove from tracking set
+  registeredConnections.delete(`${objIdStr}:${connIdStr}`);
+
+  if (objectConnectionMap.has(objIdStr)) {
+    objectConnectionMap.get(objIdStr).delete(connIdStr);
   }
+};
+
+// Clear all registrations for testing or resets
+export const clearConnectionRegistrations = () => {
+  registeredConnections.clear();
+  objectConnectionMap.clear();
 };
 
 // Get a connection by ID
@@ -65,6 +88,10 @@ export const getConnectionById = async (userId, connectionId) => {
 
     if (connectionSnap.exists()) {
       const connectionData = connectionSnap.data();
+      // Ensure text field is properly handled
+      if (connectionData && !connectionData.text) {
+        connectionData.text = '';
+      }
       // Store in cache for future use
       connectionCache.set(cacheKey, connectionData);
       return connectionData;
@@ -74,7 +101,14 @@ export const getConnectionById = async (userId, connectionId) => {
     const fallbackKey = `connection_${userId}_${connectionId}`;
     const localData = localStorage.getItem(fallbackKey);
     if (localData) {
-      return JSON.parse(localData);
+      try {
+        const parsedData = JSON.parse(localData);
+        // Ensure text field exists
+        if (!parsedData.text) parsedData.text = '';
+        return parsedData;
+      } catch (e) {
+        return null;
+      }
     }
 
     return null;
@@ -89,13 +123,19 @@ export const initializeConnectionMappings = async (userId) => {
   try {
     // Clear existing mappings
     objectConnectionMap.clear();
-    console.log('Cleared existing connection mappings');
+    registeredConnections.clear();
+
+    if (window.DEBUG_CONNECTIONS) {
+      console.log('Cleared existing connection mappings');
+    }
 
     // Get all connections
     const connectionsRef = collection(db, 'users', userId, 'connections');
     const connectionsSnap = await getDocs(connectionsRef);
 
-    console.log(`Found ${connectionsSnap.size} connections to process`);
+    if (window.DEBUG_CONNECTIONS) {
+      console.log(`Found ${connectionsSnap.size} connections to process`);
+    }
 
     let registrationCount = 0;
 
@@ -103,41 +143,31 @@ export const initializeConnectionMappings = async (userId) => {
     connectionsSnap.forEach((docSnap) => {
       const connection = docSnap.data();
 
-      console.log(`Processing connection ${connection.id}`, {
-        startObjectId: connection.start?.objectId,
-        endObjectId: connection.end?.objectId,
-      });
+      if (window.DEBUG_CONNECTIONS) {
+        console.log(`Processing connection ${connection.id}`);
+      }
 
       if (connection.start?.objectId) {
         registerObjectConnection(connection.start.objectId, connection.id);
         registrationCount++;
-      } else {
-        console.warn(`Connection ${connection.id} missing start.objectId`);
       }
 
       if (connection.end?.objectId) {
         registerObjectConnection(connection.end.objectId, connection.id);
         registrationCount++;
-      } else {
-        console.warn(`Connection ${connection.id} missing end.objectId`);
       }
     });
 
-    console.log(
-      `Initialized connection mappings: ${registrationCount} registrations for ${connectionsSnap.size} connections`
-    );
+    if (window.DEBUG_CONNECTIONS) {
+      console.log(
+        `Initialized connection mappings: ${registrationCount} registrations for ${connectionsSnap.size} connections`
+      );
+    }
 
-    // Additional debug information
-    console.log(
-      'Current object connection map:',
-      Array.from(objectConnectionMap.keys()).map((key) => ({
-        objectId: key,
-        connectionCount: objectConnectionMap.get(key).size,
-      }))
-    );
+    return { success: true, count: registrationCount };
   } catch (error) {
     console.error('Error initializing connection mappings:', error);
-    throw error; // Re-throw to allow proper error handling
+    throw error;
   }
 };
 

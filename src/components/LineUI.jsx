@@ -24,10 +24,14 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
     e.stopPropagation();
     switch (tool.name) {
       case 'text':
-        onTextClick?.();
-        setShowLineStyles(false);
-        setShowArrowDropdown(false);
-        setShowColorPicker(false);
+        // Call text click handler and make sure it's working
+        if (onTextClick) {
+          onTextClick();
+          // Reset other UI states
+          setShowLineStyles(false);
+          setShowArrowDropdown(false);
+          setShowColorPicker(false);
+        }
         break;
       case 'paint':
         setShowColorPicker(true);

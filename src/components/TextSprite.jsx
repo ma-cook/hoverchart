@@ -1,4 +1,4 @@
-import React from 'react';
+import { useEffect, useRef } from 'react';
 import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -15,13 +15,62 @@ const TextSprite = ({
     fixedSize: false,
     isFaceText: false,
     isHeaderText: false,
-    isDodecahedronHeader: false, // Add this new property
-    fixedPosition: false, // Add this new property
+    isDodecahedronHeader: false,
+    fixedPosition: false,
   },
-  billboard = true, // New prop, defaults to true
-  normal, // Add normal prop for yface orientation
+  billboard = true,
+  normal,
+  lineStyle, // Line style prop
+  pathPoints, // Path points for position calculation
 }) => {
-  const textRef = React.useRef();
+  const textRef = useRef();
+  const textContentRef = useRef(text);
+  const lastLineStyleRef = useRef(lineStyle);
+  const lastPositionRef = useRef(position);
+  const pathPointsRef = useRef(pathPoints);
+  const lastPathLengthRef = useRef(0);
+  const isCurvedLineRef = useRef(false);
+
+  // Track changes that would require position recalculation
+  useEffect(() => {
+    textContentRef.current = text;
+
+    // Track changes in line style or path points that would require repositioning
+
+    // Update refs
+    lastLineStyleRef.current = lineStyle;
+    lastPathLengthRef.current = pathPoints?.length || 0;
+
+    // Set curved line flag
+    isCurvedLineRef.current = lineStyle === 'curved';
+
+    // Handle curved line text positioning
+    if (lineStyle === 'curved' && pathPoints && pathPoints.length > 0) {
+      // Find midpoint of the curve using middle control point
+      const midIndex = Math.floor(pathPoints.length / 2);
+      const midPoint = pathPoints[midIndex];
+
+      // Add vertical offset for text placement
+      const textOffset = 1.5; // Adjust this value to change text height above line
+      const newPosition = [midPoint.x, midPoint.y, midPoint.z];
+
+      if (textRef.current) {
+        textRef.current.position.set(...newPosition);
+      }
+      lastPositionRef.current = newPosition;
+      return; // Exit early to prevent other position updates
+    }
+
+    // Handle straight line text positioning
+    if (lineStyle === 'straight' && position) {
+      if (textRef.current) {
+        textRef.current.position.set(position[0], position[1], position[2]);
+      }
+      lastPositionRef.current = [...position];
+    }
+
+    pathPointsRef.current = pathPoints;
+  }, [text, position, lineStyle, pathPoints]);
 
   const MINIMUM_DISTANCE = 1; // Minimum distance from cube top
   const TEXT_HEIGHT = 0.7; // Approximate height of largest text
@@ -45,6 +94,22 @@ const TextSprite = ({
 
   useFrame(({ camera }) => {
     if (textRef.current) {
+      // Skip position update for curved lines
+      if (!isCurvedLineRef.current && position) {
+        if (
+          Math.abs(textRef.current.position.x - position[0]) > 0.001 ||
+          Math.abs(textRef.current.position.y - position[1]) > 0.001 ||
+          Math.abs(textRef.current.position.z - position[2]) > 0.001
+        ) {
+          textRef.current.position.set(position[0], position[1], position[2]);
+        }
+      }
+
+      // Always ensure billboard is working
+      if (billboard && !style.isFaceText) {
+        textRef.current.quaternion.copy(camera.quaternion);
+      }
+
       if (style.isFaceText && normal) {
         // Get parent's world scale for size compensation
         const worldScale = new THREE.Vector3();
@@ -237,10 +302,10 @@ const TextSprite = ({
         billboard={billboard}
         depthTest={true}
         depthWrite={true}
-        renderOrder={style.renderOrder || 0}
-        side={style.side || THREE.FrontSide} // Use parent's side setting if provided
+        renderOrder={10} // Increase render order to prevent z-fighting
+        side={THREE.DoubleSide} // Use DoubleSide to ensure text is visible from all angles
       >
-        {text}
+        {text || ''}
       </Text>
     </group>
   );

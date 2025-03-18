@@ -6,16 +6,15 @@ import { Line } from '@react-three/drei';
 import './App.css';
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
-import Cube from './components/Cube';
-import Sphere from './components/Dodecahedron';
-import Plane from './components/Plane';
+
 import LineUI from './components/LineUI';
 import HeaderInput from './components/HeaderInput';
 import TextSprite from './components/TextSprite';
 import TextStyleUI from './components/TextStyleUI';
 import { EffectComposer, SMAA } from '@react-three/postprocessing'; // <-- Use SMAA instead of FXAA
-import TextObject from './components/TextObject';
+
 import { findSpaceOwner } from './services/sharedSpacesService';
+import ObjectRenderer from './components/ObjectRenderer'; // Add this import
 
 import {
   signInUser,
@@ -32,9 +31,6 @@ import {
   saveConnection,
   subscribeToConnections,
   deleteConnection, // Import delete connection function
-  addConnectionStateListener, // Add this import
-  forceReconnect, // Add this import
-  toggleNetwork, // Add this import
 } from './services/connectionsService';
 
 import {
@@ -48,8 +44,10 @@ import {
   checkLineIntersection,
   generateCurvedPath,
 } from './utils/pathfindingUtils';
-
+import { calculateMidpoint } from './utils/positionUtils'; // Add this import
+import { calculateFacePosition } from './utils/facePositionUtils'; // Add this import
 // Helper function to compare arrays - this is fine at the top level as it's not a hook
+
 const arraysEqual = (a, b) => {
   if (!a || !b || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -452,309 +450,15 @@ const App = () => {
 
   // Add this to the App component for local connection management
   // Improved face position calculation with better offsets
-  const calculateFacePosition = useCallback(
-    (indicator) => {
-      // Handle null/undefined indicator
-      if (!indicator) {
-        return [0, 0, 0];
-      }
-
-      try {
-        // Add specific handling for text object indicators
-        if (indicator.type === 'text') {
-          try {
-            // First, check if we have a valid stored position that's not [0,0,0]
-            if (
-              Array.isArray(indicator.position) &&
-              indicator.position.length === 3 &&
-              indicator.position.every(
-                (n) => typeof n === 'number' && !isNaN(n)
-              ) &&
-              !indicator.position.every((n) => n === 0)
-            ) {
-              return indicator.position;
-            }
-
-            // If we have objectId, try to find the corresponding object
-            if (indicator.objectId) {
-              const textObj = objects.find(
-                (obj) => obj.id.toString() === indicator.objectId.toString()
-              );
-
-              if (textObj) {
-                const pos = textObj.position;
-                const scale = textObj.scale || [15, 10, 1]; // Default text object scale
-
-                // Calculate position at the bottom of the text object
-                return [
-                  pos[0],
-                  pos[1] - 5 * (Array.isArray(scale) ? scale[1] : 1),
-                  pos[2],
-                ];
-              }
-            }
-
-            // Try to get position from the plane reference
-            if (indicator.plane) {
-              try {
-                // Extract world position from the group reference
-                const worldPos = new THREE.Vector3();
-                indicator.plane.updateWorldMatrix(true, false);
-                indicator.plane.getWorldPosition(worldPos);
-
-                // Get scale from indicator or use defaults
-                const scale = indicator.cube?.scale || [15, 10, 1];
-
-                // Apply offset to position at the bottom of the text plane
-                return [
-                  worldPos.x,
-                  worldPos.y - 5 * (Array.isArray(scale) ? scale[1] : 1),
-                  worldPos.z,
-                ];
-              } catch (e) {
-                console.error('Error getting position from text plane:', e);
-              }
-            }
-
-            // Last resort fallback
-            if (indicator.position) {
-              return indicator.position;
-            }
-
-            return [0, 0, 0];
-          } catch {
-            return indicator.position || [0, 0, 0];
-          }
-        }
-
-        // For plane indicators
-        if (indicator.type === 'plane') {
-          try {
-            // Store the data we're working with for debugging
-
-            // First, check if we have a valid stored world position
-            if (
-              Array.isArray(indicator.worldPosition) &&
-              indicator.worldPosition.length === 3 &&
-              indicator.worldPosition.every(
-                (n) => typeof n === 'number' && !isNaN(n)
-              )
-            ) {
-              return indicator.worldPosition;
-            }
-
-            // Second, check if we have valid stored position
-            if (
-              Array.isArray(indicator.position) &&
-              indicator.position.length === 3 &&
-              indicator.position.every(
-                (n) => typeof n === 'number' && !isNaN(n)
-              )
-            ) {
-              return indicator.position;
-            }
-
-            // Third, try to calculate from planeData
-            if (indicator.planeData) {
-              // Ensure we have valid planeData
-              const { position, scale, worldMatrixArray } = indicator.planeData;
-
-              if (Array.isArray(position) && Array.isArray(scale)) {
-                // If we have worldMatrixArray elements, use them
-                if (
-                  worldMatrixArray &&
-                  Array.isArray(worldMatrixArray) &&
-                  worldMatrixArray.length === 16
-                ) {
-                  const worldPos = new THREE.Vector3(0, -5 * scale[1], 0);
-                  const matrix = new THREE.Matrix4().fromArray(
-                    worldMatrixArray
-                  );
-                  worldPos.applyMatrix4(matrix);
-                  return [worldPos.x, worldPos.y, worldPos.z];
-                }
-
-                // Fallback: calculate estimated position from components
-                const worldPos = new THREE.Vector3();
-                worldPos.x = position[0];
-                worldPos.y = position[1] - 5 * scale[1]; // Apply offset directly
-                worldPos.z = position[2];
-                return [worldPos.x, worldPos.y, worldPos.z];
-              }
-            }
-
-            // Fourth, try to calculate from plane reference (live object)
-            if (
-              indicator.plane &&
-              typeof indicator.plane.getWorldPosition === 'function'
-            ) {
-              try {
-                const worldPos = new THREE.Vector3();
-                indicator.plane.updateWorldMatrix(true, false);
-                indicator.plane.getWorldPosition(worldPos);
-
-                // Apply offset
-                const offset = indicator.offset || [
-                  0,
-                  -5 * (indicator.scale?.[1] || 1),
-                  0,
-                ];
-                worldPos.add(new THREE.Vector3(...offset));
-
-                return [worldPos.x, worldPos.y, worldPos.z];
-              } catch (e) {
-                console.error(
-                  'Error getting position from plane reference:',
-                  e
-                );
-              }
-            }
-
-            // Final fallback: if we have any position at all, use it
-            if (indicator.position) {
-              return Array.isArray(indicator.position)
-                ? indicator.position
-                : [0, 0, 0];
-            }
-
-            // Absolute last resort
-            if (indicator.cube?.position) {
-              const pos = indicator.cube.position;
-              const scale = indicator.cube.scale || [1, 1, 1];
-              return Array.isArray(pos)
-                ? [pos[0], pos[1] - 5 * scale[1], pos[2]]
-                : [0, 0, 0];
-            }
-
-            return [0, 0, 0];
-          } catch {
-            return [0, 0, 0];
-          }
-        }
-
-        // For cube or sphere indicators - with safer error handling
-        if (indicator.type === 'cube' || indicator.type === 'sphere') {
-          try {
-            // Get position data safely
-            let worldPos;
-
-            // Get position from the indicator if available, or from the data if stored
-            const position = indicator.cube?.position || indicator.position;
-
-            if (!position) {
-              return [0, 0, 0];
-            }
-
-            // Convert to Vector3 if it's an array
-            if (Array.isArray(position)) {
-              worldPos = new THREE.Vector3(
-                Number(position[0]) || 0,
-                Number(position[1]) || 0,
-                Number(position[2]) || 0
-              );
-            } else {
-              worldPos = new THREE.Vector3(
-                Number(position.x) || 0,
-                Number(position.y) || 0,
-                Number(position.z) || 0
-              );
-            }
-
-            // Get scale safely
-            const scale = indicator.cube?.scale || [1, 1, 1];
-            let worldScale;
-
-            if (Array.isArray(scale)) {
-              worldScale = new THREE.Vector3(
-                Math.max(0.1, Number(scale[0]) || 1),
-                Math.max(0.1, Number(scale[1]) || 1),
-                Math.max(0.1, Number(scale[2]) || 1)
-              );
-            } else {
-              worldScale = new THREE.Vector3(
-                Math.max(0.1, Number(scale.x) || 1),
-                Math.max(0.1, Number(scale.y) || 1),
-                Math.max(0.1, Number(scale.z) || 1)
-              );
-            }
-
-            // Calculate the offset based on face name and cube size
-            const cubeSize = 5; // Half-size of cube
-            let faceOffset;
-
-            if (
-              indicator.type === 'sphere' &&
-              Array.isArray(indicator.faceCenter)
-            ) {
-              const localFacePos = new THREE.Vector3(...indicator.faceCenter);
-              localFacePos.multiply(worldScale);
-              return [
-                worldPos.x + localFacePos.x,
-                worldPos.y + localFacePos.y,
-                worldPos.z + localFacePos.z,
-              ];
-            } else {
-              // Standard cube face offset calculation
-              switch (indicator.face) {
-                case 'top':
-                  faceOffset = new THREE.Vector3(0, cubeSize * worldScale.y, 0);
-                  break;
-                case 'bottom':
-                  faceOffset = new THREE.Vector3(
-                    0,
-                    -cubeSize * worldScale.y,
-                    0
-                  );
-                  break;
-                case 'front':
-                  faceOffset = new THREE.Vector3(0, 0, cubeSize * worldScale.z);
-                  break;
-                case 'back':
-                  faceOffset = new THREE.Vector3(
-                    0,
-                    0,
-                    -cubeSize * worldScale.z
-                  );
-                  break;
-                case 'right':
-                  faceOffset = new THREE.Vector3(cubeSize * worldScale.x, 0, 0);
-                  break;
-                case 'left':
-                  faceOffset = new THREE.Vector3(
-                    -cubeSize * worldScale.x,
-                    0,
-                    0
-                  );
-                  break;
-                default:
-                  faceOffset = new THREE.Vector3(0, 0, 0);
-              }
-            }
-
-            // Add the offset to the world position
-            worldPos.add(faceOffset);
-
-            return [worldPos.x, worldPos.y, worldPos.z];
-          } catch {
-            return [0, 0, 0];
-          }
-        }
-
-        // Fallback for unknown indicator types
-        return Array.isArray(indicator.position)
-          ? indicator.position
-          : [0, 0, 0];
-      } catch {
-        return [0, 0, 0];
-      }
-    },
+  const calculateFacePositionWithObjects = useCallback(
+    (indicator) => calculateFacePosition(indicator, objects),
     [objects]
   );
 
   // Memoized version of the calculation function - NOW INSIDE THE COMPONENT
   const memoizedCalculateFacePosition = useMemo(
-    () => memoize(calculateFacePosition),
-    [calculateFacePosition]
+    () => memoize(calculateFacePositionWithObjects),
+    [calculateFacePositionWithObjects]
   );
 
   // Clean up handleObjectMove callback
@@ -1158,31 +862,14 @@ const App = () => {
     setSelectedId(null);
   };
 
-  const calculateMidpoint = (start, end) => {
-    // Check if start and end are valid arrays with numeric values
-    if (
-      !start ||
-      !end ||
-      !Array.isArray(start) ||
-      !Array.isArray(end) ||
-      start.length < 3 ||
-      end.length < 3
-    ) {
-      return [0, 0, 0]; // Return a default position if inputs are invalid
-    }
-
-    return [
-      (start[0] + end[0]) / 2,
-      (start[1] + end[1]) / 2,
-      (start[2] + end[2]) / 2,
-    ];
-  };
-
   const handleLineStyleChange = (connectionId, styleType) => {
     const updatedConnection = connections.find(
       (conn) => conn.id === connectionId
     );
     if (!updatedConnection || !user) return;
+
+    // Track the old line style for comparison
+    const oldLineStyle = updatedConnection.lineStyle;
 
     let newConnection;
     if (styleType === 'dotted-left' || styleType === 'dotted-right') {
@@ -1191,6 +878,8 @@ const App = () => {
         lineStyle: 'dotted',
         dashDirection: styleType.split('-')[1],
         dashOffset: 0,
+        // Add a timestamp to force recalculation
+        _lastStyleUpdate: Date.now(),
       };
     } else if (styleType === 'dashed-left' || styleType === 'dashed-right') {
       newConnection = {
@@ -1198,22 +887,50 @@ const App = () => {
         lineStyle: 'dashed',
         dashDirection: styleType.split('-')[1],
         dashOffset: 0,
+        _lastStyleUpdate: Date.now(),
       };
     } else {
       newConnection = {
         ...updatedConnection,
         lineStyle: styleType,
         dashDirection: null,
+        _lastStyleUpdate: Date.now(),
       };
     }
 
-    // Update local state
+    // Update local state immediately
     setConnections((prev) =>
       prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
     );
 
     // Save to database
     saveConnection(user.uid, currentSpaceId, newConnection);
+
+    // Check if the line style actually changed between straight and curved
+    const needsTextRepositioning =
+      (oldLineStyle === 'straight' && styleType !== 'straight') ||
+      (oldLineStyle !== 'straight' && styleType === 'straight');
+
+    // If we have text and the curve style changed, force text position recalculation
+    if (newConnection.text && needsTextRepositioning) {
+      console.log(
+        `Line style changed from ${oldLineStyle} to ${styleType}, repositioning text`
+      );
+
+      // Force refresh by temporarily changing the text
+      setLineTexts((prev) => ({
+        ...prev,
+        [connectionId]: `${newConnection.text} `, // Add temporary space
+      }));
+
+      // Then restore proper text after a short delay
+      setTimeout(() => {
+        setLineTexts((prev) => ({
+          ...prev,
+          [connectionId]: newConnection.text,
+        }));
+      }, 100);
+    }
   };
 
   const handleLineColorChange = (connectionId, color) => {
@@ -1239,19 +956,46 @@ const App = () => {
     );
     if (!updatedConnection || !user) return;
 
+    console.log('Submitting line text:', text, 'for connection:', connectionId);
+
+    // Create updated connection with the new text
     const newConnection = {
       ...updatedConnection,
-      text,
+      text: text,
       textStyle: updatedConnection.textStyle || { fontSize: 1, color: 'white' },
     };
 
-    // Update local state
+    // Update both connections state and lineTexts state atomically
     setConnections((prev) =>
       prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
     );
 
-    // Save to database
-    saveConnection(user.uid, currentSpaceId, newConnection);
+    setLineTexts((prev) => ({
+      ...prev,
+      [connectionId]: text,
+    }));
+
+    // Save to database with the space owner ID
+    if (currentSpaceId) {
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      saveConnection(spaceOwnerId, currentSpaceId, newConnection)
+        .then(() => {
+          console.log('Connection text saved successfully');
+        })
+        .catch((err) => {
+          console.error('Error saving connection text:', err);
+          // Revert state on error
+          setConnections((prev) =>
+            prev.map((conn) =>
+              conn.id === connectionId ? updatedConnection : conn
+            )
+          );
+          setLineTexts((prev) => ({
+            ...prev,
+            [connectionId]: updatedConnection.text || '',
+          }));
+        });
+    }
 
     // Close text input
     setShowLineTextInput(null);
@@ -1461,13 +1205,27 @@ const App = () => {
 
   // Add effect to sync lineTexts with connections
   useEffect(() => {
+    if (!connections.length) return;
+
+    // Build a new map of line texts
     const newLineTexts = {};
     connections.forEach((conn) => {
-      if (conn.text) {
+      if (typeof conn.text === 'string') {
         newLineTexts[conn.id] = conn.text;
       }
     });
-    setLineTexts(newLineTexts);
+
+    // Only update if there are changes to prevent loops
+    const hasChanges =
+      Object.keys(newLineTexts).length !== Object.keys(lineTexts).length ||
+      Object.keys(newLineTexts).some(
+        (id) => newLineTexts[id] !== lineTexts[id]
+      );
+
+    if (hasChanges) {
+      console.log('Updating lineTexts state:', newLineTexts);
+      setLineTexts(newLineTexts);
+    }
   }, [connections]);
 
   // Add initialization of connection mappings when user is authenticated
@@ -1536,6 +1294,8 @@ const App = () => {
   }, [user, isCheckingUrlAuth]);
 
   // Clean up space fetching effect
+  const intentionalSpaceChangeRef = useRef(false);
+
   useEffect(() => {
     if (!user) return;
 
@@ -1546,9 +1306,27 @@ const App = () => {
 
       const urlOwnerUid = params.get('ownerUid');
 
-      // Clear any existing objects/connections when changing spaces
-      setObjects([]);
-      setConnections([]);
+      // Don't clear objects/connections if we already have the same space ID
+      // This prevents unwanted clears during connection updates
+      if (
+        urlSpaceId &&
+        urlSpaceId === currentSpaceId &&
+        !intentionalSpaceChangeRef.current
+      ) {
+        // Just update owner info if needed
+        if (urlOwnerUid) {
+          window.currentSpaceOwner =
+            urlOwnerUid === user.uid ? user.uid : urlOwnerUid;
+        }
+        return;
+      }
+
+      // If we're explicitly changing spaces, clear objects/connections
+      if (intentionalSpaceChangeRef.current || urlSpaceId !== currentSpaceId) {
+        setObjects([]);
+        setConnections([]);
+        intentionalSpaceChangeRef.current = false;
+      }
 
       // If we have a space ID, let's try to use it
       if (urlSpaceId) {
@@ -1743,16 +1521,22 @@ const App = () => {
     };
 
     fetchCurrentSpace();
-  }, [user]);
+  }, [user, currentSpaceId]);
 
   // Add a new effect to handle redirection when no spaceId is available
   useEffect(() => {
     // Only run this after auth is ready and we know there's no current space
-    if (isAuthReady && user && currentSpaceId === null) {
+    // AND we're not currently processing a space change
+    if (
+      isAuthReady &&
+      user &&
+      currentSpaceId === null &&
+      !intentionalSpaceChangeRef.current
+    ) {
       // Allow a small delay for logging and cleanup
       const redirectTimeout = setTimeout(() => {
         window.location.href = 'https://volscape.web.app/';
-      }, 100);
+      }, 500); // Increase the delay to prevent quick redirects
 
       return () => clearTimeout(redirectTimeout);
     }
@@ -1814,141 +1598,6 @@ const App = () => {
     [user, currentSpaceId, connections, selectedId]
   );
 
-  // Add connection state tracking
-  const [connectionState, setConnectionState] = useState('connected');
-  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now());
-  const [reconnectAttempts, setReconnectAttempts] = useState(0);
-  const maxReconnectAttempts = 5;
-
-  // Add connection status UI state
-  const [showConnectionStatus, setShowConnectionStatus] = useState(false);
-  const connectionStatusTimeout = useRef(null);
-
-  // Add effect to track connection state
-  useEffect(() => {
-    const unsubscribe = addConnectionStateListener((state) => {
-      setConnectionState(state);
-
-      // Show connection status UI
-      setShowConnectionStatus(true);
-
-      // Clear any existing timeout
-      if (connectionStatusTimeout.current) {
-        clearTimeout(connectionStatusTimeout.current);
-      }
-
-      // Hide the status after a few seconds if connected
-      if (state === 'connected') {
-        connectionStatusTimeout.current = setTimeout(() => {
-          setShowConnectionStatus(false);
-        }, 3000);
-
-        // Reset reconnect attempts
-        setReconnectAttempts(0);
-      }
-    });
-
-    return () => {
-      if (connectionStatusTimeout.current) {
-        clearTimeout(connectionStatusTimeout.current);
-      }
-      unsubscribe();
-    };
-  }, []);
-
-  // Add effect to periodically check and force reconnect if needed
-  useEffect(() => {
-    // Skip if no user or space
-    if (!user || !currentSpaceId) return;
-
-    // Set up periodic connection health check
-    const healthCheckInterval = setInterval(() => {
-      // If it's been more than 30 seconds since last update, try to reconnect
-      const timeSinceLastUpdate = Date.now() - lastUpdateTime;
-
-      if (
-        timeSinceLastUpdate > 30000 &&
-        connectionState !== 'connecting' &&
-        reconnectAttempts < maxReconnectAttempts
-      ) {
-        console.log('No updates for 30+ seconds, attempting reconnect...');
-        setConnectionState('connecting');
-        setShowConnectionStatus(true);
-
-        // Increment reconnect attempts
-        setReconnectAttempts((prev) => prev + 1);
-
-        forceReconnect().then((success) => {
-          if (success) {
-            console.log('Reconnection successful');
-            setLastUpdateTime(Date.now());
-            setConnectionState('connected');
-
-            // Hide status after a delay
-            setTimeout(() => {
-              setShowConnectionStatus(false);
-            }, 3000);
-
-            // Re-fetch data after reconnection
-            if (user && currentSpaceId) {
-              // Refresh subscriptions by temporarily nulling spaceId
-              const tempSpaceId = currentSpaceId;
-              setCurrentSpaceId(null);
-
-              // Then restore it after a short delay
-              setTimeout(() => {
-                setCurrentSpaceId(tempSpaceId);
-              }, 500);
-            }
-          } else {
-            console.log('Reconnection failed');
-            setConnectionState('disconnected');
-          }
-        });
-      }
-    }, 10000); // Check every 10 seconds
-
-    return () => clearInterval(healthCheckInterval);
-  }, [
-    connectionState,
-    lastUpdateTime,
-    reconnectAttempts,
-    user,
-    currentSpaceId,
-  ]);
-
-  // Add handler for manual reconnection
-  const handleManualReconnect = useCallback(() => {
-    setConnectionState('connecting');
-    setShowConnectionStatus(true);
-
-    forceReconnect().then((success) => {
-      if (success) {
-        setLastUpdateTime(Date.now());
-        setConnectionState('connected');
-        setReconnectAttempts(0);
-
-        // Refresh subscriptions by temporarily nulling spaceId
-        if (user && currentSpaceId) {
-          const tempSpaceId = currentSpaceId;
-          setCurrentSpaceId(null);
-
-          // Then restore it after a short delay
-          setTimeout(() => {
-            setCurrentSpaceId(tempSpaceId);
-          }, 500);
-        }
-
-        // Hide status after a delay
-        setTimeout(() => {
-          setShowConnectionStatus(false);
-        }, 3000);
-      } else {
-        setConnectionState('disconnected');
-      }
-    });
-  }, [user, currentSpaceId]);
-
   // Add debouncing mechanism for connection updates
   const connectionUpdateTimeoutRef = useRef(null);
   const lastKnownConnectionsRef = useRef({});
@@ -1956,103 +1605,165 @@ const App = () => {
   // Add a timestamp for last connection update
   const lastConnectionUpdateTimeRef = useRef(Date.now());
 
+  // Add a ref to track if a subscription is already active
+  const activeConnectionSubscriptionRef = useRef(null);
+
   // Replace the existing connection subscription with the enhanced version
   useEffect(() => {
     if (user && currentSpaceId) {
-      console.log(
-        `Setting up connection subscription for space ${currentSpaceId}`
-      );
+      // Avoid unnecessary re-subscriptions by checking if user/spaceId actually changed
+      const subscriptionKey = `${user.uid}-${currentSpaceId}`;
 
-      // Use the space owner's ID for subscription
-      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      // Only set up a new subscription if we don't have one or if key changed
+      if (activeConnectionSubscriptionRef.current?.key !== subscriptionKey) {
+        // Clean up any existing subscription
+        if (activeConnectionSubscriptionRef.current?.unsubscribe) {
+          if (
+            typeof activeConnectionSubscriptionRef.current?.unsubscribe ===
+            'function'
+          ) {
+            activeConnectionSubscriptionRef.current.unsubscribe();
+          }
+        }
 
-      const unsubscribe = subscribeToConnections(
-        spaceOwnerId,
-        currentSpaceId,
-        (change) => {
-          // Update last activity timestamp
-          setLastUpdateTime(Date.now());
-          lastConnectionUpdateTimeRef.current = Date.now();
+        // Use the space owner's ID for subscription
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
 
-          // Use the debounced update approach for connections
+        // Set up new subscription - wrap callback to deduplicate
+        const processedChangesSet = new Set();
+
+        const unsubscribe = subscribeToConnections(
+          spaceOwnerId,
+          currentSpaceId,
+          (change) => {
+            // Update last activity timestamp
+
+            lastConnectionUpdateTimeRef.current = Date.now();
+
+            // Create a unique key for this change to prevent duplicate processing
+            const changeKey = `${change.type}-${change.id}-${
+              change.connection?.lastUpdated || Date.now()
+            }`;
+
+            if (processedChangesSet.has(changeKey)) {
+              return; // Skip if we've already processed this exact change
+            }
+            processedChangesSet.add(changeKey);
+
+            // Use the debounced update approach for connections
+            if (connectionUpdateTimeoutRef.current) {
+              clearTimeout(connectionUpdateTimeoutRef.current);
+            }
+
+            // Store the change in the ref for batching
+            if (!lastKnownConnectionsRef.current[change.id]) {
+              lastKnownConnectionsRef.current[change.id] = {};
+            }
+
+            lastKnownConnectionsRef.current[change.id] = {
+              type: change.type,
+              data: change.connection,
+              timestamp: Date.now(),
+            };
+
+            // Apply updates after a short delay to batch multiple rapid changes
+            connectionUpdateTimeoutRef.current = setTimeout(() => {
+              setConnections((prev) => {
+                // Process all accumulated changes
+                const updates = { ...lastKnownConnectionsRef.current };
+                lastKnownConnectionsRef.current = {};
+
+                // Apply all updates
+                let newConnections = [...prev];
+                Object.entries(updates).forEach(([connId, update]) => {
+                  // Skip if we don't need to update
+                  const existingConn = newConnections.find(
+                    (conn) => conn.id === connId
+                  );
+
+                  switch (update.type) {
+                    case 'added':
+                      if (!existingConn) {
+                        newConnections = [...newConnections, update.data];
+                      }
+                      break;
+                    case 'modified':
+                      if (existingConn && !isEqual(existingConn, update.data)) {
+                        newConnections = newConnections.map((conn) =>
+                          conn.id === connId ? update.data : conn
+                        );
+                      }
+                      break;
+                    case 'removed':
+                      newConnections = newConnections.filter(
+                        (conn) => conn.id !== connId
+                      );
+                      break;
+                  }
+                });
+
+                // Map object references and positions
+                const withRefs = mapConnectionsToObjects(
+                  newConnections,
+                  objects
+                );
+                return synchronizeConnectionPositions(withRefs, objects);
+              });
+            }, 100); // Short debounce time for responsiveness
+          }
+        );
+
+        // Save subscription info - Make sure unsubscribe is a function
+        if (typeof unsubscribe === 'function') {
+          activeConnectionSubscriptionRef.current = {
+            key: subscriptionKey,
+            unsubscribe: unsubscribe,
+          };
+        } else {
+          console.warn(
+            'Expected unsubscribe to be a function but got:',
+            unsubscribe
+          );
+          activeConnectionSubscriptionRef.current = {
+            key: subscriptionKey,
+            unsubscribe: () => {}, // Provide a no-op fallback
+          };
+        }
+
+        return () => {
+          // Make sure unsubscribe is a function before calling it
+          if (
+            typeof activeConnectionSubscriptionRef.current?.unsubscribe ===
+            'function'
+          ) {
+            activeConnectionSubscriptionRef.current.unsubscribe();
+          }
           if (connectionUpdateTimeoutRef.current) {
             clearTimeout(connectionUpdateTimeoutRef.current);
           }
+          activeConnectionSubscriptionRef.current = null;
+        };
+      }
 
-          // Store the change in the ref for batching
-          if (!lastKnownConnectionsRef.current[change.id]) {
-            lastKnownConnectionsRef.current[change.id] = {};
-          }
-
-          lastKnownConnectionsRef.current[change.id] = {
-            type: change.type,
-            data: change.connection,
-            timestamp: Date.now(),
-          };
-
-          // Apply updates after a short delay to batch multiple rapid changes
-          connectionUpdateTimeoutRef.current = setTimeout(() => {
-            setConnections((prev) => {
-              // Process all accumulated changes
-              const updates = { ...lastKnownConnectionsRef.current };
-              lastKnownConnectionsRef.current = {};
-
-              // Apply all updates
-              let newConnections = [...prev];
-              Object.entries(updates).forEach(([connId, update]) => {
-                switch (update.type) {
-                  case 'added':
-                    if (!newConnections.find((conn) => conn.id === connId)) {
-                      newConnections = [...newConnections, update.data];
-                    }
-                    break;
-                  case 'modified':
-                    newConnections = newConnections.map((conn) =>
-                      conn.id === connId ? update.data : conn
-                    );
-                    break;
-                  case 'removed':
-                    newConnections = newConnections.filter(
-                      (conn) => conn.id !== connId
-                    );
-                    break;
-                }
-              });
-
-              // Map object references and positions
-              const withRefs = mapConnectionsToObjects(newConnections, objects);
-              return synchronizeConnectionPositions(withRefs, objects);
-            });
-          }, 100); // Short debounce time for responsiveness
-        }
-      );
-
-      // Function to handle reconnection if needed
-      const checkConnectionHealth = setInterval(() => {
-        const timeSinceLastUpdate =
-          Date.now() - lastConnectionUpdateTimeRef.current;
-        if (timeSinceLastUpdate > 60000) {
-          // 1 minute without updates
-          console.log('Connection may be stale, forcing reconnection...');
-          forceReconnect();
-          lastConnectionUpdateTimeRef.current = Date.now(); // Reset timer
-        }
-      }, 30000);
-
+      // If we already have an active subscription with the same key, return a cleanup function
       return () => {
-        unsubscribe();
-        clearInterval(checkConnectionHealth);
-        if (connectionUpdateTimeoutRef.current) {
-          clearTimeout(connectionUpdateTimeoutRef.current);
+        if (
+          typeof activeConnectionSubscriptionRef.current?.unsubscribe ===
+          'function'
+        ) {
+          activeConnectionSubscriptionRef.current.unsubscribe();
         }
       };
     }
+
+    // Always return a cleanup function, even if it's empty
+    return () => {};
   }, [
-    user,
+    user?.uid,
     currentSpaceId,
-    objects,
     mapConnectionsToObjects,
     synchronizeConnectionPositions,
+    objects, // Adding objects here to ensure we re-create references when objects change
   ]);
 
   return (
@@ -2116,11 +1827,41 @@ const App = () => {
                   connection.end?.objectId
                 );
 
+                // Explicitly make sure we get the text
+                const connectionText =
+                  connection.text || lineTexts[connection.id] || '';
+
+                // Improved text position calculation that handles both curved and straight lines
+                let textPosition;
+
+                // First check if we have valid path points
+                if (pathPoints && pathPoints.length > 0) {
+                  if (
+                    pathPoints.length <= 2 ||
+                    connection.lineStyle === 'straight'
+                  ) {
+                    // For straight lines, use calculated midpoint with elevation
+                    textPosition = [midpoint[0], midpoint[1] + 5, midpoint[2]];
+                  } else {
+                    // For curved paths with 3+ points, use middle point from the path array
+                    // This ensures text follows the curve properly
+                    const midIdx = Math.floor(pathPoints.length / 2);
+                    textPosition = [
+                      pathPoints[midIdx].x,
+                      pathPoints[midIdx].y + 50,
+                      pathPoints[midIdx].z,
+                    ];
+                  }
+                } else {
+                  // Fallback to basic midpoint if path calculation failed
+                  textPosition = [midpoint[0], midpoint[1] + 2, midpoint[2]];
+                }
+
                 return (
                   <group key={connection.id}>
-                    {/* Single visible line with proper depth testing - hides behind objects */}
+                    {/* Single visible line with proper depth testing */}
                     <Line
-                      points={pathPoints} // Use the calculated path points
+                      points={pathPoints}
                       color={
                         connection.color ||
                         (selectedConnection === connection.id
@@ -2143,9 +1884,9 @@ const App = () => {
                       toneMapped={false}
                     />
 
-                    {/* Clickable area - needs to follow the curve */}
+                    {/* Clickable area */}
                     <Line
-                      points={pathPoints} // Also use calculated path points
+                      points={pathPoints}
                       color="white"
                       lineWidth={20}
                       onClick={(e) => handleConnectionClick(e, connection.id)}
@@ -2163,34 +1904,41 @@ const App = () => {
                       renderOrder={10}
                     />
 
-                    {/* Text and UI elements - adjust position to the midpoint of the curve */}
-                    {(connection.text || lineTexts[connection.id]) && (
-                      <TextSprite
-                        text={connection.text || lineTexts[connection.id]}
-                        position={[
-                          pathPoints[Math.floor(pathPoints.length / 2)].x,
-                          pathPoints[Math.floor(pathPoints.length / 2)].y + 5,
-                          pathPoints[Math.floor(pathPoints.length / 2)].z,
-                        ]}
-                        style={
-                          connection.textStyle || {
-                            fontSize: 1,
-                            color: 'white',
-                          }
-                        }
-                        onClick={(e) => handleLineTextClick(e, connection.id)}
-                      />
-                    )}
+                    {/* Enhanced text rendering that updates when line style changes */}
+                    <TextSprite
+                      key={`text-${connection.id}-${
+                        connection._lastStyleUpdate || 0
+                      }`}
+                      text={connectionText}
+                      position={textPosition}
+                      style={{
+                        fontSize: connection.textStyle?.fontSize || 1.5,
+                        color: connection.textStyle?.color || 'white',
+                        underline: connection.textStyle?.underline || false,
+                        fixedSize: true,
+                        backgroundOpacity: 0.4,
+                        backgroundColor: '#000000',
+                        padding: 0.3,
+                      }}
+                      onClick={(e) => handleLineTextClick(e, connection.id)}
+                      billboard={true}
+                      renderOrder={20}
+                      lineStyle={connection.lineStyle || 'straight'} // Ensure default value
+                      pathPoints={pathPoints}
+                    />
 
+                    {/* Text input UI */}
                     {showLineTextInput === connection.id && (
                       <HeaderInput
                         position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
                         onTextSubmit={(text) =>
                           handleLineTextSubmit(connection.id, text)
                         }
+                        initialText={connectionText} // Add initial text for editing existing text
                       />
                     )}
 
+                    {/* Text style UI */}
                     {showLineTextStyleUI === connection.id && (
                       <TextStyleUI
                         position={[midpoint[0], midpoint[1] + 8, midpoint[2]]}
@@ -2198,274 +1946,63 @@ const App = () => {
                           handleLineTextStyleChange(connection.id, style)
                         }
                         onClose={() => setShowLineTextStyleUI(null)}
+                        currentStyle={connection.textStyle || {}} // Pass current style for context
                       />
                     )}
 
+                    {/* Line UI */}
                     {selectedConnection === connection.id && (
                       <LineUI
                         position={midpoint}
                         onColorChange={(color) =>
                           handleLineColorChange(connection.id, color)
                         }
-                        onToggleDashed={(styleType) => {
-                          handleLineStyleChange(connection.id, styleType);
-                        }}
-                        onTextClick={() => {
-                          setShowLineTextInput(connection.id);
-                        }}
+                        onToggleDashed={(styleType) =>
+                          handleLineStyleChange(connection.id, styleType)
+                        }
+                        onTextClick={() => setShowLineTextInput(connection.id)}
+                        currentText={connectionText} // Pass current text to UI
+                        hasText={
+                          !!connectionText && connectionText.trim() !== ''
+                        } // Indicate if there's already text
                       />
                     )}
                   </group>
                 );
               })}
 
-              {objects.map((obj) => {
-                if (obj.type === 'cube') {
-                  return (
-                    <Cube
-                      key={obj.id}
-                      id={obj.id}
-                      position={obj.position}
-                      color={obj.color}
-                      headerText={obj.headerText || ''} // Ensure headerText is passed with fallback
-                      scale={obj.scale}
-                      faceColors={obj.faceColors}
-                      faceTexts={
-                        obj.faceTexts || {
-                          front: '',
-                          back: '',
-                          top: '',
-                          bottom: '',
-                          right: '',
-                          left: '',
-                        }
-                      }
-                      textStyle={
-                        obj.textStyle || {
-                          fontSize: 1.5,
-                          color: 'white',
-                          underline: false,
-                        }
-                      }
-                      faceTextStyles={
-                        obj.faceTextStyles || {
-                          front: {
-                            fontSize: 0.5,
-                            color: 'white',
-                            underline: false,
-                          },
-                          back: {
-                            fontSize: 0.5,
-                            color: 'white',
-                            underline: false,
-                          },
-                          top: {
-                            fontSize: 0.5,
-                            color: 'white',
-                            underline: false,
-                          },
-                          bottom: {
-                            fontSize: 0.5,
-                            color: 'white',
-                            underline: false,
-                          },
-                          right: {
-                            fontSize: 0.5,
-                            color: 'white',
-                            underline: false,
-                          },
-                          left: {
-                            fontSize: 0.5,
-                            color: 'white',
-                            underline: false,
-                          },
-                        }
-                      }
-                      selected={selectedId === obj.id}
-                      onClick={() => handleObjectClick(obj.id)}
-                      onMove={(newPosition) =>
-                        handleObjectMove(obj.id, newPosition)
-                      }
-                      onUpdate={handleObjectUpdate}
-                      disableOrbitControls={disableOrbitControls}
-                      enableOrbitControls={enableOrbitControls}
-                      onFaceIndicatorClick={handleFaceIndicatorClick}
-                      onFaceClick={handleFaceClick}
-                      showAllIndicators={showAllCubesIndicators}
-                      activeIndicator={activeIndicator}
-                      indicatorMode={indicatorMode}
-                      connections={connections}
-                      selectedIndicators={selectedIndicators}
-                      activeTextStyleUI={activeTextStyleUI}
-                      setActiveTextStyleUI={setActiveTextStyleUI}
-                      onIndicatorDeselected={handleIndicatorDeselected}
-                      onTransformStart={() =>
-                        registerTransformingObject(obj.id, true)
-                      }
-                      onTransformEnd={() =>
-                        registerTransformingObject(obj.id, false)
-                      }
-                      onMatrixChanged={(matrixWorld) =>
-                        handleObjectMatrixChanged(obj.id, matrixWorld)
-                      }
-                      transformControls={{
-                        matrixAutoUpdate: false, // Force consistent matrix handling
-                        coordinateSystem: 'local', // Use local coordinate system to prevent unwanted recursion
-                        stackBehavior: 'detach_on_modify', // Add custom hint for transform controls
-                      }}
-                      onDelete={handleObjectDelete}
-                    />
-                  );
-                }
-                if (obj.type === 'sphere') {
-                  return (
-                    <Sphere
-                      key={obj.id}
-                      id={obj.id}
-                      position={obj.position}
-                      scale={obj.scale || [1, 1, 1]}
-                      headerText={obj.headerText || ''}
-                      headerStyle={
-                        obj.headerStyle || {
-                          fontSize: 'medium',
-                          color: 'white',
-                          underline: false,
-                        }
-                      }
-                      lineColor={obj.lineColor || 'white'}
-                      faceColors={obj.faceColors || {}}
-                      faceTexts={obj.faceTexts || {}}
-                      faceTextStyles={obj.faceTextStyles || {}}
-                      selected={selectedId === obj.id}
-                      onClick={() => handleObjectClick(obj.id)}
-                      showAllIndicators={showAllCubesIndicators}
-                      onIndicatorSelected={handleIndicatorSelected}
-                      globalIndicatorSelected={globalIndicatorSelected}
-                      onFaceIndicatorClick={handleFaceIndicatorClick}
-                      onMove={(newPosition) =>
-                        handleObjectMove(obj.id, newPosition)
-                      }
-                      connections={connections}
-                      onUpdate={handleObjectUpdate} // Add this prop
-                      onIndicatorDeselected={handleIndicatorDeselected}
-                      onDelete={handleObjectDelete}
-                    />
-                  );
-                }
-                if (obj.type === 'plane') {
-                  return (
-                    <Plane
-                      key={obj.id}
-                      id={obj.id}
-                      position={obj.position}
-                      scale={obj.scale || [1, 1, 1]}
-                      selected={selectedId === obj.id}
-                      onClick={() => handleObjectClick(obj.id)}
-                      showAllIndicators={showAllCubesIndicators}
-                      onIndicatorSelected={handleIndicatorSelected}
-                      globalIndicatorSelected={globalIndicatorSelected}
-                      onFaceIndicatorClick={handleFaceIndicatorClick}
-                      onMove={(newPosition) =>
-                        handleObjectMove(obj.id, newPosition)
-                      }
-                      connections={connections}
-                      selectedIndicators={selectedIndicators}
-                      indicatorMode={indicatorMode}
-                      onUpdate={handleObjectUpdate}
-                      color={obj.color}
-                      headerText={obj.headerText}
-                      borderStyle={obj.borderStyle}
-                      borderColor={obj.borderColor}
-                      lineThickness={obj.lineThickness}
-                      headerStyle={obj.headerStyle}
-                      faceText={obj.faceText}
-                      faceTextStyle={obj.faceTextStyle}
-                      activeTextStyleUI={activeTextStyleUI} // Add this
-                      setActiveTextStyleUI={setActiveTextStyleUI} // Add this
-                      onDelete={handleObjectDelete}
-                    />
-                  );
-                }
-                if (obj.type === 'text') {
-                  return (
-                    <TextObject
-                      key={obj.id}
-                      id={obj.id}
-                      position={obj.position}
-                      selected={selectedId === obj.id}
-                      onClick={() => handleObjectClick(obj.id)}
-                      showAllIndicators={showAllCubesIndicators}
-                      onIndicatorSelected={handleIndicatorSelected}
-                      globalIndicatorSelected={globalIndicatorSelected}
-                      onFaceIndicatorClick={handleFaceIndicatorClick}
-                      connections={connections}
-                      selectedIndicators={selectedIndicators}
-                      indicatorMode={indicatorMode}
-                      onUpdate={handleObjectUpdate}
-                      initialText={obj.text || ''}
-                      initialTextStyle={
-                        obj.textStyle || { fontSize: 32, color: 'white' }
-                      }
-                      initialScale={obj.scale || [15, 10, 1]}
-                      onDelete={handleObjectDelete}
-                    />
-                  );
-                }
-                return null;
-              })}
+              {objects.map((obj) => (
+                <ObjectRenderer
+                  key={obj.id}
+                  obj={obj}
+                  selectedId={selectedId}
+                  handleObjectClick={handleObjectClick}
+                  handleObjectMove={handleObjectMove}
+                  handleObjectUpdate={handleObjectUpdate}
+                  disableOrbitControls={disableOrbitControls}
+                  enableOrbitControls={enableOrbitControls}
+                  handleFaceIndicatorClick={handleFaceIndicatorClick}
+                  handleFaceClick={handleFaceClick}
+                  showAllCubesIndicators={showAllCubesIndicators}
+                  activeIndicator={activeIndicator}
+                  indicatorMode={indicatorMode}
+                  connections={connections}
+                  selectedIndicators={selectedIndicators}
+                  activeTextStyleUI={activeTextStyleUI}
+                  setActiveTextStyleUI={setActiveTextStyleUI}
+                  handleIndicatorDeselected={handleIndicatorDeselected}
+                  registerTransformingObject={registerTransformingObject}
+                  handleObjectMatrixChanged={handleObjectMatrixChanged}
+                  handleIndicatorSelected={handleIndicatorSelected}
+                  globalIndicatorSelected={globalIndicatorSelected}
+                  handleObjectDelete={handleObjectDelete}
+                />
+              ))}
             </group>
             <EffectComposer>
               <SMAA />
             </EffectComposer>
           </Canvas>
-
-          {/* Add connection status indicator */}
-          {showConnectionStatus && (
-            <div
-              className="connection-status-indicator"
-              style={{
-                position: 'fixed',
-                top: '10px',
-                right: '10px',
-                background:
-                  connectionState === 'connected'
-                    ? '#4CAF50'
-                    : connectionState === 'connecting'
-                    ? '#FFC107'
-                    : '#F44336',
-                color: 'white',
-                padding: '8px 12px',
-                borderRadius: '4px',
-                zIndex: 1000,
-                display: 'flex',
-                alignItems: 'center',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-              }}
-            >
-              <span style={{ marginRight: '8px' }}>
-                {connectionState === 'connected'
-                  ? 'Connected'
-                  : connectionState === 'connecting'
-                  ? 'Reconnecting...'
-                  : 'Disconnected'}
-              </span>
-              {connectionState === 'disconnected' && (
-                <button
-                  onClick={handleManualReconnect}
-                  style={{
-                    background: '#fff',
-                    border: 'none',
-                    borderRadius: '3px',
-                    padding: '3px 8px',
-                    cursor: 'pointer',
-                    color: '#333',
-                  }}
-                >
-                  Retry
-                </button>
-              )}
-            </div>
-          )}
 
           <UIOverlay
             onCreateObject={handleCreateObject}
@@ -2476,8 +2013,6 @@ const App = () => {
             isLoading={!isAuthReady}
             showLoginButton={!isCheckingUrlAuth && !user}
             isConnectMode={isConnectMode} // Pass connect mode state to UIOverlay
-            connectionState={connectionState}
-            onReconnect={handleManualReconnect}
           />
         </>
       )}
