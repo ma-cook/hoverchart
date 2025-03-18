@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react'; // Added useMemo
 import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -31,46 +31,62 @@ const TextSprite = ({
   const lastPathLengthRef = useRef(0);
   const isCurvedLineRef = useRef(false);
 
+  // Calculate the optimal text position based on line style and path
+  const calculatedPosition = useMemo(() => {
+    // Default to the provided position
+    if (!position) return position;
+
+    // Add more detailed logging
+    console.log(
+      'TextSprite recalculating position.',
+      '\nLineStyle:',
+      lineStyle,
+      '\nPosition:',
+      position,
+      '\nHas pathPoints:',
+      !!pathPoints,
+      '\nPoints length:',
+      pathPoints?.length || 0,
+      '\nFirst point:',
+      pathPoints?.[0],
+      '\nMid point:',
+      pathPoints?.[Math.floor((pathPoints?.length || 0) / 2)]
+    );
+
+    // Make sure we explicitly check for 'curved' line style
+    const isCurvedLine = lineStyle === 'curved';
+
+    // If it's not a curved line or we don't have path points, use the provided position
+    if (!isCurvedLine || !pathPoints || pathPoints.length < 3) {
+      return position;
+    }
+
+    // For curved lines with valid path points, calculate position from the path
+    try {
+      const midIdx = Math.floor(pathPoints.length / 2);
+      const curvedYOffset = 5; // Additional Y offset specific to curved lines
+
+      // Use the midpoint of the curved path with specific Y offset
+      return [
+        pathPoints[midIdx].x,
+        pathPoints[midIdx].y + curvedYOffset,
+        pathPoints[midIdx].z,
+      ];
+    } catch (err) {
+      console.warn('Error calculating curved text position:', err);
+      return position; // Fall back to provided position
+    }
+  }, [position, pathPoints, lineStyle]);
+
   // Track changes that would require position recalculation
   useEffect(() => {
     textContentRef.current = text;
-
-    // Track changes in line style or path points that would require repositioning
-
-    // Update refs
     lastLineStyleRef.current = lineStyle;
     lastPathLengthRef.current = pathPoints?.length || 0;
-
-    // Set curved line flag
     isCurvedLineRef.current = lineStyle === 'curved';
-
-    // Handle curved line text positioning
-    if (lineStyle === 'curved' && pathPoints && pathPoints.length > 0) {
-      // Find midpoint of the curve using middle control point
-      const midIndex = Math.floor(pathPoints.length / 2);
-      const midPoint = pathPoints[midIndex];
-
-      // Add vertical offset for text placement
-      const textOffset = 1.5; // Adjust this value to change text height above line
-      const newPosition = [midPoint.x, midPoint.y, midPoint.z];
-
-      if (textRef.current) {
-        textRef.current.position.set(...newPosition);
-      }
-      lastPositionRef.current = newPosition;
-      return; // Exit early to prevent other position updates
-    }
-
-    // Handle straight line text positioning
-    if (lineStyle === 'straight' && position) {
-      if (textRef.current) {
-        textRef.current.position.set(position[0], position[1], position[2]);
-      }
-      lastPositionRef.current = [...position];
-    }
-
+    lastPositionRef.current = calculatedPosition; // Use the calculated position
     pathPointsRef.current = pathPoints;
-  }, [text, position, lineStyle, pathPoints]);
+  }, [text, calculatedPosition, lineStyle, pathPoints]);
 
   const MINIMUM_DISTANCE = 1; // Minimum distance from cube top
   const TEXT_HEIGHT = 0.7; // Approximate height of largest text
@@ -94,15 +110,13 @@ const TextSprite = ({
 
   useFrame(({ camera }) => {
     if (textRef.current) {
-      // Skip position update for curved lines
-      if (!isCurvedLineRef.current && position) {
-        if (
-          Math.abs(textRef.current.position.x - position[0]) > 0.001 ||
-          Math.abs(textRef.current.position.y - position[1]) > 0.001 ||
-          Math.abs(textRef.current.position.z - position[2]) > 0.001
-        ) {
-          textRef.current.position.set(position[0], position[1], position[2]);
-        }
+      // Use the calculated position which accounts for line style
+      if (calculatedPosition) {
+        textRef.current.position.set(
+          calculatedPosition[0],
+          calculatedPosition[1],
+          calculatedPosition[2]
+        );
       }
 
       // Always ensure billboard is working
@@ -270,6 +284,39 @@ const TextSprite = ({
     }
   });
 
+  useEffect(() => {
+    // Force position update immediately when line style or path points change
+    if (!textRef.current) return;
+
+    console.log(
+      'Line style changed:',
+      lineStyle,
+      'Path points:',
+      pathPoints?.length
+    );
+
+    // Specifically check for curved lines with valid path points
+    if (lineStyle === 'curved' && pathPoints?.length > 2) {
+      const midIdx = Math.floor(pathPoints.length / 2);
+
+      // Log the actual path point values to verify they're different
+      console.log(
+        'Using path point at index:',
+        midIdx,
+        'Value:',
+        pathPoints[midIdx]
+      );
+
+      // Apply position directly to the text element
+      const curvedYOffset = 5;
+      textRef.current.position.set(
+        pathPoints[midIdx].x,
+        pathPoints[midIdx].y + curvedYOffset,
+        pathPoints[midIdx].z
+      );
+    }
+  }, [lineStyle, pathPoints]);
+
   const fontSize = style.fixedSize
     ? style.fontSize
     : getFontSize(style.fontSize);
@@ -292,7 +339,7 @@ const TextSprite = ({
       )}
       <Text
         ref={textRef}
-        position={position}
+        position={calculatedPosition || position} // Use calculated position with fallback
         fontSize={fontSize}
         color={style.color}
         anchorX="center"

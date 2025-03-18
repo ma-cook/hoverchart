@@ -168,6 +168,8 @@ const ConnectionUpdater = ({
               _lastStyleUpdate: conn._lastStyleUpdate || 0,
               lineStyle: conn.lineStyle || 'straight',
               dashDirection: conn.dashDirection,
+              // Add any extra metadata that might be needed for curved lines
+              _textPosition: conn._textPosition,
             };
           }
         } catch (error) {

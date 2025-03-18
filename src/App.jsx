@@ -868,37 +868,27 @@ const App = () => {
     );
     if (!updatedConnection || !user) return;
 
-    // Track the old line style for comparison
-    const oldLineStyle = updatedConnection.lineStyle;
+    // Create a new connection object with the updated style
+    let newConnection = {
+      ...updatedConnection,
+      _lastStyleUpdate: Date.now(),
+    };
 
-    let newConnection;
+    // Set line style based on styleType
     if (styleType === 'dotted-left' || styleType === 'dotted-right') {
-      newConnection = {
-        ...updatedConnection,
-        lineStyle: 'dotted',
-        dashDirection: styleType.split('-')[1],
-        dashOffset: 0,
-        // Add a timestamp to force recalculation
-        _lastStyleUpdate: Date.now(),
-      };
+      newConnection.lineStyle = 'dotted';
+      newConnection.dashDirection = styleType.split('-')[1];
+      newConnection.dashOffset = 0;
     } else if (styleType === 'dashed-left' || styleType === 'dashed-right') {
-      newConnection = {
-        ...updatedConnection,
-        lineStyle: 'dashed',
-        dashDirection: styleType.split('-')[1],
-        dashOffset: 0,
-        _lastStyleUpdate: Date.now(),
-      };
+      newConnection.lineStyle = 'dashed';
+      newConnection.dashDirection = styleType.split('-')[1];
+      newConnection.dashOffset = 0;
     } else {
-      newConnection = {
-        ...updatedConnection,
-        lineStyle: styleType,
-        dashDirection: null,
-        _lastStyleUpdate: Date.now(),
-      };
+      newConnection.lineStyle = styleType;
+      newConnection.dashDirection = null;
     }
 
-    // Update local state immediately
+    // Update connections state to reflect new line style
     setConnections((prev) =>
       prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
     );
@@ -906,31 +896,63 @@ const App = () => {
     // Save to database
     saveConnection(user.uid, currentSpaceId, newConnection);
 
-    // Check if the line style actually changed between straight and curved
-    const needsTextRepositioning =
-      (oldLineStyle === 'straight' && styleType !== 'straight') ||
-      (oldLineStyle !== 'straight' && styleType === 'straight');
+    // IMPORTANT: Force a complete refresh of the connection to ensure path points are recalculated
+    setTimeout(() => {
+      // This delay allows the first update to complete
+      setConnections((prev) => {
+        return prev.map((conn) => {
+          if (conn.id === connectionId) {
+            // Find the current connection to get fresh data
+            const currentConn = prev.find((c) => c.id === connectionId);
+            if (!currentConn) return conn;
 
-    // If we have text and the curve style changed, force text position recalculation
-    if (newConnection.text && needsTextRepositioning) {
-      console.log(
-        `Line style changed from ${oldLineStyle} to ${styleType}, repositioning text`
-      );
+            // Get start and end positions
+            const startPos = currentConn.start?.position || [0, 0, 0];
+            const endPos = currentConn.end?.position || [0, 0, 0];
 
-      // Force refresh by temporarily changing the text
-      setLineTexts((prev) => ({
-        ...prev,
-        [connectionId]: `${newConnection.text} `, // Add temporary space
-      }));
+            // Explicitly regenerate path points here based on updated line style
+            const filteredObjects = objects.filter(
+              (obj) =>
+                obj.id.toString() !== currentConn.start?.objectId &&
+                obj.id.toString() !== currentConn.end?.objectId
+            );
 
-      // Then restore proper text after a short delay
-      setTimeout(() => {
-        setLineTexts((prev) => ({
-          ...prev,
-          [connectionId]: newConnection.text,
-        }));
-      }, 100);
-    }
+            const intersections = checkLineIntersection(
+              startPos,
+              endPos,
+              filteredObjects
+            );
+
+            // Force recalculation of path points with the new style
+            const freshPathPoints = generateCurvedPath(
+              startPos,
+              endPos,
+              intersections,
+              currentConn.start?.objectId,
+              currentConn.end?.objectId,
+              conn.lineStyle === 'curved' // Force curved path if style is curved
+            );
+
+            console.log(
+              'Regenerated path points for',
+              connectionId,
+              'with style',
+              conn.lineStyle,
+              'Points:',
+              freshPathPoints
+            );
+
+            // Return updated connection with force refresh flag
+            return {
+              ...conn,
+              _pathPoints: freshPathPoints, // Store recalculated path points
+              _textRefresh: Date.now(), // Force TextSprite to remount
+            };
+          }
+          return conn;
+        });
+      });
+    }, 50);
   };
 
   const handleLineColorChange = (connectionId, color) => {
@@ -1831,30 +1853,45 @@ const App = () => {
                 const connectionText =
                   connection.text || lineTexts[connection.id] || '';
 
-                // Improved text position calculation that handles both curved and straight lines
-                let textPosition;
+                // Determine if this is a curved path based on path points and intersections
+                const isCurvedPath =
+                  pathPoints.length > 2 && intersections.length > 0;
 
-                // First check if we have valid path points
+                // Explicitly set the line style based on the path and connection settings
+                const effectiveLineStyle =
+                  isCurvedPath || connection.lineStyle === 'curved'
+                    ? 'curved'
+                    : connection.lineStyle || 'straight';
+
+                // Calculate the text position
+                let textPosition;
+                const defaultStraightLineOffset = 2; // Lower offset for straight lines
+                const defaultCurvedLineOffset = 5; // Higher offset for curved lines
+
                 if (pathPoints && pathPoints.length > 0) {
-                  if (
-                    pathPoints.length <= 2 ||
-                    connection.lineStyle === 'straight'
-                  ) {
-                    // For straight lines, use calculated midpoint with elevation
-                    textPosition = [midpoint[0], midpoint[1] + 5, midpoint[2]];
-                  } else {
-                    // For curved paths with 3+ points, use middle point from the path array
-                    // This ensures text follows the curve properly
+                  if (effectiveLineStyle === 'curved') {
+                    // For curved paths, use middle point with higher elevation
                     const midIdx = Math.floor(pathPoints.length / 2);
                     textPosition = [
                       pathPoints[midIdx].x,
-                      pathPoints[midIdx].y + 50,
+                      pathPoints[midIdx].y + defaultCurvedLineOffset,
                       pathPoints[midIdx].z,
+                    ];
+                  } else {
+                    // For straight lines, use calculated midpoint with lower elevation
+                    textPosition = [
+                      midpoint[0],
+                      midpoint[1] + defaultStraightLineOffset,
+                      midpoint[2],
                     ];
                   }
                 } else {
                   // Fallback to basic midpoint if path calculation failed
-                  textPosition = [midpoint[0], midpoint[1] + 2, midpoint[2]];
+                  textPosition = [
+                    midpoint[0],
+                    midpoint[1] + defaultStraightLineOffset,
+                    midpoint[2],
+                  ];
                 }
 
                 return (
@@ -1908,7 +1945,7 @@ const App = () => {
                     <TextSprite
                       key={`text-${connection.id}-${
                         connection._lastStyleUpdate || 0
-                      }`}
+                      }-${effectiveLineStyle}-${connection._textRefresh || 0}`}
                       text={connectionText}
                       position={textPosition}
                       style={{
@@ -1923,8 +1960,8 @@ const App = () => {
                       onClick={(e) => handleLineTextClick(e, connection.id)}
                       billboard={true}
                       renderOrder={20}
-                      lineStyle={connection.lineStyle || 'straight'} // Ensure default value
-                      pathPoints={pathPoints}
+                      lineStyle={effectiveLineStyle} // Use the explicitly determined line style
+                      pathPoints={connection._pathPoints || pathPoints}
                     />
 
                     {/* Text input UI */}
