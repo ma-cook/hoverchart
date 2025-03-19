@@ -283,6 +283,21 @@ const TextObject = ({
     setIsEditing(true);
   };
 
+  // Modify this effect to ensure cursor positioning works properly
+  useEffect(() => {
+    if (isEditing && text) {
+      // Use requestAnimationFrame to ensure the DOM has updated
+      requestAnimationFrame(() => {
+        if (textAreaRef.current) {
+          textAreaRef.current.focus();
+          // Set cursor position to the end of the text
+          textAreaRef.current.selectionStart = text.length;
+          textAreaRef.current.selectionEnd = text.length;
+        }
+      });
+    }
+  }, [isEditing, text.length]);
+
   // Modified onBlur: do not close if focus moves to a child of the UI menu
   const handleBlur = (e) => {
     if (
@@ -578,9 +593,14 @@ const TextObject = ({
                 onChange={handleTextChange}
                 onBlur={handleBlur} // Updated onBlur handler
                 style={getTextAreaStyle()}
-                autoFocus
+                // Don't use autoFocus as it can conflict with programmatic focus
                 onKeyDown={handleKeyDown} // New onKeyDown handler
                 placeholder={bulletPointMode ? '• ' : 'Click to edit text...'} // Updated placeholder
+                // Add this onFocus handler to ensure cursor is at the end
+                onFocus={(e) => {
+                  e.target.selectionStart = text.length;
+                  e.target.selectionEnd = text.length;
+                }}
               />
             ) : (
               <div
