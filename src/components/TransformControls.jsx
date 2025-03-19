@@ -1,6 +1,6 @@
 import { TransformControls as DreiTransform } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 
 const TransformControls = ({ object, onDrag, scale }) => {
   const { camera, gl, scene, invalidate } = useThree();
@@ -8,14 +8,62 @@ const TransformControls = ({ object, onDrag, scale }) => {
   const lastPositionRef = useRef(null);
   const lastReportedTimeRef = useRef(0);
   const transformRef = useRef();
+  const [isInitialized, setIsInitialized] = useState(false);
+  const appliedScaleRef = useRef(null);
 
-  // Add effect to initialize scale when the component mounts
+  // Super aggressive scale initialization
   useEffect(() => {
-    if (transformRef.current && scale && object) {
+    if (!object || !scale) return;
+
+    // Function to apply scale with validation
+    const applyScale = () => {
+      if (!object) return;
+
+      // Check if object has stored scale from TextObject
+      const storedScale = object?.userData?.scaleBeforeTransform || scale;
+
+      // Always prefer userData scale if available (from TextObject)
+      const targetScale = storedScale || scale;
+
+      // Only apply if scale has changed
+      if (
+        !appliedScaleRef.current ||
+        appliedScaleRef.current[0] !== targetScale[0] ||
+        appliedScaleRef.current[1] !== targetScale[1] ||
+        appliedScaleRef.current[2] !== targetScale[2]
+      ) {
+        // Apply the scale
+        object.scale.set(targetScale[0], targetScale[1], targetScale[2]);
+        appliedScaleRef.current = [...targetScale];
+        invalidate();
+      }
+    };
+
+    // Apply scale immediately
+    applyScale();
+
+    // And after a delay to ensure it's applied after React rendering
+    const t1 = setTimeout(applyScale, 0);
+    const t2 = setTimeout(applyScale, 50);
+    const t3 = setTimeout(applyScale, 100);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [object, scale, invalidate]);
+
+  // Additional hook to initialize on first render
+  useEffect(() => {
+    if (!isInitialized && object && scale) {
+      // Initialize on first render
       object.scale.set(scale[0], scale[1], scale[2]);
+      setIsInitialized(true);
+      appliedScaleRef.current = [...scale];
       invalidate();
     }
-  }, [scale, object, invalidate]);
+  }, [isInitialized, object, scale, invalidate]);
 
   if (!object) return null;
 
@@ -69,13 +117,27 @@ const TransformControls = ({ object, onDrag, scale }) => {
           invalidate();
         }
       }}
-      onChange={invalidate}
+      onChange={(e) => {
+        // Always ensure correct scale at the beginning of transform
+        if (scale && !isDraggingRef.current) {
+          const targetScale = object?.userData?.scaleBeforeTransform || scale;
+          object.scale.set(targetScale[0], targetScale[1], targetScale[2]);
+        }
+        invalidate();
+      }}
       onMouseDown={() => {
         const controls = scene.userData.controls;
         if (controls) controls.enabled = false;
 
         // Set dragging flag
         isDraggingRef.current = true;
+
+        // Final chance to set scale correctly before drag starts
+        if (object && scale) {
+          const targetScale = object?.userData?.scaleBeforeTransform || scale;
+          object.scale.set(targetScale[0], targetScale[1], targetScale[2]);
+          invalidate();
+        }
 
         // Notify start of drag operation
         if (onDrag && object) {

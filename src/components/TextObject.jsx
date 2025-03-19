@@ -60,10 +60,22 @@ const TextObject = ({
   const [isActivelyEditing, setIsActivelyEditing] = useState(false);
   const textUpdateTimeoutRef = useRef(null);
 
-  // Move updateDatabase definition before debouncedTextUpdate
+  // Add a ref to track unsaved changes
+  const pendingChangesRef = useRef(null);
+
+  // Add a ref to track original scale before transforms
+  const originalScaleRef = useRef(scale);
+
+  // Update originalScaleRef whenever scale changes
+  useEffect(() => {
+    originalScaleRef.current = [...scale];
+  }, [scale]);
+
+  // Modify updateDatabase to check if we should actually update
   const updateDatabase = useCallback(() => {
     if (!onUpdate || !id) return;
 
+    // If editing, store changes but don't send to server
     const currentState = {
       type: 'text',
       position,
@@ -74,13 +86,19 @@ const TextObject = ({
       lastEditTime: isActivelyEditing ? Date.now() : undefined,
     };
 
-    // Only update if something has changed
-    if (
-      !groupRef.current?.lastUpdate ||
-      !isEqual(groupRef.current.lastUpdate, currentState)
-    ) {
-      groupRef.current.lastUpdate = currentState;
-      onUpdate(id, currentState);
+    // Store current state for later update
+    pendingChangesRef.current = currentState;
+
+    // Only update server if not actively editing text
+    if (!isEditing) {
+      // Only update if something has changed
+      if (
+        !groupRef.current?.lastUpdate ||
+        !isEqual(groupRef.current.lastUpdate, currentState)
+      ) {
+        groupRef.current.lastUpdate = currentState;
+        onUpdate(id, currentState);
+      }
     }
   }, [
     id,
@@ -91,15 +109,15 @@ const TextObject = ({
     textStyle,
     bulletPointMode,
     isActivelyEditing,
+    isEditing, // Add this dependency
   ]);
 
   // Now define debouncedTextUpdate after updateDatabase
   const debouncedTextUpdate = useCallback(
     debounce(() => {
-      updateDatabase();
       setIsActivelyEditing(false);
     }, 500),
-    [updateDatabase]
+    []
   );
 
   // Adjust the height of the textarea based on its content
@@ -110,19 +128,22 @@ const TextObject = ({
     }
   };
 
-  // Modify handleTextChange to not pass newText parameter
+  // Modify handleTextChange to update local state without server updates
   const handleTextChange = (e) => {
     setText(e.target.value);
     setIsActivelyEditing(true);
     adjustHeight();
 
+    // Store the change but don't send to server yet
+    pendingChangesRef.current = {
+      ...pendingChangesRef.current,
+      text: e.target.value,
+    };
+
     // Clear any pending update timeout
     if (textUpdateTimeoutRef.current) {
       clearTimeout(textUpdateTimeoutRef.current);
     }
-
-    // Call debounced update without parameters
-    debouncedTextUpdate();
 
     // Flag the text object in userData to prevent connection updates
     if (groupRef.current) {
@@ -307,6 +328,7 @@ const TextObject = ({
     ) {
       return;
     }
+
     setIsEditing(false);
     setIsActivelyEditing(false);
 
@@ -315,8 +337,15 @@ const TextObject = ({
       groupRef.current.userData.isTextEditing = false;
     }
 
-    // Force one final update
-    updateDatabase();
+    // Now that editing is complete, save the changes to the server
+    if (pendingChangesRef.current && onUpdate) {
+      onUpdate(id, pendingChangesRef.current);
+
+      // Update lastUpdate to prevent duplicate updates
+      if (groupRef.current) {
+        groupRef.current.lastUpdate = pendingChangesRef.current;
+      }
+    }
   };
 
   const getTextAreaStyle = () => ({
@@ -518,7 +547,7 @@ const TextObject = ({
     }
   }, [selected]);
 
-  // Modify the handler for scale changes during resize
+  // Modified scale handler that preserves object initialization state
   const handleScale = (e) => {
     if (!e.target || !e.target.object) return;
 
@@ -533,6 +562,9 @@ const TextObject = ({
     // Reset the object's actual scale to prevent text font scaling
     if (groupRef.current) {
       groupRef.current.scale.set(1, 1, 1);
+
+      // Store the new scale in userData for transform controls to access
+      groupRef.current.userData.currentScale = [...newScale];
 
       // Update indicator position immediately after scale change
       const indicatorPosition = calculateIndicatorPosition();
@@ -568,6 +600,22 @@ const TextObject = ({
       }
     }
   }, [showResizeControls, showResizeArrow]);
+
+  // Update effect for selection change to save pending changes
+  useEffect(() => {
+    if (!selected && pendingChangesRef.current && onUpdate) {
+      // When deselected, save any pending changes
+      onUpdate(id, pendingChangesRef.current);
+
+      // Update lastUpdate to prevent duplicate updates
+      if (groupRef.current) {
+        groupRef.current.lastUpdate = pendingChangesRef.current;
+      }
+
+      // Clear pending changes
+      pendingChangesRef.current = null;
+    }
+  }, [selected, id, onUpdate]);
 
   return (
     <>
@@ -703,38 +751,47 @@ const TextObject = ({
           object={groupRef.current}
           mode="scale"
           size={0.5}
-          scale={scale} // Add this prop to initialize with current scale
+          scale={scale} // Pass the current scale explicitly
           onObjectChange={handleScale}
           onDragStart={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = false;
             }
             registerTransformingObject?.(id, true);
-            // Set initial scale on the transform controls
-            if (transformRef.current) {
-              transformRef.current.object.scale.set(
-                scale[0],
-                scale[1],
-                scale[2]
-              );
+
+            // Immediately apply the current scale to the object
+            if (groupRef.current) {
+              // Store the original scale for reference
+              originalScaleRef.current = [...scale];
+
+              // Apply current scale right before drag starts
+              groupRef.current.userData.scaleBeforeTransform = [...scale];
+              groupRef.current.scale.set(scale[0], scale[1], scale[2]);
+
+              // Force update to ensure changes are applied before first drag event
+              setTimeout(() => {
+                if (groupRef.current) {
+                  // Apply a second time to make sure it sticks
+                  groupRef.current.scale.set(scale[0], scale[1], scale[2]);
+                }
+              }, 0);
             }
           }}
           onDragEnd={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
-            registerTransformingObject?.(id, false); // Use registerTransformingObject here
+            registerTransformingObject?.(id, false);
+
+            // Reset scale to 1 after dragging ends
+            if (groupRef.current) {
+              groupRef.current.scale.set(1, 1, 1);
+            }
           }}
           showX={true}
           showY={false}
           showZ={false}
           space="local"
-          onUpdate={() => {
-            // Reset the object's actual scale after each update
-            if (groupRef.current) {
-              groupRef.current.scale.set(1, 1, 1);
-            }
-          }}
         />
       )}
 
