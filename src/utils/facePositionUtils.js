@@ -16,36 +16,51 @@ export const calculateFacePosition = (indicator, objects) => {
     // Add specific handling for text object indicators
     if (indicator.type === 'text') {
       try {
-        // First, check if we have a valid stored position that's not [0,0,0]
+        // First priority: Check for valid user data indicator position
         if (
+          indicator.plane?.userData?.indicatorPosition &&
+          Array.isArray(indicator.plane.userData.indicatorPosition) &&
+          indicator.plane.userData.indicatorPosition.length === 3 &&
+          indicator.plane.userData.indicatorPosition.some((n) => n !== 0)
+        ) {
+          return indicator.plane.userData.indicatorPosition;
+        }
+
+        // Second priority: Check for isValidTextObjectPosition flag with good position
+        if (
+          indicator.isValidTextObjectPosition &&
           Array.isArray(indicator.position) &&
           indicator.position.length === 3 &&
-          indicator.position.every((n) => typeof n === 'number' && !isNaN(n)) &&
-          !indicator.position.every((n) => n === 0)
+          indicator.position.some((n) => n !== 0)
         ) {
           return indicator.position;
         }
 
-        // If we have objectId, try to find the corresponding object
-        if (indicator.objectId) {
+        // Third priority: Extract from stored position
+        if (
+          Array.isArray(indicator.position) &&
+          indicator.position.length === 3 &&
+          indicator.position.some((n) => n !== 0)
+        ) {
+          return indicator.position;
+        }
+
+        // Fourth priority: Calculate from object position and scale
+        if (indicator.objectId && objects) {
           const textObj = objects.find(
             (obj) => obj.id.toString() === indicator.objectId.toString()
           );
 
           if (textObj) {
             const pos = textObj.position;
-            const scale = textObj.scale || [15, 10, 1]; // Default text object scale
+            const scale = textObj.scale || [15, 10, 1];
 
             // Calculate position at the bottom of the text object
-            return [
-              pos[0],
-              pos[1] - 5 * (Array.isArray(scale) ? scale[1] : 1),
-              pos[2],
-            ];
+            return [pos[0], pos[1] - 5 * scale[1], pos[2]];
           }
         }
 
-        // Try to get position from the plane reference
+        // Fifth priority: Try to get position from the plane reference
         if (indicator.plane) {
           try {
             // Extract world position from the group reference
@@ -54,22 +69,30 @@ export const calculateFacePosition = (indicator, objects) => {
             indicator.plane.getWorldPosition(worldPos);
 
             // Get scale from indicator or use defaults
-            const scale = indicator.cube?.scale || [15, 10, 1];
+            const scale = indicator.scale || [15, 10, 1];
 
-            // Apply offset to position at the bottom of the text plane
-            return [
-              worldPos.x,
-              worldPos.y - 5 * (Array.isArray(scale) ? scale[1] : 1),
-              worldPos.z,
-            ];
+            // Apply offset based on scale
+            return [worldPos.x, worldPos.y - 5 * scale[1], worldPos.z];
           } catch (e) {
             console.error('Error getting position from text plane:', e);
           }
         }
 
-        // Last resort fallback
-        if (indicator.position) {
+        // Final fallback: use any available position information
+        if (
+          indicator.worldPosition &&
+          indicator.worldPosition.some((n) => n !== 0)
+        ) {
+          return indicator.worldPosition;
+        } else if (
+          indicator.position &&
+          indicator.position.some((n) => n !== 0)
+        ) {
           return indicator.position;
+        } else if (indicator.cube?.position) {
+          const pos = indicator.cube.position;
+          const scale = indicator.cube.scale || [15, 10, 1];
+          return [pos[0], pos[1] - 5 * scale[1], pos[2]];
         }
 
         return [0, 0, 0];

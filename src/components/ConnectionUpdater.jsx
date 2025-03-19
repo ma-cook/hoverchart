@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
+import * as THREE from 'three'; // Add Three.js import
 
 // Simplified array comparison
 const arraysEqual = (a, b) => {
@@ -36,6 +37,68 @@ const ensureValidPosition = (pos, fallback = [0, 0, 0]) => {
   }
 
   return fallback;
+};
+
+// Improve the position calculation for text objects
+const calculateTextObjectPosition = (conn, isStart) => {
+  const endpoint = isStart ? conn.start : conn.end;
+
+  // If we don't have proper references, can't calculate
+  if (!endpoint || !endpoint.objectId) return [0, 0, 0];
+
+  // FIRST PRIORITY: Check for directly stored indicator position
+  if (endpoint.plane?.userData?.indicatorPosition) {
+    const pos = endpoint.plane.userData.indicatorPosition;
+    if (
+      Array.isArray(pos) &&
+      pos.length === 3 &&
+      (pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0)
+    ) {
+      return pos;
+    }
+  }
+
+  // SECOND PRIORITY: Get the current position from the connection
+  const currentPos = endpoint.position || [0, 0, 0];
+  if (
+    currentPos &&
+    (currentPos[0] !== 0 || currentPos[1] !== 0 || currentPos[2] !== 0)
+  ) {
+    return currentPos;
+  }
+
+  // THIRD PRIORITY: Calculate from world position + offset
+  if (endpoint.plane?.userData?.lastWorldPosition) {
+    const pos = endpoint.plane.userData.lastWorldPosition;
+    const offset = endpoint.plane.userData.indicatorOffset ||
+      endpoint.offset || [0, -5, 0];
+    const scale = endpoint.plane.userData.lastScale ||
+      endpoint.scale || [1, 1, 1];
+
+    // Apply offset correctly based on scale
+    return [pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2]];
+  }
+
+  // FOURTH PRIORITY: Try to get live position
+  if (endpoint.plane) {
+    try {
+      const position = new THREE.Vector3();
+      endpoint.plane.getWorldPosition(position);
+
+      // Get the most accurate scale available
+      const scale = endpoint.scale || [1, 1, 1];
+      const verticalOffset = -5 * scale[1];
+
+      return [position.x, position.y + verticalOffset, position.z];
+    } catch (e) {
+      console.error('Error getting text object position:', e);
+    }
+  }
+
+  // Last resort - use the calculate face position or fallback
+  return calculateFacePosition
+    ? calculateFacePosition(endpoint)
+    : endpoint.position || [0, 0, 0];
 };
 
 const ConnectionUpdater = ({
@@ -90,87 +153,99 @@ const ConnectionUpdater = ({
 
         try {
           // For 'text' type indicators, be more careful with position updates
-          // to avoid resetting to [0,0,0]
           let newStartPos, newEndPos;
+          let positionsUpdated = false;
 
-          if (
-            conn.start.type === 'text' &&
-            !arraysEqual(conn.start.position, [0, 0, 0])
-          ) {
-            // Preserve existing position for text objects that already have valid positions
-            newStartPos = conn.start.position;
+          if (conn.start.type === 'text') {
+            // Use our special text object position calculation
+            newStartPos = calculateTextObjectPosition(conn, true);
+
+            // Only count as updated if position actually changed
+            if (!arraysEqual(conn.start.position, newStartPos)) {
+              positionsUpdated = true;
+            }
           } else {
-            // Calculate position for other types
             newStartPos = ensureValidPosition(
               calculateFacePosition(conn.start),
               conn.start.position
             );
+
+            if (!arraysEqual(conn.start.position, newStartPos)) {
+              positionsUpdated = true;
+            }
           }
 
-          if (
-            conn.end.type === 'text' &&
-            !arraysEqual(conn.end.position, [0, 0, 0])
-          ) {
-            // Preserve existing position for text objects that already have valid positions
-            newEndPos = conn.end.position;
+          if (conn.end.type === 'text') {
+            // Use our special text object position calculation
+            newEndPos = calculateTextObjectPosition(conn, false);
+
+            if (!arraysEqual(conn.end.position, newEndPos)) {
+              positionsUpdated = true;
+            }
           } else {
-            // Calculate position for other types
             newEndPos = ensureValidPosition(
               calculateFacePosition(conn.end),
               conn.end.position
             );
+
+            if (!arraysEqual(conn.end.position, newEndPos)) {
+              positionsUpdated = true;
+            }
           }
 
-          // Check if positions have actually changed
-          const startKey = `${conn.id}-start`;
-          const endKey = `${conn.id}-end`;
+          // Only continue if positions actually changed (to prevent cycles)
+          if (positionsUpdated) {
+            // Check if positions have actually changed
+            const startKey = `${conn.id}-start`;
+            const endKey = `${conn.id}-end`;
 
-          const startChanged = !arraysEqual(
-            lastPositions.current[startKey],
-            newStartPos
-          );
-          const endChanged = !arraysEqual(
-            lastPositions.current[endKey],
-            newEndPos
-          );
+            const startChanged = !arraysEqual(
+              lastPositions.current[startKey],
+              newStartPos
+            );
+            const endChanged = !arraysEqual(
+              lastPositions.current[endKey],
+              newEndPos
+            );
 
-          if (startChanged || endChanged) {
-            hasChanges = true;
+            if (startChanged || endChanged) {
+              hasChanges = true;
 
-            // Store new positions for comparison in next frame
-            lastPositions.current[startKey] = [...newStartPos];
-            lastPositions.current[endKey] = [...newEndPos];
+              // Store new positions for comparison in next frame
+              lastPositions.current[startKey] = [...newStartPos];
+              lastPositions.current[endKey] = [...newEndPos];
 
-            // Calculate dash offset animation
-            let newDashOffset = conn.dashOffset || 0;
-            if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
-              if (conn.dashDirection === 'left') {
-                newDashOffset = newDashOffset - delta * 2;
-              } else if (conn.dashDirection === 'right') {
-                newDashOffset = newDashOffset + delta * 2;
+              // Calculate dash offset animation
+              let newDashOffset = conn.dashOffset || 0;
+              if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
+                if (conn.dashDirection === 'left') {
+                  newDashOffset = newDashOffset - delta * 2;
+                } else if (conn.dashDirection === 'right') {
+                  newDashOffset = newDashOffset + delta * 2;
+                }
               }
-            }
 
-            // IMPORTANT: Properly preserve ALL connection properties, especially text
-            return {
-              ...conn,
-              start: { ...conn.start, position: newStartPos },
-              end: { ...conn.end, position: newEndPos },
-              dashOffset: newDashOffset,
-              // Explicitly preserve text and textStyle to prevent loss during updates
-              text: conn.text || '',
-              textStyle: conn.textStyle || {
-                fontSize: 1.5,
-                color: 'white',
-                underline: false,
-              },
-              // Preserve style update metadata
-              _lastStyleUpdate: conn._lastStyleUpdate || 0,
-              lineStyle: conn.lineStyle || 'straight',
-              dashDirection: conn.dashDirection,
-              // Add any extra metadata that might be needed for curved lines
-              _textPosition: conn._textPosition,
-            };
+              // Don't change the connection line style when just updating positions
+              return {
+                ...conn,
+                start: { ...conn.start, position: newStartPos },
+                end: { ...conn.end, position: newEndPos },
+                dashOffset: newDashOffset,
+                // Preserve all existing properties
+                lineStyle: conn.lineStyle,
+                text: conn.text || '',
+                textStyle: conn.textStyle || {
+                  fontSize: 1.5,
+                  color: 'white',
+                  underline: false,
+                },
+                _lastStyleUpdate: conn._lastStyleUpdate || 0,
+                dashDirection: conn.dashDirection,
+                _textPosition: conn._textPosition,
+                _pathPoints: conn._pathPoints,
+                _stabilityCounter: (conn._stabilityCounter || 0) + 1,
+              };
+            }
           }
         } catch (error) {
           console.error('Error updating connection position:', error);

@@ -206,6 +206,11 @@ const ObjectRenderer = ({
         initialTextStyle={obj.textStyle || { fontSize: 32, color: 'white' }}
         initialScale={obj.scale || [15, 10, 1]}
         onDelete={() => handleObjectDelete(obj.id)}
+        registerTransformingObject={registerTransformingObject}
+        onResizeStart={() => registerTransformingObject(obj.id, true)}
+        onResizeEnd={() => registerTransformingObject(obj.id, false)}
+        onTransformStart={() => registerTransformingObject(obj.id, true)}
+        onTransformEnd={() => registerTransformingObject(obj.id, false)}
       />
     );
   }

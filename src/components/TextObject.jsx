@@ -5,7 +5,7 @@ import {
   useEffect,
   useCallback,
 } from 'react';
-import { Html } from '@react-three/drei'; // <-- Added TransformControls import
+import { Html, TransformControls } from '@react-three/drei'; // Add TransformControls import
 import { useFrame } from '@react-three/fiber';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
@@ -25,12 +25,18 @@ const TextObject = ({
   selectedIndicators,
   indicatorMode,
   onUpdate,
-  onDelete, // Add this prop
+  onDelete,
+  registerTransformingObject, // Add this prop
   initialText = '',
   initialTextStyle = { fontSize: 32, color: 'white' },
   initialScale = [15, 10, 1],
+  onTransformStart, // Add this prop
+  onTransformEnd, // Add this prop
+  onResizeStart, // Add this prop
+  onResizeEnd, // Add this prop
 }) => {
   const groupRef = useRef();
+  const transformRef = useRef(); // Add ref for transform controls
   const uiMenuRef = useRef(null); // New ref for UI menu
   const [text, setText] = useState(initialText);
   const [isEditing, setIsEditing] = useState(false);
@@ -43,6 +49,7 @@ const TextObject = ({
   const [indicatorSelected, setIndicatorSelected] = useState(false);
   const [scale, setScale] = useState(initialScale); // Default size for the text plane
   const conversionFactor = 30; // Increase conversion factor for larger HTML size
+  const [showResizeControls, setShowResizeControls] = useState(false); // Add this state
 
   // New refs for tracking drag start
   const startXRef = useRef(0);
@@ -69,26 +76,52 @@ const TextObject = ({
     };
   };
 
+  // Improve the indicator position calculation to handle scale changes properly
   const calculateIndicatorPosition = () => {
-    const worldMatrix = new THREE.Matrix4();
-    const localPos = new THREE.Vector3(...getIndicatorPositions().bottom);
-    const scaleMatrix = new THREE.Matrix4();
+    if (!groupRef.current) return [0, 0, 0];
 
-    if (groupRef.current) {
-      // Get the plane's world matrix
-      groupRef.current.updateWorldMatrix(true, false);
-      worldMatrix.copy(groupRef.current.matrixWorld);
+    // Get the current world position of the group
+    const worldPosition = new THREE.Vector3();
+    groupRef.current.getWorldPosition(worldPosition);
 
-      // Apply scale
-      scaleMatrix.makeScale(...scale);
-      worldMatrix.multiply(scaleMatrix);
+    // Calculate a stable offset based on current scale
+    const verticalOffset = -5 * scale[1];
 
-      // Transform the local position to world space
-      localPos.applyMatrix4(worldMatrix);
+    // Store this position in the ref for persistence
+    const stablePosition = [
+      worldPosition.x,
+      worldPosition.y + verticalOffset,
+      worldPosition.z,
+    ];
+
+    // Store stable position in userData for connection updates
+    if (groupRef.current.userData) {
+      groupRef.current.userData.indicatorPosition = [...stablePosition];
+      groupRef.current.userData.indicatorLastUpdated = Date.now();
     }
 
-    return [localPos.x, localPos.y, localPos.z];
+    return stablePosition;
   };
+
+  // Add this function to ensure connections receive accurate position data
+  const updateIndicatorPosition = () => {
+    if (!groupRef.current) return;
+
+    const position = calculateIndicatorPosition();
+
+    // Update userData with reliable position information for connections
+    if (groupRef.current.userData) {
+      groupRef.current.userData.lastWorldPosition = [...position];
+      groupRef.current.userData.lastScale = [...scale];
+      groupRef.current.userData.indicatorOffset = [0, -5 * scale[1], 0];
+      groupRef.current.userData.positionUpdated = Date.now();
+    }
+  };
+
+  // Call this function whenever position or scale changes
+  useEffect(() => {
+    updateIndicatorPosition();
+  }, [position, scale]);
 
   const shouldShowIndicator = () => {
     // Show when any indicator is selected globally
@@ -103,6 +136,7 @@ const TextObject = ({
     return false;
   };
 
+  // Update handleIndicatorClick to store better position data
   const handleIndicatorClick = (e) => {
     e.stopPropagation();
 
@@ -121,12 +155,18 @@ const TextObject = ({
       scale: scale,
       cube: {
         id: id,
-        userData: { id: id },
+        userData: {
+          id: id,
+          indicatorPosition: indicatorPosition,
+          lastUpdated: Date.now(),
+        },
         position: position,
         scale: scale,
       },
-      // Extra data for position calculation
+      // Store explicit offset for better position recalculation
       offset: [0, -5 * scale[1], 0],
+      // Add a property to help the ConnectionUpdater identify this as a valid position
+      isValidTextObjectPosition: true,
     };
 
     // Call parent handlers first to show all indicators
@@ -205,6 +245,7 @@ const TextObject = ({
     width: `${scale[0] * 5.3 * conversionFactor}px`, // Adjusted multiplier
     height: `${scale[1] * 1.3 * conversionFactor}px`, // Adjusted multiplier
     position: 'relative',
+    transform: 'scale(1)', // Ensure text doesn't scale with the container
   });
 
   // New: Adjust the display div height when not editing
@@ -316,6 +357,143 @@ const TextObject = ({
     setTextStyle((prev) => ({ ...prev, ...newStyle }));
   };
 
+  // Add handlers for transform controls
+  const handleTransformStart = () => {
+    if (registerTransformingObject) {
+      registerTransformingObject(id, true);
+    }
+    // Disable orbit controls during transform
+    if (window.orbitControls) {
+      window.orbitControls.enabled = false;
+    }
+  };
+
+  const handleTransformEnd = () => {
+    if (registerTransformingObject) {
+      registerTransformingObject(id, false);
+    }
+    // Re-enable orbit controls after transform
+    if (window.orbitControls) {
+      window.orbitControls.enabled = true;
+    }
+
+    // Update position in database when transform ends
+    if (groupRef.current && onUpdate) {
+      const worldPosition = new THREE.Vector3();
+      groupRef.current.getWorldPosition(worldPosition);
+      onUpdate(id, {
+        position: [worldPosition.x, worldPosition.y, worldPosition.z],
+        scale,
+      });
+    }
+  };
+
+  const handleTransformChange = () => {
+    if (groupRef.current && onUpdate) {
+      const worldPosition = new THREE.Vector3();
+      groupRef.current.getWorldPosition(worldPosition);
+
+      // Just update local state during transform
+      // The position will be saved to database when transform ends
+    }
+  };
+
+  // Add effect to update TransformControls mode
+  useEffect(() => {
+    if (transformRef.current) {
+      transformRef.current.setMode('translate');
+    }
+  }, [transformRef.current]);
+
+  // Add effect to handle disabling orbit controls when transform controls are active
+  useEffect(() => {
+    return () => {
+      // Make sure orbit controls are re-enabled when component unmounts
+      if (window.orbitControls) {
+        window.orbitControls.enabled = true;
+      }
+    };
+  }, []);
+
+  // Add handler for transform changes
+  const handleDrag = useCallback(
+    (e) => {
+      if (groupRef.current && onUpdate) {
+        const worldPosition = new THREE.Vector3();
+        groupRef.current.getWorldPosition(worldPosition);
+
+        // Update position immediately for smooth dragging
+        onUpdate(id, {
+          type: 'text',
+          position: [worldPosition.x, worldPosition.y, worldPosition.z],
+          scale,
+          text,
+          textStyle,
+          bulletPointMode,
+        });
+      }
+    },
+    [id, onUpdate, scale, text, textStyle, bulletPointMode]
+  );
+
+  // Add useEffect to handle editing state when selection changes
+  useEffect(() => {
+    if (!selected) {
+      setIsEditing(false);
+    }
+  }, [selected]);
+
+  // Modify the handler for scale changes during resize
+  const handleScale = (e) => {
+    if (!e.target || !e.target.object) return;
+
+    const newScale = [
+      e.target.object.scale.x,
+      e.target.object.scale.y,
+      scale[2], // Keep Z scale unchanged
+    ];
+
+    setScale(newScale);
+
+    // Reset the object's actual scale to prevent text font scaling
+    if (groupRef.current) {
+      groupRef.current.scale.set(1, 1, 1);
+
+      // Update indicator position immediately after scale change
+      const indicatorPosition = calculateIndicatorPosition();
+
+      // Update with comprehensive position data for connections
+      groupRef.current.userData.lastWorldPosition = position.slice();
+      groupRef.current.userData.indicatorPosition = indicatorPosition;
+      groupRef.current.userData.lastScale = newScale.slice();
+      groupRef.current.userData.indicatorOffset = [0, -5 * newScale[1], 0];
+      groupRef.current.userData.positionUpdated = Date.now();
+    }
+
+    // Update database with new scale
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'text',
+        position,
+        scale: newScale,
+        text,
+        textStyle,
+        bulletPointMode,
+        isResizing: true,
+      });
+    }
+  };
+
+  // Add an effect to reset scale after transform controls are done
+  useEffect(() => {
+    if (showResizeControls || showResizeArrow) {
+      // When resize mode is activated, ensure group scale is reset to 1
+      if (groupRef.current) {
+        groupRef.current.scale.set(1, 1, 1);
+      }
+    }
+  }, [showResizeControls, showResizeArrow]);
+
   return (
     <>
       <group
@@ -376,15 +554,110 @@ const TextObject = ({
         )}
       </group>
 
-      {/* Add the new UI outside the main group */}
-      {isEditing && (
+      {/* Add TransformControls outside the group to prevent camera issues */}
+      {showTransform && (
+        <TransformControls
+          ref={transformRef}
+          object={groupRef}
+          onMouseDown={handleTransformStart}
+          onMouseUp={handleTransformEnd}
+          onChange={handleTransformChange}
+          size={0.5}
+          mode="translate" // Default to translate mode
+          onObjectChange={handleDrag}
+          onDragStart={() => {
+            if (window.orbitControls) {
+              window.orbitControls.enabled = false;
+            }
+            onTransformStart?.(id);
+          }}
+          onDragEnd={() => {
+            if (window.orbitControls) {
+              window.orbitControls.enabled = true;
+            }
+            onTransformEnd?.(id);
+          }}
+        />
+      )}
+
+      {/* Add scaling TransformControls */}
+      {showResizeArrow && selected && (
+        <TransformControls
+          object={groupRef.current}
+          mode="scale"
+          size={0.5}
+          onObjectChange={handleScale}
+          onDragStart={() => {
+            if (window.orbitControls) {
+              window.orbitControls.enabled = false;
+            }
+            onResizeStart?.(id);
+          }}
+          onDragEnd={() => {
+            if (window.orbitControls) {
+              window.orbitControls.enabled = true;
+            }
+            onResizeEnd?.(id);
+          }}
+          showX={true}
+          showY={true}
+          showZ={false}
+          space="local"
+          onUpdate={() => {
+            // Reset the object's actual scale after each update
+            if (groupRef.current) {
+              groupRef.current.scale.set(1, 1, 1);
+            }
+          }}
+        />
+      )}
+
+      {/* Add scaling TransformControls when needed */}
+      {showResizeControls && selected && (
+        <TransformControls
+          object={groupRef.current}
+          mode="scale"
+          size={0.5}
+          onObjectChange={handleScale}
+          onDragStart={() => {
+            if (window.orbitControls) {
+              window.orbitControls.enabled = false;
+            }
+            registerTransformingObject?.(id, true); // Use registerTransformingObject here
+          }}
+          onDragEnd={() => {
+            if (window.orbitControls) {
+              window.orbitControls.enabled = true;
+            }
+            registerTransformingObject?.(id, false); // Use registerTransformingObject here
+          }}
+          showX={true}
+          showY={false}
+          showZ={false}
+          space="local"
+          onUpdate={() => {
+            // Reset the object's actual scale after each update
+            if (groupRef.current) {
+              groupRef.current.scale.set(1, 1, 1);
+            }
+          }}
+        />
+      )}
+
+      {/* Only show UI when both selected AND editing */}
+      {selected && isEditing && (
         <TextObjectUI
+          ref={uiMenuRef} // Just pass the ref directly, don't pass as menuRef prop
+          text={text}
+          textStyle={textStyle}
           onStyleChange={handleStyleChange}
+          onDelete={onDelete}
+          onTransformToggle={() => setShowTransform((prev) => !prev)}
+          onResizeToggle={() => setShowResizeControls((prev) => !prev)} // Toggle drei resize controls
+          showTransform={showTransform}
+          showResizeArrow={showResizeArrow}
+          setShowResizeArrow={setShowResizeArrow}
           followTarget={groupRef}
-          menuRef={uiMenuRef} // pass the ref to keep the menu open on focus
-          onTransformToggle={() => setShowTransform(true)} // new transform toggle callback
-          onResizeToggle={() => setShowResizeArrow((prev) => !prev)}
-          onDelete={() => onDelete?.(id)} // Pass the onDelete prop
         />
       )}
     </>
