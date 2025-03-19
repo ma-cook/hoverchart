@@ -683,12 +683,21 @@ const TextObject = ({
           object={groupRef.current}
           mode="scale"
           size={0.5}
+          scale={scale} // Add this prop to initialize with current scale
           onObjectChange={handleScale}
           onDragStart={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = false;
             }
-            registerTransformingObject?.(id, true); // Use registerTransformingObject here
+            registerTransformingObject?.(id, true);
+            // Set initial scale on the transform controls
+            if (transformRef.current) {
+              transformRef.current.object.scale.set(
+                scale[0],
+                scale[1],
+                scale[2]
+              );
+            }
           }}
           onDragEnd={() => {
             if (window.orbitControls) {

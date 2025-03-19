@@ -1,17 +1,27 @@
 import { TransformControls as DreiTransform } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 
-const TransformControls = ({ object, onDrag }) => {
+const TransformControls = ({ object, onDrag, scale }) => {
   const { camera, gl, scene, invalidate } = useThree();
   const isDraggingRef = useRef(false);
   const lastPositionRef = useRef(null);
-  const lastReportedTimeRef = useRef(0); // Track time of last position report
+  const lastReportedTimeRef = useRef(0);
+  const transformRef = useRef();
+
+  // Add effect to initialize scale when the component mounts
+  useEffect(() => {
+    if (transformRef.current && scale && object) {
+      object.scale.set(scale[0], scale[1], scale[2]);
+      invalidate();
+    }
+  }, [scale, object, invalidate]);
 
   if (!object) return null;
 
   return (
     <DreiTransform
+      ref={transformRef}
       object={object}
       camera={camera}
       domElement={gl.domElement}
