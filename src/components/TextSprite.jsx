@@ -53,18 +53,53 @@ const TextSprite = ({
 
   // Add throttling mechanism
   const updateThrottleRef = useRef(false);
-  const throttleDelayRef = useRef(100); // ms
+  const throttleDelayRef = useRef(200); // Increased from 100ms
+
+  // Add tracking for parent text editing state
+  const parentEditingRef = useRef(false);
+
+  // Track last style to avoid unnecessary recalculations
+  const lastPathPointsLengthRef = useRef(pathPoints?.length || 0);
 
   // Calculate the optimal text position based on line style and path
   const calculatedPosition = useMemo(() => {
     // Default to the provided position
     if (!position) return position;
 
+    // Check if parent is currently editing text (if pathPoints has a userData reference)
+    const isParentEditing =
+      pathPoints?.[0]?.userData?.isTextEditing ||
+      pathPoints?.[pathPoints.length - 1]?.userData?.isTextEditing;
+
+    if (isParentEditing) {
+      parentEditingRef.current = true;
+      // During text editing, don't recalculate position
+      return lastPositionRef.current || position;
+    } else {
+      parentEditingRef.current = false;
+    }
+
+    // Avoid recalculation if line style and path points length haven't changed
+    if (
+      lineStyle === lastLineStyleRef.current &&
+      pathPoints?.length === lastPathPointsLengthRef.current &&
+      lastPositionRef.current
+    ) {
+      // Only recalculate every ~10 frames when nothing has changed
+      if (Math.random() > 0.1) {
+        return lastPositionRef.current;
+      }
+    }
+
+    // Update refs for comparison
+    lastLineStyleRef.current = lineStyle;
+    lastPathPointsLengthRef.current = pathPoints?.length || 0;
+
     // Throttle calculations during rapid updates
     const now = Date.now();
-    if (now - lastUpdateTimeRef.current < 50 && updateThrottleRef.current) {
+    if (now - lastUpdateTimeRef.current < 100 && updateThrottleRef.current) {
       // Return previous calculation during throttle period
-      return lastPositionRef.current;
+      return lastPositionRef.current || position;
     }
 
     // Update the last calculation time
@@ -76,9 +111,9 @@ const TextSprite = ({
       updateThrottleRef.current = false;
     }, throttleDelayRef.current);
 
-    // Reduce logging frequency
-    if (Math.random() < 0.1) {
-      // Only log about 10% of calculations
+    // Reduce logging frequency much more aggressively
+    if (Math.random() < 0.01) {
+      // Only log about 1% of calculations
       console.log(
         'TextSprite recalculating position.',
         'LineStyle:',
@@ -399,7 +434,8 @@ const TextSprite = ({
     if (!textRef.current) return;
 
     // Skip excessive logging
-    if (Math.random() < 0.1) {
+    if (Math.random() < 0.01) {
+      // Reduced to 1% of changes
       console.log(
         'Line style changed:',
         lineStyle,
@@ -417,27 +453,36 @@ const TextSprite = ({
       if (textRef.current && !smoothedPositionRef.current) {
         smoothedPositionRef.current = textRef.current.position.clone();
       }
-
-      // Force-update position after a delay to ensure path points are ready
-      setTimeout(() => {
-        if (lineStyle === 'curved' && pathPoints?.length > 2) {
-          const midIdx = Math.floor(pathPoints.length / 2);
-          const curvedYOffset = 5;
-
-          // Create the target position
-          const targetPos = new THREE.Vector3(
-            pathPoints[midIdx].x,
-            pathPoints[midIdx].y + curvedYOffset,
-            pathPoints[midIdx].z
-          );
-
-          // Apply immediate position change for style changes
-          smoothedPositionRef.current = targetPos.clone();
-          textRef.current.position.copy(targetPos);
-        }
-      }, 50);
     }
-  }, [lineStyle, pathPoints]);
+  }, [lineStyle]);
+
+  // Add a separate effect for path points changes to avoid recalculating on every render
+  useEffect(() => {
+    // Skip if parent is editing text
+    if (parentEditingRef.current) return;
+
+    // Only apply path position changes after a delay to ensure path points are ready
+    if (lineStyle === 'curved' && pathPoints?.length > 2) {
+      const timeoutId = setTimeout(() => {
+        if (!textRef.current) return;
+
+        const midIdx = Math.floor(pathPoints.length / 2);
+        const curvedYOffset = 5;
+
+        // Create the target position
+        const targetPos = new THREE.Vector3(
+          pathPoints[midIdx].x,
+          pathPoints[midIdx].y + curvedYOffset,
+          pathPoints[midIdx].z
+        );
+
+        // Apply smooth transition
+        smoothedPositionRef.current = targetPos.clone();
+      }, 100);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [pathPoints, lineStyle]);
 
   const fontSize = style.fixedSize
     ? style.fontSize

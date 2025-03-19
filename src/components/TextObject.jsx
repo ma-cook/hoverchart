@@ -11,6 +11,7 @@ import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
+import debounce from 'lodash/debounce'; // Add debounce import
 
 const TextObject = ({
   id,
@@ -55,6 +56,52 @@ const TextObject = ({
   const startXRef = useRef(0);
   const startWidthRef = useRef(scale[0]);
 
+  // Add state to track text editing activity
+  const [isActivelyEditing, setIsActivelyEditing] = useState(false);
+  const textUpdateTimeoutRef = useRef(null);
+
+  // Move updateDatabase definition before debouncedTextUpdate
+  const updateDatabase = useCallback(() => {
+    if (!onUpdate || !id) return;
+
+    const currentState = {
+      type: 'text',
+      position,
+      scale,
+      text,
+      textStyle,
+      bulletPointMode,
+      lastEditTime: isActivelyEditing ? Date.now() : undefined,
+    };
+
+    // Only update if something has changed
+    if (
+      !groupRef.current?.lastUpdate ||
+      !isEqual(groupRef.current.lastUpdate, currentState)
+    ) {
+      groupRef.current.lastUpdate = currentState;
+      onUpdate(id, currentState);
+    }
+  }, [
+    id,
+    onUpdate,
+    position,
+    scale,
+    text,
+    textStyle,
+    bulletPointMode,
+    isActivelyEditing,
+  ]);
+
+  // Now define debouncedTextUpdate after updateDatabase
+  const debouncedTextUpdate = useCallback(
+    debounce(() => {
+      updateDatabase();
+      setIsActivelyEditing(false);
+    }, 500),
+    [updateDatabase]
+  );
+
   // Adjust the height of the textarea based on its content
   const adjustHeight = () => {
     if (textAreaRef.current) {
@@ -63,9 +110,31 @@ const TextObject = ({
     }
   };
 
+  // Modify handleTextChange to not pass newText parameter
   const handleTextChange = (e) => {
     setText(e.target.value);
+    setIsActivelyEditing(true);
     adjustHeight();
+
+    // Clear any pending update timeout
+    if (textUpdateTimeoutRef.current) {
+      clearTimeout(textUpdateTimeoutRef.current);
+    }
+
+    // Call debounced update without parameters
+    debouncedTextUpdate();
+
+    // Flag the text object in userData to prevent connection updates
+    if (groupRef.current) {
+      groupRef.current.userData.isTextEditing = true;
+
+      // Clear the flag after editing stops
+      textUpdateTimeoutRef.current = setTimeout(() => {
+        if (groupRef.current) {
+          groupRef.current.userData.isTextEditing = false;
+        }
+      }, 1000);
+    }
   };
 
   const getIndicatorPositions = () => {
@@ -79,6 +148,11 @@ const TextObject = ({
   // Improve the indicator position calculation to handle scale changes properly
   const calculateIndicatorPosition = () => {
     if (!groupRef.current) return [0, 0, 0];
+
+    // If actively editing text, return the last known position to prevent flickering
+    if (isActivelyEditing && groupRef.current.userData?.indicatorPosition) {
+      return groupRef.current.userData.indicatorPosition;
+    }
 
     // Get the current world position of the group
     const worldPosition = new THREE.Vector3();
@@ -105,7 +179,7 @@ const TextObject = ({
 
   // Add this function to ensure connections receive accurate position data
   const updateIndicatorPosition = () => {
-    if (!groupRef.current) return;
+    if (!groupRef.current || isActivelyEditing) return;
 
     const position = calculateIndicatorPosition();
 
@@ -219,6 +293,15 @@ const TextObject = ({
       return;
     }
     setIsEditing(false);
+    setIsActivelyEditing(false);
+
+    // Clear any editing flags
+    if (groupRef.current) {
+      groupRef.current.userData.isTextEditing = false;
+    }
+
+    // Force one final update
+    updateDatabase();
   };
 
   const getTextAreaStyle = () => ({
@@ -317,29 +400,6 @@ const TextObject = ({
       }, 0);
     }
   };
-
-  // Add update handler
-  const updateDatabase = useCallback(() => {
-    if (!onUpdate || !id) return;
-
-    const currentState = {
-      type: 'text',
-      position,
-      scale,
-      text,
-      textStyle,
-      bulletPointMode,
-    };
-
-    // Only update if something has changed
-    if (
-      !groupRef.current?.lastUpdate ||
-      !isEqual(groupRef.current.lastUpdate, currentState)
-    ) {
-      groupRef.current.lastUpdate = currentState;
-      onUpdate(id, currentState);
-    }
-  }, [id, onUpdate, position, scale, text, textStyle, bulletPointMode]);
 
   // Add effect to trigger updates
   useEffect(() => {
@@ -499,7 +559,12 @@ const TextObject = ({
       <group
         ref={groupRef}
         position={position}
-        userData={{ type: 'textObject', id: id, objectId: id }} // Add objectId to userData for access
+        userData={{
+          type: 'textObject',
+          id: id,
+          objectId: id,
+          isTextEditing: isActivelyEditing, // Add editing flag to userData
+        }}
       >
         {/* Background plane - only handles selection */}
 

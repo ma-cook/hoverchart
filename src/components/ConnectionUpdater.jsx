@@ -46,6 +46,12 @@ const calculateTextObjectPosition = (conn, isStart) => {
   // If we don't have proper references, can't calculate
   if (!endpoint || !endpoint.objectId) return [0, 0, 0];
 
+  // Skip updating if the text object is currently being edited
+  if (endpoint.plane?.userData?.isTextEditing) {
+    // Return the current position to prevent changes during editing
+    return endpoint.position || [0, 0, 0];
+  }
+
   // FIRST PRIORITY: Check for directly stored indicator position
   if (endpoint.plane?.userData?.indicatorPosition) {
     const pos = endpoint.plane.userData.indicatorPosition;
@@ -124,6 +130,10 @@ const ConnectionUpdater = ({
     };
   }, []);
 
+  // Add a throttle mechanism for text objects
+  const lastTextUpdateTime = useRef({});
+  const TEXT_UPDATE_INTERVAL = 500; // ms between text object connection updates
+
   // Run update on every frame (with skipping)
   useFrame((state, delta) => {
     // Only proceed if mounted and if connections exist
@@ -149,6 +159,30 @@ const ConnectionUpdater = ({
             transformingObjects.current.has(conn.end?.objectId))
         ) {
           return conn;
+        }
+
+        // Skip updates for text objects that are being edited
+        const isTextObjectEditing =
+          (conn.start.type === 'text' &&
+            conn.start.plane?.userData?.isTextEditing) ||
+          (conn.end.type === 'text' && conn.end.plane?.userData?.isTextEditing);
+
+        if (isTextObjectEditing) {
+          return conn;
+        }
+
+        // Add throttling for text object connections
+        const now = Date.now();
+        const hasTextObject =
+          conn.start.type === 'text' || conn.end.type === 'text';
+
+        if (hasTextObject) {
+          const lastUpdate = lastTextUpdateTime.current[conn.id] || 0;
+          if (now - lastUpdate < TEXT_UPDATE_INTERVAL) {
+            return conn; // Skip this update if too soon
+          }
+          // Update the last update time
+          lastTextUpdateTime.current[conn.id] = now;
         }
 
         try {
