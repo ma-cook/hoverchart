@@ -1,8 +1,8 @@
-import { useRef, useEffect } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import * as THREE from 'three'; // Add Three.js import
+import { recordFrameTime, recordStateUpdate } from '../utils/debugUtils';
 
-// Simplified array comparison
+// Helper function to compare arrays with small epsilon for floating point comparison
 const arraysEqual = (a, b) => {
   if (!a || !b || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -11,293 +11,157 @@ const arraysEqual = (a, b) => {
   return true;
 };
 
-// Safety function to ensure we always get a valid position array
-const ensureValidPosition = (pos, fallback = [0, 0, 0]) => {
-  // Check if it's already a valid array
-  if (
-    Array.isArray(pos) &&
-    pos.length === 3 &&
-    pos.every((n) => typeof n === 'number' && !isNaN(n))
-  ) {
-    return pos;
-  }
-
-  // If pos is an object with numeric x,y,z properties, convert to array
-  if (
-    pos &&
-    typeof pos === 'object' &&
-    'x' in pos &&
-    'y' in pos &&
-    'z' in pos &&
-    !isNaN(pos.x) &&
-    !isNaN(pos.y) &&
-    !isNaN(pos.z)
-  ) {
-    return [pos.x, pos.y, pos.z];
-  }
-
-  return fallback;
-};
-
-// Improve the position calculation for text objects by honoring position locks
-const calculateTextObjectPosition = (conn, isStart) => {
-  const endpoint = isStart ? conn.start : conn.end;
-
-  // If we don't have proper references, can't calculate
-  if (!endpoint || !endpoint.objectId) return [0, 0, 0];
-
-  // If position is locked by TextObject component, ALWAYS respect it
-  if (endpoint._textPositionLocked) {
-    return endpoint.position || endpoint.worldPosition || [0, 0, 0];
-  }
-
-  // Skip updating if the text object is currently being edited
-  if (endpoint.plane?.userData?.isTextEditing) {
-    return endpoint.worldPosition || endpoint.position;
-  }
-
-  // SIMPLIFIED PRIORITY ORDER - no fallbacks to default positions
-
-  // First priority: worldPosition from the connection itself
-  if (Array.isArray(endpoint.worldPosition)) {
-    return endpoint.worldPosition;
-  }
-
-  // Second priority: indicatorPosition from plane.userData
-  if (Array.isArray(endpoint.plane?.userData?.indicatorPosition)) {
-    return endpoint.plane.userData.indicatorPosition;
-  }
-
-  // Third priority: indicatorPosition from cube.userData
-  if (Array.isArray(endpoint.cube?.userData?.indicatorPosition)) {
-    return endpoint.cube.userData.indicatorPosition;
-  }
-
-  // Fourth priority: explicit position in the connection
-  if (Array.isArray(endpoint.position)) {
-    return endpoint.position;
-  }
-
-  // If we get here, we have no valid position data - log warning
-  console.warn(
-    'No valid indicator position found for text object',
-    endpoint.objectId
-  );
-
-  // Return last stored position or zero vector as absolute last resort
-  return [0, 0, 0];
-};
-
+/**
+ * ConnectionUpdater - Updates connection positions and animations
+ * This component manages the animations and position updates for connections
+ * in a performance-optimized way.
+ */
 const ConnectionUpdater = ({
   connections,
   setConnections,
   calculateFacePosition,
-  transformingObjects, // Make sure we receive this prop
+  transformingObjects,
 }) => {
-  // Simple frame skipping for better performance
   const frameCount = useRef(0);
-  const FRAMES_TO_SKIP = 5;
-
-  // Track last positions to avoid redundant updates
+  const FRAMES_TO_SKIP = 6; // Increased to reduce CPU usage
   const lastPositions = useRef({});
+  const ANIMATION_SPEED = 15; // Keep moderate speed
+  const animationRequestRef = useRef();
+  const lastUpdateTime = useRef(Date.now());
+  const lastStyleChanges = useRef(new Map()); // Track recent style changes
 
-  // Add state to track if the component is mounted
-  const isMounted = useRef(true);
-
-  // Set up unmount cleanup
-  useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
-
-  // Add a throttle mechanism for text objects
-  const lastTextUpdateTime = useRef({});
-  const TEXT_UPDATE_INTERVAL = 500; // ms between text object connection updates
-
-  // Run update on every frame (with skipping)
+  // Use a more efficient animation strategy that doesn't block other operations
   useFrame((state, delta) => {
-    // Only proceed if mounted and if connections exist
-    if (!isMounted.current || connections.length === 0) return;
-
-    // Skip frames to reduce calculation frequency
     frameCount.current += 1;
+
+    // Record frame time for performance monitoring
+    recordFrameTime(delta * 1000);
+
+    // Skip more frames to reduce CPU usage
     if (frameCount.current % FRAMES_TO_SKIP !== 0) return;
 
-    // Create a variable to track changes
-    let hasChanges = false;
-    let updatedConnections = connections;
+    // Throttle updates based on time to prevent excessive renders
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateTime.current;
+    if (timeSinceLastUpdate < 100) return; // Limit to ~10fps for animations
 
-    try {
-      // Calculate new positions
-      updatedConnections = connections.map((conn) => {
-        if (!conn.start || !conn.end) return conn;
+    // Only process animations if there are no active transformations
+    if (transformingObjects.current.size > 0) return;
 
-        // Skip connection updates for objects that are actively being transformed
-        if (
-          transformingObjects &&
-          (transformingObjects.current.has(conn.start?.objectId) ||
-            transformingObjects.current.has(conn.end?.objectId))
-        ) {
-          return conn;
+    if (connections.length > 0) {
+      let hasChanges = false;
+      const animatedConnIds = new Set();
+      const styleChangedConnIds = new Set();
+
+      // First, identify connections that have had recent style changes
+      connections.forEach((conn) => {
+        // Check if this connection has had a style change in the last 3 seconds
+        if (conn._lastStyleUpdate && now - conn._lastStyleUpdate < 3000) {
+          styleChangedConnIds.add(conn.id);
+          lastStyleChanges.current.set(conn.id, conn._lastStyleUpdate);
         }
-
-        // Skip updates for text objects that are being edited
-        const isTextObjectEditing =
-          (conn.start.type === 'text' &&
-            conn.start.plane?.userData?.isTextEditing) ||
-          (conn.end.type === 'text' && conn.end.plane?.userData?.isTextEditing);
-
-        if (isTextObjectEditing) {
-          return conn;
-        }
-
-        // Add throttling for text object connections
-        const now = Date.now();
-        const hasTextObject =
-          conn.start.type === 'text' || conn.end.type === 'text';
-
-        if (hasTextObject) {
-          const lastUpdate = lastTextUpdateTime.current[conn.id] || 0;
-          if (now - lastUpdate < TEXT_UPDATE_INTERVAL) {
-            return conn; // Skip this update if too soon
-          }
-          // Update the last update time
-          lastTextUpdateTime.current[conn.id] = now;
-        }
-
-        // IMPORTANT: Don't update positions for connections with locked text positions
-        const isTextLocked =
-          (conn.start?._textPositionLocked && conn.start.type === 'text') ||
-          (conn.end?._textPositionLocked && conn.end.type === 'text');
-
-        if (isTextLocked) {
-          // Just do dash animation but don't change positions
-          if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
-            let newDashOffset = conn.dashOffset || 0;
-            if (conn.dashDirection === 'left') {
-              newDashOffset = newDashOffset - delta * 2;
-            } else if (conn.dashDirection === 'right') {
-              newDashOffset = newDashOffset + delta * 2;
-            }
-            return {
-              ...conn,
-              dashOffset: newDashOffset,
-            };
-          }
-          return conn; // No changes needed
-        }
-
-        try {
-          // For 'text' type indicators, be more careful with position updates
-          let newStartPos, newEndPos;
-          let positionsUpdated = false;
-
-          if (conn.start.type === 'text') {
-            // Use our specialized text object position calculation
-            newStartPos = calculateTextObjectPosition(conn, true);
-
-            // Only count as updated if position actually changed
-            if (!arraysEqual(conn.start.position, newStartPos)) {
-              positionsUpdated = true;
-            }
-          } else {
-            newStartPos = ensureValidPosition(
-              calculateFacePosition(conn.start),
-              conn.start.position
-            );
-
-            if (!arraysEqual(conn.start.position, newStartPos)) {
-              positionsUpdated = true;
-            }
-          }
-
-          if (conn.end.type === 'text') {
-            // Use our specialized text object position calculation
-            newEndPos = calculateTextObjectPosition(conn, false);
-
-            if (!arraysEqual(conn.end.position, newEndPos)) {
-              positionsUpdated = true;
-            }
-          } else {
-            newEndPos = ensureValidPosition(
-              calculateFacePosition(conn.end),
-              conn.end.position
-            );
-
-            if (!arraysEqual(conn.end.position, newEndPos)) {
-              positionsUpdated = true;
-            }
-          }
-
-          // Only continue if positions actually changed (to prevent cycles)
-          if (positionsUpdated) {
-            // Check if positions have actually changed
-            const startKey = `${conn.id}-start`;
-            const endKey = `${conn.id}-end`;
-
-            const startChanged = !arraysEqual(
-              lastPositions.current[startKey],
-              newStartPos
-            );
-            const endChanged = !arraysEqual(
-              lastPositions.current[endKey],
-              newEndPos
-            );
-
-            if (startChanged || endChanged) {
-              hasChanges = true;
-
-              // Store new positions for comparison in next frame
-              lastPositions.current[startKey] = [...newStartPos];
-              lastPositions.current[endKey] = [...newEndPos];
-
-              // Calculate dash offset animation
-              let newDashOffset = conn.dashOffset || 0;
-              if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
-                if (conn.dashDirection === 'left') {
-                  newDashOffset = newDashOffset - delta * 2;
-                } else if (conn.dashDirection === 'right') {
-                  newDashOffset = newDashOffset + delta * 2;
-                }
-              }
-
-              // Don't change the connection line style when just updating positions
-              return {
-                ...conn,
-                start: { ...conn.start, position: newStartPos },
-                end: { ...conn.end, position: newEndPos },
-                dashOffset: newDashOffset,
-                // Preserve all existing properties
-                lineStyle: conn.lineStyle,
-                text: conn.text || '',
-                textStyle: conn.textStyle || {
-                  fontSize: 1.5,
-                  color: 'white',
-                  underline: false,
-                },
-                _lastStyleUpdate: conn._lastStyleUpdate || 0,
-                dashDirection: conn.dashDirection,
-                _textPosition: conn._textPosition,
-                _pathPoints: conn._pathPoints,
-                _stabilityCounter: (conn._stabilityCounter || 0) + 1,
-              };
-            }
-          }
-        } catch (error) {
-          console.error('Error updating connection position:', error);
-        }
-
-        // No change or error - return original connection
-        return conn;
       });
 
-      // Only update state if there are actual changes
-      if (hasChanges && isMounted.current) {
-        setConnections(updatedConnections);
+      // Clean up old style change entries
+      Array.from(lastStyleChanges.current.entries()).forEach(
+        ([id, timestamp]) => {
+          if (now - timestamp > 3000) {
+            lastStyleChanges.current.delete(id);
+          }
+        }
+      );
+
+      const updatedConnections = connections.map((conn) => {
+        // Always recalculate positions for all connections, including animated ones
+        let newStartPos = calculateFacePosition(conn.start);
+        let newEndPos = calculateFacePosition(conn.end);
+
+        const startKey = `${conn.id}-start`;
+        const endKey = `${conn.id}-end`;
+
+        // Check if positions actually changed
+        const startChanged =
+          !lastPositions.current[startKey] ||
+          !arraysEqual(lastPositions.current[startKey], newStartPos);
+        const endChanged =
+          !lastPositions.current[endKey] ||
+          !arraysEqual(lastPositions.current[endKey], newEndPos);
+
+        if (startChanged || endChanged || styleChangedConnIds.has(conn.id)) {
+          hasChanges = true;
+
+          // Store positions for next comparison
+          if (startChanged) lastPositions.current[startKey] = [...newStartPos];
+          if (endChanged) lastPositions.current[endKey] = [...newEndPos];
+        }
+
+        // Check if this connection needs animation
+        const needsAnimation =
+          (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
+          (conn.dashDirection === 'left' || conn.dashDirection === 'right');
+
+        // Create the updated connection object
+        let updatedConn = { ...conn };
+
+        // Always update positions, regardless of whether they've changed or the connection is animated
+        updatedConn.start = { ...conn.start, position: newStartPos };
+        updatedConn.end = { ...conn.end, position: newEndPos };
+
+        // Update dash animation if needed
+        if (needsAnimation) {
+          // Track which connections are animated
+          animatedConnIds.add(conn.id);
+          hasChanges = true;
+
+          // Calculate new dash offset for animated lines
+          let newDashOffset = conn.dashOffset || 0;
+          const animationStep = delta * ANIMATION_SPEED;
+
+          if (conn.dashDirection === 'left') {
+            newDashOffset = (newDashOffset - animationStep) % 1000;
+          } else if (conn.dashDirection === 'right') {
+            newDashOffset = (newDashOffset + animationStep) % 1000;
+          }
+
+          updatedConn.dashOffset = newDashOffset;
+        }
+
+        // Return the updated connection - positions are always updated
+        return updatedConn;
+      });
+
+      // Only update state if something changed
+      if (hasChanges) {
+        recordStateUpdate(); // Record the state update for performance tracking
+
+        // Use safer state update approach
+        setConnections((current) => {
+          // If connections list changed while we were calculating,
+          // merge our updates with the current state
+          if (current.length !== connections.length) {
+            const updatedConnMap = new Map(
+              updatedConnections.map((c) => [c.id, c])
+            );
+
+            return current.map((conn) => {
+              const updatedConn = updatedConnMap.get(conn.id);
+              if (!updatedConn) return conn;
+
+              // Always update start and end positions for any connections that were updated
+              return {
+                ...conn,
+                dashOffset: updatedConn.dashOffset || conn.dashOffset,
+                start: { ...conn.start, position: updatedConn.start.position },
+                end: { ...conn.end, position: updatedConn.end.position },
+              };
+            });
+          }
+
+          return updatedConnections;
+        });
+
+        lastUpdateTime.current = now;
       }
-    } catch (error) {
-      console.error('Error in connection updater:', error);
     }
   });
 

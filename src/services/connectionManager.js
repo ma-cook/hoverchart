@@ -15,6 +15,9 @@ const registeredConnections = new Set();
 // Track existing connections between pairs of objects (regardless of direction)
 const connectedPairs = new Map();
 
+// Track initialization status
+let isInitialized = false;
+
 // Register a connection with an object - ensure IDs are strings
 export const registerObjectConnection = (objectId, connectionId) => {
   if (!objectId) {
@@ -287,54 +290,76 @@ export const initializeConnectionMappings = async (userId) => {
       console.log('Cleared existing connection mappings');
     }
 
-    // Get all connections
-    const connectionsRef = collection(db, 'users', userId, 'connections');
-    const connectionsSnap = await getDocs(connectionsRef);
-
-    if (window.DEBUG_CONNECTIONS) {
-      console.log(`Found ${connectionsSnap.size} connections to process`);
+    // Skip if already initialized for this user
+    if (isInitialized && window.lastConnectionUserId === userId) {
+      console.log('Connection mappings already initialized for this user');
+      return { success: true, cached: true };
     }
 
-    let registrationCount = 0;
+    // Get all connections from all spaces for this user
+    try {
+      const spacesRef = collection(db, 'users', userId, 'spaces');
+      const spacesSnap = await getDocs(spacesRef);
 
-    // For each connection, register it with its objects
-    connectionsSnap.forEach((docSnap) => {
-      const connection = docSnap.data();
+      let totalConnections = 0;
 
-      if (window.DEBUG_CONNECTIONS) {
-        console.log(`Processing connection ${connection.id}`);
-      }
-
-      if (connection.start?.objectId) {
-        registerObjectConnection(connection.start.objectId, connection.id);
-        registrationCount++;
-      }
-
-      if (connection.end?.objectId) {
-        registerObjectConnection(connection.end.objectId, connection.id);
-        registrationCount++;
-      }
-
-      // Also register the connected pair if both object IDs exist
-      if (connection.start?.objectId && connection.end?.objectId) {
-        registerConnectedPair(
-          connection.start.objectId,
-          connection.end.objectId,
-          connection.id
+      // Process connections space by space
+      for (const spaceDoc of spacesSnap.docs) {
+        const spaceId = spaceDoc.id;
+        const connectionsRef = collection(
+          db,
+          'users',
+          userId,
+          'spaces',
+          spaceId,
+          'connections'
         );
+        const connectionsSnap = await getDocs(connectionsRef);
+
+        console.log(
+          `Found ${connectionsSnap.size} connections in space ${spaceId}`
+        );
+        totalConnections += connectionsSnap.size;
+
+        // For each connection, register it with its objects
+        connectionsSnap.forEach((docSnap) => {
+          const connection = docSnap.data();
+
+          if (connection.start?.objectId) {
+            registerObjectConnection(connection.start.objectId, connection.id);
+          }
+
+          if (connection.end?.objectId) {
+            registerObjectConnection(connection.end.objectId, connection.id);
+          }
+
+          // Also register the connected pair if both object IDs exist
+          if (connection.start?.objectId && connection.end?.objectId) {
+            registerConnectedPair(
+              connection.start.objectId,
+              connection.end.objectId,
+              connection.id
+            );
+          }
+        });
       }
-    });
 
-    if (window.DEBUG_CONNECTIONS) {
       console.log(
-        `Initialized connection mappings: ${registrationCount} registrations for ${connectionsSnap.size} connections`
+        `Initialized connection mappings: ${registeredConnections.size} registrations for ${totalConnections} connections`
       );
-    }
 
-    return { success: true, count: registrationCount };
+      // Mark as initialized and store the user ID
+      isInitialized = true;
+      window.lastConnectionUserId = userId;
+
+      return { success: true, count: registeredConnections.size };
+    } catch (err) {
+      console.error('Error loading spaces for connection initialization:', err);
+      return { success: false, error: err.message };
+    }
   } catch (error) {
     console.error('Error initializing connection mappings:', error);
-    throw error;
+    return { success: false, error: error.message };
   }
 };
 
@@ -468,4 +493,55 @@ export const getResolvedConnections = async (userId, connections, objects) => {
       },
     };
   });
+};
+
+// Add a new function to pre-populate connection cache when needed
+export const preloadConnectionsForSpace = async (userId, spaceId) => {
+  try {
+    if (!userId || !spaceId)
+      return { success: false, reason: 'Missing userId or spaceId' };
+
+    console.log(`Pre-loading connections for space ${spaceId}`);
+
+    const connectionsRef = collection(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'connections'
+    );
+    const connectionsSnap = await getDocs(connectionsRef);
+
+    console.log(`Found ${connectionsSnap.size} connections to pre-load`);
+
+    // Cache all connections
+    connectionsSnap.forEach((docSnap) => {
+      const connection = docSnap.data();
+      const cacheKey = `${spaceId}_${connection.id}`;
+      connectionCache.set(cacheKey, connection);
+
+      // Also register connections if they aren't already
+      if (connection.start?.objectId) {
+        registerObjectConnection(connection.start.objectId, connection.id);
+      }
+
+      if (connection.end?.objectId) {
+        registerObjectConnection(connection.end.objectId, connection.id);
+      }
+
+      if (connection.start?.objectId && connection.end?.objectId) {
+        registerConnectedPair(
+          connection.start.objectId,
+          connection.end.objectId,
+          connection.id
+        );
+      }
+    });
+
+    return { success: true, count: connectionsSnap.size };
+  } catch (err) {
+    console.error('Error pre-loading connections:', err);
+    return { success: false, error: err.message };
+  }
 };
