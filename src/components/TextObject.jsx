@@ -165,7 +165,7 @@ const TextObject = ({
   };
 
   // Improved getIndicatorPositions function that uses actual container dimensions
-  const getIndicatorPositions = () => {
+  const getIndicatorPositions = useCallback(() => {
     // Get current container height - make sure we have a real value
     const containerHeight = containerDimensionsRef.current.height || 50;
 
@@ -176,7 +176,26 @@ const TextObject = ({
     return {
       bottom: [0, -yOffset, 0],
     };
-  };
+  }, [containerDimensionsRef.current.height, conversionFactor]);
+
+  // Improve the indicator position calculation to handle scale changes properly
+  const calculateIndicatorPosition = useCallback(() => {
+    // Get the group's world position
+    const worldPosition = new THREE.Vector3();
+    if (!groupRef.current) return [0, 0, 0];
+
+    groupRef.current.getWorldPosition(worldPosition);
+    // Compute offset from container dimensions via getIndicatorPositions()
+    const indicatorOffset = getIndicatorPositions().bottom;
+    const worldIndicatorPos = [
+      worldPosition.x + indicatorOffset[0],
+      worldPosition.y + indicatorOffset[1],
+      worldPosition.z + indicatorOffset[2],
+    ];
+    // Store it for connectionManager use
+    groupRef.current.userData.indicatorPosition = [...worldIndicatorPos];
+    return worldIndicatorPos;
+  }, [getIndicatorPositions]); // Add getIndicatorPositions as dependency
 
   // Function to update container dimensions
   const updateContainerDimensions = () => {
@@ -225,26 +244,9 @@ const TextObject = ({
     }
   };
 
-  // Improve the indicator position calculation to handle scale changes properly
-  const calculateIndicatorPosition = () => {
-    // Get the group’s world position
-    const worldPosition = new THREE.Vector3();
-    groupRef.current.getWorldPosition(worldPosition);
-    // Compute offset from container dimensions via getIndicatorPositions()
-    const indicatorOffset = getIndicatorPositions().bottom;
-    const worldIndicatorPos = [
-      worldPosition.x + indicatorOffset[0],
-      worldPosition.y + indicatorOffset[1],
-      worldPosition.z + indicatorOffset[2],
-    ];
-    // Store it for connectionManager use
-    groupRef.current.userData.indicatorPosition = [...worldIndicatorPos];
-    return worldIndicatorPos;
-  };
-
   // Add this function to ensure connections receive accurate position data
   // Modify updateIndicatorPosition to properly update ALL connection references
-  const updateIndicatorPosition = () => {
+  const updateIndicatorPosition = useCallback(() => {
     if (!groupRef.current) return;
 
     // Calculate the updated indicator position
@@ -256,6 +258,18 @@ const TextObject = ({
       worldPosition.y + indicatorPos.bottom[1],
       worldPosition.z + indicatorPos.bottom[2],
     ];
+
+    // IMPORTANT: Check if position has actually changed before updating
+    const currentPos = groupRef.current.userData.indicatorPosition;
+    if (
+      currentPos &&
+      Math.abs(currentPos[0] - worldIndicatorPos[0]) < 0.001 &&
+      Math.abs(currentPos[1] - worldIndicatorPos[1]) < 0.001 &&
+      Math.abs(currentPos[2] - worldIndicatorPos[2]) < 0.001
+    ) {
+      // Position hasn't changed significantly - return current position without updates
+      return currentPos;
+    }
 
     // Store consistently in ALL relevant locations
     if (groupRef.current.userData) {
@@ -269,62 +283,58 @@ const TextObject = ({
       groupRef.current.userData.indicatorLastUpdated = Date.now();
     }
 
-    // 2. Update ALL connection references that use this text object
+    // 2. Update connection references ONLY if needed - with rate limiting
     if (connections) {
-      connections.forEach((conn) => {
-        // Check if this text object is part of the connection
-        if (conn.start?.objectId === id.toString()) {
-          // Update ALL possible storage locations
-          conn.start.position = [...worldIndicatorPos];
+      // Add rate limiting - only update connections every 500ms
+      const now = Date.now();
+      const lastConnUpdate =
+        groupRef.current.userData.lastConnectionUpdate || 0;
 
-          // Update the plane reference
-          if (conn.start.plane) {
-            conn.start.plane.userData = conn.start.plane.userData || {};
-            conn.start.plane.userData.indicatorPosition = [
-              ...worldIndicatorPos,
-            ];
-            conn.start.plane.userData.indicatorOffset = [
-              0,
-              indicatorPos.bottom[1],
-              0,
-            ];
+      if (now - lastConnUpdate > 500) {
+        groupRef.current.userData.lastConnectionUpdate = now;
+
+        connections.forEach((conn) => {
+          // Check if this text object is part of the connection
+          if (conn.start?.objectId === id.toString()) {
+            // Update ALL possible storage locations
+            conn.start.position = [...worldIndicatorPos];
+            conn.start.worldPosition = [...worldIndicatorPos];
+            conn.start._textPositionLocked = true;
+
+            if (conn.start.cube?.userData) {
+              conn.start.cube.userData.indicatorPosition = [
+                ...worldIndicatorPos,
+              ];
+            }
+
+            if (conn.start.plane?.userData) {
+              conn.start.plane.userData.indicatorPosition = [
+                ...worldIndicatorPos,
+              ];
+            }
           }
 
-          // Update the cube reference (some connections use this instead)
-          if (conn.start.cube) {
-            conn.start.cube.userData = conn.start.cube.userData || {};
-            conn.start.cube.userData.indicatorPosition = [...worldIndicatorPos];
+          if (conn.end?.objectId === id.toString()) {
+            // Similar updates for end position
+            conn.end.position = [...worldIndicatorPos];
+            conn.end.worldPosition = [...worldIndicatorPos];
+            conn.end._textPositionLocked = true;
+
+            if (conn.end.cube?.userData) {
+              conn.end.cube.userData.indicatorPosition = [...worldIndicatorPos];
+            }
+
+            if (conn.end.plane?.userData) {
+              conn.end.plane.userData.indicatorPosition = [
+                ...worldIndicatorPos,
+              ];
+            }
           }
-
-          // Store as worldPosition too (used by ConnectionUpdater)
-          conn.start.worldPosition = [...worldIndicatorPos];
-        }
-
-        if (conn.end?.objectId === id.toString()) {
-          // Same updates for end position
-          conn.end.position = [...worldIndicatorPos];
-
-          if (conn.end.plane) {
-            conn.end.plane.userData = conn.end.plane.userData || {};
-            conn.end.plane.userData.indicatorPosition = [...worldIndicatorPos];
-            conn.end.plane.userData.indicatorOffset = [
-              0,
-              indicatorPos.bottom[1],
-              0,
-            ];
-          }
-
-          if (conn.end.cube) {
-            conn.end.cube.userData = conn.end.cube.userData || {};
-            conn.end.cube.userData.indicatorPosition = [...worldIndicatorPos];
-          }
-
-          conn.end.worldPosition = [...worldIndicatorPos];
-        }
-      });
+        });
+      }
     }
 
-    // 3. Also update any stored reference in the parent via callback
+    // 3. Also update stored reference in the parent via callback with rate limiting
     if (
       onUpdate &&
       connections?.some(
@@ -333,15 +343,24 @@ const TextObject = ({
           conn.end?.objectId === id.toString()
       )
     ) {
-      onUpdate(id, {
-        indicatorPosition: worldIndicatorPos,
-        lastUpdated: Date.now(),
-        indicatorOffset: [0, indicatorPos.bottom[1], 0],
-      });
+      // Add timestamp check to prevent excessive updates to parent
+      const now = Date.now();
+      const lastParentUpdate = groupRef.current.userData.lastParentUpdate || 0;
+
+      if (now - lastParentUpdate > 1000) {
+        // Only update parent once per second
+        groupRef.current.userData.lastParentUpdate = now;
+
+        onUpdate(id, {
+          indicatorPosition: worldIndicatorPos,
+          lastUpdated: now,
+          indicatorOffset: [0, indicatorPos.bottom[1], 0],
+        });
+      }
     }
 
     return worldIndicatorPos;
-  };
+  }, [id, connections, onUpdate, getIndicatorPositions]); // Properly define dependencies
 
   // Call this function whenever position or scale changes
   // Add this effect to update indicator position when container dimensions change
@@ -840,24 +859,27 @@ const TextObject = ({
         }
       }
     });
-  }, [id, connections, updateIndicatorPosition]);
+  }, [connections, id, updateIndicatorPosition]); // Fix the dependency here as well
 
   // Add useEffect to call syncConnectionPositions whenever needed
   useEffect(() => {
     if (!isActivelyEditing) {
-      // Run this once immediately
+      // Run sync once
       syncConnectionPositions();
 
-      // And schedule another sync after a short delay
-      const timer = setTimeout(syncConnectionPositions, 100);
+      // But don't schedule repeated updates - this was causing the loop
+      // Uncomment only if you find connections getting out of sync
+      /*
+      const timer = setTimeout(syncConnectionPositions, 1000);
       return () => clearTimeout(timer);
+      */
     }
   }, [
     syncConnectionPositions,
     isActivelyEditing,
+    // Only include major change dependencies, not position
     scale,
-    text,
-    position,
+    text.length, // Only update when text length changes, not on every keystroke
     textStyle.fontSize,
   ]);
 

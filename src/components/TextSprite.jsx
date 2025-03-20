@@ -85,8 +85,9 @@ const TextSprite = ({
       pathPoints?.length === lastPathPointsLengthRef.current &&
       lastPositionRef.current
     ) {
-      // Only recalculate every ~10 frames when nothing has changed
-      if (Math.random() > 0.1) {
+      // DRASTICALLY reduce recalculations - only recalculate 1% of the time
+      // when nothing has changed (was 10% previously)
+      if (Math.random() > 0.01) {
         return lastPositionRef.current;
       }
     }
@@ -111,18 +112,13 @@ const TextSprite = ({
       updateThrottleRef.current = false;
     }, throttleDelayRef.current);
 
-    // Reduce logging frequency much more aggressively
-    if (Math.random() < 0.01) {
-      // Only log about 1% of calculations
-      console.log(
-        'TextSprite recalculating position.',
-        'LineStyle:',
+    // Reduce logging frequency to only once per session (0.1% chance)
+    if (Math.random() < 0.001) {
+      // Only log about 0.1% of calculations - drastically reduced
+      console.debug('TextSprite position recalculation:', {
         lineStyle,
-        'Has pathPoints:',
-        !!pathPoints,
-        'Points length:',
-        pathPoints?.length || 0
-      );
+        pathPointsLength: pathPoints?.length || 0,
+      });
     }
 
     // Check for 'curved' line style

@@ -45,8 +45,22 @@ export const saveObject = async (userId, spaceId, object) => {
     const now = Date.now();
     const lastUpdateTime = updateThrottles.get(cacheKey) || 0;
 
-    // Increase throttle time for position updates to prevent excessive saves
-    const throttleTime = object.position ? 500 : 100; // 500ms for position, 100ms for other changes
+    // INCREASE throttle times significantly to prevent excessive server updates
+    // Use different throttle times based on object type
+    let throttleTime = 500; // Default 500ms throttle
+
+    // Text objects need more aggressive throttling for indicator position updates
+    if (object.type === 'text' && object.indicatorPosition) {
+      throttleTime = 2000; // Much longer throttle for text object indicator updates
+    }
+    // For regular position updates
+    else if (object.position) {
+      throttleTime = 800; // Increased from 500ms for position updates
+    }
+    // For other changes
+    else {
+      throttleTime = 200; // Slightly increased from 100ms
+    }
 
     if (now - lastUpdateTime < throttleTime) {
       return; // Skip this update, too soon after previous one
@@ -220,11 +234,15 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
         (snapshot) => {
           // Check if this is from cache or server
           const source = snapshot.metadata.fromCache ? 'cache' : 'server';
-          console.log(
-            `[Objects] Got ${
-              snapshot.docChanges().length
-            } changes from ${source}`
-          );
+
+          // Only log once per 5 batches of changes
+          if (Math.random() < 0.2) {
+            console.debug(
+              `[Objects] Got ${
+                snapshot.docChanges().length
+              } changes from ${source}`
+            );
+          }
 
           // Reset retry count on successful connection
           retryCount = 0;
