@@ -157,6 +157,20 @@ export const deleteObject = async (userId, spaceId, objectId) => {
   if (!userId || !spaceId || !objectId) return;
 
   try {
+    // Clear from cache immediately to prevent re-saving
+    const cacheKey = `${spaceId}_${objectId}`;
+    objectsCache.delete(cacheKey);
+    lastReceivedObjects.delete(cacheKey);
+
+    // Clear any pending save timeouts
+    if (saveTimeouts.has(cacheKey)) {
+      clearTimeout(saveTimeouts.get(cacheKey));
+      saveTimeouts.delete(cacheKey);
+    }
+
+    // Clear throttle data
+    updateThrottles.delete(cacheKey);
+
     // Check if this is a shared space
     const sharedStatus = await isSharedSpace(userId, spaceId);
 
@@ -168,7 +182,6 @@ export const deleteObject = async (userId, spaceId, objectId) => {
     // Use the owner's ID to delete from the correct collection
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
 
-    const cacheKey = `${spaceId}_${objectId}`;
     const objectRef = doc(
       db,
       'users',
@@ -178,11 +191,10 @@ export const deleteObject = async (userId, spaceId, objectId) => {
       'objects',
       objectId.toString()
     );
+
+    // Delete from database
     await deleteDoc(objectRef);
-    objectsCache.delete(cacheKey);
-    lastReceivedObjects.delete(cacheKey);
   } catch (error) {
-    // Error handling with minimal logging
     console.error('Error deleting object:', error);
   }
 };

@@ -110,6 +110,22 @@ const activeSubscriptions = new Map();
 // Track changes that we've already processed to avoid duplicates
 const processedChanges = new Set();
 
+// Add connection cache tracking
+const connectionCache = new Map();
+
+// Add this function at the top level
+const clearConnectionCache = (spaceId, connectionId) => {
+  const cacheKey = `${spaceId}_${connectionId}`;
+  connectionCache.delete(cacheKey);
+  processedChanges.delete(cacheKey);
+
+  // Also clear from lastReceivedData if it exists
+  const subscription = activeSubscriptions.get(`${spaceId}_${connectionId}`);
+  if (subscription?.lastReceivedData) {
+    subscription.lastReceivedData.delete(connectionId);
+  }
+};
+
 // Modified to include spaceId parameter and handle shared spaces
 export const saveConnection = async (userId, spaceId, connection) => {
   if (!userId || !spaceId || !connection?.id) return;
@@ -177,9 +193,10 @@ const createSubscription = (userId, spaceId, callback) => {
   // Create a unique key for this subscription
   const subscriptionKey = `${userId}-${spaceId}`;
 
-  // Check if we already have an active subscription for this combination
-  if (activeSubscriptions.has(subscriptionKey)) {
-    return activeSubscriptions.get(subscriptionKey);
+  // Clear caches when creating new subscription
+  if (!activeSubscriptions.has(subscriptionKey)) {
+    processedChanges.clear();
+    connectionCache.clear();
   }
 
   // Clear any previously processed changes when creating a new subscription
@@ -358,6 +375,9 @@ export const deleteConnection = async (userId, spaceId, connectionId) => {
   if (!userId || !spaceId || !connectionId) return;
 
   try {
+    // Clear from cache immediately
+    clearConnectionCache(spaceId, connectionId);
+
     // Check if this is a shared space
     const sharedStatus = await isSharedSpace(userId, spaceId);
 
@@ -393,7 +413,7 @@ export const deleteConnection = async (userId, spaceId, connectionId) => {
 
     await deleteDoc(connectionRef);
   } catch (error) {
-    // Silent error handling
+    console.error('Error deleting connection:', error);
   }
 };
 

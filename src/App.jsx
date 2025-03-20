@@ -71,82 +71,121 @@ const ConnectionUpdater = ({
   transformingObjects, // Add this prop
 }) => {
   const frameCount = useRef(0);
-  const FRAMES_TO_SKIP = 3;
+  const FRAMES_TO_SKIP = 6; // Increased to reduce CPU usage
   const lastPositions = useRef({});
-  // Remove the transformingObjects ref from here since it's now a prop
+  const ANIMATION_SPEED = 15; // Keep moderate speed
+  const animationRequestRef = useRef();
+  const lastUpdateTime = useRef(Date.now());
 
+  // Use a more efficient animation strategy that doesn't block other operations
   useFrame((state, delta) => {
     frameCount.current += 1;
+
+    // Skip more frames to reduce CPU usage
     if (frameCount.current % FRAMES_TO_SKIP !== 0) return;
+
+    // Throttle updates based on time to prevent excessive renders
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateTime.current;
+    if (timeSinceLastUpdate < 100) return; // Limit to ~10fps for animations
+
+    // Only process animations if there are no active transformations
+    if (transformingObjects.current.size > 0) return;
 
     if (connections.length > 0) {
       let hasChanges = false;
+      let hasAnimationOnly = true; // Track if we're only updating animations
 
-      // Calculate new positions without updating state immediately
       const updatedConnections = connections.map((conn) => {
-        // Skip connection updates for objects that are actively being scaled
-        if (
-          transformingObjects.current.has(conn.start?.objectId) ||
-          transformingObjects.current.has(conn.end?.objectId)
-        ) {
-          return conn;
-        }
+        // Get new positions (only if we have position data and aren't just animating)
+        let newStartPos = conn.start?.position || [0, 0, 0];
+        let newEndPos = conn.end?.position || [0, 0, 0];
 
-        // Using memoized calculation to avoid redundant work
-        const newStartPos = calculateFacePosition(conn.start);
-        const newEndPos = calculateFacePosition(conn.end);
-
-        // Generate position keys
         const startKey = `${conn.id}-start`;
         const endKey = `${conn.id}-end`;
 
-        // Check if positions actually changed
-        const startChanged =
-          !lastPositions.current[startKey] ||
-          !arraysEqual(lastPositions.current[startKey], newStartPos);
-        const endChanged =
-          !lastPositions.current[endKey] ||
-          !arraysEqual(lastPositions.current[endKey], newEndPos);
+        // Only recalculate positions occasionally to save CPU
+        if (frameCount.current % 12 === 0) {
+          newStartPos = calculateFacePosition(conn.start);
+          newEndPos = calculateFacePosition(conn.end);
 
-        if (startChanged || endChanged) {
+          // Check if positions actually changed
+          const startChanged =
+            !lastPositions.current[startKey] ||
+            !arraysEqual(lastPositions.current[startKey], newStartPos);
+          const endChanged =
+            !lastPositions.current[endKey] ||
+            !arraysEqual(lastPositions.current[endKey], newEndPos);
+
+          if (startChanged || endChanged) {
+            hasChanges = true;
+            hasAnimationOnly = false;
+
+            // Store positions for next comparison
+            if (startChanged)
+              lastPositions.current[startKey] = [...newStartPos];
+            if (endChanged) lastPositions.current[endKey] = [...newEndPos];
+          }
+        }
+
+        // Check if this connection needs animation
+        const needsAnimation =
+          (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
+          (conn.dashDirection === 'left' || conn.dashDirection === 'right');
+
+        if (needsAnimation) {
           hasChanges = true;
+          // Calculate new dash offset for animated lines
+          let newDashOffset = conn.dashOffset || 0;
+          const animationStep = delta * ANIMATION_SPEED;
 
-          // Store new positions for next comparison
-          lastPositions.current[startKey] = [...newStartPos];
-          lastPositions.current[endKey] = [...newEndPos];
-
-          // Update dash offset if line is animated
-          let newDashOffset = conn.dashOffset;
-          if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
-            if (conn.dashDirection === 'left') {
-              newDashOffset = (conn.dashOffset || 0) - delta * 2;
-            } else if (conn.dashDirection === 'right') {
-              newDashOffset = (conn.dashOffset || 0) + delta * 2;
-            }
+          if (conn.dashDirection === 'left') {
+            newDashOffset = (newDashOffset - animationStep) % 1000;
+          } else if (conn.dashDirection === 'right') {
+            newDashOffset = (newDashOffset + animationStep) % 1000;
           }
 
-          // Return updated connection
           return {
             ...conn,
-            start: {
-              ...conn.start,
-              position: newStartPos,
-            },
-            end: {
-              ...conn.end,
-              position: newEndPos,
-            },
+            start: { ...conn.start, position: newStartPos },
+            end: { ...conn.end, position: newEndPos },
             dashOffset: newDashOffset,
+          };
+        } else if (hasChanges && !hasAnimationOnly) {
+          // Only update positions if they changed and we're not just animating
+          return {
+            ...conn,
+            start: { ...conn.start, position: newStartPos },
+            end: { ...conn.end, position: newEndPos },
           };
         }
 
-        // No change - return original connection
         return conn;
       });
 
-      // Only update state if there are actual changes and no active transforms
-      if (hasChanges && transformingObjects.current.size === 0) {
-        setConnections(updatedConnections);
+      // Only update state if something changed
+      if (hasChanges) {
+        // Use a safer state update approach
+        setConnections((current) => {
+          // If the connections changed elsewhere while we were calculating,
+          // only update the dash offsets and preserve other changes
+          if (hasAnimationOnly && current.length !== connections.length) {
+            const connMap = new Map(updatedConnections.map((c) => [c.id, c]));
+            return current.map((c) => {
+              const updated = connMap.get(c.id);
+              if (updated) {
+                return {
+                  ...c,
+                  dashOffset: updated.dashOffset,
+                };
+              }
+              return c;
+            });
+          }
+          return updatedConnections;
+        });
+
+        lastUpdateTime.current = now;
       }
     }
   });
@@ -936,6 +975,8 @@ const App = () => {
     );
     if (!updatedConnection || !user) return;
 
+    console.log(`Changing line style for ${connectionId} to ${styleType}`);
+
     // Create a new connection object with the updated style
     let newConnection = {
       ...updatedConnection,
@@ -943,17 +984,36 @@ const App = () => {
     };
 
     // Set line style based on styleType
-    if (styleType === 'dotted-left' || styleType === 'dotted-right') {
-      newConnection.lineStyle = 'dotted';
-      newConnection.dashDirection = styleType.split('-')[1];
-      newConnection.dashOffset = 0;
-    } else if (styleType === 'dashed-left' || styleType === 'dashed-right') {
-      newConnection.lineStyle = 'dashed';
-      newConnection.dashDirection = styleType.split('-')[1];
-      newConnection.dashOffset = 0;
+    if (styleType.includes('-')) {
+      // Handle combined styles like "dotted-left" or "dashed-right"
+      const [baseStyle, direction] = styleType.split('-');
+
+      // Make sure we have valid values
+      if (
+        baseStyle &&
+        (baseStyle === 'dotted' || baseStyle === 'dashed') &&
+        direction &&
+        (direction === 'left' || direction === 'right')
+      ) {
+        newConnection.lineStyle = baseStyle;
+        newConnection.dashDirection = direction;
+        newConnection.dashOffset = 0; // Reset offset when changing direction
+
+        console.log(
+          `Setting animation: style=${baseStyle}, direction=${direction}`
+        );
+      } else {
+        console.warn(`Invalid style format: ${styleType}`);
+        newConnection.lineStyle = 'straight';
+        newConnection.dashDirection = null;
+      }
     } else {
+      // Simple style like "straight"
       newConnection.lineStyle = styleType;
       newConnection.dashDirection = null;
+      newConnection.dashOffset = 0;
+
+      console.log(`Setting non-animated style: ${styleType}`);
     }
 
     // Update connections state to reflect new line style
