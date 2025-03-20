@@ -36,6 +36,10 @@ import {
 import {
   initializeConnectionMappings,
   objectConnectionMap,
+  objectsAreConnected, // Ensure this is properly imported
+  registerObjectConnection,
+  registerConnectedPair,
+  handleTextObjectConnection,
 } from './services/connectionManager';
 import { memoize } from './utils/perfUtils'; // Add this import
 
@@ -615,7 +619,7 @@ const App = () => {
     [user, currentSpaceId]
   );
 
-  // Modify handleFaceIndicatorClick to remove logs
+  // Modify handleFaceIndicatorClick to ensure indicator positions are properly passed
   const handleFaceIndicatorClick = (indicator) => {
     // If not in connect mode, enter connect mode first
     if (!isConnectMode) {
@@ -654,12 +658,90 @@ const App = () => {
           (indicator.plane && indicator.plane.userData?.id)
       );
 
+      // Check if connection already exists using the imported function
+      // Wrap in try/catch in case there's an issue with the function
+      try {
+        const connectionAlreadyExists = objectsAreConnected(
+          startIdStr,
+          endIdStr
+        );
+
+        if (connectionAlreadyExists) {
+          // Reset selection state but stay in connect mode
+          selectedIndicatorsRef.current = [];
+          setSelectedIndicators([]);
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking connection:', error);
+        // Fallback - check manually in connections array
+        const manualConnectionCheck = connections.some(
+          (conn) =>
+            (conn.start?.objectId === startIdStr &&
+              conn.end?.objectId === endIdStr) ||
+            (conn.start?.objectId === endIdStr &&
+              conn.end?.objectId === startIdStr)
+        );
+
+        if (manualConnectionCheck) {
+          selectedIndicatorsRef.current = [];
+          setSelectedIndicators([]);
+          return;
+        }
+      }
+
       // Find objects using normalized string comparison
       const startObj = objects.find((obj) => String(obj.id) === startIdStr);
       const endObj = objects.find((obj) => String(obj.id) === endIdStr);
 
       // Better error handling without logs
       if (!startObj || !endObj) {
+        return;
+      }
+
+      // Special handling for text object connections
+      if (startObj.type === 'text' || endObj.type === 'text') {
+        let result;
+
+        if (startObj.type === 'text') {
+          // For text objects, use the INDICATOR object (not the startObj) to preserve indicator position
+          const textIndicator = selectedIndicatorsRef.current[0];
+
+          // Make sure indicator has worldPosition from original click
+          if (!textIndicator.worldPosition && textIndicator.position) {
+            textIndicator.worldPosition = textIndicator.position;
+          }
+
+          // Pass the indicator object that has position data
+          result = handleTextObjectConnection(
+            textIndicator, // Pass the indicator instead of just the object
+            endObj,
+            indicator.face,
+            user.uid,
+            currentSpaceId
+          );
+        } else {
+          // Text object is the end - similar approach with current indicator
+          result = handleTextObjectConnection(
+            indicator, // Pass the current indicator with position data
+            startObj,
+            startIndicator.face,
+            user.uid,
+            currentSpaceId
+          );
+        }
+
+        if (result.success && result.connection) {
+          // Add to local state for immediate visualization
+          setConnections((prev) => [...prev, result.connection]);
+        }
+
+        // Reset selection state regardless of outcome
+        selectedIndicatorsRef.current = [];
+        setSelectedIndicators([]);
+        setShowAllCubesIndicators(false);
+        setGlobalIndicatorSelected(false);
+        setIndicatorMode('none');
         return;
       }
 
@@ -685,25 +767,6 @@ const App = () => {
       // Calculate positions using enhanced indicators
       const startPos = calculateFacePosition(enhancedStartIndicator);
       const endPos = calculateFacePosition(enhancedEndIndicator);
-
-      // Check for duplicate connection regardless of direction
-      const duplicate = connections.some((conn) => {
-        const sameOrder =
-          conn.start.objectId === startIndicator.cube?.id.toString() &&
-          conn.start.face === startIndicator.face &&
-          conn.end.objectId === indicator.cube?.id.toString() &&
-          conn.end.face === indicator.face;
-        const reverseOrder =
-          conn.start.objectId === indicator.cube?.id.toString() &&
-          conn.start.face === indicator.face &&
-          conn.end.objectId === startIndicator.cube?.id.toString() &&
-          conn.end.face === startIndicator.face;
-        return sameOrder || reverseOrder;
-      });
-
-      if (duplicate) {
-        return;
-      }
 
       const connectionId = `${Date.now()}-${Math.random()
         .toString(36)
@@ -765,6 +828,11 @@ const App = () => {
           worldMatrixArray: indicator.planeData?.worldMatrixArray || null,
         };
       }
+
+      // Register this connection in the connection manager
+      registerObjectConnection(startObjectId, connectionId);
+      registerObjectConnection(endObjectId, connectionId);
+      registerConnectedPair(startObjectId, endObjectId, connectionId);
 
       // Update local state immediately for clickability
       setConnections((prev) => [...prev, newConnection]);
@@ -1107,56 +1175,55 @@ const App = () => {
 
         if (!startObject || !endObject) return conn;
 
-        // Create indicators with current object data
-        const startIndicator = {
-          type: conn.start.type,
-          face: conn.start.face,
-          faceCenter: conn.start.faceCenter,
-          cube: {
-            ...conn.start.cube,
-            position: startObject.position,
-            scale: startObject.scale || [1, 1, 1],
-          },
-          objectId: conn.start.objectId,
-        };
+        // Create a new connection object to avoid mutating the original
+        const updatedConn = { ...conn };
 
-        const endIndicator = {
-          type: conn.end.type,
-          face: conn.end.face,
-          faceCenter: conn.end.faceCenter,
-          cube: {
-            ...conn.end.cube,
-            position: endObject.position,
-            scale: endObject.scale || [1, 1, 1],
-          },
-          objectId: conn.end.objectId,
-        };
+        // CRITICAL FIX: Handle text objects differently
+        if (startObject.type === 'text') {
+          // Preserve the exact indicator position - DO NOT RECALCULATE for text objects
+          if (conn.start.worldPosition || conn.start.position) {
+            // Keep existing indicator position if available
+            return updatedConn;
+          }
+        }
 
-        // Calculate updated positions
-        const newStartPos = calculateFacePosition(startIndicator);
-        const newEndPos = calculateFacePosition(endIndicator);
+        if (endObject.type === 'text') {
+          // Same for end position - preserve existing indicator position
+          if (conn.end.worldPosition || conn.end.position) {
+            return updatedConn;
+          }
+        }
 
-        return {
-          ...conn,
-          start: {
-            ...conn.start,
-            position: newStartPos,
+        // Only calculate new positions for non-text objects or if no position exists
+        if (!startObject.type || startObject.type !== 'text') {
+          updatedConn.start.position = calculateFacePosition({
+            type: conn.start.type,
+            face: conn.start.face,
+            faceCenter: conn.start.faceCenter,
             cube: {
               ...conn.start.cube,
               position: startObject.position,
-              scale: startObject.scale,
+              scale: startObject.scale || [1, 1, 1],
             },
-          },
-          end: {
-            ...conn.end,
-            position: newEndPos,
+            objectId: conn.start.objectId,
+          });
+        }
+
+        if (!endObject.type || endObject.type !== 'text') {
+          updatedConn.end.position = calculateFacePosition({
+            type: conn.end.type,
+            face: conn.end.face,
+            faceCenter: conn.end.faceCenter,
             cube: {
               ...conn.end.cube,
               position: endObject.position,
-              scale: endObject.scale,
+              scale: endObject.scale || [1, 1, 1],
             },
-          },
-        };
+            objectId: conn.end.objectId,
+          });
+        }
+
+        return updatedConn;
       });
     },
     [calculateFacePosition]

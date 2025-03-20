@@ -39,72 +39,53 @@ const ensureValidPosition = (pos, fallback = [0, 0, 0]) => {
   return fallback;
 };
 
-// Improve the position calculation for text objects
+// Improve the position calculation for text objects by honoring position locks
 const calculateTextObjectPosition = (conn, isStart) => {
   const endpoint = isStart ? conn.start : conn.end;
 
   // If we don't have proper references, can't calculate
   if (!endpoint || !endpoint.objectId) return [0, 0, 0];
 
+  // If position is locked by TextObject component, ALWAYS respect it
+  if (endpoint._textPositionLocked) {
+    return endpoint.position || endpoint.worldPosition || [0, 0, 0];
+  }
+
   // Skip updating if the text object is currently being edited
   if (endpoint.plane?.userData?.isTextEditing) {
-    // Return the current position to prevent changes during editing
-    return endpoint.position || [0, 0, 0];
+    return endpoint.worldPosition || endpoint.position;
   }
 
-  // FIRST PRIORITY: Check for directly stored indicator position
-  if (endpoint.plane?.userData?.indicatorPosition) {
-    const pos = endpoint.plane.userData.indicatorPosition;
-    if (
-      Array.isArray(pos) &&
-      pos.length === 3 &&
-      (pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0)
-    ) {
-      return pos;
-    }
+  // SIMPLIFIED PRIORITY ORDER - no fallbacks to default positions
+
+  // First priority: worldPosition from the connection itself
+  if (Array.isArray(endpoint.worldPosition)) {
+    return endpoint.worldPosition;
   }
 
-  // SECOND PRIORITY: Get the current position from the connection
-  const currentPos = endpoint.position || [0, 0, 0];
-  if (
-    currentPos &&
-    (currentPos[0] !== 0 || currentPos[1] !== 0 || currentPos[2] !== 0)
-  ) {
-    return currentPos;
+  // Second priority: indicatorPosition from plane.userData
+  if (Array.isArray(endpoint.plane?.userData?.indicatorPosition)) {
+    return endpoint.plane.userData.indicatorPosition;
   }
 
-  // THIRD PRIORITY: Calculate from world position + offset
-  if (endpoint.plane?.userData?.lastWorldPosition) {
-    const pos = endpoint.plane.userData.lastWorldPosition;
-    const offset = endpoint.plane.userData.indicatorOffset ||
-      endpoint.offset || [0, -5, 0];
-    const scale = endpoint.plane.userData.lastScale ||
-      endpoint.scale || [1, 1, 1];
-
-    // Apply offset correctly based on scale
-    return [pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2]];
+  // Third priority: indicatorPosition from cube.userData
+  if (Array.isArray(endpoint.cube?.userData?.indicatorPosition)) {
+    return endpoint.cube.userData.indicatorPosition;
   }
 
-  // FOURTH PRIORITY: Try to get live position
-  if (endpoint.plane) {
-    try {
-      const position = new THREE.Vector3();
-      endpoint.plane.getWorldPosition(position);
-
-      // Get the most accurate scale available
-      const scale = endpoint.scale || [1, 1, 1];
-      const verticalOffset = -5 * scale[1];
-
-      return [position.x, position.y + verticalOffset, position.z];
-    } catch (e) {
-      console.error('Error getting text object position:', e);
-    }
+  // Fourth priority: explicit position in the connection
+  if (Array.isArray(endpoint.position)) {
+    return endpoint.position;
   }
 
-  // Last resort - use the calculate face position or fallback
-  return calculateFacePosition
-    ? calculateFacePosition(endpoint)
-    : endpoint.position || [0, 0, 0];
+  // If we get here, we have no valid position data - log warning
+  console.warn(
+    'No valid indicator position found for text object',
+    endpoint.objectId
+  );
+
+  // Return last stored position or zero vector as absolute last resort
+  return [0, 0, 0];
 };
 
 const ConnectionUpdater = ({
@@ -185,13 +166,35 @@ const ConnectionUpdater = ({
           lastTextUpdateTime.current[conn.id] = now;
         }
 
+        // IMPORTANT: Don't update positions for connections with locked text positions
+        const isTextLocked =
+          (conn.start?._textPositionLocked && conn.start.type === 'text') ||
+          (conn.end?._textPositionLocked && conn.end.type === 'text');
+
+        if (isTextLocked) {
+          // Just do dash animation but don't change positions
+          if (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') {
+            let newDashOffset = conn.dashOffset || 0;
+            if (conn.dashDirection === 'left') {
+              newDashOffset = newDashOffset - delta * 2;
+            } else if (conn.dashDirection === 'right') {
+              newDashOffset = newDashOffset + delta * 2;
+            }
+            return {
+              ...conn,
+              dashOffset: newDashOffset,
+            };
+          }
+          return conn; // No changes needed
+        }
+
         try {
           // For 'text' type indicators, be more careful with position updates
           let newStartPos, newEndPos;
           let positionsUpdated = false;
 
           if (conn.start.type === 'text') {
-            // Use our special text object position calculation
+            // Use our specialized text object position calculation
             newStartPos = calculateTextObjectPosition(conn, true);
 
             // Only count as updated if position actually changed
@@ -210,7 +213,7 @@ const ConnectionUpdater = ({
           }
 
           if (conn.end.type === 'text') {
-            // Use our special text object position calculation
+            // Use our specialized text object position calculation
             newEndPos = calculateTextObjectPosition(conn, false);
 
             if (!arraysEqual(conn.end.position, newEndPos)) {
