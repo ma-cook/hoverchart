@@ -53,7 +53,7 @@ const TextSprite = ({
 
   // Add throttling mechanism
   const updateThrottleRef = useRef(false);
-  const throttleDelayRef = useRef(200); // Increased from 100ms
+  const throttleDelayRef = useRef(100); // Reduced from 200ms
 
   // Add tracking for parent text editing state
   const parentEditingRef = useRef(false);
@@ -162,7 +162,7 @@ const TextSprite = ({
       setIsDragging(true);
 
       // Increase throttling during dragging
-      throttleDelayRef.current = 200;
+      throttleDelayRef.current = 150; // Less aggressive throttling
     }
 
     // Set timeout to detect end of dragging
@@ -181,7 +181,7 @@ const TextSprite = ({
           textRef.current.position.copy(smoothedPositionRef.current);
         }
       }
-    }, 200);
+    }, 100); // Detect drag end sooner
 
     return () => {
       if (dragTimeoutRef.current) {
@@ -246,8 +246,23 @@ const TextSprite = ({
             )
           : calculatedPosition;
 
-        // Determine smoothing factor based on dragging state
-        const smoothingFactor = isDragging ? 0.05 : 0.2;
+        // Determine smoothing factor based on context
+        // Much faster updates for connection texts - this is the key fix!
+        // Check if this is a connection line text by looking at style
+        const isConnectionText =
+          pathPoints &&
+          pathPoints.length > 0 &&
+          (lineStyle === 'curved' ||
+            lineStyle === 'straight' ||
+            lineStyle === 'dotted' ||
+            lineStyle === 'dashed');
+
+        // Use much faster smoothing for connection texts
+        const smoothingFactor = isConnectionText
+          ? 0.5 // 50% update per frame for connection texts
+          : isDragging
+          ? 0.2 // 20% update per frame during drag
+          : 0.3; // 30% update per frame for normal texts
 
         // Calculate smoothed position with lerp
         smoothedPositionRef.current = lerpVector(
@@ -266,30 +281,8 @@ const TextSprite = ({
       }
 
       if (style.isFaceText && normal) {
-        // Get parent's world scale for size compensation
-        const worldScale = new THREE.Vector3();
-        textRef.current.parent?.getWorldScale(worldScale);
-
-        // Calculate inverse scale with a more reliable approach
-        const inverseScale = new THREE.Vector3(
-          1 / Math.max(0.0001, worldScale.x),
-          1 / Math.max(0.0001, worldScale.y),
-          1 / Math.max(0.0001, worldScale.z)
-        );
-
-        // Apply inverse scale to keep text size consistent
-        textRef.current.scale.copy(inverseScale);
-
-        // Compute world-space normal from the provided face normal
-        const worldNormal = new THREE.Vector3(...normal);
-        if (textRef.current.parent) {
-          const rotationMatrix = new THREE.Matrix4();
-          textRef.current.parent.updateWorldMatrix(true, false);
-          rotationMatrix.extractRotation(textRef.current.parent.matrixWorld);
-          worldNormal.applyMatrix4(rotationMatrix);
-        }
-
-        // Get text's world position and calculate view direction
+        // For face text, update visibility based on face orientation to camera
+        const worldNormal = new THREE.Vector3(...normal).normalize();
         const textWorldPos = new THREE.Vector3();
         textRef.current.getWorldPosition(textWorldPos);
         const viewDir = textWorldPos.clone().sub(camera.position).normalize();
@@ -350,61 +343,43 @@ const TextSprite = ({
           } else if (style.isHeaderText) {
             const cubeHeight = 10 * targetScale.y;
             const distanceToCamera = camera.position.distanceTo(targetPos);
-            const fontSize = getFontSize(style.fontSize);
+            const targetY = targetPos.y + cubeHeight / 2 + TEXT_HEIGHT;
+            const scale = distanceToCamera * ZOOM_OFFSET_FACTOR;
 
-            // Different offset based on shape type
-            const baseOffset = style.isDodecahedronHeader
-              ? 8 * targetScale.y // Keep dodecahedron header high
-              : 4 * targetScale.y; // Lower offset for cube header
-            const textOffset = fontSize * 0.5;
+            const adjustedY = targetY + scale + MIN_CUBE_DISTANCE;
 
-            textRef.current.position.set(
-              targetPos.x,
-              targetPos.y + cubeHeight / 2 + baseOffset + textOffset,
-              targetPos.z
-            );
+            let baseScale = 1.0;
+            if (style.fixedSize) {
+              baseScale = style.fontSize || 1.0;
+            } else {
+              baseScale = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 1.5);
+            }
 
-            // Scale text based on distance but with tighter bounds
-            const minScale = 0.8;
-            const maxScale = 10;
-            const baseScale = distanceToCamera * 0.008; // Reduced factor for more subtle scaling
-            const scaleFactor = Math.min(
-              Math.max(baseScale, minScale),
-              maxScale
-            );
-
-            textRef.current.scale.set(scaleFactor, scaleFactor, scaleFactor);
-          } else {
-            // Calculate base heights and distances without scale influence
-            const cubeHeight = 10; // Remove scale influence
-            const topEdgeOffset = cubeHeight / 5;
-            const fontSize = getFontSize(style.fontSize);
-            const scaledTextHeight =
-              fontSize * TEXT_HEIGHT * (style.underline ? 1.2 : 1);
-            const scaledMinDistance = Math.max(
-              MINIMUM_DISTANCE, // Remove scale factor for minimum distance
-              MIN_CUBE_DISTANCE
-            );
-
-            // Calculate camera-dependent offset without scale influence
+            textRef.current.position.set(targetPos.x, adjustedY, targetPos.z);
+            textRef.current.scale.set(baseScale, baseScale, baseScale);
+            textRef.current.quaternion.copy(camera.quaternion);
+          } else if (style.isDodecahedronHeader) {
+            // Similar to cube, but with different positioning logic
             const distanceToCamera = camera.position.distanceTo(targetPos);
-            const zoomOffset = distanceToCamera * ZOOM_OFFSET_FACTOR;
-
-            // Update position but maintain constant text size
-            textRef.current.position.set(
-              targetPos.x,
-              targetPos.y +
-                topEdgeOffset +
-                scaledMinDistance +
-                scaledTextHeight +
-                zoomOffset,
-              targetPos.z
+            const targetY = targetPos.y + 15;
+            const scale = distanceToCamera * ZOOM_OFFSET_FACTOR;
+            const adjustedY = targetY + scale;
+            const baseScale = Math.min(
+              Math.max(distanceToCamera * 0.01, 0.5),
+              1.5
             );
 
-            // Use constant scale for fixed size text
+            textRef.current.position.set(targetPos.x, adjustedY, targetPos.z);
+            textRef.current.scale.set(baseScale, baseScale, baseScale);
+            textRef.current.quaternion.copy(camera.quaternion);
+          } else {
+            // For regular following text
             const baseScale = style.fixedSize
-              ? 1
-              : Math.max(distanceToCamera * 0.02, 1);
+              ? style.fontSize || 1.0
+              : Math.min(
+                  Math.max(camera.position.distanceTo(targetPos) * 0.01, 0.5),
+                  1.5
+                );
             textRef.current.scale.set(baseScale, baseScale, baseScale);
           }
           if (billboard) {
@@ -427,8 +402,6 @@ const TextSprite = ({
 
   // Modify the line style change effect to use smoothing as well
   useEffect(() => {
-    if (!textRef.current) return;
-
     // Skip excessive logging
     if (Math.random() < 0.01) {
       // Reduced to 1% of changes
@@ -472,9 +445,18 @@ const TextSprite = ({
           pathPoints[midIdx].z
         );
 
-        // Apply smooth transition
-        smoothedPositionRef.current = targetPos.clone();
-      }, 100);
+        // Apply smooth transition - directly set position for immediate feedback
+        // This makes position changes more responsive for connection texts
+        if (smoothedPositionRef.current) {
+          // For path point changes, use a faster transition (60% per frame)
+          smoothedPositionRef.current.lerp(targetPos, 0.6);
+        } else {
+          smoothedPositionRef.current = targetPos.clone();
+        }
+
+        // Apply the position immediately
+        textRef.current.position.copy(smoothedPositionRef.current);
+      }, 50); // Reduced from 100ms
 
       return () => clearTimeout(timeoutId);
     }
