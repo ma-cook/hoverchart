@@ -12,7 +12,6 @@ import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
-import debounce from 'lodash/debounce';
 
 const TextObject = ({
   id,

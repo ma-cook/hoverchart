@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { recordFrameTime, recordStateUpdate } from '../utils/debugUtils';
 
@@ -12,7 +12,7 @@ const arraysEqual = (a, b) => {
 };
 
 /**
- * ConnectionUpdater - Updates connection positions and animations
+ * ConnectionUpdater - Updates connection positions and animations with optimized performance
  */
 const ConnectionUpdater = ({
   connections,
@@ -21,273 +21,262 @@ const ConnectionUpdater = ({
   transformingObjects,
 }) => {
   const frameCount = useRef(0);
-  const FRAMES_TO_SKIP = 6; // Increased to reduce CPU usage
+  const FRAMES_TO_SKIP = 1; // Always update every frame for animations
   const lastPositions = useRef({});
-  const ANIMATION_SPEED = 15; // Keep moderate speed
+  const ANIMATION_SPEED = 10; // Slightly increased for smoother animation
   const animationRequestRef = useRef();
-  const lastUpdateTime = useRef(Date.now());
-  const lastStyleChanges = useRef(new Map()); // Track recent style changes
-  const positionUpdateDebounceRef = useRef(new Map()); // Debounce position updates
 
+  const lastUpdateTime = useRef(Date.now());
+  const lastStyleChanges = useRef(new Map());
+  const positionUpdateDebounceRef = useRef(new Map());
+
+  // Use a ref to track connections pending updates to batch them
+  const pendingAnimationUpdates = useRef(new Map());
+  const pendingPositionUpdates = useRef(new Map());
+
+  // Used to track whether we need to trigger a render
+  const needsUpdate = useRef(false);
+
+  // Store current dash offsets to interpolate between frames
+  const currentDashOffsets = useRef(new Map());
+
+  // Separate animation loop for dash animations with proper timing
+  useEffect(() => {
+    // Initialize current values from existing connections
+    connections.forEach((conn) => {
+      if (conn.dashOffset !== undefined) {
+        currentDashOffsets.current.set(conn.id, conn.dashOffset);
+      }
+    });
+
+    // Use high-resolution timing for smooth animations
+    let previousTimestamp = performance.now();
+
+    const animateDashOffset = (timestamp) => {
+      // Calculate precise delta time in seconds (with millisecond precision)
+      const deltaTime = (timestamp - previousTimestamp) / 1000;
+      previousTimestamp = timestamp;
+
+      // Skip if delta time is unreasonably large (e.g. after tab was inactive)
+      if (deltaTime > 0.1) {
+        animationRequestRef.current = requestAnimationFrame(animateDashOffset);
+        return;
+      }
+
+      // Only update if we have connections
+      if (connections && connections.length > 0) {
+        // Find all connections that need animation
+        connections.forEach((conn) => {
+          if (
+            (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
+            (conn.dashDirection === 'left' || conn.dashDirection === 'right')
+          ) {
+            // Get current dash offset value (or initialize it)
+            const currentOffset =
+              currentDashOffsets.current.get(conn.id) || conn.dashOffset || 0;
+
+            // Calculate animation step with precise delta time for consistent speed
+            const animationStep = deltaTime * ANIMATION_SPEED;
+
+            // Calculate new offset with direction
+            let newDashOffset;
+            if (conn.dashDirection === 'left') {
+              newDashOffset = (currentOffset - animationStep) % 1000;
+              if (newDashOffset < 0) newDashOffset += 1000; // Keep positive for consistency
+            } else {
+              newDashOffset = (currentOffset + animationStep) % 1000;
+            }
+
+            // Update the current value in our ref for smooth interpolation
+            currentDashOffsets.current.set(conn.id, newDashOffset);
+
+            // Queue update to React state, but only at certain intervals
+            pendingAnimationUpdates.current.set(conn.id, {
+              id: conn.id,
+              dashOffset: newDashOffset,
+            });
+
+            needsUpdate.current = true;
+          }
+        });
+      }
+
+      // Apply batched updates every 16ms (~60fps) for smooth animation
+      // while preventing too many React state updates
+      const now = performance.now();
+      if (needsUpdate.current && now - lastUpdateTime.current > 16.67) {
+        applyBatchedUpdates();
+        lastUpdateTime.current = now;
+      }
+
+      animationRequestRef.current = requestAnimationFrame(animateDashOffset);
+    };
+
+    animationRequestRef.current = requestAnimationFrame(animateDashOffset);
+
+    return () => {
+      if (animationRequestRef.current) {
+        cancelAnimationFrame(animationRequestRef.current);
+      }
+    };
+  }, [connections]);
+
+  // Apply all pending updates in a single React state update - optimized for minimal re-renders
+  const applyBatchedUpdates = () => {
+    if (!needsUpdate.current) return;
+
+    recordStateUpdate();
+
+    setConnections((current) => {
+      // Create a new array only if we have changes to make
+      if (
+        pendingAnimationUpdates.current.size === 0 &&
+        pendingPositionUpdates.current.size === 0
+      ) {
+        return current;
+      }
+
+      // Apply all pending updates in one pass
+      return current.map((conn) => {
+        const animUpdate = pendingAnimationUpdates.current.get(conn.id);
+        const posUpdate = pendingPositionUpdates.current.get(conn.id);
+
+        if (!animUpdate && !posUpdate) return conn;
+
+        // Create a new connection object only if needed to avoid unnecessary re-renders
+        const result = { ...conn };
+
+        // Apply animation updates (dash offset) with interpolation for smoothness
+        if (animUpdate) {
+          result.dashOffset = animUpdate.dashOffset;
+        }
+
+        // Apply position updates
+        if (posUpdate && !conn._transformLocked) {
+          // Skip position updates for locked or recently moved connections
+          if (
+            !conn._isDragging ||
+            !conn._moveTimestamp ||
+            Date.now() - conn._moveTimestamp > 500
+          ) {
+            if (posUpdate.start)
+              result.start = { ...conn.start, position: posUpdate.start };
+            if (posUpdate.end)
+              result.end = { ...conn.end, position: posUpdate.end };
+
+            // Clear dragging flags
+            delete result._isDragging;
+            delete result._moveTimestamp;
+          }
+        }
+
+        return result;
+      });
+    });
+
+    // Clear pending updates
+    pendingAnimationUpdates.current.clear();
+    pendingPositionUpdates.current.clear();
+    needsUpdate.current = false;
+  };
+
+  // Handle position updates on a different timing than animations
   useFrame((state, delta) => {
     frameCount.current += 1;
     recordFrameTime(delta * 1000);
 
+    // Only process position updates every few frames
     if (frameCount.current % FRAMES_TO_SKIP !== 0) return;
 
+    // Skip during active transformations - prevents visual jitter
+    if (transformingObjects.current.size > 0) return;
+
     const now = Date.now();
-    const timeSinceLastUpdate = now - lastUpdateTime.current;
 
-    // Determine update interval based on active transformations
-    const hasActiveTransforms = transformingObjects.current.size > 0;
-    const updateInterval = hasActiveTransforms ? 50 : 100;
-
-    if (timeSinceLastUpdate < updateInterval) return;
-
-    // Handle animations differently during active transformations
-    if (hasActiveTransforms) {
-      // During transforms, only update animations for non-attached connections
-      updateAnimationsOnly(connections, delta, now);
-      return;
-    }
-
-    // Process all connections during normal operation
+    // Process connections for position updates
     if (connections.length > 0) {
-      processConnections(connections, now, delta);
+      processPositionUpdates(connections, now);
     }
   });
 
-  // Update only dash animations during transforms
-  const updateAnimationsOnly = (connections, delta, now) => {
-    const animatedConnections = connections.filter(
-      (conn) =>
-        // Skip connections that are transform-locked
-        !conn._transformLocked &&
-        (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
-        (conn.dashDirection === 'left' || conn.dashDirection === 'right')
-    );
-
-    if (animatedConnections.length === 0) return;
-
-    const updatedConnections = animatedConnections.map((conn) => {
-      let newDashOffset = conn.dashOffset || 0;
-      const animationStep = delta * ANIMATION_SPEED;
-
-      if (conn.dashDirection === 'left') {
-        newDashOffset = (newDashOffset - animationStep) % 1000;
-      } else if (conn.dashDirection === 'right') {
-        newDashOffset = (newDashOffset + animationStep) % 1000;
-      }
-
-      return {
-        ...conn,
-        dashOffset: newDashOffset,
-      };
-    });
-
-    setConnections((current) => {
-      return current.map((conn) => {
-        const updated = updatedConnections.find((u) => u.id === conn.id);
-        if (updated) {
-          return { ...conn, dashOffset: updated.dashOffset };
-        }
-        return conn;
-      });
-    });
-
-    lastUpdateTime.current = now;
-  };
-
-  // Process connections - both positions and animations
-  const processConnections = (connections, now, delta) => {
+  // Process position updates separately from animations
+  const processPositionUpdates = (connections, now) => {
     let hasChanges = false;
-    const animatedConnIds = new Set();
-    const styleChangedConnIds = new Set();
-    const positionChangedConnIds = new Set();
 
-    // First identify connections with recent style changes
     connections.forEach((conn) => {
-      if (conn._lastStyleUpdate && now - conn._lastStyleUpdate < 3000) {
-        styleChangedConnIds.add(conn.id);
-        lastStyleChanges.current.set(conn.id, conn._lastStyleUpdate);
-      }
-
-      // Identify connections that need immediate position update
-      if (conn._needsUpdate || conn._positionFromMove) {
-        positionChangedConnIds.add(conn.id);
-      }
-    });
-
-    // Clean up old style changes
-    Array.from(lastStyleChanges.current.entries()).forEach(
-      ([id, timestamp]) => {
-        if (now - timestamp > 3000) {
-          lastStyleChanges.current.delete(id);
-        }
-      }
-    );
-
-    // Process each connection
-    const updatedConnections = connections.map((conn) => {
-      // Skip locked connections or those being actively dragged (recent movement)
-      if (conn._transformLocked) {
-        return conn;
-      }
-
-      // For connections that were just moved, preserve their position and just continue animation
+      // Skip locked connections or those being actively dragged
       if (
-        conn._isDragging &&
-        conn._moveTimestamp &&
-        now - conn._moveTimestamp < 200
+        conn._transformLocked ||
+        (conn._isDragging &&
+          conn._moveTimestamp &&
+          now - conn._moveTimestamp < 200)
       ) {
-        // Just update animation if needed
-        if (
-          (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
-          (conn.dashDirection === 'left' || conn.dashDirection === 'right')
-        ) {
-          hasChanges = true;
-          let newDashOffset = conn.dashOffset || 0;
-          const animationStep = delta * ANIMATION_SPEED;
-
-          if (conn.dashDirection === 'left') {
-            newDashOffset = (newDashOffset - animationStep) % 1000;
-          } else if (conn.dashDirection === 'right') {
-            newDashOffset = (newDashOffset + animationStep) % 1000;
-          }
-
-          return { ...conn, dashOffset: newDashOffset };
-        }
-        return conn;
+        return;
       }
 
       // Check if this connection should have position updates debounced
       const lastPositionUpdate =
         positionUpdateDebounceRef.current.get(conn.id) || 0;
       const shouldDebouncePosition =
-        now - lastPositionUpdate < 500 && !positionChangedConnIds.has(conn.id);
+        now - lastPositionUpdate < 500 && !conn._needsUpdate;
 
-      // Always recalculate positions unless debounced
-      let newStartPos = shouldDebouncePosition
-        ? conn.start.position
-        : calculateFacePosition(conn.start);
-      let newEndPos = shouldDebouncePosition
-        ? conn.end.position
-        : calculateFacePosition(conn.end);
+      if (shouldDebouncePosition) return;
+
+      // Calculate new positions
+      const newStartPos = calculateFacePosition(conn.start);
+      const newEndPos = calculateFacePosition(conn.end);
 
       const startKey = `${conn.id}-start`;
       const endKey = `${conn.id}-end`;
 
       // Check if positions actually changed
       const startChanged =
-        !shouldDebouncePosition &&
-        (!lastPositions.current[startKey] ||
-          !arraysEqual(lastPositions.current[startKey], newStartPos));
+        !lastPositions.current[startKey] ||
+        !arraysEqual(lastPositions.current[startKey], newStartPos);
 
       const endChanged =
-        !shouldDebouncePosition &&
-        (!lastPositions.current[endKey] ||
-          !arraysEqual(lastPositions.current[endKey], newEndPos));
+        !lastPositions.current[endKey] ||
+        !arraysEqual(lastPositions.current[endKey], newEndPos);
 
-      if (startChanged || endChanged || styleChangedConnIds.has(conn.id)) {
+      if (startChanged || endChanged) {
         hasChanges = true;
+        needsUpdate.current = true;
 
         // Store positions for next comparison
         if (startChanged) {
           lastPositions.current[startKey] = [...newStartPos];
           positionUpdateDebounceRef.current.set(conn.id, now);
-        }
-        if (endChanged) {
-          lastPositions.current[endKey] = [...newEndPos];
-          positionUpdateDebounceRef.current.set(conn.id, now);
-        }
-      }
 
-      // Check if animation is needed
-      const needsAnimation =
-        (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
-        (conn.dashDirection === 'left' || conn.dashDirection === 'right');
-
-      // Create the updated connection object
-      const updatedConn = { ...conn };
-
-      // Clear any one-time flags
-      delete updatedConn._needsUpdate;
-      delete updatedConn._positionFromMove;
-
-      // Update positions if changed and not dragging
-      if ((startChanged || endChanged) && !conn._isDragging) {
-        updatedConn.start = { ...conn.start, position: newStartPos };
-        updatedConn.end = { ...conn.end, position: newEndPos };
-
-        // Clear dragging flags if they exist
-        delete updatedConn._isDragging;
-        delete updatedConn._moveTimestamp;
-      }
-
-      // Update dash animation if needed
-      if (needsAnimation) {
-        animatedConnIds.add(conn.id);
-        hasChanges = true;
-
-        // Calculate new dash offset
-        let newDashOffset = conn.dashOffset || 0;
-        const animationStep = delta * ANIMATION_SPEED;
-
-        if (conn.dashDirection === 'left') {
-          newDashOffset = (newDashOffset - animationStep) % 1000;
-        } else if (conn.dashDirection === 'right') {
-          newDashOffset = (newDashOffset + animationStep) % 1000;
-        }
-
-        updatedConn.dashOffset = newDashOffset;
-      }
-
-      return updatedConn;
-    });
-
-    // Only update state if something changed
-    if (hasChanges) {
-      recordStateUpdate();
-
-      setConnections((current) => {
-        // Handle if connections array changed while calculating
-        if (current.length !== connections.length) {
-          const updatedConnMap = new Map(
-            updatedConnections.map((c) => [c.id, c])
-          );
-
-          return current.map((conn) => {
-            const updatedConn = updatedConnMap.get(conn.id);
-            if (!updatedConn) return conn;
-
-            // Skip position updates for locked or recently moved connections
-            if (
-              conn._transformLocked ||
-              (conn._isDragging &&
-                conn._moveTimestamp &&
-                now - conn._moveTimestamp < 500)
-            ) {
-              return {
-                ...conn,
-                dashOffset: updatedConn.dashOffset || conn.dashOffset,
-              };
-            }
-
-            // For all other connections, apply full updates
-            return {
-              ...conn,
-              dashOffset: updatedConn.dashOffset || conn.dashOffset,
-              start: updatedConn.start || conn.start,
-              end: updatedConn.end || conn.end,
-              _isDragging: updatedConn._isDragging,
-              _moveTimestamp: updatedConn._moveTimestamp,
-            };
+          // Queue position update
+          const existing = pendingPositionUpdates.current.get(conn.id) || {};
+          pendingPositionUpdates.current.set(conn.id, {
+            ...existing,
+            id: conn.id,
+            start: newStartPos,
           });
         }
 
-        return updatedConnections;
-      });
+        if (endChanged) {
+          lastPositions.current[endKey] = [...newEndPos];
+          positionUpdateDebounceRef.current.set(conn.id, now);
 
+          // Queue position update
+          const existing = pendingPositionUpdates.current.get(conn.id) || {};
+          pendingPositionUpdates.current.set(conn.id, {
+            ...existing,
+            id: conn.id,
+            end: newEndPos,
+          });
+        }
+      }
+    });
+
+    // Apply updates if time elapsed or we have significant changes
+    if (
+      (hasChanges && pendingPositionUpdates.current.size > 2) ||
+      now - lastUpdateTime.current > 100
+    ) {
+      applyBatchedUpdates();
       lastUpdateTime.current = now;
     }
   };

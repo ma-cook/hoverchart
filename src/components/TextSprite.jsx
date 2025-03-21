@@ -213,7 +213,6 @@ const TextSprite = ({
     }
   }, [isDragging]);
 
-  const MINIMUM_DISTANCE = 1; // Minimum distance from cube top
   const TEXT_HEIGHT = 0.7; // Approximate height of largest text
   const ZOOM_OFFSET_FACTOR = 0.05; // Controls how much text moves up when zooming out
   const MIN_CUBE_DISTANCE = 2; // Minimum distance from cube top

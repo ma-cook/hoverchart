@@ -32,57 +32,63 @@ const ConnectionsRenderer = ({
   return (
     <>
       {connections.map((connection) => {
-        const startPosition = connection.start?.position || [0, 0, 0];
-        const endPosition = connection.end?.position || [0, 0, 0];
-        const midpoint = calculateMidpoint(startPosition, endPosition);
+        // Optimize connection rendering with useMemo
+        const renderData = useMemo(() => {
+          const startPosition = connection.start?.position || [0, 0, 0];
+          const endPosition = connection.end?.position || [0, 0, 0];
+          const midpoint = calculateMidpoint(startPosition, endPosition);
 
-        // Calculate intersections and path points
-        const intersections = checkLineIntersection(
-          startPosition,
-          endPosition,
-          objects.filter(
-            (obj) =>
-              obj.id.toString() !== connection.start?.objectId &&
-              obj.id.toString() !== connection.end?.objectId
-          )
-        );
-
-        // Generate path (curved if needed)
-        const pathPoints =
-          connection._pathPoints ||
-          generateCurvedPath(
+          // Calculate intersections and path points
+          const intersections = checkLineIntersection(
             startPosition,
             endPosition,
-            intersections,
-            connection.start?.objectId,
-            connection.end?.objectId,
-            connection.lineStyle === 'curved'
+            objects.filter(
+              (obj) =>
+                obj.id.toString() !== connection.start?.objectId &&
+                obj.id.toString() !== connection.end?.objectId
+            )
           );
 
-        // Determine connection text
-        const connectionText =
-          connection.text || lineTexts[connection.id] || '';
+          // Generate path (curved if needed)
+          const pathPoints =
+            connection._pathPoints ||
+            generateCurvedPath(
+              startPosition,
+              endPosition,
+              intersections,
+              connection.start?.objectId,
+              connection.end?.objectId,
+              connection.lineStyle === 'curved'
+            );
 
-        // Determine line style
-        const isCurvedPath = pathPoints.length > 2 && intersections.length > 0;
-        const effectiveLineStyle =
-          isCurvedPath || connection.lineStyle === 'curved'
-            ? 'curved'
-            : connection.lineStyle || 'straight';
+          // Determine line style
+          const isCurvedPath =
+            pathPoints.length > 2 && intersections.length > 0;
+          const effectiveLineStyle =
+            isCurvedPath || connection.lineStyle === 'curved'
+              ? 'curved'
+              : connection.lineStyle || 'straight';
 
-        // Calculate text position
-        let textPosition;
-        const defaultStraightLineOffset = 2;
-        const defaultCurvedLineOffset = 5;
+          // Calculate text position
+          let textPosition;
+          const defaultStraightLineOffset = 2;
+          const defaultCurvedLineOffset = 5;
 
-        if (pathPoints && pathPoints.length > 0) {
-          if (effectiveLineStyle === 'curved') {
-            const midIdx = Math.floor(pathPoints.length / 2);
-            textPosition = [
-              pathPoints[midIdx].x,
-              pathPoints[midIdx].y + defaultCurvedLineOffset,
-              pathPoints[midIdx].z,
-            ];
+          if (pathPoints && pathPoints.length > 0) {
+            if (effectiveLineStyle === 'curved') {
+              const midIdx = Math.floor(pathPoints.length / 2);
+              textPosition = [
+                pathPoints[midIdx].x,
+                pathPoints[midIdx].y + defaultCurvedLineOffset,
+                pathPoints[midIdx].z,
+              ];
+            } else {
+              textPosition = [
+                midpoint[0],
+                midpoint[1] + defaultStraightLineOffset,
+                midpoint[2],
+              ];
+            }
           } else {
             textPosition = [
               midpoint[0],
@@ -90,17 +96,37 @@ const ConnectionsRenderer = ({
               midpoint[2],
             ];
           }
-        } else {
-          textPosition = [
-            midpoint[0],
-            midpoint[1] + defaultStraightLineOffset,
-            midpoint[2],
-          ];
-        }
+
+          return {
+            startPosition,
+            endPosition,
+            midpoint,
+            pathPoints,
+            effectiveLineStyle,
+            textPosition,
+          };
+          // Add all dependencies that should trigger a re-render
+        }, [
+          connection.start?.position,
+          connection.end?.position,
+          connection._pathPoints,
+          connection.lineStyle,
+          connection.start?.objectId,
+          connection.end?.objectId,
+          // We intentionally exclude objects to prevent full recalculations
+        ]);
+
+        // Extract variables from memoized result
+        const { pathPoints, effectiveLineStyle, textPosition, midpoint } =
+          renderData;
+
+        // Determine connection text
+        const connectionText =
+          connection.text || lineTexts[connection.id] || '';
 
         return (
           <group key={connection.id}>
-            {/* Main visible line */}
+            {/* Main visible line with improved dash animation */}
             <Line
               points={pathPoints}
               color={
@@ -124,7 +150,7 @@ const ConnectionsRenderer = ({
               polygonOffsetFactor={-1}
               polygonOffsetUnits={-1}
               toneMapped={false}
-              resolution={2}
+              resolution={4} // Increased from 2 for smoother lines
             />
 
             {/* Clickable area */}
@@ -150,7 +176,7 @@ const ConnectionsRenderer = ({
               polygonOffsetUnits={-0.9}
             />
 
-            {/* Connection text */}
+            {/* Connection text with optimized key to reduce re-renders */}
             <TextSprite
               key={`text-${connection.id}-${
                 connection._lastStyleUpdate || 0

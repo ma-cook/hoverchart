@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-import { db } from './firebase';
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { EffectComposer, SMAA } from '@react-three/postprocessing';
@@ -42,7 +40,6 @@ const App = () => {
   // Base state
   const [backgroundColor] = useState('black');
   const cameraRef = useRef();
-  const transformingObjects = useRef(new Set());
   const intentionalSpaceChangeRef = useRef(false);
 
   // Object state that needs to be initialized first
@@ -60,15 +57,14 @@ const App = () => {
     connections,
     setConnections,
     lineTexts,
-    setLineTexts,
+
     selectedConnection,
     setSelectedConnection,
     showLineTextInput,
     setShowLineTextInput,
     showLineTextStyleUI,
     setShowLineTextStyleUI,
-    lineTextStyles,
-    setLineTextStyles,
+
     handleLineTextSubmit,
     handleLineTextStyleChange,
     handleLineColorChange,
@@ -85,7 +81,7 @@ const App = () => {
     handleObjectDelete,
     lastUpdateRef,
     draggingObjectsRef,
-    lastSavedRef,
+
     registerTransformingObject, // Get the transform function
     transformingObjectsRef, // Get the transform ref
     getTransformStartPosition, // Add this new property

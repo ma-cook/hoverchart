@@ -5,7 +5,7 @@ import React, {
   useState,
   useCallback,
 } from 'react';
-import { useFrame } from '@react-three/fiber';
+
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import FaceIndicator from './FaceIndicator';
