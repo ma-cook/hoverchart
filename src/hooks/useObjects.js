@@ -23,8 +23,12 @@ export function useObjects({
   const draggingObjectsRef = useRef(new Set());
   const lastSavedRef = useRef(null);
   const createdObjectIds = useRef(new Set()); // Track locally created object IDs
+  const transformingObjectsRef = useRef(new Set()); // Track objects being transformed
+  const transformPositionsRef = useRef(new Map()); // Track positions during transforms
+  const transformLockTimeRef = useRef(new Map()); // Track when transforms started
+  const positionHistoryRef = useRef(new Map()); // Track recent positions to prevent oscillation
 
-  // Save objects periodically
+  // Save objects periodically with transform prevention
   useEffect(() => {
     if (!user || !objects.length || !currentSpaceId) return;
 
@@ -34,8 +38,15 @@ export function useObjects({
       lastSavedRef.current = JSON.parse(JSON.stringify(objects));
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
 
+      // Only save objects that aren't currently being dragged or transformed
       objects.forEach((obj) => {
-        saveObject(spaceOwnerId, currentSpaceId, obj);
+        const objId = obj.id.toString();
+        if (
+          !draggingObjectsRef.current.has(objId) &&
+          !transformingObjectsRef.current.has(objId)
+        ) {
+          saveObject(spaceOwnerId, currentSpaceId, obj);
+        }
       });
     }, 1000);
 
@@ -240,6 +251,240 @@ export function useObjects({
     [user, currentSpaceId, selectedId, connections, setConnections]
   );
 
+  // Enhanced transform tracking with robust locking and position history
+  const registerTransformingObject = useCallback(
+    (id, isTransforming, position) => {
+      const objId = id?.toString();
+      if (!objId) return;
+
+      const now = Date.now();
+
+      if (isTransforming) {
+        // Mark as transforming
+        transformingObjectsRef.current.add(objId);
+
+        // Store current position to help resolve conflicts later
+        if (position) {
+          transformPositionsRef.current.set(objId, [...position]);
+          // Also store in position history to detect jitter oscillations
+          positionHistoryRef.current.set(objId, {
+            position: [...position],
+            timestamp: now,
+          });
+        } else {
+          // Find existing position from objects array
+          const obj = objects.find((o) => o.id.toString() === objId);
+          if (obj?.position) {
+            transformPositionsRef.current.set(objId, [...obj.position]);
+            positionHistoryRef.current.set(objId, {
+              position: [...obj.position],
+              timestamp: now,
+            });
+          }
+        }
+
+        // Store transform start time
+        transformLockTimeRef.current.set(objId, now);
+
+        // Block any db updates for this object AND its connected objects/lines
+        draggingObjectsRef.current.add(objId);
+
+        // Update connections to mark them as locked
+        if (connections && connections.length > 0) {
+          setConnections((prevConnections) => {
+            const updated = prevConnections.map((conn) => {
+              if (
+                conn.start?.objectId === objId ||
+                conn.end?.objectId === objId
+              ) {
+                return {
+                  ...conn,
+                  _transformLocked: true,
+                  _lockTime: now,
+                  _controlledBy: objId,
+                };
+              }
+              return conn;
+            });
+            return updated;
+          });
+        }
+
+        // Freeze object to prevent any subscription updates during transform
+        setObjects((prev) =>
+          prev.map((obj) => {
+            if (obj.id.toString() === objId) {
+              return {
+                ...obj,
+                _transformLocked: true,
+                _lockTime: now,
+                _positionLocked: true,
+              };
+            }
+            return obj;
+          })
+        );
+      } else {
+        // On transform end
+        const lockTime = transformLockTimeRef.current.get(objId) || 0;
+
+        // Keep transform locked briefly to prevent jitter
+        setTimeout(() => {
+          // Check if another transform hasn't started
+          if (transformLockTimeRef.current.get(objId) === lockTime) {
+            transformingObjectsRef.current.delete(objId);
+            transformLockTimeRef.current.delete(objId);
+
+            // Get final position before unlocking
+            const finalPosition = transformPositionsRef.current.get(objId);
+            transformPositionsRef.current.delete(objId);
+
+            // Save final position to position history to prevent jitter
+            if (finalPosition) {
+              positionHistoryRef.current.set(objId, {
+                position: [...finalPosition],
+                timestamp: now,
+                isFinal: true,
+              });
+            }
+
+            // Unlock connections
+            if (connections && connections.length > 0) {
+              setConnections((prevConnections) => {
+                return prevConnections.map((conn) => {
+                  if (conn._controlledBy === objId) {
+                    const newConn = { ...conn };
+                    delete newConn._transformLocked;
+                    delete newConn._lockTime;
+                    delete newConn._controlledBy;
+
+                    // Force connections to stay with the moved object
+                    if (conn.start?.objectId === objId && finalPosition) {
+                      // Recalculate start position based on new object position
+                      const startPos = calculateNewConnectionPosition(
+                        conn.start,
+                        finalPosition
+                      );
+                      if (startPos) {
+                        newConn.start.position = startPos;
+                        // Mark this as a confirmed position after transform
+                        newConn._positionConfirmed = now;
+                      }
+                    }
+
+                    if (conn.end?.objectId === objId && finalPosition) {
+                      // Recalculate end position based on new object position
+                      const endPos = calculateNewConnectionPosition(
+                        conn.end,
+                        finalPosition
+                      );
+                      if (endPos) {
+                        newConn.end.position = endPos;
+                        // Mark this as a confirmed position after transform
+                        newConn._positionConfirmed = now;
+                      }
+                    }
+
+                    return newConn;
+                  }
+                  return conn;
+                });
+              });
+            }
+
+            // Remove transform lock flag from object
+            setObjects((prev) =>
+              prev.map((obj) => {
+                if (obj.id.toString() === objId) {
+                  const newObj = { ...obj };
+                  delete newObj._transformLocked;
+                  delete newObj._lockTime;
+                  delete newObj._positionLocked;
+
+                  // Update position one final time if it changed
+                  if (
+                    finalPosition &&
+                    !isEqual(newObj.position, finalPosition)
+                  ) {
+                    newObj.position = [...finalPosition];
+                    newObj._positionConfirmed = now;
+                  }
+
+                  return newObj;
+                }
+                return obj;
+              })
+            );
+
+            // Extend dragging block slightly after transform ends
+            setTimeout(() => {
+              draggingObjectsRef.current.delete(objId);
+            }, 300);
+          }
+        }, 150);
+      }
+    },
+    [objects, setObjects, connections, setConnections]
+  );
+
+  // Helper function to calculate new connection position after object move
+  const calculateNewConnectionPosition = (connectionEnd, newObjectPosition) => {
+    if (!connectionEnd?.faceCenter) return null;
+
+    try {
+      // Re-calculate position based on new object position
+      const faceCenter = connectionEnd.faceCenter || [0, 0, 0];
+      const worldPos = new THREE.Vector3(...faceCenter);
+      const worldMatrix = new THREE.Matrix4()
+        .makeScale(...(connectionEnd.cube?.scale || [1, 1, 1]))
+        .setPosition(
+          newObjectPosition[0],
+          newObjectPosition[1],
+          newObjectPosition[2]
+        );
+      worldPos.applyMatrix4(worldMatrix);
+
+      // Return new position as array
+      return [worldPos.x, worldPos.y, worldPos.z];
+    } catch (err) {
+      console.error('Error calculating connection position:', err);
+      return null;
+    }
+  };
+
+  // Check if a received position update is likely jitter/oscillation
+  const isPositionJitter = useCallback((objId, newPosition) => {
+    const history = positionHistoryRef.current.get(objId);
+    if (!history) return false;
+
+    // If this position is very close to a recent confirmed position, it's likely jitter
+    const dist = history.position.reduce(
+      (acc, val, idx) => acc + Math.pow(val - newPosition[idx], 2),
+      0
+    );
+
+    // If squared distance is very small and the history is recent, consider it jitter
+    const isVeryClose = Math.sqrt(dist) < 0.05; // Threshold for "close enough"
+    const isRecentHistory = Date.now() - history.timestamp < 2000; // Within 2 seconds
+
+    return isVeryClose && isRecentHistory;
+  }, []);
+
+  // Expose the position jitter check function
+  const checkPositionJitter = useCallback(
+    (objId, newPosition) => {
+      return isPositionJitter(objId?.toString(), newPosition);
+    },
+    [isPositionJitter]
+  );
+
+  // Expose previous position for transform operations
+  const getTransformStartPosition = useCallback((id) => {
+    if (!id) return null;
+    const idStr = id.toString();
+    return transformPositionsRef.current.get(idStr);
+  }, []);
+
   return {
     selectedId,
     setSelectedId,
@@ -248,5 +493,9 @@ export function useObjects({
     lastUpdateRef,
     draggingObjectsRef,
     lastSavedRef,
+    registerTransformingObject, // Export this function
+    transformingObjectsRef, // Export this ref
+    getTransformStartPosition, // Add this new function
+    checkPositionJitter, // Export the jitter check function
   };
 }

@@ -41,6 +41,13 @@ export const handleFaceIndicatorClick = ({
   currentSpaceId,
   isConnectMode,
 }) => {
+  // Debug output to help diagnose issues
+  console.log('Face indicator clicked:', {
+    indicator,
+    selectedIndicatorsRef: selectedIndicatorsRef.current,
+    isConnectMode,
+  });
+
   // If not in connect mode, enter connect mode first
   if (!isConnectMode) {
     setIsConnectMode(true);
@@ -50,6 +57,7 @@ export const handleFaceIndicatorClick = ({
     // Store the first indicator
     selectedIndicatorsRef.current = [indicator];
     setSelectedIndicators([indicator]);
+    console.log('Entered connect mode with first indicator:', indicator);
     return {
       success: true,
       complete: false,
@@ -59,39 +67,58 @@ export const handleFaceIndicatorClick = ({
 
   if (selectedIndicatorsRef.current.length === 0) {
     // First indicator selection - store it in both state and ref
-    selectedIndicatorsRef.current.push(indicator);
+    selectedIndicatorsRef.current = [indicator];
     setSelectedIndicators([indicator]);
+    console.log('First indicator selected:', indicator);
     return {
       success: true,
       complete: false,
       message: 'First indicator selected',
     };
   } else {
-    // We have the first indicator, now create a connection with the second
+    // Extract necessary data from indicators with error checking
     const startIndicator = selectedIndicatorsRef.current[0];
 
-    // More robust ID extraction for text object indicators
-    const startIdStr = String(
-      startIndicator.cube?.id ||
-        startIndicator.id ||
-        startIndicator.objectId ||
-        startIndicator.cube?.userData?.objectId ||
-        (startIndicator.plane && startIndicator.plane.userData?.id)
-    );
+    // More robust ID extraction with fallbacks
+    const getIdFromIndicator = (ind) => {
+      if (!ind) return null;
+      return String(
+        ind.cube?.id ||
+          ind.id ||
+          ind.objectId ||
+          ind.cube?.userData?.id ||
+          (ind.plane && ind.plane.userData?.id)
+      );
+    };
 
-    const endIdStr = String(
-      indicator.cube?.id ||
-        indicator.id ||
-        indicator.objectId ||
-        indicator.cube?.userData?.objectId ||
-        (indicator.plane && indicator.plane.userData?.id)
-    );
+    const startIdStr = getIdFromIndicator(startIndicator);
+    const endIdStr = getIdFromIndicator(indicator);
+
+    if (!startIdStr || !endIdStr) {
+      console.error('Invalid indicator data:', { startIndicator, indicator });
+      // Reset selection state but stay in connect mode
+      selectedIndicatorsRef.current = [];
+      setSelectedIndicators([]);
+      return {
+        success: false,
+        complete: true,
+        message: 'Invalid indicator data',
+      };
+    }
+
+    console.log('Attempting connection from', startIdStr, 'to', endIdStr);
 
     // Check if connection already exists
     try {
       const connectionAlreadyExists = objectsAreConnected(startIdStr, endIdStr);
 
       if (connectionAlreadyExists) {
+        console.log(
+          'Connection already exists between',
+          startIdStr,
+          'and',
+          endIdStr
+        );
         // Reset selection state but stay in connect mode
         selectedIndicatorsRef.current = [];
         setSelectedIndicators([]);
@@ -103,33 +130,24 @@ export const handleFaceIndicatorClick = ({
       }
     } catch (error) {
       console.error('Error checking connection:', error);
-
-      // Fallback - check manually in connections array
-      const manualConnectionCheck = connections.some(
-        (conn) =>
-          (conn.start?.objectId === startIdStr &&
-            conn.end?.objectId === endIdStr) ||
-          (conn.start?.objectId === endIdStr &&
-            conn.end?.objectId === startIdStr)
-      );
-
-      if (manualConnectionCheck) {
-        selectedIndicatorsRef.current = [];
-        setSelectedIndicators([]);
-        return {
-          success: false,
-          complete: true,
-          message: 'Connection already exists (manual check)',
-        };
-      }
     }
 
     // Find objects using normalized string comparison
     const startObj = objects.find((obj) => String(obj.id) === startIdStr);
     const endObj = objects.find((obj) => String(obj.id) === endIdStr);
 
+    console.log('Found objects:', { startObj, endObj });
+
     // Better error handling
     if (!startObj || !endObj) {
+      console.error('Failed to find objects for connection', {
+        startIdStr,
+        endIdStr,
+        objects,
+      });
+      // Reset selection state
+      selectedIndicatorsRef.current = [];
+      setSelectedIndicators([]);
       return {
         success: false,
         complete: true,
@@ -150,6 +168,10 @@ export const handleFaceIndicatorClick = ({
           textIndicator.worldPosition = textIndicator.position;
         }
 
+        console.log('Creating text connection with text as start:', {
+          textIndicator,
+          endObj,
+        });
         // Pass the indicator object that has position data
         result = handleTextObjectConnection(
           textIndicator, // Pass the indicator instead of just the object
@@ -160,6 +182,10 @@ export const handleFaceIndicatorClick = ({
         );
       } else {
         // Text object is the end - similar approach with current indicator
+        console.log('Creating text connection with text as end:', {
+          startObj,
+          indicator,
+        });
         result = handleTextObjectConnection(
           indicator, // Pass the current indicator with position data
           startObj,
@@ -170,17 +196,16 @@ export const handleFaceIndicatorClick = ({
       }
 
       if (result.success && result.connection) {
+        console.log('Text connection created:', result.connection);
         // Add to local state for immediate visualization
         setConnections((prev) => [...prev, result.connection]);
+      } else {
+        console.error('Failed to create text connection:', result);
       }
 
       // Reset selection state regardless of outcome
       selectedIndicatorsRef.current = [];
       setSelectedIndicators([]);
-      setShowAllCubesIndicators(false);
-      setGlobalIndicatorSelected(false);
-      setIndicatorMode('none');
-
       return {
         success: result.success,
         complete: true,
@@ -188,6 +213,8 @@ export const handleFaceIndicatorClick = ({
         connection: result.connection,
       };
     }
+
+    console.log('Creating standard connection between indicators');
 
     // Create enhanced indicators with full object data
     const enhancedStartIndicator = {
@@ -222,6 +249,7 @@ export const handleFaceIndicatorClick = ({
 
     // Validate we have both object IDs
     if (!startObjectId || !endObjectId) {
+      console.error('Invalid object IDs:', { startObjectId, endObjectId });
       return {
         success: false,
         complete: true,
@@ -229,26 +257,33 @@ export const handleFaceIndicatorClick = ({
       };
     }
 
+    console.log('Creating connection with:', {
+      startObjectId,
+      startPos,
+      endObjectId,
+      endPos,
+    });
+
     // Include objectId in the connection data
     const newConnection = {
       id: connectionId,
       start: {
-        type: startIndicator.type,
+        type: startIndicator.type || 'cube',
         face: startIndicator.face,
         position: startPos, // Use calculated position
         faceCenter: startIndicator.faceCenter || [0, 0, 0],
         objectId: startObjectId,
-        cube: startIndicator.cube,
-        plane: startIndicator.plane,
+        cube: enhancedStartIndicator.cube,
+        plane: enhancedStartIndicator.plane,
       },
       end: {
-        type: indicator.type,
+        type: indicator.type || 'cube',
         face: indicator.face,
         position: endPos, // Use calculated position
         faceCenter: indicator.faceCenter || [0, 0, 0],
         objectId: endObjectId,
-        cube: indicator.cube,
-        plane: indicator.plane,
+        cube: enhancedEndIndicator.cube,
+        plane: enhancedEndIndicator.plane,
       },
       lineStyle: 'straight',
       color: 'white',
@@ -256,26 +291,7 @@ export const handleFaceIndicatorClick = ({
       textStyle: { fontSize: 1, color: 'white' },
     };
 
-    // For plane type indicators, preserve all position data that was originally calculated
-    if (startIndicator.type === 'plane') {
-      newConnection.start.worldPosition = startPos;
-      newConnection.start.planeData = {
-        position: startObj.position,
-        scale: startObj.scale || [1, 1, 1],
-        // Store worldMatrixArray if available
-        worldMatrixArray: startIndicator.planeData?.worldMatrixArray || null,
-      };
-    }
-
-    if (indicator.type === 'plane') {
-      newConnection.end.worldPosition = endPos;
-      newConnection.end.planeData = {
-        position: endObj.position,
-        scale: endObj.scale || [1, 1, 1],
-        // Store worldMatrixArray if available
-        worldMatrixArray: indicator.planeData?.worldMatrixArray || null,
-      };
-    }
+    console.log('Connection created:', newConnection);
 
     // Register this connection in the connection manager
     registerObjectConnection(startObjectId, connectionId);
@@ -288,12 +304,17 @@ export const handleFaceIndicatorClick = ({
     // Save to database; if error, rollback state
     if (user) {
       try {
-        saveConnection(user.uid, currentSpaceId, newConnection).catch(() => {
-          setConnections((prev) =>
-            prev.filter((conn) => conn.id !== connectionId)
-          );
-        });
-      } catch {
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+        saveConnection(spaceOwnerId, currentSpaceId, newConnection).catch(
+          (err) => {
+            console.error('Failed to save connection:', err);
+            setConnections((prev) =>
+              prev.filter((conn) => conn.id !== connectionId)
+            );
+          }
+        );
+      } catch (err) {
+        console.error('Error in connection save:', err);
         setConnections((prev) =>
           prev.filter((conn) => conn.id !== connectionId)
         );
@@ -303,9 +324,6 @@ export const handleFaceIndicatorClick = ({
     // Reset indicator selection states
     selectedIndicatorsRef.current = [];
     setSelectedIndicators([]);
-    setShowAllCubesIndicators(false);
-    setGlobalIndicatorSelected(false);
-    setIndicatorMode('none');
 
     return {
       success: true,

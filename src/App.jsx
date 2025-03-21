@@ -27,10 +27,13 @@ import {
   handleObjectUpdate,
 } from './utils/objectUpdateHandlers';
 import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
-import { initializeConnectionMappings } from './services/connectionManager';
+import {
+  initializeConnectionMappings,
+  preloadConnectionsForSpace,
+} from './services/connectionManager';
 import { signInUser } from './services/authService';
-import { subscribeToObjects } from './services/objectsService'; // Add this import
-import isEqual from 'lodash/isEqual'; // Add this import for the isEqual check
+import { subscribeToObjects } from './services/objectsService';
+import isEqual from 'lodash/isEqual';
 
 /**
  * Main application component
@@ -83,6 +86,10 @@ const App = () => {
     lastUpdateRef,
     draggingObjectsRef,
     lastSavedRef,
+    registerTransformingObject, // Get the transform function
+    transformingObjectsRef, // Get the transform ref
+    getTransformStartPosition, // Add this new property
+    checkPositionJitter, // Get the jitter check function
   } = useObjects({
     user,
     currentSpaceId,
@@ -164,20 +171,28 @@ const App = () => {
               }
               return prev;
             case 'modified':
-              // Don't update positions for objects being dragged
-              if (draggingObjectsRef.current.has(change.id.toString())) {
-                return prev.map((obj) => {
-                  if (obj.id.toString() === change.id) {
-                    const currentPosition = obj.position;
-                    const updatedObj = {
-                      ...change.object,
-                      position: currentPosition,
-                    };
-                    lastUpdateRef.current[change.id] = updatedObj;
-                    return updatedObj;
-                  }
-                  return obj;
-                });
+              // Prevent position updates for actively transformed/dragged objects
+              if (
+                transformingObjectsRef.current.has(change.id.toString()) ||
+                draggingObjectsRef.current.has(change.id.toString())
+              ) {
+                // Find existing object
+                const existingObj = prev.find(
+                  (obj) => obj.id.toString() === change.id
+                );
+                if (existingObj) {
+                  // Preserve current position but accept other changes
+                  const updatedObj = {
+                    ...change.object,
+                    position: existingObj.position,
+                    _transformActive: true,
+                  };
+                  lastUpdateRef.current[change.id] = updatedObj;
+
+                  return prev.map((obj) =>
+                    obj.id.toString() === change.id ? updatedObj : obj
+                  );
+                }
               }
 
               // Update other objects normally
@@ -199,16 +214,13 @@ const App = () => {
     );
 
     return () => unsubscribe();
-  }, [user, currentSpaceId, lastUpdateRef, draggingObjectsRef]);
-
-  // Register object as transforming
-  const registerTransformingObject = useCallback((id, isTransforming) => {
-    if (isTransforming) {
-      transformingObjects.current.add(id.toString());
-    } else {
-      transformingObjects.current.delete(id.toString());
-    }
-  }, []);
+  }, [
+    user,
+    currentSpaceId,
+    lastUpdateRef,
+    draggingObjectsRef,
+    transformingObjectsRef,
+  ]);
 
   // Matrix updates tracking to prevent recursion
   const handleObjectMatrixChanged = useCallback((id, matrixWorld) => {
@@ -306,17 +318,71 @@ const App = () => {
   // Object update handler
   const handleObjectUpdateCallback = useCallback(
     (id, updates) => {
+      // Skip position updates for objects being transformed
+      // Or for position updates that look like jitter
+      if (updates.position) {
+        if (transformingObjectsRef.current.has(id.toString())) {
+          // Skip position updates during transform, keep other properties
+          const updatesWithoutPosition = { ...updates };
+          delete updatesWithoutPosition.position;
+
+          if (Object.keys(updatesWithoutPosition).length > 0) {
+            handleObjectUpdate({
+              id,
+              updates: updatesWithoutPosition,
+              transformingObjects: transformingObjectsRef,
+              lastUpdateRef,
+              setObjects,
+              user,
+              currentSpaceId,
+              checkPositionJitter,
+            });
+          }
+          return;
+        }
+
+        // If position looks like jitter (oscillation), skip it
+        if (checkPositionJitter(id, updates.position)) {
+          console.log('Skipping likely position jitter for object', id);
+          const updatesWithoutPosition = { ...updates };
+          delete updatesWithoutPosition.position;
+
+          if (Object.keys(updatesWithoutPosition).length > 0) {
+            handleObjectUpdate({
+              id,
+              updates: updatesWithoutPosition,
+              transformingObjects: transformingObjectsRef,
+              lastUpdateRef,
+              setObjects,
+              user,
+              currentSpaceId,
+              checkPositionJitter,
+            });
+          }
+          return;
+        }
+      }
+
+      // For non-position updates or non-jittery updates
       handleObjectUpdate({
         id,
         updates,
-        transformingObjects,
+        transformingObjects: transformingObjectsRef,
         lastUpdateRef,
         setObjects,
         user,
         currentSpaceId,
+        checkPositionJitter,
       });
     },
-    [user, currentSpaceId, setObjects, lastUpdateRef]
+    [
+      user,
+      currentSpaceId,
+      setObjects,
+      lastUpdateRef,
+      transformingObjectsRef,
+      checkPositionJitter,
+    ]
   );
 
   // Face indicator click handler
@@ -374,18 +440,27 @@ const App = () => {
   // Canvas click handler
   const handleCanvasClick = useCallback(
     (event) => {
-      if (!event.object) {
-        setActiveTextStyleUI(null);
-        setSelectedConnection(null);
-        setShowLineTextStyleUI(null);
-      }
+      // Close any active text styling menus
+      setActiveTextStyleUI(null);
+      setSelectedConnection(null);
+      setShowLineTextStyleUI(null);
       setSelectedId(null);
+
+      // If they were trying to create a connection but clicked empty space,
+      // cancel the connection creation process
+      if (isConnectMode && selectedIndicators.length > 0) {
+        setSelectedIndicators([]);
+        selectedIndicatorsRef.current = [];
+      }
     },
     [
       setActiveTextStyleUI,
       setSelectedConnection,
       setShowLineTextStyleUI,
       setSelectedId,
+      isConnectMode,
+      selectedIndicators,
+      selectedIndicatorsRef,
     ]
   );
 
@@ -428,7 +503,7 @@ const App = () => {
             connections={connections}
             setConnections={setConnections}
             calculateFacePosition={memoizedCalculateFacePosition}
-            transformingObjects={transformingObjects}
+            transformingObjects={transformingObjectsRef} // Use transforming ref here too
           />
 
           {/* Render all connections */}
@@ -470,11 +545,13 @@ const App = () => {
               activeTextStyleUI={activeTextStyleUI}
               setActiveTextStyleUI={setActiveTextStyleUI}
               handleIndicatorDeselected={handleIndicatorDeselected}
-              registerTransformingObject={registerTransformingObject}
+              registerTransformingObject={registerTransformingObject} // Pass the register function
+              getTransformStartPosition={getTransformStartPosition} // Add this prop
               handleObjectMatrixChanged={handleObjectMatrixChanged}
               handleIndicatorSelected={handleIndicatorSelected}
               globalIndicatorSelected={globalIndicatorSelected}
               handleObjectDelete={handleObjectDelete}
+              checkPositionJitter={checkPositionJitter} // Pass this prop
             />
           ))}
         </group>

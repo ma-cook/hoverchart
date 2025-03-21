@@ -5,17 +5,6 @@ import isEqual from 'lodash/isEqual';
 /**
  * Handle object movement with position updates
  * @param {Object} params - Parameters object
- * @param {any} params.id - Object ID
- * @param {Object} params.newPosition - New position coordinates {x, y, z}
- * @param {boolean} params.isDragStart - Whether this is the start of a drag operation
- * @param {boolean} params.isDragEnd - Whether this is the end of a drag operation
- * @param {Set} params.draggingObjectsRef - Reference to tracked dragging objects
- * @param {Array} params.objects - Current objects array
- * @param {Function} params.setObjects - Function to update objects state
- * @param {Array} params.connections - Current connections array
- * @param {Function} params.setConnections - Function to update connections state
- * @param {Object} params.user - Current user object
- * @param {string} params.currentSpaceId - Current space ID
  */
 export const handleObjectMove = ({
   id,
@@ -29,6 +18,7 @@ export const handleObjectMove = ({
   setConnections,
   user,
   currentSpaceId,
+  checkPositionJitter,
 }) => {
   const objectId = id.toString();
 
@@ -37,24 +27,67 @@ export const handleObjectMove = ({
     draggingObjectsRef.current.add(objectId);
   }
 
+  // Store the movement timestamp to track the most recent change
+  const moveTimestamp = Date.now();
+
   // Update local object state immediately for smooth UI
-  setObjects((prev) =>
-    prev.map((obj) =>
-      obj.id === id
-        ? {
-            ...obj,
-            position: [newPosition.x, newPosition.y, newPosition.z],
-          }
-        : obj
-    )
-  );
+  setObjects((prev) => {
+    // Find the existing object
+    const existingObject = prev.find((obj) => obj.id === id);
+    if (!existingObject) return prev;
+
+    // Never update position for transform locked objects
+    if (existingObject._transformLocked) {
+      return prev;
+    }
+
+    // Skip update if this is a jittery movement coming from elsewhere
+    if (
+      existingObject._moveTimestamp &&
+      existingObject._moveTimestamp > moveTimestamp
+    ) {
+      return prev;
+    }
+
+    // Skip if we think this is oscillation jitter
+    if (
+      checkPositionJitter &&
+      existingObject.position &&
+      checkPositionJitter(objectId, [
+        newPosition.x,
+        newPosition.y,
+        newPosition.z,
+      ])
+    ) {
+      return prev;
+    }
+
+    // Create updated objects array - prevent jitter by not changing refs
+    return prev.map((obj) => {
+      if (obj.id === id) {
+        // Form new object carefully to avoid unnecessary re-renders
+        const newObj = {
+          ...obj,
+          position: [newPosition.x, newPosition.y, newPosition.z],
+          _moveTimestamp: moveTimestamp,
+          _isDragging: true,
+        };
+        return newObj;
+      }
+      return obj;
+    });
+  });
 
   // Find connections related to this object and update them
   setConnections((prev) => {
     // Check if any connections need updating
     const needsUpdate = prev.some(
       (conn) =>
-        conn.start?.objectId === objectId || conn.end?.objectId === objectId
+        // Only update connections not locked by transforms and that are recent
+        (conn.start?.objectId === objectId ||
+          conn.end?.objectId === objectId) &&
+        !conn._transformLocked &&
+        (!conn._moveTimestamp || conn._moveTimestamp < moveTimestamp)
     );
 
     if (!needsUpdate) return prev;
@@ -69,6 +102,14 @@ export const handleObjectMove = ({
         return conn;
       }
 
+      // Skip if connection is transform locked or has a more recent update
+      if (
+        conn._transformLocked ||
+        (conn._moveTimestamp && conn._moveTimestamp > moveTimestamp)
+      ) {
+        return conn;
+      }
+
       // Clone the connection to modify it
       const updatedConn = { ...conn };
 
@@ -76,9 +117,7 @@ export const handleObjectMove = ({
       if (updatedConn.start?.objectId === objectId) {
         // Re-calculate start position based on new object position
         const faceCenter = updatedConn.start.faceCenter || [0, 0, 0];
-        // Transform the face position to world coordinates
         const worldPos = new THREE.Vector3(...faceCenter);
-        // Apply the object's transform
         const worldMatrix = new THREE.Matrix4()
           .makeScale(...(updatedConn.start.cube?.scale || [1, 1, 1]))
           .setPosition(newPosition.x, newPosition.y, newPosition.z);
@@ -86,6 +125,7 @@ export const handleObjectMove = ({
 
         // Update the position
         updatedConn.start.position = [worldPos.x, worldPos.y, worldPos.z];
+        updatedConn.start._positionFromMove = true; // Flag this as an explicit position update
       }
 
       if (updatedConn.end?.objectId === objectId) {
@@ -98,44 +138,60 @@ export const handleObjectMove = ({
         worldPos.applyMatrix4(worldMatrix);
 
         updatedConn.end.position = [worldPos.x, worldPos.y, worldPos.z];
+        updatedConn.end._positionFromMove = true; // Flag this as an explicit position update
       }
 
-      // Make sure this update is properly tracked by adding a flag
-      // This will signal to the connection updater that positions need to be recalculated
-      updatedConn._positionMoved = Date.now();
+      // Flag this connection as being dragged and track timestamp
+      updatedConn._isDragging = true;
+      updatedConn._moveTimestamp = moveTimestamp;
+      updatedConn._needsUpdate = true; // Mark for immediate update
 
       return updatedConn;
     });
   });
 
-  // ONLY save to database when drag ends or in special cases
+  // ONLY save to database when drag ends
   if (user && isDragEnd) {
-    const object = objects.find((obj) => obj.id === id);
+    // Find the object from current state, not the passed objects array
+    // to ensure we have the most recent state
+    const currentObjects = objects || [];
+    const object = currentObjects.find((obj) => obj.id === id);
+
     if (object) {
+      // Skip saving if this object is transform locked
+      if (object._transformLocked) {
+        draggingObjectsRef.current.delete(objectId);
+        return;
+      }
+
+      // When drag ends, clean up the movement timestamps and flags
       const updatedObject = {
         ...object,
         position: [newPosition.x, newPosition.y, newPosition.z],
+        _finalPosition: true, // Mark this as a final confirmed position
       };
 
-      const spaceOwnerId = window.currentSpaceOwner || user.uid;
-      saveObject(spaceOwnerId, currentSpaceId, updatedObject);
+      // Remove tracking flags before saving to database
+      delete updatedObject._isDragging;
+      delete updatedObject._moveTimestamp;
+      delete updatedObject._transformActive;
 
-      // Remove from dragging set when drag ends
-      draggingObjectsRef.current.delete(objectId);
+      // Adding a brief delay before saving to avoid race conditions
+      setTimeout(() => {
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+        saveObject(spaceOwnerId, currentSpaceId, updatedObject);
+
+        // Remove from dragging set when drag ends after save completes
+        setTimeout(() => {
+          draggingObjectsRef.current.delete(objectId);
+        }, 300); // Longer timeout to prevent jitter after drag end
+      }, 150);
     }
   }
 };
 
 /**
  * Handle object updates including scale, position, and other properties
- * @param {Object} params - Parameters object
- * @param {any} params.id - Object ID
- * @param {Object} params.updates - Properties to update
- * @param {Object} params.transformingObjects - Reference to objects being transformed
- * @param {Object} params.lastUpdateRef - Reference to track last updates for debouncing
- * @param {Function} params.setObjects - Function to update objects state
- * @param {Object} params.user - Current user object
- * @param {string} params.currentSpaceId - Current space ID
  */
 export const handleObjectUpdate = ({
   id,
@@ -145,47 +201,131 @@ export const handleObjectUpdate = ({
   setObjects,
   user,
   currentSpaceId,
+  checkPositionJitter,
 }) => {
   if (!user || !id || !currentSpaceId) return;
 
-  // Only track object ID during transform, don't manipulate matrices
-  if (updates.scale && transformingObjects.current.has(id.toString())) {
-    setObjects((prev) => {
+  const updateTimestamp = Date.now();
+  const isTransforming = transformingObjects.current.has(id.toString());
+  const objId = id.toString();
+
+  // Handle updates during transform with extreme caution
+  setObjects((prev) => {
+    const existingObj = prev.find((obj) => obj.id === id);
+
+    if (!existingObj) return prev;
+
+    // Critical: Never update transformLocked objects from outside their transform
+    if (existingObj._transformLocked && !isTransforming) {
+      return prev;
+    }
+
+    // Skip if there's a more recent update for this object
+    if (
+      existingObj._updateTimestamp &&
+      existingObj._updateTimestamp > updateTimestamp
+    ) {
+      return prev;
+    }
+
+    // If this is a position update, check for jitter/oscillation
+    if (
+      updates.position &&
+      checkPositionJitter &&
+      checkPositionJitter(objId, updates.position)
+    ) {
+      // Skip position update but keep other properties
+      const updatesWithoutPosition = { ...updates };
+      delete updatesWithoutPosition.position;
+
+      if (Object.keys(updatesWithoutPosition).length === 0) {
+        return prev; // Nothing left to update
+      }
+
+      // Continue with non-position updates
+      updates = updatesWithoutPosition;
+    }
+
+    // Special handling for transform operations
+    if (isTransforming) {
       return prev.map((obj) => {
         if (obj.id === id) {
-          const newObj = { ...obj, ...updates };
-          lastUpdateRef.current[id] = newObj;
+          // For transform operations, we always prioritize our local state
+          const newObj = {
+            ...obj,
+            ...updates,
+            _isTransforming: true,
+            _updateTimestamp: updateTimestamp,
+            // Keep transform lock in place
+            _transformLocked: obj._transformLocked || true,
+            _lockTime: obj._lockTime || updateTimestamp,
+          };
+
+          // Update last reference with clean object
+          lastUpdateRef.current[id] = {
+            ...newObj,
+            _isTransforming: undefined,
+            _updateTimestamp: undefined,
+            _transformLocked: undefined,
+            _lockTime: undefined,
+          };
+
           return newObj;
         }
         return obj;
       });
-    });
+    }
 
-    // Let Three.js handle the matrices naturally
-    return;
-  }
-
-  // Regular update process for non-scaling changes
-  setObjects((prev) => {
+    // For normal updates, proceed as usual but verify locking
     return prev.map((obj) => {
       if (obj.id === id) {
-        const newObj = { ...obj, ...updates };
+        // Standard non-transform update flow
 
-        // Use correct owner ID
-        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+        // Filter out position updates for controlled objects
+        let filteredUpdates = { ...updates };
 
-        // Check if position has changed
-        if (updates.position && !isEqual(obj.position, updates.position)) {
-          // Save immediately for position changes
-          saveObject(spaceOwnerId, currentSpaceId, newObj);
-          lastUpdateRef.current[id] = newObj;
-        } else {
-          // Normal debounced save for other changes
-          if (!isEqual(lastUpdateRef.current[id], newObj)) {
-            lastUpdateRef.current[id] = newObj;
-            saveObject(spaceOwnerId, currentSpaceId, newObj);
-          }
+        if (obj._transformLocked && filteredUpdates.position) {
+          delete filteredUpdates.position;
         }
+
+        // If no updates left after filtering, return unchanged object
+        if (Object.keys(filteredUpdates).length === 0) {
+          return obj;
+        }
+
+        const newObj = {
+          ...obj,
+          ...filteredUpdates,
+          _updateTimestamp: updateTimestamp,
+        };
+
+        // Handle database updates with debouncing
+        if (!obj._transformLocked && !obj._isDragging) {
+          // Create clean version of object for database
+          const cleanObj = { ...newObj };
+          delete cleanObj._isTransforming;
+          delete cleanObj._updateTimestamp;
+          delete cleanObj._positionUpdated;
+          delete cleanObj._saveTimeout;
+          delete cleanObj._transformLocked;
+          delete cleanObj._lockTime;
+          delete cleanObj._isDragging;
+          delete cleanObj._moveTimestamp;
+
+          // Clear any existing save timeout
+          if (newObj._saveTimeout) {
+            clearTimeout(newObj._saveTimeout);
+          }
+
+          const saveTimeout = setTimeout(() => {
+            const spaceOwnerId = window.currentSpaceOwner || user.uid;
+            saveObject(spaceOwnerId, currentSpaceId, cleanObj);
+          }, 300); // Longer debounce time to reduce saves
+
+          newObj._saveTimeout = saveTimeout;
+          lastUpdateRef.current[id] = cleanObj;
+        }
+
         return newObj;
       }
       return obj;

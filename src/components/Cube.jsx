@@ -1,742 +1,965 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
-import {
-  Line,
-  TransformControls as DreiTransformControls,
-} from '@react-three/drei';
+import React, {
+  useRef,
+  useMemo,
+  useEffect,
+  useState,
+  useCallback,
+} from 'react';
+import { useFrame } from '@react-three/fiber';
+import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import * as THREE from 'three';
+import FaceIndicator from './FaceIndicator';
+import TextSprite from './TextSprite';
 import ObjectUI from './ObjectUI';
 import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
-import TextSprite from './TextSprite';
 import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
-import FaceIndicator from './FaceIndicator'; // <-- New import
-import { getFaceIndicatorProps, faces, faceMaterialProps } from './cubeHelpers'; // <-- New import
+import { Line } from '@react-three/drei';
+import isEqual from 'lodash/isEqual';
+import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
 
+// Constants to avoid recreation
+const DEFAULT_COLOR = '#ffffff';
+const DEFAULT_OPACITY = 0.1;
+const SELECTED_OPACITY = 0.3;
+const CUBE_SIZE = 5; // Half-size of cube
+const FACE_SIZE = 9.8; // Size of colored face
+const FACE_THICKNESS = 0.05; // Thickness of face overlay
+
+/**
+ * Optimized Cube component
+ */
 const Cube = ({
   position,
+  scale = [1, 1, 1],
+  color = DEFAULT_COLOR,
+  faceColors = {},
+  faceTexts = {},
+  headerText = '',
+  textStyle = { fontSize: 1.5, color: 'white', underline: false },
+  faceTextStyles = {},
+  id,
   selected,
   onClick,
-  onMove,
   onFaceIndicatorClick,
   onFaceClick,
-  showAllIndicators,
+  showAllCubesIndicators,
   activeIndicator,
   indicatorMode,
-  connections,
-  selectedIndicators,
+  connections = [],
+  selectedIndicators = [],
   activeTextStyleUI,
   setActiveTextStyleUI,
   onUpdate,
-  onDelete, // Add new prop
-  id,
-  // Add default values for optional props
-  headerText: initialHeaderText = '',
-  scale: initialScale = [1, 1, 1],
-  color: initialColor = 'white',
-  faceColors: initialFaceColors = {
-    front: null,
-    back: null,
-    top: null,
-    bottom: null,
-    right: null,
-    left: null,
-  },
-  faceTexts: initialFaceTexts = {
-    front: '',
-    back: '',
-    top: '',
-    bottom: '',
-    right: '',
-    left: '',
-  },
-  textStyle: initialTextStyle = {
-    fontSize: 1.5,
-    color: 'white',
-    underline: false,
-  },
-  faceTextStyles: initialFaceTextStyles = {
-    front: { fontSize: 0.5, color: 'white', underline: false },
-    back: { fontSize: 0.5, color: 'white', underline: false },
-    top: { fontSize: 0.5, color: 'white', underline: false },
-    bottom: { fontSize: 0.5, color: 'white', underline: false },
-    right: { fontSize: 0.5, color: 'white', underline: false },
-    left: { fontSize: 0.5, color: 'white', underline: false },
-  },
-  onTransformStart, // Add these new props
+  onDelete,
+  onTransformStart,
   onTransformEnd,
+  onMove,
+  registerTransformingObject,
 }) => {
+  // Refs
+  const groupRef = useRef();
+  const meshRef = useRef();
+  const transformRef = useRef();
+  const lastPositionRef = useRef(position);
+  const lastUpdateTimeRef = useRef(0);
+
+  // State
   const [selectedFace, setSelectedFace] = useState(null);
-  const [selectedIndicator, setSelectedIndicator] = useState(null); // Add a separate state for tracking indicator selection
+  const [selectedIndicator, setSelectedIndicator] = useState(null);
   const [showTransform, setShowTransform] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
-  const [headerText, setHeaderText] = useState(initialHeaderText);
-  const contentRef = useRef();
-  const [scale, setScale] = useState(initialScale); // Existing scale state
-  const [isResizing, setIsResizing] = useState(false); // Existing isResizing state
-  const [faceColors, setFaceColors] = useState(initialFaceColors);
-  const [textStyle, setTextStyle] = useState(() => ({
-    fontSize: 1.5,
-    color: 'white',
-    underline: false,
-    ...initialTextStyle, // Immediately apply any provided styles
-  }));
-
-  const [faceTextStyles, setFaceTextStyles] = useState(() => ({
-    front: { fontSize: 0.5, color: 'white', underline: false },
-    back: { fontSize: 0.5, color: 'white', underline: false },
-    top: { fontSize: 0.5, color: 'white', underline: false },
-    bottom: { fontSize: 0.5, color: 'white', underline: false },
-    right: { fontSize: 0.5, color: 'white', underline: false },
-    left: { fontSize: 0.5, color: 'white', underline: false },
-    ...initialFaceTextStyles, // Immediately apply any provided styles
-  }));
-  const [showObjectUI, setShowObjectUI] = useState(true); // Add this state
+  const [localHeaderText, setLocalHeaderText] = useState(headerText);
   const [showFaceTextInput, setShowFaceTextInput] = useState(false);
-  const [faceTexts, setFaceTexts] = useState(initialFaceTexts);
-  const [activeTextFace, setActiveTextFace] = useState(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [showObjectUI, setShowObjectUI] = useState(true);
   const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
-  const [color, setColor] = useState(initialColor);
+  const [activeTextFace, setActiveTextFace] = useState(null);
+  const [localColor, setLocalColor] = useState(color);
+  const [localScale, setLocalScale] = useState(scale);
+  const [localFaceColors, setLocalFaceColors] = useState(faceColors);
+  const [localFaceTexts, setLocalFaceTexts] = useState(faceTexts);
+  const [localFaceTextStyles, setLocalFaceTextStyles] = useState(() => {
+    // Initialize with default styles for each face if not provided
+    const defaultStyles = {
+      front: { fontSize: 0.5, color: 'white', underline: false },
+      back: { fontSize: 0.5, color: 'white', underline: false },
+      top: { fontSize: 0.5, color: 'white', underline: false },
+      bottom: { fontSize: 0.5, color: 'white', underline: false },
+      right: { fontSize: 0.5, color: 'white', underline: false },
+      left: { fontSize: 0.5, color: 'white', underline: false },
+    };
+    return { ...defaultStyles, ...faceTextStyles };
+  });
+  const [localTextStyle, setLocalTextStyle] = useState(textStyle);
+  const [isScaleModified, setIsScaleModified] = useState(false);
 
-  // Add a lastPositionRef to track real position
-  const lastPositionRef = useRef(position);
-  const transformControlsRef = useRef();
+  // Update local state when props change
+  useEffect(() => {
+    setLocalHeaderText(headerText);
+  }, [headerText]);
 
-  // Update position ref when position prop changes
+  useEffect(() => {
+    setLocalColor(color);
+  }, [color]);
+
+  useEffect(() => {
+    setLocalScale(scale);
+  }, [scale]);
+
+  useEffect(() => {
+    setLocalFaceColors(faceColors);
+  }, [faceColors]);
+
+  useEffect(() => {
+    setLocalFaceTexts(faceTexts);
+  }, [faceTexts]);
+
+  useEffect(() => {
+    if (!isEqual(localFaceTextStyles, faceTextStyles)) {
+      setLocalFaceTextStyles(faceTextStyles);
+    }
+  }, [faceTextStyles]);
+
+  useEffect(() => {
+    if (!isEqual(localTextStyle, textStyle)) {
+      setLocalTextStyle(textStyle);
+    }
+  }, [textStyle]);
+
+  // Update lastPositionRef when position changes
   useEffect(() => {
     lastPositionRef.current = position;
   }, [position]);
 
-  // Update color when prop changes
+  // Reset selection states when cube is deselected
   useEffect(() => {
-    setColor(initialColor);
-  }, [initialColor]);
-
-  // Add useEffect to update faceTexts when props change
-  useEffect(() => {
-    setFaceTexts(initialFaceTexts);
-  }, [initialFaceTexts]);
-
-  // Add effects to update states when props change
-  useEffect(() => {
-    if (
-      initialTextStyle &&
-      JSON.stringify(textStyle) !== JSON.stringify(initialTextStyle)
-    ) {
-      setTextStyle(initialTextStyle);
+    if (!selected) {
+      setSelectedFace(null);
+      setSelectedIndicator(null);
+      setShowTransform(false);
+      setActiveTextStyleUI(null);
+      // Close text style UI menus
+      setShowHeaderTextStyleUI(false);
+      setActiveTextFace(null);
     }
-  }, [initialTextStyle]);
+  }, [selected, setActiveTextStyleUI]);
 
-  useEffect(() => {
-    if (
-      initialFaceTextStyles &&
-      JSON.stringify(faceTextStyles) !== JSON.stringify(initialFaceTextStyles)
-    ) {
-      setFaceTextStyles(initialFaceTextStyles);
-    }
-  }, [initialFaceTextStyles]);
+  // Check if a face is connected via a connection
+  const isIndicatorConnected = useCallback(
+    (faceName) => {
+      return connections.some(
+        (conn) =>
+          (conn.start?.objectId === id.toString() &&
+            conn.start?.face === faceName) ||
+          (conn.end?.objectId === id.toString() && conn.end?.face === faceName)
+      );
+    },
+    [connections, id]
+  );
 
-  // Add effect to update headerText when prop changes
+  // Check if an indicator should be shown as active
+  const isIndicatorActive = useCallback(
+    (faceName) => {
+      return selectedIndicator === faceName && !isIndicatorConnected(faceName);
+    },
+    [selectedIndicator, isIndicatorConnected]
+  );
+
+  // Calculate UI positions based on cube scale
+  const getUIPositions = useMemo(() => {
+    const uiOffset = 0.1; // Small z-offset to avoid z-fighting
+
+    return {
+      objectUI: [0, CUBE_SIZE + 20 / localScale[1], uiOffset],
+      headerInput: [0, CUBE_SIZE + 5 / localScale[1], uiOffset],
+      headerText: [0, CUBE_SIZE + 5 / localScale[1], uiOffset],
+      textStyleUI: [0, CUBE_SIZE + 7 / localScale[1], uiOffset],
+    };
+  }, [localScale]);
+
+  // Determine if an indicator should be shown
+  const shouldShowIndicator = useCallback(
+    (faceName) => {
+      // Always show indicators that are connected
+      if (isIndicatorConnected(faceName)) {
+        return true;
+      }
+
+      // Show indicators during connection creation
+      if (selectedIndicators.length > 0) {
+        return true;
+      }
+
+      // Show indicators for selected faces
+      if (selectedFace === faceName && selected) {
+        return true;
+      }
+
+      // Show all indicators when explicitly requested
+      if (showAllCubesIndicators && selected) {
+        return true;
+      }
+
+      // Show indicators based on mode
+      switch (indicatorMode) {
+        case 'all':
+        case 'indicators':
+          return selected || showAllCubesIndicators;
+        case 'single':
+          return (
+            (activeIndicator?.cube?.id === id &&
+              activeIndicator?.face === faceName) ||
+            (selected && faceName === selectedFace)
+          );
+        default:
+          return false;
+      }
+    },
+    [
+      isIndicatorConnected,
+      selectedIndicators.length,
+      selectedFace,
+      selected,
+      showAllCubesIndicators,
+      indicatorMode,
+      activeIndicator,
+      id,
+    ]
+  );
+
+  // Cube edge line points
+  const cubeLinePoints = useMemo(
+    () => [
+      // Bottom face edges
+      [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+      [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+      [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+      [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+      [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+
+      // Top face edges
+      [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+      [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+      [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+      [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+      [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+
+      // Vertical edges connecting top and bottom
+      [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+      [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+      [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+      [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+      [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+      [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+      [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+    ],
+    []
+  );
+
+  // Calculate face text offset based on font size
+  const getFaceTextOffset = useCallback((fontSize, faceName) => {
+    const baseOffset =
+      faceName === 'top' ? 0 : faceName === 'bottom' ? 0.2 : 0.5;
+    const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
+    const textHeight = fontSizeMultiplier * 0.7;
+    const zSafetyMargin = faceName === 'top' ? 0.1 : 0.3;
+
+    return baseOffset + textHeight / 2 + zSafetyMargin;
+  }, []);
+
+  // Get material for a face
+  const getFaceMaterial = useCallback(
+    (faceName) => ({
+      ...faceMaterialProps,
+      color: localFaceColors[faceName]
+        ? new THREE.Color(localFaceColors[faceName])
+        : selectedFace === faceName
+        ? new THREE.Color('#99ccff')
+        : new THREE.Color('#ffffff'),
+      opacity: localFaceColors[faceName]
+        ? 1.0
+        : selectedFace === faceName
+        ? SELECTED_OPACITY
+        : DEFAULT_OPACITY,
+    }),
+    [localFaceColors, selectedFace]
+  );
+
+  // Event handlers
+  const handleSceneClick = useCallback(() => {
+    setShowObjectUI(true);
+    setShowHeaderTextStyleUI(false); // Close header text style UI
+    setActiveTextFace(null); // Reset active text face for face text UI
+    setActiveTextStyleUI(null); // Reset active text style UI reference
+    onClick();
+  }, [onClick, setActiveTextStyleUI]);
+
+  // Add a new effect to close text style UI when clicking elsewhere
   useEffect(() => {
-    setHeaderText(initialHeaderText);
-  }, [initialHeaderText]);
+    const handleGlobalClick = (event) => {
+      // Don't close if clicking within the TextStyleUI components
+      if (
+        event.target &&
+        event.target.closest('.object-ui-content, .color-picker-container')
+      ) {
+        return;
+      }
+
+      // Close text styling UI when clicking elsewhere
+      if (showHeaderTextStyleUI || activeTextFace) {
+        setShowHeaderTextStyleUI(false);
+        setActiveTextFace(null);
+        setActiveTextStyleUI(null);
+      }
+    };
+
+    // Add a global click handler to the window
+    window.addEventListener('mousedown', handleGlobalClick);
+
+    return () => {
+      window.removeEventListener('mousedown', handleGlobalClick);
+    };
+  }, [showHeaderTextStyleUI, activeTextFace, setActiveTextStyleUI]);
+
+  const handleFaceClick = useCallback(
+    (e, faceName) => {
+      e.stopPropagation();
+      setSelectedFace(selectedFace === faceName ? null : faceName);
+      setShowObjectUI(false);
+
+      onFaceClick?.({
+        cube: groupRef.current,
+        face: faceName,
+        id: id,
+      });
+    },
+    [id, onFaceClick, selectedFace]
+  );
+
+  const handleColoredFaceClick = useCallback(
+    (e, faceName) => {
+      e.stopPropagation();
+      if (selected) {
+        handleFaceClick(e, faceName);
+      } else {
+        handleSceneClick();
+      }
+    },
+    [selected, handleFaceClick, handleSceneClick]
+  );
+
+  const handleIndicatorClick = useCallback(
+    (e, faceName) => {
+      e.stopPropagation();
+
+      setSelectedIndicator(selectedIndicator === faceName ? null : faceName);
+
+      const { position: facePos } = getFaceIndicatorProps(faceName);
+
+      // Create complete indicator data
+      const indicatorData = {
+        type: 'cube',
+        face: faceName,
+        cube: {
+          id,
+          position: lastPositionRef.current,
+          scale: localScale,
+          userData: { objectId: id.toString() },
+        },
+        position: lastPositionRef.current,
+        faceCenter: facePos,
+      };
+
+      // Calculate world position
+      const worldPos = new THREE.Vector3(facePos[0], facePos[1], facePos[2]);
+      if (groupRef.current?.matrixWorld) {
+        worldPos.applyMatrix4(groupRef.current.matrixWorld);
+        indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
+      }
+
+      onFaceIndicatorClick?.(indicatorData);
+    },
+    [id, onFaceIndicatorClick, selectedIndicator, localScale]
+  );
+
+  const handleTransformToggle = useCallback(() => {
+    setShowTransform((prev) => {
+      if (!prev) {
+        setIsResizing(false);
+      }
+      return !prev;
+    });
+  }, []);
+
+  const handleResizeToggle = useCallback(() => {
+    setIsResizing((prev) => {
+      if (!prev) {
+        setShowTransform(false);
+      }
+      return !prev;
+    });
+  }, []);
+
+  const handleHeaderToggle = useCallback(() => {
+    setShowHeader(!showHeader);
+  }, [showHeader]);
+
+  const handleHeaderSubmit = useCallback(
+    (text) => {
+      setLocalHeaderText(text);
+      if (onUpdate) {
+        onUpdate(id, {
+          color: localColor,
+          headerText: text,
+          scale: localScale,
+          position: lastPositionRef.current,
+          faceColors: localFaceColors,
+          faceTexts: localFaceTexts,
+          faceTextStyles: localFaceTextStyles,
+          textStyle: localTextStyle,
+          type: 'cube',
+        });
+      }
+      setShowHeader(false);
+      setShowObjectUI(false);
+    },
+    [
+      id,
+      onUpdate,
+      localColor,
+      localScale,
+      localFaceColors,
+      localFaceTexts,
+      localFaceTextStyles,
+      localTextStyle,
+    ]
+  );
 
   const handleLineColorChange = useCallback(
     (newColor) => {
-      setColor(newColor);
+      setLocalColor(newColor);
+
+      if (onUpdate) {
+        // Debounce updates to avoid excessive database writes
+        clearTimeout(lastUpdateTimeRef.current);
+        lastUpdateTimeRef.current = setTimeout(() => {
+          onUpdate(id, {
+            color: newColor,
+            headerText: localHeaderText,
+            scale: localScale,
+            position: lastPositionRef.current,
+            faceColors: localFaceColors,
+            faceTexts: localFaceTexts,
+            faceTextStyles: localFaceTextStyles,
+            textStyle: localTextStyle,
+            type: 'cube',
+          });
+        }, 300);
+      }
+    },
+    [
+      id,
+      onUpdate,
+      localHeaderText,
+      localScale,
+      localFaceColors,
+      localFaceTexts,
+      localFaceTextStyles,
+      localTextStyle,
+    ]
+  );
+
+  const handleFaceColorChange = useCallback(
+    (color, face) => {
+      const updatedFaceColors = {
+        ...localFaceColors,
+        [face]: color,
+      };
+
+      setLocalFaceColors(updatedFaceColors);
+
+      if (onUpdate) {
+        // Debounce updates
+        clearTimeout(lastUpdateTimeRef.current);
+        lastUpdateTimeRef.current = setTimeout(() => {
+          onUpdate(id, {
+            color: localColor,
+            headerText: localHeaderText,
+            scale: localScale,
+            position: lastPositionRef.current,
+            faceColors: updatedFaceColors,
+            faceTexts: localFaceTexts,
+            faceTextStyles: localFaceTextStyles,
+            textStyle: localTextStyle,
+            type: 'cube',
+          });
+        }, 300);
+      }
+    },
+    [
+      id,
+      onUpdate,
+      localColor,
+      localHeaderText,
+      localScale,
+      localFaceColors,
+      localFaceTexts,
+      localFaceTextStyles,
+      localTextStyle,
+    ]
+  );
+
+  const handleTextClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      e.nativeEvent?.stopPropagation?.();
+      setShowHeaderTextStyleUI(true);
+      setActiveTextFace(null);
+      setActiveTextStyleUI(groupRef.current);
+      setSelectedFace(null);
+    },
+    [setActiveTextStyleUI]
+  );
+
+  const handleFaceTextClick = useCallback(() => {
+    setShowFaceTextInput(true);
+  }, []);
+
+  const handleFaceTextSubmit = useCallback(
+    (text) => {
+      const updatedTexts = {
+        ...localFaceTexts,
+        [selectedFace]: text,
+      };
+
+      setLocalFaceTexts(updatedTexts);
+
       if (onUpdate) {
         onUpdate(id, {
-          color: newColor,
-          headerText,
-          scale,
-          position,
-          faceColors,
-          faceTexts,
-          faceTextStyles,
-          textStyle,
+          color: localColor,
+          headerText: localHeaderText,
+          scale: localScale,
+          position: lastPositionRef.current,
+          faceColors: localFaceColors,
+          faceTexts: updatedTexts,
+          faceTextStyles: localFaceTextStyles,
+          textStyle: localTextStyle,
           type: 'cube',
+        });
+      }
+
+      setShowFaceTextInput(false);
+      setSelectedFace(null);
+    },
+    [
+      id,
+      onUpdate,
+      localColor,
+      localHeaderText,
+      localScale,
+      localFaceColors,
+      localFaceTexts,
+      localFaceTextStyles,
+      localTextStyle,
+      selectedFace,
+    ]
+  );
+
+  const handleFaceTextStyleClick = useCallback(
+    (e, faceName) => {
+      if (e) {
+        e.stopPropagation();
+        e.nativeEvent?.stopPropagation?.();
+      }
+      setActiveTextStyleUI(groupRef.current);
+      setActiveTextFace(faceName);
+      setSelectedFace(null);
+      setShowFaceTextInput(false);
+      // Add this line to trigger the UI
+      setShowHeaderTextStyleUI(false);
+    },
+    [setActiveTextStyleUI]
+  );
+
+  const handleStyleChange = useCallback(
+    (newStyle) => {
+      if (activeTextFace) {
+        const updatedFaceTextStyles = {
+          ...localFaceTextStyles,
+          [activeTextFace]: {
+            ...localFaceTextStyles[activeTextFace],
+            ...newStyle,
+          },
+        };
+
+        setLocalFaceTextStyles(updatedFaceTextStyles);
+
+        if (onUpdate) {
+          onUpdate(id, {
+            color: localColor,
+            headerText: localHeaderText,
+            scale: localScale,
+            position: lastPositionRef.current,
+            faceColors: localFaceColors,
+            faceTexts: localFaceTexts,
+            faceTextStyles: updatedFaceTextStyles,
+            textStyle: localTextStyle,
+            type: 'cube',
+          });
+        }
+      } else {
+        const updatedTextStyle = { ...localTextStyle, ...newStyle };
+
+        setLocalTextStyle(updatedTextStyle);
+
+        if (onUpdate) {
+          onUpdate(id, {
+            color: localColor,
+            headerText: localHeaderText,
+            scale: localScale,
+            position: lastPositionRef.current,
+            faceColors: localFaceColors,
+            faceTexts: localFaceTexts,
+            faceTextStyles: localFaceTextStyles,
+            textStyle: updatedTextStyle,
+            type: 'cube',
+          });
+        }
+      }
+    },
+    [
+      id,
+      onUpdate,
+      localColor,
+      localHeaderText,
+      localScale,
+      localFaceColors,
+      localFaceTexts,
+      localFaceTextStyles,
+      localTextStyle,
+      activeTextFace,
+    ]
+  );
+
+  const handleDrag = useCallback(
+    (e) => {
+      const newPos = e.target.object.position;
+      lastPositionRef.current = [newPos.x, newPos.y, newPos.z];
+
+      // Update object
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'cube',
+          position: [newPos.x, newPos.y, newPos.z],
+          scale: localScale,
+          color: localColor,
+          headerText: localHeaderText,
+          faceColors: localFaceColors,
+          faceTexts: localFaceTexts,
+          faceTextStyles: localFaceTextStyles,
+          textStyle: localTextStyle,
+        });
+      }
+
+      // Call onMove for immediate UI updates
+      if (onMove) {
+        onMove({
+          x: newPos.x,
+          y: newPos.y,
+          z: newPos.z,
         });
       }
     },
     [
       id,
       onUpdate,
-      headerText,
-      scale,
-      position,
-      faceColors,
-      faceTexts,
-      faceTextStyles,
-      textStyle,
+      onMove,
+      localScale,
+      localColor,
+      localHeaderText,
+      localFaceColors,
+      localFaceTexts,
+      localFaceTextStyles,
+      localTextStyle,
     ]
   );
 
-  // Reset selectedFace and showTransform when the cube is deselected
-  useEffect(() => {
-    if (!selected) {
-      setSelectedFace(null);
-      setSelectedIndicator(null); // Also clear indicator selection
-      setShowTransform(false); // Ensure TransformControls are hidden
-      setActiveTextStyleUI(false); // Add this line to close TextStyleUI
-    }
-  }, [selected, setSelectedFace, setShowTransform, setActiveTextStyleUI]); // Added missing dependencies
+  const handleScale = useCallback(
+    (e) => {
+      if (!e.target || !e.target.object) return;
 
-  // Store orbitControls in the mesh's userData when mounted
-  useEffect(() => {
-    if (contentRef.current && window.orbitControls) {
-      contentRef.current.orbitControls = window.orbitControls;
-    }
-  }, [contentRef]); // Added refs as dependencies
+      const newScale = [
+        e.target.object.scale.x,
+        e.target.object.scale.y,
+        e.target.object.scale.z,
+      ];
 
-  // Update handleFaceClick to not affect indicator selection
-  const handleFaceClick = (e, faceName) => {
-    e.stopPropagation();
-    setSelectedFace(selectedFace === faceName ? null : faceName);
-    setShowObjectUI(false); // Hide ObjectUI when face is clicked
-
-    // When clicking a face, set indicator mode to single and make this the active indicator
-    onFaceClick?.({
-      cube: contentRef.current,
-      face: faceName,
-      id: id, // Explicitly include ID
-    });
-
-    // Don't select the indicator when clicking on the face
-    // We should only select indicators when they're directly clicked
-  };
-
-  const handleSceneClick = () => {
-    setShowObjectUI(true); // Show ObjectUI when cube body is clicked
-    onClick();
-  };
-
-  // Update handleDrag to handle first drag specially
-  const handleDrag = (e) => {
-    // Get new position from the transform controls event
-    const newPos = e.target.object.position;
-
-    // Update our position ref
-    lastPositionRef.current = [newPos.x, newPos.y, newPos.z];
-
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'cube',
-        position: [newPos.x, newPos.y, newPos.z],
-        scale,
-        color,
-        headerText,
-        faceColors,
-        faceTexts,
-        faceTextStyles,
-        textStyle,
-      });
-    }
-
-    // Also call onMove for immediate UI updates
-    if (onMove) {
-      onMove({
-        x: newPos.x,
-        y: newPos.y,
-        z: newPos.z,
-      });
-    }
-  };
-
-  // Add this function to detect when transform controls are attached
-
-  // Update handleTransformToggle
-  const handleTransformToggle = () => {
-    setShowTransform((prev) => {
-      // If enabling transform controls, disable resize mode
-      if (!prev) {
-        setIsResizing(false);
-
-        // Don't modify position directly, the TransformControls will handle it
-        // The position is now managed by the outer group to avoid jumps
+      // Only update if the scale change is significant
+      const epsilon = 0.0001;
+      if (
+        Math.abs(newScale[0] - localScale[0]) < epsilon &&
+        Math.abs(newScale[1] - localScale[1]) < epsilon &&
+        Math.abs(newScale[2] - localScale[2]) < epsilon
+      ) {
+        return;
       }
-      return !prev;
-    });
-  };
 
-  const handleHeaderToggle = () => {
-    setShowHeader(!showHeader);
-  };
+      setLocalScale(newScale);
+      setIsScaleModified(true);
+    },
+    [localScale]
+  );
 
-  const handleHeaderSubmit = (text) => {
-    setHeaderText(text);
-    if (onUpdate) {
-      onUpdate(id, {
-        color,
-        headerText: text, // Pass the new header text
-        scale,
-        position,
-        faceColors,
-        faceTexts,
-        faceTextStyles,
-        textStyle,
-        type: 'cube',
-      });
-    }
-    setShowHeader(false);
-    setShowObjectUI(false); // Hide ObjectUI after header text is submitted
-  };
-
-  const handleResizeToggle = () => {
-    setIsResizing((prev) => {
-      // If enabling resize mode, disable transform controls
-      if (!prev) {
-        setShowTransform(false);
-      }
-      return !prev;
-    });
-  };
-
-  // Update handleIndicatorClick to properly manage selection state
-  const handleIndicatorClick = (e, faceName) => {
-    e.stopPropagation();
-
-    // Toggle indicator selection state
-    if (selectedIndicator === faceName) {
-      setSelectedIndicator(null);
-    } else {
-      setSelectedIndicator(faceName);
-    }
-
-    // Get face indicator props for this face
-    const { position: facePos } = getFaceIndicatorProps(faceName);
-
-    // Create the complete indicator data
-    const indicatorData = {
-      type: 'cube',
-      face: faceName,
-      cube: {
-        id,
-        position,
-        scale,
-        userData: { objectId: id.toString() },
-      },
-      position: position, // Use cube's position as base
-      faceCenter: facePos,
-    };
-
-    // Calculate world position (from local face position)
-    const worldPos = new THREE.Vector3(facePos[0], facePos[1], facePos[2]);
-    worldPos.applyMatrix4(
-      contentRef.current?.matrixWorld || new THREE.Matrix4()
-    );
-    indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
-
-    // Call the handler with complete data
-    onFaceIndicatorClick?.(indicatorData);
-  };
-
-  const handleColorChange = (color, face) => {
-    setFaceColors((prev) => ({
-      ...prev,
-      [face]: color,
-    }));
-  };
-
-  const handleTextClick = (e) => {
-    e.stopPropagation();
-    setShowHeaderTextStyleUI(true);
-    setActiveTextFace(null);
-    setActiveTextStyleUI(contentRef.current);
-    setShowObjectUI(false);
-    setSelectedFace(null);
-  };
-
-  const handleStyleChange = (newStyle) => {
-    if (activeTextFace) {
-      const updatedFaceTextStyles = {
-        ...faceTextStyles,
-        [activeTextFace]: { ...faceTextStyles[activeTextFace], ...newStyle },
-      };
-      setFaceTextStyles(updatedFaceTextStyles);
-      if (onUpdate) {
-        onUpdate(id, {
-          color,
-          headerText,
-          scale,
-          position,
-          faceColors,
-          faceTexts,
-          faceTextStyles: updatedFaceTextStyles,
-          textStyle,
-          type: 'cube',
-        });
-      }
-    } else {
-      const updatedTextStyle = { ...textStyle, ...newStyle };
-      setTextStyle(updatedTextStyle);
-      if (onUpdate) {
-        onUpdate(id, {
-          color,
-          headerText,
-          scale,
-          position,
-          faceColors,
-          faceTexts,
-          faceTextStyles,
-          textStyle: updatedTextStyle,
-          type: 'cube',
-        });
-      }
-    }
-  };
-
-  const handleFaceTextSubmit = (text) => {
-    const updatedTexts = {
-      ...faceTexts,
-      [selectedFace]: text,
-    };
-    setFaceTexts(updatedTexts);
-    if (onUpdate) {
-      onUpdate(id, {
-        color,
-        headerText,
-        scale,
-        position,
-        faceColors,
-        faceTexts: updatedTexts, // Pass the updated texts
-        faceTextStyles,
-        textStyle,
-        type: 'cube',
-      });
-    }
-    setShowFaceTextInput(false);
-    setSelectedFace(null);
-  };
-
-  const handleFaceTextClick = () => {
-    setShowFaceTextInput(true);
-  };
-
-  const handleFaceTextStyleClick = (e, faceName) => {
-    if (e) {
-      e.stopPropagation();
-    }
-    setShowHeaderTextStyleUI(false);
-    setActiveTextFace(faceName);
-    setActiveTextStyleUI(contentRef.current);
-    setShowObjectUI(false);
-    setSelectedFace(null);
-    setShowFaceTextInput(false);
-  };
-
-  // Remove the global click handler effect since it won't work reliably
-  // with Three.js events
-  useEffect(() => {
-    if (!selected) {
-      setSelectedFace(null);
-      setShowTransform(false);
-      setActiveTextStyleUI(false);
-    }
-  }, [selected]);
-
-  // Add useEffect to persist state changes
-  useEffect(() => {
-    if (onUpdate && id) {
-      onUpdate(id, {
-        color,
-        headerText,
-        scale,
-        position,
-        faceColors,
-        faceTexts,
-        faceTextStyles,
-        textStyle,
-        type: 'cube',
-      });
-    }
-  }, [
-    id,
-    color,
-    headerText,
-    scale,
-    position,
-    faceColors,
-    faceTexts,
-    faceTextStyles,
-    textStyle,
-    onUpdate,
-  ]);
-
-  // Add an effect to keep contentRef position in sync when transform is active
-  useEffect(() => {
-    if (showTransform && contentRef.current) {
-      // Ensure object position matches our tracked position
-      contentRef.current.position.set(
-        lastPositionRef.current[0],
-        lastPositionRef.current[1],
-        lastPositionRef.current[2]
-      );
-    }
-  }, [showTransform]);
-
-  const size = 5; // Half-size since points are from center
-
-  // Define cube vertices (corners)
-  const points = [
-    // Bottom face edges
-    [-size, -size, -size],
-    [-size, -size, size],
-    [-size, -size, size],
-    [size, -size, size],
-    [size, -size, size],
-    [size, -size, -size],
-    [size, -size, -size],
-    [-size, -size, -size],
-
-    // Top face edges
-    [-size, size, -size],
-    [-size, size, size],
-    [-size, size, size],
-    [size, size, size],
-    [size, size, size],
-    [size, size, -size],
-    [size, size, -size],
-    [-size, size, -size],
-
-    // Vertical edges connecting top and bottom
-    [-size, -size, -size],
-    [-size, size, -size],
-    [size, -size, -size],
-    [size, size, -size],
-    [-size, -size, size],
-    [-size, size, size],
-    [size, -size, size],
-    [size, size, size],
-  ];
-
-  // Update the face material side condition to correctly identify which faces face outward
-  // All faces actually face outward from their local perspective
-  const getFaceMaterial = (faceName) => ({
-    ...faceMaterialProps,
-    color: faceColors[faceName]
-      ? new THREE.Color(faceColors[faceName])
-      : selectedFace === faceName
-      ? new THREE.Color('#99ccff')
-      : new THREE.Color('#ffffff'),
-    opacity: faceColors[faceName]
-      ? 1.0
-      : selectedFace === faceName
-      ? 0.1
-      : 0.05,
-    depthWrite: true, // Enable depth writing
-    side: THREE.FrontSide, // All cube faces should use FrontSide
-    transparent: true,
-    depthTest: true,
-  });
-
-  // Update the position calculation functions to use consistent logic like Plane and Dodecahedron
-  const getUIPositions = () => {
-    // Use the base size without scale since the group already applies scale
-    const cubeHalfSize = 5; // Fixed half-size of cube (unscaled)
-    const zOffset = 0.1; // Small z-offset to avoid z-fighting
-
-    return {
-      objectUI: [0, cubeHalfSize + 20 / scale[1], zOffset], // Divide by scale to compensate
-      headerInput: [0, cubeHalfSize + 5 / scale[1], zOffset], // Keep 5 units above cube regardless of scale
-      headerText: [0, cubeHalfSize + 5 / scale[1], zOffset], // Keep 5 units above cube regardless of scale
-      textStyleUI: [0, cubeHalfSize + 7 / scale[1], zOffset], // 7 units above for style UI
-    };
-  };
-
-  // Replace the old getUIPosition function with this new implementation
-
-  // Calculate header input position relative to cube's top edge
-
-  // Update isIndicatorActive to make it only return true for directly clicked indicators
-  const isIndicatorActive = (faceName) => {
-    // Only return active if it's explicitly selected and not connected
-    return selectedIndicator === faceName && !isIndicatorConnected(faceName);
-  };
-
-  // Add a helper function to check if an indicator should show as connected
-  const isIndicatorConnected = (faceName) => {
-    return connections.some(
-      (conn) =>
-        (conn.start.objectId === id.toString() &&
-          conn.start.face === faceName) ||
-        (conn.end.objectId === id.toString() && conn.end.face === faceName)
-    );
-  };
-
-  // Update shouldShowIndicator to make indicators visible on face click
-  const shouldShowIndicator = (faceName) => {
-    // Always show indicator if the face is connected
-    if (isIndicatorConnected(faceName)) {
-      return true;
-    }
-
-    // Show indicators when in connection creation mode
-    if (selectedIndicators.length > 0) {
-      return true;
-    }
-
-    // Show indicator for selected face
-    if (selectedFace === faceName && selected) {
-      return true;
-    }
-
-    // Show all indicators when explicitly requested
-    if (showAllIndicators && selected) {
-      return true;
-    }
-
-    // Show indicators based on mode
-    switch (indicatorMode) {
-      case 'all':
-        return selected || showAllIndicators;
-      case 'indicators':
-        return selected || showAllIndicators;
-      case 'single':
-        return (
-          (activeIndicator?.cube?.id === id &&
-            activeIndicator?.face === faceName) ||
-          (selected && faceName === selectedFace)
-        );
-      default:
-        return false;
-    }
-  };
-
-  // Add a handler for colored face clicks
-  const handleColoredFaceClick = (e, name) => {
-    e.stopPropagation();
-    // Only handle face click if cube is already selected
-    if (selected) {
-      handleFaceClick(e, name);
-    } else {
-      // If cube isn't selected, handle as a cube click first
-      handleSceneClick();
-    }
-  };
-
-  // Add helper function to calculate text offset based on font size
-  const getFaceTextOffset = (fontSize, faceName) => {
-    // Base distance from face - adjusted for each face direction
-    const baseOffset =
-      faceName === 'top'
-        ? 0 // Reduced offset for top face (was 0.2)
-        : faceName === 'bottom'
-        ? 0.2 // Keep bottom face as is
-        : 0.5; // Standard offset for other faces
-
-    const fontSizeMultiplier = typeof fontSize === 'number' ? fontSize : 0.5;
-    const textHeight = fontSizeMultiplier * 0.7;
-
-    // Reduce safety margin for top face
-    const zSafetyMargin = faceName === 'top' ? 0.1 : 0.3;
-
-    return baseOffset + textHeight / 2 + zSafetyMargin;
-  };
-
-  const getFaceUIPosition = (faceName) => {
-    switch (faceName) {
-      case 'front':
-        return [0, 1, 0];
-      case 'back':
-        return [0, 0, 0];
-      case 'top':
-        return [0, 0, 0];
-      case 'bottom':
-        return [0, 0, 0];
-      case 'right':
-        return [0, 0, 0];
-      case 'left':
-        return [0, 0, 0];
-      default:
-        return [0, 0, 0];
-    }
-  };
-
-  // Be sure to clear timeouts when component unmounts
-  useEffect(() => {
-    return () => {
-      if (contentRef.current?._scaleTimeout) {
-        clearTimeout(contentRef.current._scaleTimeout);
-      }
-    };
-  }, []);
-
-  // Add new state to track scale modifications without nested flags
-  const [isScaleModified, setIsScaleModified] = useState(false);
-
-  // Replace handleScale function with the exact implementation from Dodecahedron
-  const handleScale = (e) => {
-    if (!e.target || !e.target.object) return;
-    const newScale = [
-      e.target.object.scale.x,
-      e.target.object.scale.y,
-      e.target.object.scale.z,
-    ];
-    // Only update if the scale change is significant
-    const epsilon = 0.0001;
-    if (
-      Math.abs(newScale[0] - scale[0]) < epsilon &&
-      Math.abs(newScale[1] - scale[1]) < epsilon &&
-      Math.abs(newScale[2] - scale[2]) < epsilon
-    ) {
-      return;
-    }
-    setScale(newScale);
-    setIsScaleModified(true);
-  };
-
-  // Replace existing scale effects with this simplified version that matches Dodecahedron exactly
+  // Update database when scale changes
   useEffect(() => {
     if (isScaleModified) {
-      // Only update database when flag is set
+      // Update database
       if (onUpdate) {
         onUpdate(id, {
           type: 'cube',
-          position,
-          scale,
-          color,
-          headerText,
-          faceColors,
-          faceTexts,
-          faceTextStyles,
-          textStyle,
+          position: lastPositionRef.current,
+          scale: localScale,
+          color: localColor,
+          headerText: localHeaderText,
+          faceColors: localFaceColors,
+          faceTexts: localFaceTexts,
+          faceTextStyles: localFaceTextStyles,
+          textStyle: localTextStyle,
         });
       }
 
-      // Reset flag immediately
+      // Reset flag
       setIsScaleModified(false);
 
-      // Call transform end callback if provided
+      // Call callback
       if (onTransformEnd) {
         onTransformEnd(id);
       }
     }
   }, [
     isScaleModified,
-    scale,
     onUpdate,
     id,
-    position,
-    color,
-    headerText,
-    faceColors,
-    faceTexts,
-    faceTextStyles,
-    textStyle,
+    localScale,
+    localColor,
+    localHeaderText,
+    localFaceColors,
+    localFaceTexts,
+    localFaceTextStyles,
+    localTextStyle,
     onTransformEnd,
   ]);
 
-  // Add helper function to calculate face thickness that adjusts with scale
-  const getFaceThickness = () => {
-    // Use a very small constant thickness that won't grow excessively when scaled
-    return 0.05;
-  };
+  // Render colored faces and indicators
+  const renderFaces = useMemo(() => {
+    return faces.map(({ name, normal }) => {
+      // Skip if face has no color and cube isn't selected/shown
+      if (!localFaceColors[name] && !selected && !showAllCubesIndicators) {
+        return null;
+      }
+
+      const { position: facePos, rotation } = getFaceIndicatorProps(name);
+      const isConnected = isIndicatorConnected(name);
+      const isActive = isIndicatorActive(name);
+
+      return (
+        <mesh
+          key={`face-${name}`}
+          position={[facePos[0], facePos[1], facePos[2]]}
+          rotation={rotation}
+          onClick={(e) => handleColoredFaceClick(e, name)}
+          renderOrder={-1} // Lower render order for faces
+        >
+          <boxGeometry args={[FACE_SIZE, FACE_SIZE, FACE_THICKNESS]} />
+          <meshBasicMaterial
+            {...getFaceMaterial(name)}
+            transparent={true}
+            depthWrite={false} // Prevent faces from blocking lines
+            side={THREE.FrontSide}
+            renderOrder={-1}
+          />
+
+          {selected && selectedFace === name && !showFaceTextInput && (
+            <FaceUI
+              position={[0, 1, 0]}
+              normal={normal}
+              onColorChange={handleFaceColorChange}
+              face={name}
+              onTextClick={handleFaceTextClick}
+            />
+          )}
+
+          {showFaceTextInput && selectedFace === name && (
+            <FaceTextInput
+              position={[0, 6, 0]}
+              onTextSubmit={handleFaceTextSubmit}
+            />
+          )}
+
+          {shouldShowIndicator(name) && (
+            <FaceIndicator
+              position={[
+                0,
+                0,
+                FACE_THICKNESS * (localFaceColors[name] ? 10 : 4),
+              ]}
+              rotation={[0, 0, 0]}
+              onClick={(e) => handleIndicatorClick(e, name)}
+              isActive={isActive}
+              isConnected={isConnected}
+              objectId={id}
+              face={name}
+              renderOrder={20} // Increase render order to ensure visibility
+            />
+          )}
+        </mesh>
+      );
+    });
+  }, [
+    localFaceColors,
+    selected,
+    showAllCubesIndicators,
+    isIndicatorConnected,
+    isIndicatorActive,
+    handleColoredFaceClick,
+    getFaceMaterial,
+    selectedFace,
+    showFaceTextInput,
+    shouldShowIndicator,
+    handleIndicatorClick,
+    handleFaceColorChange,
+    handleFaceTextClick,
+    handleFaceTextSubmit,
+    id,
+  ]);
+
+  // Render face texts
+  const renderFaceTexts = useMemo(() => {
+    return faces.map(({ name, normal }) => {
+      if (!localFaceTexts[name]) return null;
+
+      const { position: facePos, rotation } = getFaceIndicatorProps(name);
+      const textStyle = localFaceTextStyles[name];
+      const yOffset = getFaceTextOffset(textStyle.fontSize, name);
+
+      // Adjust offset multiplier for colored faces
+      const offsetMultiplier =
+        name === 'bottom' ? 0.8 : localFaceColors[name] ? 0.25 : 0.05;
+
+      // Calculate position with offset to prevent z-fighting
+      const offsetPosition = [
+        facePos[0] + normal[0] * offsetMultiplier,
+        facePos[1] + normal[1] * offsetMultiplier,
+        facePos[2] + normal[2] * offsetMultiplier,
+      ];
+
+      // Calculate inverse scale
+      const inverseScale = localScale.map((s) => 1 / Math.max(0.0001, s));
+
+      // Special rotation adjustment
+      let adjustedRotation;
+      if (name === 'left') {
+        adjustedRotation = [
+          rotation[0],
+          rotation[1] + Math.PI / 2,
+          rotation[2],
+        ];
+      } else if (name === 'right') {
+        adjustedRotation = [
+          rotation[0],
+          rotation[1] - Math.PI / 2,
+          rotation[2],
+        ];
+      } else if (name === 'top') {
+        adjustedRotation = [
+          rotation[0] + Math.PI / 2,
+          rotation[1],
+          rotation[2],
+        ];
+      } else if (name === 'bottom') {
+        adjustedRotation = [
+          rotation[0] - Math.PI / 2,
+          rotation[1],
+          rotation[2],
+        ];
+      } else {
+        adjustedRotation = rotation;
+      }
+
+      return (
+        <group
+          key={`text-${name}`}
+          position={offsetPosition}
+          rotation={adjustedRotation}
+          scale={inverseScale}
+        >
+          <TextSprite
+            text={localFaceTexts[name]}
+            position={[0, yOffset, 0]}
+            followTarget={null}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.nativeEvent?.stopPropagation?.();
+              handleFaceTextStyleClick(e, name);
+              return false; // Prevent event bubbling
+            }}
+            style={{
+              ...textStyle,
+              fixedSize: true,
+              isFaceText: true,
+              renderOrder: 2,
+              depthTest: true,
+              depthWrite: true,
+            }}
+            normal={normal}
+            billboard={false}
+            side={THREE.FrontSide}
+          />
+
+          {/* Update condition to show TextStyleUI */}
+          {activeTextFace === name && (
+            <TextStyleUI
+              position={[0, 6, 0]}
+              onStyleChange={handleStyleChange}
+              onClose={() => {
+                setActiveTextFace(null);
+                setActiveTextStyleUI(null);
+                setShowHeaderTextStyleUI(false);
+              }}
+              currentStyle={localFaceTextStyles[name] || {}}
+            />
+          )}
+        </group>
+      );
+    });
+  }, [
+    localFaceTexts,
+    localFaceTextStyles,
+    localFaceColors,
+    localScale,
+    getFaceTextOffset,
+    handleFaceTextStyleClick,
+    handleStyleChange,
+    activeTextFace,
+    activeTextStyleUI,
+  ]);
 
   return (
     <>
       {/* Main cube group */}
-      <group ref={contentRef} position={position} scale={scale}>
+      <group ref={groupRef} position={position} scale={localScale}>
+        {/* Invisible hit box */}
         <mesh
+          ref={meshRef}
           onClick={(e) => {
             e.stopPropagation();
             handleSceneClick();
@@ -750,337 +973,187 @@ const Cube = ({
           <meshBasicMaterial visible={false} />
         </mesh>
 
-        {/* Always render colored faces */}
-        {faces.map(({ name, normal }) => {
-          if (!faceColors[name]) return null; // Only render if face has color
-          const { position: facePos, rotation } = getFaceIndicatorProps(name);
-          const uiPos = getFaceUIPosition(name);
-
-          // Calculate inverse scale to ensure consistent visual thickness
-
-          const thickness = getFaceThickness();
-
-          return (
-            <mesh
-              key={`colored-${name}`}
-              position={[facePos[0], facePos[1], facePos[2]]}
-              rotation={rotation}
-              onClick={(e) => handleColoredFaceClick(e, name)}
-              renderOrder={1}
-            >
-              {/* Use consistent visual depth by scaling the geometry */}
-              <boxGeometry args={[9.8, 9.9, thickness]} />
-              <meshBasicMaterial
-                color={faceColors[name]}
-                opacity={1.0}
-                transparent={true}
-                depthWrite={true}
-                depthTest={true}
-                side={THREE.FrontSide} // Always use FrontSide for all faces
-                polygonOffset={true} // <-- Enable polygon offset
-                polygonOffsetFactor={-1} // <-- Push face slightly back
-                polygonOffsetUnits={-4} // <-- Fine tune offset
-              />
-              {selected && ( // Only render these when cube is selected
-                <>
-                  {selectedFace === name && !showFaceTextInput && (
-                    <FaceUI
-                      position={uiPos}
-                      normal={normal}
-                      onColorChange={handleColorChange}
-                      face={name}
-                      onTextClick={handleFaceTextClick}
-                    />
-                  )}
-                  {showFaceTextInput && selectedFace === name && (
-                    <FaceTextInput
-                      position={[0, 6, 0]}
-                      onTextSubmit={handleFaceTextSubmit}
-                    />
-                  )}
-                </>
-              )}
-            </mesh>
-          );
-        })}
-
-        {/* Render all face indicators in a separate pass */}
-        {faces.map(({ name }) => {
-          const { position: facePos, rotation } = getFaceIndicatorProps(name);
-          const isConnected = isIndicatorConnected(name);
-
-          // Only consider active if directly selected and not connected
-          const isSelected = selectedIndicator === name && !isConnected;
-
-          return (
-            shouldShowIndicator(name) && (
-              <mesh
-                key={`indicator-${name}`}
-                position={[facePos[0], facePos[1], facePos[2]]}
-                rotation={rotation}
-                renderOrder={3}
-              >
-                <FaceIndicator
-                  position={[0, 0, 0.3]}
-                  rotation={[0, 0, 0]}
-                  onClick={(e) => handleIndicatorClick(e, name)}
-                  isActive={isSelected}
-                  isConnected={isConnected}
-                />
-              </mesh>
-            )
-          );
-        })}
-
-        {/* Update face text rendering with dynamic positioning */}
-        {faces.map(({ name }) => {
-          const {
-            position: facePos,
-            rotation,
-            normal,
-          } = getFaceIndicatorProps(name);
-          if (!faceTexts[name]) return null;
-
-          const textStyle = faceTextStyles[name];
-          const yOffset = getFaceTextOffset(textStyle.fontSize, name);
-
-          // Adjust offset multiplier based on whether the face has a color
-          // Use a larger offset for colored faces to ensure text is visible
-          const offsetMultiplier =
-            name === 'bottom' ? 0.8 : faceColors[name] ? 0.25 : 0.05; // Increased from 0.01 to 0.05/0.25
-
-          // Calculate position with adjusted offset to prevent z-fighting
-          const offsetPosition = [
-            facePos[0] + normal[0] * offsetMultiplier,
-            facePos[1] + normal[1] * offsetMultiplier,
-            facePos[2] + normal[2] * offsetMultiplier,
-          ];
-
-          // Calculate inverse scale for each dimension
-          const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
-
-          // Special rotation adjustment for different faces
-          const adjustedRotation =
-            name === 'left'
-              ? [rotation[0], rotation[1] + Math.PI / 2, rotation[2]]
-              : name === 'right'
-              ? [rotation[0], rotation[1] - Math.PI / 2, rotation[2]]
-              : name === 'top'
-              ? [rotation[0] + Math.PI / 2, rotation[1], rotation[2]]
-              : name === 'bottom'
-              ? [rotation[0] - Math.PI / 2, rotation[1], rotation[2]]
-              : rotation;
-
-          return (
-            <group
-              key={`text-${name}`}
-              position={offsetPosition}
-              rotation={adjustedRotation}
-              scale={inverseScale}
-            >
-              <TextSprite
-                text={faceTexts[name]}
-                position={[0, yOffset, 0]}
-                followTarget={null}
-                onClick={(e) => handleFaceTextStyleClick(e, name)}
-                style={{
-                  ...textStyle,
-                  fixedSize: true,
-                  isFaceText: true,
-                  renderOrder: 2,
-                  depthTest: true,
-                  depthWrite: true, // Enable depth writing
-                }}
-                normal={normal}
-                billboard={false}
-                side={THREE.FrontSide} // Always use FrontSide for all faces
-              />
-              {/* Style UI rendering */}
-              {activeTextFace === name &&
-                activeTextStyleUI === contentRef.current && (
-                  <TextStyleUI
-                    position={[0, 6, 0]}
-                    onStyleChange={handleStyleChange}
-                    onClose={() => {
-                      setActiveTextFace(null);
-                      setActiveTextStyleUI(null);
-                    }}
-                  />
-                )}
-            </group>
-          );
-        })}
-
-        {/* Render selection-dependent faces and UI */}
-        {(selected || showAllIndicators) && (
-          <>
-            {faces.map(({ name, normal }) => {
-              if (faceColors[name]) return null; // Skip if face is colored
-              const { position: facePos, rotation } =
-                getFaceIndicatorProps(name);
-              const uiPos = getFaceUIPosition(name);
-              const thickness = getFaceThickness();
-
-              return (
-                <mesh
-                  key={`ui-${name}`}
-                  position={[facePos[0], facePos[1], facePos[2]]}
-                  rotation={rotation}
-                  onClick={(e) => handleFaceClick(e, name)}
-                  renderOrder={2}
-                >
-                  {/* Use consistent visual depth */}
-                  <boxGeometry args={[10.4, 10.4, thickness]} />
-                  <meshBasicMaterial
-                    {...getFaceMaterial(name)}
-                    side={THREE.FrontSide} // Always use FrontSide
-                  />
-                  {selectedFace === name && selected && !showFaceTextInput && (
-                    <FaceUI
-                      position={uiPos}
-                      normal={normal}
-                      onColorChange={handleColorChange}
-                      face={name}
-                      onTextClick={handleFaceTextClick}
-                    />
-                  )}
-                  {showFaceTextInput && selectedFace === name && (
-                    <FaceTextInput
-                      position={[0, 6, 0]}
-                      onTextSubmit={handleFaceTextSubmit}
-                    />
-                  )}
-                  {shouldShowIndicator(name) && (
-                    <FaceIndicator
-                      position={[0, 0, 0.2]}
-                      rotation={[0, 0, 0]}
-                      onClick={(e) => handleIndicatorClick(e, name)}
-                      isActive={isIndicatorActive(name)}
-                    />
-                  )}
-                </mesh>
-              );
-            })}
-          </>
-        )}
-
+        {/* Cube edge lines */}
         <Line
-          points={points}
-          color={color} // Use color instead of lineColor
+          points={cubeLinePoints}
+          color={localColor}
           lineWidth={3}
           segments={true}
-          polygonOffset // <-- Enable polygon offset for the edge lines
-          polygonOffsetFactor={1} // <-- Bring lines forward
-          polygonOffsetUnits={1} // <-- Fine tune the offset
+          renderOrder={1} // Higher render order for cube edges
+          transparent={false}
+          depthWrite={false}
         />
 
-        {/* Move UI elements inside main group */}
+        {/* Colored faces and indicators */}
+        {renderFaces}
+
+        {/* Face text elements */}
+        {renderFaceTexts}
+
+        {/* Header text */}
+        {localHeaderText && (
+          <group
+            scale={localScale.map((s) => 1 / Math.max(0.0001, s))}
+            position={getUIPositions.headerText}
+          >
+            <TextSprite
+              text={localHeaderText}
+              position={[0, 0, 0]}
+              followTarget={null}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.nativeEvent?.stopPropagation?.();
+                handleTextClick(e);
+                return false; // Prevent event bubbling
+              }}
+              style={{
+                ...localTextStyle,
+                isHeaderText: true,
+                fixedSize: false,
+              }}
+            />
+
+            {/* Remove the activeTextStyleUI condition */}
+            {showHeaderTextStyleUI && (
+              <TextStyleUI
+                position={[0, 2 / localScale[1], 0]}
+                followTarget={null}
+                onStyleChange={handleStyleChange}
+                onClose={() => {
+                  setShowHeaderTextStyleUI(false);
+                  setActiveTextStyleUI(null);
+                }}
+                currentStyle={localTextStyle}
+              />
+            )}
+          </group>
+        )}
+
+        {/* Object UI */}
         {selected && !showHeader && showObjectUI && (
           <ObjectUI
-            key={`ui-${id}`}
-            position={getUIPositions().objectUI}
+            position={getUIPositions.objectUI}
             onTransformToggle={handleTransformToggle}
             onHeaderToggle={handleHeaderToggle}
             onResizeToggle={handleResizeToggle}
             onLineColorChange={handleLineColorChange}
-            onDelete={() => onDelete?.(id)} // Pass the delete handler with this object's ID
+            onDelete={() => onDelete?.(id)}
             showTransform={showTransform}
             showHeader={showHeader}
-            followTarget={null} // Important: Don't set followTarget here, it's already within the group
+            followTarget={null}
             objectId={id}
           />
         )}
 
-        {/* Keep other UI elements inside main group with local positions */}
+        {/* Header input */}
         {selected && showHeader && (
           <HeaderInput
-            position={getUIPositions().headerInput}
+            position={getUIPositions.headerInput}
             onTextSubmit={handleHeaderSubmit}
-            followTarget={null} // Remove followTarget here too
+            followTarget={null}
+            initialText={localHeaderText}
           />
-        )}
-        {headerText && (
-          <group
-            scale={scale.map((s) => 1 / Math.max(0.0001, s))}
-            position={getUIPositions().headerText}
-          >
-            <TextSprite
-              text={headerText}
-              position={[0, 0, 0]}
-              followTarget={null}
-              onClick={handleTextClick}
-              style={{
-                ...textStyle,
-                isHeaderText: true,
-                fixedSize: false, // Allow camera-based scaling
-              }}
-            />
-            {showHeaderTextStyleUI &&
-              activeTextStyleUI === contentRef.current && (
-                <TextStyleUI
-                  position={[0, 2 / scale[1], 0]} // Adjust position slightly upward
-                  followTarget={null}
-                  onStyleChange={handleStyleChange}
-                  onClose={() => {
-                    setShowHeaderTextStyleUI(false);
-                    setActiveTextStyleUI(null);
-                  }}
-                />
-              )}
-          </group>
         )}
       </group>
 
-      {/* IMPORTANT: Keep the TransformControls OUTSIDE the main group, at the same level */}
-      {selected && showTransform && contentRef.current && (
+      {/* Transform controls */}
+      {selected && showTransform && groupRef.current && (
         <DreiTransformControls
-          ref={transformControlsRef}
-          object={contentRef.current}
+          ref={transformRef}
+          object={groupRef.current}
           onObjectChange={handleDrag}
           onDragStart={() => {
-            if (contentRef.current?.orbitControls) {
-              contentRef.current.orbitControls.enabled = false;
+            if (window.orbitControls) {
+              window.orbitControls.enabled = false;
             }
+            registerTransformingObject?.(id, true, position);
+            onTransformStart?.(id);
           }}
           onDragEnd={() => {
-            if (contentRef.current?.orbitControls) {
-              contentRef.current.orbitControls.enabled = true;
+            if (window.orbitControls) {
+              window.orbitControls.enabled = true;
             }
+            registerTransformingObject?.(id, false);
+            onTransformEnd?.(id);
           }}
           mode="translate"
-          space="world"
-          size={1}
+          size={0.5}
         />
       )}
 
-      {/* Scale transform controls - MUST be kept separate from the main TransformControls */}
-      {selected && isResizing && contentRef.current && (
+      {/* Scale transform controls */}
+      {selected && isResizing && groupRef.current && (
         <DreiTransformControls
-          object={contentRef.current}
+          object={groupRef.current}
           onObjectChange={handleScale}
           onDragStart={() => {
-            if (contentRef.current?.orbitControls) {
-              contentRef.current.orbitControls.enabled = false;
+            if (window.orbitControls) {
+              window.orbitControls.enabled = false;
             }
-            if (onTransformStart) {
-              onTransformStart(id);
-            }
+            registerTransformingObject?.(id, true, position);
+            onTransformStart?.(id);
           }}
           onDragEnd={() => {
-            if (contentRef.current?.orbitControls) {
-              contentRef.current.orbitControls.enabled = true;
+            if (window.orbitControls) {
+              window.orbitControls.enabled = true;
             }
-            // No additional processing here - it's all handled by the isScaleModified effect
+            // No call to onTransformEnd here - it's handled by the isScaleModified effect
           }}
           mode="scale"
-          space="local"
-          size={1}
-          matrixAutoUpdate={false}
+          size={0.5}
         />
       )}
     </>
   );
 };
 
-Cube.displayName = 'Cube';
-export default Cube;
+// Apply memo with custom comparison to optimize renders
+export default React.memo(Cube, (prevProps, nextProps) => {
+  // Always re-render when selection changes
+  if (prevProps.selected !== nextProps.selected) return false;
+
+  // Re-render when indicator mode or visibility changes
+  if (prevProps.showAllCubesIndicators !== nextProps.showAllCubesIndicators)
+    return false;
+  if (prevProps.indicatorMode !== nextProps.indicatorMode) return false;
+  if (prevProps.globalIndicatorSelected !== nextProps.globalIndicatorSelected)
+    return false;
+
+  // Re-render when position, scale, or color changes
+  if (!isEqual(prevProps.position, nextProps.position)) return false;
+  if (!isEqual(prevProps.scale, nextProps.scale)) return false;
+  if (prevProps.color !== nextProps.color) return false;
+
+  // Re-render when text or styles change
+  if (prevProps.headerText !== nextProps.headerText) return false;
+  if (!isEqual(prevProps.textStyle, nextProps.textStyle)) return false;
+  if (!isEqual(prevProps.faceColors, nextProps.faceColors)) return false;
+  if (!isEqual(prevProps.faceTexts, nextProps.faceTexts)) return false;
+  if (!isEqual(prevProps.faceTextStyles, nextProps.faceTextStyles))
+    return false;
+
+  // Re-render when selected indicators change
+  if (
+    prevProps.selectedIndicators?.length !==
+    nextProps.selectedIndicators?.length
+  )
+    return false;
+
+  // Only check connections that affect this cube
+  const prevConnected = prevProps.connections.some(
+    (conn) =>
+      conn.start?.objectId === prevProps.id.toString() ||
+      conn.end?.objectId === prevProps.id.toString()
+  );
+
+  const nextConnected = nextProps.connections.some(
+    (conn) =>
+      conn.start?.objectId === nextProps.id.toString() ||
+      conn.end?.objectId === nextProps.id.toString()
+  );
+
+  if (prevConnected !== nextConnected) return false;
+
+  // Default to not re-rendering if no significant changes
+  return true;
+});

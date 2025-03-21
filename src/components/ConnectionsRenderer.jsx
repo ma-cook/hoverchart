@@ -116,11 +116,16 @@ const ConnectionsRenderer = ({
               dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
               gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
               dashOffset={connection.dashOffset || 0}
-              renderOrder={1}
-              transparent={false}
-              depthTest={true}
+              renderOrder={100} // Increased render order to be above all other elements
+              transparent={true} // Enable transparency
+              opacity={1} // Full opacity
+              depthTest={false} // Disable depth testing to always show on top
               depthWrite={false}
+              polygonOffset={true} // Add polygon offset
+              polygonOffsetFactor={-10} // Push the line forward
+              polygonOffsetUnits={-10}
               toneMapped={false}
+              resolution={2} // Improve line quality
             />
 
             {/* Clickable area */}
@@ -140,7 +145,10 @@ const ConnectionsRenderer = ({
               transparent
               opacity={0}
               depthTest={false}
-              renderOrder={10}
+              renderOrder={99} // Just below the main line but above other elements
+              polygonOffset={true}
+              polygonOffsetFactor={-9}
+              polygonOffsetUnits={-9}
             />
 
             {/* Connection text */}
