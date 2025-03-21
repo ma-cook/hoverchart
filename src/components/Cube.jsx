@@ -810,7 +810,7 @@ const Cube = ({
               position={[
                 0,
                 0,
-                FACE_THICKNESS * (localFaceColors[name] ? 10 : 4),
+                FACE_THICKNESS * (localFaceColors[name] ? 1 : 1),
               ]}
               rotation={[0, 0, 0]}
               onClick={(e) => handleIndicatorClick(e, name)}
@@ -853,7 +853,7 @@ const Cube = ({
 
       // Adjust offset multiplier for colored faces
       const offsetMultiplier =
-        name === 'bottom' ? 0.8 : localFaceColors[name] ? 0.25 : 0.05;
+        name === 'bottom' ? 0.8 : localFaceColors[name] ? 0.1 : 0.05;
 
       // Calculate position with offset to prevent z-fighting
       const offsetPosition = [

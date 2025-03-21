@@ -502,7 +502,7 @@ const TextSprite = ({
       )}
       <Text
         ref={textRef}
-        position={calculatedPosition || position} // Use calculated position with fallback
+        position={calculatedPosition || position}
         fontSize={fontSize}
         color={style.color}
         anchorX="center"
@@ -511,9 +511,14 @@ const TextSprite = ({
         outlineColor={style.color}
         billboard={billboard}
         depthTest={true}
-        depthWrite={true}
-        renderOrder={10} // Increase render order to prevent z-fighting
-        side={THREE.DoubleSide} // Use DoubleSide to ensure text is visible from all angles
+        depthWrite={false} // Change to false to prevent z-fighting
+        renderOrder={-2} // Even lower than indicators to ensure proper occlusion
+        side={THREE.FrontSide}
+        polygonOffset={true}
+        polygonOffsetFactor={3} // Higher value to push further behind faces
+        polygonOffsetUnits={3} // Higher value to push further behind faces
+        transparent={true}
+        opacity={1}
       >
         {text || ''}
       </Text>

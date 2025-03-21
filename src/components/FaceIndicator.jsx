@@ -74,8 +74,12 @@ const FaceIndicator = ({
           opacity={isActive || isConnected ? 1.0 : 0.6}
           transparent={true}
           depthTest={true}
-          depthWrite={false}
-          renderOrder={5}
+          depthWrite={false} // Change to false to prevent z-fighting
+          side={THREE.FrontSide}
+          polygonOffset={true}
+          polygonOffsetFactor={2} // Increase this value to push further behind faces
+          polygonOffsetUnits={2} // Increase this value to push further behind faces
+          renderOrder={-1} // Make this negative to ensure it's behind colored faces
         />
       </mesh>
     </group>
