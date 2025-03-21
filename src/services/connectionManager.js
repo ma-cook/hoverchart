@@ -12,7 +12,7 @@ export const objectConnectionMap = new Map();
 // Track which connections have already been registered to avoid duplicates
 const registeredConnections = new Set();
 
-// Track existing connections between pairs of objects (regardless of direction)
+// Modified: Track existing connections between specific faces of objects
 const connectedPairs = new Map();
 
 // Track initialization status
@@ -52,24 +52,41 @@ export const registerObjectConnection = (objectId, connectionId) => {
   }
 };
 
-// Check if two objects already have a connection between them
-export const objectsAreConnected = (objectId1, objectId2) => {
+// Check if two objects already have a connection between SPECIFIC FACES
+export const objectsAreConnected = (objectId1, objectId2, face1, face2) => {
   // Standardize IDs
   const id1 = objectId1?.toString();
   const id2 = objectId2?.toString();
 
   if (!id1 || !id2) return false;
 
-  // Create connection keys for both directions
-  const key1 = `${id1}_${id2}`;
-  const key2 = `${id2}_${id1}`;
+  // If no face parameters provided, fall back to the old behavior (any connection between objects)
+  if (!face1 || !face2) {
+    // Create connection keys for both directions
+    const key1 = `${id1}_${id2}`;
+    const key2 = `${id2}_${id1}`;
 
-  // Check if either key exists in the map
+    // Check if either key exists in the map
+    return connectedPairs.has(key1) || connectedPairs.has(key2);
+  }
+
+  // With face information, check for specific face connections
+  // Create face-specific connection keys for both directions
+  const key1 = `${id1}:${face1}_${id2}:${face2}`;
+  const key2 = `${id2}:${face2}_${id1}:${face1}`;
+
+  // Check if this specific face connection exists
   return connectedPairs.has(key1) || connectedPairs.has(key2);
 };
 
-// Track a connection between two objects
-export const registerConnectedPair = (objectId1, objectId2, connectionId) => {
+// Modified: Track a connection between two objects' specific faces
+export const registerConnectedPair = (
+  objectId1,
+  objectId2,
+  connectionId,
+  face1,
+  face2
+) => {
   if (!objectId1 || !objectId2 || !connectionId) return;
 
   // Standardize IDs
@@ -77,20 +94,43 @@ export const registerConnectedPair = (objectId1, objectId2, connectionId) => {
   const id2 = objectId2.toString();
   const connId = connectionId.toString();
 
-  // Use consistent direction (alphabetical order) for the key
-  const key = id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
+  // Store both a general object connection and the face-specific connection
 
-  // Store the connection ID
-  connectedPairs.set(key, connId);
+  // General object-to-object connection (for backward compatibility)
+  const generalKey = id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
+
+  // If face information is provided, also create a face-specific key
+  if (face1 && face2) {
+    // Create a face-specific key
+    const faceKey =
+      id1 < id2
+        ? `${id1}:${face1}_${id2}:${face2}`
+        : `${id2}:${face2}_${id1}:${face1}`;
+
+    // Store the connection ID with the face-specific key
+    connectedPairs.set(faceKey, connId);
+  }
+
+  // Always maintain the general connection reference too
+  connectedPairs.set(generalKey, connId);
 };
 
 // Remove connection between objects
-export const unregisterConnectedPair = (objectId1, objectId2) => {
+export const unregisterConnectedPair = (objectId1, objectId2, face1, face2) => {
   if (!objectId1 || !objectId2) return;
 
   const id1 = objectId1.toString();
   const id2 = objectId2.toString();
 
+  // If face information is provided, delete the face-specific connection
+  if (face1 && face2) {
+    const faceKey1 = `${id1}:${face1}_${id2}:${face2}`;
+    const faceKey2 = `${id2}:${face2}_${id1}:${face1}`;
+    connectedPairs.delete(faceKey1);
+    connectedPairs.delete(faceKey2);
+  }
+
+  // Delete the general connection key as well
   const key = id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
   connectedPairs.delete(key);
 };
@@ -113,11 +153,12 @@ export const handleTextObjectConnection = (
   );
   const targetObjectId = String(targetObject.id || targetObject.objectId);
 
-  // Check if these objects are already connected
-  if (objectsAreConnected(textObjectId, targetObjectId)) {
+  // Check if these objects are already connected on the same face
+  const textFace = textObjectOrIndicator.face || 'default'; // Use a default face for text
+  if (objectsAreConnected(textObjectId, targetObjectId, textFace, targetFace)) {
     return {
       success: false,
-      message: 'These objects are already connected',
+      message: 'These faces are already connected',
     };
   }
 
@@ -192,8 +233,14 @@ export const handleTextObjectConnection = (
   registerObjectConnection(textObjectId, connectionId);
   registerObjectConnection(targetObjectId, connectionId);
 
-  // Register the pair as connected
-  registerConnectedPair(textObjectId, targetObjectId, connectionId);
+  // Register the pair as connected with face information
+  registerConnectedPair(
+    textObjectId,
+    targetObjectId,
+    connectionId,
+    textFace,
+    targetFace
+  );
 
   // Save the connection to database
   try {
@@ -521,7 +568,7 @@ export const preloadConnectionsForSpace = async (userId, spaceId) => {
       const cacheKey = `${spaceId}_${connection.id}`;
       connectionCache.set(cacheKey, connection);
 
-      // Also register connections if they aren't already
+      // Register connections with face information
       if (connection.start?.objectId) {
         registerObjectConnection(connection.start.objectId, connection.id);
       }
@@ -534,7 +581,9 @@ export const preloadConnectionsForSpace = async (userId, spaceId) => {
         registerConnectedPair(
           connection.start.objectId,
           connection.end.objectId,
-          connection.id
+          connection.id,
+          connection.start?.face,
+          connection.end?.face
         );
       }
     });

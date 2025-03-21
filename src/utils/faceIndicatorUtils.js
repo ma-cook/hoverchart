@@ -108,30 +108,6 @@ export const handleFaceIndicatorClick = ({
 
     console.log('Attempting connection from', startIdStr, 'to', endIdStr);
 
-    // Check if connection already exists
-    try {
-      const connectionAlreadyExists = objectsAreConnected(startIdStr, endIdStr);
-
-      if (connectionAlreadyExists) {
-        console.log(
-          'Connection already exists between',
-          startIdStr,
-          'and',
-          endIdStr
-        );
-        // Reset selection state but stay in connect mode
-        selectedIndicatorsRef.current = [];
-        setSelectedIndicators([]);
-        return {
-          success: false,
-          complete: true,
-          message: 'Connection already exists',
-        };
-      }
-    } catch (error) {
-      console.error('Error checking connection:', error);
-    }
-
     // Find objects using normalized string comparison
     const startObj = objects.find((obj) => String(obj.id) === startIdStr);
     const endObj = objects.find((obj) => String(obj.id) === endIdStr);
@@ -293,10 +269,16 @@ export const handleFaceIndicatorClick = ({
 
     console.log('Connection created:', newConnection);
 
-    // Register this connection in the connection manager
+    // Register this connection in the connection manager with face information
     registerObjectConnection(startObjectId, connectionId);
     registerObjectConnection(endObjectId, connectionId);
-    registerConnectedPair(startObjectId, endObjectId, connectionId);
+    registerConnectedPair(
+      startObjectId,
+      endObjectId,
+      connectionId,
+      startIndicator.face,
+      indicator.face
+    );
 
     // Update local state immediately for clickability
     setConnections((prev) => [...prev, newConnection]);
@@ -330,6 +312,93 @@ export const handleFaceIndicatorClick = ({
       complete: true,
       message: 'Connection created successfully',
       connection: newConnection,
+    };
+  }
+};
+
+export const processConnectionCreation = (
+  selectedIndicators,
+  selectedIndicatorsRef,
+  user,
+  currentSpaceId,
+  setConnections,
+  objects,
+  indicator
+) => {
+  // Sanity check the selected indicators
+  if (
+    !selectedIndicatorsRef.current ||
+    selectedIndicatorsRef.current.length === 0
+  ) {
+    console.warn('No indicators selected for connection');
+    return { success: false, message: 'No indicators selected' };
+  }
+
+  try {
+    const startIndicator = selectedIndicatorsRef.current[0];
+
+    // Validate both indicators have valid data
+    if (
+      !startIndicator ||
+      !indicator ||
+      !startIndicator.cube ||
+      !indicator.cube
+    ) {
+      console.error('Invalid indicator data for connection creation', {
+        startIndicator,
+        endIndicator: indicator,
+      });
+      selectedIndicatorsRef.current = [];
+      return {
+        success: false,
+        complete: true,
+        message: 'Invalid indicator data',
+      };
+    }
+
+    const startObjectId = startIndicator.cube.id.toString();
+    const endObjectId = indicator.cube.id.toString();
+
+    // Don't connect an object to itself
+    if (startObjectId === endObjectId) {
+      console.warn('Cannot connect an object to itself');
+      selectedIndicatorsRef.current = [];
+      return {
+        success: false,
+        complete: true,
+        message: 'Cannot connect an object to itself',
+      };
+    }
+
+    // Get objects from the IDs with proper error checking
+    const startObj = objects.find(
+      (obj) => obj?.id?.toString() === startObjectId
+    );
+    const endObj = objects.find((obj) => obj?.id?.toString() === endObjectId);
+
+    if (!startObj || !endObj) {
+      console.error('Could not find objects for connection:', {
+        startId: startObjectId,
+        endId: endObjectId,
+        objectsFound: objects.length,
+      });
+      selectedIndicatorsRef.current = [];
+      return {
+        success: false,
+        complete: true,
+        message: 'Objects not found',
+      };
+    }
+
+    // ...rest of your existing code...
+  } catch (error) {
+    console.error('Error creating connection:', error);
+    // Reset selection state
+    selectedIndicatorsRef.current = [];
+    return {
+      success: false,
+      complete: true,
+      message: 'Connection creation error',
     };
   }
 };

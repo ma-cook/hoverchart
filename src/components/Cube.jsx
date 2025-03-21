@@ -187,7 +187,7 @@ const Cube = ({
         return true;
       }
 
-      // Show indicators during connection creation
+      // Show indicators during connection creation on ALL cubes
       if (selectedIndicators.length > 0) {
         return true;
       }
@@ -197,16 +197,17 @@ const Cube = ({
         return true;
       }
 
-      // Show all indicators when explicitly requested
-      if (showAllCubesIndicators && selected) {
+      // Show all indicators when explicitly requested - already fixed this part
+      if (showAllCubesIndicators) {
         return true;
       }
 
-      // Show indicators based on mode
+      // Show indicators based on mode - FIX THIS PART:
       switch (indicatorMode) {
         case 'all':
+          return true; // Show on all cubes always in 'all' mode
         case 'indicators':
-          return selected || showAllCubesIndicators;
+          return true; // Show on all cubes in 'indicators' mode as well
         case 'single':
           return (
             (activeIndicator?.cube?.id === id &&
@@ -762,14 +763,21 @@ const Cube = ({
   // Render colored faces and indicators
   const renderFaces = useMemo(() => {
     return faces.map(({ name, normal }) => {
-      // Skip if face has no color and cube isn't selected/shown
-      if (!localFaceColors[name] && !selected && !showAllCubesIndicators) {
-        return null;
-      }
-
+      // Get indicator properties for this face
       const { position: facePos, rotation } = getFaceIndicatorProps(name);
       const isConnected = isIndicatorConnected(name);
       const isActive = isIndicatorActive(name);
+
+      // First, check if this indicator should be shown based on our logic
+      const displayIndicator = shouldShowIndicator(name);
+
+      // Then, determine if the face itself should be visible (separate from indicator visibility)
+      const displayFace =
+        localFaceColors[name] ||
+        (selected && (selectedFace === name || isActive));
+
+      // FIXED: Always render faces (remove the conditional return null),
+      // even if not displayed - this ensures they're always clickable
 
       return (
         <mesh
@@ -777,17 +785,22 @@ const Cube = ({
           position={[facePos[0], facePos[1], facePos[2]]}
           rotation={rotation}
           onClick={(e) => handleColoredFaceClick(e, name)}
-          renderOrder={-1} // Lower render order for faces
+          renderOrder={-1}
         >
+          {/* Always render the geometry for click detection */}
           <boxGeometry args={[FACE_SIZE, FACE_SIZE, FACE_THICKNESS]} />
           <meshBasicMaterial
             {...getFaceMaterial(name)}
             transparent={true}
-            depthWrite={false} // Prevent faces from blocking lines
+            depthWrite={false}
             side={THREE.FrontSide}
             renderOrder={-1}
+            // Only make the material visible when displayFace is true
+            visible={displayFace}
+            opacity={displayFace ? getFaceMaterial(name).opacity : 0.001}
           />
 
+          {/* UI elements for selected face */}
           {selected && selectedFace === name && !showFaceTextInput && (
             <FaceUI
               position={[0, 1, 0]}
@@ -805,12 +818,13 @@ const Cube = ({
             />
           )}
 
-          {shouldShowIndicator(name) && (
+          {/* Always render indicator if needed, independent of face visibility */}
+          {displayIndicator && (
             <FaceIndicator
               position={[
                 0,
                 0,
-                FACE_THICKNESS * (localFaceColors[name] ? 1 : 1),
+                FACE_THICKNESS * (localFaceColors[name] ? 1 : 0.5),
               ]}
               rotation={[0, 0, 0]}
               onClick={(e) => handleIndicatorClick(e, name)}
@@ -818,7 +832,7 @@ const Cube = ({
               isConnected={isConnected}
               objectId={id}
               face={name}
-              renderOrder={20} // Increase render order to ensure visibility
+              renderOrder={20}
             />
           )}
         </mesh>
@@ -840,6 +854,7 @@ const Cube = ({
     handleFaceTextClick,
     handleFaceTextSubmit,
     id,
+    selectedIndicators.length,
   ]);
 
   // Render face texts

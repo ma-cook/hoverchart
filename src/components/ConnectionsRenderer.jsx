@@ -10,6 +10,307 @@ import {
 } from '../utils/pathfindingUtils';
 import { calculateMidpoint } from '../utils/positionUtils';
 
+// Separate connection rendering into a sub-component to fix the hooks issue
+const Connection = ({
+  connection,
+  objects,
+  selectedConnection,
+  lineTexts,
+  showLineTextInput,
+  showLineTextStyleUI,
+  handleConnectionClick,
+  handleLineTextClick,
+  handleLineTextSubmit,
+  handleLineTextStyleChange,
+  handleLineColorChange,
+  handleLineStyleChange,
+  setShowLineTextStyleUI,
+  setShowLineTextInput,
+}) => {
+  // Always call hooks first, before any conditional returns
+  // Declare all useMemo hooks unconditionally
+
+  // First hook: Calculate basic connection data
+  const connectionData = useMemo(() => {
+    // Handle invalid connections gracefully inside the hook
+    if (!connection) {
+      return { isValid: false, midpoint: [0, 0, 0] };
+    }
+
+    // Extract props with safe fallbacks
+    const startPosition = connection.start?.position || [0, 0, 0];
+    const endPosition = connection.end?.position || [0, 0, 0];
+
+    return {
+      isValid: Boolean(
+        connection &&
+          connection.start &&
+          connection.end &&
+          Array.isArray(connection.start.position) &&
+          Array.isArray(connection.end.position)
+      ),
+      midpoint: calculateMidpoint(startPosition, endPosition),
+      startPosition,
+      endPosition,
+    };
+  }, [connection]);
+
+  // Second hook: Filter relevant objects
+  const filteredObjects = useMemo(() => {
+    if (!connection) return [];
+
+    const startObjectId = connection.start?.objectId || '';
+    const endObjectId = connection.end?.objectId || '';
+
+    return objects
+      ? objects.filter(
+          (obj) =>
+            obj &&
+            obj.id &&
+            startObjectId &&
+            endObjectId &&
+            obj.id.toString() !== startObjectId.toString() &&
+            obj.id.toString() !== endObjectId.toString()
+        )
+      : [];
+  }, [connection, objects]);
+
+  // Third hook: Calculate path and intersections
+  const pathData = useMemo(() => {
+    if (!connection || !connectionData.isValid) {
+      return {
+        calculatedPathPoints: [
+          [0, 0, 0],
+          [0, 0, 0],
+        ],
+        effectiveLineStyle: 'straight',
+        intersections: [],
+      };
+    }
+
+    const startPosition = connectionData.startPosition;
+    const endPosition = connectionData.endPosition;
+    const startObjectId = connection.start?.objectId || '';
+    const endObjectId = connection.end?.objectId || '';
+    const pathPoints = connection._pathPoints;
+    const lineStyle = connection.lineStyle || 'straight';
+
+    // Calculate intersections
+    const intersections = checkLineIntersection(
+      startPosition,
+      endPosition,
+      filteredObjects
+    );
+
+    // Generate path (curved if needed)
+    const calculatedPathPoints =
+      pathPoints ||
+      generateCurvedPath(
+        startPosition,
+        endPosition,
+        intersections,
+        startObjectId,
+        endObjectId,
+        lineStyle === 'curved'
+      );
+
+    // Determine if path should be curved
+    const isCurvedPath =
+      calculatedPathPoints &&
+      calculatedPathPoints.length > 2 &&
+      intersections &&
+      intersections.length > 0;
+
+    // Determine effective line style
+    const effectiveLineStyle =
+      isCurvedPath || lineStyle === 'curved' ? 'curved' : lineStyle;
+
+    return {
+      calculatedPathPoints: calculatedPathPoints || [
+        startPosition,
+        endPosition,
+      ],
+      effectiveLineStyle,
+      intersections,
+    };
+  }, [connection, connectionData, filteredObjects]);
+
+  // Fourth hook: Calculate text position
+  const textPositionData = useMemo(() => {
+    if (!connection || !connectionData.isValid) {
+      return { textPosition: [0, 0, 0] };
+    }
+
+    // Define default offsets
+    const defaultStraightLineOffset = 2;
+    const defaultCurvedLineOffset = 5;
+    const { midpoint } = connectionData;
+    const { calculatedPathPoints, effectiveLineStyle } = pathData;
+
+    // Calculate text position based on line style
+    let textPosition;
+
+    if (calculatedPathPoints && calculatedPathPoints.length > 0) {
+      if (effectiveLineStyle === 'curved') {
+        const midIdx = Math.floor(calculatedPathPoints.length / 2);
+        textPosition = [
+          calculatedPathPoints[midIdx].x,
+          calculatedPathPoints[midIdx].y + defaultCurvedLineOffset,
+          calculatedPathPoints[midIdx].z,
+        ];
+      } else {
+        textPosition = [
+          midpoint[0],
+          midpoint[1] + defaultStraightLineOffset,
+          midpoint[2],
+        ];
+      }
+    } else {
+      textPosition = [
+        midpoint[0],
+        midpoint[1] + defaultStraightLineOffset,
+        midpoint[2],
+      ];
+    }
+
+    return {
+      textPosition,
+    };
+  }, [connection, connectionData, pathData]);
+
+  // Early return after all hooks are declared
+  if (!connection) return null;
+
+  // Early return for invalid connections - after all hooks are declared
+  if (!connectionData.isValid) {
+    console.warn('Invalid connection structure:', connection);
+    return null;
+  }
+
+  // Extract all needed values from hooks
+  const { midpoint } = connectionData;
+  const { calculatedPathPoints, effectiveLineStyle } = pathData;
+  const { textPosition } = textPositionData;
+
+  // Determine connection text
+  const connectionText =
+    connection.text || (lineTexts && lineTexts[connection.id]) || '';
+
+  return (
+    <group key={connection.id}>
+      {/* Main visible line with improved dash animation */}
+      <Line
+        points={calculatedPathPoints}
+        color={
+          connection.color ||
+          (selectedConnection === connection.id ? '#ffff00' : 'white')
+        }
+        lineWidth={selectedConnection === connection.id ? 4 : 2}
+        dashed={
+          connection.lineStyle === 'dashed' || connection.lineStyle === 'dotted'
+        }
+        dashScale={connection.lineStyle === 'dotted' ? 1 : 0.5}
+        dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
+        gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
+        dashOffset={connection.dashOffset || 0}
+        renderOrder={20}
+        transparent={false}
+        depthTest={true}
+        depthWrite={true}
+        polygonOffset={true}
+        polygonOffsetFactor={-1}
+        polygonOffsetUnits={-1}
+        toneMapped={false}
+        resolution={4}
+      />
+
+      {/* Clickable area */}
+      <Line
+        points={calculatedPathPoints}
+        color="white"
+        lineWidth={20}
+        onClick={(e) => handleConnectionClick(e, connection.id)}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = 'pointer';
+        }}
+        onPointerOut={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = 'auto';
+        }}
+        transparent
+        opacity={0}
+        depthTest={true}
+        renderOrder={19}
+        polygonOffset={true}
+        polygonOffsetFactor={-0.9}
+        polygonOffsetUnits={-0.9}
+      />
+
+      {/* Connection text */}
+      <TextSprite
+        key={`text-${connection.id}-${
+          connection._lastStyleUpdate || 0
+        }-${effectiveLineStyle}-${connection._textRefresh || 0}`}
+        text={connectionText}
+        position={textPosition}
+        style={{
+          fontSize: connection.textStyle?.fontSize || 1.5,
+          color: connection.textStyle?.color || 'white',
+          underline: connection.textStyle?.underline || false,
+          fixedSize: true,
+          backgroundOpacity: 0.4,
+          backgroundColor: '#000000',
+          padding: 0.3,
+        }}
+        onClick={(e) => handleLineTextClick(e, connection.id)}
+        billboard={true}
+        renderOrder={20}
+        lineStyle={effectiveLineStyle}
+        pathPoints={calculatedPathPoints}
+      />
+
+      {/* Text input UI */}
+      {showLineTextInput === connection.id && (
+        <HeaderInput
+          position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
+          onTextSubmit={(text) => handleLineTextSubmit(connection.id, text)}
+          initialText={connectionText}
+        />
+      )}
+
+      {/* Text style UI */}
+      {showLineTextStyleUI === connection.id && (
+        <TextStyleUI
+          position={[midpoint[0], midpoint[1] + 8, midpoint[2]]}
+          onStyleChange={(style) =>
+            handleLineTextStyleChange(connection.id, style)
+          }
+          onClose={() => setShowLineTextStyleUI(null)}
+          currentStyle={connection.textStyle || {}}
+        />
+      )}
+
+      {/* Connection controls */}
+      {selectedConnection === connection.id && (
+        <LineUI
+          position={midpoint}
+          onColorChange={(color) => handleLineColorChange(connection.id, color)}
+          onToggleDashed={(styleType) =>
+            handleLineStyleChange(connection.id, styleType)
+          }
+          onTextClick={() => setShowLineTextInput(connection.id)}
+          currentText={connectionText}
+          hasText={!!connectionText && connectionText.trim() !== ''}
+        />
+      )}
+    </group>
+  );
+};
+
+// Memoize the Connection component to avoid unnecessary re-renders
+const MemoizedConnection = React.memo(Connection);
+
 /**
  * Component for rendering all connections
  */
@@ -31,215 +332,25 @@ const ConnectionsRenderer = ({
 }) => {
   return (
     <>
-      {connections.map((connection) => {
-        // Optimize connection rendering with useMemo
-        const renderData = useMemo(() => {
-          const startPosition = connection.start?.position || [0, 0, 0];
-          const endPosition = connection.end?.position || [0, 0, 0];
-          const midpoint = calculateMidpoint(startPosition, endPosition);
-
-          // Calculate intersections and path points
-          const intersections = checkLineIntersection(
-            startPosition,
-            endPosition,
-            objects.filter(
-              (obj) =>
-                obj.id.toString() !== connection.start?.objectId &&
-                obj.id.toString() !== connection.end?.objectId
-            )
-          );
-
-          // Generate path (curved if needed)
-          const pathPoints =
-            connection._pathPoints ||
-            generateCurvedPath(
-              startPosition,
-              endPosition,
-              intersections,
-              connection.start?.objectId,
-              connection.end?.objectId,
-              connection.lineStyle === 'curved'
-            );
-
-          // Determine line style
-          const isCurvedPath =
-            pathPoints.length > 2 && intersections.length > 0;
-          const effectiveLineStyle =
-            isCurvedPath || connection.lineStyle === 'curved'
-              ? 'curved'
-              : connection.lineStyle || 'straight';
-
-          // Calculate text position
-          let textPosition;
-          const defaultStraightLineOffset = 2;
-          const defaultCurvedLineOffset = 5;
-
-          if (pathPoints && pathPoints.length > 0) {
-            if (effectiveLineStyle === 'curved') {
-              const midIdx = Math.floor(pathPoints.length / 2);
-              textPosition = [
-                pathPoints[midIdx].x,
-                pathPoints[midIdx].y + defaultCurvedLineOffset,
-                pathPoints[midIdx].z,
-              ];
-            } else {
-              textPosition = [
-                midpoint[0],
-                midpoint[1] + defaultStraightLineOffset,
-                midpoint[2],
-              ];
-            }
-          } else {
-            textPosition = [
-              midpoint[0],
-              midpoint[1] + defaultStraightLineOffset,
-              midpoint[2],
-            ];
-          }
-
-          return {
-            startPosition,
-            endPosition,
-            midpoint,
-            pathPoints,
-            effectiveLineStyle,
-            textPosition,
-          };
-          // Add all dependencies that should trigger a re-render
-        }, [
-          connection.start?.position,
-          connection.end?.position,
-          connection._pathPoints,
-          connection.lineStyle,
-          connection.start?.objectId,
-          connection.end?.objectId,
-          // We intentionally exclude objects to prevent full recalculations
-        ]);
-
-        // Extract variables from memoized result
-        const { pathPoints, effectiveLineStyle, textPosition, midpoint } =
-          renderData;
-
-        // Determine connection text
-        const connectionText =
-          connection.text || lineTexts[connection.id] || '';
-
-        return (
-          <group key={connection.id}>
-            {/* Main visible line with improved dash animation */}
-            <Line
-              points={pathPoints}
-              color={
-                connection.color ||
-                (selectedConnection === connection.id ? '#ffff00' : 'white')
-              }
-              lineWidth={selectedConnection === connection.id ? 4 : 2}
-              dashed={
-                connection.lineStyle === 'dashed' ||
-                connection.lineStyle === 'dotted'
-              }
-              dashScale={connection.lineStyle === 'dotted' ? 1 : 0.5}
-              dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
-              gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
-              dashOffset={connection.dashOffset || 0}
-              renderOrder={20}
-              transparent={false}
-              depthTest={true} // Enable depth testing
-              depthWrite={true} // Enable depth writing
-              polygonOffset={true}
-              polygonOffsetFactor={-1}
-              polygonOffsetUnits={-1}
-              toneMapped={false}
-              resolution={4} // Increased from 2 for smoother lines
-            />
-
-            {/* Clickable area */}
-            <Line
-              points={pathPoints}
-              color="white"
-              lineWidth={20}
-              onClick={(e) => handleConnectionClick(e, connection.id)}
-              onPointerOver={(e) => {
-                e.stopPropagation();
-                document.body.style.cursor = 'pointer';
-              }}
-              onPointerOut={(e) => {
-                e.stopPropagation();
-                document.body.style.cursor = 'auto';
-              }}
-              transparent
-              opacity={0}
-              depthTest={true}
-              renderOrder={19}
-              polygonOffset={true}
-              polygonOffsetFactor={-0.9}
-              polygonOffsetUnits={-0.9}
-            />
-
-            {/* Connection text with optimized key to reduce re-renders */}
-            <TextSprite
-              key={`text-${connection.id}-${
-                connection._lastStyleUpdate || 0
-              }-${effectiveLineStyle}-${connection._textRefresh || 0}`}
-              text={connectionText}
-              position={textPosition}
-              style={{
-                fontSize: connection.textStyle?.fontSize || 1.5,
-                color: connection.textStyle?.color || 'white',
-                underline: connection.textStyle?.underline || false,
-                fixedSize: true,
-                backgroundOpacity: 0.4,
-                backgroundColor: '#000000',
-                padding: 0.3,
-              }}
-              onClick={(e) => handleLineTextClick(e, connection.id)}
-              billboard={true}
-              renderOrder={20}
-              lineStyle={effectiveLineStyle}
-              pathPoints={pathPoints}
-            />
-
-            {/* Text input UI */}
-            {showLineTextInput === connection.id && (
-              <HeaderInput
-                position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
-                onTextSubmit={(text) =>
-                  handleLineTextSubmit(connection.id, text)
-                }
-                initialText={connectionText}
-              />
-            )}
-
-            {/* Text style UI */}
-            {showLineTextStyleUI === connection.id && (
-              <TextStyleUI
-                position={[midpoint[0], midpoint[1] + 8, midpoint[2]]}
-                onStyleChange={(style) =>
-                  handleLineTextStyleChange(connection.id, style)
-                }
-                onClose={() => setShowLineTextStyleUI(null)}
-                currentStyle={connection.textStyle || {}}
-              />
-            )}
-
-            {/* Connection controls */}
-            {selectedConnection === connection.id && (
-              <LineUI
-                position={midpoint}
-                onColorChange={(color) =>
-                  handleLineColorChange(connection.id, color)
-                }
-                onToggleDashed={(styleType) =>
-                  handleLineStyleChange(connection.id, styleType)
-                }
-                onTextClick={() => setShowLineTextInput(connection.id)}
-                currentText={connectionText}
-                hasText={!!connectionText && connectionText.trim() !== ''}
-              />
-            )}
-          </group>
-        );
-      })}
+      {connections.map((connection) => (
+        <MemoizedConnection
+          key={connection?.id || Math.random().toString()}
+          connection={connection}
+          objects={objects}
+          selectedConnection={selectedConnection}
+          lineTexts={lineTexts}
+          showLineTextInput={showLineTextInput}
+          showLineTextStyleUI={showLineTextStyleUI}
+          handleConnectionClick={handleConnectionClick}
+          handleLineTextClick={handleLineTextClick}
+          handleLineTextSubmit={handleLineTextSubmit}
+          handleLineTextStyleChange={handleLineTextStyleChange}
+          handleLineColorChange={handleLineColorChange}
+          handleLineStyleChange={handleLineStyleChange}
+          setShowLineTextStyleUI={setShowLineTextStyleUI}
+          setShowLineTextInput={setShowLineTextInput}
+        />
+      ))}
     </>
   );
 };
