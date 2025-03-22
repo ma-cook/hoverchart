@@ -42,7 +42,7 @@ const FaceIndicator = ({
     ? '#0088ff' // Blue for selected (not connected)
     : hovered
     ? '#aaaaaa' // Light gray for hover
-    : '#777777'; // Darker gray for normal state
+    : '#aaaaaa'; // Darker gray for normal state
 
   return (
     <group ref={groupRef}>

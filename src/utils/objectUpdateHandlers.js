@@ -215,17 +215,94 @@ export const handleObjectUpdate = ({
 
     if (!existingObj) return prev;
 
-    // Critical: Never update transformLocked objects from outside their transform
+    // Handle TextObject final position updates BEFORE the transform lock check
+    // Inside handleObjectUpdate function, modify the TextObject handler:
+    if (existingObj.type === 'text' && updates._finalPosition === true) {
+      // Create clean update without transform flags
+      const cleanUpdate = { ...updates };
+
+      // Ensure position is in correct format
+      if (cleanUpdate.position) {
+        cleanUpdate.position = Array.isArray(cleanUpdate.position)
+          ? cleanUpdate.position
+          : [
+              cleanUpdate.position.x,
+              cleanUpdate.position.y,
+              cleanUpdate.position.z,
+            ];
+      }
+
+      // Remove control flags
+      delete cleanUpdate._transformActive;
+      delete cleanUpdate._updateTimestamp;
+      delete cleanUpdate._finalPosition;
+      delete cleanUpdate._moveComplete;
+
+      const updatedObj = {
+        ...existingObj,
+        ...cleanUpdate,
+      };
+
+      // Save to database immediately
+      if (user && currentSpaceId) {
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+        saveObject(spaceOwnerId, currentSpaceId, updatedObj);
+      }
+
+      return prev.map((obj) => (obj.id === id ? updatedObj : obj));
+    }
+
+    // AFTER the special case, do the transform lock check
     if (existingObj._transformLocked && !isTransforming) {
       return prev;
     }
 
-    // Skip if there's a more recent update for this object
-    if (
-      existingObj._updateTimestamp &&
-      existingObj._updateTimestamp > updateTimestamp
-    ) {
-      return prev;
+    // Handle TextObject final position updates with high priority - add this section
+    if (existingObj.type === 'text' && updates._finalPosition === true) {
+      // Create a clean update without transform flags
+      const cleanUpdate = { ...updates };
+      delete cleanUpdate._transformActive;
+      delete cleanUpdate._updateTimestamp;
+      delete cleanUpdate._finalPosition;
+      delete cleanUpdate._moveComplete;
+
+      // Update state with the clean object
+      const updatedObj = {
+        ...existingObj,
+        ...cleanUpdate,
+      };
+
+      // Save to database immediately for text objects
+      if (user && currentSpaceId) {
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+        const cleanObj = { ...updatedObj };
+
+        // Remove temporary properties from database update
+        delete cleanObj._isTransforming;
+        delete cleanObj._updateTimestamp;
+        delete cleanObj._positionUpdated;
+        delete cleanObj._saveTimeout;
+        delete cleanObj._transformLocked;
+        delete cleanObj._lockTime;
+        delete cleanObj._isDragging;
+        delete cleanObj._moveTimestamp;
+
+        // Important: Ensure position is properly formatted
+        if (cleanObj.position && !Array.isArray(cleanObj.position)) {
+          cleanObj.position = [
+            cleanObj.position.x || 0,
+            cleanObj.position.y || 0,
+            cleanObj.position.z || 0,
+          ];
+        }
+
+        setTimeout(() => {
+          saveObject(spaceOwnerId, currentSpaceId, cleanObj);
+        }, 100);
+      }
+
+      // Update the objects array
+      return prev.map((obj) => (obj.id === id ? updatedObj : obj));
     }
 
     // If this is a position update, check for jitter/oscillation

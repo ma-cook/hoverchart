@@ -530,64 +530,64 @@ const TextObject = ({
   };
 
   const handleTransformEnd = () => {
+    // Step 1: Unregister from transform system FIRST
     registerTransformingObject?.(id, false);
+
     if (window.orbitControls) {
       window.orbitControls.enabled = true;
     }
 
-    // Final position calculation after movement ends
-    const worldInfo = updateWorldMatrix();
-    if (groupRef.current && onUpdate && worldInfo) {
-      // Remove movement flags
-      setIsMoving(false);
+    // Step 2: Get the final position
+    if (groupRef.current && onUpdate) {
+      const newPos = groupRef.current.position;
 
+      // Send a MINIMAL update like Cube does
+      onUpdate(id, {
+        type: 'text',
+        position: [newPos.x, newPos.y, newPos.z], // Array format is critical
+        _finalPosition: true, // This flag tells objectUpdateHandlers to save it
+        _moveComplete: true, // Additional flag used by database handler
+      });
+
+      // Clear any transform-related flags
       if (groupRef.current.userData) {
         groupRef.current.userData._transformActive = false;
         groupRef.current.userData._isDragging = false;
-        groupRef.current.userData._textObjectMoving = false;
+        groupRef.current.userData.isMoving = false;
       }
 
-      // Final update to database with the new positions
-      onUpdate(id, {
-        position: worldInfo.worldPos,
-        worldPosition: worldInfo.worldPos,
-        indicatorPosition: worldInfo.indicatorPos,
-        scale,
-        planeData: {
-          worldMatrix: worldInfo.matrix,
-          position: worldInfo.worldPos,
-          scale: [...scale],
-          offset: getIndicatorOffset(),
-        },
-        _moveComplete: true, // Signal that movement is complete for any listeners
-        _moveTimestamp: Date.now(),
-      });
+      setIsMoving(false);
     }
+
+    // Cleanup
+    pendingChangesRef.current = null;
     onTransformEnd?.(id);
   };
 
   // Enhanced handleDrag to update connection points in real-time
-  // Replace your handleDrag function
+  // Enhanced handleDrag to use the simpler Cube approach
   const handleDrag = useCallback(
     (e) => {
       if (!groupRef.current || !onUpdate) return;
 
-      // Get the new position after drag
+      // Get the new position directly like in Cube component
       const newPos = e.target.object.position;
-      const worldPos = new THREE.Vector3(newPos.x, newPos.y, newPos.z);
 
-      // Calculate indicator position
+      // Calculate indicator position for connections
       const offset = new THREE.Vector3(...getIndicatorOffset());
       offset.applyQuaternion(groupRef.current.quaternion);
-      const indicatorWorldPos = worldPos.clone().add(offset);
-
+      const indicatorWorldPos = new THREE.Vector3(
+        newPos.x,
+        newPos.y,
+        newPos.z
+      ).add(offset);
       const indicatorPosArray = [
         indicatorWorldPos.x,
         indicatorWorldPos.y,
         indicatorWorldPos.z,
       ];
 
-      // Update all connections in real-time
+      // Update all connections in real-time if needed
       if (connections) {
         connections.forEach((conn) => {
           if (conn.start?.objectId === stringId) {
@@ -598,7 +598,6 @@ const TextObject = ({
               conn.start.faceCenter = [...indicatorPosArray];
             }
           }
-
           if (conn.end?.objectId === stringId) {
             conn.end.position = [...indicatorPosArray];
             conn.end.worldPosition = [...indicatorPosArray];
@@ -610,21 +609,40 @@ const TextObject = ({
         });
       }
 
-      // Update position in real-time (not in database yet to avoid overwrites)
+      // Use the same simple update approach as handleTransformEnd and Cube
       onUpdate(id, {
+        // Include type FIRST like in Cube.jsx
+        type: 'text',
+
+        // Simple position format
         position: [newPos.x, newPos.y, newPos.z],
-        worldPosition: [newPos.x, newPos.y, newPos.z],
-        indicatorPosition: indicatorPosArray,
-        planeData: {
-          position: [newPos.x, newPos.y, newPos.z],
-          worldMatrix: Array.from(groupRef.current.matrixWorld.elements),
-          scale: [...scale],
-          offset: getIndicatorOffset(),
-        },
-        _transformActive: true, // Mark this as a non-database update
+
+        // Include ALL essential properties
+        scale: scale,
+        text: text,
+        textStyle: textStyle,
+        bulletPointMode: bulletPointMode,
+
+        // CRITICAL: Don't add _transformActive flag which causes filtering!
       });
+
+      // Store the updated positions in userData for any component that needs it
+      if (groupRef.current) {
+        groupRef.current.userData.position = [newPos.x, newPos.y, newPos.z];
+        groupRef.current.userData.indicatorPosition = indicatorPosArray;
+      }
     },
-    [id, connections, stringId, onUpdate, scale, getIndicatorOffset]
+    [
+      id,
+      connections,
+      stringId,
+      onUpdate,
+      scale,
+      text,
+      textStyle,
+      bulletPointMode,
+      getIndicatorOffset,
+    ]
   );
 
   const handleScale = (e) => {

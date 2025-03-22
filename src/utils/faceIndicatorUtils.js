@@ -69,7 +69,7 @@ export const handleFaceIndicatorClick = ({
     // First indicator selection - store it in both state and ref
     selectedIndicatorsRef.current = [indicator];
     setSelectedIndicators([indicator]);
-    console.log('First indicator selected:', indicator);
+
     return {
       success: true,
       complete: false,
@@ -208,8 +208,13 @@ export const handleFaceIndicatorClick = ({
       }
 
       // Reset selection state regardless of outcome
-      selectedIndicatorsRef.current = [];
+
       setSelectedIndicators([]);
+      selectedIndicatorsRef.current = [];
+      setIsConnectMode(false);
+      setShowAllCubesIndicators(false);
+      setGlobalIndicatorSelected(false);
+      setIndicatorMode('none');
       return {
         success: result.success,
         complete: true,
@@ -332,8 +337,12 @@ export const handleFaceIndicatorClick = ({
     }
 
     // Reset indicator selection states
-    selectedIndicatorsRef.current = [];
     setSelectedIndicators([]);
+    selectedIndicatorsRef.current = [];
+    setIsConnectMode(false);
+    setShowAllCubesIndicators(false);
+    setGlobalIndicatorSelected(false);
+    setIndicatorMode('none');
 
     return {
       success: true,
