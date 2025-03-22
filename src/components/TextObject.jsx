@@ -45,6 +45,7 @@ const TextObject = ({
   const [textStyle, setTextStyle] = useState(initialTextStyle);
   const [scale, setScale] = useState(initialScale);
   const [indicatorSelected, setIndicatorSelected] = useState(false);
+  const [contentHeight, setContentHeight] = useState('auto');
 
   // UI mode states
   const [showTransform, setShowTransform] = useState(false);
@@ -62,23 +63,17 @@ const TextObject = ({
   const lastUpdateRef = useRef(null);
   const worldMatrixRef = useRef(null);
   const worldPosRef = useRef(null);
+  const contentHeightRef = useRef(0);
+  const needsFocusRef = useRef(false);
+  const initialFocusDoneRef = useRef(false);
+  const lastCursorPositionRef = useRef(null);
+  const textContentRef = useRef(initialText);
 
   // Constants
   const conversionFactor = 30;
   const stringId = String(id);
 
   // Sync props to state
-  useEffect(() => {
-    if (initialScale !== undefined) setScale(initialScale);
-  }, [initialScale]);
-
-  useEffect(() => {
-    if (initialText !== undefined) setText(initialText);
-  }, [initialText]);
-
-  useEffect(() => {
-    if (initialTextStyle !== undefined) setTextStyle(initialTextStyle);
-  }, [initialTextStyle]);
 
   // Calculate offset for indicator consistently
   const getIndicatorOffset = useCallback(() => {
@@ -238,9 +233,35 @@ const TextObject = ({
     getIndicatorOffset,
   ]);
 
+  // Modified auto-resize function for the textarea
+  const autoResizeTextArea = useCallback(() => {
+    if (!textAreaRef.current) return;
+
+    // Reset height to calculate the actual height required
+    textAreaRef.current.style.height = 'auto';
+
+    // Get the scrollHeight (actual content height)
+    const scrollHeight = textAreaRef.current.scrollHeight;
+
+    // Store height in ref and state
+    contentHeightRef.current = scrollHeight;
+    setContentHeight(`${scrollHeight}px`);
+
+    // Set the height based on content
+    textAreaRef.current.style.height = `${scrollHeight}px`;
+
+    // Update container dimensions for connections
+    containerDimensionsRef.current = {
+      width: textAreaRef.current.offsetWidth,
+      height: scrollHeight,
+    };
+  }, []);
+
   // Event handlers
+  // Modified text change handler to preserve cursor position
   const handleTextChange = (e) => {
-    setText(e.target.value);
+    // Store text in ref instead of state to avoid re-renders
+    textContentRef.current = e.target.value;
     setIsActivelyEditing(true);
 
     pendingChangesRef.current = {
@@ -260,6 +281,15 @@ const TextObject = ({
         }
       }, 1000);
     }
+
+    // Auto-resize without affecting cursor
+    autoResizeTextArea();
+
+    // Update the text state less frequently to avoid cursor jumps
+    clearTimeout(textUpdateTimeoutRef.current);
+    textUpdateTimeoutRef.current = setTimeout(() => {
+      setText(textContentRef.current);
+    }, 300); // Debounce state updates
   };
 
   const handleBlur = (e) => {
@@ -271,6 +301,8 @@ const TextObject = ({
       return;
     }
 
+    // Sync text state with ref value
+    setText(textContentRef.current);
     setIsEditing(false);
     setIsActivelyEditing(false);
 
@@ -281,33 +313,55 @@ const TextObject = ({
     updateDatabase();
   };
 
-  // Click handler to activate editing
-  const handleTextClick = (e) => {
-    e.stopPropagation();
-    onClick();
-    setIsEditing(true);
-
-    requestAnimationFrame(() => {
-      if (textAreaRef.current) {
-        textAreaRef.current.focus();
-      }
-    });
-  };
-
+  // Improved click handler to set focus flags only during initial activation
   const handleDivClick = (e) => {
     e.stopPropagation();
     e.preventDefault();
     onClick();
-    setIsEditing(true);
 
-    setTimeout(() => {
-      if (textAreaRef.current) {
-        textAreaRef.current.focus();
-        textAreaRef.current.selectionStart = text.length;
-        textAreaRef.current.selectionEnd = text.length;
-      }
-    }, 10);
+    // Only set focus flags when transitioning from non-editing to editing
+    if (!isEditing) {
+      needsFocusRef.current = true;
+      initialFocusDoneRef.current = false;
+    }
+
+    // Activate editing mode
+    setIsEditing(true);
   };
+
+  // Simplify handleTextClick to use the same logic
+  const handleTextClick = (e) => {
+    handleDivClick(e);
+  };
+
+  // Modified focus effect to respect cursor position after initial focus
+  useEffect(() => {
+    if (isEditing && needsFocusRef.current && !initialFocusDoneRef.current) {
+      // Use a slightly longer timeout to ensure DOM is fully updated
+      const focusTimeout = setTimeout(() => {
+        if (textAreaRef.current) {
+          textAreaRef.current.focus();
+
+          // Only set cursor to end during initial focus
+          textAreaRef.current.selectionStart = text.length;
+          textAreaRef.current.selectionEnd = text.length;
+
+          autoResizeTextArea();
+          needsFocusRef.current = false;
+          initialFocusDoneRef.current = true;
+        }
+      }, 50); // Slightly longer timeout for reliable focusing
+
+      return () => clearTimeout(focusTimeout);
+    }
+  }, [isEditing, text, autoResizeTextArea]);
+
+  // Keep the existing effect for auto-resizing
+  useEffect(() => {
+    if (isEditing) {
+      autoResizeTextArea();
+    }
+  }, [isEditing, autoResizeTextArea]);
 
   // Connection indicator click - critical for connection handling
   const handleIndicatorClick = (e) => {
@@ -514,7 +568,8 @@ const TextObject = ({
   const getTextAreaStyle = () => ({
     autoWrap: 'wrap',
     width: '100%',
-    height: 'auto',
+    height: contentHeight,
+    minHeight: '2em', // Start with small height, will expand
     background: 'rgba(0,0,0,0.5)',
     color: textStyle.color || 'white',
     border: 'none',
@@ -579,6 +634,36 @@ const TextObject = ({
     }
   });
 
+  // Simplified effect that syncs heights on mode switch
+  useEffect(() => {
+    if (isEditing && textAreaRef.current) {
+      autoResizeTextArea();
+    }
+  }, [isEditing, autoResizeTextArea]);
+
+  // Add effect to update height when text changes in either mode
+  useEffect(() => {
+    if (isEditing) {
+      autoResizeTextArea();
+    } else if (displayRef.current && contentHeight !== 'auto') {
+      displayRef.current.style.height = contentHeight;
+    }
+  }, [text, isEditing, autoResizeTextArea, contentHeight]);
+
+  // Initialize content height on component mount
+  useEffect(() => {
+    // Set initial height based on content or a minimum value
+    if (text) {
+      // Delay to ensure DOM is ready
+      setTimeout(() => {
+        if (displayRef.current) {
+          const initialHeight = Math.max(displayRef.current.scrollHeight, 32);
+          setContentHeight(`${initialHeight}px`);
+        }
+      }, 100);
+    }
+  }, []);
+
   return (
     <>
       <group
@@ -603,17 +688,23 @@ const TextObject = ({
             {isEditing ? (
               <textarea
                 ref={textAreaRef}
-                value={text}
+                // Remove value prop to make uncontrolled
+                defaultValue={textContentRef.current}
                 onChange={handleTextChange}
                 onBlur={handleBlur}
                 style={getTextAreaStyle()}
                 onKeyDown={handleKeyDown}
                 placeholder={bulletPointMode ? '• ' : 'Click to edit text...'}
-                onFocus={(e) => {
-                  e.target.selectionStart = text.length;
-                  e.target.selectionEnd = text.length;
+                onClick={(e) => {
+                  // Just prevent the click from bubbling
+                  e.stopPropagation();
                 }}
-                onClick={(e) => e.stopPropagation()}
+                // Added onMouseDown to clear auto-focus flags
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  needsFocusRef.current = false;
+                  initialFocusDoneRef.current = true;
+                }}
               />
             ) : (
               <div
@@ -624,7 +715,6 @@ const TextObject = ({
                   userSelect: 'none',
                   cursor: 'text',
                   width: '100%',
-                  minHeight: '2em',
                 }}
               >
                 {text || 'Click to edit text...'}
@@ -726,7 +816,7 @@ const TextObject = ({
       )}
 
       {/* Text style UI */}
-      {selected && isEditing && (
+      {selected && (
         <TextObjectUI
           ref={uiMenuRef}
           text={text}
