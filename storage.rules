@@ -1,0 +1,37 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default: deny all access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+    
+    // Allow users to access their own files
+    match /users/{userId}/{allPaths=**} {
+      // Allow read/write if the user is authenticated and accessing their own files
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // For shared spaces
+    match /users/{ownerId}/spaces/{spaceId}/{allPaths=**} {
+      // Allow access if:
+      // 1. The user owns the space OR
+      // 2. The user has been granted access to the space OR
+      // 3. The space is shared with "everyone"
+      allow read: if 
+        request.auth != null && request.auth.uid == ownerId ||
+        exists(/databases/(default)/documents/spaces/$(spaceId)/members/$(request.auth.uid)) ||
+        exists(/databases/(default)/documents/users/$(ownerId)/spaces/$(spaceId)) && 
+        get(/databases/(default)/documents/users/$(ownerId)/spaces/$(spaceId)).data.sharedWith is list && 
+        "everyone" in get(/databases/(default)/documents/users/$(ownerId)/spaces/$(spaceId)).data.sharedWith;
+        
+      // Write still requires authentication
+      allow write: if 
+        request.auth != null && (
+          request.auth.uid == ownerId || 
+          exists(/databases/(default)/documents/spaces/$(spaceId)/members/$(request.auth.uid))
+        );
+    }
+  }
+}

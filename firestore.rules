@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow anyone to check if a space exists and is public
+    match /users/{userId}/spaces/{spaceId} {
+      allow read: if 
+        // Allow anyone to read basic space metadata if it's shared with "everyone"
+        resource.data.sharedWith is list && "everyone" in resource.data.sharedWith;
+      
+      // Normal authenticated access
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Allow read access to objects in public spaces
+      match /objects/{objectId} {
+        allow read: if
+          // Either the user is authenticated and owns the space
+          (request.auth != null && request.auth.uid == userId) ||
+          // Or the parent space is shared with "everyone"
+          (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith is list && 
+          "everyone" in get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith);
+        
+        // Only owner can write
+        allow write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+    
+    // Other rules stay the same...
+    // Default: deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Allow users to access their own data
+    match /users/{userId}/{document=**} {
+      // Allow full access to own documents
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Special rule for public spaces: allow anonymous read for spaces shared with "everyone"
+      match /spaces/{spaceId} {
+        allow read: if 
+          // For authenticated users
+          (request.auth != null && request.auth.uid == userId) ||
+          // For anonymous users if space is public
+          (resource.data.sharedWith is list && "everyone" in resource.data.sharedWith);
+        
+        // Allow authenticated users to write their own spaces
+        allow write: if request.auth != null && request.auth.uid == userId;
+        
+        // Allow access to objects in public spaces
+        match /objects/{objectId} {
+          allow read: if 
+            (request.auth != null && request.auth.uid == userId) ||
+            (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith is list && 
+             "everyone" in get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith);
+          
+          // Only owner can write
+          allow write: if request.auth != null && request.auth.uid == userId;
+        }
+      }
+    }
+    
+    // Allow access to shared spaces collections
+    match /spaces/{spaceId} {
+      allow read: if 
+        request.auth != null && 
+        (resource.data.ownerId == request.auth.uid || 
+         resource.data.sharedWith.hasAny([request.auth.uid]));
+      
+      // Allow anonymous read for spaces marked as public
+      allow read: if resource.data.sharedWith is list && "everyone" in resource.data.sharedWith;
+      
+      // Owner can write
+      allow write: if request.auth != null && resource.data.ownerId == request.auth.uid;
+    }
+    
+    // Legacy shared spaces support
+    match /sharedSpaces/{shareId} {
+      allow read: if 
+        request.auth != null && 
+        (resource.data.ownerId == request.auth.uid || 
+         resource.data.sharedWith == request.auth.uid);
+    }
+  }
+}

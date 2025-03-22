@@ -14,6 +14,35 @@ const sharedSpacesCache = new Map();
 
 // Check if a space is shared with the current user - updated to match landing page structure
 export const isSharedSpace = async (currentUserId, spaceId) => {
+  // Quick exit for anonymous users or if we already know it's a public space
+  if (!currentUserId) {
+    const ownerFromUrl = window.currentSpaceOwner;
+    if (ownerFromUrl) {
+      return {
+        isShared: true,
+        ownerId: ownerFromUrl,
+        permissions: 'read',
+        isPublic: true,
+      };
+    }
+    return { isShared: false, ownerId: null, permissions: 'none' };
+  }
+
+  // Use cached information if available
+  if (
+    window.currentSpaceOwner &&
+    window.publicAccessSpace === spaceId &&
+    window.currentSpaceOwner !== currentUserId
+  ) {
+    // We're in a known public space
+    return {
+      isShared: true,
+      ownerId: window.currentSpaceOwner,
+      permissions: 'read',
+      isPublic: true,
+    };
+  }
+
   const cacheKey = `${currentUserId}_${spaceId}`;
 
   // Check cache first
@@ -22,6 +51,25 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
   }
 
   try {
+    // First check if it's the user's own space (this should never fail with permissions)
+    try {
+      const ownSpaceRef = doc(db, 'users', currentUserId, 'spaces', spaceId);
+      const ownSpaceDoc = await getDoc(ownSpaceRef);
+
+      if (ownSpaceDoc.exists()) {
+        const result = {
+          isShared: false,
+          ownerId: currentUserId,
+          permissions: 'write',
+        };
+        sharedSpacesCache.set(cacheKey, result);
+        return result;
+      }
+    } catch (err) {
+      // Ignore error and continue to other checks
+    }
+
+    // Rest of the checks for shared spaces
     console.log(
       `Looking for shared space: ${spaceId} for user: ${currentUserId}`
     );
@@ -181,6 +229,20 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
     return { isShared: false, ownerId: null };
   } catch (error) {
     console.error('Error checking if space is shared:', error);
+
+    // Special handling for permission errors - could be a public space
+    if (error.code === 'permission-denied' && window.currentSpaceOwner) {
+      console.log(
+        'Permission denied, but we have an owner ID, assuming public read-only access'
+      );
+      return {
+        isShared: true,
+        ownerId: window.currentSpaceOwner,
+        permissions: 'read',
+        isPublic: true,
+      };
+    }
+
     return { isShared: false, ownerId: null };
   }
 };

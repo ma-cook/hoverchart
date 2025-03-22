@@ -199,9 +199,12 @@ export const deleteObject = async (userId, spaceId, objectId) => {
   }
 };
 
-// Enhanced subscription function with better error handling and reconnection
+// Enhanced subscription function with support for public spaces
 export const subscribeToObjects = (userId, spaceId, callback) => {
-  if (!userId || !spaceId) return () => {};
+  if (!spaceId) return () => {};
+
+  // Anonymous access is possible for public spaces
+  const isAnonymous = !userId;
 
   let unsubscribe = null;
   let isSubscribed = true;
@@ -211,22 +214,45 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
   let lastDocumentCount = 0;
   let reconnectTimer = null;
 
-  // First determine if this is a shared space
+  // First determine if this is a shared/public space
   const startSubscription = async () => {
     try {
-      const sharedStatus = await isSharedSpace(userId, spaceId);
+      // Handle anonymous access (userId might be null)
+      const ownerIdFromUrl = window.currentSpaceOwner;
 
-      // If we unsubscribed while waiting for the async operation, return early
-      if (!isSubscribed) return;
+      // For anonymous access, we must have an owner ID from the URL
+      if (isAnonymous && !ownerIdFromUrl) {
+        console.error('Anonymous access requires owner ID in URL');
+        return;
+      }
 
-      // Use the owner's ID to subscribe to the correct collection
-      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+      // Use URL owner ID for anonymous access
+      const effectiveOwnerId = isAnonymous ? ownerIdFromUrl : userId;
+
+      // If not anonymous, check sharing permissions
+      let ownerUserId = effectiveOwnerId;
+      if (!isAnonymous) {
+        try {
+          const sharedStatus = await isSharedSpace(userId, spaceId);
+
+          // If unsubscribed during async, return early
+          if (!isSubscribed) return;
+
+          ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+        } catch (error) {
+          console.error('Error checking shared status:', error);
+          // Fall back to URL owner or current user if there's an error
+          ownerUserId = window.currentSpaceOwner || userId;
+        }
+      }
 
       // Store owner ID for future reference
       window.currentSpaceOwner = ownerUserId;
 
       console.log(
-        `[Objects] Setting up subscription for space ${spaceId} owned by ${ownerUserId}`
+        `[Objects] Setting up subscription for space ${spaceId} owned by ${ownerUserId}${
+          isAnonymous ? ' (anonymous access)' : ''
+        }`
       );
 
       const objectsRef = collection(
@@ -240,10 +266,15 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
 
       const q = query(objectsRef);
 
+      // Rest of the subscription logic remains the same
+      // ...existing subscription code...
+
       unsubscribe = onSnapshot(
         q,
         { includeMetadataChanges: true },
         (snapshot) => {
+          // Existing snapshot handling code
+          // ...existing code...
           // Check if this is from cache or server
           const source = snapshot.metadata.fromCache ? 'cache' : 'server';
 
@@ -313,6 +344,20 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
         async (error) => {
           console.error('Objects subscription error:', error);
 
+          // If permission denied for anonymous users, display specific message
+          if (error.code === 'permission-denied' && isAnonymous) {
+            console.error(
+              'Anonymous access denied. This space may not be public.'
+            );
+            // Optionally show an error message to the user
+            if (window.showAccessDeniedMessage) {
+              window.showAccessDeniedMessage();
+            }
+            return;
+          }
+
+          // Existing error handling code
+          // ...existing code...
           if (retryCount < maxRetries) {
             retryCount++;
             console.log(

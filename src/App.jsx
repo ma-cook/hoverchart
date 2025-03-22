@@ -165,15 +165,58 @@ const App = () => {
     }
   }, [user, currentSpaceId]);
 
-  // Subscribe to objects changes
+  // Enhanced check for public access URL parameters
   useEffect(() => {
-    if (!user || !currentSpaceId) return () => {};
+    // Extract space ID and owner ID from URL if present
+    const params = new URLSearchParams(window.location.search);
+    const spaceParam = params.get('space');
+    const ownerParam = params.get('owner');
 
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
+    // Store for access by other components
+    if (spaceParam && ownerParam) {
+      console.log(
+        `Public access mode detected: space=${spaceParam}, owner=${ownerParam}`
+      );
+      window.publicAccessSpace = spaceParam;
+      window.currentSpaceOwner = ownerParam;
+
+      // Store in session storage as backup
+      sessionStorage.setItem(`isSharedSpace_${spaceParam}`, 'true');
+      sessionStorage.setItem(`sharedSpaceOwner_${spaceParam}`, ownerParam);
+      sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
+
+      // For anonymous users viewing public spaces
+      if (!user) {
+        console.log('Anonymous access to public space:', spaceParam);
+      }
+    }
+  }, []);
+
+  // Modified to handle anonymous access for public spaces
+  const publicSpaceId = window.publicAccessSpace;
+  const effectiveSpaceId = publicSpaceId || currentSpaceId;
+  const canViewSpace = !!(user || publicSpaceId);
+  const isReadOnly =
+    !!publicSpaceId && (!user || window.currentSpaceOwner !== user?.uid);
+
+  // Display read-only indicator for public spaces
+  useEffect(() => {
+    if (isReadOnly) {
+      console.log('Read-only mode active for public space');
+      // Optionally show a UI indicator
+    }
+  }, [isReadOnly]);
+
+  // Subscribe to objects changes - supports anonymous access to public spaces
+  useEffect(() => {
+    if (!canViewSpace || (!user && !window.currentSpaceOwner)) return () => {};
+
+    const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+    const spaceToLoad = effectiveSpaceId;
 
     const unsubscribe = subscribeToObjects(
-      spaceOwnerId,
-      currentSpaceId,
+      user?.uid, // May be null for anonymous access
+      spaceToLoad,
       (change) => {
         setObjects((prev) => {
           switch (change.type) {
@@ -228,7 +271,8 @@ const App = () => {
     return () => unsubscribe();
   }, [
     user,
-    currentSpaceId,
+    effectiveSpaceId,
+    canViewSpace,
     lastUpdateRef,
     draggingObjectsRef,
     transformingObjectsRef,
@@ -477,12 +521,22 @@ const App = () => {
   );
 
   // Show loading screens when authenticating
-  if (isCheckingUrlAuth) {
+  if (isCheckingUrlAuth && !publicSpaceId) {
     return <div className="auth-loading">Authenticating...</div>;
   }
 
-  if (!isAuthReady) {
+  if (!isAuthReady && !publicSpaceId) {
     return <div className="loading">Loading...</div>;
+  }
+
+  if (!canViewSpace) {
+    return (
+      <div className="auth-required">
+        <h2>Authentication Required</h2>
+        <p>Please sign in to view or create spaces</p>
+        <button onClick={handleLogin}>Login with Google</button>
+      </div>
+    );
   }
 
   return (

@@ -28,9 +28,15 @@ export function useObjects({
   const transformLockTimeRef = useRef(new Map()); // Track when transforms started
   const positionHistoryRef = useRef(new Map()); // Track recent positions to prevent oscillation
 
-  // Save objects periodically with transform prevention
+  // Save objects periodically with transform prevention - skip for read-only
   useEffect(() => {
-    if (!user || !objects.length || !currentSpaceId) return;
+    // Skip object saving if we're in read-only mode (public space)
+    const isReadOnly =
+      window.publicAccessSpace === currentSpaceId &&
+      window.currentSpaceOwner &&
+      window.currentSpaceOwner !== user?.uid;
+
+    if (!user || !objects?.length || !currentSpaceId || isReadOnly) return;
 
     const saveTimeout = setTimeout(() => {
       if (isEqual(lastSavedRef.current, objects)) return;
@@ -40,6 +46,8 @@ export function useObjects({
 
       // Only save objects that aren't currently being dragged or transformed
       objects.forEach((obj) => {
+        if (!obj?.id) return; // Skip objects without valid IDs
+
         const objId = obj.id.toString();
         if (
           !draggingObjectsRef.current.has(objId) &&
