@@ -52,26 +52,42 @@ const App = () => {
     intentionalSpaceChangeRef,
   });
 
+  // Memoize the objects parameter to useConnections to prevent identity changes
+  const objectsParam = useMemo(() => {
+    // Only include necessary data to avoid excessive object references
+    return objects.map((obj) => ({
+      id: obj.id,
+      position: obj.position,
+      scale: obj.scale,
+      type: obj.type,
+    }));
+  }, [objects]);
+
   // Connections hooks (now with objects already initialized)
   const {
     connections,
     setConnections,
     lineTexts,
-
     selectedConnection,
     setSelectedConnection,
     showLineTextInput,
     setShowLineTextInput,
     showLineTextStyleUI,
     setShowLineTextStyleUI,
-
+    lineTextStyles,
+    setLineTextStyles,
     handleLineTextSubmit,
     handleLineTextStyleChange,
     handleLineColorChange,
     handleLineStyleChange,
     handleConnectionClick,
     handleLineTextClick,
-  } = useConnections({ user, currentSpaceId, objects });
+    connectionsLoaded,
+  } = useConnections({
+    user,
+    currentSpaceId,
+    objects: objectsParam, // Use the memoized objects param
+  });
 
   // Objects hook gets the connections from above
   const {

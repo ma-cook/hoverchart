@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import isEqual from 'lodash/isEqual';
 import {
   saveConnection,
@@ -30,6 +30,17 @@ export function useConnections({ user, currentSpaceId, objects }) {
   const activeConnectionSubscriptionRef = useRef(null);
   const initialLoadCompletedRef = useRef(false); // Track initial load
   const connectionBatchRef = useRef([]); // Batch of connections to process
+
+  // Add new refs to track subscription state and prevent duplicates
+  const isSubscribingRef = useRef(false);
+  const lastSubscriptionKeyRef = useRef(null);
+  const subscriptionDebounceTimerRef = useRef(null);
+
+  // Memoize the subscription key to make it stable
+  const subscriptionKey = useMemo(() => {
+    if (!user || !currentSpaceId) return null;
+    return `${user.uid}-${currentSpaceId}`;
+  }, [user?.uid, currentSpaceId]);
 
   // Map connections to objects
   const mapConnectionsToObjects = useCallback((connections, objects) => {
@@ -134,200 +145,232 @@ export function useConnections({ user, currentSpaceId, objects }) {
 
   // Subscribe to connection changes - improved to handle initial load better
   useEffect(() => {
-    if (!user || !currentSpaceId) return () => {};
+    // Skip if no key or if already subscribing
+    if (!subscriptionKey || isSubscribingRef.current) return () => {};
 
-    const subscriptionKey = `${user.uid}-${currentSpaceId}`;
-    console.log(`Setting up connection subscription for ${subscriptionKey}`);
-    setConnectionsLoaded(false); // Reset loaded state on subscription change
-    initialLoadCompletedRef.current = false;
+    console.log(`Checking connection subscription for ${subscriptionKey}`);
 
-    if (activeConnectionSubscriptionRef.current?.key === subscriptionKey) {
-      return () => activeConnectionSubscriptionRef.current?.unsubscribe();
-    }
+    // Set flag to prevent parallel subscription attempts
+    isSubscribingRef.current = true;
 
+    // If we have a subscription for this key, reuse it
     if (
+      activeConnectionSubscriptionRef.current?.key === subscriptionKey &&
       typeof activeConnectionSubscriptionRef.current?.unsubscribe === 'function'
     ) {
-      activeConnectionSubscriptionRef.current.unsubscribe();
+      console.log(
+        `Reusing existing connection subscription for ${subscriptionKey}`
+      );
+      isSubscribingRef.current = false;
+      return () => {};
     }
 
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-    const processedChangesSet = new Set();
-    connectionBatchRef.current = []; // Clear any existing batch
-    let initialBatchTimeout = null;
-
-    const unsubscribe = subscribeToConnections(
-      spaceOwnerId,
-      currentSpaceId,
-      (change) => {
-        lastConnectionUpdateTimeRef.current = Date.now();
-        console.log(
-          `Connection change received: ${change.type} for ${change.id}`
-        );
-
-        // For the initial load, batch changes to process them all at once
-        if (!initialLoadCompletedRef.current) {
-          connectionBatchRef.current.push(change);
-
-          // Clear any existing timeout
-          if (initialBatchTimeout) {
-            clearTimeout(initialBatchTimeout);
-          }
-
-          // Set a timeout to process all initial changes
-          initialBatchTimeout = setTimeout(() => {
-            console.log(
-              `Processing initial batch of ${connectionBatchRef.current.length} connections`
-            );
-
-            // Process all batched changes at once
-            const connections = connectionBatchRef.current.reduce(
-              (acc, change) => {
-                if (change.type === 'added' || change.type === 'modified') {
-                  // Add/replace this connection
-                  const existingIndex = acc.findIndex(
-                    (c) => c.id === change.id
-                  );
-                  if (existingIndex >= 0) {
-                    acc[existingIndex] = change.connection;
-                  } else {
-                    acc.push(change.connection);
-                  }
-                }
-                return acc;
-              },
-              []
-            );
-
-            // Apply all connections at once
-            if (connections.length > 0) {
-              const withRefs = mapConnectionsToObjects(connections, objects);
-              const syncedConnections = synchronizeConnectionPositions(
-                withRefs,
-                objects
-              );
-              setConnections(syncedConnections);
-            }
-
-            initialLoadCompletedRef.current = true;
-            setConnectionsLoaded(true);
-            connectionBatchRef.current = [];
-          }, 500);
-
-          return; // Skip individual processing for initial batch
-        }
-
-        // Normal individual change processing for changes after initial load
-        const changeKey = `${change.type}-${change.id}-${
-          change.connection?.lastUpdated || Date.now()
-        }`;
-        if (processedChangesSet.has(changeKey)) return;
-        processedChangesSet.add(changeKey);
-
-        // Batch updates
-        if (connectionUpdateTimeoutRef.current) {
-          clearTimeout(connectionUpdateTimeoutRef.current);
-        }
-
-        if (!lastKnownConnectionsRef.current[change.id]) {
-          lastKnownConnectionsRef.current[change.id] = {};
-        }
-
-        lastKnownConnectionsRef.current[change.id] = {
-          type: change.type,
-          data: change.connection,
-          timestamp: Date.now(),
-        };
-
-        connectionUpdateTimeoutRef.current = setTimeout(() => {
-          setConnections((prev) => {
-            const updates = { ...lastKnownConnectionsRef.current };
-            lastKnownConnectionsRef.current = {};
-
-            let newConnections = [...prev];
-
-            Object.entries(updates).forEach(([connId, update]) => {
-              const existingConn = newConnections.find(
-                (conn) => conn.id === connId
-              );
-
-              switch (update.type) {
-                case 'added':
-                  if (!existingConn) {
-                    newConnections = [...newConnections, update.data];
-                  }
-                  break;
-                case 'modified':
-                  if (existingConn && !isEqual(existingConn, update.data)) {
-                    newConnections = newConnections.map((conn) =>
-                      conn.id === connId ? update.data : conn
-                    );
-                  }
-                  break;
-                case 'removed':
-                  newConnections = newConnections.filter(
-                    (conn) => conn.id !== connId
-                  );
-                  break;
-              }
-            });
-
-            // Map object references and positions
-            const withRefs = mapConnectionsToObjects(newConnections, objects);
-            return synchronizeConnectionPositions(withRefs, objects);
-          });
-        }, 100);
-      }
-    );
-
-    // Store subscription info
-    if (typeof unsubscribe === 'function') {
-      activeConnectionSubscriptionRef.current = {
-        key: subscriptionKey,
-        unsubscribe,
-      };
-    } else {
-      activeConnectionSubscriptionRef.current = {
-        key: subscriptionKey,
-        unsubscribe: () => {},
-      };
+    // Debounce multiple rapid subscription attempts
+    if (subscriptionDebounceTimerRef.current) {
+      clearTimeout(subscriptionDebounceTimerRef.current);
     }
 
-    return () => {
+    subscriptionDebounceTimerRef.current = setTimeout(() => {
+      console.log(`Setting up connection subscription for ${subscriptionKey}`);
+      setConnectionsLoaded(false);
+      initialLoadCompletedRef.current = false;
+
+      // Clean up any existing subscription
       if (
         typeof activeConnectionSubscriptionRef.current?.unsubscribe ===
-        'function'
+          'function' &&
+        activeConnectionSubscriptionRef.current?.key !== subscriptionKey
       ) {
+        console.log(`Cleaning up previous connection subscription`);
+        activeConnectionSubscriptionRef.current.unsubscribe();
+        activeConnectionSubscriptionRef.current = null;
+      }
+
+      lastSubscriptionKeyRef.current = subscriptionKey;
+
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      const processedChangesSet = new Set();
+      connectionBatchRef.current = [];
+      let initialBatchTimeout = null;
+
+      const unsubscribe = subscribeToConnections(
+        spaceOwnerId,
+        currentSpaceId,
+        (change) => {
+          lastConnectionUpdateTimeRef.current = Date.now();
+          console.log(
+            `Connection change received: ${change.type} for ${change.id}`
+          );
+
+          // For the initial load, batch changes to process them all at once
+          if (!initialLoadCompletedRef.current) {
+            connectionBatchRef.current.push(change);
+
+            // Clear any existing timeout
+            if (initialBatchTimeout) {
+              clearTimeout(initialBatchTimeout);
+            }
+
+            // Set a timeout to process all initial changes
+            initialBatchTimeout = setTimeout(() => {
+              console.log(
+                `Processing initial batch of ${connectionBatchRef.current.length} connections`
+              );
+
+              // Process all batched changes at once
+              const connections = connectionBatchRef.current.reduce(
+                (acc, change) => {
+                  if (change.type === 'added' || change.type === 'modified') {
+                    // Add/replace this connection
+                    const existingIndex = acc.findIndex(
+                      (c) => c.id === change.id
+                    );
+                    if (existingIndex >= 0) {
+                      acc[existingIndex] = change.connection;
+                    } else {
+                      acc.push(change.connection);
+                    }
+                  }
+                  return acc;
+                },
+                []
+              );
+
+              // Apply all connections at once
+              if (connections.length > 0) {
+                const withRefs = mapConnectionsToObjects(connections, objects);
+                const syncedConnections = synchronizeConnectionPositions(
+                  withRefs,
+                  objects
+                );
+                setConnections(syncedConnections);
+              }
+
+              initialLoadCompletedRef.current = true;
+              setConnectionsLoaded(true);
+              connectionBatchRef.current = [];
+            }, 500);
+
+            return; // Skip individual processing for initial batch
+          }
+
+          // Normal individual change processing for changes after initial load
+          const changeKey = `${change.type}-${change.id}-${
+            change.connection?.lastUpdated || Date.now()
+          }`;
+          if (processedChangesSet.has(changeKey)) return;
+          processedChangesSet.add(changeKey);
+
+          // Batch updates
+          if (connectionUpdateTimeoutRef.current) {
+            clearTimeout(connectionUpdateTimeoutRef.current);
+          }
+
+          if (!lastKnownConnectionsRef.current[change.id]) {
+            lastKnownConnectionsRef.current[change.id] = {};
+          }
+
+          lastKnownConnectionsRef.current[change.id] = {
+            type: change.type,
+            data: change.connection,
+            timestamp: Date.now(),
+          };
+
+          connectionUpdateTimeoutRef.current = setTimeout(() => {
+            setConnections((prev) => {
+              const updates = { ...lastKnownConnectionsRef.current };
+              lastKnownConnectionsRef.current = {};
+
+              let newConnections = [...prev];
+
+              Object.entries(updates).forEach(([connId, update]) => {
+                const existingConn = newConnections.find(
+                  (conn) => conn.id === connId
+                );
+
+                switch (update.type) {
+                  case 'added':
+                    if (!existingConn) {
+                      newConnections = [...newConnections, update.data];
+                    }
+                    break;
+                  case 'modified':
+                    if (existingConn && !isEqual(existingConn, update.data)) {
+                      newConnections = newConnections.map((conn) =>
+                        conn.id === connId ? update.data : conn
+                      );
+                    }
+                    break;
+                  case 'removed':
+                    newConnections = newConnections.filter(
+                      (conn) => conn.id !== connId
+                    );
+                    break;
+                }
+              });
+
+              // Map object references and positions
+              const withRefs = mapConnectionsToObjects(newConnections, objects);
+              return synchronizeConnectionPositions(withRefs, objects);
+            });
+          }, 100);
+        }
+      );
+
+      // Store subscription with proper cleanup function
+      if (typeof unsubscribe === 'function') {
+        activeConnectionSubscriptionRef.current = {
+          key: subscriptionKey,
+          unsubscribe,
+        };
+      }
+
+      isSubscribingRef.current = false;
+    }, 250); // Debounce subscription attempts
+
+    // Return proper cleanup function
+    return () => {
+      if (subscriptionDebounceTimerRef.current) {
+        clearTimeout(subscriptionDebounceTimerRef.current);
+      }
+
+      // Don't unsubscribe on every render, only when unmounting or changing key
+      if (
+        typeof activeConnectionSubscriptionRef.current?.unsubscribe ===
+          'function' &&
+        !document.hidden // Don't unsubscribe when tab is just hidden
+      ) {
+        console.log(`Cleaning up connection subscription on unmount`);
         activeConnectionSubscriptionRef.current.unsubscribe();
       }
-      if (connectionUpdateTimeoutRef.current) {
-        clearTimeout(connectionUpdateTimeoutRef.current);
-      }
-      if (initialBatchTimeout) {
-        clearTimeout(initialBatchTimeout);
-      }
-      activeConnectionSubscriptionRef.current = null;
     };
+  }, [subscriptionKey]); // Use the stable memoized key only
+
+  // Update connections when objects change - with better condition
+  useEffect(() => {
+    if (!connectionsLoaded || connections.length === 0 || objects.length === 0)
+      return;
+
+    // Prevent updates during active transformations
+    if (objects.some((obj) => obj._transformActive || obj._isDragging)) return;
+
+    const updatedConnections = synchronizeConnectionPositions(
+      connections,
+      objects
+    );
+
+    // Only update if there are actual changes to prevent loops
+    if (!isEqual(updatedConnections, connections)) {
+      setConnections(updatedConnections);
+    }
   }, [
-    user?.uid,
-    currentSpaceId,
     objects,
-    mapConnectionsToObjects,
+    connectionsLoaded,
+    // Use JSON.stringify to stabilize the dependency on connections
+    // but only check length to avoid deep comparison on every render
+    connections.length,
     synchronizeConnectionPositions,
   ]);
-
-  // Update connections when objects change
-  useEffect(() => {
-    if (connections.length && objects.length) {
-      const updatedConnections = synchronizeConnectionPositions(
-        connections,
-        objects
-      );
-      if (!isEqual(updatedConnections, connections)) {
-        setConnections(updatedConnections);
-      }
-    }
-  }, [objects, synchronizeConnectionPositions, connections]);
 
   // Sync line texts with connections
   useEffect(() => {

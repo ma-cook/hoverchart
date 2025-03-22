@@ -46,6 +46,7 @@ const TextObject = ({
   const [scale, setScale] = useState(initialScale);
   const [indicatorSelected, setIndicatorSelected] = useState(false);
   const [contentHeight, setContentHeight] = useState('auto');
+  const [isMoving, setIsMoving] = useState(false);
 
   // UI mode states
   const [showTransform, setShowTransform] = useState(false);
@@ -68,6 +69,7 @@ const TextObject = ({
   const initialFocusDoneRef = useRef(false);
   const lastCursorPositionRef = useRef(null);
   const textContentRef = useRef(initialText);
+  const connectedLineIdsRef = useRef(new Set());
 
   // Constants
   const conversionFactor = 30;
@@ -115,7 +117,22 @@ const TextObject = ({
     return { top: offset };
   }, [getIndicatorOffset]);
 
-  // Update world matrix and position for connections
+  // Enhanced: Get connected connection IDs
+  useEffect(() => {
+    if (!connections || !id) return;
+
+    const connectedIds = new Set();
+    connections.forEach((conn) => {
+      const startId = String(conn.start?.objectId || conn.start?.id);
+      const endId = String(conn.end?.objectId || conn.end?.id);
+      if (stringId === startId || stringId === endId) {
+        connectedIds.add(conn.id);
+      }
+    });
+    connectedLineIdsRef.current = connectedIds;
+  }, [connections, stringId, id]);
+
+  // Enhanced updateWorldMatrix function to better handle connections
   const updateWorldMatrix = useCallback(() => {
     if (!groupRef.current) return null;
 
@@ -138,6 +155,31 @@ const TextObject = ({
       indicatorWorldPos.z,
     ];
 
+    // Store enhanced connection data in userData for real-time updates
+    if (groupRef.current) {
+      // Store more precise indicator data directly for connection system to use
+      groupRef.current.userData = {
+        ...groupRef.current.userData,
+        isTextObject: true,
+        objectId: stringId,
+        type: 'textObject',
+        id: stringId,
+        indicatorOffset: getIndicatorOffset(),
+        indicatorWorldPosition: indicatorPosArray, // More clear naming
+        worldPosition: worldPosArray,
+        face: 'top',
+        isMoving: isMoving,
+        _lastUpdateTime: Date.now(), // Add timestamp to track freshness
+        connectedLineIds: Array.from(connectedLineIdsRef.current),
+        planeData: {
+          worldMatrix: Array.from(worldMatrix.elements),
+          position: [...worldPosArray],
+          scale: [...scale],
+          offset: getIndicatorOffset(),
+        },
+      };
+    }
+
     worldPosRef.current = {
       worldPos: worldPosArray,
       indicatorPos: indicatorPosArray,
@@ -149,7 +191,7 @@ const TextObject = ({
       indicatorPos: indicatorPosArray,
       matrix: Array.from(worldMatrix.elements),
     };
-  }, [getIndicatorOffset]);
+  }, [getIndicatorOffset, scale, stringId, isMoving]);
 
   // Update world position when transform changes
   useEffect(() => {
@@ -443,13 +485,20 @@ const TextObject = ({
     updateDatabase();
   };
 
-  // Transform control handlers
+  // Enhanced transform handlers for better connection management
   const handleTransformStart = () => {
-    registerTransformingObject?.(id, true);
+    registerTransformingObject?.(id, true, position);
     if (window.orbitControls) {
       window.orbitControls.enabled = false;
     }
+    setIsMoving(true);
     onTransformStart?.(id);
+
+    // Mark connections as being transformed to prevent jitter
+    if (groupRef.current) {
+      groupRef.current.userData._transformActive = true;
+      groupRef.current.userData._isDragging = true;
+    }
   };
 
   const handleTransformEnd = () => {
@@ -458,8 +507,19 @@ const TextObject = ({
       window.orbitControls.enabled = true;
     }
 
+    // Final position calculation after movement ends
     const worldInfo = updateWorldMatrix();
     if (groupRef.current && onUpdate && worldInfo) {
+      // Remove movement flags
+      setIsMoving(false);
+
+      if (groupRef.current.userData) {
+        groupRef.current.userData._transformActive = false;
+        groupRef.current.userData._isDragging = false;
+        groupRef.current.userData._textObjectMoving = false;
+      }
+
+      // Final update to database with the new positions
       onUpdate(id, {
         position: worldInfo.worldPos,
         worldPosition: worldInfo.worldPos,
@@ -471,32 +531,74 @@ const TextObject = ({
           scale: [...scale],
           offset: getIndicatorOffset(),
         },
+        _moveComplete: true, // Signal that movement is complete for any listeners
+        _moveTimestamp: Date.now(),
       });
     }
     onTransformEnd?.(id);
   };
 
+  // Enhanced handleDrag to update connection points in real-time
   const handleDrag = useCallback(
     (e) => {
       if (!groupRef.current || !onUpdate) return;
 
+      // Update world matrix and position information
       const worldInfo = updateWorldMatrix();
       if (!worldInfo) return;
 
-      onUpdate(id, {
-        type: 'text',
-        position: worldInfo.worldPos,
-        worldPosition: worldInfo.worldPos,
-        indicatorPosition: worldInfo.indicatorPos,
-        planeData: {
-          worldMatrix: worldInfo.matrix,
+      // Mark this object as moving to prevent jitter checks
+      if (!isMoving) {
+        setIsMoving(true);
+      }
+
+      // Update connection positions in real-time without database writes
+      if (groupRef.current) {
+        // Add specific flag for TextObject movement in userData
+        groupRef.current.userData._textObjectMoving = true;
+        groupRef.current.userData._lastMoveTime = Date.now();
+        groupRef.current.userData.indicatorWorldPosition =
+          worldInfo.indicatorPos;
+
+        // For connections to find this information directly during movement
+        groupRef.current.userData.connectionData = {
+          indicatorPosition: worldInfo.indicatorPos,
+          worldPosition: worldInfo.worldPos,
+          objectId: stringId,
+          id: stringId,
+          face: 'top',
+        };
+      }
+
+      // Only update database every 100ms to reduce load during continuous movement
+      const throttleTime = 100;
+      const now = Date.now();
+      if (now - (lastUpdateRef.current?.time || 0) > throttleTime) {
+        // Immediate visual update during movement
+        onUpdate(id, {
+          type: 'text',
           position: worldInfo.worldPos,
-          scale: [...scale],
-          offset: getIndicatorOffset(),
-        },
-      });
+          worldPosition: worldInfo.worldPos,
+          indicatorPosition: worldInfo.indicatorPos,
+          planeData: {
+            worldMatrix: worldInfo.matrix,
+            position: worldInfo.worldPos,
+            scale: [...scale],
+            offset: getIndicatorOffset(),
+          },
+          _transformActive: true, // Skip database updates but keep visual updates
+          _isDragging: true, // Indicate this is an active drag operation
+        });
+
+        // Store last update time for throttling
+        lastUpdateRef.current = {
+          ...lastUpdateRef.current,
+          time: now,
+          position: worldInfo.worldPos,
+        };
+      }
     },
-    [id, onUpdate, scale, updateWorldMatrix, getIndicatorOffset]
+    [id, onUpdate, scale, updateWorldMatrix, getIndicatorOffset, isMoving]
   );
 
   const handleScale = (e) => {
@@ -664,6 +766,7 @@ const TextObject = ({
     }
   }, []);
 
+  // Enhanced render with _transformActive flag in userData
   return (
     <>
       <group
@@ -677,6 +780,8 @@ const TextObject = ({
           containerDimensions: containerDimensionsRef.current,
           indicatorOffset: getIndicatorOffset(),
           face: 'top',
+          isMoving: isMoving,
+          _transformActive: isMoving,
         }}
       >
         <Html transform position={[0, 0, 0.1]} center>
@@ -795,12 +900,16 @@ const TextObject = ({
           scale={scale}
           onObjectChange={handleScale}
           onDragStart={() => {
-            if (window.orbitControls) window.orbitControls.enabled = false;
+            if (window.orbitControls) {
+              window.orbitControls.enabled = false;
+            }
             registerTransformingObject?.(id, true);
             onResizeStart?.(id);
           }}
           onDragEnd={() => {
-            if (window.orbitControls) window.orbitControls.enabled = true;
+            if (window.orbitControls) {
+              window.orbitControls.enabled = true;
+            }
             registerTransformingObject?.(id, false);
             onResizeEnd?.(id);
 

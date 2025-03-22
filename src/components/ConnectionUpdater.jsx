@@ -40,6 +40,10 @@ const ConnectionUpdater = ({
   // Store current dash offsets to interpolate between frames
   const currentDashOffsets = useRef(new Map());
 
+  // Add a ref to track previously processed connections to avoid redundant processing
+  const processedConnectionsRef = useRef(new Set());
+  const connectionProcessCountRef = useRef({});
+
   // Separate animation loop for dash animations with proper timing
   useEffect(() => {
     // Initialize current values from existing connections
@@ -199,85 +203,248 @@ const ConnectionUpdater = ({
     }
   });
 
-  // Process position updates separately from animations
+  // Enhanced position update processing with better TextObject handling
   const processPositionUpdates = (connections, now) => {
     let hasChanges = false;
 
+    // Reset processed connections counter every 2 seconds to prevent stale state
+    if (now - (lastUpdateTime.current || 0) > 2000) {
+      processedConnectionsRef.current.clear();
+      connectionProcessCountRef.current = {};
+    }
+
     connections.forEach((conn) => {
-      // Skip locked connections or those being actively dragged
-      if (
-        conn._transformLocked ||
-        (conn._isDragging &&
-          conn._moveTimestamp &&
-          now - conn._moveTimestamp < 200)
-      ) {
-        return;
-      }
-
-      // Check if this connection should have position updates debounced
-      const lastPositionUpdate =
-        positionUpdateDebounceRef.current.get(conn.id) || 0;
-      const shouldDebouncePosition =
-        now - lastPositionUpdate < 500 && !conn._needsUpdate;
-
-      if (shouldDebouncePosition) return;
-
-      // Calculate new positions
-      const newStartPos = calculateFacePosition(conn.start);
-      const newEndPos = calculateFacePosition(conn.end);
-
-      const startKey = `${conn.id}-start`;
-      const endKey = `${conn.id}-end`;
-
-      // Check if positions actually changed
-      const startChanged =
-        !lastPositions.current[startKey] ||
-        !arraysEqual(lastPositions.current[startKey], newStartPos);
-
-      const endChanged =
-        !lastPositions.current[endKey] ||
-        !arraysEqual(lastPositions.current[endKey], newEndPos);
-
-      if (startChanged || endChanged) {
-        hasChanges = true;
-        needsUpdate.current = true;
-
-        // Store positions for next comparison
-        if (startChanged) {
-          lastPositions.current[startKey] = [...newStartPos];
-          positionUpdateDebounceRef.current.set(conn.id, now);
-
-          // Queue position update
-          const existing = pendingPositionUpdates.current.get(conn.id) || {};
-          pendingPositionUpdates.current.set(conn.id, {
-            ...existing,
-            id: conn.id,
-            start: newStartPos,
-          });
+      try {
+        // Skip if this connection has been processed too many times in quick succession
+        const processCount = connectionProcessCountRef.current[conn.id] || 0;
+        if (
+          processCount > 5 &&
+          now - (positionUpdateDebounceRef.current.get(conn.id) || 0) < 1000
+        ) {
+          return;
         }
 
-        if (endChanged) {
-          lastPositions.current[endKey] = [...newEndPos];
-          positionUpdateDebounceRef.current.set(conn.id, now);
+        // Update process count
+        connectionProcessCountRef.current[conn.id] = processCount + 1;
 
-          // Queue position update
-          const existing = pendingPositionUpdates.current.get(conn.id) || {};
-          pendingPositionUpdates.current.set(conn.id, {
-            ...existing,
-            id: conn.id,
-            end: newEndPos,
-          });
+        // Enhanced detection of text objects and their movement states
+        const startIsText =
+          conn.start?.type === 'text' ||
+          conn.start?.cube?.type === 'textObject' ||
+          conn.start?.objectId?.toString().includes('text');
+
+        const endIsText =
+          conn.end?.type === 'text' ||
+          conn.end?.cube?.type === 'textObject' ||
+          conn.end?.objectId?.toString().includes('text');
+
+        // Check if object is actively moving by examining the lastMoveTime or motion flags
+        const startIsMoving =
+          startIsText &&
+          (conn.start?.cube?._textObjectMoving ||
+            conn.start?._transformActive ||
+            (conn.start?.cube?.userData?._lastMoveTime &&
+              now - conn.start.cube.userData._lastMoveTime < 500));
+
+        const endIsMoving =
+          endIsText &&
+          (conn.end?.cube?._textObjectMoving ||
+            conn.end?._transformActive ||
+            (conn.end?.cube?.userData?._lastMoveTime &&
+              now - conn.end.cube.userData._lastMoveTime < 500));
+
+        // Skip locked connections or recently moved ones (unless text object is moving)
+        if (
+          conn._transformLocked ||
+          (conn._isDragging &&
+            conn._moveTimestamp &&
+            now - conn._moveTimestamp < 200 &&
+            !startIsMoving &&
+            !endIsMoving)
+        ) {
+          return;
         }
+
+        // Special handling for text objects that are currently moving
+        if (startIsText || endIsText) {
+          // Calculate positions with priority for live object data
+          let newStartPos, newEndPos;
+
+          if (startIsText) {
+            if (startIsMoving) {
+              // For moving text objects, use the most direct and up-to-date position data
+              newStartPos =
+                conn.start?.cube?.userData?.indicatorWorldPosition ||
+                conn.start?.cube?.userData?.connectionData?.indicatorPosition ||
+                conn.start?.worldPosition ||
+                calculateFacePosition(conn.start);
+            } else {
+              // For static text objects, calculate or use stored position
+              newStartPos = calculateFacePosition(conn.start);
+            }
+          } else {
+            // Normal calculation for non-text objects
+            newStartPos = calculateFacePosition(conn.start);
+          }
+
+          if (endIsText) {
+            if (endIsMoving) {
+              // For moving text objects, use direct position data
+              newEndPos =
+                conn.end?.cube?.userData?.indicatorWorldPosition ||
+                conn.end?.cube?.userData?.connectionData?.indicatorPosition ||
+                conn.end?.worldPosition ||
+                calculateFacePosition(conn.end);
+            } else {
+              // For static text objects, calculate position
+              newEndPos = calculateFacePosition(conn.end);
+            }
+          } else {
+            // Normal calculation for non-text objects
+            newEndPos = calculateFacePosition(conn.end);
+          }
+
+          // Safety check for valid positions
+          if (
+            !newStartPos ||
+            !newEndPos ||
+            !Array.isArray(newStartPos) ||
+            !Array.isArray(newEndPos) ||
+            newStartPos.some(isNaN) ||
+            newEndPos.some(isNaN)
+          ) {
+            console.warn('Invalid position data for connection', conn.id);
+            return;
+          }
+
+          const startKey = `${conn.id}-start`;
+          const endKey = `${conn.id}-end`;
+
+          // Check if positions actually changed
+          const startChanged =
+            !lastPositions.current[startKey] ||
+            !arraysEqual(lastPositions.current[startKey], newStartPos);
+
+          const endChanged =
+            !lastPositions.current[endKey] ||
+            !arraysEqual(lastPositions.current[endKey], newEndPos);
+
+          if (startChanged || endChanged) {
+            hasChanges = true;
+            needsUpdate.current = true;
+
+            // Store positions and queue updates with higher priority for moving objects
+            if (startChanged) {
+              lastPositions.current[startKey] = [...newStartPos];
+              positionUpdateDebounceRef.current.set(conn.id, now);
+
+              const existing =
+                pendingPositionUpdates.current.get(conn.id) || {};
+              pendingPositionUpdates.current.set(conn.id, {
+                ...existing,
+                id: conn.id,
+                start: newStartPos,
+                priority: startIsMoving ? 3 : 1, // Higher priority (3) for actively moving objects
+              });
+            }
+
+            if (endChanged) {
+              lastPositions.current[endKey] = [...newEndPos];
+              positionUpdateDebounceRef.current.set(conn.id, now);
+
+              const existing =
+                pendingPositionUpdates.current.get(conn.id) || {};
+              pendingPositionUpdates.current.set(conn.id, {
+                ...existing,
+                id: conn.id,
+                end: newEndPos,
+                priority: endIsMoving ? 3 : 1, // Higher priority for actively moving objects
+              });
+            }
+          }
+        } else {
+          // Original logic for regular objects
+          // Check if this connection should have position updates debounced
+          const lastPositionUpdate =
+            positionUpdateDebounceRef.current.get(conn.id) || 0;
+          const shouldDebouncePosition =
+            now - lastPositionUpdate < 500 && !conn._needsUpdate;
+
+          if (shouldDebouncePosition) return;
+
+          // Calculate new positions
+          const newStartPos = calculateFacePosition(conn.start);
+          const newEndPos = calculateFacePosition(conn.end);
+
+          const startKey = `${conn.id}-start`;
+          const endKey = `${conn.id}-end`;
+
+          // Check if positions actually changed
+          const startChanged =
+            !lastPositions.current[startKey] ||
+            !arraysEqual(lastPositions.current[startKey], newStartPos);
+
+          const endChanged =
+            !lastPositions.current[endKey] ||
+            !arraysEqual(lastPositions.current[endKey], newEndPos);
+
+          if (startChanged || endChanged) {
+            hasChanges = true;
+            needsUpdate.current = true;
+
+            // Store positions for next comparison
+            if (startChanged) {
+              lastPositions.current[startKey] = [...newStartPos];
+              positionUpdateDebounceRef.current.set(conn.id, now);
+
+              // Queue position update
+              const existing =
+                pendingPositionUpdates.current.get(conn.id) || {};
+              pendingPositionUpdates.current.set(conn.id, {
+                ...existing,
+                id: conn.id,
+                start: newStartPos,
+              });
+            }
+
+            if (endChanged) {
+              lastPositions.current[endKey] = [...newEndPos];
+              positionUpdateDebounceRef.current.set(conn.id, now);
+
+              // Queue position update
+              const existing =
+                pendingPositionUpdates.current.get(conn.id) || {};
+              pendingPositionUpdates.current.set(conn.id, {
+                ...existing,
+                id: conn.id,
+                end: newEndPos,
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error processing connection update:', error, conn);
       }
     });
 
-    // Apply updates if time elapsed or we have significant changes
+    // Apply updates immediately for high-priority updates (moving text objects)
+    // or after accumulating changes for regular updates
     if (
+      (hasChanges &&
+        pendingPositionUpdates.current.size > 0 &&
+        Array.from(pendingPositionUpdates.current.values()).some(
+          (update) => update.priority >= 3
+        )) ||
       (hasChanges && pendingPositionUpdates.current.size > 2) ||
-      now - lastUpdateTime.current > 100
+      (hasChanges && now - lastUpdateTime.current > 50) // Shorter interval for more responsive updates
     ) {
       applyBatchedUpdates();
       lastUpdateTime.current = now;
+
+      // Reset counters after successful update
+      setTimeout(() => {
+        connectionProcessCountRef.current = {};
+      }, 500);
     }
   };
 
