@@ -406,26 +406,54 @@ const TextObject = ({
   }, [isEditing, autoResizeTextArea]);
 
   // Connection indicator click - critical for connection handling
+  // Update your existing handleIndicatorClick function
   const handleIndicatorClick = (e) => {
     e.stopPropagation();
 
     try {
-      // Use the utility function for consistent indicator format
-      const indicator = prepareTextObjectIndicator(
-        groupRef.current,
-        id,
-        position,
-        scale
-      );
+      // Get the actual world position first
+      const worldPos = new THREE.Vector3();
+      groupRef.current.getWorldPosition(worldPos);
 
-      if (!indicator) {
-        console.error('Failed to prepare text object indicator');
-        return;
-      }
+      // Apply indicator offset
+      const offset = new THREE.Vector3(...getIndicatorOffset());
+      offset.applyQuaternion(groupRef.current.quaternion);
+      const indicatorWorldPos = worldPos.clone().add(offset);
+      const indicatorPosArray = [
+        indicatorWorldPos.x,
+        indicatorWorldPos.y,
+        indicatorWorldPos.z,
+      ];
 
-      // Add additional properties needed for connection visualization
-      indicator.faceCenter = indicator.worldPosition;
-      indicator.facePosition = indicator.worldPosition;
+      // Create indicator data in the format expected by ConnectionManager
+      const indicator = {
+        type: 'text',
+        objectId: stringId,
+        id: stringId,
+        position: indicatorPosArray,
+        worldPosition: indicatorPosArray,
+        face: 'top',
+        plane: groupRef.current, // CRITICAL: Direct reference to component
+        faceCenter: indicatorPosArray,
+        facePosition: indicatorPosArray,
+        scale: [...scale],
+        planeData: {
+          worldMatrix: Array.from(groupRef.current.matrixWorld.elements),
+          position: [...position],
+          scale: [...scale],
+          offset: getIndicatorOffset(),
+        },
+        // Include cube data for compatibility
+        cube: {
+          id: stringId,
+          position,
+          scale,
+          userData: {
+            objectId: stringId,
+            indicatorPosition: indicatorPosArray,
+          },
+        },
+      };
 
       setIndicatorSelected(true);
       onIndicatorSelected?.();
@@ -539,66 +567,64 @@ const TextObject = ({
   };
 
   // Enhanced handleDrag to update connection points in real-time
+  // Replace your handleDrag function
   const handleDrag = useCallback(
     (e) => {
       if (!groupRef.current || !onUpdate) return;
 
-      // Update world matrix and position information
-      const worldInfo = updateWorldMatrix();
-      if (!worldInfo) return;
+      // Get the new position after drag
+      const newPos = e.target.object.position;
+      const worldPos = new THREE.Vector3(newPos.x, newPos.y, newPos.z);
 
-      // Mark this object as moving to prevent jitter checks
-      if (!isMoving) {
-        setIsMoving(true);
-      }
+      // Calculate indicator position
+      const offset = new THREE.Vector3(...getIndicatorOffset());
+      offset.applyQuaternion(groupRef.current.quaternion);
+      const indicatorWorldPos = worldPos.clone().add(offset);
 
-      // Update connection positions in real-time without database writes
-      if (groupRef.current) {
-        // Add specific flag for TextObject movement in userData
-        groupRef.current.userData._textObjectMoving = true;
-        groupRef.current.userData._lastMoveTime = Date.now();
-        groupRef.current.userData.indicatorWorldPosition =
-          worldInfo.indicatorPos;
+      const indicatorPosArray = [
+        indicatorWorldPos.x,
+        indicatorWorldPos.y,
+        indicatorWorldPos.z,
+      ];
 
-        // For connections to find this information directly during movement
-        groupRef.current.userData.connectionData = {
-          indicatorPosition: worldInfo.indicatorPos,
-          worldPosition: worldInfo.worldPos,
-          objectId: stringId,
-          id: stringId,
-          face: 'top',
-        };
-      }
+      // Update all connections in real-time
+      if (connections) {
+        connections.forEach((conn) => {
+          if (conn.start?.objectId === stringId) {
+            conn.start.position = [...indicatorPosArray];
+            conn.start.worldPosition = [...indicatorPosArray];
+            if (conn.start.plane === groupRef.current) {
+              conn.start.facePosition = [...indicatorPosArray];
+              conn.start.faceCenter = [...indicatorPosArray];
+            }
+          }
 
-      // Only update database every 100ms to reduce load during continuous movement
-      const throttleTime = 100;
-      const now = Date.now();
-      if (now - (lastUpdateRef.current?.time || 0) > throttleTime) {
-        // Immediate visual update during movement
-        onUpdate(id, {
-          type: 'text',
-          position: worldInfo.worldPos,
-          worldPosition: worldInfo.worldPos,
-          indicatorPosition: worldInfo.indicatorPos,
-          planeData: {
-            worldMatrix: worldInfo.matrix,
-            position: worldInfo.worldPos,
-            scale: [...scale],
-            offset: getIndicatorOffset(),
-          },
-          _transformActive: true, // Skip database updates but keep visual updates
-          _isDragging: true, // Indicate this is an active drag operation
+          if (conn.end?.objectId === stringId) {
+            conn.end.position = [...indicatorPosArray];
+            conn.end.worldPosition = [...indicatorPosArray];
+            if (conn.end.plane === groupRef.current) {
+              conn.end.facePosition = [...indicatorPosArray];
+              conn.end.faceCenter = [...indicatorPosArray];
+            }
+          }
         });
-
-        // Store last update time for throttling
-        lastUpdateRef.current = {
-          ...lastUpdateRef.current,
-          time: now,
-          position: worldInfo.worldPos,
-        };
       }
+
+      // Update position in real-time (not in database yet to avoid overwrites)
+      onUpdate(id, {
+        position: [newPos.x, newPos.y, newPos.z],
+        worldPosition: [newPos.x, newPos.y, newPos.z],
+        indicatorPosition: indicatorPosArray,
+        planeData: {
+          position: [newPos.x, newPos.y, newPos.z],
+          worldMatrix: Array.from(groupRef.current.matrixWorld.elements),
+          scale: [...scale],
+          offset: getIndicatorOffset(),
+        },
+        _transformActive: true, // Mark this as a non-database update
+      });
     },
-    [id, onUpdate, scale, updateWorldMatrix, getIndicatorOffset, isMoving]
+    [id, connections, stringId, onUpdate, scale, getIndicatorOffset]
   );
 
   const handleScale = (e) => {

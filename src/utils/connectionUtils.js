@@ -72,50 +72,66 @@ export const getConnectionKey = (id1, id2) => {
 };
 
 /**
- * Prepares a standardized indicator object for text objects
- * @param {object} textObject - The text object reference
- * @param {string} id - The text object ID
- * @param {array} position - The object position
- * @param {array} scale - The object scale
- * @returns {object} - Standardized indicator object for connections
+ * Prepares a consistent text object indicator format for connections
+ * @param {Object} plane - The text object group reference
+ * @param {string|number} id - Object ID
+ * @param {Array} position - Object position
+ * @param {Array} scale - Object scale
+ * @returns {Object} - Formatted indicator object
  */
-export const prepareTextObjectIndicator = (textObject, id, position, scale) => {
-  if (!textObject || !id) return null;
+export const prepareTextObjectIndicator = (plane, id, position, scale) => {
+  if (!plane) return null;
 
-  const worldPos = new THREE.Vector3();
-  const offset = new THREE.Vector3(0, scale[1] * 0.65, 0);
+  try {
+    // Get world position
+    const worldPos = new THREE.Vector3();
+    plane.getWorldPosition(worldPos);
 
-  textObject.updateWorldMatrix(true, false);
-  textObject.getWorldPosition(worldPos);
+    // Calculate indicator offset based on scale
+    const offset = [0, scale[1] * 0.65, 0];
 
-  offset.applyQuaternion(textObject.quaternion);
-  worldPos.add(offset);
+    // Apply offset to position
+    const offsetVec = new THREE.Vector3(...offset);
+    offsetVec.applyQuaternion(plane.quaternion);
+    const indicatorPos = new THREE.Vector3(
+      worldPos.x + offsetVec.x,
+      worldPos.y + offsetVec.y,
+      worldPos.z + offsetVec.z
+    );
 
-  const positionArray = [worldPos.x, worldPos.y, worldPos.z];
-  const stringId = String(id);
+    // Extract matrix data
+    plane.updateWorldMatrix(true, false);
+    const worldMatrix = plane.matrixWorld.clone();
 
-  return {
-    type: 'text',
-    position: positionArray,
-    worldPosition: positionArray,
-    face: 'top',
-    facePosition: positionArray, // Add facePosition for connection lines
-    faceCenter: positionArray, // Add faceCenter for consistent API
-    plane: textObject,
-    scale: [...scale],
-    planeData: {
-      position: [...position],
-      scale: [...scale],
-      worldMatrix: Array.from(textObject.matrixWorld.elements),
-      offset: [0, scale[1] * 0.65, 0],
-    },
-    cube: {
-      id: stringId,
-      position,
+    // Create indicator object
+    return {
+      plane,
+      type: 'text',
+      position: [indicatorPos.x, indicatorPos.y, indicatorPos.z],
+      worldPosition: [indicatorPos.x, indicatorPos.y, indicatorPos.z],
+      objectId: String(id),
+      id: String(id),
+      face: 'top',
       scale,
-      userData: { objectId: stringId },
-    },
-    id: stringId,
-    objectId: stringId,
-  };
+      planeData: {
+        worldMatrix: Array.from(worldMatrix.elements),
+        position: [worldPos.x, worldPos.y, worldPos.z],
+        scale,
+        offset,
+      },
+      cube: {
+        id: String(id),
+        position: [worldPos.x, worldPos.y, worldPos.z],
+        scale,
+        userData: {
+          id: String(id),
+          objectId: String(id),
+          indicatorPosition: [indicatorPos.x, indicatorPos.y, indicatorPos.z],
+        },
+      },
+    };
+  } catch (error) {
+    console.error('Error preparing text object indicator:', error);
+    return null;
+  }
 };
