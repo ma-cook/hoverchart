@@ -9,6 +9,7 @@ import {
   checkLineIntersection,
   generateCurvedPath,
 } from '../utils/pathfindingUtils';
+import * as THREE from 'three';
 
 /**
  * Custom hook to manage connections
@@ -74,7 +75,7 @@ export function useConnections({ user, currentSpaceId, objects }) {
     });
   }, []);
 
-  // Position synchronization for connections
+  // Position synchronization for connections - improved to better handle plane objects
   const synchronizeConnectionPositions = useCallback(
     (connections, objectsData) => {
       if (!connections.length || !objectsData.length) return connections;
@@ -108,8 +109,74 @@ export function useConnections({ user, currentSpaceId, objects }) {
           return updatedConn;
         }
 
+        // Special handling for plane objects - more reliable position tracking
+        if (startObject.type === 'plane') {
+          // For planes, check if we have an explicit indicator position
+          if (startObject._indicatorWorldPosition) {
+            updatedConn.start.position = [
+              ...startObject._indicatorWorldPosition,
+            ];
+            updatedConn.start.worldPosition = [
+              ...startObject._indicatorWorldPosition,
+            ];
+            updatedConn.start.facePosition = [
+              ...startObject._indicatorWorldPosition,
+            ];
+            updatedConn.start.faceCenter = [
+              ...startObject._indicatorWorldPosition,
+            ];
+            return updatedConn;
+          }
+
+          // Otherwise calculate the position - this is the same calculation as in the plane component
+          const offset = [0, -5 * (startObject.scale?.[1] || 1), 0];
+          const worldPos = new THREE.Vector3(...startObject.position);
+          const offsetVec = new THREE.Vector3(...offset);
+
+          // We can't apply quaternion here without the actual object,
+          // so we just do a simple vertical offset
+          worldPos.add(offsetVec);
+
+          updatedConn.start.position = [worldPos.x, worldPos.y, worldPos.z];
+          updatedConn.start.worldPosition = [
+            worldPos.x,
+            worldPos.y,
+            worldPos.z,
+          ];
+          updatedConn.start.facePosition = [worldPos.x, worldPos.y, worldPos.z];
+          updatedConn.start.faceCenter = [worldPos.x, worldPos.y, worldPos.z];
+        }
+
+        // Same special handling for plane objects as the end point
+        if (endObject.type === 'plane') {
+          if (endObject._indicatorWorldPosition) {
+            updatedConn.end.position = [...endObject._indicatorWorldPosition];
+            updatedConn.end.worldPosition = [
+              ...endObject._indicatorWorldPosition,
+            ];
+            updatedConn.end.facePosition = [
+              ...endObject._indicatorWorldPosition,
+            ];
+            updatedConn.end.faceCenter = [...endObject._indicatorWorldPosition];
+            return updatedConn;
+          }
+
+          const offset = [0, -5 * (endObject.scale?.[1] || 1), 0];
+          const worldPos = new THREE.Vector3(...endObject.position);
+          const offsetVec = new THREE.Vector3(...offset);
+          worldPos.add(offsetVec);
+
+          updatedConn.end.position = [worldPos.x, worldPos.y, worldPos.z];
+          updatedConn.end.worldPosition = [worldPos.x, worldPos.y, worldPos.z];
+          updatedConn.end.facePosition = [worldPos.x, worldPos.y, worldPos.z];
+          updatedConn.end.faceCenter = [worldPos.x, worldPos.y, worldPos.z];
+        }
+
         // Update positions for regular objects
-        if (!startObject.type || startObject.type !== 'text') {
+        if (
+          !startObject.type ||
+          (startObject.type !== 'text' && startObject.type !== 'plane')
+        ) {
           updatedConn.start.position = calculateFacePosition({
             type: conn.start.type,
             face: conn.start.face,
@@ -123,7 +190,10 @@ export function useConnections({ user, currentSpaceId, objects }) {
           });
         }
 
-        if (!endObject.type || endObject.type !== 'text') {
+        if (
+          !endObject.type ||
+          (endObject.type !== 'text' && endObject.type !== 'plane')
+        ) {
           updatedConn.end.position = calculateFacePosition({
             type: conn.end.type,
             face: conn.end.face,

@@ -301,7 +301,7 @@ const Plane = ({
     };
   }, []);
 
-  // Handle dragging for position updates
+  // Handle dragging for position updates - improve this to save to database
   const handleDrag = (e) => {
     if (groupRef.current) {
       const newPos = e.target.object.position;
@@ -322,6 +322,51 @@ const Plane = ({
 
       const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
 
+      // Update any connected connection points in real-time
+      if (connections) {
+        connections.forEach((conn) => {
+          // Update start position if this plane is the start object
+          if (
+            conn.start?.objectId === String(id) ||
+            conn.start?.plane === groupRef.current
+          ) {
+            conn.start.position = [...worldPosArray];
+            conn.start.worldPosition = [...worldPosArray];
+            conn.start.facePosition = [...worldPosArray];
+            conn.start.faceCenter = [...worldPosArray];
+          }
+
+          // Update end position if this plane is the end object
+          if (
+            conn.end?.objectId === String(id) ||
+            conn.end?.plane === groupRef.current
+          ) {
+            conn.end.position = [...worldPosArray];
+            conn.end.worldPosition = [...worldPosArray];
+            conn.end.facePosition = [...worldPosArray];
+            conn.end.faceCenter = [...worldPosArray];
+          }
+        });
+      }
+
+      // Add these critical properties to userData to help ConnectionUpdater
+      if (groupRef.current) {
+        groupRef.current.userData = {
+          ...groupRef.current.userData,
+          isPlane: true,
+          objectId: String(id),
+          id: String(id),
+          indicatorOffset: [0, -5 * currentScale[1], 0],
+          indicatorWorldPosition: worldPosArray,
+          worldPosition: worldPosArray,
+          facePosition: worldPosArray,
+          isMoving: true,
+          _lastUpdateTime: Date.now(),
+          _isDragging: true,
+        };
+      }
+
+      // Always update position in database during drag with all connection data
       if (onUpdate) {
         onUpdate(id, {
           type: 'plane',
@@ -333,8 +378,98 @@ const Plane = ({
             scale: currentScale,
             offset: [0, -5 * currentScale[1], 0],
           },
+          _isDragging: true,
+          _indicatorWorldPosition: worldPosArray,
         });
       }
+    }
+  };
+
+  // Add transform start/end handlers
+  const handleTransformStart = () => {
+    if (window.orbitControls) {
+      window.orbitControls.enabled = false;
+    }
+    if (onTransformStart) {
+      onTransformStart(id);
+    }
+  };
+
+  const handleTransformEnd = () => {
+    if (window.orbitControls) {
+      window.orbitControls.enabled = true;
+    }
+
+    // Final position update at transform end - crucial for database saving
+    if (groupRef.current && onUpdate) {
+      const newPos = groupRef.current.position;
+
+      // Calculate world data for connections
+      const worldPos = new THREE.Vector3();
+      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+
+      groupRef.current.updateWorldMatrix(true, false);
+      groupRef.current.getWorldPosition(worldPos);
+
+      offset.applyQuaternion(groupRef.current.quaternion);
+      worldPos.add(offset);
+
+      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
+      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
+
+      // Update any connected connection points one final time
+      if (connections) {
+        connections.forEach((conn) => {
+          // Update start position if this plane is the start object
+          if (
+            conn.start?.objectId === String(id) ||
+            conn.start?.plane === groupRef.current
+          ) {
+            conn.start.position = [...worldPosArray];
+            conn.start.worldPosition = [...worldPosArray];
+            conn.start.facePosition = [...worldPosArray];
+            conn.start.faceCenter = [...worldPosArray];
+          }
+
+          // Update end position if this plane is the end object
+          if (
+            conn.end?.objectId === String(id) ||
+            conn.end?.plane === groupRef.current
+          ) {
+            conn.end.position = [...worldPosArray];
+            conn.end.worldPosition = [...worldPosArray];
+            conn.end.facePosition = [...worldPosArray];
+            conn.end.faceCenter = [...worldPosArray];
+          }
+        });
+      }
+
+      // Save the final position to the database with all necessary data
+      onUpdate(id, {
+        type: 'plane',
+        position: [newPos.x, newPos.y, newPos.z],
+        worldPosition: worldPosArray,
+        planeData: {
+          worldMatrix,
+          position: [newPos.x, newPos.y, newPos.z],
+          scale: currentScale,
+          offset: [0, -5 * currentScale[1], 0],
+        },
+        color: currentColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
+        _finalPosition: true,
+        _indicatorWorldPosition: worldPosArray,
+      });
+    }
+
+    if (onTransformEnd) {
+      onTransformEnd(id);
     }
   };
 
@@ -560,8 +695,10 @@ const Plane = ({
         type: 'plane',
         position: positionArray,
         worldPosition: positionArray,
+        facePosition: positionArray, // Add explicit facePosition
+        faceCenter: positionArray, // Add explicit faceCenter
         face: 'bottom',
-        plane: planeRef,
+        plane: planeRef, // Store direct reference to the plane object
         scale: [...currentScale],
         planeData: {
           position: [...position],
@@ -574,12 +711,17 @@ const Plane = ({
           id: stringId,
           position,
           scale: currentScale,
-          userData: { objectId: stringId },
+          userData: {
+            objectId: stringId,
+            planeRef: planeRef, // Store reference in userData as well
+            indicatorPosition: positionArray,
+          },
         },
         id: stringId,
         objectId: stringId,
       };
 
+      setIndicatorSelected(true);
       onIndicatorSelected?.();
       onFaceIndicatorClick?.(indicator);
     } catch (error) {
@@ -755,6 +897,10 @@ const Plane = ({
           object={groupRef.current}
           mode="translate"
           onObjectChange={handleDrag}
+          onDragStart={handleTransformStart}
+          onDragEnd={handleTransformEnd}
+          onMouseDown={handleTransformStart}
+          onMouseUp={handleTransformEnd}
         />
       )}
     </>

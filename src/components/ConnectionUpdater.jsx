@@ -238,22 +238,44 @@ const ConnectionUpdater = ({
           conn.end?.cube?.type === 'textObject' ||
           conn.end?.objectId?.toString().includes('text');
 
-        // Check if object is actively moving by examining the lastMoveTime or motion flags
+        // Enhanced detection of plane objects
+        const startIsPlane =
+          conn.start?.type === 'plane' ||
+          conn.start?.plane?.userData?.isPlane ||
+          (conn.start?.objectId &&
+            String(conn.start.objectId).includes('plane'));
+
+        const endIsPlane =
+          conn.end?.type === 'plane' ||
+          conn.end?.plane?.userData?.isPlane ||
+          (conn.end?.objectId && String(conn.end.objectId).includes('plane'));
+
+        // Check if object is actively moving by examining flags
         const startIsMoving =
-          startIsText &&
-          (conn.start?.cube?._textObjectMoving ||
-            conn.start?._transformActive ||
-            (conn.start?.cube?.userData?._lastMoveTime &&
-              now - conn.start.cube.userData._lastMoveTime < 500));
+          (startIsText &&
+            (conn.start?.cube?._textObjectMoving ||
+              conn.start?._transformActive ||
+              (conn.start?.cube?.userData?._lastMoveTime &&
+                now - conn.start.cube.userData._lastMoveTime < 500))) ||
+          (startIsPlane &&
+            (conn.start?.plane?.userData?._isDragging ||
+              conn.start?.plane?.userData?.isMoving ||
+              (conn.start?.plane?.userData?._lastUpdateTime &&
+                now - conn.start.plane.userData._lastUpdateTime < 500)));
 
         const endIsMoving =
-          endIsText &&
-          (conn.end?.cube?._textObjectMoving ||
-            conn.end?._transformActive ||
-            (conn.end?.cube?.userData?._lastMoveTime &&
-              now - conn.end.cube.userData._lastMoveTime < 500));
+          (endIsText &&
+            (conn.end?.cube?._textObjectMoving ||
+              conn.end?._transformActive ||
+              (conn.end?.cube?.userData?._lastMoveTime &&
+                now - conn.end.cube.userData._lastMoveTime < 500))) ||
+          (endIsPlane &&
+            (conn.end?.plane?.userData?._isDragging ||
+              conn.end?.plane?.userData?.isMoving ||
+              (conn.end?.plane?.userData?._lastUpdateTime &&
+                now - conn.end.plane.userData._lastUpdateTime < 500)));
 
-        // Skip locked connections or recently moved ones (unless text object is moving)
+        // Skip locked connections or recently moved ones (unless object is moving)
         if (
           conn._transformLocked ||
           (conn._isDragging &&
@@ -265,28 +287,42 @@ const ConnectionUpdater = ({
           return;
         }
 
-        // Special handling for text objects that are currently moving
-        if (startIsText || endIsText) {
+        // Special handling for text objects and plane objects that are currently moving
+        if (startIsText || endIsText || startIsPlane || endIsPlane) {
           // Calculate positions with priority for live object data
           let newStartPos, newEndPos;
 
+          // Handle start position calculation
           if (startIsText) {
             if (startIsMoving) {
-              // For moving text objects, use the most direct and up-to-date position data
+              // For moving text objects, use the most direct position data
               newStartPos =
                 conn.start?.cube?.userData?.indicatorWorldPosition ||
                 conn.start?.cube?.userData?.connectionData?.indicatorPosition ||
                 conn.start?.worldPosition ||
                 calculateFacePosition(conn.start);
             } else {
-              // For static text objects, calculate or use stored position
+              // For static text objects, calculate position
+              newStartPos = calculateFacePosition(conn.start);
+            }
+          } else if (startIsPlane) {
+            if (startIsMoving) {
+              // For moving planes, use the most direct position data
+              newStartPos =
+                conn.start?.plane?.userData?.indicatorWorldPosition ||
+                conn.start?.worldPosition ||
+                conn.start?._indicatorWorldPosition ||
+                calculateFacePosition(conn.start);
+            } else {
+              // For static planes, calculate position
               newStartPos = calculateFacePosition(conn.start);
             }
           } else {
-            // Normal calculation for non-text objects
+            // Normal calculation for regular objects
             newStartPos = calculateFacePosition(conn.start);
           }
 
+          // Handle end position calculation
           if (endIsText) {
             if (endIsMoving) {
               // For moving text objects, use direct position data
@@ -299,8 +335,20 @@ const ConnectionUpdater = ({
               // For static text objects, calculate position
               newEndPos = calculateFacePosition(conn.end);
             }
+          } else if (endIsPlane) {
+            if (endIsMoving) {
+              // For moving planes, use the most direct position data
+              newEndPos =
+                conn.end?.plane?.userData?.indicatorWorldPosition ||
+                conn.end?.worldPosition ||
+                conn.end?._indicatorWorldPosition ||
+                calculateFacePosition(conn.end);
+            } else {
+              // For static planes, calculate position
+              newEndPos = calculateFacePosition(conn.end);
+            }
           } else {
-            // Normal calculation for non-text objects
+            // Normal calculation for regular objects
             newEndPos = calculateFacePosition(conn.end);
           }
 
