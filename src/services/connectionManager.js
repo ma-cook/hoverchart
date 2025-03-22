@@ -154,7 +154,7 @@ export const handleTextObjectConnection = (
   const targetObjectId = String(targetObject.id || targetObject.objectId);
 
   // Check if these objects are already connected on the same face
-  const textFace = textObjectOrIndicator.face || 'default'; // Use a default face for text
+  const textFace = textObjectOrIndicator.face || 'top'; // Use 'top' as default face for text objects
   if (objectsAreConnected(textObjectId, targetObjectId, textFace, targetFace)) {
     return {
       success: false,
@@ -167,60 +167,80 @@ export const handleTextObjectConnection = (
     .toString(36)
     .substr(2, 9)}`;
 
-  // SIMPLIFIED: Always use the precise indicator position for text objects
-  // with strict priority order and no fallbacks to default positions
+  // Extract position data with multiple fallbacks for text object
   let textObjectPosition;
 
-  // First priority: worldPosition - the explicitly calculated indicator position
+  // First priority: Use standardized worldPosition
   if (Array.isArray(textObjectOrIndicator.worldPosition)) {
     textObjectPosition = textObjectOrIndicator.worldPosition;
   }
-  // Second priority: position - sometimes this contains the calculated position
+  // Second priority: Use indicator position from planeData
+  else if (textObjectOrIndicator.planeData?.position) {
+    textObjectPosition = textObjectOrIndicator.planeData.position;
+  }
+  // Third priority: Use basic position
   else if (Array.isArray(textObjectOrIndicator.position)) {
     textObjectPosition = textObjectOrIndicator.position;
   }
-  // Third priority: indicator position stored in userData
-  else if (Array.isArray(textObjectOrIndicator.userData?.indicatorPosition)) {
-    textObjectPosition = textObjectOrIndicator.userData.indicatorPosition;
-  }
-  // Fourth priority: indicator position stored in plane.userData
+  // Final fallback: Try userData
   else if (
-    Array.isArray(textObjectOrIndicator.plane?.userData?.indicatorPosition)
+    Array.isArray(textObjectOrIndicator.plane?.userData?.worldPos?.indicatorPos)
   ) {
-    textObjectPosition = textObjectOrIndicator.plane.userData.indicatorPosition;
-  }
-  // If we somehow don't have a valid indicator position, throw an error
-  else {
-    console.error(
-      'No valid indicator position found for text object connection'
-    );
+    textObjectPosition =
+      textObjectOrIndicator.plane.userData.worldPos.indicatorPos;
+  } else {
+    console.error('No valid position found for text object connection');
     return { success: false, message: 'Invalid indicator position' };
   }
 
-  // Create connection data with the correct position
+  // Extract target position with fallbacks, prioritizing face position
+  let targetPosition;
+  if (Array.isArray(targetObject.facePosition)) {
+    targetPosition = targetObject.facePosition;
+  } else if (Array.isArray(targetObject.worldPosition)) {
+    targetPosition = targetObject.worldPosition;
+  } else if (Array.isArray(targetObject.position)) {
+    targetPosition = targetObject.position;
+  } else {
+    targetPosition = [0, 0, 0];
+  }
+
+  console.log('Connection positions:', {
+    textObjectPosition,
+    targetPosition,
+    targetObject,
+  });
+
+  // Create connection data with the correct position and metadata
   const newConnection = {
     id: connectionId,
     start: {
       type: 'text',
       objectId: textObjectId,
       position: textObjectPosition,
-      worldPosition: textObjectPosition, // Store as both position and worldPosition
-      plane: {
-        userData: {
-          id: textObjectId,
-          indicatorPosition: textObjectPosition,
-        },
+      worldPosition: textObjectPosition,
+      face: textFace,
+      plane: textObjectOrIndicator.plane || null,
+      planeData: textObjectOrIndicator.planeData || {
+        worldMatrix: textObjectOrIndicator.worldMatrix || null,
+        position: textObjectPosition,
+        scale: textObjectOrIndicator.scale || [1, 1, 1],
+        offset: textObjectOrIndicator.offset || [0, 0, 0],
       },
     },
     end: {
       type: targetObject.type || 'cube',
       face: targetFace,
       objectId: targetObjectId,
-      position: targetObject.position,
+      position: targetPosition,
+      worldPosition: targetPosition,
+      faceCenter: targetObject.faceCenter || targetPosition,
+      facePosition: targetPosition,
       cube: {
         id: targetObjectId,
-        position: targetObject.position,
+        position: targetObject.position || targetPosition,
         scale: targetObject.scale || [1, 1, 1],
+        face: targetFace,
       },
     },
     lineStyle: 'straight',

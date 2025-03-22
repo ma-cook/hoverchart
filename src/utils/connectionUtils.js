@@ -1,4 +1,5 @@
 import { objectsAreConnected } from '../services/connectionManager';
+import * as THREE from 'three';
 
 /**
  * Checks if a connection can be created between two objects
@@ -68,4 +69,53 @@ export const getConnectionKey = (id1, id2) => {
 
   // Ensure consistent key format (alphabetical order)
   return id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
+};
+
+/**
+ * Prepares a standardized indicator object for text objects
+ * @param {object} textObject - The text object reference
+ * @param {string} id - The text object ID
+ * @param {array} position - The object position
+ * @param {array} scale - The object scale
+ * @returns {object} - Standardized indicator object for connections
+ */
+export const prepareTextObjectIndicator = (textObject, id, position, scale) => {
+  if (!textObject || !id) return null;
+
+  const worldPos = new THREE.Vector3();
+  const offset = new THREE.Vector3(0, scale[1] * 0.65, 0);
+
+  textObject.updateWorldMatrix(true, false);
+  textObject.getWorldPosition(worldPos);
+
+  offset.applyQuaternion(textObject.quaternion);
+  worldPos.add(offset);
+
+  const positionArray = [worldPos.x, worldPos.y, worldPos.z];
+  const stringId = String(id);
+
+  return {
+    type: 'text',
+    position: positionArray,
+    worldPosition: positionArray,
+    face: 'top',
+    facePosition: positionArray, // Add facePosition for connection lines
+    faceCenter: positionArray, // Add faceCenter for consistent API
+    plane: textObject,
+    scale: [...scale],
+    planeData: {
+      position: [...position],
+      scale: [...scale],
+      worldMatrix: Array.from(textObject.matrixWorld.elements),
+      offset: [0, scale[1] * 0.65, 0],
+    },
+    cube: {
+      id: stringId,
+      position,
+      scale,
+      userData: { objectId: stringId },
+    },
+    id: stringId,
+    objectId: stringId,
+  };
 };

@@ -144,27 +144,55 @@ export const handleFaceIndicatorClick = ({
           textIndicator.worldPosition = textIndicator.position;
         }
 
+        // Add face position calculation for the end object's indicator
+        const endPosition = calculateFacePosition(indicator);
+
+        // Enhance the end object with the calculated face position
+        const enhancedEndObj = {
+          ...endObj,
+          position: endPosition, // Use the face position instead of object center
+          worldPosition: endPosition,
+          face: indicator.face,
+          faceCenter: indicator.faceCenter || endPosition,
+          facePosition: endPosition,
+        };
+
         console.log('Creating text connection with text as start:', {
           textIndicator,
-          endObj,
+          endObj: enhancedEndObj,
         });
+
         // Pass the indicator object that has position data
         result = handleTextObjectConnection(
           textIndicator, // Pass the indicator instead of just the object
-          endObj,
+          enhancedEndObj, // Use the enhanced object with face position
           indicator.face,
           user?.uid,
           currentSpaceId
         );
       } else {
         // Text object is the end - similar approach with current indicator
+        // Calculate face position for the start object
+        const startPosition = calculateFacePosition(startIndicator);
+
+        // Enhance the start object with the calculated face position
+        const enhancedStartObj = {
+          ...startObj,
+          position: startPosition, // Use the face position instead of object center
+          worldPosition: startPosition,
+          face: startIndicator.face,
+          faceCenter: startIndicator.faceCenter || startPosition,
+          facePosition: startPosition,
+        };
+
         console.log('Creating text connection with text as end:', {
-          startObj,
+          startObj: enhancedStartObj,
           indicator,
         });
+
         result = handleTextObjectConnection(
           indicator, // Pass the current indicator with position data
-          startObj,
+          enhancedStartObj, // Use the enhanced object with face position
           startIndicator.face,
           user?.uid,
           currentSpaceId

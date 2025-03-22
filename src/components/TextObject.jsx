@@ -1,17 +1,11 @@
-import {
-  useRef,
-  useState,
-  useLayoutEffect,
-  useEffect,
-  useCallback,
-  useMemo,
-} from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { Html, TransformControls } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
+import { prepareTextObjectIndicator } from '../utils/connectionUtils';
 
 const TextObject = ({
   id,
@@ -20,6 +14,7 @@ const TextObject = ({
   onClick,
   showAllIndicators,
   onIndicatorSelected,
+  onIndicatorDeselected,
   globalIndicatorSelected,
   onFaceIndicatorClick,
   connections,
@@ -49,40 +44,64 @@ const TextObject = ({
   const [isActivelyEditing, setIsActivelyEditing] = useState(false);
   const [textStyle, setTextStyle] = useState(initialTextStyle);
   const [scale, setScale] = useState(initialScale);
+  const [indicatorSelected, setIndicatorSelected] = useState(false);
 
-  // UI mode states - these could be consolidated but keeping separate for clarity
+  // UI mode states
   const [showTransform, setShowTransform] = useState(false);
   const [showResizeArrow, setShowResizeArrow] = useState(false);
   const [showResizeControls, setShowResizeControls] = useState(false);
   const [bulletPointMode, setBulletPointMode] = useState(false);
 
   // Technical refs
-  const indicatorSelectedRef = useRef(false);
   const textUpdateTimeoutRef = useRef(null);
   const pendingChangesRef = useRef(null);
   const originalScaleRef = useRef(scale);
   const containerDimensionsRef = useRef({ width: 0, height: 0 });
   const startXRef = useRef(0);
   const startWidthRef = useRef(scale[0]);
+  const lastUpdateRef = useRef(null);
+  const worldMatrixRef = useRef(null);
+  const worldPosRef = useRef(null);
 
   // Constants
   const conversionFactor = 30;
+  const stringId = String(id);
+
+  // Sync props to state
+  useEffect(() => {
+    if (initialScale !== undefined) setScale(initialScale);
+  }, [initialScale]);
+
+  useEffect(() => {
+    if (initialText !== undefined) setText(initialText);
+  }, [initialText]);
+
+  useEffect(() => {
+    if (initialTextStyle !== undefined) setTextStyle(initialTextStyle);
+  }, [initialTextStyle]);
+
+  // Calculate offset for indicator consistently
+  const getIndicatorOffset = useCallback(() => {
+    return [0, scale[1] * 0.65, 0];
+  }, [scale]);
 
   // Memoized derived values
   const isIndicatorConnected = useCallback(() => {
-    return connections?.some(
-      (conn) =>
-        conn.start.plane === groupRef.current ||
-        conn.end.plane === groupRef.current
-    );
-  }, [connections]);
+    if (!connections || !id) return false;
+
+    return connections.some((conn) => {
+      const startId = String(conn.start?.objectId || conn.start?.id);
+      const endId = String(conn.end?.objectId || conn.end?.id);
+      return stringId === startId || stringId === endId;
+    });
+  }, [connections, stringId]);
 
   const shouldShowIndicator = useMemo(() => {
     if (selectedIndicators?.length > 0) return true;
     if (indicatorMode === 'indicators') return true;
     if (showAllIndicators || globalIndicatorSelected) return true;
     if (isIndicatorConnected()) return true;
-    if (indicatorSelectedRef.current) return true;
+    if (indicatorSelected) return true;
     if (selected) return true;
     return false;
   }, [
@@ -92,14 +111,84 @@ const TextObject = ({
     globalIndicatorSelected,
     selected,
     isIndicatorConnected,
+    indicatorSelected,
   ]);
 
   // Improved getIndicatorPositions with memoization
   const getIndicatorPositions = useCallback(() => {
-    const containerHeight = containerDimensionsRef.current.height || 50;
-    const yOffset = containerHeight / conversionFactor + 0.25;
-    return { bottom: [0, -yOffset, 0] };
-  }, [containerDimensionsRef.current.height, conversionFactor]);
+    const offset = getIndicatorOffset();
+    return { top: offset };
+  }, [getIndicatorOffset]);
+
+  // Update world matrix and position for connections
+  const updateWorldMatrix = useCallback(() => {
+    if (!groupRef.current) return null;
+
+    groupRef.current.updateWorldMatrix(true, false);
+    const worldMatrix = groupRef.current.matrixWorld.clone();
+    worldMatrixRef.current = worldMatrix;
+
+    const worldPos = new THREE.Vector3();
+    groupRef.current.getWorldPosition(worldPos);
+
+    // Apply indicator offset
+    const offset = new THREE.Vector3(...getIndicatorOffset());
+    offset.applyQuaternion(groupRef.current.quaternion);
+    const indicatorWorldPos = worldPos.clone().add(offset);
+
+    const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
+    const indicatorPosArray = [
+      indicatorWorldPos.x,
+      indicatorWorldPos.y,
+      indicatorWorldPos.z,
+    ];
+
+    worldPosRef.current = {
+      worldPos: worldPosArray,
+      indicatorPos: indicatorPosArray,
+      matrix: Array.from(worldMatrix.elements),
+    };
+
+    return {
+      worldPos: worldPosArray,
+      indicatorPos: indicatorPosArray,
+      matrix: Array.from(worldMatrix.elements),
+    };
+  }, [getIndicatorOffset]);
+
+  // Update world position when transform changes
+  useEffect(() => {
+    updateWorldMatrix();
+
+    // Store connection-relevant data in userData for easy access
+    if (groupRef.current) {
+      groupRef.current.userData.indicatorOffset = getIndicatorOffset();
+      groupRef.current.userData.worldPos = worldPosRef.current;
+      groupRef.current.userData.objectType = 'text';
+    }
+  }, [position, scale, updateWorldMatrix, getIndicatorOffset]);
+
+  const closeAllUIs = useCallback(() => {
+    setShowTransform(false);
+    setShowResizeArrow(false);
+    setShowResizeControls(false);
+    setIsEditing(false);
+  }, []);
+
+  // Handle selection/deselection
+  useEffect(() => {
+    if (!selected) {
+      closeAllUIs();
+      setIndicatorSelected(false);
+      onIndicatorDeselected?.();
+
+      // Save pending changes when deselected
+      if (pendingChangesRef.current && onUpdate) {
+        onUpdate(id, pendingChangesRef.current);
+        pendingChangesRef.current = null;
+      }
+    }
+  }, [selected, closeAllUIs, onIndicatorDeselected, id, onUpdate]);
 
   // Optimized database update to reduce unnecessary saves
   const updateDatabase = useCallback(() => {
@@ -115,16 +204,26 @@ const TextObject = ({
       lastEditTime: isActivelyEditing ? Date.now() : undefined,
     };
 
-    pendingChangesRef.current = currentState;
+    // Only update if state has changed
+    if (
+      !lastUpdateRef.current ||
+      !isEqual(lastUpdateRef.current, currentState)
+    ) {
+      const worldInfo = updateWorldMatrix();
 
-    if (!isEditing && groupRef.current) {
-      if (
-        !groupRef.current.lastUpdate ||
-        !isEqual(groupRef.current.lastUpdate, currentState)
-      ) {
-        groupRef.current.lastUpdate = currentState;
-        onUpdate(id, currentState);
+      if (worldInfo) {
+        currentState.worldPosition = worldInfo.worldPos;
+        currentState.indicatorPosition = worldInfo.indicatorPos;
+        currentState.planeData = {
+          worldMatrix: worldInfo.matrix,
+          position: [...position],
+          scale: [...scale],
+          offset: getIndicatorOffset(),
+        };
       }
+
+      lastUpdateRef.current = currentState;
+      onUpdate(id, currentState);
     }
   }, [
     id,
@@ -135,203 +234,14 @@ const TextObject = ({
     textStyle,
     bulletPointMode,
     isActivelyEditing,
-    isEditing,
+    updateWorldMatrix,
+    getIndicatorOffset,
   ]);
-
-  // Improved indicator position calculation
-  const calculateIndicatorPosition = useCallback(() => {
-    if (!groupRef.current) return [0, 0, 0];
-
-    const worldPosition = new THREE.Vector3();
-    groupRef.current.getWorldPosition(worldPosition);
-    const indicatorOffset = getIndicatorPositions().bottom;
-
-    const worldIndicatorPos = [
-      worldPosition.x + indicatorOffset[0],
-      worldPosition.y + indicatorOffset[1],
-      worldPosition.z + indicatorOffset[2],
-    ];
-
-    groupRef.current.userData.indicatorPosition = [...worldIndicatorPos];
-    return worldIndicatorPos;
-  }, [getIndicatorPositions]);
-
-  // Optimized updateIndicatorPosition with better controls
-  const updateIndicatorPosition = useCallback(() => {
-    if (!groupRef.current) return;
-
-    const indicatorPos = getIndicatorPositions();
-    const worldPosition = new THREE.Vector3();
-    groupRef.current.getWorldPosition(worldPosition);
-    const worldIndicatorPos = [
-      worldPosition.x + indicatorPos.bottom[0],
-      worldPosition.y + indicatorPos.bottom[1],
-      worldPosition.z + indicatorPos.bottom[2],
-    ];
-
-    // Skip update if position hasn't changed significantly
-    const currentPos = groupRef.current.userData.indicatorPosition;
-    if (
-      currentPos &&
-      Math.abs(currentPos[0] - worldIndicatorPos[0]) < 0.001 &&
-      Math.abs(currentPos[1] - worldIndicatorPos[1]) < 0.001 &&
-      Math.abs(currentPos[2] - worldIndicatorPos[2]) < 0.001
-    ) {
-      return currentPos;
-    }
-
-    // Store position in userData
-    if (groupRef.current.userData) {
-      groupRef.current.userData.indicatorPosition = [...worldIndicatorPos];
-      groupRef.current.userData.indicatorOffset = [
-        0,
-        indicatorPos.bottom[1],
-        0,
-      ];
-      groupRef.current.userData.indicatorLastUpdated = Date.now();
-    }
-
-    // Update connection endpoints with rate limiting
-    const now = Date.now();
-
-    // Helper function for updating connections if needed
-    const updateConnectionsIfNeeded = () => {
-      if (!connections) return;
-
-      const lastConnUpdate =
-        groupRef.current.userData.lastConnectionUpdate || 0;
-      if (now - lastConnUpdate <= 500) return;
-
-      groupRef.current.userData.lastConnectionUpdate = now;
-
-      connections.forEach((conn) => {
-        // Update connection endpoints that match this object
-        if (conn.start?.objectId === id.toString()) {
-          conn.start.position = [...worldIndicatorPos];
-          conn.start.worldPosition = [...worldIndicatorPos];
-          conn.start._textPositionLocked = true;
-
-          if (conn.start.cube?.userData) {
-            conn.start.cube.userData.indicatorPosition = [...worldIndicatorPos];
-          }
-
-          if (conn.start.plane?.userData) {
-            conn.start.plane.userData.indicatorPosition = [
-              ...worldIndicatorPos,
-            ];
-          }
-        }
-
-        if (conn.end?.objectId === id.toString()) {
-          conn.end.position = [...worldIndicatorPos];
-          conn.end.worldPosition = [...worldIndicatorPos];
-          conn.end._textPositionLocked = true;
-
-          if (conn.end.cube?.userData) {
-            conn.end.cube.userData.indicatorPosition = [...worldIndicatorPos];
-          }
-
-          if (conn.end.plane?.userData) {
-            conn.end.plane.userData.indicatorPosition = [...worldIndicatorPos];
-          }
-        }
-      });
-    };
-
-    // Update parent via callback with rate limiting
-    const updateParentIfNeeded = () => {
-      if (!onUpdate) return;
-
-      // Only update if this object is part of a connection
-      if (
-        !connections?.some(
-          (conn) =>
-            conn.start?.objectId === id.toString() ||
-            conn.end?.objectId === id.toString()
-        )
-      )
-        return;
-
-      // Rate limit to once per second
-      const lastParentUpdate = groupRef.current.userData.lastParentUpdate || 0;
-      if (now - lastParentUpdate <= 1000) return;
-
-      groupRef.current.userData.lastParentUpdate = now;
-
-      onUpdate(id, {
-        indicatorPosition: worldIndicatorPos,
-        lastUpdated: now,
-        indicatorOffset: [0, indicatorPos.bottom[1], 0],
-      });
-    };
-
-    // Execute updates
-    updateConnectionsIfNeeded();
-    updateParentIfNeeded();
-
-    return worldIndicatorPos;
-  }, [id, connections, onUpdate, getIndicatorPositions]);
-
-  // DOM element height adjustments
-  const adjustHeight = () => {
-    if (textAreaRef.current) {
-      textAreaRef.current.style.height = 'auto';
-      textAreaRef.current.style.height = `${textAreaRef.current.scrollHeight}px`;
-      setTimeout(updateContainerDimensions, 0);
-    }
-  };
-
-  const adjustDisplayHeight = () => {
-    if (displayRef.current) {
-      displayRef.current.style.height = 'auto';
-      displayRef.current.style.height = `${displayRef.current.scrollHeight}px`;
-      setTimeout(updateContainerDimensions, 0);
-    }
-  };
-
-  // Container dimensions tracking
-  const updateContainerDimensions = () => {
-    if (!displayRef.current && !textAreaRef.current) return;
-
-    const element = isEditing ? textAreaRef.current : displayRef.current;
-    const height = element?.offsetHeight || 0;
-    const width = element?.offsetWidth || 0;
-
-    if (
-      height === containerDimensionsRef.current.height &&
-      width === containerDimensionsRef.current.width
-    )
-      return;
-
-    containerDimensionsRef.current = { width, height };
-
-    // Update indicator position if height has changed significantly
-    if (Math.abs(height - (containerDimensionsRef.current.height || 0)) > 2) {
-      const worldPos = updateIndicatorPosition();
-
-      if (
-        connections?.some(
-          (conn) =>
-            conn.start?.objectId === id.toString() ||
-            conn.end?.objectId === id.toString()
-        ) &&
-        onUpdate &&
-        !isActivelyEditing
-      ) {
-        onUpdate(id, {
-          indicatorPosition: worldPos,
-          lastUpdated: Date.now(),
-          containerHeight: height,
-        });
-      }
-    }
-  };
 
   // Event handlers
   const handleTextChange = (e) => {
     setText(e.target.value);
     setIsActivelyEditing(true);
-    adjustHeight();
 
     pendingChangesRef.current = {
       ...pendingChangesRef.current,
@@ -368,22 +278,15 @@ const TextObject = ({
       groupRef.current.userData.isTextEditing = false;
     }
 
-    if (pendingChangesRef.current && onUpdate) {
-      onUpdate(id, pendingChangesRef.current);
-
-      if (groupRef.current) {
-        groupRef.current.lastUpdate = pendingChangesRef.current;
-      }
-    }
+    updateDatabase();
   };
 
-  // Improve the handleTextClick function to immediately activate editing
+  // Click handler to activate editing
   const handleTextClick = (e) => {
     e.stopPropagation();
     onClick();
     setIsEditing(true);
 
-    // Focus the textarea in the next render cycle
     requestAnimationFrame(() => {
       if (textAreaRef.current) {
         textAreaRef.current.focus();
@@ -391,60 +294,49 @@ const TextObject = ({
     });
   };
 
-  // Modify the div click handler to be more responsive
   const handleDivClick = (e) => {
     e.stopPropagation();
-    e.preventDefault(); // Prevent any default behavior
+    e.preventDefault();
     onClick();
     setIsEditing(true);
 
-    // Focus the textarea immediately after state update
     setTimeout(() => {
       if (textAreaRef.current) {
         textAreaRef.current.focus();
-        // Set cursor position to end of text
         textAreaRef.current.selectionStart = text.length;
         textAreaRef.current.selectionEnd = text.length;
       }
     }, 10);
   };
 
+  // Connection indicator click - critical for connection handling
   const handleIndicatorClick = (e) => {
     e.stopPropagation();
 
-    const worldPosition = new THREE.Vector3();
-    groupRef.current.getWorldPosition(worldPosition);
-    const indicatorOffset = getIndicatorPositions().bottom;
-    const worldIndicatorPos = [
-      worldPosition.x + indicatorOffset[0],
-      worldPosition.y + indicatorOffset[1],
-      worldPosition.z + indicatorOffset[2],
-    ];
+    try {
+      // Use the utility function for consistent indicator format
+      const indicator = prepareTextObjectIndicator(
+        groupRef.current,
+        id,
+        position,
+        scale
+      );
 
-    const indicator = {
-      plane: groupRef.current,
-      type: 'text',
-      position: worldIndicatorPos,
-      worldPosition: worldIndicatorPos,
-      objectId: id,
-      id: id,
-      face: 'bottom',
-      scale: scale,
-      cube: {
-        id: id,
-        position: position,
-        scale: scale,
-        userData: {
-          id: id,
-          objectId: id,
-          indicatorPosition: worldIndicatorPos,
-        },
-      },
-    };
+      if (!indicator) {
+        console.error('Failed to prepare text object indicator');
+        return;
+      }
 
-    onIndicatorSelected?.();
-    onFaceIndicatorClick?.(indicator);
-    indicatorSelectedRef.current = true;
+      // Add additional properties needed for connection visualization
+      indicator.faceCenter = indicator.worldPosition;
+      indicator.facePosition = indicator.worldPosition;
+
+      setIndicatorSelected(true);
+      onIndicatorSelected?.();
+      onFaceIndicatorClick?.(indicator);
+    } catch (error) {
+      console.error('Error in handleIndicatorClick:', error);
+    }
   };
 
   // Resizing handlers
@@ -454,6 +346,7 @@ const TextObject = ({
     startWidthRef.current = scale[0];
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
+    onResizeStart?.(id);
   };
 
   const handlePointerMove = (e) => {
@@ -466,13 +359,34 @@ const TextObject = ({
       maxWidth = 200;
     if (newWidth >= minWidth && newWidth <= maxWidth) {
       setScale([newWidth, scale[1], scale[2]]);
-      updateDatabase();
+
+      // Update connections right away on resize
+      if (onUpdate && groupRef.current) {
+        const worldInfo = updateWorldMatrix();
+        if (worldInfo) {
+          onUpdate(id, {
+            type: 'text',
+            scale: [newWidth, scale[1], scale[2]],
+            worldPosition: worldInfo.worldPos,
+            indicatorPosition: worldInfo.indicatorPos,
+            planeData: {
+              worldMatrix: worldInfo.matrix,
+              position: [...position],
+              scale: [newWidth, scale[1], scale[2]],
+              offset: getIndicatorOffset(),
+            },
+            isResizing: true,
+          });
+        }
+      }
     }
   };
 
   const handlePointerUp = () => {
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', handlePointerUp);
+    onResizeEnd?.(id);
+    updateDatabase();
   };
 
   // Transform control handlers
@@ -481,6 +395,7 @@ const TextObject = ({
     if (window.orbitControls) {
       window.orbitControls.enabled = false;
     }
+    onTransformStart?.(id);
   };
 
   const handleTransformEnd = () => {
@@ -489,33 +404,45 @@ const TextObject = ({
       window.orbitControls.enabled = true;
     }
 
-    if (groupRef.current && onUpdate) {
-      const worldPosition = new THREE.Vector3();
-      groupRef.current.getWorldPosition(worldPosition);
+    const worldInfo = updateWorldMatrix();
+    if (groupRef.current && onUpdate && worldInfo) {
       onUpdate(id, {
-        position: [worldPosition.x, worldPosition.y, worldPosition.z],
+        position: worldInfo.worldPos,
+        worldPosition: worldInfo.worldPos,
+        indicatorPosition: worldInfo.indicatorPos,
         scale,
+        planeData: {
+          worldMatrix: worldInfo.matrix,
+          position: worldInfo.worldPos,
+          scale: [...scale],
+          offset: getIndicatorOffset(),
+        },
       });
     }
+    onTransformEnd?.(id);
   };
 
   const handleDrag = useCallback(
     (e) => {
-      if (groupRef.current && onUpdate) {
-        const worldPosition = new THREE.Vector3();
-        groupRef.current.getWorldPosition(worldPosition);
+      if (!groupRef.current || !onUpdate) return;
 
-        onUpdate(id, {
-          type: 'text',
-          position: [worldPosition.x, worldPosition.y, worldPosition.z],
-          scale,
-          text,
-          textStyle,
-          bulletPointMode,
-        });
-      }
+      const worldInfo = updateWorldMatrix();
+      if (!worldInfo) return;
+
+      onUpdate(id, {
+        type: 'text',
+        position: worldInfo.worldPos,
+        worldPosition: worldInfo.worldPos,
+        indicatorPosition: worldInfo.indicatorPos,
+        planeData: {
+          worldMatrix: worldInfo.matrix,
+          position: worldInfo.worldPos,
+          scale: [...scale],
+          offset: getIndicatorOffset(),
+        },
+      });
     },
-    [id, onUpdate, scale, text, textStyle, bulletPointMode]
+    [id, onUpdate, scale, updateWorldMatrix, getIndicatorOffset]
   );
 
   const handleScale = (e) => {
@@ -533,27 +460,26 @@ const TextObject = ({
       // Reset actual scale to prevent font scaling
       groupRef.current.scale.set(1, 1, 1);
 
-      groupRef.current.userData.currentScale = [...newScale];
-
-      // Update position data for connections
-      const indicatorPosition = calculateIndicatorPosition();
-      groupRef.current.userData.lastWorldPosition = position.slice();
-      groupRef.current.userData.indicatorPosition = indicatorPosition;
-      groupRef.current.userData.lastScale = newScale.slice();
-      groupRef.current.userData.indicatorOffset = [0, -5 * newScale[1], 0];
-      groupRef.current.userData.positionUpdated = Date.now();
-    }
-
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'text',
-        position,
-        scale: newScale,
-        text,
-        textStyle,
-        bulletPointMode,
-        isResizing: true,
-      });
+      const worldInfo = updateWorldMatrix();
+      if (worldInfo && onUpdate) {
+        onUpdate(id, {
+          type: 'text',
+          position,
+          scale: newScale,
+          text,
+          textStyle,
+          bulletPointMode,
+          worldPosition: worldInfo.worldPos,
+          indicatorPosition: worldInfo.indicatorPos,
+          planeData: {
+            worldMatrix: worldInfo.matrix,
+            position: [...position],
+            scale: [...newScale],
+            offset: [0, newScale[1] * 0.65, 0],
+          },
+          isResizing: true,
+        });
+      }
     }
   };
 
@@ -581,6 +507,7 @@ const TextObject = ({
       }
     }
     setTextStyle((prev) => ({ ...prev, ...newStyle }));
+    updateDatabase();
   };
 
   // StyleSheet-like objects
@@ -611,95 +538,6 @@ const TextObject = ({
     transform: 'scale(1)',
   });
 
-  // Connection synchronization
-  const syncConnectionPositions = useCallback(() => {
-    if (!connections || !groupRef.current) return;
-
-    const worldIndicatorPos = updateIndicatorPosition();
-
-    connections.forEach((conn) => {
-      // Update start position references
-      if (conn.start?.objectId === id.toString()) {
-        conn.start.position = [...worldIndicatorPos];
-        conn.start.worldPosition = [...worldIndicatorPos];
-        conn.start._textPositionLocked = true;
-
-        if (conn.start.cube?.userData) {
-          conn.start.cube.userData.indicatorPosition = [...worldIndicatorPos];
-        }
-
-        if (conn.start.plane?.userData) {
-          conn.start.plane.userData.indicatorPosition = [...worldIndicatorPos];
-        }
-      }
-
-      // Update end position references
-      if (conn.end?.objectId === id.toString()) {
-        conn.end.position = [...worldIndicatorPos];
-        conn.end.worldPosition = [...worldIndicatorPos];
-        conn.end._textPositionLocked = true;
-
-        if (conn.end.cube?.userData) {
-          conn.end.cube.userData.indicatorPosition = [...worldIndicatorPos];
-        }
-
-        if (conn.end.plane?.userData) {
-          conn.end.plane.userData.indicatorPosition = [...worldIndicatorPos];
-        }
-      }
-    });
-  }, [connections, id, updateIndicatorPosition]);
-
-  // Effects
-  useLayoutEffect(() => {
-    if (isEditing) {
-      requestAnimationFrame(adjustHeight);
-    } else {
-      adjustDisplayHeight();
-    }
-  }, [text, isEditing, textStyle.fontSize]);
-
-  // Combined dimension updates and indicator position updates
-  useEffect(() => {
-    if (isActivelyEditing) return;
-
-    updateIndicatorPosition();
-
-    const timer = setTimeout(() => {
-      updateIndicatorPosition();
-      updateContainerDimensions();
-    }, 50);
-
-    return () => clearTimeout(timer);
-  }, [
-    containerDimensionsRef.current.height,
-    containerDimensionsRef.current.width,
-    text,
-    textStyle.fontSize,
-    scale,
-    position,
-    isActivelyEditing,
-    updateIndicatorPosition,
-  ]);
-
-  // Combined selection effects
-  useEffect(() => {
-    if (!selected) {
-      setShowTransform(false);
-      setIsEditing(false);
-      indicatorSelectedRef.current = false;
-
-      // Save pending changes when deselected
-      if (pendingChangesRef.current && onUpdate) {
-        onUpdate(id, pendingChangesRef.current);
-        if (groupRef.current) {
-          groupRef.current.lastUpdate = pendingChangesRef.current;
-        }
-        pendingChangesRef.current = null;
-      }
-    }
-  }, [selected, id, onUpdate]);
-
   // Combined scale-related effects
   useEffect(() => {
     originalScaleRef.current = [...scale];
@@ -722,58 +560,24 @@ const TextObject = ({
     };
   }, []);
 
-  // Mutation observer for content changes in non-editing mode
-  useEffect(() => {
-    if (!isEditing && displayRef.current) {
-      const observer = new MutationObserver(adjustDisplayHeight);
-      observer.observe(displayRef.current, {
-        childList: true,
-        characterData: true,
-        subtree: true,
-      });
-      return () => observer.disconnect();
-    }
-  }, [isEditing]);
-
-  // Combined connection sync and database update
-  useEffect(() => {
-    if (!isActivelyEditing) {
-      syncConnectionPositions();
-      updateDatabase();
-    }
-  }, [
-    syncConnectionPositions,
-    updateDatabase,
-    isActivelyEditing,
-    scale,
-    text.length,
-    textStyle.fontSize,
-  ]);
-
-  // Cursor positioning effect
-  useEffect(() => {
-    if (isEditing && text) {
-      requestAnimationFrame(() => {
-        if (textAreaRef.current) {
-          textAreaRef.current.focus();
-          textAreaRef.current.selectionStart = text.length;
-          textAreaRef.current.selectionEnd = text.length;
-        }
-      });
-    }
-  }, [isEditing, text.length]);
-
   // Update rotation to always face camera
   useFrame(({ camera }) => {
     if (groupRef.current) {
       groupRef.current.quaternion.copy(camera.quaternion);
+
+      // Update world matrix when camera angle changes to ensure
+      // connection points remain accurate
+      if (
+        groupRef.current &&
+        connections?.some(
+          (conn) =>
+            conn.start.objectId === stringId || conn.end.objectId === stringId
+        )
+      ) {
+        updateWorldMatrix();
+      }
     }
   });
-
-  // Trigger database updates
-  useEffect(() => {
-    updateDatabase();
-  }, [updateDatabase]);
 
   return (
     <>
@@ -782,17 +586,19 @@ const TextObject = ({
         position={position}
         userData={{
           type: 'textObject',
-          id: id,
-          objectId: id,
+          id: stringId,
+          objectId: stringId,
           isTextEditing: isActivelyEditing,
           containerDimensions: containerDimensionsRef.current,
+          indicatorOffset: getIndicatorOffset(),
+          face: 'top',
         }}
       >
         <Html transform position={[0, 0, 0.1]} center>
           <div
             style={getContainerStyle()}
             className="text-object-container"
-            onClick={handleDivClick} // Add click handler to parent div for better click area
+            onClick={handleDivClick}
           >
             {isEditing ? (
               <textarea
@@ -807,7 +613,7 @@ const TextObject = ({
                   e.target.selectionStart = text.length;
                   e.target.selectionEnd = text.length;
                 }}
-                onClick={(e) => e.stopPropagation()} // Prevent click from bubbling to container
+                onClick={(e) => e.stopPropagation()}
               />
             ) : (
               <div
@@ -817,8 +623,8 @@ const TextObject = ({
                   ...getTextAreaStyle(),
                   userSelect: 'none',
                   cursor: 'text',
-                  width: '100%', // Ensure div takes full width for easier clicking
-                  minHeight: '2em', // Ensure there's always a clickable area
+                  width: '100%',
+                  minHeight: '2em',
                 }}
               >
                 {text || 'Click to edit text...'}
@@ -838,12 +644,12 @@ const TextObject = ({
 
         {shouldShowIndicator && (
           <FaceIndicator
-            position={getIndicatorPositions().bottom}
+            position={getIndicatorPositions().top}
             rotation={[0, 0, 0]}
             onClick={handleIndicatorClick}
-            isActive={indicatorSelectedRef.current || isIndicatorConnected()}
-            objectId={id}
-            face="bottom"
+            isActive={indicatorSelected || isIndicatorConnected()}
+            objectId={stringId}
+            face="top"
           />
         )}
       </group>
@@ -858,14 +664,8 @@ const TextObject = ({
           size={0.5}
           mode="translate"
           onObjectChange={handleDrag}
-          onDragStart={() => {
-            if (window.orbitControls) window.orbitControls.enabled = false;
-            onTransformStart?.(id);
-          }}
-          onDragEnd={() => {
-            if (window.orbitControls) window.orbitControls.enabled = true;
-            onTransformEnd?.(id);
-          }}
+          onDragStart={handleTransformStart}
+          onDragEnd={handleTransformEnd}
         />
       )}
 
@@ -907,22 +707,12 @@ const TextObject = ({
           onDragStart={() => {
             if (window.orbitControls) window.orbitControls.enabled = false;
             registerTransformingObject?.(id, true);
-
-            if (groupRef.current) {
-              originalScaleRef.current = [...scale];
-              groupRef.current.userData.scaleBeforeTransform = [...scale];
-              groupRef.current.scale.set(scale[0], scale[1], scale[2]);
-
-              setTimeout(() => {
-                if (groupRef.current) {
-                  groupRef.current.scale.set(scale[0], scale[1], scale[2]);
-                }
-              }, 0);
-            }
+            onResizeStart?.(id);
           }}
           onDragEnd={() => {
             if (window.orbitControls) window.orbitControls.enabled = true;
             registerTransformingObject?.(id, false);
+            onResizeEnd?.(id);
 
             if (groupRef.current) {
               groupRef.current.scale.set(1, 1, 1);
@@ -942,7 +732,7 @@ const TextObject = ({
           text={text}
           textStyle={textStyle}
           onStyleChange={handleStyleChange}
-          onDelete={onDelete}
+          onDelete={onDelete ? () => onDelete(id) : undefined}
           onTransformToggle={() => setShowTransform((prev) => !prev)}
           onResizeToggle={() => setShowResizeControls((prev) => !prev)}
           showTransform={showTransform}

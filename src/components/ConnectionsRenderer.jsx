@@ -37,17 +37,42 @@ const Connection = ({
       return { isValid: false, midpoint: [0, 0, 0] };
     }
 
-    // Extract props with safe fallbacks
-    const startPosition = connection.start?.position || [0, 0, 0];
-    const endPosition = connection.end?.position || [0, 0, 0];
+    // Extract positions with proper priority:
+    // 1. facePosition (face-specific position)
+    // 2. worldPosition (world-space position)
+    // 3. position (object position)
+
+    // For start position
+    let startPosition;
+    if (Array.isArray(connection.start?.facePosition)) {
+      startPosition = connection.start.facePosition;
+    } else if (Array.isArray(connection.start?.worldPosition)) {
+      startPosition = connection.start.worldPosition;
+    } else if (Array.isArray(connection.start?.position)) {
+      startPosition = connection.start.position;
+    } else {
+      startPosition = [0, 0, 0];
+    }
+
+    // For end position
+    let endPosition;
+    if (Array.isArray(connection.end?.facePosition)) {
+      endPosition = connection.end.facePosition;
+    } else if (Array.isArray(connection.end?.worldPosition)) {
+      endPosition = connection.end.worldPosition;
+    } else if (Array.isArray(connection.end?.position)) {
+      endPosition = connection.end.position;
+    } else {
+      endPosition = [0, 0, 0];
+    }
 
     return {
       isValid: Boolean(
         connection &&
           connection.start &&
           connection.end &&
-          Array.isArray(connection.start.position) &&
-          Array.isArray(connection.end.position)
+          startPosition &&
+          endPosition
       ),
       midpoint: calculateMidpoint(startPosition, endPosition),
       startPosition,
