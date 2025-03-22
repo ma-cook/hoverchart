@@ -9,6 +9,7 @@ import {
   generateCurvedPath,
 } from '../utils/pathfindingUtils';
 import { calculateMidpoint } from '../utils/positionUtils';
+import PublicConnectionsRenderer from './PublicConnectionsRenderer';
 
 // Separate connection rendering into a sub-component to fix the hooks issue
 const Connection = ({
@@ -355,6 +356,22 @@ const ConnectionsRenderer = ({
   setShowLineTextStyleUI,
   setShowLineTextInput,
 }) => {
+  // Check if we're in read-only public mode (anonymous access)
+  const isAnonymous = !window.currentUser;
+  const isPublicSpace = window.publicAccessSpace && window.currentSpaceOwner;
+
+  // For anonymous users in public spaces, use the dedicated public renderer
+  if (isAnonymous && isPublicSpace) {
+    return (
+      <PublicConnectionsRenderer
+        spaceId={window.publicAccessSpace}
+        ownerId={window.currentSpaceOwner}
+        objects={objects}
+      />
+    );
+  }
+
+  // Regular rendering for authenticated users
   return (
     <>
       {connections.map((connection) => (
@@ -380,4 +397,4 @@ const ConnectionsRenderer = ({
   );
 };
 
-export default React.memo(ConnectionsRenderer);
+export default ConnectionsRenderer;

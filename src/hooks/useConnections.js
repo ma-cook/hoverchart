@@ -43,6 +43,11 @@ export function useConnections({ user, currentSpaceId, objects }) {
     return `${user.uid}-${currentSpaceId}`;
   }, [user?.uid, currentSpaceId]);
 
+  // Check for public access parameters
+  const publicSpaceId = window.publicAccessSpace;
+  const effectiveSpaceId = publicSpaceId || currentSpaceId;
+  const canViewSpace = !!(user || publicSpaceId);
+
   // Map connections to objects
   const mapConnectionsToObjects = useCallback((connections, objects) => {
     return connections.map((conn) => {
@@ -415,6 +420,28 @@ export function useConnections({ user, currentSpaceId, objects }) {
       }
     };
   }, [subscriptionKey]); // Use the stable memoized key only
+
+  // Subscribe to connections
+  useEffect(() => {
+    if (!canViewSpace || (!user && !window.currentSpaceOwner)) return () => {};
+
+    const userId = user?.uid; // May be null for anonymous access
+    const spaceId = effectiveSpaceId;
+
+    console.log(`Setting up connections subscription for ${spaceId}`);
+
+    // Use a small delay to ensure objects are loaded first
+    const timer = setTimeout(() => {
+      const unsubscribe = subscribeToConnections(
+        userId,
+        spaceId,
+        handleConnectionChange
+      );
+      return () => unsubscribe();
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [user, effectiveSpaceId, canViewSpace]);
 
   // Update connections when objects change - with better condition
   useEffect(() => {
