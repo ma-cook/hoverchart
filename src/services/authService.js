@@ -1,4 +1,3 @@
-import { auth, provider } from '../firebase';
 import {
   signInWithPopup,
   signInWithCustomToken,
@@ -6,16 +5,86 @@ import {
   onAuthStateChanged,
   browserLocalPersistence,
   setPersistence,
+  signOut as firebaseSignOut,
 } from 'firebase/auth';
+import { auth, provider } from '../firebase';
 
 import { getOrCreateDefaultSpace, getSpaceById } from './spacesService';
+import { registerSharedSpaceFromUrl } from './sharedSpacesService';
 
-export const signInUser = async () => {
+export const signInUser = async (redirectUrl) => {
   try {
     await setPersistence(auth, browserLocalPersistence);
-    await signInWithPopup(auth, provider);
+
+    // Check if we're currently viewing a shared space
+    const isViewingSharedSpace =
+      window.publicAccessSpace && window.currentSpaceOwner;
+
+    // Explicitly save current URL and view state before login
+    const currentUrl = window.location.href;
+    const publicSpaceId = window.publicAccessSpace;
+    const publicSpaceOwner = window.currentSpaceOwner;
+
+    console.log(
+      `Preserving current state before login: ${
+        isViewingSharedSpace ? 'public space' : 'regular space'
+      }`
+    );
+
+    // Sign in with Google
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+    console.log('Successfully signed in user:', user.uid);
+
+    // Restore public space context after login
+    if (isViewingSharedSpace) {
+      window.publicAccessSpace = publicSpaceId;
+      window.currentSpaceOwner = publicSpaceOwner;
+      console.log('Restored public space context after login');
+
+      // Register this user as having access to the shared space
+      await registerSharedSpaceFromUrl(
+        user.uid,
+        window.publicAccessSpace,
+        window.currentSpaceOwner
+      );
+
+      // Update session storage for safety
+      sessionStorage.setItem(`isPublicSpace_${publicSpaceId}`, 'true');
+      sessionStorage.setItem(`isSharedSpace_${publicSpaceId}`, 'true');
+      sessionStorage.setItem(
+        `sharedSpaceOwner_${publicSpaceId}`,
+        publicSpaceOwner
+      );
+    }
+
+    return user;
   } catch (error) {
-    console.error('Error during sign in:', error);
+    console.error('Error signing in:', error);
+    throw error;
+  }
+};
+
+export const handlePostLoginRedirect = () => {
+  // MODIFIED: Completely disable automatic redirection
+  console.log('Post-login redirection is completely disabled');
+
+  // Clean up stored URL if it exists to prevent any chance of redirection
+  if (sessionStorage.getItem('loginRedirectUrl')) {
+    sessionStorage.removeItem('loginRedirectUrl');
+  }
+
+  // Always return false to indicate no redirection occurred
+  return false;
+};
+
+export const signOut = async () => {
+  try {
+    await firebaseSignOut(auth);
+    console.log('User signed out successfully');
+  } catch (error) {
+    console.error('Error signing out:', error);
+    throw error;
   }
 };
 

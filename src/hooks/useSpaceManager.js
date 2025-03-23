@@ -14,10 +14,22 @@ export function useSpaceManager({ user, intentionalSpaceChangeRef }) {
     if (!user) return;
 
     const fetchCurrentSpace = async () => {
-      // Check URL for space ID first
+      // Check URL for space ID first - check both 'spaceId' and 'space' parameters
       const params = new URLSearchParams(window.location.search);
-      const urlSpaceId = params.get('spaceId');
-      const urlOwnerUid = params.get('ownerUid');
+      const urlSpaceId = params.get('spaceId') || params.get('space');
+      const urlOwnerUid = params.get('ownerUid') || params.get('owner');
+
+      // If we're in a public space, always preserve those values
+      const isPublicSpace = !!(
+        window.publicAccessSpace && window.currentSpaceOwner
+      );
+
+      if (isPublicSpace) {
+        console.log('Public space detected, maintaining public space state');
+        setCurrentSpaceId(window.publicAccessSpace);
+        // Don't modify any other state, keep the public space context
+        return;
+      }
 
       // Don't clear objects/connections if we already have the same space ID
       if (
@@ -211,23 +223,17 @@ export function useSpaceManager({ user, intentionalSpaceChangeRef }) {
         return;
       }
 
-      // If we reach here, redirect to landing page
+      // If we reach here, do NOT redirect - just set null space ID
+      // and let the app handle showing appropriate UI
       setCurrentSpaceId(null);
+      console.log('No space ID found, but not redirecting');
     };
 
     fetchCurrentSpace();
   }, [user, currentSpaceId, intentionalSpaceChangeRef]);
 
-  // Redirect when no space ID available
-  useEffect(() => {
-    if (user && currentSpaceId === null && !intentionalSpaceChangeRef.current) {
-      const redirectTimeout = setTimeout(() => {
-        window.location.href = 'https://volscape.web.app/';
-      }, 500);
-
-      return () => clearTimeout(redirectTimeout);
-    }
-  }, [user, currentSpaceId, intentionalSpaceChangeRef]);
+  // COMPLETELY REMOVE the second effect that handled redirection
+  // No redirection logic at all - this ensures we never redirect users
 
   return { currentSpaceId, setCurrentSpaceId };
 }

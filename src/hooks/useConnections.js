@@ -430,6 +430,68 @@ export function useConnections({ user, currentSpaceId, objects }) {
 
     console.log(`Setting up connections subscription for ${spaceId}`);
 
+    // Define the handleConnectionChange function here
+    const handleConnectionChange = (change) => {
+      lastConnectionUpdateTimeRef.current = Date.now();
+      console.log(
+        `Connection change received: ${change.type} for ${change.id}`
+      );
+
+      // Batch updates
+      if (connectionUpdateTimeoutRef.current) {
+        clearTimeout(connectionUpdateTimeoutRef.current);
+      }
+
+      if (!lastKnownConnectionsRef.current[change.id]) {
+        lastKnownConnectionsRef.current[change.id] = {};
+      }
+
+      lastKnownConnectionsRef.current[change.id] = {
+        type: change.type,
+        data: change.connection,
+        timestamp: Date.now(),
+      };
+
+      connectionUpdateTimeoutRef.current = setTimeout(() => {
+        setConnections((prev) => {
+          const updates = { ...lastKnownConnectionsRef.current };
+          lastKnownConnectionsRef.current = {};
+
+          let newConnections = [...prev];
+
+          Object.entries(updates).forEach(([connId, update]) => {
+            const existingConn = newConnections.find(
+              (conn) => conn.id === connId
+            );
+
+            switch (update.type) {
+              case 'added':
+                if (!existingConn) {
+                  newConnections = [...newConnections, update.data];
+                }
+                break;
+              case 'modified':
+                if (existingConn && !isEqual(existingConn, update.data)) {
+                  newConnections = newConnections.map((conn) =>
+                    conn.id === connId ? update.data : conn
+                  );
+                }
+                break;
+              case 'removed':
+                newConnections = newConnections.filter(
+                  (conn) => conn.id !== connId
+                );
+                break;
+            }
+          });
+
+          // Map object references and positions
+          const withRefs = mapConnectionsToObjects(newConnections, objects);
+          return synchronizeConnectionPositions(withRefs, objects);
+        });
+      }, 100);
+    };
+
     // Use a small delay to ensure objects are loaded first
     const timer = setTimeout(() => {
       const unsubscribe = subscribeToConnections(
@@ -441,7 +503,14 @@ export function useConnections({ user, currentSpaceId, objects }) {
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [user, effectiveSpaceId, canViewSpace]);
+  }, [
+    user,
+    effectiveSpaceId,
+    canViewSpace,
+    objects,
+    mapConnectionsToObjects,
+    synchronizeConnectionPositions,
+  ]);
 
   // Update connections when objects change - with better condition
   useEffect(() => {

@@ -1,24 +1,52 @@
 import { useState, useEffect } from 'react';
-import { observeAuthState, handleUrlAuth } from '../services/authService';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { auth } from '../firebase'; // Import auth directly instead of app
+import {
+  handlePostLoginRedirect,
+  handleUrlAuth,
+} from '../services/authService';
 
-/**
- * Custom hook to manage authentication state
- */
 export function useAuthState() {
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isCheckingUrlAuth, setIsCheckingUrlAuth] = useState(true);
 
-  // Auth observer effect
   useEffect(() => {
-    const unsubscribe = observeAuthState((user) => {
-      setUser(user);
-      setIsAuthReady(true);
+    // No need to call getAuth since we're importing auth directly now
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      setUser(authUser);
+
+      if (authUser) {
+        // Store in window for components that need current user info
+        window.currentUser = authUser;
+
+        // Get public space context if it exists
+        const isPublicSpace = !!(
+          window.publicAccessSpace && window.currentSpaceOwner
+        );
+
+        if (isPublicSpace) {
+          console.log(
+            'Maintaining public space context after auth state change'
+          );
+        }
+
+        // Handle post-login redirect but prevent actual redirect
+        handlePostLoginRedirect();
+
+        // Always finish auth check - never wait for any redirect
+        setIsAuthReady(true);
+        setIsCheckingUrlAuth(false);
+      } else {
+        window.currentUser = null;
+        setIsAuthReady(true);
+        setIsCheckingUrlAuth(false);
+      }
     });
+
     return () => unsubscribe();
   }, []);
 
-  // URL auth check
   useEffect(() => {
     const checkUrlAuth = async () => {
       const params = new URLSearchParams(window.location.search);
@@ -42,7 +70,6 @@ export function useAuthState() {
     checkUrlAuth();
   }, []);
 
-  // Update auth check state
   useEffect(() => {
     if (user || !isCheckingUrlAuth) {
       setIsCheckingUrlAuth(false);
