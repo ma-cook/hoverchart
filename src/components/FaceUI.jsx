@@ -16,6 +16,8 @@ const FaceUI = ({
   onHeaderToggle, // Add this prop
   onBorderToggle, // Update this to handle more options
   onDelete, // Add this prop
+  onWebcamToggle, // Add webcam toggle handler
+  webcamActive = false, // Add webcam state
 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showBorderMenu, setShowBorderMenu] = useState(false); // Add this state
@@ -76,13 +78,18 @@ const FaceUI = ({
     { name: 'opacity', icon: '○' },
   ];
 
-  // Add transform, resize, border, and delete tools conditionally
+  // Add transform, resize, border, webcam, and delete tools conditionally
   const tools = isPlane
     ? [
         ...baseTools,
         { name: 'transform', icon: '✥' },
         { name: 'resize', icon: '↔' }, // Add resize button
         { name: 'border', icon: '▢' }, // Add border tool for planes
+        {
+          name: 'webcam',
+          icon: '📹',
+          active: webcamActive, // Show active state
+        },
         { name: 'delete', icon: '🗑️' }, // Add delete tool for planes
       ]
     : baseTools;
@@ -105,6 +112,9 @@ const FaceUI = ({
       case 'border':
         setShowBorderMenu((prev) => !prev);
         setShowColorPicker(false);
+        break;
+      case 'webcam': // Handle webcam toggle
+        onWebcamToggle?.();
         break;
       case 'delete':
         if (window.confirm('Are you sure you want to delete this object?')) {
@@ -142,8 +152,20 @@ const FaceUI = ({
           {tools.map((tool) => (
             <button
               key={tool.name}
-              className="face-tool-button"
+              className={`face-tool-button ${tool.active ? 'active-tool' : ''}`}
               onClick={(e) => handleToolClick(tool, e)}
+              style={
+                tool.active
+                  ? { backgroundColor: '#4CAF50', color: 'white' }
+                  : {}
+              }
+              title={
+                tool.name === 'webcam'
+                  ? webcamActive
+                    ? 'Disable Camera'
+                    : 'Enable Camera'
+                  : tool.name
+              }
             >
               {tool.icon}
             </button>

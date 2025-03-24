@@ -11,6 +11,7 @@ import FaceTextInput from './FaceTextInput';
 import TextStyleUI from './TextStyleUI';
 import HeaderInput from './HeaderInput';
 import FaceIndicator from './FaceIndicator';
+import WebcamStream from './WebcamStream'; // Import WebcamStream component
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 
@@ -48,6 +49,7 @@ const Plane = ({
   },
   onTransformStart,
   onTransformEnd,
+  webcamActive: initialWebcamActive = false, // Add webcam prop
 }) => {
   const groupRef = useRef();
   const meshRef = useRef();
@@ -79,6 +81,7 @@ const Plane = ({
   const [currentFaceTextStyle, setCurrentFaceTextStyle] =
     useState(initialFaceTextStyle);
   const [isScaleModified, setIsScaleModified] = useState(false);
+  const [webcamActive, setWebcamActive] = useState(initialWebcamActive); // Add webcam state
 
   // Last update ref to avoid redundant database updates
   const lastUpdateRef = useRef(null);
@@ -119,6 +122,9 @@ const Plane = ({
     if (initialFaceTextStyle !== undefined)
       setCurrentFaceTextStyle(initialFaceTextStyle);
   }, [initialFaceTextStyle]);
+  useEffect(() => {
+    if (initialWebcamActive !== undefined) setWebcamActive(initialWebcamActive);
+  }, [initialWebcamActive]);
 
   const closeAllUIs = useCallback(() => {
     setShowTextStyleUI(false);
@@ -205,6 +211,7 @@ const Plane = ({
       lineThickness: currentLineThickness,
       faceText: currentFaceText,
       faceTextStyle: currentFaceTextStyle,
+      webcamActive, // Include webcam state in database updates
     };
 
     // Only update if state has changed
@@ -228,6 +235,7 @@ const Plane = ({
     currentLineThickness,
     currentFaceText,
     currentFaceTextStyle,
+    webcamActive, // Add webcamActive to dependencies
   ]);
 
   // Add a timeout ref to properly manage debounce
@@ -463,6 +471,7 @@ const Plane = ({
         lineThickness: currentLineThickness,
         faceText: currentFaceText,
         faceTextStyle: currentFaceTextStyle,
+        webcamActive, // Include webcam state
         _finalPosition: true,
         _indicatorWorldPosition: worldPosArray,
       });
@@ -747,6 +756,31 @@ const Plane = ({
     return false;
   };
 
+  // Add webcam toggle handler
+  const handleWebcamToggle = () => {
+    const newWebcamState = !webcamActive;
+    setWebcamActive(newWebcamState);
+
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'plane',
+        webcamActive: newWebcamState,
+        position,
+        scale: currentScale,
+        color: currentColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
+      });
+    }
+
+    setShowUI(false);
+  };
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -760,6 +794,11 @@ const Plane = ({
               depthWrite={!!currentColor}
             />
           </mesh>
+          {/* Add WebcamStream component */}
+          {webcamActive && (
+            <WebcamStream meshRef={meshRef} active={webcamActive} />
+          )}
+
           <Line
             points={points}
             color={selected ? 'blue' : currentBorderColor}
@@ -791,7 +830,9 @@ const Plane = ({
             onHeaderToggle={handleHeaderToggle}
             onBorderToggle={handleBorderToggle}
             followTarget={groupRef}
-            onDelete={() => onDelete?.(id)} // Add this line to handle deletion
+            onDelete={() => onDelete?.(id)}
+            onWebcamToggle={handleWebcamToggle} // Add webcam toggle handler
+            webcamActive={webcamActive} // Pass webcam state
           />
         )}
 
