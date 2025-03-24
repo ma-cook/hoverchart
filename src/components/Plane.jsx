@@ -1,6 +1,7 @@
 import {
   Line,
   TransformControls as DreiTransformControls,
+  Html,
 } from '@react-three/drei';
 import { Vector3 } from 'three';
 import { useRef, useState, useEffect, useCallback } from 'react';
@@ -11,7 +12,7 @@ import FaceTextInput from './FaceTextInput';
 import TextStyleUI from './TextStyleUI';
 import HeaderInput from './HeaderInput';
 import FaceIndicator from './FaceIndicator';
-import WebcamStream from './WebcamStream'; // Import WebcamStream component
+import WebcamStream from './WebcamStream';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 
@@ -29,7 +30,7 @@ const Plane = ({
   indicatorMode,
   id,
   onUpdate,
-  onDelete, // Add this prop
+  onDelete,
   scale: initialScale = [1, 1, 1],
   color: initialColor = null,
   headerText: initialHeaderText = '',
@@ -49,13 +50,17 @@ const Plane = ({
   },
   onTransformStart,
   onTransformEnd,
-  webcamActive: initialWebcamActive = false, // Add webcam prop
+  webcamActive: initialWebcamActive = false,
 }) => {
   const groupRef = useRef();
   const meshRef = useRef();
   const contentRef = useRef();
   const { camera } = useThree();
   const size = 5;
+
+  const lastWebcamStateRef = useRef(initialWebcamActive);
+  const [webcamActive, setWebcamActive] = useState(initialWebcamActive);
+  const [webcamInitialized, setWebcamInitialized] = useState(false);
 
   const [showUI, setShowUI] = useState(false);
   const [showTextInput, setShowTextInput] = useState(false);
@@ -81,7 +86,6 @@ const Plane = ({
   const [currentFaceTextStyle, setCurrentFaceTextStyle] =
     useState(initialFaceTextStyle);
   const [isScaleModified, setIsScaleModified] = useState(false);
-  const [webcamActive, setWebcamActive] = useState(initialWebcamActive); // Add webcam state
 
   // Last update ref to avoid redundant database updates
   const lastUpdateRef = useRef(null);
@@ -211,7 +215,7 @@ const Plane = ({
       lineThickness: currentLineThickness,
       faceText: currentFaceText,
       faceTextStyle: currentFaceTextStyle,
-      webcamActive, // Include webcam state in database updates
+      webcamActive,
     };
 
     // Only update if state has changed
@@ -235,7 +239,7 @@ const Plane = ({
     currentLineThickness,
     currentFaceText,
     currentFaceTextStyle,
-    webcamActive, // Add webcamActive to dependencies
+    webcamActive,
   ]);
 
   // Add a timeout ref to properly manage debounce
@@ -471,7 +475,7 @@ const Plane = ({
         lineThickness: currentLineThickness,
         faceText: currentFaceText,
         faceTextStyle: currentFaceTextStyle,
-        webcamActive, // Include webcam state
+        webcamActive,
         _finalPosition: true,
         _indicatorWorldPosition: worldPosArray,
       });
@@ -756,10 +760,15 @@ const Plane = ({
     return false;
   };
 
-  // Add webcam toggle handler
+  // Modified webcam toggle handler with initialization tracking
   const handleWebcamToggle = () => {
     const newWebcamState = !webcamActive;
     setWebcamActive(newWebcamState);
+    lastWebcamStateRef.current = newWebcamState;
+
+    if (newWebcamState) {
+      setWebcamInitialized(true);
+    }
 
     if (onUpdate) {
       onUpdate(id, {
@@ -778,8 +787,86 @@ const Plane = ({
       });
     }
 
+    console.log(`Webcam toggled to ${newWebcamState ? 'ON' : 'OFF'}`);
     setShowUI(false);
   };
+
+  // Separate effect to handle webcam initialization on component mount
+  useEffect(() => {
+    if (initialWebcamActive && !webcamInitialized) {
+      console.log('Initializing webcam from props:', initialWebcamActive);
+      setWebcamInitialized(true);
+      setWebcamActive(true);
+      lastWebcamStateRef.current = true;
+    }
+  }, []);
+
+  // Sync webcam state with potential external updates
+  useEffect(() => {
+    if (initialWebcamActive !== lastWebcamStateRef.current) {
+      console.log('Syncing webcam state from props:', initialWebcamActive);
+      setWebcamActive(initialWebcamActive);
+      lastWebcamStateRef.current = initialWebcamActive;
+      if (initialWebcamActive) {
+        setWebcamInitialized(true);
+      }
+    }
+  }, [initialWebcamActive]);
+
+  // Reset mesh material when webcam is deactivated
+  useEffect(() => {
+    if (!webcamActive && meshRef.current) {
+      const material = meshRef.current.material;
+      if (material.map) {
+        console.log('Removing webcam texture from material');
+        material.map = null;
+        material.needsUpdate = true;
+      }
+    }
+  }, [webcamActive]);
+
+  // Save webcam state to material userData to persist through material updates
+  useEffect(() => {
+    if (meshRef.current) {
+      // Store webcam state on the material's userData
+      meshRef.current.userData.webcamActive = webcamActive;
+
+      // If we have a material already, make sure it has the right properties
+      if (meshRef.current.material) {
+        // Ensure the material is set to be transparent if webcam is active
+        if (webcamActive) {
+          meshRef.current.material.transparent = true;
+          meshRef.current.material.opacity = 1;
+          meshRef.current.material.needsUpdate = true;
+        }
+      }
+    }
+  }, [webcamActive]);
+
+  // Add a new effect to respond to material changes
+  // This helps maintain webcam visibility after material/mesh changes
+  useEffect(() => {
+    // This will run when the mesh is re-created or updated
+    if (meshRef.current && meshRef.current.material) {
+      const material = meshRef.current.material;
+
+      // Store current webcam state in userData so it persists
+      meshRef.current.userData.webcamActive = webcamActive;
+
+      // Set appropriate material properties based on webcam state
+      if (webcamActive) {
+        material.transparent = true;
+        material.opacity = 1;
+      }
+      material.needsUpdate = true;
+    }
+  }, [
+    meshRef.current,
+    currentColor,
+    currentBorderStyle,
+    currentLineThickness,
+    currentScale,
+  ]);
 
   return (
     <>
@@ -794,9 +881,27 @@ const Plane = ({
               depthWrite={!!currentColor}
             />
           </mesh>
-          {/* Add WebcamStream component */}
-          {webcamActive && (
+
+          {/* Add WebcamStream component with webcamInitialized check */}
+          {webcamActive && webcamInitialized && (
             <WebcamStream meshRef={meshRef} active={webcamActive} />
+          )}
+
+          {/* Add a loading indicator when webcam is being initialized */}
+          {webcamActive && !webcamInitialized && (
+            <Html center>
+              <div
+                style={{
+                  color: 'white',
+                  background: 'rgba(0,0,0,0.5)',
+                  padding: '5px 10px',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                }}
+              >
+                Initializing camera...
+              </div>
+            </Html>
           )}
 
           <Line
@@ -831,8 +936,8 @@ const Plane = ({
             onBorderToggle={handleBorderToggle}
             followTarget={groupRef}
             onDelete={() => onDelete?.(id)}
-            onWebcamToggle={handleWebcamToggle} // Add webcam toggle handler
-            webcamActive={webcamActive} // Pass webcam state
+            onWebcamToggle={handleWebcamToggle}
+            webcamActive={webcamActive}
           />
         )}
 
@@ -864,7 +969,7 @@ const Plane = ({
 
       {selected && isResizing && contentRef.current && (
         <DreiTransformControls
-          key={`scale-controls-${id}`} // Add a stable key
+          key={`scale-controls-${id}`}
           object={contentRef.current}
           onObjectChange={handleScale}
           onDragStart={() => {
