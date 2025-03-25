@@ -18,9 +18,6 @@ const FaceIndicator = ({
   const [hovered, setHovered] = useState(false);
 
   // Only log when DEBUG is true
-  if (DEBUG) {
-    console.log('FaceIndicator rendering', { position, isActive, isConnected });
-  }
 
   useFrame(() => {
     if (meshRef.current && groupRef.current) {

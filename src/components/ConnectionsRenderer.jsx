@@ -1,9 +1,9 @@
 import React, { useMemo } from 'react';
-import { Line } from '@react-three/drei';
 import TextSprite from './TextSprite';
 import LineUI from './LineUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
+import AnimatedConnectionLine from './AnimatedConnectionLine';
 import {
   checkLineIntersection,
   generateCurvedPath,
@@ -224,37 +224,19 @@ const Connection = ({
 
   return (
     <group key={connection.id}>
-      {/* Main visible line with improved dash animation */}
-      <Line
+      {/* Replace standard Line with optimized AnimatedConnectionLine */}
+      <AnimatedConnectionLine
         points={calculatedPathPoints}
+        connectionId={connection.id}
         color={
           connection.color ||
           (selectedConnection === connection.id ? '#ffff00' : 'white')
         }
         lineWidth={selectedConnection === connection.id ? 4 : 2}
-        dashed={
-          connection.lineStyle === 'dashed' || connection.lineStyle === 'dotted'
-        }
-        dashScale={connection.lineStyle === 'dotted' ? 1 : 0.5}
-        dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
-        gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
+        lineStyle={connection.lineStyle || 'straight'}
+        dashDirection={connection.dashDirection || null}
         dashOffset={connection.dashOffset || 0}
-        renderOrder={20}
-        transparent={false}
-        depthTest={true}
-        depthWrite={true}
-        polygonOffset={true}
-        polygonOffsetFactor={-1}
-        polygonOffsetUnits={-1}
-        toneMapped={false}
-        resolution={4}
-      />
-
-      {/* Clickable area */}
-      <Line
-        points={calculatedPathPoints}
-        color="white"
-        lineWidth={20}
+        isSelected={selectedConnection === connection.id}
         onClick={(e) => handleConnectionClick(e, connection.id)}
         onPointerOver={(e) => {
           e.stopPropagation();
@@ -264,13 +246,6 @@ const Connection = ({
           e.stopPropagation();
           document.body.style.cursor = 'auto';
         }}
-        transparent
-        opacity={0}
-        depthTest={true}
-        renderOrder={19}
-        polygonOffset={true}
-        polygonOffsetFactor={-0.9}
-        polygonOffsetUnits={-0.9}
       />
 
       {/* Connection text */}
@@ -328,6 +303,7 @@ const Connection = ({
           onTextClick={() => setShowLineTextInput(connection.id)}
           currentText={connectionText}
           hasText={!!connectionText && connectionText.trim() !== ''}
+          currentConnection={connection}
         />
       )}
     </group>

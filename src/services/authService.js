@@ -12,7 +12,7 @@ import { auth, provider } from '../firebase';
 import { getOrCreateDefaultSpace, getSpaceById } from './spacesService';
 import { registerSharedSpaceFromUrl } from './sharedSpacesService';
 
-export const signInUser = async (redirectUrl) => {
+export const signInUser = async () => {
   try {
     await setPersistence(auth, browserLocalPersistence);
 
@@ -21,26 +21,18 @@ export const signInUser = async (redirectUrl) => {
       window.publicAccessSpace && window.currentSpaceOwner;
 
     // Explicitly save current URL and view state before login
-    const currentUrl = window.location.href;
+
     const publicSpaceId = window.publicAccessSpace;
     const publicSpaceOwner = window.currentSpaceOwner;
-
-    console.log(
-      `Preserving current state before login: ${
-        isViewingSharedSpace ? 'public space' : 'regular space'
-      }`
-    );
 
     // Sign in with Google
     const result = await signInWithPopup(auth, provider);
     const user = result.user;
-    console.log('Successfully signed in user:', user.uid);
 
     // Restore public space context after login
     if (isViewingSharedSpace) {
       window.publicAccessSpace = publicSpaceId;
       window.currentSpaceOwner = publicSpaceOwner;
-      console.log('Restored public space context after login');
 
       // Register this user as having access to the shared space
       await registerSharedSpaceFromUrl(
@@ -67,7 +59,6 @@ export const signInUser = async (redirectUrl) => {
 
 export const handlePostLoginRedirect = () => {
   // MODIFIED: Completely disable automatic redirection
-  console.log('Post-login redirection is completely disabled');
 
   // Clean up stored URL if it exists to prevent any chance of redirection
   if (sessionStorage.getItem('loginRedirectUrl')) {
@@ -81,7 +72,6 @@ export const handlePostLoginRedirect = () => {
 export const signOut = async () => {
   try {
     await firebaseSignOut(auth);
-    console.log('User signed out successfully');
   } catch (error) {
     console.error('Error signing out:', error);
     throw error;
@@ -107,13 +97,9 @@ export const observeAuthState = (callback) => {
 
 export const validateAuthToken = async (token) => {
   try {
-    console.log('Starting token validation...', { tokenLength: token?.length });
-
     // Cloud Function endpoint
     const functionUrl =
       'https://verifyauthtoken-qtk2xsi74a-uc.a.run.app/verify-token';
-
-    console.log('Sending request to:', functionUrl);
 
     const response = await fetch(functionUrl, {
       method: 'POST',
@@ -128,12 +114,6 @@ export const validateAuthToken = async (token) => {
       }),
     });
 
-    console.log('Response received:', {
-      status: response.status,
-      statusText: response.statusText,
-      headers: Object.fromEntries(response.headers.entries()),
-    });
-
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Validation error details:', errorText);
@@ -141,7 +121,6 @@ export const validateAuthToken = async (token) => {
     }
 
     const data = await response.json();
-    console.log('Validation successful, received data:', data);
 
     if (!data.customToken) {
       throw new Error('No custom token in response');
@@ -162,13 +141,10 @@ export const handleUrlAuth = async () => {
   const spaceId = params.get('spaceId');
 
   if (!token || !uid) {
-    console.log('Missing token or UID in URL');
     return false;
   }
 
   try {
-    console.log('Starting URL authentication for UID:', uid);
-
     // Get custom token from validation
     const customToken = await validateAuthToken(token);
 
@@ -178,15 +154,13 @@ export const handleUrlAuth = async () => {
     }
 
     // Sign in with the custom token
-    console.log('Signing in with custom token...');
+
     const userCredential = await signInWithCustomToken(auth, customToken);
 
     if (!userCredential?.user) {
       console.error('No user returned after custom token sign in');
       return false;
     }
-
-    console.log('Successfully signed in user:', userCredential.user.uid);
 
     // Verify the UID matches
     if (userCredential.user.uid !== uid) {
@@ -203,13 +177,11 @@ export const handleUrlAuth = async () => {
       const space = await getSpaceById(uid, spaceId);
       if (space) {
         sessionStorage.setItem('currentSpaceId', spaceId);
-        console.log(`Space ID ${spaceId} stored in session`);
       } else {
         console.warn(`Space ID ${spaceId} not found, falling back to default`);
         const defaultSpace = await getOrCreateDefaultSpace(uid);
         if (defaultSpace) {
           sessionStorage.setItem('currentSpaceId', defaultSpace.id);
-          console.log(`Default space ID ${defaultSpace.id} stored in session`);
         }
       }
     } else {
@@ -217,7 +189,6 @@ export const handleUrlAuth = async () => {
       const defaultSpace = await getOrCreateDefaultSpace(uid);
       if (defaultSpace) {
         sessionStorage.setItem('currentSpaceId', defaultSpace.id);
-        console.log(`Default space ID ${defaultSpace.id} stored in session`);
       }
     }
 

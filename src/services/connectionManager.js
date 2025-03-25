@@ -247,6 +247,7 @@ export const handleTextObjectConnection = (
     color: 'white',
     text: '',
     textStyle: { fontSize: 1, color: 'white' },
+    dashOffset: 0,
   };
 
   // Register connection with both objects

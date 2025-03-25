@@ -25,10 +25,7 @@ import {
   handleObjectUpdate,
 } from './utils/objectUpdateHandlers';
 import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
-import {
-  initializeConnectionMappings,
-  preloadConnectionsForSpace,
-} from './services/connectionManager';
+
 import { signInUser } from './services/authService';
 import { subscribeToObjects } from './services/objectsService';
 import isEqual from 'lodash/isEqual';
@@ -74,15 +71,13 @@ const App = () => {
     setShowLineTextInput,
     showLineTextStyleUI,
     setShowLineTextStyleUI,
-    lineTextStyles,
-    setLineTextStyles,
+
     handleLineTextSubmit,
     handleLineTextStyleChange,
     handleLineColorChange,
     handleLineStyleChange,
     handleConnectionClick,
     handleLineTextClick,
-    connectionsLoaded,
   } = useConnections({
     user,
     currentSpaceId,
@@ -135,36 +130,6 @@ const App = () => {
   // UI state
   const [activeTextStyleUI, setActiveTextStyleUI] = useState(null);
 
-  // Initialize connections
-  useEffect(() => {
-    if (user) {
-      // More robust initialization process
-      const initConnections = async () => {
-        console.log('Initializing connection mappings');
-        try {
-          // First initialize the connection mappings
-          const initResult = await initializeConnectionMappings(user.uid);
-          console.log('Connection mapping initialization result:', initResult);
-
-          // If we're in a specific space, also preload its connections
-          if (currentSpaceId) {
-            const spaceOwnerId = window.currentSpaceOwner || user.uid;
-            const preloadResult = await preloadConnectionsForSpace(
-              spaceOwnerId,
-              currentSpaceId
-            );
-            console.log('Connection preloading result:', preloadResult);
-          }
-        } catch (err) {
-          console.error('Error during connection initialization:', err);
-        }
-      };
-
-      // Run the initialization
-      initConnections();
-    }
-  }, [user, currentSpaceId]);
-
   // Enhanced check for public access URL parameters
   useEffect(() => {
     // Extract space ID and owner ID from URL if present
@@ -211,7 +176,6 @@ const App = () => {
   useEffect(() => {
     if (!canViewSpace || (!user && !window.currentSpaceOwner)) return () => {};
 
-    const spaceOwnerId = window.currentSpaceOwner || user?.uid;
     const spaceToLoad = effectiveSpaceId;
 
     const unsubscribe = subscribeToObjects(

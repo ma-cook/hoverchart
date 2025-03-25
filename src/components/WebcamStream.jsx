@@ -20,8 +20,6 @@ const WebcamStream = ({ meshRef, active }) => {
     document.body.appendChild(video); // Add to DOM to ensure proper playback
     videoRef.current = video;
 
-    console.log('Attempting to access webcam...');
-
     // Start webcam stream with explicit constraints for better compatibility
     navigator.mediaDevices
       .getUserMedia({
@@ -33,7 +31,6 @@ const WebcamStream = ({ meshRef, active }) => {
         audio: true, // Audio is explicitly disabled here
       })
       .then((stream) => {
-        console.log('Webcam access granted', stream);
         video.srcObject = stream;
         streamRef.current = stream;
 
@@ -43,8 +40,6 @@ const WebcamStream = ({ meshRef, active }) => {
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
-              console.log('Video is playing, creating texture');
-
               // Create video texture with corrected format
               const texture = new THREE.VideoTexture(video);
               texture.minFilter = THREE.LinearFilter;
@@ -73,7 +68,6 @@ const WebcamStream = ({ meshRef, active }) => {
 
                 // Apply the new material
                 meshRef.current.material = newMaterial;
-                console.log('Texture applied to material', newMaterial);
               }
             })
             .catch((error) => {
@@ -89,12 +83,9 @@ const WebcamStream = ({ meshRef, active }) => {
 
     // Cleanup function
     return () => {
-      console.log('Cleaning up webcam resources');
-
       if (streamRef.current) {
         const tracks = streamRef.current.getTracks();
         tracks.forEach((track) => {
-          console.log('Stopping track:', track.kind);
           track.stop();
         });
         streamRef.current = null;
@@ -102,7 +93,6 @@ const WebcamStream = ({ meshRef, active }) => {
 
       if (meshRef.current && meshRef.current.material) {
         if (meshRef.current.material.map) {
-          console.log('Disposing texture');
           meshRef.current.material.map.dispose();
           meshRef.current.material.map = null;
           meshRef.current.material.needsUpdate = true;
@@ -110,13 +100,11 @@ const WebcamStream = ({ meshRef, active }) => {
       }
 
       if (textureRef.current) {
-        console.log('Disposing texture reference');
         textureRef.current.dispose();
         textureRef.current = null;
       }
 
       if (videoRef.current) {
-        console.log('Cleaning up video element');
         if (videoRef.current.srcObject) {
           videoRef.current.srcObject = null;
         }
@@ -134,7 +122,6 @@ const WebcamStream = ({ meshRef, active }) => {
       // Check if the material lost its texture and reapply if needed
       const material = meshRef.current.material;
       if (!material.map || material.map !== textureRef.current) {
-        console.log('Reapplying texture to material');
         material.map = textureRef.current;
         material.transparent = true;
         material.opacity = 1;

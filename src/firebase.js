@@ -27,7 +27,6 @@ setPersistence(auth, browserLocalPersistence)
       if (user) {
         try {
           await user.getIdToken(true);
-          console.log('Token refreshed for user:', user.uid);
         } catch (error) {
           console.error('Token refresh failed:', error);
         }

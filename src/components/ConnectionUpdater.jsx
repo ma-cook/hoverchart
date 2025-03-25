@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { recordFrameTime, recordStateUpdate } from '../utils/debugUtils';
 
@@ -21,9 +21,9 @@ const ConnectionUpdater = ({
   transformingObjects,
 }) => {
   const frameCount = useRef(0);
-  const FRAMES_TO_SKIP = 1; // Always update every frame for animations
+  const FRAMES_TO_SKIP = 1;
   const lastPositions = useRef({});
-  const ANIMATION_SPEED = 10; // Slightly increased for smoother animation
+  const ANIMATION_SPEED = 6; // Significantly increased animation speed
   const animationRequestRef = useRef();
 
   const lastUpdateTime = useRef(Date.now());
@@ -44,80 +44,155 @@ const ConnectionUpdater = ({
   const processedConnectionsRef = useRef(new Set());
   const connectionProcessCountRef = useRef({});
 
-  // Separate animation loop for dash animations with proper timing
+  // Track the last animation update time to ensure animations run smoothly
+  const lastAnimationUpdateTime = useRef(0);
+
+  // Performance monitoring
+  const fpsHistory = useRef([]);
+  const lastFpsUpdate = useRef(Date.now());
+
+  // Store references to line materials for direct updates
+  const lineMaterialsRef = useRef(new Map());
+
+  // Reduce state update frequency for better performance
+  const STATE_UPDATE_INTERVAL = 5000; // Only update React state every 5 seconds
+
+  // Register a line material for direct updates
+  const registerLineMaterial = (connectionId, material) => {
+    if (material && !lineMaterialsRef.current.has(connectionId)) {
+      lineMaterialsRef.current.set(connectionId, material);
+    }
+  };
+
+  // Unregister a line material
+  const unregisterLineMaterial = (connectionId) => {
+    lineMaterialsRef.current.delete(connectionId);
+  };
+
+  // Expose these methods to child components
+  useEffect(() => {
+    // Make registration functions available globally
+    window._connectionAnimationSystem = {
+      registerLineMaterial,
+      unregisterLineMaterial,
+    };
+
+    return () => {
+      delete window._connectionAnimationSystem;
+    };
+  }, []);
+
+  // Direct animation system - optimized to update materials directly without React state changes
   useEffect(() => {
     // Initialize current values from existing connections
     connections.forEach((conn) => {
       if (conn.dashOffset !== undefined) {
         currentDashOffsets.current.set(conn.id, conn.dashOffset);
+      } else if (
+        (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
+        (conn.dashDirection === 'left' || conn.dashDirection === 'right')
+      ) {
+        // Initialize missing dash offsets
+        currentDashOffsets.current.set(conn.id, 0);
       }
     });
 
     // Use high-resolution timing for smooth animations
     let previousTimestamp = performance.now();
+    let accumulatedTime = 0;
 
-    const animateDashOffset = (timestamp) => {
-      // Calculate precise delta time in seconds (with millisecond precision)
-      const deltaTime = (timestamp - previousTimestamp) / 1000;
+    const updateLineMaterials = (timestamp) => {
+      // Calculate precise delta time in seconds
+      const deltaTime = Math.min(0.05, (timestamp - previousTimestamp) / 1000); // Cap at 50ms to prevent huge jumps
       previousTimestamp = timestamp;
 
-      // Skip if delta time is unreasonably large (e.g. after tab was inactive)
-      if (deltaTime > 0.1) {
-        animationRequestRef.current = requestAnimationFrame(animateDashOffset);
-        return;
+      // Accumulate time for performance monitoring
+      accumulatedTime += deltaTime;
+
+      // Only update FPS occasionally to reduce overhead
+      if (accumulatedTime > 1.0) {
+        // Every second
+        accumulatedTime = 0;
+
+        // Calculate FPS for monitoring (optional)
+        const fps = 1 / Math.max(0.001, deltaTime);
+        fpsHistory.current.push(fps);
+
+        // Trim history to prevent memory growth
+        if (fpsHistory.current.length > 60) {
+          fpsHistory.current = fpsHistory.current.slice(-30);
+        }
       }
 
-      // Only update if we have connections
-      if (connections && connections.length > 0) {
-        // Find all connections that need animation
-        connections.forEach((conn) => {
+      // Update all material references directly
+      lineMaterialsRef.current.forEach((material, connectionId) => {
+        try {
+          // Find the connection in the current state
+          const conn = connections.find((c) => c.id === connectionId);
+          if (!conn) return;
+
+          // Only update if this is an animated line
           if (
             (conn.lineStyle === 'dashed' || conn.lineStyle === 'dotted') &&
             (conn.dashDirection === 'left' || conn.dashDirection === 'right')
           ) {
-            // Get current dash offset value (or initialize it)
-            const currentOffset =
-              currentDashOffsets.current.get(conn.id) || conn.dashOffset || 0;
-
-            // Calculate animation step with precise delta time for consistent speed
+            // Calculate the new dash offset with higher speed
+            let dashOffset = currentDashOffsets.current.get(connectionId) || 0;
             const animationStep = deltaTime * ANIMATION_SPEED;
 
-            // Calculate new offset with direction
-            let newDashOffset;
+            // Update dash offset based on direction
             if (conn.dashDirection === 'left') {
-              newDashOffset = (currentOffset - animationStep) % 1000;
-              if (newDashOffset < 0) newDashOffset += 1000; // Keep positive for consistency
+              dashOffset = (dashOffset - animationStep) % 100;
+              if (dashOffset < 0) dashOffset += 100;
             } else {
-              newDashOffset = (currentOffset + animationStep) % 1000;
+              dashOffset = (dashOffset + animationStep) % 100;
             }
 
-            // Update the current value in our ref for smooth interpolation
-            currentDashOffsets.current.set(conn.id, newDashOffset);
+            // Store current value for next frame
+            currentDashOffsets.current.set(connectionId, dashOffset);
 
-            // Queue update to React state, but only at certain intervals
-            pendingAnimationUpdates.current.set(conn.id, {
-              id: conn.id,
-              dashOffset: newDashOffset,
-            });
+            // Direct material update - this is the key to smooth animation
+            if (material.uniforms && material.uniforms.dashOffset) {
+              material.uniforms.dashOffset.value = dashOffset;
+              material.uniformsNeedUpdate = true;
+            } else if (material.dashOffset !== undefined) {
+              material.dashOffset = dashOffset;
+              material.needsUpdate = true;
+            }
 
-            needsUpdate.current = true;
+            // Queue rare React state updates for persistence (every 5 seconds)
+            const now = Date.now();
+            if (now - lastAnimationUpdateTime.current > STATE_UPDATE_INTERVAL) {
+              pendingAnimationUpdates.current.set(connectionId, {
+                id: connectionId,
+                dashOffset,
+              });
+              needsUpdate.current = true;
+              lastAnimationUpdateTime.current = now;
+            }
           }
-        });
-      }
+        } catch (err) {
+          console.error('Error updating line material:', err);
+        }
+      });
 
-      // Apply batched updates every 16ms (~60fps) for smooth animation
-      // while preventing too many React state updates
-      const now = performance.now();
-      if (needsUpdate.current && now - lastUpdateTime.current > 16.67) {
+      // Apply batched updates to React state only very occasionally
+      if (
+        needsUpdate.current &&
+        Date.now() - lastUpdateTime.current > STATE_UPDATE_INTERVAL
+      ) {
         applyBatchedUpdates();
-        lastUpdateTime.current = now;
+        lastUpdateTime.current = Date.now();
       }
 
-      animationRequestRef.current = requestAnimationFrame(animateDashOffset);
+      // Always continue the animation loop
+      animationRequestRef.current = requestAnimationFrame(updateLineMaterials);
     };
 
-    animationRequestRef.current = requestAnimationFrame(animateDashOffset);
+    // Start the animation loop
+    animationRequestRef.current = requestAnimationFrame(updateLineMaterials);
 
+    // Clean up on unmount
     return () => {
       if (animationRequestRef.current) {
         cancelAnimationFrame(animationRequestRef.current);
@@ -125,14 +200,14 @@ const ConnectionUpdater = ({
     };
   }, [connections]);
 
-  // Apply all pending updates in a single React state update - optimized for minimal re-renders
+  // Apply all pending updates in a single React state update - for persistence only, not animation
   const applyBatchedUpdates = () => {
     if (!needsUpdate.current) return;
 
     recordStateUpdate();
 
     setConnections((current) => {
-      // Create a new array only if we have changes to make
+      // Only create a new array if we have actual changes
       if (
         pendingAnimationUpdates.current.size === 0 &&
         pendingPositionUpdates.current.size === 0

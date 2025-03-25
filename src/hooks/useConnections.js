@@ -223,8 +223,6 @@ export function useConnections({ user, currentSpaceId, objects }) {
     // Skip if no key or if already subscribing
     if (!subscriptionKey || isSubscribingRef.current) return () => {};
 
-    console.log(`Checking connection subscription for ${subscriptionKey}`);
-
     // Set flag to prevent parallel subscription attempts
     isSubscribingRef.current = true;
 
@@ -233,9 +231,6 @@ export function useConnections({ user, currentSpaceId, objects }) {
       activeConnectionSubscriptionRef.current?.key === subscriptionKey &&
       typeof activeConnectionSubscriptionRef.current?.unsubscribe === 'function'
     ) {
-      console.log(
-        `Reusing existing connection subscription for ${subscriptionKey}`
-      );
       isSubscribingRef.current = false;
       return () => {};
     }
@@ -246,7 +241,6 @@ export function useConnections({ user, currentSpaceId, objects }) {
     }
 
     subscriptionDebounceTimerRef.current = setTimeout(() => {
-      console.log(`Setting up connection subscription for ${subscriptionKey}`);
       setConnectionsLoaded(false);
       initialLoadCompletedRef.current = false;
 
@@ -256,7 +250,6 @@ export function useConnections({ user, currentSpaceId, objects }) {
           'function' &&
         activeConnectionSubscriptionRef.current?.key !== subscriptionKey
       ) {
-        console.log(`Cleaning up previous connection subscription`);
         activeConnectionSubscriptionRef.current.unsubscribe();
         activeConnectionSubscriptionRef.current = null;
       }
@@ -273,9 +266,6 @@ export function useConnections({ user, currentSpaceId, objects }) {
         currentSpaceId,
         (change) => {
           lastConnectionUpdateTimeRef.current = Date.now();
-          console.log(
-            `Connection change received: ${change.type} for ${change.id}`
-          );
 
           // For the initial load, batch changes to process them all at once
           if (!initialLoadCompletedRef.current) {
@@ -288,10 +278,6 @@ export function useConnections({ user, currentSpaceId, objects }) {
 
             // Set a timeout to process all initial changes
             initialBatchTimeout = setTimeout(() => {
-              console.log(
-                `Processing initial batch of ${connectionBatchRef.current.length} connections`
-              );
-
               // Process all batched changes at once
               const connections = connectionBatchRef.current.reduce(
                 (acc, change) => {
@@ -415,7 +401,6 @@ export function useConnections({ user, currentSpaceId, objects }) {
           'function' &&
         !document.hidden // Don't unsubscribe when tab is just hidden
       ) {
-        console.log(`Cleaning up connection subscription on unmount`);
         activeConnectionSubscriptionRef.current.unsubscribe();
       }
     };
@@ -428,14 +413,9 @@ export function useConnections({ user, currentSpaceId, objects }) {
     const userId = user?.uid; // May be null for anonymous access
     const spaceId = effectiveSpaceId;
 
-    console.log(`Setting up connections subscription for ${spaceId}`);
-
     // Define the handleConnectionChange function here
     const handleConnectionChange = (change) => {
       lastConnectionUpdateTimeRef.current = Date.now();
-      console.log(
-        `Connection change received: ${change.type} for ${change.id}`
-      );
 
       // Batch updates
       if (connectionUpdateTimeoutRef.current) {
@@ -684,25 +664,33 @@ export function useConnections({ user, currentSpaceId, objects }) {
           baseStyle &&
           (baseStyle === 'dotted' || baseStyle === 'dashed') &&
           direction &&
-          (direction === 'left' || direction === 'right')
+          (direction === 'left' ||
+            direction === 'right' ||
+            direction === 'none')
         ) {
           newConnection.lineStyle = baseStyle;
           newConnection.dashDirection = direction;
+          // Always initialize dashOffset to 0 to start animation correctly
           newConnection.dashOffset = 0;
         } else {
           newConnection.lineStyle = 'straight';
           newConnection.dashDirection = null;
+          newConnection.dashOffset = 0;
         }
       } else {
         newConnection.lineStyle = styleType;
-        newConnection.dashDirection = null;
+        // Always set a default direction for animated lines
+        newConnection.dashDirection =
+          styleType === 'dashed' || styleType === 'dotted' ? 'right' : null;
         newConnection.dashOffset = 0;
       }
 
+      // Update React state immediately
       setConnections((prev) =>
         prev.map((conn) => (conn.id === connectionId ? newConnection : conn))
       );
 
+      // Save to database
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
       saveConnection(spaceOwnerId, currentSpaceId, newConnection);
 
