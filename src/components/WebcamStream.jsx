@@ -308,7 +308,7 @@ const WebcamStream = ({
 
           console.log('Broadcast connectivity test results:', connectivityTest);
 
-          // IMPORTANT: Focus on database state (inDatabase), not memory state
+          // CRITICAL FIX: Focus only on database state, not memory state
           const broadcastExists = connectivityTest.broadcastData?.inDatabase;
 
           if (!broadcastExists) {
@@ -322,7 +322,7 @@ const WebcamStream = ({
           } else {
             // If broadcast exists in database, keep trying even if not in memory
             console.log(
-              'Broadcast exists in database - continuing connection attempt'
+              'Broadcast exists in database - continuing connection attempt regardless of memory state'
             );
             // Just continue waiting - connection might still establish
           }
