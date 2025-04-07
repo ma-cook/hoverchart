@@ -927,17 +927,13 @@ export const testBroadcastConnectivity = async (spaceId, broadcastId) => {
       planeData.broadcastId !== 'pending' &&
       !!planeData.broadcastData;
 
-    // Check if broadcaster is in memory (only for information, not used for decision making)
-    const isStreaming = !!activeStreams[`${spaceId}-${planeDoc.id}`];
-
-    // ONLY use database validity as the criteria
+    // ONLY use database validity as the criteria - completely removed in-memory check
     return {
-      success: isValidInDatabase, // This is the only check that matters
+      success: isValidInDatabase,
       broadcastData: {
         planeId: planeDoc.id,
         broadcastId: planeData.broadcastId,
         broadcasterId: planeData.broadcasterId,
-        inMemory: isStreaming, // Just for logging/debugging
         inDatabase: isValidInDatabase,
       },
       diagnostic: {
@@ -963,7 +959,7 @@ export const testBroadcastConnectivity = async (spaceId, broadcastId) => {
 export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
   console.log('⭐ isPlaneBeingBroadcast check:', { spaceId, planeId });
 
-  // Skip memory check and go directly to database
+  // Go directly to database - no memory check at all
   if (spaceId && planeId) {
     try {
       const spaceOwner = window.currentSpaceOwner || currentUserId;
@@ -991,15 +987,7 @@ export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
           }`
         );
 
-        // Check in-memory state only for logging, not for decision
-        const isInMemory = !!activeStreams[`${spaceId}-${planeId}`];
-        console.log(
-          `Broadcasting status for plane ${planeId} in memory: ${
-            isInMemory ? 'ACTIVE' : 'inactive'
-          }`
-        );
-
-        // Always return database state
+        // Return database state directly
         return isBroadcasting;
       }
     } catch (err) {
