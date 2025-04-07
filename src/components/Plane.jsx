@@ -20,7 +20,7 @@ import isEqual from 'lodash/isEqual';
 import {
   findAvailableBroadcasts,
   isPlaneBeingBroadcast,
-} from '../services/webRTCService';
+} from '../services/webrtcService';
 
 const Plane = ({
   position = [0, 0, 0],
