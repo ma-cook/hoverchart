@@ -1,23 +1,119 @@
 import { useEffect, useState, useRef } from 'react';
+import { Html } from '@react-three/drei';
 import * as THREE from 'three';
+import { startBroadcasting, joinBroadcast } from '../services/webRTCService';
 
-const WebcamStream = ({ meshRef, active }) => {
+// Add verification console log
+console.log('WebcamStream component loaded, webRTC functions:', {
+  startBroadcastingExists: !!startBroadcasting,
+  joinBroadcastExists: !!joinBroadcast,
+});
+
+const WebcamStream = ({
+  meshRef,
+  active,
+  userId,
+  spaceId,
+  planeId,
+  isBroadcasting = false,
+  isReceiving = false,
+  broadcastData = null,
+  onBroadcastStarted,
+  onBroadcastStopped,
+  onViewerCountChange,
+}) => {
   const [hasError, setHasError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('Camera access error');
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Refs
   const videoRef = useRef(null);
   const textureRef = useRef(null);
   const streamRef = useRef(null);
+  const broadcastControlRef = useRef(null);
+  const viewerConnectionRef = useRef(null);
+  const remoteVideoRef = useRef(null);
 
-  // Set up the webcam stream initially
+  // Cleanup function for all resources
+  const cleanup = () => {
+    // Stop media tracks
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+
+    // Stop broadcasting
+    if (broadcastControlRef.current) {
+      broadcastControlRef.current.stop();
+      broadcastControlRef.current = null;
+    }
+
+    // Disconnect as viewer
+    if (viewerConnectionRef.current) {
+      viewerConnectionRef.current.disconnect();
+      viewerConnectionRef.current = null;
+    }
+
+    // Dispose texture
+    if (textureRef.current) {
+      textureRef.current.dispose();
+      textureRef.current = null;
+    }
+
+    // Remove video elements
+    [videoRef, remoteVideoRef].forEach((ref) => {
+      if (ref.current) {
+        if (ref.current.srcObject) {
+          ref.current.srcObject = null;
+        }
+        if (document.body.contains(ref.current)) {
+          document.body.removeChild(ref.current);
+        }
+        ref.current = null;
+      }
+    });
+
+    // Clear mesh material
+    if (meshRef.current?.material?.map) {
+      meshRef.current.material.map.dispose();
+      meshRef.current.material.map = null;
+      meshRef.current.material.needsUpdate = true;
+    }
+  };
+
+  // Handle broadcasting mode: capture webcam and stream to others
   useEffect(() => {
-    if (!active || !meshRef.current) return;
+    if (!active || !isBroadcasting || !userId || !spaceId || !planeId) {
+      console.log('Skipping broadcast due to:', {
+        active,
+        isBroadcasting,
+        userId,
+        spaceId,
+        planeId,
+      });
+      return () => {
+        // Empty cleanup to prevent unintended broadcast stopping during re-renders
+        console.log('Empty cleanup function for skipped broadcast');
+      };
+    }
+
+    // Prevent duplicate effect runs by tracking the mount state
+    const isMounted = { current: true };
+    console.log(
+      '🎬 Starting broadcast effect, isBroadcasting:',
+      isBroadcasting
+    );
+
+    setIsLoading(true);
+    console.log('Initializing broadcast mode for webcam');
 
     // Create video element
     const video = document.createElement('video');
     video.autoplay = true;
     video.playsInline = true;
     video.muted = true;
-    video.style.display = 'none'; // Hide video element but keep it in DOM for iOS
-    document.body.appendChild(video); // Add to DOM to ensure proper playback
+    video.style.display = 'none';
+    document.body.appendChild(video);
     videoRef.current = video;
 
     // Start webcam stream with explicit constraints for better compatibility
@@ -28,110 +124,198 @@ const WebcamStream = ({ meshRef, active }) => {
           height: { ideal: 720 },
           facingMode: 'user',
         },
-        audio: true, // Audio is explicitly disabled here
+        audio: true,
       })
       .then((stream) => {
-        video.srcObject = stream;
+        console.log(
+          'Webcam access granted:',
+          stream.getTracks().length,
+          'tracks'
+        );
         streamRef.current = stream;
+        video.srcObject = stream;
 
-        // Use a promise to ensure video is actually playing before creating texture
-        const playPromise = video.play();
+        video
+          .play()
+          .then(() => {
+            console.log('Video started playing locally, creating texture');
+            // Create video texture for local display
+            const texture = new THREE.VideoTexture(video);
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.format = THREE.RGBAFormat;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            textureRef.current = texture;
 
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              // Create video texture with corrected format
-              const texture = new THREE.VideoTexture(video);
-              texture.minFilter = THREE.LinearFilter;
-              texture.magFilter = THREE.LinearFilter;
-              texture.format = THREE.RGBAFormat;
-              texture.colorSpace = THREE.SRGBColorSpace;
+            // Apply to plane material immediately for local display
+            if (meshRef.current) {
+              console.log('Applying texture to mesh');
+              const material = meshRef.current.material;
+              const newMaterial = material.clone();
+              newMaterial.map = texture;
+              newMaterial.transparent = true;
+              newMaterial.opacity = 1;
+              newMaterial.needsUpdate = true;
+              meshRef.current.material = newMaterial;
+            }
 
-              // Important: explicitly set these properties for better compatibility
-              texture.generateMipmaps = false;
-              texture.wrapS = THREE.ClampToEdgeWrapping;
-              texture.wrapT = THREE.ClampToEdgeWrapping;
+            // The webcam is now visible locally - set loading to false
+            setIsLoading(false);
 
-              textureRef.current = texture;
+            // Now start broadcasting in the background with detailed logging
+            console.log(
+              'Starting WebRTC broadcast with broadcasting flag:',
+              isBroadcasting
+            );
+            startBroadcasting(userId, spaceId, planeId, stream)
+              .then((broadcastControl) => {
+                console.log(
+                  '🔴 LIVE: Broadcast started with ID:',
+                  broadcastControl.broadcastId
+                );
 
-              // Apply texture to plane material
-              if (meshRef.current) {
-                const material = meshRef.current.material;
+                // Store the broadcast control
+                broadcastControlRef.current = broadcastControl;
 
-                // Clone the material to avoid shared state issues
-                const newMaterial = material.clone();
-                newMaterial.map = texture;
-                newMaterial.transparent = true;
-                newMaterial.opacity = 1;
-                newMaterial.depthWrite = true;
-                newMaterial.needsUpdate = true;
+                // Add a flag to prevent automatic cleanup that might stop the broadcast
+                broadcastControlRef.current.isActive = true;
 
-                // Apply the new material
-                meshRef.current.material = newMaterial;
-              }
-            })
-            .catch((error) => {
-              console.error('Error starting video playback:', error);
-              setHasError(true);
-            });
-        }
+                // Double-check that we got a valid ID
+                if (!broadcastControl.broadcastId) {
+                  console.error(
+                    '❌ CRITICAL ERROR: Missing broadcastId from broadcast control'
+                  );
+                  return;
+                }
+
+                // Immediately notify parent with the broadcastId
+                if (onBroadcastStarted) {
+                  console.log('📣 Notifying parent component of broadcast:', {
+                    broadcastId: broadcastControl.broadcastId,
+                    planeId,
+                  });
+
+                  // Only call parent handler, remove direct database updates
+                  onBroadcastStarted({
+                    broadcastId: broadcastControl.broadcastId,
+                    planeId,
+                  });
+                }
+
+                // Set up viewer count updates
+                const viewerCountInterval = setInterval(() => {
+                  if (broadcastControl.getViewerCount && onViewerCountChange) {
+                    onViewerCountChange(broadcastControl.getViewerCount());
+                  }
+                }, 2000);
+
+                broadcastControlRef.current.viewerCountInterval =
+                  viewerCountInterval;
+              })
+              .catch((error) => {
+                console.error('❌ Failed to start broadcast:', error);
+                // We need to notify the user there was an error
+                setErrorMessage('Failed to start broadcast: ' + error.message);
+                setHasError(true);
+              });
+          })
+          .catch((error) => {
+            console.error('Error starting video playback:', error);
+            setIsLoading(false);
+            setHasError(true);
+            setErrorMessage('Failed to start video');
+          });
       })
       .catch((error) => {
         console.error('Error accessing webcam:', error);
+        setIsLoading(false);
         setHasError(true);
+        setErrorMessage('Camera access error');
       });
 
-    // Cleanup function
+    // Modify the return cleanup function to be more defensive
     return () => {
-      if (streamRef.current) {
-        const tracks = streamRef.current.getTracks();
-        tracks.forEach((track) => {
-          track.stop();
-        });
-        streamRef.current = null;
-      }
+      console.log(
+        'Cleanup triggered in broadcasting effect with broadcasting state:',
+        isBroadcasting
+      );
 
-      if (meshRef.current && meshRef.current.material) {
-        if (meshRef.current.material.map) {
-          meshRef.current.material.map.dispose();
-          meshRef.current.material.map = null;
-          meshRef.current.material.needsUpdate = true;
-        }
-      }
+      // Only clean up if we're unmounting, not on every re-render
+      if (!isMounted.current) return;
+      isMounted.current = false;
 
-      if (textureRef.current) {
-        textureRef.current.dispose();
-        textureRef.current = null;
-      }
-
-      if (videoRef.current) {
-        if (videoRef.current.srcObject) {
-          videoRef.current.srcObject = null;
-        }
-        if (document.body.contains(videoRef.current)) {
-          document.body.removeChild(videoRef.current);
-        }
-        videoRef.current = null;
-      }
+      // Don't call cleanup() here - it might cause premature broadcast stopping
+      // We'll rely on the component unmount effect for full cleanup
     };
-  }, [active, meshRef]);
+  }, [active, isBroadcasting, userId, spaceId, planeId, meshRef]);
 
-  // This effect ensures the texture stays applied during rerenders
+  // Handle receiving mode: watch someone else's broadcast
   useEffect(() => {
-    if (active && textureRef.current && meshRef.current) {
-      // Check if the material lost its texture and reapply if needed
-      const material = meshRef.current.material;
-      if (!material.map || material.map !== textureRef.current) {
-        material.map = textureRef.current;
-        material.transparent = true;
-        material.opacity = 1;
-        material.depthWrite = true;
-        material.needsUpdate = true;
-      }
-    }
-  });
+    if (!active || !isReceiving || !broadcastData || !spaceId) return;
 
-  // Add animation frame to keep texture updating
+    setIsLoading(true);
+
+    // Create video element for remote stream
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video.style.display = 'none';
+    document.body.appendChild(video);
+    remoteVideoRef.current = video;
+
+    // Join the broadcast
+    joinBroadcast(spaceId, broadcastData.broadcastId, userId, video)
+      .then((connection) => {
+        viewerConnectionRef.current = connection;
+
+        // When video starts playing, create texture
+        video.onloadedmetadata = () => {
+          // Create video texture from the remote stream
+          const texture = new THREE.VideoTexture(video);
+          texture.minFilter = THREE.LinearFilter;
+          texture.magFilter = THREE.LinearFilter;
+          texture.format = THREE.RGBAFormat;
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.generateMipmaps = false;
+          texture.wrapS = THREE.ClampToEdgeWrapping;
+          texture.wrapT = THREE.ClampToEdgeWrapping;
+          textureRef.current = texture;
+
+          // Apply texture to plane material
+          if (meshRef.current) {
+            const material = meshRef.current.material;
+            const newMaterial = material.clone();
+            newMaterial.map = texture;
+            newMaterial.transparent = true;
+            newMaterial.opacity = 1;
+            newMaterial.depthWrite = true;
+            newMaterial.needsUpdate = true;
+            meshRef.current.material = newMaterial;
+          }
+
+          setIsLoading(false);
+        };
+
+        // Handle errors
+        video.onerror = () => {
+          console.error('Video error');
+          setIsLoading(false);
+          setHasError(true);
+          setErrorMessage('Video streaming error');
+        };
+      })
+      .catch((error) => {
+        console.error('Error joining broadcast:', error);
+        setIsLoading(false);
+        setHasError(true);
+        setErrorMessage('Failed to connect to broadcast');
+      });
+
+    return cleanup;
+  }, [active, isReceiving, broadcastData, spaceId, userId, meshRef]);
+
+  // Update texture every frame
   useEffect(() => {
     if (!active || !textureRef.current) return;
 
@@ -153,9 +337,24 @@ const WebcamStream = ({ meshRef, active }) => {
         cancelAnimationFrame(frameId);
       }
     };
-  }, [active, textureRef.current, meshRef.current]);
+  }, [active, meshRef]);
 
-  // Add error indicator when webcam access fails
+  // Clean up exclusively on component unmount
+  useEffect(() => {
+    return () => {
+      console.log('🧹 WebcamStream UNMOUNTING, cleaning up resources');
+
+      // Call onBroadcastStopped only if we were actually broadcasting
+      if (isBroadcasting && broadcastControlRef.current && onBroadcastStopped) {
+        console.log('Notifying parent of broadcast stop on unmount');
+        onBroadcastStopped();
+      }
+
+      cleanup();
+    };
+  }, []); // Empty dependency array - only runs on unmount
+
+  // Error display
   if (hasError) {
     return (
       <mesh position={[0, 0, 0.1]}>
@@ -176,11 +375,70 @@ const WebcamStream = ({ meshRef, active }) => {
                 whiteSpace: 'nowrap',
               }}
             >
-              ⚠️ Camera access error
+              ⚠️ {errorMessage}
             </div>
           </Html>
         </mesh>
       </mesh>
+    );
+  }
+
+  // Loading indicator
+  if (isLoading) {
+    return (
+      <Html center position={[0, 0, 0.1]}>
+        <div
+          style={{
+            color: 'white',
+            background: 'rgba(0,0,0,0.5)',
+            padding: '5px 10px',
+            borderRadius: '4px',
+            fontSize: '14px',
+          }}
+        >
+          {isBroadcasting ? 'Starting broadcast...' : 'Connecting to stream...'}
+        </div>
+      </Html>
+    );
+  }
+
+  // Broadcasting status indicator
+  if (isBroadcasting) {
+    return (
+      <Html position={[4, 4, 0.1]}>
+        <div
+          style={{
+            color: 'white',
+            background: 'rgba(255,0,0,0.7)',
+            padding: '3px 6px',
+            borderRadius: '3px',
+            fontSize: '12px',
+            fontWeight: 'bold',
+          }}
+        >
+          LIVE
+        </div>
+      </Html>
+    );
+  }
+
+  // Viewing status indicator
+  if (isReceiving) {
+    return (
+      <Html position={[4, 4, 0.1]}>
+        <div
+          style={{
+            color: 'white',
+            background: 'rgba(0,0,255,0.7)',
+            padding: '3px 6px',
+            borderRadius: '3px',
+            fontSize: '12px',
+            fontWeight: 'bold',
+          }}
+        >
+          VIEWING
+        </div>
+      </Html>
     );
   }
 

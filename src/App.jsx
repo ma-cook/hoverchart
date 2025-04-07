@@ -29,6 +29,7 @@ import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { signInUser } from './services/authService';
 import { subscribeToObjects } from './services/objectsService';
 import isEqual from 'lodash/isEqual';
+import { initWebRTC } from './services/webRTCService';
 
 /**
  * Main application component
@@ -484,6 +485,13 @@ const App = () => {
     ]
   );
 
+  // Initialize WebRTC service with user ID when available
+  useEffect(() => {
+    if (user?.uid) {
+      initWebRTC(user.uid);
+    }
+  }, [user?.uid]);
+
   // Show loading screens when authenticating
   if (isCheckingUrlAuth && !publicSpaceId) {
     return <div className="auth-loading">Authenticating...</div>;
@@ -582,6 +590,8 @@ const App = () => {
               globalIndicatorSelected={globalIndicatorSelected}
               handleObjectDelete={handleObjectDelete}
               checkPositionJitter={checkPositionJitter} // Pass this prop
+              user={user}
+              currentSpaceId={effectiveSpaceId} // Use effectiveSpaceId instead of currentSpaceId
             />
           ))}
         </group>

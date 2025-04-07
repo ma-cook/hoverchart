@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { recordFrameTime, recordStateUpdate } from '../utils/debugUtils';
 
@@ -27,7 +27,7 @@ const ConnectionUpdater = ({
   const animationRequestRef = useRef();
 
   const lastUpdateTime = useRef(Date.now());
-  const lastStyleChanges = useRef(new Map());
+
   const positionUpdateDebounceRef = useRef(new Map());
 
   // Use a ref to track connections pending updates to batch them
@@ -49,7 +49,6 @@ const ConnectionUpdater = ({
 
   // Performance monitoring
   const fpsHistory = useRef([]);
-  const lastFpsUpdate = useRef(Date.now());
 
   // Store references to line materials for direct updates
   const lineMaterialsRef = useRef(new Map());

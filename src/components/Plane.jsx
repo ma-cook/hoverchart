@@ -16,6 +16,12 @@ import WebcamStream from './WebcamStream';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 
+// Add imports for WebRTC functionality
+import {
+  findAvailableBroadcasts,
+  isPlaneBeingBroadcast,
+} from '../services/webRTCService';
+
 const Plane = ({
   position = [0, 0, 0],
   selected,
@@ -51,6 +57,9 @@ const Plane = ({
   onTransformStart,
   onTransformEnd,
   webcamActive: initialWebcamActive = false,
+  // Add user and space ID props for WebRTC
+  user,
+  currentSpaceId,
 }) => {
   const groupRef = useRef();
   const meshRef = useRef();
@@ -85,12 +94,18 @@ const Plane = ({
   const [currentFaceText, setCurrentFaceText] = useState(initialFaceText);
   const [currentFaceTextStyle, setCurrentFaceTextStyle] =
     useState(initialFaceTextStyle);
-  const [isScaleModified, setIsScaleModified] = useState(false);
 
   // Last update ref to avoid redundant database updates
   const lastUpdateRef = useRef(null);
   // Last world position ref for connection calculations
   const lastWorldPosRef = useRef(null);
+
+  // Add WebRTC state
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [isViewingBroadcast, setIsViewingBroadcast] = useState(false);
+  const [broadcastInfo, setBroadcastInfo] = useState(null);
+  const [viewerCount, setViewerCount] = useState(0);
+  const broadcastCheckIntervalRef = useRef(null);
 
   // Sync props to state
   useEffect(() => {
@@ -760,20 +775,193 @@ const Plane = ({
     return false;
   };
 
-  // Modified webcam toggle handler with initialization tracking
+  // Check for broadcasts on component mount and when webcam active changes
+  useEffect(() => {
+    if (!currentSpaceId || !id || !user) return;
+
+    // Store the result directly in a variable to ensure the linter recognizes usage
+    const isCurrentlyBroadcasting = isPlaneBeingBroadcast(currentSpaceId, id);
+    if (isCurrentlyBroadcasting) {
+      setIsBroadcasting(true);
+    }
+
+    // Only check for other broadcasts if webcam is active but we're not broadcasting
+    if (webcamActive && !isBroadcasting) {
+      const checkForBroadcasts = async () => {
+        try {
+          const broadcasts = await findAvailableBroadcasts(currentSpaceId);
+
+          // Find broadcast for this plane by another user
+          const broadcast = broadcasts.find(
+            (b) => b.planeId === id && b.broadcasterId !== user.uid
+          );
+
+          if (broadcast) {
+            setBroadcastInfo({
+              broadcastId: broadcast.id,
+              broadcasterId: broadcast.broadcasterId,
+              planeId: broadcast.planeId,
+            });
+            setIsViewingBroadcast(true);
+          } else {
+            setBroadcastInfo(null);
+            setIsViewingBroadcast(false);
+          }
+        } catch (error) {
+          console.error('Error checking broadcasts:', error);
+        }
+      };
+
+      // Check immediately and set up interval
+      checkForBroadcasts();
+
+      // Set up periodic checks
+      broadcastCheckIntervalRef.current = setInterval(checkForBroadcasts, 5000);
+    }
+
+    return () => {
+      if (broadcastCheckIntervalRef.current) {
+        clearInterval(broadcastCheckIntervalRef.current);
+        broadcastCheckIntervalRef.current = null;
+      }
+    };
+  }, [currentSpaceId, id, user, webcamActive, isBroadcasting]);
+
+  // Modified webcam toggle handler to ensure broadcasting state is correctly set
   const handleWebcamToggle = () => {
     const newWebcamState = !webcamActive;
-    setWebcamActive(newWebcamState);
-    lastWebcamStateRef.current = newWebcamState;
 
     if (newWebcamState) {
       setWebcamInitialized(true);
+
+      // If turning on webcam, ask if they want to broadcast
+      if (
+        confirm(
+          'Do you want to broadcast this webcam to other users in this space?'
+        )
+      ) {
+        console.log('Setting broadcasting mode to true');
+
+        // Update both states together to ensure synchronization
+        setWebcamActive(true);
+        setIsBroadcasting(true);
+        lastWebcamStateRef.current = true;
+
+        // Update DB immediately to indicate we're starting a broadcast
+        if (onUpdate) {
+          console.log(
+            'Updating database with broadcasting=true and broadcastStarting=true'
+          );
+          onUpdate(id, {
+            type: 'plane',
+            webcamActive: true,
+            broadcasting: true,
+            broadcastStarting: true, // Flag that we're in the process of starting
+            broadcasterId: user?.uid,
+            broadcastId: 'pending', // Use 'pending' instead of 'initializing'
+            broadcastStartTime: Date.now(), // Track when we started
+            position,
+            scale: currentScale,
+            color: currentColor,
+            headerText: currentHeaderText,
+            headerStyle: currentHeaderStyle,
+            borderStyle: currentBorderStyle,
+            borderColor: currentBorderColor,
+            lineThickness: currentLineThickness,
+            faceText: currentFaceText,
+            faceTextStyle: currentFaceTextStyle,
+          });
+        }
+
+        console.log(`Webcam toggled to ON with broadcasting: true`);
+      } else {
+        console.log('Local webcam only - no broadcasting');
+        setWebcamActive(true);
+        setIsBroadcasting(false);
+        lastWebcamStateRef.current = true;
+
+        if (onUpdate) {
+          onUpdate(id, {
+            type: 'plane',
+            webcamActive: true,
+            broadcasting: false,
+            position,
+            scale: currentScale,
+            color: currentColor,
+            headerText: currentHeaderText,
+            headerStyle: currentHeaderStyle,
+            borderStyle: currentBorderStyle,
+            borderColor: currentBorderColor,
+            lineThickness: currentLineThickness,
+            faceText: currentFaceText,
+            faceTextStyle: currentFaceTextStyle,
+          });
+        }
+      }
+    } else {
+      // If turning off webcam, stop broadcasting
+      if (isBroadcasting) {
+        console.log('Broadcasting active, stopping before turning off webcam');
+        handleBroadcastStopped();
+      }
+
+      setWebcamActive(false);
+      lastWebcamStateRef.current = false;
+      setIsViewingBroadcast(false);
+      setBroadcastInfo(null);
+
+      // Update database
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'plane',
+          webcamActive: false,
+          broadcasting: false,
+          broadcastId: null,
+          position,
+          scale: currentScale,
+          color: currentColor,
+          headerText: currentHeaderText,
+          headerStyle: currentHeaderStyle,
+          borderStyle: currentBorderStyle,
+          borderColor: currentBorderColor,
+          lineThickness: currentLineThickness,
+          faceText: currentFaceText,
+          faceTextStyle: currentFaceTextStyle,
+        });
+      }
     }
 
+    setShowUI(false);
+  };
+
+  // Handle broadcast start event
+  const handleBroadcastStarted = (info) => {
+    console.log('Broadcast started:', info);
+
+    if (!info || !info.broadcastId) {
+      console.error('Error: No broadcastId provided to handleBroadcastStarted');
+      return;
+    }
+
+    // Ensure we maintain the broadcasting state flag
+    setIsBroadcasting(true);
+
+    // Update database with broadcast status and EXPLICIT broadcastId
     if (onUpdate) {
-      onUpdate(id, {
+      console.log(`Updating plane ${id} with broadcastId ${info.broadcastId}`);
+
+      // CRITICAL - Force direct update with the broadcastId
+      // This ensures the broadcastId is properly set in the database
+      const updates = {
         type: 'plane',
-        webcamActive: newWebcamState,
+        broadcasting: true,
+        broadcasterId: user?.uid,
+        broadcastId: info.broadcastId, // THIS IS CRITICAL
+        broadcastStarting: false, // Changed from pending to active
+        broadcastInfo: {
+          started: new Date().toISOString(),
+          broadcasterId: user?.uid,
+        },
         position,
         scale: currentScale,
         color: currentColor,
@@ -784,12 +972,93 @@ const Plane = ({
         lineThickness: currentLineThickness,
         faceText: currentFaceText,
         faceTextStyle: currentFaceTextStyle,
-      });
-    }
+        webcamActive: true,
+      };
 
-    console.log(`Webcam toggled to ${newWebcamState ? 'ON' : 'OFF'}`);
-    setShowUI(false);
+      // Force multiple updates with slight delays to ensure the database is updated
+      onUpdate(id, updates);
+
+      // First follow-up
+      setTimeout(() => {
+        console.log('First follow-up broadcast ID check');
+        if (isBroadcasting) {
+          // Only update if we're still broadcasting
+          onUpdate(id, {
+            ...updates,
+            _updateTime: Date.now(),
+          });
+        }
+      }, 1000);
+
+      // Second follow-up with just the critical fields
+      setTimeout(() => {
+        console.log('Second follow-up broadcast ID check - minimal update');
+        if (isBroadcasting) {
+          // Only update if we're still broadcasting
+          onUpdate(id, {
+            broadcastId: info.broadcastId,
+            broadcasting: true,
+            _finalCheck: true,
+          });
+        }
+      }, 3000);
+    }
   };
+
+  // Add debugging to identify unwanted broadcast stops
+  const handleBroadcastStopped = () => {
+    console.log('📍 Broadcast stopped called. Stack trace:');
+    console.trace();
+
+    // Only take action if we were actually broadcasting
+    if (isBroadcasting) {
+      setIsBroadcasting(false);
+      setViewerCount(0);
+
+      // Update database
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'plane',
+          broadcasting: false,
+          broadcastId: null,
+          position,
+          scale: currentScale,
+          color: currentColor,
+          headerText: currentHeaderText,
+          headerStyle: currentHeaderStyle,
+          borderStyle: currentBorderStyle,
+          borderColor: currentBorderColor,
+          lineThickness: currentLineThickness,
+          faceText: currentFaceText,
+          faceTextStyle: currentFaceTextStyle,
+        });
+      }
+    } else {
+      console.log(
+        '⚠️ Broadcast stop called but isBroadcasting was already false'
+      );
+    }
+  };
+
+  // Handle viewer count updates
+  const handleViewerCountChange = (count) => {
+    setViewerCount(count);
+  };
+
+  // Add cleanup effect to ensure all WebRTC resources are properly disposed
+  useEffect(() => {
+    return () => {
+      // Clear any broadcasting when component unmounts
+      if (isBroadcasting) {
+        handleBroadcastStopped();
+      }
+
+      // Clear all intervals
+      if (broadcastCheckIntervalRef.current) {
+        clearInterval(broadcastCheckIntervalRef.current);
+      }
+    };
+  }, [isBroadcasting]);
 
   // Separate effect to handle webcam initialization on component mount
   useEffect(() => {
@@ -868,6 +1137,18 @@ const Plane = ({
     currentScale,
   ]);
 
+  // Add debug log at the start of component
+  useEffect(() => {
+    if (webcamActive) {
+      console.log('Plane component props check:', {
+        userId: user?.uid,
+        spaceId: currentSpaceId,
+        planeId: id,
+        isBroadcasting,
+      });
+    }
+  }, [webcamActive, user, currentSpaceId, id, isBroadcasting]);
+
   return (
     <>
       <group ref={groupRef} position={position}>
@@ -882,9 +1163,24 @@ const Plane = ({
             />
           </mesh>
 
-          {/* Add WebcamStream component with webcamInitialized check */}
+          {/* Fixed WebcamStream implementation with explicit broadcasting state */}
           {webcamActive && webcamInitialized && (
-            <WebcamStream meshRef={meshRef} active={webcamActive} />
+            <WebcamStream
+              key={`webcam-${id}-${isBroadcasting ? 'broadcasting' : 'local'}-${
+                isViewingBroadcast ? 'viewing' : 'notviewing'
+              }`}
+              meshRef={meshRef}
+              active={webcamActive}
+              userId={user?.uid}
+              spaceId={currentSpaceId}
+              planeId={id}
+              isBroadcasting={isBroadcasting}
+              isReceiving={isViewingBroadcast}
+              broadcastData={isViewingBroadcast ? broadcastInfo : null}
+              onBroadcastStarted={handleBroadcastStarted}
+              onBroadcastStopped={handleBroadcastStopped}
+              onViewerCountChange={handleViewerCountChange}
+            />
           )}
 
           {/* Add a loading indicator when webcam is being initialized */}
@@ -938,6 +1234,8 @@ const Plane = ({
             onDelete={() => onDelete?.(id)}
             onWebcamToggle={handleWebcamToggle}
             webcamActive={webcamActive}
+            isBroadcasting={isBroadcasting}
+            viewerCount={viewerCount}
           />
         )}
 

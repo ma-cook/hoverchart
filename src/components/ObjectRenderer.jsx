@@ -26,6 +26,8 @@ const ObjectRenderer = ({
   handleIndicatorSelected,
   globalIndicatorSelected,
   handleObjectDelete,
+  user, // Add this prop
+  currentSpaceId, // Add this prop
 }) => {
   if (obj.type === 'cube') {
     return (
@@ -182,6 +184,8 @@ const ObjectRenderer = ({
         activeTextStyleUI={activeTextStyleUI}
         setActiveTextStyleUI={setActiveTextStyleUI}
         onDelete={() => handleObjectDelete(obj.id)}
+        user={user}
+        currentSpaceId={currentSpaceId}
       />
     );
   }

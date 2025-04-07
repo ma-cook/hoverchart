@@ -18,6 +18,7 @@ const FaceUI = ({
   onDelete, // Add this prop
   onWebcamToggle, // Add webcam toggle handler
   webcamActive = false, // Add webcam state
+  isBroadcasting = false, // Add broadcasting state
 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showBorderMenu, setShowBorderMenu] = useState(false); // Add this state
@@ -87,7 +88,7 @@ const FaceUI = ({
         { name: 'border', icon: '▢' }, // Add border tool for planes
         {
           name: 'webcam',
-          icon: '📹',
+          icon: isBroadcasting ? `📹` : '📹', // Show viewer count if broadcasting
           active: webcamActive, // Show active state
         },
         { name: 'delete', icon: '🗑️' }, // Add delete tool for planes
@@ -156,13 +157,21 @@ const FaceUI = ({
               onClick={(e) => handleToolClick(tool, e)}
               style={
                 tool.active
-                  ? { backgroundColor: '#4CAF50', color: 'white' }
+                  ? {
+                      backgroundColor:
+                        tool.name === 'webcam' && isBroadcasting
+                          ? '#ff4444'
+                          : '#4CAF50',
+                      color: 'white',
+                    }
                   : {}
               }
               title={
                 tool.name === 'webcam'
                   ? webcamActive
-                    ? 'Disable Camera'
+                    ? isBroadcasting
+                      ? `Broadcasting`
+                      : 'Disable Camera'
                     : 'Enable Camera'
                   : tool.name
               }
