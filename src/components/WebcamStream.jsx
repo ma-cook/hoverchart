@@ -5,6 +5,7 @@ import {
   startBroadcasting,
   joinBroadcast,
   testBroadcastConnectivity,
+  findAvailableBroadcasts, // Add this import
 } from '../services/webrtcService';
 
 // Add verification console log
@@ -30,6 +31,7 @@ const WebcamStream = ({
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('Camera access error');
   const [isLoading, setIsLoading] = useState(true);
+  const [broadcastDetails, setBroadcastDetails] = useState(null); // Add state for broadcast details
 
   // Refs
   const videoRef = useRef(null);
@@ -332,78 +334,118 @@ const WebcamStream = ({
       }
     }, 10000); // 10 seconds should be enough for a connection
 
-    // Join the broadcast with more detailed error handling
-    joinBroadcast(spaceId, broadcastData.broadcastId, userId, video)
-      .then((connection) => {
-        viewerConnectionRef.current = connection;
+    // Enhanced broadcast fetching and connection logic
+    const connectToBroadcast = async () => {
+      try {
+        // First verify the broadcast exists and get its details
+        const broadcasts = await findAvailableBroadcasts(spaceId);
+        console.log('Available broadcasts:', broadcasts);
 
-        // Additional logging to track video element state
-        console.log('Got connection, video element state:', {
-          readyState: video.readyState,
-          paused: video.paused,
-          networkState: video.networkState,
-        });
+        const matchingBroadcast = broadcasts.find(
+          (b) =>
+            b.id === broadcastData.broadcastId ||
+            b.planeId === broadcastData.planeId
+        );
 
-        // When video starts playing, create texture
-        video.onloadedmetadata = () => {
-          console.log('Video metadata loaded, dimensions:', {
-            width: video.videoWidth,
-            height: video.videoHeight,
-          });
-
-          // Create video texture from the remote stream
-          const texture = new THREE.VideoTexture(video);
-          texture.minFilter = THREE.LinearFilter;
-          texture.magFilter = THREE.LinearFilter;
-          texture.format = THREE.RGBAFormat;
-          texture.colorSpace = THREE.SRGBColorSpace;
-          texture.generateMipmaps = false;
-          texture.wrapS = THREE.ClampToEdgeWrapping;
-          texture.wrapT = THREE.ClampToEdgeWrapping;
-          textureRef.current = texture;
-
-          // Apply texture to plane material
-          if (meshRef.current) {
-            const material = meshRef.current.material;
-            const newMaterial = material.clone();
-            newMaterial.map = texture;
-            newMaterial.transparent = true;
-            newMaterial.opacity = 1;
-            newMaterial.depthWrite = true;
-            newMaterial.needsUpdate = true;
-            meshRef.current.material = newMaterial;
-          }
-
-          setIsLoading(false);
-          clearTimeout(diagnosticTimer);
-        };
-
-        // Add more event handlers for better diagnostics
-        video.onplaying = () => {
-          console.log('🎥 Remote video now playing');
-          setIsLoading(false);
-          clearTimeout(diagnosticTimer);
-        };
-
-        // Handle errors
-        video.onerror = (e) => {
-          console.error('Video element error:', e);
-          setIsLoading(false);
-          setHasError(true);
-          setErrorMessage(
-            'Video streaming error: ' +
-              (e.target.error ? e.target.error.message : 'unknown error')
+        if (!matchingBroadcast) {
+          console.warn(
+            'Could not find matching broadcast. Will try direct connection anyway.'
           );
-          clearTimeout(diagnosticTimer);
-        };
-      })
-      .catch((error) => {
-        console.error('Error joining broadcast:', error);
+        } else {
+          console.log('Found matching broadcast:', matchingBroadcast);
+          setBroadcastDetails(matchingBroadcast);
+        }
+
+        // Proceed with joining broadcast - use the ID from verification if possible
+        const broadcastId = matchingBroadcast?.id || broadcastData.broadcastId;
+
+        console.log(
+          `Joining broadcast with ID: ${broadcastId}, User ID: ${userId}`
+        );
+
+        // Join the broadcast with more detailed error handling
+        joinBroadcast(spaceId, broadcastId, userId, video)
+          .then((connection) => {
+            viewerConnectionRef.current = connection;
+
+            // Additional logging to track video element state
+            console.log('Got connection, video element state:', {
+              readyState: video.readyState,
+              paused: video.paused,
+              networkState: video.networkState,
+            });
+
+            // When video starts playing, create texture
+            video.onloadedmetadata = () => {
+              console.log('Video metadata loaded, dimensions:', {
+                width: video.videoWidth,
+                height: video.videoHeight,
+              });
+
+              // Create video texture from the remote stream
+              const texture = new THREE.VideoTexture(video);
+              texture.minFilter = THREE.LinearFilter;
+              texture.magFilter = THREE.LinearFilter;
+              texture.format = THREE.RGBAFormat;
+              texture.colorSpace = THREE.SRGBColorSpace;
+              texture.generateMipmaps = false;
+              texture.wrapS = THREE.ClampToEdgeWrapping;
+              texture.wrapT = THREE.ClampToEdgeWrapping;
+              textureRef.current = texture;
+
+              // Apply texture to plane material
+              if (meshRef.current) {
+                const material = meshRef.current.material;
+                const newMaterial = material.clone();
+                newMaterial.map = texture;
+                newMaterial.transparent = true;
+                newMaterial.opacity = 1;
+                newMaterial.depthWrite = true;
+                newMaterial.needsUpdate = true;
+                meshRef.current.material = newMaterial;
+              }
+
+              setIsLoading(false);
+              clearTimeout(diagnosticTimer);
+            };
+
+            // Add more event handlers for better diagnostics
+            video.onplaying = () => {
+              console.log('🎥 Remote video now playing');
+              setIsLoading(false);
+              clearTimeout(diagnosticTimer);
+            };
+
+            // Handle errors
+            video.onerror = (e) => {
+              console.error('Video element error:', e);
+              setIsLoading(false);
+              setHasError(true);
+              setErrorMessage(
+                'Video streaming error: ' +
+                  (e.target.error ? e.target.error.message : 'unknown error')
+              );
+              clearTimeout(diagnosticTimer);
+            };
+          })
+          .catch((error) => {
+            console.error('Error joining broadcast:', error);
+            setIsLoading(false);
+            setHasError(true);
+            setErrorMessage('Failed to connect to broadcast: ' + error.message);
+            clearTimeout(diagnosticTimer);
+          });
+      } catch (error) {
+        console.error('Error in broadcast connection flow:', error);
         setIsLoading(false);
         setHasError(true);
-        setErrorMessage('Failed to connect to broadcast: ' + error.message);
+        setErrorMessage('Connection failed: ' + error.message);
         clearTimeout(diagnosticTimer);
-      });
+      }
+    };
+
+    // Start the connection process
+    connectToBroadcast();
 
     return () => {
       clearTimeout(diagnosticTimer);
@@ -521,23 +563,40 @@ const WebcamStream = ({
     );
   }
 
-  // Viewing status indicator
+  // Enhanced status display for viewer
   if (isReceiving) {
     return (
-      <Html position={[4, 4, 0.1]}>
-        <div
-          style={{
-            color: 'white',
-            background: 'rgba(0,0,255,0.7)',
-            padding: '3px 6px',
-            borderRadius: '3px',
-            fontSize: '12px',
-            fontWeight: 'bold',
-          }}
-        >
-          VIEWING
-        </div>
-      </Html>
+      <>
+        <Html position={[4, 4, 0.1]}>
+          <div
+            style={{
+              color: 'white',
+              background: 'rgba(0,0,255,0.7)',
+              padding: '3px 6px',
+              borderRadius: '3px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+            }}
+          >
+            VIEWING
+          </div>
+        </Html>
+        {broadcastDetails && (
+          <Html position={[4, 3, 0.1]}>
+            <div
+              style={{
+                color: 'white',
+                background: 'rgba(0,0,0,0.5)',
+                padding: '2px 4px',
+                borderRadius: '2px',
+                fontSize: '10px',
+              }}
+            >
+              ID: {broadcastDetails.id.substring(0, 8)}
+            </div>
+          </Html>
+        )}
+      </>
     );
   }
 
