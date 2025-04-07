@@ -31,7 +31,8 @@ const WebcamStream = ({
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('Camera access error');
   const [isLoading, setIsLoading] = useState(true);
-  const [broadcastDetails, setBroadcastDetails] = useState(null); // Add state for broadcast details
+  const [broadcastDetails, setBroadcastDetails] = useState(null);
+  const [connectionAttempts, setConnectionAttempts] = useState(0); // Track connection attempts
 
   // Refs
   const videoRef = useRef(null);
@@ -272,9 +273,15 @@ const WebcamStream = ({
     if (!active || !isReceiving || !broadcastData || !spaceId) return;
 
     setIsLoading(true);
+    setHasError(false); // Reset error state when attempting new connection
+
+    // Track connection attempts for retry logic
+    setConnectionAttempts((prev) => prev + 1);
 
     console.log(
-      '🎬 Initializing receiving mode for remote broadcast:',
+      `🎬 Initializing receiving mode for remote broadcast (attempt #${
+        connectionAttempts + 1
+      }):`,
       broadcastData
     );
 
@@ -301,10 +308,8 @@ const WebcamStream = ({
 
           console.log('Broadcast connectivity test results:', connectivityTest);
 
-          // Modified check: Use database state first, fall back to memory state
-          const broadcastExists =
-            connectivityTest.broadcastData?.inDatabase ||
-            connectivityTest.success;
+          // IMPORTANT: Focus on database state (inDatabase), not memory state
+          const broadcastExists = connectivityTest.broadcastData?.inDatabase;
 
           if (!broadcastExists) {
             setErrorMessage(
@@ -314,19 +319,12 @@ const WebcamStream = ({
             );
             setHasError(true);
             setIsLoading(false);
-          } else if (
-            !connectivityTest.success &&
-            connectivityTest.broadcastData?.inDatabase
-          ) {
-            // If broadcast exists in database but not in memory, keep trying
+          } else {
+            // If broadcast exists in database, keep trying even if not in memory
             console.log(
-              "Broadcast exists in database but not active in broadcaster's memory"
+              'Broadcast exists in database - continuing connection attempt'
             );
             // Just continue waiting - connection might still establish
-          } else {
-            console.log(
-              "Broadcast exists but connection hasn't been established"
-            );
           }
         } catch (e) {
           console.error('Error running diagnostic:', e);
@@ -349,10 +347,13 @@ const WebcamStream = ({
 
         if (!matchingBroadcast) {
           console.warn(
-            'Could not find matching broadcast. Will try direct connection anyway.'
+            'Could not find matching broadcast in database search. Will try direct connection anyway.'
           );
         } else {
-          console.log('Found matching broadcast:', matchingBroadcast);
+          console.log(
+            'Found matching broadcast in database:',
+            matchingBroadcast
+          );
           setBroadcastDetails(matchingBroadcast);
         }
 
@@ -451,7 +452,15 @@ const WebcamStream = ({
       clearTimeout(diagnosticTimer);
       cleanup();
     };
-  }, [active, isReceiving, broadcastData, spaceId, userId, meshRef]);
+  }, [
+    active,
+    isReceiving,
+    broadcastData,
+    spaceId,
+    userId,
+    meshRef,
+    connectionAttempts,
+  ]);
 
   // Update texture every frame
   useEffect(() => {
@@ -495,14 +504,14 @@ const WebcamStream = ({
     };
   }, []); // Empty dependency array - only runs on unmount
 
-  // Error display
+  // Error display with retry button
   if (hasError) {
     return (
       <mesh position={[0, 0, 0.1]}>
         <planeGeometry args={[9, 9]} />
         <meshBasicMaterial color="black" transparent opacity={0.7} />
         <mesh position={[0, 0, 0.1]}>
-          <planeGeometry args={[8, 1]} />
+          <planeGeometry args={[8, 2]} />
           <meshBasicMaterial color="red" transparent opacity={0.8} />
           <Html center position={[0, 0, 0.1]}>
             <div
@@ -511,12 +520,33 @@ const WebcamStream = ({
                 fontWeight: 'bold',
                 textAlign: 'center',
                 backgroundColor: 'rgba(0,0,0,0.5)',
-                padding: '5px',
-                borderRadius: '3px',
+                padding: '10px',
+                borderRadius: '5px',
                 whiteSpace: 'nowrap',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '10px',
               }}
             >
-              ⚠️ {errorMessage}
+              <div>⚠️ {errorMessage}</div>
+              <button
+                onClick={() => {
+                  setHasError(false);
+                  setIsLoading(true);
+                  setConnectionAttempts((prev) => prev + 1); // Trigger reconnection
+                }}
+                style={{
+                  padding: '5px 10px',
+                  background: '#4285f4',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                Retry Connection
+              </button>
             </div>
           </Html>
         </mesh>
