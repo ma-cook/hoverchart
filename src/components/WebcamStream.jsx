@@ -177,6 +177,17 @@ const WebcamStream = ({
                 // Store the broadcast control
                 broadcastControlRef.current = broadcastControl;
 
+                // CRITICAL FIX: Log success message with more details
+                console.log(
+                  '✅ Broadcast setup complete and ready for viewers!',
+                  {
+                    broadcastId: broadcastControl.broadcastId,
+                    planeId,
+                    spaceId,
+                    userId,
+                  }
+                );
+
                 // Add a flag to prevent automatic cleanup that might stop the broadcast
                 broadcastControlRef.current.isActive = true;
 
@@ -350,7 +361,10 @@ const WebcamStream = ({
         onBroadcastStopped();
       }
 
-      cleanup();
+      // CRITICAL FIX: Add a small delay before cleanup to ensure broadcast has time to setup
+      setTimeout(() => {
+        cleanup();
+      }, 100);
     };
   }, []); // Empty dependency array - only runs on unmount
 

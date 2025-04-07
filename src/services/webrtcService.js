@@ -2,11 +2,8 @@ import { db } from '../firebase';
 import {
   collection,
   doc,
-  addDoc,
   getDoc,
-  setDoc,
   onSnapshot,
-  deleteDoc,
   updateDoc,
   serverTimestamp,
   query,
@@ -19,7 +16,7 @@ import {
 
 const activeStreams = {};
 
-// Configuration with properly formatted ICE servers using only public servers
+// Updated configuration with more reliable TURN servers
 const configuration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -27,19 +24,30 @@ const configuration = {
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
-    // Free TURN servers - these typically work without authentication
+    // Updated TURN servers - more reliable options
     {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
+      urls: [
+        'turn:global.turn.twilio.com:3478?transport=udp',
+        'turn:global.turn.twilio.com:3478?transport=tcp',
+        'turn:global.turn.twilio.com:443?transport=tcp',
+      ],
+      username:
+        'f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d',
+      credential: 'w1uxM55V9yVoqyVFjt+mxDBV0F87AUCemaYVQGxsPLw=',
     },
     {
       urls: 'turn:openrelay.metered.ca:443',
       username: 'openrelayproject',
       credential: 'openrelayproject',
     },
+    {
+      urls: 'turn:relay.metered.ca:443',
+      username: 'e8dd65f183e28d282e8b83b0',
+      credential: 'uWdWNmkhvyqTEswO',
+    },
   ],
   iceCandidatePoolSize: 10,
+  sdpSemantics: 'unified-plan',
 };
 
 // Store these in module scope
@@ -259,7 +267,6 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
 
 // Use a memory-based approach for ICE candidates and connections
 const inMemoryIceCandidates = {};
-const inMemoryConnections = {};
 const connectionResponses = {};
 
 /**
@@ -271,6 +278,19 @@ function setupInMemoryIceCandidateCollection(
   planeId,
   broadcastId
 ) {
+  // Add connection state monitoring
+  peerConnection.onconnectionstatechange = () => {
+    console.log(`WebRTC connection state: ${peerConnection.connectionState}`);
+    if (peerConnection.connectionState === 'failed') {
+      console.error('WebRTC connection failed, attempting to restart ICE');
+      peerConnection.restartIce();
+    }
+  };
+
+  peerConnection.oniceconnectionstatechange = () => {
+    console.log(`ICE connection state: ${peerConnection.iceConnectionState}`);
+  };
+
   peerConnection.onicecandidate = async (event) => {
     if (!event.candidate) return;
 
@@ -390,6 +410,23 @@ async function processConnectionRequest(
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
 
+    // Add ICE candidates from the viewer if available
+    if (
+      connectionData.iceCandidates &&
+      connectionData.iceCandidates.length > 0
+    ) {
+      console.log(
+        `Adding ${connectionData.iceCandidates.length} ICE candidates from viewer`
+      );
+      for (const candidate of connectionData.iceCandidates) {
+        try {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.warn('Could not add ICE candidate from viewer:', err);
+        }
+      }
+    }
+
     // Store the answer in the plane object's connections data
     const planeRef = doc(
       db,
@@ -410,6 +447,8 @@ async function processConnectionRequest(
       [`broadcastData.connections.${connectionId}.status`]: 'answered',
       [`broadcastData.connections.${connectionId}.answeredAt`]:
         serverTimestamp(),
+      [`broadcastData.connections.${connectionId}.broadcasterIceCandidates`]:
+        activeStreams[`${spaceId}-${planeId}`]?.iceCandidates || [],
     });
 
     // Track this viewer in memory
@@ -490,15 +529,33 @@ export const joinBroadcast = async (
     // Create a peer connection
     const peerConnection = new RTCPeerConnection(configuration);
 
+    // Add connection state monitoring
+    peerConnection.onconnectionstatechange = () => {
+      console.log(
+        `Viewer WebRTC connection state: ${peerConnection.connectionState}`
+      );
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+      console.log(
+        `Viewer ICE connection state: ${peerConnection.iceConnectionState}`
+      );
+    };
+
     // Set up video display when we get remote tracks
     peerConnection.ontrack = (event) => {
-      console.log('Received remote track');
+      console.log('Received remote track', event.track);
       if (videoElement && event.streams && event.streams[0]) {
         videoElement.srcObject = event.streams[0];
         videoElement
           .play()
           .then(() => console.log('Remote video playing'))
           .catch((e) => console.error('Error playing video:', e));
+      } else {
+        console.warn('Got track but missing video element or stream', {
+          videoElement: !!videoElement,
+          hasStreams: !!event.streams && event.streams.length > 0,
+        });
       }
     };
 
@@ -511,6 +568,28 @@ export const joinBroadcast = async (
       if (event.candidate) {
         iceCandidates.push(event.candidate.toJSON());
         console.log('Added viewer ICE candidate to memory');
+
+        // Also update the connection data with new ICE candidates
+        try {
+          const planeRef = doc(
+            db,
+            'users',
+            spaceOwner,
+            'spaces',
+            spaceId,
+            'objects',
+            planeId
+          );
+
+          updateDoc(planeRef, {
+            [`broadcastData.connections.${connectionId}.iceCandidates`]:
+              arrayUnion(event.candidate.toJSON()),
+          }).catch((err) =>
+            console.warn('Failed to update ICE candidates:', err)
+          );
+        } catch (err) {
+          console.warn('Error updating ICE candidates:', err);
+        }
       }
     };
 
@@ -626,6 +705,25 @@ export const joinBroadcast = async (
           console.log('Added broadcaster ICE candidate from plane data');
         } catch (err) {
           console.error('Error adding broadcaster ICE candidate:', err);
+        }
+      }
+    }
+
+    // Check for direct ICE candidates in the connection data
+    const updatedPlaneDoc = await getDoc(planeRef);
+    const updatedData = updatedPlaneDoc.data();
+    const connectionData =
+      updatedData?.broadcastData?.connections?.[connectionId];
+
+    if (connectionData?.broadcasterIceCandidates?.length > 0) {
+      console.log(
+        `Adding ${connectionData.broadcasterIceCandidates.length} broadcaster ICE candidates`
+      );
+      for (const candidate of connectionData.broadcasterIceCandidates) {
+        try {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.warn('Could not add ICE candidate from broadcaster:', err);
         }
       }
     }
