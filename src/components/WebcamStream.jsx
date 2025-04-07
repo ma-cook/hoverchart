@@ -1,12 +1,17 @@
 import { useEffect, useState, useRef } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { startBroadcasting, joinBroadcast } from '../services/webrtcService';
+import {
+  startBroadcasting,
+  joinBroadcast,
+  testBroadcastConnectivity,
+} from '../services/webrtcService';
 
 // Add verification console log
 console.log('WebcamStream component loaded, webRTC functions:', {
   startBroadcastingExists: !!startBroadcasting,
   joinBroadcastExists: !!joinBroadcast,
+  testBroadcastConnectivityExists: !!testBroadcastConnectivity,
 });
 
 const WebcamStream = ({
