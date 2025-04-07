@@ -791,14 +791,52 @@ export const joinBroadcast = async (
 };
 
 // Utility functions
-export const isPlaneBeingBroadcast = (spaceId, planeId) => {
+export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
   console.log('⭐ isPlaneBeingBroadcast check:', { spaceId, planeId });
+
+  // First check in memory for quick response
   const isActive = !!activeStreams[`${spaceId}-${planeId}`];
   console.log(
-    `Broadcasting status for plane ${planeId}: ${
+    `Broadcasting status for plane ${planeId} in memory: ${
       isActive ? 'ACTIVE' : 'inactive'
     }`
   );
+
+  // If not active in memory, check database as fallback
+  if (!isActive && spaceId && planeId) {
+    try {
+      const spaceOwner = window.currentSpaceOwner || currentUserId;
+      const planeRef = doc(
+        db,
+        'users',
+        spaceOwner,
+        'spaces',
+        spaceId,
+        'objects',
+        planeId
+      );
+
+      const planeDoc = await getDoc(planeRef);
+      if (planeDoc.exists()) {
+        const planeData = planeDoc.data();
+        const isBroadcasting =
+          !!planeData.broadcasting &&
+          !!planeData.broadcastId &&
+          planeData.broadcastId !== 'pending';
+
+        console.log(
+          `Broadcasting status for plane ${planeId} in database: ${
+            isBroadcasting ? 'ACTIVE' : 'inactive'
+          }`
+        );
+
+        return isBroadcasting;
+      }
+    } catch (err) {
+      console.error('Error checking broadcast status in database:', err);
+    }
+  }
+
   return isActive;
 };
 
@@ -817,14 +855,18 @@ export const findAvailableBroadcasts = async (spaceId) => {
     const q = query(objectsRef, where('broadcasting', '==', true));
     const snapshot = await getDocs(q);
 
-    return snapshot.docs
+    const broadcasts = snapshot.docs
       .map((doc) => ({
         id: doc.data().broadcastId,
         planeId: doc.id,
         broadcasterId: doc.data().broadcasterId,
         active: true,
+        startTime: doc.data().broadcastStartTime || Date.now(),
       }))
-      .filter((b) => b.id); // Filter out any undefined broadcastIds
+      .filter((b) => b.id && b.id !== 'pending'); // Filter out any undefined or pending broadcastIds
+
+    console.log(`Found ${broadcasts.length} active broadcasts:`, broadcasts);
+    return broadcasts;
   } catch (error) {
     console.error('Error finding broadcasts:', error);
     return [];

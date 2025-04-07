@@ -779,15 +779,33 @@ const Plane = ({
   useEffect(() => {
     if (!currentSpaceId || !id || !user) return;
 
-    // Store the result directly in a variable to ensure the linter recognizes usage
-    const isCurrentlyBroadcasting = isPlaneBeingBroadcast(currentSpaceId, id);
-    if (isCurrentlyBroadcasting) {
-      setIsBroadcasting(true);
-    }
+    // Track if component is still mounted
+    let isMounted = true;
+
+    // Check if this plane is currently broadcasting
+    const checkBroadcastingStatus = async () => {
+      try {
+        const isCurrentlyBroadcasting = await isPlaneBeingBroadcast(
+          currentSpaceId,
+          id
+        );
+
+        // Only update state if component is still mounted
+        if (isMounted) {
+          setIsBroadcasting(isCurrentlyBroadcasting);
+        }
+      } catch (err) {
+        console.error('Error checking broadcasting status:', err);
+      }
+    };
+
+    checkBroadcastingStatus();
 
     // Only check for other broadcasts if webcam is active but we're not broadcasting
     if (webcamActive && !isBroadcasting) {
       const checkForBroadcasts = async () => {
+        if (!isMounted) return;
+
         try {
           const broadcasts = await findAvailableBroadcasts(currentSpaceId);
 
@@ -796,14 +814,15 @@ const Plane = ({
             (b) => b.planeId === id && b.broadcasterId !== user.uid
           );
 
-          if (broadcast) {
+          if (broadcast && isMounted) {
+            console.log('Found broadcast by another user:', broadcast);
             setBroadcastInfo({
               broadcastId: broadcast.id,
               broadcasterId: broadcast.broadcasterId,
               planeId: broadcast.planeId,
             });
             setIsViewingBroadcast(true);
-          } else {
+          } else if (isMounted) {
             setBroadcastInfo(null);
             setIsViewingBroadcast(false);
           }
@@ -820,6 +839,7 @@ const Plane = ({
     }
 
     return () => {
+      isMounted = false;
       if (broadcastCheckIntervalRef.current) {
         clearInterval(broadcastCheckIntervalRef.current);
         broadcastCheckIntervalRef.current = null;
