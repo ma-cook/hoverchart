@@ -17,14 +17,6 @@ import {
   deleteField,
 } from 'firebase/firestore';
 
-console.log('WebRTC service module loading...');
-
-// Simple test to verify module execution
-(() => {
-  console.log('WebRTC service initialization check');
-})();
-
-// In-memory storage for active broadcasts
 const activeStreams = {};
 
 // Configuration with properly formatted ICE servers using only public servers
