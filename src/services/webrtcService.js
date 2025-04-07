@@ -526,35 +526,133 @@ export const joinBroadcast = async (
     const planeId = planeDoc.id;
     const planeData = planeDoc.data();
 
-    // Create a peer connection
-    const peerConnection = new RTCPeerConnection(configuration);
+    console.log(`Found broadcast plane ${planeId} with data:`, {
+      broadcastId: planeData.broadcastId,
+      broadcasterId: planeData.broadcasterId,
+      hasData: !!planeData.broadcastData,
+    });
 
-    // Add connection state monitoring
+    // Create a peer connection with aggressive connection monitoring
+    const peerConnection = new RTCPeerConnection({
+      ...configuration,
+      iceTransportPolicy: 'all', // Try both relayed and direct connections
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    });
+
+    // Add enhanced connection state monitoring with reconnection logic
     peerConnection.onconnectionstatechange = () => {
       console.log(
-        `Viewer WebRTC connection state: ${peerConnection.connectionState}`
+        `📡 Viewer WebRTC connection state changed to: ${peerConnection.connectionState}`
       );
+
+      // Add reconnection logic for failed connections
+      if (
+        peerConnection.connectionState === 'failed' ||
+        peerConnection.connectionState === 'disconnected'
+      ) {
+        console.warn(
+          'Connection failed or disconnected, attempting to restart ICE'
+        );
+        peerConnection.restartIce();
+
+        // Also try to renegotiate after a short delay
+        setTimeout(() => {
+          if (
+            peerConnection.connectionState === 'failed' ||
+            peerConnection.connectionState === 'disconnected'
+          ) {
+            console.log('Attempting connection renegotiation...');
+            // Try reconnecting using the existing process
+            // This will be handled by the polling mechanism already in place
+          }
+        }, 2000);
+      }
     };
 
     peerConnection.oniceconnectionstatechange = () => {
       console.log(
-        `Viewer ICE connection state: ${peerConnection.iceConnectionState}`
+        `🧊 Viewer ICE connection state changed to: ${peerConnection.iceConnectionState}`
       );
+
+      // Log candidate pairs for debugging
+      if (
+        peerConnection.iceConnectionState === 'checking' ||
+        peerConnection.iceConnectionState === 'connected'
+      ) {
+        console.log('ICE gathering state:', peerConnection.iceGatheringState);
+
+        // Try to log stats when available
+        if (peerConnection.getStats) {
+          peerConnection
+            .getStats()
+            .then((stats) => {
+              let candidatePairs = [];
+              stats.forEach((report) => {
+                if (report.type === 'candidate-pair') {
+                  candidatePairs.push(report);
+                }
+              });
+              console.log(`Found ${candidatePairs.length} ICE candidate pairs`);
+            })
+            .catch((e) => console.error('Error getting stats:', e));
+        }
+      }
     };
 
-    // Set up video display when we get remote tracks
+    // Enhanced track handling with more diagnostics
     peerConnection.ontrack = (event) => {
-      console.log('Received remote track', event.track);
+      console.log('✅ Received remote track', {
+        kind: event.track.kind,
+        id: event.track.id,
+        enabled: event.track.enabled,
+        readyState: event.track.readyState,
+        hasStreams: !!event.streams && event.streams.length > 0,
+      });
+
       if (videoElement && event.streams && event.streams[0]) {
-        videoElement.srcObject = event.streams[0];
-        videoElement
-          .play()
-          .then(() => console.log('Remote video playing'))
-          .catch((e) => console.error('Error playing video:', e));
+        // Log stream details
+        const stream = event.streams[0];
+        console.log('Stream details:', {
+          id: stream.id,
+          active: stream.active,
+          trackCount: stream.getTracks().length,
+        });
+
+        // Attach stream to video element
+        videoElement.srcObject = stream;
+
+        // Add explicit error handling for play()
+        videoElement.onloadedmetadata = () => {
+          console.log('Video metadata loaded, attempting to play...');
+          videoElement
+            .play()
+            .then(() => console.log('👍 Remote video playing successfully'))
+            .catch((e) => {
+              console.error('❌ Error playing video:', e);
+              // Try again with user interaction if needed
+              const retryPlay = () => {
+                videoElement
+                  .play()
+                  .then(() => {
+                    console.log('👍 Video playing after retry');
+                    document.removeEventListener('click', retryPlay);
+                  })
+                  .catch((e) => console.error('Still failed to play:', e));
+              };
+              document.addEventListener('click', retryPlay, { once: true });
+            });
+        };
+
+        // Add more event listeners for diagnostics
+        videoElement.onerror = (e) => console.error('Video element error:', e);
+        videoElement.onstalled = () => console.warn('Video playback stalled');
+        videoElement.onwaiting = () => console.log('Video waiting for data');
       } else {
-        console.warn('Got track but missing video element or stream', {
+        console.warn('❌ Got track but missing requirements for display', {
           videoElement: !!videoElement,
           hasStreams: !!event.streams && event.streams.length > 0,
+          track: event.track?.readyState,
         });
       }
     };
@@ -787,6 +885,69 @@ export const joinBroadcast = async (
   } catch (error) {
     console.error('Error joining broadcast:', error);
     throw error;
+  }
+};
+
+// Add a new helper function to test connectivity directly
+export const testBroadcastConnectivity = async (spaceId, broadcastId) => {
+  try {
+    console.log(
+      `Testing connectivity to broadcast ${broadcastId} in space ${spaceId}`
+    );
+
+    // First check if the broadcast exists and is active
+    const spaceOwner = window.currentSpaceOwner || currentUserId;
+    const objectsRef = collection(
+      db,
+      'users',
+      spaceOwner,
+      'spaces',
+      spaceId,
+      'objects'
+    );
+
+    const q = query(objectsRef, where('broadcastId', '==', broadcastId));
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      return {
+        success: false,
+        error: 'Broadcast not found in database',
+        details: { broadcastId, spaceId },
+      };
+    }
+
+    const planeDoc = snapshot.docs[0];
+    const planeData = planeDoc.data();
+
+    // Check if broadcaster is still considered active in memory
+    const isStreaming = !!activeStreams[`${spaceId}-${planeDoc.id}`];
+
+    return {
+      success: isStreaming,
+      broadcastData: {
+        planeId: planeDoc.id,
+        broadcastId: planeData.broadcastId,
+        broadcasterId: planeData.broadcasterId,
+        inMemory: isStreaming,
+        inDatabase: true,
+      },
+      diagnostic: {
+        hasConnections: !!planeData.broadcastData?.connections,
+        connectionCount: planeData.broadcastData?.connections
+          ? Object.keys(planeData.broadcastData.connections).length
+          : 0,
+        hasIceCandidates: !!planeData.broadcastData?.iceCandidates,
+        iceCandidateCount: planeData.broadcastData?.iceCandidates?.length || 0,
+      },
+    };
+  } catch (error) {
+    console.error('Error testing broadcast connectivity:', error);
+    return {
+      success: false,
+      error: error.message,
+      stack: error.stack,
+    };
   }
 };
 

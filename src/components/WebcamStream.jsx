@@ -266,6 +266,11 @@ const WebcamStream = ({
 
     setIsLoading(true);
 
+    console.log(
+      '🎬 Initializing receiving mode for remote broadcast:',
+      broadcastData
+    );
+
     // Create video element for remote stream
     const video = document.createElement('video');
     video.autoplay = true;
@@ -275,13 +280,58 @@ const WebcamStream = ({
     document.body.appendChild(video);
     remoteVideoRef.current = video;
 
-    // Join the broadcast
+    // Create a diagnostic timer to report if we're not getting video after a reasonable time
+    const diagnosticTimer = setTimeout(async () => {
+      if (isLoading && active && isReceiving) {
+        console.warn('⏰ Still waiting for remote video after timeout');
+
+        try {
+          // Try to diagnose the issue
+          const connectivityTest = await testBroadcastConnectivity(
+            spaceId,
+            broadcastData.broadcastId
+          );
+
+          console.log('Broadcast connectivity test results:', connectivityTest);
+
+          if (!connectivityTest.success) {
+            setErrorMessage(
+              `Connection issue: ${
+                connectivityTest.error || 'Broadcaster may have disconnected'
+              }`
+            );
+            setHasError(true);
+            setIsLoading(false);
+          } else {
+            console.log(
+              "Broadcast exists but connection hasn't been established"
+            );
+          }
+        } catch (e) {
+          console.error('Error running diagnostic:', e);
+        }
+      }
+    }, 10000); // 10 seconds should be enough for a connection
+
+    // Join the broadcast with more detailed error handling
     joinBroadcast(spaceId, broadcastData.broadcastId, userId, video)
       .then((connection) => {
         viewerConnectionRef.current = connection;
 
+        // Additional logging to track video element state
+        console.log('Got connection, video element state:', {
+          readyState: video.readyState,
+          paused: video.paused,
+          networkState: video.networkState,
+        });
+
         // When video starts playing, create texture
         video.onloadedmetadata = () => {
+          console.log('Video metadata loaded, dimensions:', {
+            width: video.videoWidth,
+            height: video.videoHeight,
+          });
+
           // Create video texture from the remote stream
           const texture = new THREE.VideoTexture(video);
           texture.minFilter = THREE.LinearFilter;
@@ -306,24 +356,40 @@ const WebcamStream = ({
           }
 
           setIsLoading(false);
+          clearTimeout(diagnosticTimer);
+        };
+
+        // Add more event handlers for better diagnostics
+        video.onplaying = () => {
+          console.log('🎥 Remote video now playing');
+          setIsLoading(false);
+          clearTimeout(diagnosticTimer);
         };
 
         // Handle errors
-        video.onerror = () => {
-          console.error('Video error');
+        video.onerror = (e) => {
+          console.error('Video element error:', e);
           setIsLoading(false);
           setHasError(true);
-          setErrorMessage('Video streaming error');
+          setErrorMessage(
+            'Video streaming error: ' +
+              (e.target.error ? e.target.error.message : 'unknown error')
+          );
+          clearTimeout(diagnosticTimer);
         };
       })
       .catch((error) => {
         console.error('Error joining broadcast:', error);
         setIsLoading(false);
         setHasError(true);
-        setErrorMessage('Failed to connect to broadcast');
+        setErrorMessage('Failed to connect to broadcast: ' + error.message);
+        clearTimeout(diagnosticTimer);
       });
 
-    return cleanup;
+    return () => {
+      clearTimeout(diagnosticTimer);
+      cleanup();
+    };
   }, [active, isReceiving, broadcastData, spaceId, userId, meshRef]);
 
   // Update texture every frame
