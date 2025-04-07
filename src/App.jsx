@@ -29,7 +29,7 @@ import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { signInUser } from './services/authService';
 import { subscribeToObjects } from './services/objectsService';
 import isEqual from 'lodash/isEqual';
-import { initWebRTC } from './services/webRTCService';
+import { initWebRTC } from './services/webRTCService.js';
 
 /**
  * Main application component
