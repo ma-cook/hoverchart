@@ -294,7 +294,12 @@ const WebcamStream = ({
 
           console.log('Broadcast connectivity test results:', connectivityTest);
 
-          if (!connectivityTest.success) {
+          // Modified check: Use database state first, fall back to memory state
+          const broadcastExists =
+            connectivityTest.broadcastData?.inDatabase ||
+            connectivityTest.success;
+
+          if (!broadcastExists) {
             setErrorMessage(
               `Connection issue: ${
                 connectivityTest.error || 'Broadcaster may have disconnected'
@@ -302,6 +307,15 @@ const WebcamStream = ({
             );
             setHasError(true);
             setIsLoading(false);
+          } else if (
+            !connectivityTest.success &&
+            connectivityTest.broadcastData?.inDatabase
+          ) {
+            // If broadcast exists in database but not in memory, keep trying
+            console.log(
+              "Broadcast exists in database but not active in broadcaster's memory"
+            );
+            // Just continue waiting - connection might still establish
           } else {
             console.log(
               "Broadcast exists but connection hasn't been established"

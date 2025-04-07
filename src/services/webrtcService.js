@@ -920,17 +920,25 @@ export const testBroadcastConnectivity = async (spaceId, broadcastId) => {
     const planeDoc = snapshot.docs[0];
     const planeData = planeDoc.data();
 
-    // Check if broadcaster is still considered active in memory
+    // Check if broadcast is valid in database (primary check)
+    const isValidInDatabase =
+      !!planeData.broadcasting &&
+      !!planeData.broadcastId &&
+      planeData.broadcastId !== 'pending' &&
+      !!planeData.broadcastData;
+
+    // Check if broadcaster is in memory (secondary, informational)
     const isStreaming = !!activeStreams[`${spaceId}-${planeDoc.id}`];
 
+    // Use database validity as the primary success criteria
     return {
-      success: isStreaming,
+      success: isValidInDatabase, // This is the key change
       broadcastData: {
         planeId: planeDoc.id,
         broadcastId: planeData.broadcastId,
         broadcasterId: planeData.broadcasterId,
         inMemory: isStreaming,
-        inDatabase: true,
+        inDatabase: isValidInDatabase,
       },
       diagnostic: {
         hasConnections: !!planeData.broadcastData?.connections,
