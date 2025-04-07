@@ -927,17 +927,17 @@ export const testBroadcastConnectivity = async (spaceId, broadcastId) => {
       planeData.broadcastId !== 'pending' &&
       !!planeData.broadcastData;
 
-    // Check if broadcaster is in memory (secondary, informational)
+    // Check if broadcaster is in memory (only for information, not used for decision making)
     const isStreaming = !!activeStreams[`${spaceId}-${planeDoc.id}`];
 
-    // Use database validity as the primary success criteria
+    // ONLY use database validity as the criteria
     return {
-      success: isValidInDatabase, // This is the key change
+      success: isValidInDatabase, // This is the only check that matters
       broadcastData: {
         planeId: planeDoc.id,
         broadcastId: planeData.broadcastId,
         broadcasterId: planeData.broadcasterId,
-        inMemory: isStreaming,
+        inMemory: isStreaming, // Just for logging/debugging
         inDatabase: isValidInDatabase,
       },
       diagnostic: {
@@ -963,16 +963,8 @@ export const testBroadcastConnectivity = async (spaceId, broadcastId) => {
 export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
   console.log('⭐ isPlaneBeingBroadcast check:', { spaceId, planeId });
 
-  // First check in memory for quick response
-  const isActive = !!activeStreams[`${spaceId}-${planeId}`];
-  console.log(
-    `Broadcasting status for plane ${planeId} in memory: ${
-      isActive ? 'ACTIVE' : 'inactive'
-    }`
-  );
-
-  // If not active in memory, check database as fallback
-  if (!isActive && spaceId && planeId) {
+  // Skip memory check and go directly to database
+  if (spaceId && planeId) {
     try {
       const spaceOwner = window.currentSpaceOwner || currentUserId;
       const planeRef = doc(
@@ -999,6 +991,15 @@ export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
           }`
         );
 
+        // Check in-memory state only for logging, not for decision
+        const isInMemory = !!activeStreams[`${spaceId}-${planeId}`];
+        console.log(
+          `Broadcasting status for plane ${planeId} in memory: ${
+            isInMemory ? 'ACTIVE' : 'inactive'
+          }`
+        );
+
+        // Always return database state
         return isBroadcasting;
       }
     } catch (err) {
@@ -1006,7 +1007,8 @@ export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
     }
   }
 
-  return isActive;
+  // If we can't check the database, return false as fallback
+  return false;
 };
 
 export const findAvailableBroadcasts = async (spaceId) => {
