@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { doc, getDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
 import { findSpaceOwner } from '../services/sharedSpacesService';
-import { registerUserPresence } from '../services/webrtcservice';
+import { registerUserPresence } from '../services/webRservice';
 import { setUserPresence } from '../services/presenceService';
 
 /**
