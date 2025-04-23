@@ -490,9 +490,6 @@ export const updateObjectInSpace = async (
       updatedBy: userId, // Track who made the last update
     });
     // Log success
-    console.log(
-      `[updateObjectInSpace] Firestore update successful for object ${objectId}.`
-    );
   } catch (error) {
     // Log error
     console.error(
