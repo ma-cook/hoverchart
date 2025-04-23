@@ -413,12 +413,7 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
   }
 };
 
-export const joinBroadcast = async (
-  spaceId,
-  broadcastId,
-  viewerId,
-  videoElement = null
-) => {
+export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
   try {
     console.log(
       `Viewer ${viewerId} attempting to join broadcast: ${broadcastId} in space: ${spaceId}`

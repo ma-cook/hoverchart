@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { registerUserPresence } from '../services/webrtcService';
+import { registerUserPresence } from '../services/webrtcservice';
 
 // Helper for array comparison
 const arraysEqual = (a, b) => {

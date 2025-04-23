@@ -5,7 +5,7 @@ import {
   startBroadcasting,
   joinBroadcast,
   findAvailableBroadcasts, // Add this import
-} from '../services/webrtcService';
+} from '../services/webrtcservice';
 
 // Add verification console log
 console.log('WebcamStream component loaded, webRTC functions:', {
