@@ -339,6 +339,12 @@ const App = () => {
   // Object update handler
   const handleObjectUpdateCallback = useCallback(
     (id, updates) => {
+      // Add log here
+      console.log(
+        `[App] handleObjectUpdateCallback received for ID ${id}:`,
+        updates
+      );
+
       // Skip position updates for objects being transformed
       // Or for position updates that look like jitter
       if (updates.position) {
@@ -355,7 +361,7 @@ const App = () => {
               lastUpdateRef,
               setObjects,
               user,
-              currentSpaceId,
+              currentSpaceId: effectiveSpaceId, // Use effectiveSpaceId
               checkPositionJitter,
             });
           }
@@ -376,7 +382,7 @@ const App = () => {
               lastUpdateRef,
               setObjects,
               user,
-              currentSpaceId,
+              currentSpaceId: effectiveSpaceId, // Use effectiveSpaceId
               checkPositionJitter,
             });
           }
@@ -392,13 +398,13 @@ const App = () => {
         lastUpdateRef,
         setObjects,
         user,
-        currentSpaceId,
+        currentSpaceId: effectiveSpaceId, // Use effectiveSpaceId
         checkPositionJitter,
       });
     },
     [
       user,
-      currentSpaceId,
+      effectiveSpaceId, // Use effectiveSpaceId
       setObjects,
       lastUpdateRef,
       transformingObjectsRef,
@@ -542,6 +548,8 @@ const App = () => {
             setConnections={setConnections}
             calculateFacePosition={memoizedCalculateFacePosition}
             transformingObjects={transformingObjectsRef} // Use transforming ref here too
+            userId={user?.uid} // Add this prop
+            spaceId={effectiveSpaceId} // Add this prop
           />
 
           {/* Render all connections */}

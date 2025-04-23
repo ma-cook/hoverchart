@@ -7,6 +7,8 @@ import {
   query,
   Timestamp,
   deleteDoc,
+  updateDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import isEqual from 'lodash/isEqual';
 import { isSharedSpace } from './sharedSpacesService';
@@ -431,6 +433,74 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
     }
     if (unsubscribe) unsubscribe();
   };
+};
+
+/**
+ * Updates an existing object in a specific space in Firestore.
+ * @param {string} userId - The ID of the user performing the update (or space owner).
+ * @param {string} spaceId - The ID of the space containing the object.
+ * @param {string} objectId - The ID of the object to update.
+ * @param {object} updates - An object containing the fields to update.
+ * @returns {Promise<void>}
+ */
+export const updateObjectInSpace = async (
+  userId,
+  spaceId,
+  objectId,
+  updates
+) => {
+  if (!userId || !spaceId || !objectId) {
+    console.error(
+      '[updateObjectInSpace] Missing userId, spaceId, or objectId.'
+    );
+    throw new Error('Missing required IDs for object update.');
+  }
+  if (!updates || Object.keys(updates).length === 0) {
+    console.warn(
+      '[updateObjectInSpace] No updates provided for object:',
+      objectId
+    );
+    return; // Don't attempt an empty update
+  }
+
+  // Determine the correct owner path (handle public spaces if necessary)
+  const spaceOwner = window.currentSpaceOwner || userId;
+  const objectRef = doc(
+    db,
+    'users',
+    spaceOwner,
+    'spaces',
+    spaceId,
+    'objects',
+    objectId
+  );
+
+  // Log the attempt
+  console.log(`[updateObjectInSpace] Attempting Firestore update:`, {
+    spaceOwner,
+    spaceId,
+    objectId,
+    updates,
+  });
+
+  try {
+    await updateDoc(objectRef, {
+      ...updates,
+      lastUpdated: serverTimestamp(),
+      updatedBy: userId, // Track who made the last update
+    });
+    // Log success
+    console.log(
+      `[updateObjectInSpace] Firestore update successful for object ${objectId}.`
+    );
+  } catch (error) {
+    // Log error
+    console.error(
+      `[updateObjectInSpace] Firestore update failed for object ${objectId}:`,
+      error
+    );
+    throw error; // Re-throw the error for the caller
+  }
 };
 
 export { positionsEqual };

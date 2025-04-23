@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { saveObject } from '../services/objectsService';
+import { saveObject, updateObjectInSpace } from '../services/objectsService';
 import isEqual from 'lodash/isEqual';
 
 /**
@@ -196,216 +196,46 @@ export const handleObjectMove = ({
 export const handleObjectUpdate = ({
   id,
   updates,
-  transformingObjects,
+  transformingObjects, // Keep this if used for logic, otherwise remove
   lastUpdateRef,
-  setObjects,
+  setObjects, // Keep this if used for local state update, otherwise remove
   user,
   currentSpaceId,
-  checkPositionJitter,
+  checkPositionJitter, // Keep this if used for logic, otherwise remove
 }) => {
-  if (!user || !id || !currentSpaceId) return;
+  if (!id || !currentSpaceId || !user?.uid) {
+    console.error(
+      '[handleObjectUpdate] Missing id, spaceId, or user for update.'
+    );
+    return;
+  }
 
-  const updateTimestamp = Date.now();
-  const isTransforming = transformingObjects.current.has(id.toString());
-  const objId = id.toString();
+  // Log the received updates and context
+  console.log(
+    `[handleObjectUpdate] Processing update for ID ${id} in space ${currentSpaceId} by user ${user.uid}:`,
+    updates
+  );
 
-  // Handle updates during transform with extreme caution
-  setObjects((prev) => {
-    const existingObj = prev.find((obj) => obj.id === id);
+  // --- Optional: Add checks here if needed (e.g., filtering updates) ---
+  // Example: const filteredUpdates = { ...updates }; delete filteredUpdates.someProperty;
 
-    if (!existingObj) return prev;
+  // Update Firestore
+  updateObjectInSpace(user.uid, currentSpaceId, id, updates)
+    .then(() => {
+      // Log success
+      console.log(
+        `[handleObjectUpdate] Successfully requested Firestore update for ID ${id}.`
+      );
 
-    // Handle TextObject final position updates BEFORE the transform lock check
-    // Inside handleObjectUpdate function, modify the TextObject handler:
-    if (existingObj.type === 'text' && updates._finalPosition === true) {
-      // Create clean update without transform flags
-      const cleanUpdate = { ...updates };
-
-      // Ensure position is in correct format
-      if (cleanUpdate.position) {
-        cleanUpdate.position = Array.isArray(cleanUpdate.position)
-          ? cleanUpdate.position
-          : [
-              cleanUpdate.position.x,
-              cleanUpdate.position.y,
-              cleanUpdate.position.z,
-            ];
-      }
-
-      // Remove control flags
-      delete cleanUpdate._transformActive;
-      delete cleanUpdate._updateTimestamp;
-      delete cleanUpdate._finalPosition;
-      delete cleanUpdate._moveComplete;
-
-      const updatedObj = {
-        ...existingObj,
-        ...cleanUpdate,
-      };
-
-      // Save to database immediately
-      if (user && currentSpaceId) {
-        const spaceOwnerId = window.currentSpaceOwner || user.uid;
-        saveObject(spaceOwnerId, currentSpaceId, updatedObj);
-      }
-
-      return prev.map((obj) => (obj.id === id ? updatedObj : obj));
-    }
-
-    // AFTER the special case, do the transform lock check
-    if (existingObj._transformLocked && !isTransforming) {
-      return prev;
-    }
-
-    // Handle TextObject final position updates with high priority - add this section
-    if (existingObj.type === 'text' && updates._finalPosition === true) {
-      // Create a clean update without transform flags
-      const cleanUpdate = { ...updates };
-      delete cleanUpdate._transformActive;
-      delete cleanUpdate._updateTimestamp;
-      delete cleanUpdate._finalPosition;
-      delete cleanUpdate._moveComplete;
-
-      // Update state with the clean object
-      const updatedObj = {
-        ...existingObj,
-        ...cleanUpdate,
-      };
-
-      // Save to database immediately for text objects
-      if (user && currentSpaceId) {
-        const spaceOwnerId = window.currentSpaceOwner || user.uid;
-        const cleanObj = { ...updatedObj };
-
-        // Remove temporary properties from database update
-        delete cleanObj._isTransforming;
-        delete cleanObj._updateTimestamp;
-        delete cleanObj._positionUpdated;
-        delete cleanObj._saveTimeout;
-        delete cleanObj._transformLocked;
-        delete cleanObj._lockTime;
-        delete cleanObj._isDragging;
-        delete cleanObj._moveTimestamp;
-
-        // Important: Ensure position is properly formatted
-        if (cleanObj.position && !Array.isArray(cleanObj.position)) {
-          cleanObj.position = [
-            cleanObj.position.x || 0,
-            cleanObj.position.y || 0,
-            cleanObj.position.z || 0,
-          ];
-        }
-
-        setTimeout(() => {
-          saveObject(spaceOwnerId, currentSpaceId, cleanObj);
-        }, 100);
-      }
-
-      // Update the objects array
-      return prev.map((obj) => (obj.id === id ? updatedObj : obj));
-    }
-
-    // If this is a position update, check for jitter/oscillation
-    if (
-      updates.position &&
-      checkPositionJitter &&
-      checkPositionJitter(objId, updates.position)
-    ) {
-      // Skip position update but keep other properties
-      const updatesWithoutPosition = { ...updates };
-      delete updatesWithoutPosition.position;
-
-      if (Object.keys(updatesWithoutPosition).length === 0) {
-        return prev; // Nothing left to update
-      }
-
-      // Continue with non-position updates
-      updates = updatesWithoutPosition;
-    }
-
-    // Special handling for transform operations
-    if (isTransforming) {
-      return prev.map((obj) => {
-        if (obj.id === id) {
-          // For transform operations, we always prioritize our local state
-          const newObj = {
-            ...obj,
-            ...updates,
-            _isTransforming: true,
-            _updateTimestamp: updateTimestamp,
-            // Keep transform lock in place
-            _transformLocked: obj._transformLocked || true,
-            _lockTime: obj._lockTime || updateTimestamp,
-          };
-
-          // Update last reference with clean object
-          lastUpdateRef.current[id] = {
-            ...newObj,
-            _isTransforming: undefined,
-            _updateTimestamp: undefined,
-            _transformLocked: undefined,
-            _lockTime: undefined,
-          };
-
-          return newObj;
-        }
-        return obj;
-      });
-    }
-
-    // For normal updates, proceed as usual but verify locking
-    return prev.map((obj) => {
-      if (obj.id === id) {
-        // Standard non-transform update flow
-
-        // Filter out position updates for controlled objects
-        let filteredUpdates = { ...updates };
-
-        if (obj._transformLocked && filteredUpdates.position) {
-          delete filteredUpdates.position;
-        }
-
-        // If no updates left after filtering, return unchanged object
-        if (Object.keys(filteredUpdates).length === 0) {
-          return obj;
-        }
-
-        const newObj = {
-          ...obj,
-          ...filteredUpdates,
-          _updateTimestamp: updateTimestamp,
-        };
-
-        // Handle database updates with debouncing
-        if (!obj._transformLocked && !obj._isDragging) {
-          // Create clean version of object for database
-          const cleanObj = { ...newObj };
-          delete cleanObj._isTransforming;
-          delete cleanObj._updateTimestamp;
-          delete cleanObj._positionUpdated;
-          delete cleanObj._saveTimeout;
-          delete cleanObj._transformLocked;
-          delete cleanObj._lockTime;
-          delete cleanObj._isDragging;
-          delete cleanObj._moveTimestamp;
-
-          // Clear any existing save timeout
-          if (newObj._saveTimeout) {
-            clearTimeout(newObj._saveTimeout);
-          }
-
-          const saveTimeout = setTimeout(() => {
-            const spaceOwnerId = window.currentSpaceOwner || user.uid;
-            saveObject(spaceOwnerId, currentSpaceId, cleanObj);
-          }, 300); // Longer debounce time to reduce saves
-
-          newObj._saveTimeout = saveTimeout;
-          lastUpdateRef.current[id] = cleanObj;
-        }
-
-        return newObj;
-      }
-      return obj;
+      // --- Optional: Update local state optimistically if needed ---
+      // setObjects(prevObjects => ... );
+      // lastUpdateRef.current[id] = { ...lastUpdateRef.current[id], ...updates };
+    })
+    .catch((error) => {
+      // Log error
+      console.error(
+        `[handleObjectUpdate] Error updating Firestore for ID ${id}:`,
+        error
+      );
     });
-  });
 };

@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import {
   startBroadcasting,
   joinBroadcast,
-  testBroadcastConnectivity,
   findAvailableBroadcasts, // Add this import
 } from '../services/webrtcService';
 
@@ -12,7 +11,6 @@ import {
 console.log('WebcamStream component loaded, webRTC functions:', {
   startBroadcastingExists: !!startBroadcasting,
   joinBroadcastExists: !!joinBroadcast,
-  testBroadcastConnectivityExists: !!testBroadcastConnectivity,
 });
 
 const WebcamStream = ({
@@ -43,47 +41,74 @@ const WebcamStream = ({
   const remoteVideoRef = useRef(null);
 
   // Cleanup function for all resources
-  const cleanup = () => {
-    // Stop media tracks
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+  const cleanup = (options = { fullCleanup: true }) => {
+    console.log(`🧹 Cleanup called with options: ${JSON.stringify(options)}`);
+
+    // Stop media tracks (only if full cleanup or specifically requested)
+    if (options.fullCleanup || options.stopLocalStream) {
+      if (streamRef.current) {
+        console.log('Stopping local media tracks');
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
     }
 
-    // Stop broadcasting
-    if (broadcastControlRef.current) {
-      broadcastControlRef.current.stop();
-      broadcastControlRef.current = null;
+    // Stop broadcasting (only if full cleanup or specifically requested)
+    if (options.fullCleanup || options.stopBroadcasting) {
+      if (broadcastControlRef.current) {
+        console.log('Stopping broadcast');
+        broadcastControlRef.current.stop();
+        broadcastControlRef.current = null;
+      }
     }
 
-    // Disconnect as viewer
-    if (viewerConnectionRef.current) {
-      viewerConnectionRef.current.disconnect();
-      viewerConnectionRef.current = null;
+    // Disconnect as viewer (only if full cleanup or specifically requested)
+    if (options.fullCleanup || options.stopViewing) {
+      if (viewerConnectionRef.current) {
+        console.log('Disconnecting viewer connection');
+        viewerConnectionRef.current.disconnect();
+        viewerConnectionRef.current = null;
+      }
     }
 
-    // Dispose texture
+    // Dispose texture (always dispose if it exists)
     if (textureRef.current) {
+      console.log('Disposing texture');
       textureRef.current.dispose();
       textureRef.current = null;
     }
 
-    // Remove video elements
-    [videoRef, remoteVideoRef].forEach((ref) => {
-      if (ref.current) {
-        if (ref.current.srcObject) {
+    // Remove video elements (only if full cleanup)
+    if (options.fullCleanup) {
+      console.log('Removing video elements');
+      [videoRef, remoteVideoRef].forEach((ref) => {
+        if (ref.current) {
+          // --- Ensure handlers are removed before srcObject is nulled ---
+          ref.current.onloadedmetadata = null;
+          ref.current.onplaying = null;
+          ref.current.onerror = null;
           ref.current.srcObject = null;
+          // --- End handler removal ---
+          if (document.body.contains(ref.current)) {
+            document.body.removeChild(ref.current);
+          }
+          ref.current = null;
         }
-        if (document.body.contains(ref.current)) {
-          document.body.removeChild(ref.current);
-        }
-        ref.current = null;
-      }
-    });
+      });
+    } else if (options.stopViewing && remoteVideoRef.current) {
+      // If only stopping viewing, clean up remote video specifically
+      console.log('Cleaning up remote video element');
+      remoteVideoRef.current.onloadedmetadata = null;
+      remoteVideoRef.current.onplaying = null;
+      remoteVideoRef.current.onerror = null;
+      remoteVideoRef.current.srcObject = null;
+      // Don't remove the element itself unless full cleanup
+    }
 
-    // Clear mesh material
+    // Clear mesh material map (always clear if it exists)
     if (meshRef.current?.material?.map) {
-      meshRef.current.material.map.dispose();
+      console.log('Clearing mesh material map');
+      meshRef.current.material.map.dispose(); // Dispose the old map
       meshRef.current.material.map = null;
       meshRef.current.material.needsUpdate = true;
     }
@@ -270,197 +295,289 @@ const WebcamStream = ({
 
   // Handle receiving mode: watch someone else's broadcast
   useEffect(() => {
-    if (!active || !isReceiving || !broadcastData || !spaceId) return;
+    // --- Guard clause ---
+    if (!active || !isReceiving || !broadcastData || !spaceId || !userId) {
+      // Add more detail to the skip log
+      console.log(
+        `[WebcamStream ${planeId}] Skipping receiving effect. Conditions not met:`,
+        {
+          active,
+          isReceiving,
+          hasBroadcastData: !!broadcastData,
+          broadcastId: broadcastData?.broadcastId,
+          spaceId,
+          userId,
+        }
+      );
+      // --- If we were previously viewing, ensure cleanup happens ---
+      if (viewerConnectionRef.current) {
+        console.log(
+          `[WebcamStream ${planeId}] Conditions no longer met for receiving, cleaning up previous viewing session.`
+        );
+        cleanup({ stopViewing: true }); // Clean up only viewing resources
+      }
+      return;
+    }
+    // --- End Guard clause ---
+
+    // Prevent duplicate effect runs
+    const isMounted = { current: true };
+    let connection = null; // To store the connection object for cleanup
+    let currentStream = null; // Track the stream being processed
+    const currentBroadcastId = broadcastData.broadcastId; // Capture broadcastId for cleanup comparison
 
     setIsLoading(true);
-    setHasError(false); // Reset error state when attempting new connection
-
-    // Track connection attempts for retry logic
-    setConnectionAttempts((prev) => prev + 1);
-
+    setHasError(false);
+    // Log entry into the effect
     console.log(
-      `🎬 Initializing receiving mode for remote broadcast (attempt #${
-        connectionAttempts + 1
-      }):`,
+      `[WebcamStream ${planeId}] ✅ Receiving effect triggered for broadcast:`,
       broadcastData
     );
 
-    // Create video element for remote stream
-    const video = document.createElement('video');
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true;
-    video.style.display = 'none';
-    document.body.appendChild(video);
-    remoteVideoRef.current = video;
+    // Create or reuse video element for remote stream
+    if (!remoteVideoRef.current) {
+      console.log(`[WebcamStream ${planeId}] Creating remote video element.`);
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      video.style.display = 'none';
+      document.body.appendChild(video);
+      remoteVideoRef.current = video;
+    } else {
+      console.log(
+        `[WebcamStream ${planeId}] Reusing existing remote video element.`
+      );
+      // Ensure it's ready for a new stream
+      remoteVideoRef.current.srcObject = null;
+    }
 
-    // Create a diagnostic timer to report if we're not getting video after a reasonable time
-    const diagnosticTimer = setTimeout(async () => {
-      if (isLoading && active && isReceiving) {
-        console.warn('⏰ Still waiting for remote video after timeout');
-
-        try {
-          // Try to diagnose the issue
-          const connectivityTest = await testBroadcastConnectivity(
-            spaceId,
-            broadcastData.broadcastId
-          );
-
-          console.log('Broadcast connectivity test results:', connectivityTest);
-
-          // CRITICAL FIX: Focus only on database state, not memory state
-          const broadcastExists = connectivityTest.broadcastData?.inDatabase;
-
-          if (!broadcastExists) {
-            setErrorMessage(
-              `Connection issue: ${
-                connectivityTest.error || 'Broadcaster may have disconnected'
-              }`
-            );
-            setHasError(true);
-            setIsLoading(false);
-          } else {
-            // If broadcast exists in database, keep trying even if not in memory
-            console.log(
-              'Broadcast exists in database - continuing connection attempt regardless of memory state'
-            );
-            // Just continue waiting - connection might still establish
-          }
-        } catch (e) {
-          console.error('Error running diagnostic:', e);
-        }
-      }
-    }, 10000); // 10 seconds should be enough for a connection
-
-    // Enhanced broadcast fetching and connection logic
     const connectToBroadcast = async () => {
-      try {
-        // First verify the broadcast exists and get its details
-        const broadcasts = await findAvailableBroadcasts(spaceId);
-        console.log('Available broadcasts:', broadcasts);
+      if (!isMounted.current) {
+        console.log(
+          `[WebcamStream ${planeId}] Component unmounted before connectToBroadcast could run.`
+        );
+        return;
+      }
 
-        const matchingBroadcast = broadcasts.find(
-          (b) =>
-            b.id === broadcastData.broadcastId ||
-            b.planeId === broadcastData.planeId
+      try {
+        // Log before calling joinBroadcast
+        console.log(
+          `[WebcamStream ${planeId}] Attempting to join broadcast ${currentBroadcastId} as viewer ${userId}...`
+        );
+        connection = await joinBroadcast(
+          spaceId,
+          currentBroadcastId, // Use captured broadcastId
+          userId
         );
 
-        if (!matchingBroadcast) {
-          console.warn(
-            'Could not find matching broadcast in database search. Will try direct connection anyway.'
-          );
-        } else {
+        if (!isMounted.current) {
+          // Check again after await
           console.log(
-            'Found matching broadcast in database:',
-            matchingBroadcast
+            `[WebcamStream ${planeId}] Component unmounted after joinBroadcast returned, disconnecting.`
           );
-          setBroadcastDetails(matchingBroadcast);
+          connection?.disconnect();
+          return;
         }
 
-        // Proceed with joining broadcast - use the ID from verification if possible
-        const broadcastId = matchingBroadcast?.id || broadcastData.broadcastId;
-
+        // Log successful initiation
         console.log(
-          `Joining broadcast with ID: ${broadcastId}, User ID: ${userId}`
+          `[WebcamStream ${planeId}] Successfully initiated joinBroadcast call for ${currentBroadcastId}. Waiting for tracks...`
         );
+        viewerConnectionRef.current = connection; // Store for potential manual disconnect
 
-        // Join the broadcast with more detailed error handling
-        joinBroadcast(spaceId, broadcastId, userId, video)
-          .then((connection) => {
-            viewerConnectionRef.current = connection;
+        // --- CRITICAL: Refined ontrack handler ---
+        connection.peerConnection.ontrack = (event) => {
+          console.log(
+            `[WebcamStream ${planeId}] 🛤️ Received remote track! Kind: ${event.track.kind}, Stream ID: ${event.streams[0]?.id}`
+          );
 
-            // Additional logging to track video element state
-            console.log('Got connection, video element state:', {
-              readyState: video.readyState,
-              paused: video.paused,
-              networkState: video.networkState,
-            });
+          if (
+            event.streams &&
+            event.streams[0] &&
+            remoteVideoRef.current &&
+            event.track.kind === 'video' // Only process video tracks here
+          ) {
+            const newStream = event.streams[0];
 
-            // When video starts playing, create texture
-            video.onloadedmetadata = () => {
-              console.log('Video metadata loaded, dimensions:', {
-                width: video.videoWidth,
-                height: video.videoHeight,
-              });
-
-              // Create video texture from the remote stream
-              const texture = new THREE.VideoTexture(video);
-              texture.minFilter = THREE.LinearFilter;
-              texture.magFilter = THREE.LinearFilter;
-              texture.format = THREE.RGBAFormat;
-              texture.colorSpace = THREE.SRGBColorSpace;
-              texture.generateMipmaps = false;
-              texture.wrapS = THREE.ClampToEdgeWrapping;
-              texture.wrapT = THREE.ClampToEdgeWrapping;
-              textureRef.current = texture;
-
-              // Apply texture to plane material
-              if (meshRef.current) {
-                const material = meshRef.current.material;
-                const newMaterial = material.clone();
-                newMaterial.map = texture;
-                newMaterial.transparent = true;
-                newMaterial.opacity = 1;
-                newMaterial.depthWrite = true;
-                newMaterial.needsUpdate = true;
-                meshRef.current.material = newMaterial;
-              }
-
-              setIsLoading(false);
-              clearTimeout(diagnosticTimer);
-            };
-
-            // Add more event handlers for better diagnostics
-            video.onplaying = () => {
-              console.log('🎥 Remote video now playing');
-              setIsLoading(false);
-              clearTimeout(diagnosticTimer);
-            };
-
-            // Handle errors
-            video.onerror = (e) => {
-              console.error('Video element error:', e);
-              setIsLoading(false);
-              setHasError(true);
-              setErrorMessage(
-                'Video streaming error: ' +
-                  (e.target.error ? e.target.error.message : 'unknown error')
+            // If this is a new stream, assign it and set up handlers
+            if (remoteVideoRef.current.srcObject !== newStream) {
+              console.log(
+                `[WebcamStream ${planeId}] Assigning new stream ${newStream.id} to video element.`
               );
-              clearTimeout(diagnosticTimer);
-            };
-          })
-          .catch((error) => {
-            console.error('Error joining broadcast:', error);
-            setIsLoading(false);
-            setHasError(true);
-            setErrorMessage('Failed to connect to broadcast: ' + error.message);
-            clearTimeout(diagnosticTimer);
-          });
+              currentStream = newStream; // Track the stream we are processing
+              remoteVideoRef.current.srcObject = newStream;
+
+              // Reset handlers to avoid duplicates from previous streams
+              remoteVideoRef.current.onloadedmetadata = null;
+              remoteVideoRef.current.onplaying = null;
+              remoteVideoRef.current.onerror = null;
+
+              remoteVideoRef.current.onloadedmetadata = () => {
+                // --- Check if the stream is still the one we expect ---
+                if (remoteVideoRef.current?.srcObject !== currentStream) {
+                  console.warn(
+                    `[WebcamStream ${planeId}] onloadedmetadata fired for outdated stream. Ignoring.`
+                  );
+                  return;
+                }
+                console.log(
+                  `[WebcamStream ${planeId}] Remote video metadata loaded for stream ${currentStream.id}, creating texture.`
+                );
+
+                const texture = new THREE.VideoTexture(remoteVideoRef.current);
+                texture.minFilter = THREE.LinearFilter;
+                texture.magFilter = THREE.LinearFilter;
+                texture.format = THREE.RGBAFormat;
+                texture.colorSpace = THREE.SRGBColorSpace;
+                textureRef.current = texture;
+
+                if (meshRef.current) {
+                  console.log(
+                    `[WebcamStream ${planeId}] Applying remote stream texture to mesh.`
+                  );
+                  const material = meshRef.current.material;
+                  const newMaterial = material.clone();
+                  newMaterial.map = texture;
+                  newMaterial.transparent = true;
+                  newMaterial.opacity = 1;
+                  newMaterial.needsUpdate = true;
+                  meshRef.current.material = newMaterial;
+                }
+
+                // --- Attempt to play only after metadata is loaded ---
+                console.log(
+                  `[WebcamStream ${planeId}] Attempting to play video for stream ${currentStream.id}.`
+                );
+                remoteVideoRef.current
+                  .play()
+                  .then(() => {
+                    console.log(
+                      `[WebcamStream ${planeId}] Remote video started playing for stream ${currentStream.id}.`
+                    );
+                    setIsLoading(false);
+                  })
+                  .catch((e) => {
+                    // Log specific play error
+                    console.error(
+                      `[WebcamStream ${planeId}] Error playing remote video for stream ${currentStream.id}:`,
+                      e
+                    );
+                    // Avoid setting error state if it's the common AbortError from rapid changes
+                    if (e.name !== 'AbortError') {
+                      setErrorMessage('Remote video playback error');
+                      setHasError(true);
+                      setIsLoading(false);
+                    } else {
+                      console.warn(
+                        `[WebcamStream ${planeId}] Playback aborted, likely due to stream change.`
+                      );
+                    }
+                  });
+
+                // Remove handler after first successful load for this stream
+                remoteVideoRef.current.onloadedmetadata = null;
+              };
+
+              remoteVideoRef.current.onplaying = () => {
+                // --- Check if the stream is still the one we expect ---
+                if (remoteVideoRef.current?.srcObject !== currentStream) {
+                  console.warn(
+                    `[WebcamStream ${planeId}] onplaying fired for outdated stream. Ignoring.`
+                  );
+                  return;
+                }
+                console.log(
+                  `[WebcamStream ${planeId}] Remote video is playing for stream ${currentStream.id}.`
+                );
+                setIsLoading(false); // Ensure loading is false if play succeeds
+              };
+
+              remoteVideoRef.current.onerror = (e) => {
+                // --- Check if the stream is still the one we expect ---
+                if (remoteVideoRef.current?.srcObject !== currentStream) {
+                  console.warn(
+                    `[WebcamStream ${planeId}] onerror fired for outdated stream. Ignoring.`
+                  );
+                  return;
+                }
+                console.error(
+                  `[WebcamStream ${planeId}] Remote video element error for stream ${currentStream.id}:`,
+                  e
+                );
+                setErrorMessage('Remote video playback error');
+                setHasError(true);
+                setIsLoading(false);
+              };
+            } else {
+              console.log(
+                `[WebcamStream ${planeId}] Received ontrack for the same stream ${newStream.id}. Ignoring assignment.`
+              );
+            }
+          } else {
+            console.warn(
+              `[WebcamStream ${planeId}] ontrack event received, but no stream, video element, or not a video track.`
+            );
+          }
+        };
+        // --- End ontrack handler ---
       } catch (error) {
-        console.error('Error in broadcast connection flow:', error);
-        setIsLoading(false);
+        if (!isMounted.current) return; // Check again after await
+        // Log error during joinBroadcast call
+        console.error(
+          `[WebcamStream ${planeId}] Error calling joinBroadcast for ${broadcastData?.broadcastId}:`,
+          error
+        );
+        setErrorMessage(`Failed to connect: ${error.message}`);
         setHasError(true);
-        setErrorMessage('Connection failed: ' + error.message);
-        clearTimeout(diagnosticTimer);
+        setIsLoading(false);
       }
     };
 
-    // Start the connection process
     connectToBroadcast();
 
+    // --- Refined Cleanup function for this effect ---
     return () => {
-      clearTimeout(diagnosticTimer);
-      cleanup();
+      console.log(
+        `[WebcamStream ${planeId}] 🧹 Cleaning up receiving effect for broadcast ${currentBroadcastId}`
+      );
+      isMounted.current = false; // Mark as unmounted/cleaning up
+
+      // Disconnect the specific viewer connection created in this effect run
+      if (connection) {
+        console.log(
+          `[WebcamStream ${planeId}] Disconnecting specific viewer connection for ${currentBroadcastId}`
+        );
+        connection.disconnect();
+      }
+      // If the component is *still* in receiving mode but for a *different* broadcast,
+      // we only want to clean up the video/texture part, not stop everything.
+      // The main cleanup() call is handled by the unmount effect.
+      // However, if isReceiving becomes false, the guard clause handles cleanup.
+      // So, we mainly need to clean the video element state here if the broadcastData changes.
+
+      // Clean up video handlers and texture associated with the *previous* stream
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.onloadedmetadata = null;
+        remoteVideoRef.current.onplaying = null;
+        remoteVideoRef.current.onerror = null;
+        // Don't null srcObject here if we might immediately receive a new stream
+      }
+      if (textureRef.current) {
+        textureRef.current.dispose();
+        textureRef.current = null;
+      }
+      if (meshRef.current?.material?.map) {
+        meshRef.current.material.map = null; // Remove reference, texture disposed above
+        meshRef.current.material.needsUpdate = true;
+      }
+
+      // Reset loading/error state for the next potential connection
+      // setIsLoading(true); // Resetting might cause flicker if next connection is fast
+      // setHasError(false);
     };
-  }, [
-    active,
-    isReceiving,
-    broadcastData,
-    spaceId,
-    userId,
-    meshRef,
-    connectionAttempts,
-  ]);
+    // --- End Refined Cleanup ---
+  }, [active, isReceiving, broadcastData, spaceId, userId, meshRef, planeId]);
 
   // Update texture every frame
   useEffect(() => {
@@ -489,18 +606,16 @@ const WebcamStream = ({
   // Clean up exclusively on component unmount
   useEffect(() => {
     return () => {
-      console.log('🧹 WebcamStream UNMOUNTING, cleaning up resources');
+      console.log('🧹 WebcamStream UNMOUNTING, performing FULL cleanup');
 
       // Call onBroadcastStopped only if we were actually broadcasting
       if (isBroadcasting && broadcastControlRef.current && onBroadcastStopped) {
         console.log('Notifying parent of broadcast stop on unmount');
-        onBroadcastStopped();
+        onBroadcastStopped(); // Notify parent first
       }
 
-      // CRITICAL FIX: Add a small delay before cleanup to ensure broadcast has time to setup
-      setTimeout(() => {
-        cleanup();
-      }, 100);
+      // Perform a full cleanup of all resources
+      cleanup({ fullCleanup: true }); // Use the full cleanup option
     };
   }, []); // Empty dependency array - only runs on unmount
 

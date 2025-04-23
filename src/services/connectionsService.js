@@ -189,173 +189,9 @@ export const saveConnection = async (userId, spaceId, connection) => {
 };
 
 // Simplify the subscription logic by removing reconnection attempts
-const createSubscription = (userId, spaceId, callback) => {
-  // Create a unique key for this subscription
-  const subscriptionKey = `${userId}-${spaceId}`;
+// Remove the unused createSubscription function
 
-  // Clear caches when creating new subscription
-  if (!activeSubscriptions.has(subscriptionKey)) {
-    processedChanges.clear();
-    connectionCache.clear();
-  }
-
-  // Clear any previously processed changes when creating a new subscription
-  processedChanges.clear();
-
-  let unsubscribe = null;
-  let isSubscribed = true;
-
-  // Store the last received data to handle reconnection
-  const lastReceivedData = new Map();
-
-  const subscribe = async () => {
-    if (!userId || !spaceId) {
-      return () => {};
-    }
-
-    try {
-      // Check if this is a shared space
-      const sharedStatus = await isSharedSpace(userId, spaceId);
-
-      // If we unsubscribed while waiting for the async operation, return early
-      if (!isSubscribed) {
-        return () => {};
-      }
-
-      // Use the owner's ID to subscribe to the correct collection
-      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-
-      // Store owner ID for future reference
-      window.currentSpaceOwner = ownerUserId;
-
-      const connectionsRef = collection(
-        db,
-        'users',
-        ownerUserId,
-        'spaces',
-        spaceId,
-        'connections'
-      );
-      const q = query(connectionsRef);
-
-      try {
-        unsubscribe = onSnapshot(
-          q,
-          { includeMetadataChanges: false }, // Only interested in actual data changes
-          (snapshot) => {
-            // Count unique changes to actually process to reduce noise
-            const newChangesToProcess = snapshot
-              .docChanges()
-              .filter((change) => {
-                // Create a unique key that includes document data hash
-                const data = change.doc.data();
-                const dataHash = JSON.stringify(data);
-                const changeKey = `${change.type}-${change.doc.id}-${dataHash}`;
-
-                if (processedChanges.has(changeKey)) {
-                  return false; // We've seen this exact change before
-                }
-
-                // Only keep the most recent 300 processed changes to prevent memory leaks
-                if (processedChanges.size > 300) {
-                  const oldestChange = Array.from(processedChanges)[0];
-                  processedChanges.delete(oldestChange);
-                }
-
-                processedChanges.add(changeKey);
-                return true;
-              });
-
-            // Only process changes we haven't seen before
-            newChangesToProcess.forEach((change) => {
-              // Store the latest data
-              if (change.type !== 'removed') {
-                lastReceivedData.set(change.doc.id, change.doc.data());
-              } else {
-                lastReceivedData.delete(change.doc.id);
-
-                // If we're removing a connection, unregister it from any objects
-                const connectionData = change.doc.data();
-                if (connectionData.start?.objectId) {
-                  unregisterObjectConnection(
-                    connectionData.start.objectId,
-                    change.doc.id
-                  );
-                }
-                if (connectionData.end?.objectId) {
-                  unregisterObjectConnection(
-                    connectionData.end.objectId,
-                    change.doc.id
-                  );
-                }
-              }
-
-              // Send the raw connection data without processing
-              try {
-                callback({
-                  type: change.type,
-                  id: change.doc.id,
-                  connection: change.doc.data(),
-                });
-              } catch (callbackErr) {
-                console.error('Error in connection callback:', callbackErr);
-              }
-            });
-          },
-          (error) => {
-            console.error('Firestore connections subscription error:', error);
-            // No reconnection logic here
-          }
-        );
-
-        const cleanupFn = () => {
-          isSubscribed = false;
-          if (unsubscribe) {
-            try {
-              unsubscribe();
-            } catch (err) {
-              console.warn('Error during unsubscribe:', err);
-            }
-          }
-          activeSubscriptions.delete(subscriptionKey);
-        };
-
-        activeSubscriptions.set(subscriptionKey, cleanupFn);
-        return cleanupFn;
-      } catch (error) {
-        console.error('Subscription setup error:', error);
-        activeSubscriptions.delete(subscriptionKey);
-        return () => {};
-      }
-    } catch (error) {
-      console.error('Error checking shared space status:', error);
-      activeSubscriptions.delete(subscriptionKey);
-      return () => {};
-    }
-  };
-
-  // Return a function that will properly clean up the subscription
-  const unsubscribeFn = () => {
-    isSubscribed = false;
-    if (unsubscribe) {
-      try {
-        unsubscribe();
-      } catch (err) {
-        console.warn('Error during unsubscribe:', err);
-      }
-    }
-    activeSubscriptions.delete(subscriptionKey);
-  };
-
-  // Start the subscription process
-  subscribe().catch((error) => {
-    console.error('Error in subscription process:', error);
-  });
-
-  return unsubscribeFn;
-};
-
-// Update the export to use the simplified subscription logic without retries
+// Update the export to use subscribe function directly
 export const subscribeToConnections = (userId, spaceId, callback) => {
   if (!spaceId) return () => {};
 
@@ -372,44 +208,12 @@ export const subscribeToConnections = (userId, spaceId, callback) => {
   // Use the URL owner ID for anonymous access, or user ID for authenticated users
   const effectiveOwnerId = isAnonymous ? ownerIdFromUrl : userId;
 
-  const startSubscription = async () => {
-    try {
-      // For authenticated users, check if it's a shared space first
-      let ownerUserId = effectiveOwnerId;
-      if (!isAnonymous) {
-        try {
-          // Check if it's a shared space
-          const sharedStatus = await isSharedSpace(userId, spaceId);
-          ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-        } catch (error) {
-          // Fall back to using the URL owner or user ID on error
-          console.error('Error checking shared status for connections:', error);
-          ownerUserId = window.currentSpaceOwner || userId;
-        }
-      }
-
-      // Save owner ID for future reference
-      if (ownerUserId) {
-        window.currentSpaceOwner = ownerUserId;
-      }
-
-      console.log(
-        `[Connections] Setting up subscription for space ${spaceId} owned by ${ownerUserId}${
-          isAnonymous ? ' (anonymous access)' : ''
-        }`
-      );
-
-      // Rest of subscription code
-      // ...existing subscription code...
-    } catch (error) {
-      console.error('Error starting connection subscription:', error);
-    }
-  };
-
+  // Remove the unused startSubscription function
+  // Just call subscribe directly
   return subscribe(effectiveOwnerId, spaceId, callback);
 };
 
-// Update the underlying subscribe function to handle permission errors
+// Keep the subscribe function as is, it's being used
 const subscribe = (userId, spaceId, callback) => {
   // Create a unique key for this subscription
   const subscriptionKey = `${userId}-${spaceId}`;
@@ -533,9 +337,6 @@ const subscribe = (userId, spaceId, callback) => {
               );
               return;
             }
-
-            // Rest of error handling...
-            // ...existing error handling code...
           }
         );
 

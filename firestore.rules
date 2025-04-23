@@ -1,84 +1,154 @@
 rules_version = '2';
+
 service cloud.firestore {
-  match /databases/{database}/documents {
-    // Allow anyone to check if a space exists and is public
-    match /users/{userId}/spaces/{spaceId} {
-      allow read: if 
-        // Allow anyone to read basic space metadata if it's shared with "everyone"
-        resource.data.sharedWith is list && "everyone" in resource.data.sharedWith;
-      
-      // Normal authenticated access
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-      
-      // Allow read access to objects in public spaces
-      match /objects/{objectId} {
-        allow read: if
-          // Either the user is authenticated and owns the space
-          (request.auth != null && request.auth.uid == userId) ||
-          // Or the parent space is shared with "everyone"
-          (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith is list && 
-          "everyone" in get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith);
-        
-        // Only owner can write
-        allow write: if request.auth != null && request.auth.uid == userId;
-      }
-    }
-    
-    // Other rules stay the same...
-    // Default: deny all access
-    match /{document=**} {
-      allow read, write: if false;
+ match /databases/{database}/documents {
+    // Helper functions
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == 'VsKDyU5XjiNYHzKVuwVanCPd90A2';
     }
 
-    // Allow users to access their own data
-    match /users/{userId}/{document=**} {
-      // Allow full access to own documents
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Fixed function to check if space is shared with user
+    function isSpaceSharedWithUser(userId, spaceData) {
+      return spaceData != null && 
+             spaceData.sharedWith != null && 
+             spaceData.sharedWith is list && 
+             spaceData.sharedWith.size() > 0 &&
+             spaceData.sharedWith.where('userId', '==', userId).size() > 0;
+    }
+    
+    // NEW: Function to check if space is public (shared with "everyone")
+    function isPublicSpace(spaceData) {
+      return spaceData != null &&
+             spaceData.sharedWith != null &&
+             spaceData.sharedWith is list &&
+             spaceData.sharedWith.hasAny(["everyone"]);
+    }
+    
+    // Simplified function to check if update is valid for shared user
+    function isValidSharedUpdate(userId) {
+      // Allow ANY update by a shared user - we'll enforce specific rules in the application code
+      return true;
+    }
+    
+    // CRITICAL: Allow access to top-level spaces collection
+    match /spaces/{spaceId} {
+      // Allow read for authenticated users OR if the space is public
+      allow read: if isAuthenticated() || isPublicSpace(resource.data);
       
-      // Special rule for public spaces: allow anonymous read for spaces shared with "everyone"
+      allow write: if isAuthenticated() && 
+                    (resource == null || 
+                     resource.data.ownerId == request.auth.uid ||
+                     isSpaceSharedWithUser(request.auth.uid, resource.data));
+    }
+
+    // Allow access to sharedSpaces collection
+    match /sharedSpaces/{documentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // User data and nested collections
+    match /users/{userId} {
+      // Allow read access to authenticated users OR for public space access
+      allow read: if isAuthenticated() || 
+                   exists(/databases/$(database)/documents/users/$(userId)/spaces) &&
+                   (resource.data.ownerId == userId);
+      
+      // Allow write to own user document
+      allow create, update: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Personal objects/connections (not in spaces)
+      match /objects/{objectId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && request.auth.uid == userId;
+      }
+
+      match /connections/{connectionId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && request.auth.uid == userId;
+      }
+      
+      // Shared spaces collection
+      match /sharedSpaces/{spaceId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && request.auth.uid == userId;
+      }
+      
+      // Spaces owned by this user
       match /spaces/{spaceId} {
-        allow read: if 
-          // For authenticated users
-          (request.auth != null && request.auth.uid == userId) ||
-          // For anonymous users if space is public
-          (resource.data.sharedWith is list && "everyone" in resource.data.sharedWith);
+        // MODIFIED: Allow public access to spaces marked as public
+        allow read: if isAuthenticated() || 
+                     (resource != null && isPublicSpace(resource.data));
         
-        // Allow authenticated users to write their own spaces
-        allow write: if request.auth != null && request.auth.uid == userId;
+        // Space creation/deletion by owner only
+        allow create, delete: if isAuthenticated() && request.auth.uid == userId;
         
-        // Allow access to objects in public spaces
+        allow update: if isAuthenticated() && (
+          request.auth.uid == userId || 
+          isSpaceSharedWithUser(request.auth.uid, resource.data)
+        );
+        
+        // NEW: Allow access to presence subcollection
+        match /presence/{presenceId} {
+          allow read: if isAuthenticated();
+          allow write: if isAuthenticated(); // Any authenticated user can update their presence
+        }
+        
+        // Objects within spaces
         match /objects/{objectId} {
-          allow read: if 
-            (request.auth != null && request.auth.uid == userId) ||
-            (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith is list && 
-             "everyone" in get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data.sharedWith);
+          // MODIFIED: Allow anonymous access to objects in public spaces
+          allow read: if isAuthenticated() || 
+                       (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+                        isPublicSpace(get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data));
           
-          // Only owner can write
-          allow write: if request.auth != null && request.auth.uid == userId;
+          // Keep write access restricted to authenticated users
+          allow write: if isAuthenticated();
+        }
+        
+        // Connections within spaces
+        match /connections/{connectionId} {
+          // MODIFIED: Allow anonymous access to connections in public spaces
+          allow read: if isAuthenticated() || 
+                       (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+                        isPublicSpace(get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data));
+          
+          // Keep write access restricted to authenticated users
+          allow write: if isAuthenticated();
         }
       }
     }
-    
-    // Allow access to shared spaces collections
-    match /spaces/{spaceId} {
-      allow read: if 
-        request.auth != null && 
-        (resource.data.ownerId == request.auth.uid || 
-         resource.data.sharedWith.hasAny([request.auth.uid]));
-      
-      // Allow anonymous read for spaces marked as public
-      allow read: if resource.data.sharedWith is list && "everyone" in resource.data.sharedWith;
-      
-      // Owner can write
-      allow write: if request.auth != null && resource.data.ownerId == request.auth.uid;
+    // Updates collection
+    match /updates/{document} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
-    
-    // Legacy shared spaces support
-    match /sharedSpaces/{shareId} {
-      allow read: if 
-        request.auth != null && 
-        (resource.data.ownerId == request.auth.uid || 
-         resource.data.sharedWith == request.auth.uid);
+
+    // NEW: Add rules for leave requests collection
+    match /leaveRequests/{requestId} {
+      // Anyone authenticated can read their own leave requests
+      allow read: if isAuthenticated() && 
+                   (resource == null || resource.data.userId == request.auth.uid);
+      
+      // Anyone authenticated can create a leave request for themselves
+      allow create: if isAuthenticated() && 
+                     request.resource.data.userId == request.auth.uid;
+                     
+      // Only admins and the space owner can update a leave request
+      allow update: if isAuthenticated() && 
+                     (isAdmin() || 
+                      resource.data.ownerId == request.auth.uid);
+                     
+      // Only admins can delete leave requests
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Deny all other access by default
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -4,7 +4,7 @@ import {
   Html,
 } from '@react-three/drei';
 import { Vector3 } from 'three';
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceUI from './FaceUI';
 import TextSprite from './TextSprite';
@@ -15,12 +15,11 @@ import FaceIndicator from './FaceIndicator';
 import WebcamStream from './WebcamStream';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
+import { debounce } from 'lodash';
 
-// Add imports for WebRTC functionality
-import {
-  findAvailableBroadcasts,
-  isPlaneBeingBroadcast,
-} from '../services/webrtcService';
+const UPDATE_DEBOUNCE_TIME = 500;
 
 const Plane = ({
   position = [0, 0, 0],
@@ -57,7 +56,6 @@ const Plane = ({
   onTransformStart,
   onTransformEnd,
   webcamActive: initialWebcamActive = false,
-  // Add user and space ID props for WebRTC
   user,
   currentSpaceId,
 }) => {
@@ -67,10 +65,8 @@ const Plane = ({
   const { camera } = useThree();
   const size = 5;
 
-  const lastWebcamStateRef = useRef(initialWebcamActive);
   const [webcamActive, setWebcamActive] = useState(initialWebcamActive);
   const [webcamInitialized, setWebcamInitialized] = useState(false);
-
   const [showUI, setShowUI] = useState(false);
   const [showTextInput, setShowTextInput] = useState(false);
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
@@ -95,82 +91,69 @@ const Plane = ({
   const [currentFaceTextStyle, setCurrentFaceTextStyle] =
     useState(initialFaceTextStyle);
 
-  // Last update ref to avoid redundant database updates
-  const lastUpdateRef = useRef(null);
-  // Last world position ref for connection calculations
-  const lastWorldPosRef = useRef(null);
-
-  // Add WebRTC state
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isViewingBroadcast, setIsViewingBroadcast] = useState(false);
   const [broadcastInfo, setBroadcastInfo] = useState(null);
   const [viewerCount, setViewerCount] = useState(0);
-  const broadcastCheckIntervalRef = useRef(null);
 
-  // Sync props to state
-  useEffect(() => {
-    if (initialScale !== undefined) setCurrentScale(initialScale);
-  }, [initialScale]);
-  useEffect(() => {
-    if (initialColor !== undefined) setCurrentColor(initialColor);
-  }, [initialColor]);
-  useEffect(() => {
-    if (initialHeaderText !== undefined)
-      setCurrentHeaderText(initialHeaderText);
-  }, [initialHeaderText]);
-  useEffect(() => {
-    if (initialBorderStyle !== undefined)
-      setCurrentBorderStyle(initialBorderStyle);
-  }, [initialBorderStyle]);
-  useEffect(() => {
-    if (initialBorderColor !== undefined)
-      setCurrentBorderColor(initialBorderColor);
-  }, [initialBorderColor]);
-  useEffect(() => {
-    if (initialLineThickness !== undefined)
-      setCurrentLineThickness(initialLineThickness);
-  }, [initialLineThickness]);
-  useEffect(() => {
-    if (initialHeaderStyle !== undefined)
-      setCurrentHeaderStyle(initialHeaderStyle);
-  }, [initialHeaderStyle]);
-  useEffect(() => {
-    if (initialFaceText !== undefined) setCurrentFaceText(initialFaceText);
-  }, [initialFaceText]);
-  useEffect(() => {
-    if (initialFaceTextStyle !== undefined)
-      setCurrentFaceTextStyle(initialFaceTextStyle);
-  }, [initialFaceTextStyle]);
-  useEffect(() => {
-    if (initialWebcamActive !== undefined) setWebcamActive(initialWebcamActive);
-  }, [initialWebcamActive]);
+  const lastWebcamStateRef = useRef(initialWebcamActive);
+  const lastWorldPosRef = useRef(null);
+  const lastBroadcastSeenRef = useRef(Date.now());
+  const scaleTimeoutRef = useRef(null);
+  const pendingScaleRef = useRef(null);
+  const isTransformingRef = useRef(false);
+  const isMountedRef = useRef(true);
 
-  const closeAllUIs = useCallback(() => {
-    setShowTextStyleUI(false);
-    setShowUI(false);
-    setShowTextInput(false);
-    setShowTransform(false);
-    setIsResizing(false);
-    setShowHeader(false);
-    setShowHeaderStyleUI(false);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
-  const points = [
-    new Vector3(-size, -size, 0),
-    new Vector3(size, -size, 0),
-    new Vector3(size, size, 0),
-    new Vector3(-size, size, 0),
-    new Vector3(-size, -size, 0),
-  ];
+  useEffect(() => {
+    setCurrentScale(initialScale);
+    setCurrentColor(initialColor);
+    setCurrentHeaderText(initialHeaderText);
+    setCurrentBorderStyle(initialBorderStyle);
+    setCurrentBorderColor(initialBorderColor);
+    setCurrentLineThickness(initialLineThickness);
+    setCurrentHeaderStyle(initialHeaderStyle);
+    setCurrentFaceText(initialFaceText);
+    setCurrentFaceTextStyle(initialFaceTextStyle);
 
-  // Keep plane facing camera
+    if (initialWebcamActive !== lastWebcamStateRef.current) {
+      setWebcamActive(initialWebcamActive);
+      lastWebcamStateRef.current = initialWebcamActive;
+      if (initialWebcamActive && !webcamInitialized) {
+        setWebcamInitialized(true);
+      }
+    } else if (initialWebcamActive && !webcamInitialized) {
+      setWebcamInitialized(true);
+      setWebcamActive(true);
+      lastWebcamStateRef.current = true;
+    }
+  }, [
+    id,
+    initialScale,
+    initialColor,
+    initialHeaderText,
+    initialBorderStyle,
+    initialBorderColor,
+    initialLineThickness,
+    initialHeaderStyle,
+    initialFaceText,
+    initialFaceTextStyle,
+    initialWebcamActive,
+    webcamInitialized,
+  ]);
+
   useFrame(() => {
     if (groupRef.current) {
       groupRef.current.lookAt(camera.position);
     }
   });
 
-  // Handle selection/deselection
   useEffect(() => {
     if (!selected) {
       closeAllUIs();
@@ -179,25 +162,8 @@ const Plane = ({
     } else if (!indicatorSelected) {
       setShowUI(true);
     }
-  }, [selected, closeAllUIs, onIndicatorDeselected, indicatorSelected]);
+  }, [selected, indicatorSelected, onIndicatorDeselected]);
 
-  // Handle global clicks for UI elements
-  useEffect(() => {
-    const handleGlobalClick = (e) => {
-      const isTextStyleUIClick = e.target.closest('.text-style-ui');
-      const isTextClick = e.target.closest('.text-sprite');
-      if (!isTextStyleUIClick && !isTextClick) {
-        setShowTextStyleUI(false);
-      }
-    };
-
-    if (showTextStyleUI) {
-      window.addEventListener('click', handleGlobalClick);
-    }
-    return () => window.removeEventListener('click', handleGlobalClick);
-  }, [showTextStyleUI]);
-
-  // Update world position when transform changes
   useEffect(() => {
     if (groupRef.current && contentRef.current) {
       const worldPos = new THREE.Vector3();
@@ -210,17 +176,23 @@ const Plane = ({
       worldPos.add(offset);
 
       lastWorldPosRef.current = [worldPos.x, worldPos.y, worldPos.z];
-      groupRef.current._worldMatrix = groupRef.current.matrixWorld.clone();
     }
   }, [position, currentScale]);
 
-  // Update database with state changes
-  useEffect(() => {
-    if (!onUpdate || !id) return;
+  const debouncedUpdate = useMemo(
+    () =>
+      debounce((updates) => {
+        if (onUpdate && id && isMountedRef.current) {
+          onUpdate(id, { type: 'plane', ...updates });
+        }
+      }, UPDATE_DEBOUNCE_TIME),
+    [onUpdate, id]
+  );
 
-    const currentState = {
-      type: 'plane',
-      position,
+  useEffect(() => {
+    if (!isMountedRef.current) return;
+
+    const updates = {
       scale: currentScale,
       color: currentColor,
       headerText: currentHeaderText,
@@ -231,20 +203,14 @@ const Plane = ({
       faceText: currentFaceText,
       faceTextStyle: currentFaceTextStyle,
       webcamActive,
+      broadcasting: webcamActive && isBroadcasting,
     };
+    debouncedUpdate(updates);
 
-    // Only update if state has changed
-    if (
-      !lastUpdateRef.current ||
-      !isEqual(lastUpdateRef.current, currentState)
-    ) {
-      lastUpdateRef.current = currentState;
-      onUpdate(id, currentState);
-    }
+    return () => {
+      debouncedUpdate.cancel();
+    };
   }, [
-    id,
-    onUpdate,
-    position,
     currentScale,
     currentColor,
     currentHeaderText,
@@ -255,223 +221,73 @@ const Plane = ({
     currentFaceText,
     currentFaceTextStyle,
     webcamActive,
+    isBroadcasting,
+    debouncedUpdate,
   ]);
 
-  // Add a timeout ref to properly manage debounce
-  const scaleTimeoutRef = useRef(null);
+  const handleScale = useCallback(
+    (e) => {
+      if (!e.target || !e.target.object) return;
+      pendingScaleRef.current = [
+        e.target.object.scale.x,
+        e.target.object.scale.y,
+        currentScale[2],
+      ];
+      isTransformingRef.current = true;
+      if (scaleTimeoutRef.current) clearTimeout(scaleTimeoutRef.current);
+      scaleTimeoutRef.current = setTimeout(() => {
+        if (pendingScaleRef.current && isMountedRef.current) {
+          setCurrentScale(pendingScaleRef.current);
+          pendingScaleRef.current = null;
+        }
+      }, 50);
+    },
+    [currentScale]
+  );
 
-  // Replace the scale handling mechanism with a ref-based approach
-  const pendingScaleRef = useRef(null);
-  const isTransformingRef = useRef(false);
-
-  // Completely rewrite the handleScale function to avoid state update cycles
-  const handleScale = (e) => {
-    if (!e.target || !e.target.object) return;
-
-    // Store scale values in the ref instead of setting state immediately
-    pendingScaleRef.current = [
-      e.target.object.scale.x,
-      e.target.object.scale.y,
-      currentScale[2], // Keep Z scale unchanged
-    ];
-
-    // Flag that we're in a transform operation
-    isTransformingRef.current = true;
-
-    // Set a timeout to apply the scale change after the current render cycle
-    if (scaleTimeoutRef.current) clearTimeout(scaleTimeoutRef.current);
-
-    scaleTimeoutRef.current = setTimeout(() => {
-      if (pendingScaleRef.current) {
-        // Apply the pending scale and reset the flag
-        setCurrentScale(pendingScaleRef.current);
-        pendingScaleRef.current = null;
-      }
-    }, 50); // Very short timeout to break the render cycle
-  };
-
-  // Add effect to handle the transform end event separately from scale changes
   useEffect(() => {
     if (isTransformingRef.current && !pendingScaleRef.current) {
       isTransformingRef.current = false;
-
-      // Now that we've applied the scale and we're not transforming, update the database
-      if (onUpdate) {
-        onUpdate(id, {
-          type: 'plane',
-          position,
-          scale: currentScale,
-          color: currentColor,
-          headerText: currentHeaderText,
-          headerStyle: currentHeaderStyle,
-          borderStyle: currentBorderStyle,
-          borderColor: currentBorderColor,
-          lineThickness: currentLineThickness,
-          faceText: currentFaceText,
-          faceTextStyle: currentFaceTextStyle,
-        });
-      }
-
-      // Call transform end callback
       if (onTransformEnd) {
         onTransformEnd(id);
       }
     }
-  }, [currentScale, isTransformingRef.current]);
-
-  // Add an extra cleanup step to prevent any lingering updates
-  useEffect(() => {
     return () => {
       if (scaleTimeoutRef.current) clearTimeout(scaleTimeoutRef.current);
-      isTransformingRef.current = false;
-      pendingScaleRef.current = null;
     };
-  }, []);
+  }, [currentScale, onTransformEnd, id]);
 
-  // Handle dragging for position updates - improve this to save to database
-  const handleDrag = (e) => {
-    if (groupRef.current) {
+  const handleDrag = useCallback(
+    (e) => {
+      if (!groupRef.current || !onUpdate) return;
+
       const newPos = e.target.object.position;
       groupRef.current.position.copy(newPos);
 
-      // Calculate the new world position with offset
       const worldPos = new THREE.Vector3();
       const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
-
       groupRef.current.updateWorldMatrix(true, false);
       groupRef.current.getWorldPosition(worldPos);
-
       offset.applyQuaternion(groupRef.current.quaternion);
       worldPos.add(offset);
-
       const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
       lastWorldPosRef.current = worldPosArray;
-
       const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
 
-      // Update any connected connection points in real-time
-      if (connections) {
-        connections.forEach((conn) => {
-          // Update start position if this plane is the start object
-          if (
-            conn.start?.objectId === String(id) ||
-            conn.start?.plane === groupRef.current
-          ) {
-            conn.start.position = [...worldPosArray];
-            conn.start.worldPosition = [...worldPosArray];
-            conn.start.facePosition = [...worldPosArray];
-            conn.start.faceCenter = [...worldPosArray];
-          }
+      groupRef.current.userData = {
+        ...groupRef.current.userData,
+        isPlane: true,
+        objectId: String(id),
+        id: String(id),
+        indicatorOffset: [0, -5 * currentScale[1], 0],
+        indicatorWorldPosition: worldPosArray,
+        worldPosition: worldPosArray,
+        facePosition: worldPosArray,
+        isMoving: true,
+        _lastUpdateTime: Date.now(),
+        _isDragging: true,
+      };
 
-          // Update end position if this plane is the end object
-          if (
-            conn.end?.objectId === String(id) ||
-            conn.end?.plane === groupRef.current
-          ) {
-            conn.end.position = [...worldPosArray];
-            conn.end.worldPosition = [...worldPosArray];
-            conn.end.facePosition = [...worldPosArray];
-            conn.end.faceCenter = [...worldPosArray];
-          }
-        });
-      }
-
-      // Add these critical properties to userData to help ConnectionUpdater
-      if (groupRef.current) {
-        groupRef.current.userData = {
-          ...groupRef.current.userData,
-          isPlane: true,
-          objectId: String(id),
-          id: String(id),
-          indicatorOffset: [0, -5 * currentScale[1], 0],
-          indicatorWorldPosition: worldPosArray,
-          worldPosition: worldPosArray,
-          facePosition: worldPosArray,
-          isMoving: true,
-          _lastUpdateTime: Date.now(),
-          _isDragging: true,
-        };
-      }
-
-      // Always update position in database during drag with all connection data
-      if (onUpdate) {
-        onUpdate(id, {
-          type: 'plane',
-          position: [newPos.x, newPos.y, newPos.z],
-          worldPosition: worldPosArray,
-          planeData: {
-            worldMatrix,
-            position: [newPos.x, newPos.y, newPos.z],
-            scale: currentScale,
-            offset: [0, -5 * currentScale[1], 0],
-          },
-          _isDragging: true,
-          _indicatorWorldPosition: worldPosArray,
-        });
-      }
-    }
-  };
-
-  // Add transform start/end handlers
-  const handleTransformStart = () => {
-    if (window.orbitControls) {
-      window.orbitControls.enabled = false;
-    }
-    if (onTransformStart) {
-      onTransformStart(id);
-    }
-  };
-
-  const handleTransformEnd = () => {
-    if (window.orbitControls) {
-      window.orbitControls.enabled = true;
-    }
-
-    // Final position update at transform end - crucial for database saving
-    if (groupRef.current && onUpdate) {
-      const newPos = groupRef.current.position;
-
-      // Calculate world data for connections
-      const worldPos = new THREE.Vector3();
-      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
-
-      groupRef.current.updateWorldMatrix(true, false);
-      groupRef.current.getWorldPosition(worldPos);
-
-      offset.applyQuaternion(groupRef.current.quaternion);
-      worldPos.add(offset);
-
-      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
-      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
-
-      // Update any connected connection points one final time
-      if (connections) {
-        connections.forEach((conn) => {
-          // Update start position if this plane is the start object
-          if (
-            conn.start?.objectId === String(id) ||
-            conn.start?.plane === groupRef.current
-          ) {
-            conn.start.position = [...worldPosArray];
-            conn.start.worldPosition = [...worldPosArray];
-            conn.start.facePosition = [...worldPosArray];
-            conn.start.faceCenter = [...worldPosArray];
-          }
-
-          // Update end position if this plane is the end object
-          if (
-            conn.end?.objectId === String(id) ||
-            conn.end?.plane === groupRef.current
-          ) {
-            conn.end.position = [...worldPosArray];
-            conn.end.worldPosition = [...worldPosArray];
-            conn.end.facePosition = [...worldPosArray];
-            conn.end.faceCenter = [...worldPosArray];
-          }
-        });
-      }
-
-      // Save the final position to the database with all necessary data
       onUpdate(id, {
         type: 'plane',
         position: [newPos.x, newPos.y, newPos.z],
@@ -482,6 +298,44 @@ const Plane = ({
           scale: currentScale,
           offset: [0, -5 * currentScale[1], 0],
         },
+        _isDragging: true,
+        _indicatorWorldPosition: worldPosArray,
+      });
+    },
+    [onUpdate, id, currentScale]
+  );
+
+  const handleTransformStart = useCallback(() => {
+    if (window.orbitControls) window.orbitControls.enabled = false;
+    if (onTransformStart) onTransformStart(id);
+  }, [onTransformStart, id]);
+
+  const handleTransformEnd = useCallback(() => {
+    if (window.orbitControls) window.orbitControls.enabled = true;
+
+    if (groupRef.current && onUpdate) {
+      const newPos = groupRef.current.position;
+      const worldPos = new THREE.Vector3();
+      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+      groupRef.current.updateWorldMatrix(true, false);
+      groupRef.current.getWorldPosition(worldPos);
+      offset.applyQuaternion(groupRef.current.quaternion);
+      worldPos.add(offset);
+      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
+      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
+
+      debouncedUpdate.flush();
+      onUpdate(id, {
+        type: 'plane',
+        position: [newPos.x, newPos.y, newPos.z],
+        worldPosition: worldPosArray,
+        planeData: {
+          worldMatrix,
+          position: [newPos.x, newPos.y, newPos.z],
+          scale: currentScale,
+          offset: [0, -5 * currentScale[1], 0],
+        },
+        scale: currentScale,
         color: currentColor,
         headerText: currentHeaderText,
         headerStyle: currentHeaderStyle,
@@ -491,759 +345,480 @@ const Plane = ({
         faceText: currentFaceText,
         faceTextStyle: currentFaceTextStyle,
         webcamActive,
+        broadcasting: webcamActive && isBroadcasting,
         _finalPosition: true,
         _indicatorWorldPosition: worldPosArray,
       });
     }
 
-    if (onTransformEnd) {
-      onTransformEnd(id);
-    }
-  };
+    if (onTransformEnd) onTransformEnd(id);
+  }, [
+    onUpdate,
+    id,
+    currentScale,
+    currentColor,
+    currentHeaderText,
+    currentHeaderStyle,
+    currentBorderStyle,
+    currentBorderColor,
+    currentLineThickness,
+    currentFaceText,
+    currentFaceTextStyle,
+    webcamActive,
+    isBroadcasting,
+    onTransformEnd,
+    debouncedUpdate,
+  ]);
 
-  // UI event handlers
-  const handleClick = (e) => {
-    e.stopPropagation();
-    onClick();
-    if (!selected) {
-      closeAllUIs();
-      setShowUI(true);
-    } else {
-      setShowUI(true);
-    }
-  };
+  const closeAllUIs = useCallback(() => {
+    setShowTextStyleUI(false);
+    setShowUI(false);
+    setShowTextInput(false);
+    setShowTransform(false);
+    setIsResizing(false);
+    setShowHeader(false);
+    setShowHeaderStyleUI(false);
+  }, []);
 
-  const handleTextClick = () => {
+  const handleClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      onClick();
+      if (!selected) {
+        closeAllUIs();
+      }
+      setShowUI(true);
+    },
+    [onClick, selected, closeAllUIs]
+  );
+
+  const handleTextClick = useCallback(() => {
     closeAllUIs();
     setShowTextInput(true);
-  };
+  }, [closeAllUIs]);
 
-  const handleTextSubmit = (newText) => {
-    setCurrentFaceText(newText);
-    closeAllUIs();
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'plane',
-        position,
-        scale: currentScale,
-        color: currentColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: newText,
-        faceTextStyle: currentFaceTextStyle,
-      });
-    }
-  };
+  const handleTextSubmit = useCallback(
+    (newText) => {
+      setCurrentFaceText(newText);
+      closeAllUIs();
+    },
+    [closeAllUIs]
+  );
 
-  const handleTextStyleChange = (newStyle) => {
-    const updatedStyle = { ...currentFaceTextStyle, ...newStyle };
-    setCurrentFaceTextStyle(updatedStyle);
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'plane',
-        position,
-        scale: currentScale,
-        color: currentColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: updatedStyle,
-      });
-    }
-  };
+  const handleTextStyleChange = useCallback((newStyle) => {
+    setCurrentFaceTextStyle((prev) => ({ ...prev, ...newStyle }));
+  }, []);
 
-  const handleTextSpriteClick = (e) => {
-    e.stopPropagation();
-    closeAllUIs();
-    setShowTextStyleUI(true);
-  };
+  const handleTextSpriteClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      closeAllUIs();
+      setShowTextStyleUI(true);
+    },
+    [closeAllUIs]
+  );
 
-  const handleTransformToggle = () => {
+  const handleTransformToggle = useCallback(() => {
     setShowTransform((prev) => !prev);
     setShowUI(false);
-  };
+  }, []);
 
-  const handleResizeToggle = () => {
+  const handleResizeToggle = useCallback(() => {
     setIsResizing((prev) => {
       if (!prev) setShowTransform(false);
       return !prev;
     });
     setShowUI(false);
-  };
+  }, []);
 
-  const handleColorChange = (newColor) => {
+  const handleColorChange = useCallback((newColor) => {
     setCurrentColor(newColor);
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'plane',
-        position,
-        scale: currentScale,
-        color: newColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
-      });
-    }
-  };
+  }, []);
 
-  const handleHeaderToggle = () => {
+  const handleHeaderToggle = useCallback(() => {
     closeAllUIs();
     setShowHeader(true);
-  };
+  }, [closeAllUIs]);
 
-  const handleHeaderSubmit = (text) => {
+  const handleHeaderSubmit = useCallback((text) => {
     setCurrentHeaderText(text);
     setShowHeader(false);
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'plane',
-        position,
-        scale: currentScale,
-        color: currentColor,
-        headerText: text,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
-      });
-    }
-  };
+  }, []);
 
-  const handleHeaderTextClick = (e) => {
-    e.stopPropagation();
-    closeAllUIs();
-    setShowHeaderStyleUI(true);
-    setShowUI(false);
-  };
+  const handleHeaderTextClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      closeAllUIs();
+      setShowHeaderStyleUI(true);
+      setShowUI(false);
+    },
+    [closeAllUIs]
+  );
 
-  const handleHeaderStyleChange = (newStyle) => {
-    const updatedStyle = { ...currentHeaderStyle, ...newStyle };
-    setCurrentHeaderStyle(updatedStyle);
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'plane',
-        position,
-        scale: currentScale,
-        color: currentColor,
-        headerText: currentHeaderText,
-        headerStyle: updatedStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
-      });
-    }
-  };
+  const handleHeaderStyleChange = useCallback((newStyle) => {
+    setCurrentHeaderStyle((prev) => ({ ...prev, ...newStyle }));
+  }, []);
 
-  const handleBorderToggle = (option) => {
-    if (!onUpdate || !id) return;
-
-    const updates = {
-      type: 'plane',
-      position,
-      scale: currentScale,
-      color: currentColor,
-      headerText: currentHeaderText,
-      headerStyle: currentHeaderStyle,
-      borderStyle: currentBorderStyle,
-      borderColor: currentBorderColor,
-      lineThickness: currentLineThickness,
-      faceText: currentFaceText,
-      faceTextStyle: currentFaceTextStyle,
-    };
-
+  const handleBorderToggle = useCallback((option) => {
     if (option.type === 'style') {
-      updates.borderStyle = option.value;
       setCurrentBorderStyle(option.value);
     } else if (option.type === 'color') {
-      updates.borderColor = option.value;
       setCurrentBorderColor(option.value);
     } else if (option.type === 'thickness') {
-      const newThickness =
-        currentLineThickness >= 6 ? 1 : currentLineThickness + 2;
-      updates.lineThickness = newThickness;
-      setCurrentLineThickness(newThickness);
+      setCurrentLineThickness((prev) => (prev >= 6 ? 1 : prev + 2));
     }
+  }, []);
 
-    onUpdate(id, updates);
-  };
-
-  // Position calculation helpers
-  const getUIPositions = () => {
-    const planeHeight = 10 * currentScale[1];
-    const verticalOffset = planeHeight / 2;
-    const zOffset = 5;
-
-    return {
-      faceUI: [0, verticalOffset + 2, zOffset],
-      headerInput: [position[0], position[1] + verticalOffset + 4, position[2]],
-      headerText: [position[0], position[1] + verticalOffset + 4, position[2]],
-    };
-  };
-
-  const getIndicatorPositions = () => ({
-    bottom: [0, -5 - 1, 0], // 5 is half the plane height, -1 is offset
-  });
-
-  // Connection indicator handling
-  const handleIndicatorClick = (e) => {
-    e.stopPropagation();
-
-    try {
-      const planeRef = contentRef.current || groupRef.current;
-      if (!planeRef) return;
-
-      planeRef.updateWorldMatrix(true, false);
-      const worldMatrix = planeRef.matrixWorld.clone();
-
-      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
-      const worldPos = new THREE.Vector3();
-
-      planeRef.getWorldPosition(worldPos);
-      offset.applyQuaternion(planeRef.quaternion);
-      worldPos.add(offset);
-
-      const positionArray = [worldPos.x, worldPos.y, worldPos.z];
-
-      const stringId = String(id);
-      const indicator = {
-        type: 'plane',
-        position: positionArray,
-        worldPosition: positionArray,
-        facePosition: positionArray, // Add explicit facePosition
-        faceCenter: positionArray, // Add explicit faceCenter
-        face: 'bottom',
-        plane: planeRef, // Store direct reference to the plane object
-        scale: [...currentScale],
-        planeData: {
-          position: [...position],
+  const handleIndicatorClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      try {
+        const planeRef = contentRef.current || groupRef.current;
+        if (!planeRef) return;
+        planeRef.updateWorldMatrix(true, false);
+        const worldMatrix = planeRef.matrixWorld.clone();
+        const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+        const worldPos = new THREE.Vector3();
+        planeRef.getWorldPosition(worldPos);
+        offset.applyQuaternion(planeRef.quaternion);
+        worldPos.add(offset);
+        const positionArray = [worldPos.x, worldPos.y, worldPos.z];
+        const stringId = String(id);
+        const indicator = {
+          type: 'plane',
+          position: positionArray,
+          worldPosition: positionArray,
+          facePosition: positionArray,
+          faceCenter: positionArray,
+          face: 'bottom',
+          plane: planeRef,
           scale: [...currentScale],
-          worldMatrix: Array.from(worldMatrix.elements),
-          offset: [0, -5 * currentScale[1], 0],
-        },
-        // Include standardized data for compatibility
-        cube: {
-          id: stringId,
-          position,
-          scale: currentScale,
-          userData: {
-            objectId: stringId,
-            planeRef: planeRef, // Store reference in userData as well
-            indicatorPosition: positionArray,
+          planeData: {
+            position: [...position],
+            scale: [...currentScale],
+            worldMatrix: Array.from(worldMatrix.elements),
+            offset: [0, -5 * currentScale[1], 0],
           },
-        },
-        id: stringId,
-        objectId: stringId,
-      };
+          cube: {
+            id: stringId,
+            position,
+            scale: currentScale,
+            userData: {
+              objectId: stringId,
+              planeRef: planeRef,
+              indicatorPosition: positionArray,
+            },
+          },
+          id: stringId,
+          objectId: stringId,
+        };
+        setIndicatorSelected(true);
+        onIndicatorSelected?.();
+        onFaceIndicatorClick?.(indicator);
+      } catch (error) {
+        console.error('Error in handleIndicatorClick:', error);
+      }
+    },
+    [id, currentScale, position, onIndicatorSelected, onFaceIndicatorClick]
+  );
 
-      setIndicatorSelected(true);
-      onIndicatorSelected?.();
-      onFaceIndicatorClick?.(indicator);
-    } catch (error) {
-      console.error('Error in handleIndicatorClick:', error);
-    }
-  };
-
-  const isIndicatorConnected = () => {
+  const isIndicatorConnected = useMemo(() => {
     return connections?.some(
       (conn) =>
         conn.start.plane === groupRef.current ||
         conn.end.plane === groupRef.current
     );
-  };
+  }, [connections]);
 
-  const shouldShowIndicator = () => {
+  const shouldShowIndicator = useMemo(() => {
     if (selectedIndicators?.length > 0) return true;
     if (indicatorMode === 'indicators') return true;
     if (showAllIndicators || globalIndicatorSelected) return true;
-    if (isIndicatorConnected()) return true;
+    if (isIndicatorConnected) return true;
     if (indicatorSelected) return true;
     if (selected) return true;
     return false;
-  };
+  }, [
+    selectedIndicators,
+    indicatorMode,
+    showAllIndicators,
+    globalIndicatorSelected,
+    isIndicatorConnected,
+    indicatorSelected,
+    selected,
+  ]);
 
-  // Check for broadcasts on component mount and when webcam active changes
   useEffect(() => {
-    if (!currentSpaceId || !id || !user) return;
+    if (!currentSpaceId || !id || !user || !window.currentSpaceOwner) return;
 
-    // Track if component is still mounted
-    let isMounted = true;
-
-    // Check if this plane is currently broadcasting
-    const checkBroadcastingStatus = async () => {
-      try {
-        const isCurrentlyBroadcasting = await isPlaneBeingBroadcast(
-          currentSpaceId,
-          id
-        );
-
-        // Only update state if component is still mounted
-        if (isMounted) {
-          setIsBroadcasting(isCurrentlyBroadcasting);
-        }
-      } catch (err) {
-        console.error('Error checking broadcasting status:', err);
+    if (webcamActive || isViewingBroadcast) {
+      if (isViewingBroadcast && webcamActive) {
+        setIsViewingBroadcast(false);
+        setBroadcastInfo(null);
       }
-    };
+      return;
+    }
 
-    checkBroadcastingStatus();
+    const planeRef = doc(
+      db,
+      'users',
+      window.currentSpaceOwner,
+      'spaces',
+      currentSpaceId,
+      'objects',
+      id
+    );
 
-    // Only check for other broadcasts if webcam is active but we're not broadcasting
-    if (webcamActive && !isBroadcasting) {
-      const checkForBroadcasts = async () => {
-        if (!isMounted) return;
+    const unsubscribe = onSnapshot(
+      planeRef,
+      (docSnap) => {
+        if (!isMountedRef.current || webcamActive) return;
 
-        try {
-          const broadcasts = await findAvailableBroadcasts(currentSpaceId);
+        const data = docSnap.exists() ? docSnap.data() : null;
+        const isRemoteBroadcastingNow =
+          data?.broadcasting === true && data?.broadcasterId !== user.uid;
+        const newBroadcastId = data?.broadcastId || null;
+        const newBroadcasterId = data?.broadcasterId || null;
 
-          // Find broadcast for this plane by another user
-          const broadcast = broadcasts.find(
-            (b) => b.planeId === id && b.broadcasterId !== user.uid
-          );
+        if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
+          lastBroadcastSeenRef.current = Date.now();
 
-          if (broadcast && isMounted) {
-            console.log('Found broadcast by another user:', broadcast);
-            setBroadcastInfo({
-              broadcastId: broadcast.id,
-              broadcasterId: broadcast.broadcasterId,
-              planeId: broadcast.planeId,
-            });
-            setIsViewingBroadcast(true);
-          } else if (isMounted) {
+          const newBroadcastInfo = {
+            broadcastId: newBroadcastId,
+            broadcasterId: newBroadcasterId,
+            planeId: id,
+          };
+
+          if (!isEqual(broadcastInfo, newBroadcastInfo)) {
+            setBroadcastInfo(newBroadcastInfo);
+            if (!isViewingBroadcast) {
+              setIsViewingBroadcast(true);
+            }
+          }
+        } else {
+          if (isViewingBroadcast) {
+            const now = Date.now();
+            if (now - lastBroadcastSeenRef.current > 5000) {
+              setBroadcastInfo(null);
+              setIsViewingBroadcast(false);
+            }
+          } else if (broadcastInfo !== null) {
+            setBroadcastInfo(null);
+          }
+        }
+      },
+      (error) => {
+        if (isViewingBroadcast && isMountedRef.current) {
+          const now = Date.now();
+          if (now - lastBroadcastSeenRef.current > 10000) {
             setBroadcastInfo(null);
             setIsViewingBroadcast(false);
           }
-        } catch (error) {
-          console.error('Error checking broadcasts:', error);
         }
-      };
-
-      // Check immediately and set up interval
-      checkForBroadcasts();
-
-      // Set up periodic checks
-      broadcastCheckIntervalRef.current = setInterval(checkForBroadcasts, 5000);
-    }
+      }
+    );
 
     return () => {
-      isMounted = false;
-      if (broadcastCheckIntervalRef.current) {
-        clearInterval(broadcastCheckIntervalRef.current);
-        broadcastCheckIntervalRef.current = null;
-      }
+      unsubscribe();
     };
-  }, [currentSpaceId, id, user, webcamActive, isBroadcasting]);
+  }, [
+    currentSpaceId,
+    id,
+    user,
+    webcamActive,
+    isViewingBroadcast,
+    broadcastInfo,
+  ]);
 
-  // Modified webcam toggle handler to ensure broadcasting state is correctly set
-  const handleWebcamToggle = () => {
-    const newWebcamState = !webcamActive;
+  const handleBroadcastStopped = useCallback(() => {
+    if (!isMountedRef.current) return;
+    if (isBroadcasting) {
+      setIsBroadcasting(false);
+      setViewerCount(0);
+      onUpdate?.(id, {
+        type: 'plane',
+        broadcasting: false,
+        broadcastId: null,
+        webcamActive: false,
+      });
+    }
+  }, [onUpdate, id, isBroadcasting]);
+
+  const handleWebcamToggle = useCallback(() => {
+    const currentWebcamState = webcamActive;
+    const newWebcamState = !currentWebcamState;
 
     if (newWebcamState) {
       setWebcamInitialized(true);
 
-      // If turning on webcam, ask if they want to broadcast
       if (
         confirm(
           'Do you want to broadcast this webcam to other users in this space?'
         )
       ) {
-        console.log('Setting broadcasting mode to true');
-
-        // Update both states together to ensure synchronization
         setWebcamActive(true);
         setIsBroadcasting(true);
         lastWebcamStateRef.current = true;
-
-        // Update DB immediately to indicate we're starting a broadcast
-        if (onUpdate) {
-          console.log(
-            'Updating database with broadcasting=true and broadcastStarting=true'
-          );
-          onUpdate(id, {
-            type: 'plane',
-            webcamActive: true,
-            broadcasting: true,
-            broadcastStarting: true, // Flag that we're in the process of starting
-            broadcasterId: user?.uid,
-            broadcastId: 'pending', // Use 'pending' instead of 'initializing'
-            broadcastStartTime: Date.now(), // Track when we started
-            position,
-            scale: currentScale,
-            color: currentColor,
-            headerText: currentHeaderText,
-            headerStyle: currentHeaderStyle,
-            borderStyle: currentBorderStyle,
-            borderColor: currentBorderColor,
-            lineThickness: currentLineThickness,
-            faceText: currentFaceText,
-            faceTextStyle: currentFaceTextStyle,
-          });
-        }
-
-        console.log(`Webcam toggled to ON with broadcasting: true`);
       } else {
-        console.log('Local webcam only - no broadcasting');
         setWebcamActive(true);
         setIsBroadcasting(false);
         lastWebcamStateRef.current = true;
-
-        if (onUpdate) {
-          onUpdate(id, {
-            type: 'plane',
-            webcamActive: true,
-            broadcasting: false,
-            position,
-            scale: currentScale,
-            color: currentColor,
-            headerText: currentHeaderText,
-            headerStyle: currentHeaderStyle,
-            borderStyle: currentBorderStyle,
-            borderColor: currentBorderColor,
-            lineThickness: currentLineThickness,
-            faceText: currentFaceText,
-            faceTextStyle: currentFaceTextStyle,
-          });
-        }
       }
     } else {
-      // If turning off webcam, stop broadcasting
       if (isBroadcasting) {
-        console.log('Broadcasting active, stopping before turning off webcam');
         handleBroadcastStopped();
       }
-
       setWebcamActive(false);
-      lastWebcamStateRef.current = false;
+      setIsBroadcasting(false);
       setIsViewingBroadcast(false);
       setBroadcastInfo(null);
-
-      // Update database
-      if (onUpdate) {
-        onUpdate(id, {
-          type: 'plane',
-          webcamActive: false,
-          broadcasting: false,
-          broadcastId: null,
-          position,
-          scale: currentScale,
-          color: currentColor,
-          headerText: currentHeaderText,
-          headerStyle: currentHeaderStyle,
-          borderStyle: currentBorderStyle,
-          borderColor: currentBorderColor,
-          lineThickness: currentLineThickness,
-          faceText: currentFaceText,
-          faceTextStyle: currentFaceTextStyle,
-        });
-      }
+      lastWebcamStateRef.current = false;
     }
 
     setShowUI(false);
-  };
+  }, [webcamActive, isBroadcasting, handleBroadcastStopped]);
 
-  // Handle broadcast start event
-  const handleBroadcastStarted = (info) => {
-    console.log('Broadcast started:', info);
-
-    if (!info || !info.broadcastId) {
-      console.error('Error: No broadcastId provided to handleBroadcastStarted');
-      return;
-    }
-
-    // Ensure we maintain the broadcasting state flag
-    setIsBroadcasting(true);
-
-    // Update database with broadcast status and EXPLICIT broadcastId
-    if (onUpdate) {
-      console.log(`Updating plane ${id} with broadcastId ${info.broadcastId}`);
-
-      // CRITICAL - Force direct update with the broadcastId
-      // This ensures the broadcastId is properly set in the database
-      const updates = {
+  const handleBroadcastStarted = useCallback(
+    (info) => {
+      if (!info || !info.broadcastId || !isMountedRef.current) return;
+      if (!isBroadcasting) setIsBroadcasting(true);
+      onUpdate?.(id, {
         type: 'plane',
         broadcasting: true,
         broadcasterId: user?.uid,
-        broadcastId: info.broadcastId, // THIS IS CRITICAL
-        broadcastStarting: false, // Changed from pending to active
-        broadcastInfo: {
-          started: new Date().toISOString(),
-          broadcasterId: user?.uid,
-        },
-        position,
-        scale: currentScale,
-        color: currentColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
+        broadcastId: info.broadcastId,
+        broadcastStarting: false,
         webcamActive: true,
-      };
+      });
+    },
+    [onUpdate, id, user?.uid, isBroadcasting]
+  );
 
-      // Force multiple updates with slight delays to ensure the database is updated
-      onUpdate(id, updates);
-
-      // First follow-up
-      setTimeout(() => {
-        console.log('First follow-up broadcast ID check');
-        if (isBroadcasting) {
-          // Only update if we're still broadcasting
-          onUpdate(id, {
-            ...updates,
-            _updateTime: Date.now(),
-          });
-        }
-      }, 1000);
-
-      // Second follow-up with just the critical fields
-      setTimeout(() => {
-        console.log('Second follow-up broadcast ID check - minimal update');
-        if (isBroadcasting) {
-          // Only update if we're still broadcasting
-          onUpdate(id, {
-            broadcastId: info.broadcastId,
-            broadcasting: true,
-            _finalCheck: true,
-          });
-        }
-      }, 3000);
-    }
-  };
-
-  // Add debugging to identify unwanted broadcast stops
-  const handleBroadcastStopped = () => {
-    console.log('📍 Broadcast stopped called. Stack trace:');
-    console.trace();
-
-    // Only take action if we were actually broadcasting
-    if (isBroadcasting) {
-      setIsBroadcasting(false);
-      setViewerCount(0);
-
-      // Update database
-      if (onUpdate) {
-        onUpdate(id, {
-          type: 'plane',
-          broadcasting: false,
-          broadcastId: null,
-          position,
-          scale: currentScale,
-          color: currentColor,
-          headerText: currentHeaderText,
-          headerStyle: currentHeaderStyle,
-          borderStyle: currentBorderStyle,
-          borderColor: currentBorderColor,
-          lineThickness: currentLineThickness,
-          faceText: currentFaceText,
-          faceTextStyle: currentFaceTextStyle,
-        });
-      }
-    } else {
-      console.log(
-        '⚠️ Broadcast stop called but isBroadcasting was already false'
-      );
-    }
-  };
-
-  // Handle viewer count updates
-  const handleViewerCountChange = (count) => {
-    setViewerCount(count);
-  };
-
-  // Add cleanup effect to ensure all WebRTC resources are properly disposed
-  useEffect(() => {
-    return () => {
-      // Clear any broadcasting when component unmounts
-      if (isBroadcasting) {
-        handleBroadcastStopped();
-      }
-
-      // Clear all intervals
-      if (broadcastCheckIntervalRef.current) {
-        clearInterval(broadcastCheckIntervalRef.current);
-      }
-    };
-  }, [isBroadcasting]);
-
-  // Separate effect to handle webcam initialization on component mount
-  useEffect(() => {
-    if (initialWebcamActive && !webcamInitialized) {
-      console.log('Initializing webcam from props:', initialWebcamActive);
-      setWebcamInitialized(true);
-      setWebcamActive(true);
-      lastWebcamStateRef.current = true;
+  const handleViewerCountChange = useCallback((count) => {
+    if (isMountedRef.current) {
+      setViewerCount(count);
     }
   }, []);
 
-  // Sync webcam state with potential external updates
   useEffect(() => {
-    if (initialWebcamActive !== lastWebcamStateRef.current) {
-      console.log('Syncing webcam state from props:', initialWebcamActive);
-      setWebcamActive(initialWebcamActive);
-      lastWebcamStateRef.current = initialWebcamActive;
-      if (initialWebcamActive) {
-        setWebcamInitialized(true);
+    return () => {
+      if (isBroadcasting) {
+        handleBroadcastStopped();
       }
-    }
-  }, [initialWebcamActive]);
+    };
+  }, [isBroadcasting, handleBroadcastStopped]);
 
-  // Reset mesh material when webcam is deactivated
-  useEffect(() => {
-    if (!webcamActive && meshRef.current) {
-      const material = meshRef.current.material;
-      if (material.map) {
-        console.log('Removing webcam texture from material');
-        material.map = null;
-        material.needsUpdate = true;
-      }
-    }
-  }, [webcamActive]);
+  const uiPositions = useMemo(() => {
+    const planeHeight = 10 * currentScale[1];
+    const verticalOffset = planeHeight / 2;
+    const zOffset = 0.1;
+    return {
+      faceUI: [0, verticalOffset + 2, zOffset + 0.1],
+      headerInput: [0, verticalOffset + 4, zOffset],
+      headerText: [0, verticalOffset + 4, zOffset],
+      textSprite: [0, 0, zOffset],
+      textStyleUI: [0, 6, zOffset + 2],
+      headerStyleUI: [0, verticalOffset + 6, zOffset + 2],
+      textInput: [0, 3, zOffset + 2],
+    };
+  }, [currentScale]);
 
-  // Save webcam state to material userData to persist through material updates
-  useEffect(() => {
-    if (meshRef.current) {
-      // Store webcam state on the material's userData
-      meshRef.current.userData.webcamActive = webcamActive;
+  const indicatorPosition = useMemo(() => [0, -size - 1, 0], []);
 
-      // If we have a material already, make sure it has the right properties
-      if (meshRef.current.material) {
-        // Ensure the material is set to be transparent if webcam is active
-        if (webcamActive) {
-          meshRef.current.material.transparent = true;
-          meshRef.current.material.opacity = 1;
-          meshRef.current.material.needsUpdate = true;
-        }
-      }
-    }
-  }, [webcamActive]);
+  const meshMaterial = useMemo(
+    () => (
+      <meshBasicMaterial
+        color={currentColor || (selected ? '#99ccff' : 'white')}
+        transparent
+        opacity={currentColor ? 1 : selected ? 0.1 : 0}
+        depthWrite={!!currentColor}
+        side={THREE.DoubleSide}
+        needsUpdate={true}
+      />
+    ),
+    [currentColor, selected]
+  );
 
-  // Add a new effect to respond to material changes
-  // This helps maintain webcam visibility after material/mesh changes
-  useEffect(() => {
-    // This will run when the mesh is re-created or updated
-    if (meshRef.current && meshRef.current.material) {
-      const material = meshRef.current.material;
+  const lineMaterialProps = useMemo(
+    () => ({
+      color: selected ? 'blue' : currentBorderColor,
+      lineWidth: currentLineThickness,
+      dashed: currentBorderStyle !== 'solid',
+      dashScale: currentBorderStyle === 'dotted' ? 1 : 2,
+      dashSize: currentBorderStyle === 'dotted' ? 0.1 : 1,
+      gapSize: currentBorderStyle === 'dotted' ? 0.1 : 0.5,
+    }),
+    [selected, currentBorderColor, currentLineThickness, currentBorderStyle]
+  );
 
-      // Store current webcam state in userData so it persists
-      meshRef.current.userData.webcamActive = webcamActive;
-
-      // Set appropriate material properties based on webcam state
-      if (webcamActive) {
-        material.transparent = true;
-        material.opacity = 1;
-      }
-      material.needsUpdate = true;
-    }
-  }, [
-    meshRef.current,
-    currentColor,
-    currentBorderStyle,
-    currentLineThickness,
-    currentScale,
-  ]);
-
-  // Add debug log at the start of component
-  useEffect(() => {
-    if (webcamActive) {
-      console.log('Plane component props check:', {
-        userId: user?.uid,
-        spaceId: currentSpaceId,
-        planeId: id,
-        isBroadcasting,
-      });
-    }
-  }, [webcamActive, user, currentSpaceId, id, isBroadcasting]);
+  const points = useMemo(
+    () => [
+      new Vector3(-size, -size, 0),
+      new Vector3(size, -size, 0),
+      new Vector3(size, size, 0),
+      new Vector3(-size, size, 0),
+      new Vector3(-size, -size, 0),
+    ],
+    []
+  );
 
   return (
     <>
       <group ref={groupRef} position={position}>
         <group ref={contentRef} scale={currentScale}>
           <mesh ref={meshRef} onClick={handleClick}>
-            <planeGeometry args={[10, 10]} />
-            <meshBasicMaterial
-              color={currentColor || (selected ? '#99ccff' : 'white')}
-              transparent
-              opacity={currentColor ? 1 : selected ? 0.1 : 0}
-              depthWrite={!!currentColor}
-            />
+            <planeGeometry args={[size * 2, size * 2]} />
+            {meshMaterial}
           </mesh>
 
-          {/* Fixed WebcamStream implementation with explicit broadcasting state */}
-          {webcamActive && webcamInitialized && (
-            <WebcamStream
-              key={`webcam-${id}-${isBroadcasting ? 'broadcasting' : 'local'}-${
-                isViewingBroadcast ? 'viewing' : 'notviewing'
-              }`}
-              meshRef={meshRef}
-              active={webcamActive}
-              userId={user?.uid}
-              spaceId={currentSpaceId}
-              planeId={id}
-              isBroadcasting={isBroadcasting}
-              isReceiving={isViewingBroadcast}
-              broadcastData={isViewingBroadcast ? broadcastInfo : null}
-              onBroadcastStarted={handleBroadcastStarted}
-              onBroadcastStopped={handleBroadcastStopped}
-              onViewerCountChange={handleViewerCountChange}
-            />
-          )}
-
-          {/* Add a loading indicator when webcam is being initialized */}
+          {(webcamActive || isViewingBroadcast) &&
+            (webcamInitialized || isViewingBroadcast) && (
+              <WebcamStream
+                key={`${id}-${broadcastInfo?.broadcastId || 'local'}`}
+                meshRef={meshRef}
+                active={webcamActive || isViewingBroadcast}
+                userId={user?.uid}
+                spaceId={currentSpaceId}
+                planeId={id}
+                isBroadcasting={webcamActive && isBroadcasting}
+                isReceiving={isViewingBroadcast}
+                broadcastData={broadcastInfo}
+                onBroadcastStarted={handleBroadcastStarted}
+                onBroadcastStopped={handleBroadcastStopped}
+                onViewerCountChange={handleViewerCountChange}
+              />
+            )}
           {webcamActive && !webcamInitialized && (
-            <Html center>
-              <div
-                style={{
-                  color: 'white',
-                  background: 'rgba(0,0,0,0.5)',
-                  padding: '5px 10px',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                }}
-              >
-                Initializing camera...
-              </div>
+            <Html center position={[0, 0, 0.1]}>
+              <div className="initializing-cam">Initializing...</div>
             </Html>
           )}
 
-          <Line
-            points={points}
-            color={selected ? 'blue' : currentBorderColor}
-            lineWidth={currentLineThickness}
-            dashed={currentBorderStyle !== 'solid'}
-            dashScale={currentBorderStyle === 'dotted' ? 1 : 2}
-            dashSize={currentBorderStyle === 'dotted' ? 0.1 : 1}
-            gapSize={currentBorderStyle === 'dotted' ? 0.1 : 0.5}
-          />
-          {shouldShowIndicator() && (
+          <Line points={points} {...lineMaterialProps} />
+
+          {shouldShowIndicator && (
             <FaceIndicator
-              position={getIndicatorPositions().bottom}
-              rotation={[0, 0, 0]}
+              position={indicatorPosition}
               onClick={handleIndicatorClick}
-              isActive={indicatorSelected || isIndicatorConnected()}
+              isActive={indicatorSelected || isIndicatorConnected}
+            />
+          )}
+
+          {currentFaceText && (
+            <TextSprite
+              text={currentFaceText}
+              position={uiPositions.textSprite}
+              style={currentFaceTextStyle}
+              onClick={handleTextSpriteClick}
+              billboard={false}
             />
           )}
         </group>
 
         {selected && showUI && (
           <FaceUI
-            position={getUIPositions().faceUI}
+            position={uiPositions.faceUI}
             onColorChange={handleColorChange}
-            face="front"
             onTextClick={handleTextClick}
             isPlane={true}
             onTransformToggle={handleTransformToggle}
@@ -1260,109 +835,73 @@ const Plane = ({
         )}
 
         {showTextInput && (
-          <FaceTextInput position={[0, 6, 0]} onTextSubmit={handleTextSubmit} />
-        )}
-
-        {currentFaceText && (
-          <TextSprite
-            text={currentFaceText}
-            position={[0, 0, 0.1]}
-            style={{
-              ...currentFaceTextStyle,
-              fixedSize: true,
-            }}
-            onClick={handleTextSpriteClick}
-            billboard={false}
+          <FaceTextInput
+            position={uiPositions.textInput}
+            onTextSubmit={handleTextSubmit}
+            followTarget={groupRef}
           />
         )}
 
         {showTextStyleUI && (
           <TextStyleUI
-            position={[0, 10, 0]}
+            position={uiPositions.textStyleUI}
             onStyleChange={handleTextStyleChange}
-            onClose={() => closeAllUIs()}
+            onClose={closeAllUIs}
+            followTarget={groupRef}
+          />
+        )}
+
+        {showHeader && (
+          <HeaderInput
+            position={uiPositions.headerInput}
+            onTextSubmit={handleHeaderSubmit}
+            followTarget={groupRef}
+          />
+        )}
+        {showHeaderStyleUI && (
+          <TextStyleUI
+            position={uiPositions.headerStyleUI}
+            onStyleChange={handleHeaderStyleChange}
+            onClose={() => {
+              setShowHeaderStyleUI(false);
+              setShowUI(true);
+            }}
+            followTarget={groupRef}
+            uiType="header"
           />
         )}
       </group>
 
-      {selected && isResizing && contentRef.current && (
-        <DreiTransformControls
-          key={`scale-controls-${id}`}
-          object={contentRef.current}
-          onObjectChange={handleScale}
-          onDragStart={() => {
-            if (contentRef.current?.orbitControls) {
-              contentRef.current.orbitControls.enabled = false;
-            }
-            if (onTransformStart) {
-              onTransformStart(id);
-            }
-          }}
-          onDragEnd={() => {
-            if (contentRef.current?.orbitControls) {
-              contentRef.current.orbitControls.enabled = true;
-            }
-            // Force final update on drag end
-            if (pendingScaleRef.current) {
-              setCurrentScale(pendingScaleRef.current);
-              pendingScaleRef.current = null;
-            }
-          }}
-          mode="scale"
-          space="local"
-          size={1}
-          matrixAutoUpdate={false}
-          showX={true}
-          showY={true}
-          showZ={false}
-        />
-      )}
-
-      {showHeader && (
-        <HeaderInput
-          position={getUIPositions().headerInput}
-          onTextSubmit={handleHeaderSubmit}
-          followTarget={groupRef}
-        />
-      )}
-
       {currentHeaderText && (
         <TextSprite
           text={currentHeaderText}
-          position={getUIPositions().headerText}
+          position={position}
+          offset={uiPositions.headerText}
           followTarget={groupRef}
           onClick={handleHeaderTextClick}
-          style={{
-            ...currentHeaderStyle,
-            isHeaderText: true,
-            isPlaneHeader: true,
-            fixedSize: true,
-            fixedPosition: true,
-          }}
+          style={currentHeaderStyle}
           billboard={true}
         />
       )}
 
-      {showHeaderStyleUI && (
-        <TextStyleUI
-          position={[0, 12, 0]}
-          onStyleChange={handleHeaderStyleChange}
-          onClose={() => {
-            setShowHeaderStyleUI(false);
-            setShowUI(true);
-          }}
-          followTarget={groupRef}
-          uiType="header"
+      {selected && isResizing && contentRef.current && (
+        <DreiTransformControls
+          key={`scale-${id}`}
+          object={contentRef.current}
+          onObjectChange={handleScale}
+          onMouseDown={handleTransformStart}
+          onMouseUp={handleTransformEnd}
+          mode="scale"
+          space="local"
+          showZ={false}
         />
       )}
-
       {selected && showTransform && groupRef.current && (
         <DreiTransformControls
+          key={`translate-${id}`}
           object={groupRef.current}
           mode="translate"
           onObjectChange={handleDrag}
-          onDragStart={handleTransformStart}
-          onDragEnd={handleTransformEnd}
           onMouseDown={handleTransformStart}
           onMouseUp={handleTransformEnd}
         />

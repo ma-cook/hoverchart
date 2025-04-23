@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { doc, getDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
 import { findSpaceOwner } from '../services/sharedSpacesService';
+import { registerUserPresence } from '../services/webrtcservice';
+import { setUserPresence } from '../services/presenceService';
 
 /**
  * Custom hook to manage space ID and ownership
@@ -27,6 +29,13 @@ export function useSpaceManager({ user, intentionalSpaceChangeRef }) {
       if (isPublicSpace) {
         console.log('Public space detected, maintaining public space state');
         setCurrentSpaceId(window.publicAccessSpace);
+
+        // Register presence for public space
+        if (window.publicAccessSpace) {
+          setUserPresence(user.uid, window.publicAccessSpace);
+          registerUserPresence(user.uid, window.publicAccessSpace);
+        }
+
         // Don't modify any other state, keep the public space context
         return;
       }
@@ -42,6 +51,11 @@ export function useSpaceManager({ user, intentionalSpaceChangeRef }) {
           window.currentSpaceOwner =
             urlOwnerUid === user.uid ? user.uid : urlOwnerUid;
         }
+
+        // Register presence even for the same space (in case it was missed)
+        setUserPresence(user.uid, urlSpaceId);
+        registerUserPresence(user.uid, urlSpaceId);
+
         return;
       }
 
@@ -56,6 +70,10 @@ export function useSpaceManager({ user, intentionalSpaceChangeRef }) {
           // Set space ID early to prevent redirects
           setCurrentSpaceId(urlSpaceId);
           sessionStorage.setItem('currentSpaceId', urlSpaceId);
+
+          // Register user presence in this space
+          setUserPresence(user.uid, urlSpaceId);
+          registerUserPresence(user.uid, urlSpaceId);
 
           // Case 1: URL explicitly provides owner ID
           if (urlOwnerUid) {
