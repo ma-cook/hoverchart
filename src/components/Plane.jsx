@@ -104,6 +104,17 @@ const Plane = ({
   const isTransformingRef = useRef(false);
   const isMountedRef = useRef(true);
 
+  // Define closeAllUIs before it's used in useEffect
+  const closeAllUIs = useCallback(() => {
+    setShowTextStyleUI(false);
+    setShowUI(false);
+    setShowTextInput(false);
+    setShowTransform(false);
+    setIsResizing(false);
+    setShowHeader(false);
+    setShowHeaderStyleUI(false);
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -369,16 +380,6 @@ const Plane = ({
     onTransformEnd,
     debouncedUpdate,
   ]);
-
-  const closeAllUIs = useCallback(() => {
-    setShowTextStyleUI(false);
-    setShowUI(false);
-    setShowTextInput(false);
-    setShowTransform(false);
-    setIsResizing(false);
-    setShowHeader(false);
-    setShowHeaderStyleUI(false);
-  }, []);
 
   const handleClick = useCallback(
     (e) => {

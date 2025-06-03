@@ -18,7 +18,11 @@ import {
  */
 export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
   const [loadedCells, setLoadedCells] = useState(new Set());
-  const [currentCellCoords, setCurrentCellCoords] = useState({ x: 0, y: 0 });
+  const [currentCellCoords, setCurrentCellCoords] = useState({
+    x: 0,
+    y: 0,
+    z: 0,
+  });
   const [isInitialized, setIsInitialized] = useState(false);
 
   // Refs for tracking
@@ -30,8 +34,18 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
    */
   const initializeSpatialSystem = useCallback(async () => {
     if (!currentSpaceId || isInitialized || initializationPromise.current) {
+      console.log('initializeSpatialSystem: Skipping initialization', {
+        currentSpaceId,
+        isInitialized,
+        hasPromise: !!initializationPromise.current,
+      });
       return;
     }
+
+    console.log('initializeSpatialSystem: Starting initialization', {
+      currentSpaceId,
+      user: user?.uid,
+    });
 
     // Prevent multiple initialization attempts
     initializationPromise.current = (async () => {
@@ -40,8 +54,11 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         const ownerUserId = window.currentSpaceOwner || user?.uid;
 
         if (!ownerUserId) {
+          console.log('initializeSpatialSystem: No owner user ID found');
           return;
         }
+
+        console.log('initializeSpatialSystem: Using owner ID', ownerUserId);
 
         // Discover existing cells that contain objects
         const existingCells = await getOccupiedCells(
@@ -49,24 +66,52 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
           currentSpaceId
         );
 
+        console.log(
+          'initializeSpatialSystem: Found existing cells',
+          existingCells
+        );
+
         // Always ensure the origin cell exists
         const originCellSuccess = await createCell(
           ownerUserId,
           currentSpaceId,
           0,
+          0,
           0
         );
 
+        console.log(
+          'initializeSpatialSystem: Origin cell creation result',
+          originCellSuccess
+        );
+
         // Combine origin cell with existing occupied cells
-        const cellsToLoad = new Set(['0,0']); // Always start with origin
+        const cellsToLoad = new Set(['0,0,0']); // Always start with origin
         existingCells.forEach((cellId) => cellsToLoad.add(cellId));
+
+        console.log(
+          'initializeSpatialSystem: Cells to load',
+          Array.from(cellsToLoad)
+        );
+
         if (originCellSuccess || existingCells.length > 0) {
           setLoadedCells(cellsToLoad);
-          setCurrentCellCoords({ x: 0, y: 0 });
+          setCurrentCellCoords({ x: 0, y: 0, z: 0 });
           setIsInitialized(true);
+          console.log('initializeSpatialSystem: Initialization complete', {
+            cellsToLoad,
+            isInitialized: true,
+          });
+        } else {
+          console.log(
+            'initializeSpatialSystem: Failed to initialize - no cells loaded'
+          );
         }
-      } catch {
-        // Error during initialization - continue silently
+      } catch (error) {
+        console.error(
+          'initializeSpatialSystem: Error during initialization',
+          error
+        );
       }
     })();
 
@@ -76,10 +121,10 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
    * Load a cell and its objects
    */
   const loadCell = useCallback(
-    async (cellX, cellY) => {
+    async (cellX, cellY, cellZ = 0) => {
       if (!currentSpaceId) return false;
 
-      const cellId = getCellId(cellX, cellY);
+      const cellId = getCellId(cellX, cellY, cellZ);
 
       // Skip if already loaded
       if (loadedCells.has(cellId)) {
@@ -98,14 +143,16 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
           ownerUserId,
           currentSpaceId,
           cellX,
-          cellY
+          cellY,
+          cellZ
         );
         if (!exists) {
           const created = await createCell(
             ownerUserId,
             currentSpaceId,
             cellX,
-            cellY
+            cellY,
+            cellZ
           );
           if (!created) {
             return false;
@@ -152,7 +199,14 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
    */
   const updateCameraPosition = useCallback(
     async (position) => {
-      if (!isInitialized || !currentSpaceId) return;
+      if (!isInitialized || !currentSpaceId) {
+        console.log('updateCameraPosition: Skipping update', {
+          isInitialized,
+          currentSpaceId,
+          position: position ? [position.x, position.y, position.z] : null,
+        });
+        return;
+      }
 
       // Convert position to array if it's a Vector3
       const posArray = Array.isArray(position)
@@ -171,14 +225,29 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
       // Only update if camera moved more than 10 units
       if (distance < 10) return;
 
+      console.log('updateCameraPosition: Camera moved significantly', {
+        from: lastCameraPosition.current,
+        to: posArray,
+        distance,
+      });
+
       lastCameraPosition.current = posArray;
 
       // Get current cell coordinates
-      const newCellCoords = getCellCoordinates(posArray); // Update current cell if changed
+      const newCellCoords = getCellCoordinates(posArray);
+
+      console.log('updateCameraPosition: New cell coordinates', newCellCoords);
+
+      // Update current cell if changed
       if (
         newCellCoords.x !== currentCellCoords.x ||
-        newCellCoords.y !== currentCellCoords.y
+        newCellCoords.y !== currentCellCoords.y ||
+        newCellCoords.z !== currentCellCoords.z
       ) {
+        console.log('updateCameraPosition: Cell changed', {
+          from: currentCellCoords,
+          to: newCellCoords,
+        });
         setCurrentCellCoords(newCellCoords);
       }
 
@@ -188,22 +257,57 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         CELL_LOAD_DISTANCE
       );
 
+      console.log(
+        'updateCameraPosition: Adjacent cells to check',
+        adjacentCells
+      );
+
       // Load current cell if not loaded
-      const currentCellId = getCellId(newCellCoords.x, newCellCoords.y);
+      const currentCellId = getCellId(
+        newCellCoords.x,
+        newCellCoords.y,
+        newCellCoords.z
+      );
+
+      console.log(
+        'updateCameraPosition: Current cell ID',
+        currentCellId,
+        'loaded cells',
+        Array.from(loadedCells)
+      );
+
       if (!loadedCells.has(currentCellId)) {
-        await loadCell(newCellCoords.x, newCellCoords.y);
-      } // Load adjacent cells that should be loaded
+        console.log(
+          'updateCameraPosition: Loading current cell',
+          currentCellId
+        );
+        await loadCell(newCellCoords.x, newCellCoords.y, newCellCoords.z);
+      }
+
+      // Load adjacent cells that should be loaded
       for (const cellCoords of adjacentCells) {
-        const cellId = getCellId(cellCoords.x, cellCoords.y);
+        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
         if (!loadedCells.has(cellId)) {
-          await loadCell(cellCoords.x, cellCoords.y);
+          console.log(
+            'updateCameraPosition: Loading adjacent cell',
+            cellId,
+            cellCoords
+          );
+          await loadCell(cellCoords.x, cellCoords.y, cellCoords.z);
         }
-      } // Unload cells that are too far away
+      }
+
+      // Unload cells that are too far away
       const cellsToUnload = getCellsToUnload(
         posArray,
         Array.from(loadedCells),
         CELL_UNLOAD_DISTANCE
       );
+
+      if (cellsToUnload.length > 0) {
+        console.log('updateCameraPosition: Unloading cells', cellsToUnload);
+      }
+
       for (const cellId of cellsToUnload) {
         unloadCell(cellId);
       }
@@ -284,6 +388,12 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
 
   // Track camera position
   useEffect(() => {
+    console.log('Camera tracking effect:', {
+      cameraRefExists: !!cameraRef?.current,
+      cameraExists: !!cameraRef?.current?.camera,
+      isInitialized,
+    });
+
     if (!cameraRef?.current?.camera || !isInitialized) return;
 
     const camera = cameraRef.current.camera;
@@ -296,10 +406,12 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
       animationId = requestAnimationFrame(trackCameraPosition);
     };
 
+    console.log('Starting camera position tracking');
     // Start tracking
     trackCameraPosition();
 
     return () => {
+      console.log('Stopping camera position tracking');
       if (animationId) {
         cancelAnimationFrame(animationId);
       }

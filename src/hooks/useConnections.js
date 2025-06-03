@@ -253,10 +253,9 @@ export function useConnections({ user, currentSpaceId, objects }) {
         activeConnectionSubscriptionRef.current.unsubscribe();
         activeConnectionSubscriptionRef.current = null;
       }
-
       lastSubscriptionKeyRef.current = subscriptionKey;
 
-      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      const spaceOwnerId = window.currentSpaceOwner || user?.uid;
       const processedChangesSet = new Set();
       connectionBatchRef.current = [];
       let initialBatchTimeout = null;
@@ -410,7 +409,7 @@ export function useConnections({ user, currentSpaceId, objects }) {
     currentSpaceId,
     mapConnectionsToObjects,
     synchronizeConnectionPositions,
-    user.uid,
+    user?.uid,
   ]); // Use the stable memoized key only
 
   // Subscribe to connections

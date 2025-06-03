@@ -463,7 +463,8 @@ export const moveObjectBetweenCells = async (
     const newCellCoords = getCellCoordinates(newPosition); // If the cell hasn't changed, just update the object in place
     if (
       oldCellCoords.x === newCellCoords.x &&
-      oldCellCoords.y === newCellCoords.y
+      oldCellCoords.y === newCellCoords.y &&
+      oldCellCoords.z === newCellCoords.z
     ) {
       const updatedObject = {
         ...objectData,
@@ -507,8 +508,8 @@ export const loadObjectsFromCells = async (userId, spaceId, loadedCells) => {
     const sharedStatus = await isSharedSpace(userId, spaceId);
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
     const cellCoords = loadedCells.map((cellKey) => {
-      const [x, y] = cellKey.split(',').map(Number);
-      return { x, y };
+      const [x, y, z] = cellKey.split(',').map(Number);
+      return { x, y, z: z || 0 }; // Default z to 0 for backward compatibility
     });
 
     const objects = await getObjectsFromCells(ownerUserId, spaceId, cellCoords);

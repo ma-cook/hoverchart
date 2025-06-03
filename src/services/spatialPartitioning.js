@@ -9,25 +9,26 @@ import {
 } from 'firebase/firestore';
 
 // Cell size constants
-export const CELL_SIZE = 1000;
+export const CELL_SIZE = 2000;
 export const CELL_LOAD_DISTANCE = 4; // Distance from edge to trigger adjacent cell loading
 export const CELL_UNLOAD_DISTANCE = 2; // Distance in cell blocks to unload cells
 
 /**
  * Calculate which cell a position belongs to
  * @param {Array} position - [x, y, z] world position
- * @returns {Object} - {x, y} cell coordinates
+ * @returns {Object} - {x, y, z} cell coordinates
  */
 export const getCellCoordinates = (position) => {
   if (!Array.isArray(position) || position.length < 3) {
-    return { x: 0, y: 0 };
+    return { x: 0, y: 0, z: 0 };
   }
 
-  const [x, , z] = position; // We use x and z for 2D grid, ignoring y (vertical)
+  const [x, y, z] = position;
 
   return {
     x: Math.floor(x / CELL_SIZE),
-    y: Math.floor(z / CELL_SIZE), // Note: using z for y coordinate in 2D grid
+    y: Math.floor(y / CELL_SIZE),
+    z: Math.floor(z / CELL_SIZE),
   };
 };
 
@@ -35,34 +36,38 @@ export const getCellCoordinates = (position) => {
  * Generate cell ID from coordinates
  * @param {number} x - Cell x coordinate
  * @param {number} y - Cell y coordinate
+ * @param {number} z - Cell z coordinate
  * @returns {string} - Cell ID
  */
-export const getCellId = (x, y) => {
-  return `${x},${y}`;
+export const getCellId = (x, y, z) => {
+  return `${x},${y},${z}`;
 };
 
 /**
  * Parse cell ID back to coordinates
  * @param {string} cellId - Cell ID string
- * @returns {Object} - {x, y} cell coordinates
+ * @returns {Object} - {x, y, z} cell coordinates
  */
 export const parseCellId = (cellId) => {
-  const [x, y] = cellId.split(',').map(Number);
-  return { x, y };
+  const [x, y, z] = cellId.split(',').map(Number);
+  return { x, y, z };
 };
 
 /**
  * Get world bounds for a cell
  * @param {number} cellX - Cell x coordinate
  * @param {number} cellY - Cell y coordinate
- * @returns {Object} - {minX, maxX, minZ, maxZ} bounds
+ * @param {number} cellZ - Cell z coordinate
+ * @returns {Object} - {minX, maxX, minY, maxY, minZ, maxZ} bounds
  */
-export const getCellBounds = (cellX, cellY) => {
+export const getCellBounds = (cellX, cellY, cellZ) => {
   return {
     minX: cellX * CELL_SIZE,
     maxX: (cellX + 1) * CELL_SIZE,
-    minZ: cellY * CELL_SIZE,
-    maxZ: (cellY + 1) * CELL_SIZE,
+    minY: cellY * CELL_SIZE,
+    maxY: (cellY + 1) * CELL_SIZE,
+    minZ: cellZ * CELL_SIZE,
+    maxZ: (cellZ + 1) * CELL_SIZE,
   };
 };
 
@@ -80,47 +85,67 @@ export const getAdjacentCellsToLoad = (
     return [];
   }
 
-  const [x, , z] = position;
+  const [x, y, z] = position;
   const currentCell = getCellCoordinates(position);
-  const bounds = getCellBounds(currentCell.x, currentCell.y);
+  const bounds = getCellBounds(currentCell.x, currentCell.y, currentCell.z);
 
   const adjacentCells = [];
 
   // Check distance to each edge and determine which adjacent cells to load
   const distanceToLeftEdge = x - bounds.minX;
   const distanceToRightEdge = bounds.maxX - x;
-  const distanceToBottomEdge = z - bounds.minZ;
-  const distanceToTopEdge = bounds.maxZ - z;
+  const distanceToBottomEdge = y - bounds.minY;
+  const distanceToTopEdge = bounds.maxY - y;
+  const distanceToFrontEdge = z - bounds.minZ;
+  const distanceToBackEdge = bounds.maxZ - z;
 
-  // Load adjacent cells if within threshold distance
+  // Load adjacent cells if within threshold distance in any direction
+  // X-axis neighbors
   if (distanceToLeftEdge <= distance) {
-    adjacentCells.push({ x: currentCell.x - 1, y: currentCell.y }); // Left
-
-    if (distanceToBottomEdge <= distance) {
-      adjacentCells.push({ x: currentCell.x - 1, y: currentCell.y - 1 }); // Bottom-left
-    }
-    if (distanceToTopEdge <= distance) {
-      adjacentCells.push({ x: currentCell.x - 1, y: currentCell.y + 1 }); // Top-left
-    }
+    adjacentCells.push({
+      x: currentCell.x - 1,
+      y: currentCell.y,
+      z: currentCell.z,
+    });
   }
-
   if (distanceToRightEdge <= distance) {
-    adjacentCells.push({ x: currentCell.x + 1, y: currentCell.y }); // Right
-
-    if (distanceToBottomEdge <= distance) {
-      adjacentCells.push({ x: currentCell.x + 1, y: currentCell.y - 1 }); // Bottom-right
-    }
-    if (distanceToTopEdge <= distance) {
-      adjacentCells.push({ x: currentCell.x + 1, y: currentCell.y + 1 }); // Top-right
-    }
+    adjacentCells.push({
+      x: currentCell.x + 1,
+      y: currentCell.y,
+      z: currentCell.z,
+    });
   }
 
+  // Y-axis neighbors
   if (distanceToBottomEdge <= distance) {
-    adjacentCells.push({ x: currentCell.x, y: currentCell.y - 1 }); // Bottom
+    adjacentCells.push({
+      x: currentCell.x,
+      y: currentCell.y - 1,
+      z: currentCell.z,
+    });
+  }
+  if (distanceToTopEdge <= distance) {
+    adjacentCells.push({
+      x: currentCell.x,
+      y: currentCell.y + 1,
+      z: currentCell.z,
+    });
   }
 
-  if (distanceToTopEdge <= distance) {
-    adjacentCells.push({ x: currentCell.x, y: currentCell.y + 1 }); // Top
+  // Z-axis neighbors
+  if (distanceToFrontEdge <= distance) {
+    adjacentCells.push({
+      x: currentCell.x,
+      y: currentCell.y,
+      z: currentCell.z - 1,
+    });
+  }
+  if (distanceToBackEdge <= distance) {
+    adjacentCells.push({
+      x: currentCell.x,
+      y: currentCell.y,
+      z: currentCell.z + 1,
+    });
   }
 
   return adjacentCells;
@@ -132,15 +157,16 @@ export const getAdjacentCellsToLoad = (
  * @param {string} spaceId - Space ID
  * @param {number} cellX - Cell x coordinate
  * @param {number} cellY - Cell y coordinate
+ * @param {number} cellZ - Cell z coordinate
  * @returns {Promise<boolean>} - Success status
  */
-export const createCell = async (userId, spaceId, cellX, cellY) => {
+export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
   if (!userId || !spaceId) {
     return false;
   }
 
   try {
-    const cellId = getCellId(cellX, cellY);
+    const cellId = getCellId(cellX, cellY, cellZ);
     const cellRef = doc(
       db,
       'users',
@@ -155,16 +181,20 @@ export const createCell = async (userId, spaceId, cellX, cellY) => {
     const cellDoc = await getDoc(cellRef);
     if (cellDoc.exists()) {
       return true;
-    } // Create new cell
+    }
+
+    // Create new cell
     const cellData = {
       id: cellId,
       x: cellX,
       y: cellY,
-      bounds: getCellBounds(cellX, cellY),
+      z: cellZ,
+      bounds: getCellBounds(cellX, cellY, cellZ),
       createdAt: new Date(),
       objects: {}, // Will store object data with objectId as key
       connections: {}, // Will store connection data with connectionId as key
     };
+
     await setDoc(cellRef, cellData);
     return true;
   } catch {
@@ -178,13 +208,14 @@ export const createCell = async (userId, spaceId, cellX, cellY) => {
  * @param {string} spaceId - Space ID
  * @param {number} cellX - Cell x coordinate
  * @param {number} cellY - Cell y coordinate
+ * @param {number} cellZ - Cell z coordinate
  * @returns {Promise<boolean>} - Whether cell exists
  */
-export const cellExists = async (userId, spaceId, cellX, cellY) => {
+export const cellExists = async (userId, spaceId, cellX, cellY, cellZ) => {
   if (!userId || !spaceId) return false;
 
   try {
-    const cellId = getCellId(cellX, cellY);
+    const cellId = getCellId(cellX, cellY, cellZ);
     const cellRef = doc(
       db,
       'users',
@@ -207,13 +238,14 @@ export const cellExists = async (userId, spaceId, cellX, cellY) => {
  * @param {string} spaceId - Space ID
  * @param {number} cellX - Cell x coordinate
  * @param {number} cellY - Cell y coordinate
+ * @param {number} cellZ - Cell z coordinate
  * @returns {Promise<Object|null>} - Cell data or null
  */
-export const getCell = async (userId, spaceId, cellX, cellY) => {
+export const getCell = async (userId, spaceId, cellX, cellY, cellZ) => {
   if (!userId || !spaceId) return null;
 
   try {
-    const cellId = getCellId(cellX, cellY);
+    const cellId = getCellId(cellX, cellY, cellZ);
     const cellRef = doc(
       db,
       'users',
@@ -249,10 +281,9 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
     !objectData.position
   )
     return false;
-
   try {
     const cellCoords = getCellCoordinates(objectData.position);
-    const cellId = getCellId(cellCoords.x, cellCoords.y);
+    const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
     const cellRef = doc(
       db,
       'users',
@@ -271,12 +302,19 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
       cellData = cellDoc.data();
     } else {
       // Create cell if it doesn't exist
-      await createCell(userId, spaceId, cellCoords.x, cellCoords.y);
+      await createCell(
+        userId,
+        spaceId,
+        cellCoords.x,
+        cellCoords.y,
+        cellCoords.z
+      );
       cellData = {
         id: cellId,
         x: cellCoords.x,
         y: cellCoords.y,
-        bounds: getCellBounds(cellCoords.x, cellCoords.y),
+        z: cellCoords.z,
+        bounds: getCellBounds(cellCoords.x, cellCoords.y, cellCoords.z),
         createdAt: new Date(),
         objects: {},
         connections: {},
@@ -320,7 +358,7 @@ export const removeObjectFromCell = async (
 
   try {
     const cellCoords = getCellCoordinates(position);
-    const cellId = getCellId(cellCoords.x, cellCoords.y);
+    const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
     const cellRef = doc(
       db,
       'users',
@@ -377,11 +415,11 @@ export const moveObjectBetweenCells = async (
 
   const oldCellCoords = getCellCoordinates(oldPosition);
   const newCellCoords = getCellCoordinates(newPosition);
-
   // If object didn't change cells, just update the object data in the current cell
   if (
     oldCellCoords.x === newCellCoords.x &&
-    oldCellCoords.y === newCellCoords.y
+    oldCellCoords.y === newCellCoords.y &&
+    oldCellCoords.z === newCellCoords.z
   ) {
     // Update object in current cell with new position
     const updatedObjectData = { ...objectData, position: newPosition };
@@ -442,9 +480,8 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
 
   try {
     const allObjects = [];
-
     for (const coords of cellCoords) {
-      const cellId = getCellId(coords.x, coords.y);
+      const cellId = getCellId(coords.x, coords.y, coords.z);
       const cellRef = doc(
         db,
         'users',
@@ -495,10 +532,9 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
     !objectData.position
   )
     return false;
-
   try {
     const cellCoords = getCellCoordinates(objectData.position);
-    const cellId = getCellId(cellCoords.x, cellCoords.y);
+    const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
     const cellRef = doc(
       db,
       'users',
@@ -551,10 +587,9 @@ export const deleteObjectFromCell = async (
   position
 ) => {
   if (!userId || !spaceId || !objectId || !position) return false;
-
   try {
     const cellCoords = getCellCoordinates(position);
-    const cellId = getCellId(cellCoords.x, cellCoords.y);
+    const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
     const cellRef = doc(
       db,
       'users',
@@ -604,9 +639,8 @@ export const subscribeToCells = (userId, spaceId, cellCoords, callback) => {
   }
 
   const unsubscribes = [];
-
   cellCoords.forEach((coords) => {
-    const cellId = getCellId(coords.x, coords.y);
+    const cellId = getCellId(coords.x, coords.y, coords.z);
     const cellRef = doc(
       db,
       'users',
@@ -680,12 +714,16 @@ export const getOccupiedCells = async (userId, spaceId) => {
 
 /**
  * Calculate the distance between two cells in cell blocks
- * @param {Object} cell1 - {x, y} cell coordinates
- * @param {Object} cell2 - {x, y} cell coordinates
+ * @param {Object} cell1 - {x, y, z} cell coordinates
+ * @param {Object} cell2 - {x, y, z} cell coordinates
  * @returns {number} - Distance in cell blocks (Manhattan distance)
  */
 export const getCellDistance = (cell1, cell2) => {
-  return Math.max(Math.abs(cell1.x - cell2.x), Math.abs(cell1.y - cell2.y));
+  return Math.max(
+    Math.abs(cell1.x - cell2.x),
+    Math.abs(cell1.y - cell2.y),
+    Math.abs(cell1.z - cell2.z || 0)
+  );
 };
 
 /**

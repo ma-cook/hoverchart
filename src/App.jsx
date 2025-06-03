@@ -9,6 +9,7 @@ import UIOverlay from './components/UIOverlay';
 import ConnectionUpdater from './components/ConnectionUpdater';
 import ObjectRenderer from './components/ObjectRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
+import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 
 // Hook imports
 import { useAuthState } from './hooks/useAuthState';
@@ -565,7 +566,6 @@ const App = () => {
             userId={user?.uid} // Add this prop
             spaceId={effectiveSpaceId} // Add this prop
           />
-
           {/* Render all connections */}
           <ConnectionsRenderer
             connections={connections}
@@ -582,8 +582,7 @@ const App = () => {
             handleLineStyleChange={handleLineStyleChange}
             setShowLineTextStyleUI={setShowLineTextStyleUI}
             setShowLineTextInput={setShowLineTextInput}
-          />
-
+          />{' '}
           {/* Render all objects */}
           {objects.map((obj) => (
             <ObjectRenderer
@@ -615,7 +614,16 @@ const App = () => {
               user={user}
               currentSpaceId={effectiveSpaceId} // Use effectiveSpaceId instead of currentSpaceId
             />
-          ))}
+          ))}{' '}
+          {/* Render cell boundaries */}
+          <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
+          {/* Debug output for cell boundaries */}
+          {console.log(
+            'App Debug - loadedCells:',
+            loadedCells,
+            'isSpatialInitialized:',
+            isSpatialInitialized
+          )}
         </group>
 
         <EffectComposer>
