@@ -1,5 +1,4 @@
 import {
-  objectsAreConnected,
   registerObjectConnection,
   registerConnectedPair,
   handleTextObjectConnection,
@@ -29,7 +28,6 @@ import { calculateFacePosition } from './facePositionUtils';
 export const handleFaceIndicatorClick = ({
   indicator,
   objects,
-  connections,
   selectedIndicatorsRef,
   setSelectedIndicators,
   setConnections,
@@ -295,9 +293,9 @@ export const handleFaceIndicatorClick = ({
         plane: enhancedEndIndicator.plane,
       },
       lineStyle: 'straight',
-      color: 'white',
+      color: 'black',
       text: '',
-      textStyle: { fontSize: 1, color: 'white' },
+      textStyle: { fontSize: 1, color: 'black' },
     };
 
     console.log('Connection created:', newConnection);

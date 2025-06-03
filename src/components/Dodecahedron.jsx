@@ -31,13 +31,13 @@ const Sphere = ({
   // Add default values for props
   headerText: initialHeaderText = '',
   scale: initialScale = [1, 1, 1],
-  lineColor: initialLineColor = 'white',
+  lineColor: initialLineColor = 'black',
   faceColors: initialFaceColors = {},
   faceTexts: initialFaceTexts = {},
   faceTextStyles: initialFaceTextStyles = {},
   headerStyle: initialHeaderStyle = {
     fontSize: 'medium',
-    color: 'white',
+    color: 'black',
     underline: false,
   },
 }) => {
@@ -312,7 +312,7 @@ const Sphere = ({
             idx,
             faceTextStyles[idx] || {
               fontSize: 0.5,
-              color: 'white',
+              color: 'black',
               underline: false,
             },
           ])
@@ -759,7 +759,7 @@ const Sphere = ({
             <meshBasicMaterial
               color={
                 faceColors[idx] || // Custom color if set
-                (selected && highlightedFaces.has(idx) ? '#0066ff' : 'white') // Only show highlight when selected
+                (selected && highlightedFaces.has(idx) ? '#0066ff' : 'black') // Only show highlight when selected
               }
               transparent
               opacity={
@@ -780,7 +780,7 @@ const Sphere = ({
 
         {/* Wireframe lines */}
         {points.map((linePoints, idx) => (
-          <Line key={idx} points={linePoints} color={lineColor} lineWidth={3} />
+          <Line key={idx} points={linePoints} color={lineColor} lineWidth={1} />
         ))}
 
         {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}
@@ -790,7 +790,7 @@ const Sphere = ({
           const { position, normal } = getFaceTextPosition(faceIdx);
           const textStyle = faceTextStyles[faceIndex] || {
             fontSize: 0.5,
-            color: 'white',
+            color: 'black',
             underline: false,
           };
 

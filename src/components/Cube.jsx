@@ -20,7 +20,7 @@ import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
 
 // Constants to avoid recreation
-const DEFAULT_COLOR = '#ffffff';
+const DEFAULT_COLOR = '#000000';
 const DEFAULT_OPACITY = 0.1;
 const SELECTED_OPACITY = 0.3;
 const CUBE_SIZE = 5; // Half-size of cube
@@ -37,7 +37,7 @@ const Cube = ({
   faceColors = {},
   faceTexts = {},
   headerText = '',
-  textStyle = { fontSize: 1.5, color: 'white', underline: false },
+  textStyle = { fontSize: 1.5, color: 'black', underline: false },
   faceTextStyles = {},
   id,
   selected,
@@ -83,12 +83,12 @@ const Cube = ({
   const [localFaceTextStyles, setLocalFaceTextStyles] = useState(() => {
     // Initialize with default styles for each face if not provided
     const defaultStyles = {
-      front: { fontSize: 0.5, color: 'white', underline: false },
-      back: { fontSize: 0.5, color: 'white', underline: false },
-      top: { fontSize: 0.5, color: 'white', underline: false },
-      bottom: { fontSize: 0.5, color: 'white', underline: false },
-      right: { fontSize: 0.5, color: 'white', underline: false },
-      left: { fontSize: 0.5, color: 'white', underline: false },
+      front: { fontSize: 0.5, color: 'black', underline: false },
+      back: { fontSize: 0.5, color: 'black', underline: false },
+      top: { fontSize: 0.5, color: 'black', underline: false },
+      bottom: { fontSize: 0.5, color: 'black', underline: false },
+      right: { fontSize: 0.5, color: 'black', underline: false },
+      left: { fontSize: 0.5, color: 'black', underline: false },
     };
     return { ...defaultStyles, ...faceTextStyles };
   });
@@ -285,7 +285,7 @@ const Cube = ({
         ? new THREE.Color(localFaceColors[faceName])
         : selectedFace === faceName
         ? new THREE.Color('#99ccff')
-        : new THREE.Color('#ffffff'),
+        : new THREE.Color('#000000'),
       opacity: localFaceColors[faceName]
         ? 1.0
         : selectedFace === faceName
@@ -992,7 +992,7 @@ const Cube = ({
         <Line
           points={cubeLinePoints}
           color={localColor}
-          lineWidth={3}
+          lineWidth={1}
           segments={true}
           renderOrder={1} // Higher render order for cube edges
           transparent={false}

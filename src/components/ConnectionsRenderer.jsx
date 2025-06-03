@@ -230,9 +230,9 @@ const Connection = ({
         connectionId={connection.id}
         color={
           connection.color ||
-          (selectedConnection === connection.id ? '#ffff00' : 'white')
+          (selectedConnection === connection.id ? '#ffff00' : 'black')
         }
-        lineWidth={selectedConnection === connection.id ? 4 : 2}
+        lineWidth={selectedConnection === connection.id ? 1 : 1}
         lineStyle={connection.lineStyle || 'straight'}
         dashDirection={connection.dashDirection || null}
         dashOffset={connection.dashOffset || 0}
@@ -257,7 +257,7 @@ const Connection = ({
         position={textPosition}
         style={{
           fontSize: connection.textStyle?.fontSize || 1.5,
-          color: connection.textStyle?.color || 'white',
+          color: connection.textStyle?.color || 'black',
           underline: connection.textStyle?.underline || false,
           fixedSize: true,
           backgroundOpacity: 0.4,

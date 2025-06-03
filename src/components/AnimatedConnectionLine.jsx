@@ -8,7 +8,7 @@ import { Line } from '@react-three/drei';
 const AnimatedConnectionLine = ({
   points,
   connectionId,
-  color = 'white',
+  color = 'black',
   lineWidth = 2,
   lineStyle = 'straight',
   dashDirection,
@@ -96,7 +96,7 @@ const AnimatedConnectionLine = ({
       <Line
         ref={lineRef}
         points={points}
-        color={color || (isSelected ? '#ffff00' : 'white')}
+        color={color || (isSelected ? '#ffff00' : 'black')}
         lineWidth={isSelected ? 4 : lineWidth}
         dashed={isDashed}
         dashScale={dashScale}

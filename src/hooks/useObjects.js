@@ -1,7 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import * as THREE from 'three'; // Add THREE import
 import isEqual from 'lodash/isEqual';
-import { saveObject, deleteObject } from '../services/objectsService';
+import {
+  saveObjectToCell,
+  deleteObjectFromSpatialCell,
+} from '../services/spatialObjectsService';
 import { deleteConnection } from '../services/connectionsService';
 
 /**
@@ -15,6 +18,7 @@ export function useObjects({
   setConnections,
   objects, // Now passed from parent
   setObjects, // Now passed from parent
+  addObjectToSpatialSystem, // Spatial partitioning function
 }) {
   const [selectedId, setSelectedId] = useState(null);
 
@@ -43,7 +47,6 @@ export function useObjects({
 
       lastSavedRef.current = JSON.parse(JSON.stringify(objects));
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
-
       // Only save objects that aren't currently being dragged or transformed
       objects.forEach((obj) => {
         if (!obj?.id) return; // Skip objects without valid IDs
@@ -53,13 +56,128 @@ export function useObjects({
           !draggingObjectsRef.current.has(objId) &&
           !transformingObjectsRef.current.has(objId)
         ) {
-          saveObject(spaceOwnerId, currentSpaceId, obj);
+          saveObjectToCell(spaceOwnerId, currentSpaceId, obj);
         }
       });
     }, 1000);
 
     return () => clearTimeout(saveTimeout);
   }, [objects, user, currentSpaceId]);
+
+  // Helper function to create object at a given position
+  const createObjectWithPosition = useCallback(
+    async (type, position) => {
+      // Create a truly unique ID with a UUID suffix
+      const uniqueId =
+        Date.now() + '-' + Math.random().toString(36).substring(2, 10);
+
+      // Create object with type-specific defaults
+      const newObject = {
+        type,
+        position: [position.x, position.y, position.z],
+        id: uniqueId,
+        scale: [1, 1, 1],
+        ...(type === 'sphere'
+          ? {
+              lineColor: 'black',
+              headerText: '',
+              headerStyle: {
+                fontSize: 1.5,
+                color: 'black',
+                underline: false,
+              },
+              faceColors: Array(12)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = null;
+                  return acc;
+                }, {}),
+              faceTexts: Array(12)
+                .fill('')
+                .reduce((acc, _, idx) => {
+                  acc[idx] = '';
+                  return acc;
+                }, {}),
+              faceTextStyles: Array(12)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = {
+                    fontSize: 0.5,
+                    color: 'black',
+                    underline: false,
+                  };
+                  return acc;
+                }, {}),
+            }
+          : type === 'cube'
+          ? {
+              color: '#000000',
+              headerText: '',
+              faceColors: {},
+              faceTexts: {
+                front: '',
+                back: '',
+                top: '',
+                bottom: '',
+                right: '',
+                left: '',
+              },
+              textStyle: { fontSize: 1.5, color: 'black', underline: false },
+            }
+          : type === 'plane'
+          ? {
+              borderStyle: 'solid',
+              borderColor: 'black',
+              lineThickness: 1,
+              color: null,
+              headerText: '',
+              headerStyle: {
+                fontSize: 1.5,
+                color: 'black',
+                underline: false,
+              },
+              faceText: '',
+              faceTextStyle: {
+                fontSize: 0.5,
+                color: 'black',
+                underline: false,
+              },
+            }
+          : {}),
+      };
+
+      // Add to tracking set to prevent duplicate addition
+      createdObjectIds.current.add(uniqueId.toString());
+
+      // Update local state first for immediate feedback
+      setObjects((prev) => [...prev, newObject]);
+
+      // Save to database
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
+
+      // Add object to spatial partitioning system
+      if (addObjectToSpatialSystem) {
+        try {
+          const success = await addObjectToSpatialSystem(
+            uniqueId,
+            newObject.position
+          );
+          if (success) {
+            console.log(
+              `Object ${uniqueId} added to spatial system at position`,
+              newObject.position
+            );
+          } else {
+            console.warn(`Failed to add object ${uniqueId} to spatial system`);
+          }
+        } catch (error) {
+          console.error('Error adding object to spatial system:', error);
+        }
+      }
+    },
+    [user, currentSpaceId, setObjects, addObjectToSpatialSystem]
+  );
 
   // Create a new object with a guaranteed unique ID
   const handleCreateObject = useCallback(
@@ -114,105 +232,18 @@ export function useObjects({
         createObjectWithPosition(type, newPosition);
       }
     },
-    [user, currentSpaceId, cameraRef]
+    [user, currentSpaceId, cameraRef, createObjectWithPosition]
   );
-
-  // Helper function to create object at a given position
-  const createObjectWithPosition = (type, position) => {
-    // Create a truly unique ID with a UUID suffix
-    const uniqueId =
-      Date.now() + '-' + Math.random().toString(36).substring(2, 10);
-
-    // Create object with type-specific defaults
-    const newObject = {
-      type,
-      position: [position.x, position.y, position.z],
-      id: uniqueId,
-      scale: [1, 1, 1],
-      ...(type === 'sphere'
-        ? {
-            lineColor: 'white',
-            headerText: '',
-            headerStyle: {
-              fontSize: 1.5,
-              color: 'white',
-              underline: false,
-            },
-            faceColors: Array(12)
-              .fill(null)
-              .reduce((acc, _, idx) => {
-                acc[idx] = null;
-                return acc;
-              }, {}),
-            faceTexts: Array(12)
-              .fill('')
-              .reduce((acc, _, idx) => {
-                acc[idx] = '';
-                return acc;
-              }, {}),
-            faceTextStyles: Array(12)
-              .fill(null)
-              .reduce((acc, _, idx) => {
-                acc[idx] = {
-                  fontSize: 0.5,
-                  color: 'white',
-                  underline: false,
-                };
-                return acc;
-              }, {}),
-          }
-        : type === 'cube'
-        ? {
-            color: '#ffffff',
-            headerText: '',
-            faceColors: {},
-            faceTexts: {
-              front: '',
-              back: '',
-              top: '',
-              bottom: '',
-              right: '',
-              left: '',
-            },
-            textStyle: { fontSize: 1.5, color: 'white', underline: false },
-          }
-        : type === 'plane'
-        ? {
-            borderStyle: 'solid',
-            borderColor: 'white',
-            lineThickness: 1,
-            color: null,
-            headerText: '',
-            headerStyle: {
-              fontSize: 1.5,
-              color: 'white',
-              underline: false,
-            },
-            faceText: '',
-            faceTextStyle: {
-              fontSize: 0.5,
-              color: 'white',
-              underline: false,
-            },
-          }
-        : {}),
-    };
-
-    // Add to tracking set to prevent duplicate addition
-    createdObjectIds.current.add(uniqueId.toString());
-
-    // Update local state first for immediate feedback
-    setObjects((prev) => [...prev, newObject]);
-
-    // Save to database
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-    saveObject(spaceOwnerId, currentSpaceId, newObject);
-  };
 
   // Delete an object and its connections
   const handleObjectDelete = useCallback(
     (id) => {
       if (!user || !currentSpaceId) return;
+
+      // Find the object to get its position for spatial deletion
+      const objectToDelete = objects.find(
+        (obj) => obj.id.toString() === id.toString()
+      );
 
       // Update UI first for responsiveness
       setObjects((prev) =>
@@ -253,10 +284,27 @@ export function useObjects({
       // Remove from tracking set if present
       createdObjectIds.current.delete(id.toString());
 
+      // Delete from database
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
-      deleteObject(spaceOwnerId, currentSpaceId, id);
+
+      if (objectToDelete?.position) {
+        deleteObjectFromSpatialCell(
+          spaceOwnerId,
+          currentSpaceId,
+          id,
+          objectToDelete.position
+        );
+      }
     },
-    [user, currentSpaceId, selectedId, connections, setConnections]
+    [
+      user,
+      currentSpaceId,
+      selectedId,
+      connections,
+      setConnections,
+      objects,
+      setObjects,
+    ]
   );
 
   // Enhanced transform tracking with robust locking and position history

@@ -16,6 +16,7 @@ import { useSpaceManager } from './hooks/useSpaceManager';
 import { useConnections } from './hooks/useConnections';
 import { useObjects } from './hooks/useObjects';
 import { useIndicators } from './hooks/useIndicators';
+import { useSpatialManager } from './hooks/useSpatialManager';
 
 // Utility imports
 import { memoize } from './utils/perfUtils';
@@ -27,7 +28,8 @@ import {
 import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 
 import { signInUser } from './services/authService';
-import { subscribeToObjects } from './services/objectsService';
+import { subscribeToSpatialObjects } from './services/spatialObjectsService';
+import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
 
@@ -36,7 +38,7 @@ import { initWebRTC } from './services/webRservice';
  */
 const App = () => {
   // Base state
-  const [backgroundColor] = useState('black');
+  const [backgroundColor] = useState('white');
   const cameraRef = useRef();
   const intentionalSpaceChangeRef = useRef(false);
 
@@ -48,7 +50,26 @@ const App = () => {
   const { currentSpaceId } = useSpaceManager({
     user,
     intentionalSpaceChangeRef,
+  }); // Spatial partitioning hook
+  const {
+    addObjectToSpatialSystem,
+    moveObjectInSpatialSystem,
+    loadedCells,
+    isInitialized: isSpatialInitialized,
+    currentCellCoords,
+  } = useSpatialManager({
+    user,
+    currentSpaceId,
+    cameraRef,
   });
+  // Setup debug context for spatial partitioning
+  useEffect(() => {
+    window._spatialManagerDebug = {
+      loadedCells,
+      currentCellCoords,
+      isInitialized: isSpatialInitialized,
+    };
+  }, [loadedCells, currentCellCoords, isSpatialInitialized]);
 
   // Memoize the objects parameter to useConnections to prevent identity changes
   const objectsParam = useMemo(() => {
@@ -84,7 +105,6 @@ const App = () => {
     currentSpaceId,
     objects: objectsParam, // Use the memoized objects param
   });
-
   // Objects hook gets the connections from above
   const {
     selectedId,
@@ -106,6 +126,8 @@ const App = () => {
     setConnections,
     objects,
     setObjects,
+    addObjectToSpatialSystem,
+    moveObjectInSpatialSystem,
   });
 
   // Indicators hook
@@ -136,13 +158,8 @@ const App = () => {
     // Extract space ID and owner ID from URL if present
     const params = new URLSearchParams(window.location.search);
     const spaceParam = params.get('space');
-    const ownerParam = params.get('owner');
-
-    // Store for access by other components
+    const ownerParam = params.get('owner'); // Store for access by other components
     if (spaceParam && ownerParam) {
-      console.log(
-        `Public access mode detected: space=${spaceParam}, owner=${ownerParam}`
-      );
       window.publicAccessSpace = spaceParam;
       window.currentSpaceOwner = ownerParam;
 
@@ -150,13 +167,13 @@ const App = () => {
       sessionStorage.setItem(`isSharedSpace_${spaceParam}`, 'true');
       sessionStorage.setItem(`sharedSpaceOwner_${spaceParam}`, ownerParam);
       sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
-
-      // For anonymous users viewing public spaces
-      if (!user) {
-        console.log('Anonymous access to public space:', spaceParam);
-      }
     }
-  }, []);
+
+    // Setup debug context for spatial partitioning
+    window._currentSpaceId = currentSpaceId;
+    window._currentUserId = user?.uid;
+    window._firebaseDb = db;
+  }, [user, currentSpaceId]);
 
   // Modified to handle anonymous access for public spaces
   const publicSpaceId = window.publicAccessSpace;
@@ -164,24 +181,33 @@ const App = () => {
   const canViewSpace = !!(user || publicSpaceId);
   const isReadOnly =
     !!publicSpaceId && (!user || window.currentSpaceOwner !== user?.uid);
-
   // Display read-only indicator for public spaces
   useEffect(() => {
     if (isReadOnly) {
-      console.log('Read-only mode active for public space');
       // Optionally show a UI indicator
     }
   }, [isReadOnly]);
 
-  // Subscribe to objects changes - supports anonymous access to public spaces
+  // Subscribe to spatial objects changes - supports anonymous access to public spaces
   useEffect(() => {
     if (!canViewSpace || (!user && !window.currentSpaceOwner)) return () => {};
+    if (!isSpatialInitialized) return () => {}; // Wait for spatial system to initialize
+
+    if (
+      !loadedCells ||
+      !Array.isArray(loadedCells) ||
+      loadedCells.length === 0
+    ) {
+      return () => {};
+    }
 
     const spaceToLoad = effectiveSpaceId;
+    const ownerUserId = window.currentSpaceOwner || user?.uid;
 
-    const unsubscribe = subscribeToObjects(
-      user?.uid, // May be null for anonymous access
+    const unsubscribe = subscribeToSpatialObjects(
+      ownerUserId, // May be null for anonymous access
       spaceToLoad,
+      loadedCells, // Array of loaded cell IDs
       (change) => {
         setObjects((prev) => {
           switch (change.type) {
@@ -238,6 +264,8 @@ const App = () => {
     user,
     effectiveSpaceId,
     canViewSpace,
+    isSpatialInitialized,
+    loadedCells, // Re-subscribe when loaded cells change
     lastUpdateRef,
     draggingObjectsRef,
     transformingObjectsRef,
@@ -256,7 +284,6 @@ const App = () => {
 
     window._matrixUpdateMap.set(id.toString(), matrixWorld.clone());
   }, []);
-
   // Store camera reference in window for debugging
   useEffect(() => {
     if (cameraRef.current?.orbitControls) {
@@ -267,7 +294,7 @@ const App = () => {
     if (cameraRef.current?.camera) {
       window.camera = cameraRef.current.camera;
     }
-  }, [cameraRef.current]);
+  }); // Removed dependency array as we want this to run on every render
 
   // Camera controls
   const disableOrbitControls = useCallback(() => {
@@ -335,16 +362,9 @@ const App = () => {
       draggingObjectsRef,
     ]
   );
-
   // Object update handler
   const handleObjectUpdateCallback = useCallback(
     (id, updates) => {
-      // Add log here
-      console.log(
-        `[App] handleObjectUpdateCallback received for ID ${id}:`,
-        updates
-      );
-
       // Skip position updates for objects being transformed
       // Or for position updates that look like jitter
       if (updates.position) {
@@ -366,11 +386,8 @@ const App = () => {
             });
           }
           return;
-        }
-
-        // If position looks like jitter (oscillation), skip it
+        } // If position looks like jitter (oscillation), skip it
         if (checkPositionJitter(id, updates.position)) {
-          console.log('Skipping likely position jitter for object', id);
           const updatesWithoutPosition = { ...updates };
           delete updatesWithoutPosition.position;
 
@@ -463,33 +480,30 @@ const App = () => {
     },
     [setActiveIndicator, setIndicatorMode]
   );
-
   // Canvas click handler
-  const handleCanvasClick = useCallback(
-    (event) => {
-      // Close any active text styling menus
-      setActiveTextStyleUI(null);
-      setSelectedConnection(null);
-      setShowLineTextStyleUI(null);
-      setSelectedId(null);
+  const handleCanvasClick = useCallback(() => {
+    // Close any active text styling menus
+    setActiveTextStyleUI(null);
+    setSelectedConnection(null);
+    setShowLineTextStyleUI(null);
+    setSelectedId(null);
 
-      // If they were trying to create a connection but clicked empty space,
-      // cancel the connection creation process
-      if (isConnectMode && selectedIndicators.length > 0) {
-        setSelectedIndicators([]);
-        selectedIndicatorsRef.current = [];
-      }
-    },
-    [
-      setActiveTextStyleUI,
-      setSelectedConnection,
-      setShowLineTextStyleUI,
-      setSelectedId,
-      isConnectMode,
-      selectedIndicators,
-      selectedIndicatorsRef,
-    ]
-  );
+    // If they were trying to create a connection but clicked empty space,
+    // cancel the connection creation process
+    if (isConnectMode && selectedIndicators.length > 0) {
+      setSelectedIndicators([]);
+      selectedIndicatorsRef.current = [];
+    }
+  }, [
+    setActiveTextStyleUI,
+    setSelectedConnection,
+    setShowLineTextStyleUI,
+    setSelectedId,
+    isConnectMode,
+    selectedIndicators,
+    setSelectedIndicators,
+    selectedIndicatorsRef,
+  ]);
 
   // Initialize WebRTC service with user ID when available
   useEffect(() => {

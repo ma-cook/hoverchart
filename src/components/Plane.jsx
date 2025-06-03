@@ -40,17 +40,17 @@ const Plane = ({
   color: initialColor = null,
   headerText: initialHeaderText = '',
   borderStyle: initialBorderStyle = 'solid',
-  borderColor: initialBorderColor = 'white',
+  borderColor: initialBorderColor = 'black',
   lineThickness: initialLineThickness = 1,
   headerStyle: initialHeaderStyle = {
     fontSize: 1.5,
-    color: 'white',
+    color: 'black',
     underline: false,
   },
   faceText: initialFaceText = '',
   faceTextStyle: initialFaceTextStyle = {
     fontSize: 0.5,
-    color: 'white',
+    color: 'black',
     underline: false,
   },
   onTransformStart,
@@ -162,7 +162,7 @@ const Plane = ({
     } else if (!indicatorSelected) {
       setShowUI(true);
     }
-  }, [selected, indicatorSelected, onIndicatorDeselected]);
+  }, [selected, indicatorSelected, onIndicatorDeselected, closeAllUIs]);
 
   useEffect(() => {
     if (groupRef.current && contentRef.current) {
@@ -607,7 +607,7 @@ const Plane = ({
           }
         }
       },
-      (error) => {
+      () => {
         if (isViewingBroadcast && isMountedRef.current) {
           const now = Date.now();
           if (now - lastBroadcastSeenRef.current > 10000) {
@@ -724,11 +724,10 @@ const Plane = ({
   }, [currentScale]);
 
   const indicatorPosition = useMemo(() => [0, -size - 1, 0], []);
-
   const meshMaterial = useMemo(
     () => (
       <meshBasicMaterial
-        color={currentColor || (selected ? '#99ccff' : 'white')}
+        color={currentColor || (selected ? '#99ccff' : 'black')}
         transparent
         opacity={currentColor ? 1 : selected ? 0.1 : 0}
         depthWrite={!!currentColor}

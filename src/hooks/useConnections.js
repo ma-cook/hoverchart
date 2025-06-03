@@ -41,7 +41,7 @@ export function useConnections({ user, currentSpaceId, objects }) {
   const subscriptionKey = useMemo(() => {
     if (!user || !currentSpaceId) return null;
     return `${user.uid}-${currentSpaceId}`;
-  }, [user?.uid, currentSpaceId]);
+  }, [user, currentSpaceId]);
 
   // Check for public access parameters
   const publicSpaceId = window.publicAccessSpace;
@@ -404,7 +404,14 @@ export function useConnections({ user, currentSpaceId, objects }) {
         activeConnectionSubscriptionRef.current.unsubscribe();
       }
     };
-  }, [subscriptionKey]); // Use the stable memoized key only
+  }, [
+    subscriptionKey,
+    objects,
+    currentSpaceId,
+    mapConnectionsToObjects,
+    synchronizeConnectionPositions,
+    user.uid,
+  ]); // Use the stable memoized key only
 
   // Subscribe to connections
   useEffect(() => {
@@ -512,8 +519,7 @@ export function useConnections({ user, currentSpaceId, objects }) {
   }, [
     objects,
     connectionsLoaded,
-    // Use JSON.stringify to stabilize the dependency on connections
-    // but only check length to avoid deep comparison on every render
+    connections,
     connections.length,
     synchronizeConnectionPositions,
   ]);
@@ -569,7 +575,7 @@ export function useConnections({ user, currentSpaceId, objects }) {
         text,
         textStyle: updatedConnection.textStyle || {
           fontSize: 1,
-          color: 'white',
+          color: 'black',
         },
       };
 

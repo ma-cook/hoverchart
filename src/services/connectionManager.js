@@ -244,9 +244,9 @@ export const handleTextObjectConnection = (
       },
     },
     lineStyle: 'straight',
-    color: 'white',
+    color: 'black',
     text: '',
-    textStyle: { fontSize: 1, color: 'white' },
+    textStyle: { fontSize: 1, color: 'black' },
     dashOffset: 0,
   };
 
@@ -334,7 +334,7 @@ export const getConnectionById = async (userId, connectionId) => {
         // Ensure text field exists
         if (!parsedData.text) parsedData.text = '';
         return parsedData;
-      } catch (e) {
+      } catch {
         return null;
       }
     }

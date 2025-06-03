@@ -140,17 +140,14 @@ export const saveObject = async (userId, spaceId, object) => {
 
           // Store in last received cache for reconnection scenarios
           lastReceivedObjects.set(`${spaceId}_${objectId}`, objectToSave);
-
           await setDoc(objectRef, objectToSave);
-        } catch (error) {
-          console.error('Error saving object:', error);
+        } catch {
           objectsCache.delete(cacheKey);
         }
       }, saveTimeout)
     );
-  } catch (error) {
-    // Error handling with minimal logging
-    console.error('Error in saveObject:', error);
+  } catch {
+    // Silent error handling
   }
 };
 
@@ -192,12 +189,10 @@ export const deleteObject = async (userId, spaceId, objectId) => {
       spaceId,
       'objects',
       objectId.toString()
-    );
-
-    // Delete from database
+    ); // Delete from database
     await deleteDoc(objectRef);
-  } catch (error) {
-    console.error('Error deleting object:', error);
+  } catch {
+    // Silent error handling
   }
 };
 
@@ -220,11 +215,8 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
   const startSubscription = async () => {
     try {
       // Handle anonymous access (userId might be null)
-      const ownerIdFromUrl = window.currentSpaceOwner;
-
-      // For anonymous access, we must have an owner ID from the URL
+      const ownerIdFromUrl = window.currentSpaceOwner; // For anonymous access, we must have an owner ID from the URL
       if (isAnonymous && !ownerIdFromUrl) {
-        console.error('Anonymous access requires owner ID in URL');
         return;
       }
 
@@ -239,23 +231,13 @@ export const subscribeToObjects = (userId, spaceId, callback) => {
 
           // If unsubscribed during async, return early
           if (!isSubscribed) return;
-
           ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-        } catch (error) {
-          console.error('Error checking shared status:', error);
+        } catch {
           // Fall back to URL owner or current user if there's an error
           ownerUserId = window.currentSpaceOwner || userId;
         }
-      }
-
-      // Store owner ID for future reference
+      } // Store owner ID for future reference
       window.currentSpaceOwner = ownerUserId;
-
-      console.log(
-        `[Objects] Setting up subscription for space ${spaceId} owned by ${ownerUserId}${
-          isAnonymous ? ' (anonymous access)' : ''
-        }`
-      );
 
       const objectsRef = collection(
         db,

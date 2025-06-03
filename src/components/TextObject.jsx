@@ -5,7 +5,6 @@ import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
-import { prepareTextObjectIndicator } from '../utils/connectionUtils';
 
 const TextObject = ({
   id,
@@ -24,7 +23,7 @@ const TextObject = ({
   onDelete,
   registerTransformingObject,
   initialText = '',
-  initialTextStyle = { fontSize: 32, color: 'white' },
+  initialTextStyle = { fontSize: 32, color: 'black' },
   initialScale = [15, 10, 1],
   onTransformStart,
   onTransformEnd,
@@ -67,7 +66,7 @@ const TextObject = ({
   const contentHeightRef = useRef(0);
   const needsFocusRef = useRef(false);
   const initialFocusDoneRef = useRef(false);
-  const lastCursorPositionRef = useRef(null);
+
   const textContentRef = useRef(initialText);
   const connectedLineIdsRef = useRef(new Set());
 
@@ -91,7 +90,7 @@ const TextObject = ({
       const endId = String(conn.end?.objectId || conn.end?.id);
       return stringId === startId || stringId === endId;
     });
-  }, [connections, stringId]);
+  }, [connections, stringId, id]);
 
   const shouldShowIndicator = useMemo(() => {
     if (selectedIndicators?.length > 0) return true;
@@ -715,9 +714,8 @@ const TextObject = ({
     autoWrap: 'wrap',
     width: '100%',
     height: contentHeight,
-    minHeight: '2em', // Start with small height, will expand
-    background: 'rgba(0,0,0,0.5)',
-    color: textStyle.color || 'white',
+    minHeight: '2em', // Start with small height, will expand    background: 'rgba(0,0,0,0.5)',
+    color: textStyle.color || 'black',
     border: 'none',
     padding: '8px',
     margin: '0',
@@ -808,7 +806,7 @@ const TextObject = ({
         }
       }, 100);
     }
-  }, []);
+  }, [text]);
 
   // Enhanced render with _transformActive flag in userData
   return (

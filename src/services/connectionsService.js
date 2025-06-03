@@ -93,12 +93,12 @@ const serializeConnection = (connection) => {
     lineStyle: connection.lineStyle || 'straight',
     dashDirection: connection.dashDirection || null,
     dashOffset: connection.dashOffset || 0,
-    color: connection.color || 'white',
+    color: connection.color || 'black',
     // More explicit text handling - ensure text is always a string
     text: typeof connection.text === 'string' ? connection.text : '',
     textStyle: {
       fontSize: connection.textStyle?.fontSize || 1,
-      color: connection.textStyle?.color || 'white',
+      color: connection.textStyle?.color || 'black',
       underline: connection.textStyle?.underline || false,
     },
   };

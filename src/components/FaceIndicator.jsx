@@ -31,10 +31,9 @@ const FaceIndicator = ({
       );
     }
   });
-
   // Determine color based on state
   const color = isConnected
-    ? '#ffffff' // White for connected indicators
+    ? '#000000' // Black for connected indicators
     : isActive
     ? '#0088ff' // Blue for selected (not connected)
     : hovered

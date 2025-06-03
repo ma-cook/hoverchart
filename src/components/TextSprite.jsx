@@ -20,7 +20,7 @@ const TextSprite = ({
   onClick,
   style = {
     fontSize: 'medium',
-    color: 'white',
+    color: 'black',
     underline: false,
     fixedSize: false,
     isFaceText: false,
@@ -145,7 +145,7 @@ const TextSprite = ({
       // Store in lastPositionRef for throttling
       lastPositionRef.current = newPos;
       return newPos;
-    } catch (err) {
+    } catch {
       return position; // Fall back to provided position
     }
   }, [position, pathPoints, lineStyle]);
@@ -211,7 +211,7 @@ const TextSprite = ({
         );
       }
     }
-  }, [isDragging]);
+  }, [isDragging, calculatedPosition]);
 
   const TEXT_HEIGHT = 0.7; // Approximate height of largest text
   const ZOOM_OFFSET_FACTOR = 0.05; // Controls how much text moves up when zooming out
@@ -422,7 +422,7 @@ const TextSprite = ({
         smoothedPositionRef.current = textRef.current.position.clone();
       }
     }
-  }, [lineStyle]);
+  }, [lineStyle, pathPoints]);
 
   // Add a separate effect for path points changes to avoid recalculating on every render
   useEffect(() => {

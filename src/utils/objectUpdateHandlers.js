@@ -1,6 +1,8 @@
 import * as THREE from 'three';
-import { saveObject, updateObjectInSpace } from '../services/objectsService';
-import isEqual from 'lodash/isEqual';
+import {
+  saveObjectToCell,
+  updateObjectInSpatialCell,
+} from '../services/spatialObjectsService';
 
 /**
  * Handle object movement with position updates
@@ -14,7 +16,6 @@ export const handleObjectMove = ({
   draggingObjectsRef,
   objects,
   setObjects,
-  connections,
   setConnections,
   user,
   currentSpaceId,
@@ -174,12 +175,10 @@ export const handleObjectMove = ({
       // Remove tracking flags before saving to database
       delete updatedObject._isDragging;
       delete updatedObject._moveTimestamp;
-      delete updatedObject._transformActive;
-
-      // Adding a brief delay before saving to avoid race conditions
+      delete updatedObject._transformActive; // Adding a brief delay before saving to avoid race conditions
       setTimeout(() => {
         const spaceOwnerId = window.currentSpaceOwner || user.uid;
-        saveObject(spaceOwnerId, currentSpaceId, updatedObject);
+        saveObjectToCell(spaceOwnerId, currentSpaceId, updatedObject);
 
         // Remove from dragging set when drag ends after save completes
         setTimeout(() => {
@@ -193,49 +192,22 @@ export const handleObjectMove = ({
 /**
  * Handle object updates including scale, position, and other properties
  */
-export const handleObjectUpdate = ({
-  id,
-  updates,
-  transformingObjects, // Keep this if used for logic, otherwise remove
-  lastUpdateRef,
-  setObjects, // Keep this if used for local state update, otherwise remove
-  user,
-  currentSpaceId,
-  checkPositionJitter, // Keep this if used for logic, otherwise remove
-}) => {
+export const handleObjectUpdate = ({ id, updates, user, currentSpaceId }) => {
   if (!id || !currentSpaceId || !user?.uid) {
-    console.error(
-      '[handleObjectUpdate] Missing id, spaceId, or user for update.'
-    );
     return;
   }
 
-  // Log the received updates and context
-  console.log(
-    `[handleObjectUpdate] Processing update for ID ${id} in space ${currentSpaceId} by user ${user.uid}:`,
-    updates
-  );
-
   // --- Optional: Add checks here if needed (e.g., filtering updates) ---
-  // Example: const filteredUpdates = { ...updates }; delete filteredUpdates.someProperty;
-
-  // Update Firestore
-  updateObjectInSpace(user.uid, currentSpaceId, id, updates)
+  // Example: const filteredUpdates = { ...updates }; delete filteredUpdates.someProperty;  // Update Firestore using spatial cell-based function
+  const spaceOwnerId = window.currentSpaceOwner || user.uid;
+  const objectData = { id, ...updates };
+  updateObjectInSpatialCell(spaceOwnerId, currentSpaceId, objectData)
     .then(() => {
-      // Log success
-      console.log(
-        `[handleObjectUpdate] Successfully requested Firestore update for ID ${id}.`
-      );
-
       // --- Optional: Update local state optimistically if needed ---
       // setObjects(prevObjects => ... );
       // lastUpdateRef.current[id] = { ...lastUpdateRef.current[id], ...updates };
     })
-    .catch((error) => {
-      // Log error
-      console.error(
-        `[handleObjectUpdate] Error updating Firestore for ID ${id}:`,
-        error
-      );
+    .catch(() => {
+      // Error updating Firestore - continue silently
     });
 };

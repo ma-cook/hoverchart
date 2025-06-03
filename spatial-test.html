@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Spatial System Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+      }
+      .test-section {
+        margin: 20px 0;
+        padding: 15px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+      }
+      .success {
+        background-color: #d4edda;
+        border-color: #c3e6cb;
+      }
+      .error {
+        background-color: #f8d7da;
+        border-color: #f5c6cb;
+      }
+      .info {
+        background-color: #d1ecf1;
+        border-color: #bee5eb;
+      }
+      button {
+        padding: 10px 15px;
+        margin: 5px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      pre {
+        background: #f8f9fa;
+        padding: 10px;
+        border-radius: 3px;
+        overflow-x: auto;
+      }
+      .status {
+        margin: 10px 0;
+        padding: 10px;
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🧪 Spatial Partitioning System Test</h1>
+
+    <div class="test-section info">
+      <h3>Test Instructions</h3>
+      <p>
+        1. Open the main application at
+        <a href="http://localhost:5173/" target="_blank"
+          >http://localhost:5173/</a
+        >
+      </p>
+      <p>2. Open browser console (F12)</p>
+      <p>3. Click the buttons below to run tests in the console</p>
+      <p>
+        4. Try creating objects in the main app and monitor the results here
+      </p>
+    </div>
+
+    <div class="test-section">
+      <h3>Quick Tests</h3>
+      <button onclick="runQuickStatus()">Quick Status Check</button>
+      <button onclick="runHealthCheck()">Health Check</button>
+      <button onclick="startObjectTest()">Start Object Creation Test</button>
+      <button onclick="checkTestResults()">Check Test Results</button>
+    </div>
+
+    <div class="test-section">
+      <h3>Test Results</h3>
+      <div id="results">
+        <p>Click "Quick Status Check" to begin...</p>
+      </div>
+    </div>
+
+    <script>
+      // Function to run commands in the main app's context
+      function runInMainApp(command) {
+        try {
+          // Try to access the main app window
+          const mainWindow =
+            window.parent !== window
+              ? window.parent
+              : window.open('', 'mainApp');
+          if (mainWindow && mainWindow.location.hostname === 'localhost') {
+            return mainWindow.eval(command);
+          } else {
+            throw new Error('Main app not accessible');
+          }
+        } catch (error) {
+          return { error: error.message };
+        }
+      }
+
+      function updateResults(content, type = 'info') {
+        const resultsDiv = document.getElementById('results');
+        const statusDiv = document.createElement('div');
+        statusDiv.className = `status ${type}`;
+        statusDiv.innerHTML = content;
+        resultsDiv.appendChild(statusDiv);
+        resultsDiv.scrollTop = resultsDiv.scrollHeight;
+      }
+
+      function runQuickStatus() {
+        updateResults('<h4>🔍 Running Quick Status Check...</h4>');
+
+        const result = runInMainApp(`
+                if (typeof SpatialDebugger !== 'undefined') {
+                    const stats = SpatialDebugger.getStats();
+                    JSON.stringify(stats, null, 2);
+                } else {
+                    JSON.stringify({ error: 'SpatialDebugger not available' });
+                }
+            `);
+
+        if (result.error) {
+          updateResults(`<strong>❌ Error:</strong> ${result.error}`, 'error');
+          updateResults(
+            `<p><strong>Solution:</strong> Make sure the main app is open at localhost:5173 and SpatialDebugger is loaded.</p>`
+          );
+        } else {
+          try {
+            const stats = JSON.parse(result);
+            if (stats.error) {
+              updateResults(
+                `<strong>❌ SpatialDebugger Error:</strong> ${stats.error}`,
+                'error'
+              );
+            } else {
+              let statusHtml = '<h4>✅ Spatial System Status:</h4><pre>';
+              statusHtml += `Space ID: ${stats.spaceId || 'none'}\\n`;
+              statusHtml += `Current Cell: ${
+                stats.currentCell
+                  ? `(${stats.currentCell.x}, ${stats.currentCell.y})`
+                  : 'none'
+              }\\n`;
+              statusHtml += `Loaded Cells: ${
+                stats.loadedCells?.length || 0
+              }\\n`;
+              statusHtml += `Total Objects: ${stats.totalObjects || 0}\\n`;
+              statusHtml += `Camera Position: (${
+                stats.cameraPosition?.x?.toFixed(2) || 0
+              }, ${stats.cameraPosition?.y?.toFixed(2) || 0})`;
+              statusHtml += '</pre>';
+              updateResults(statusHtml, 'success');
+            }
+          } catch (parseError) {
+            updateResults(
+              `<strong>❌ Parse Error:</strong> ${parseError.message}`,
+              'error'
+            );
+          }
+        }
+      }
+
+      function runHealthCheck() {
+        updateResults('<h4>🏥 Running Health Check...</h4>');
+
+        const result = runInMainApp(`
+                if (typeof SpatialVerification !== 'undefined') {
+                    SpatialVerification.healthCheck();
+                    'Health check completed - see console for details';
+                } else {
+                    'SpatialVerification not available';
+                }
+            `);
+
+        if (result.error) {
+          updateResults(`<strong>❌ Error:</strong> ${result.error}`, 'error');
+        } else {
+          updateResults(
+            `<strong>✅ Health Check:</strong> ${result}`,
+            'success'
+          );
+          updateResults(
+            '<p>📊 Check the browser console in the main app for detailed health check results.</p>'
+          );
+        }
+      }
+
+      function startObjectTest() {
+        updateResults('<h4>🧪 Starting Object Creation Test...</h4>');
+
+        const result = runInMainApp(`
+                if (typeof ManualSpatialTest !== 'undefined') {
+                    ManualSpatialTest.testObjectCreation();
+                    'Object creation test started - monitoring spatial events';
+                } else {
+                    'ManualSpatialTest not available';
+                }
+            `);
+
+        if (result.error) {
+          updateResults(`<strong>❌ Error:</strong> ${result.error}`, 'error');
+        } else {
+          updateResults(
+            `<strong>✅ Test Started:</strong> ${result}`,
+            'success'
+          );
+          updateResults(
+            '<p>📝 <strong>Next steps:</strong><br>1. Go to the main app<br>2. Click somewhere on the canvas to create objects<br>3. Come back here and click "Check Test Results"</p>'
+          );
+        }
+      }
+
+      function checkTestResults() {
+        updateResults('<h4>📊 Checking Test Results...</h4>');
+
+        const result = runInMainApp(`
+                if (typeof ManualSpatialTest !== 'undefined') {
+                    ManualSpatialTest.checkResults();
+                    'Test results checked - see console for details';
+                } else {
+                    'ManualSpatialTest not available';
+                }
+            `);
+
+        if (result.error) {
+          updateResults(`<strong>❌ Error:</strong> ${result.error}`, 'error');
+        } else {
+          updateResults(
+            `<strong>✅ Results Checked:</strong> ${result}`,
+            'success'
+          );
+          updateResults(
+            '<p>📊 Check the browser console in the main app for detailed test results.</p>'
+          );
+        }
+      }
+
+      // Auto-run status check on load
+      setTimeout(runQuickStatus, 1000);
+    </script>
+  </body>
+</html>

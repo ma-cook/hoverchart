@@ -108,8 +108,7 @@ service cloud.firestore {
           // Keep write access restricted to authenticated users
           allow write: if isAuthenticated();
         }
-        
-        // Connections within spaces
+          // Connections within spaces
         match /connections/{connectionId} {
           // MODIFIED: Allow anonymous access to connections in public spaces
           allow read: if isAuthenticated() || 
@@ -118,6 +117,24 @@ service cloud.firestore {
           
           // Keep write access restricted to authenticated users
           allow write: if isAuthenticated();
+        }
+        
+        // NEW: Spatial partitioning cells
+        match /cells/{cellId} {
+          // Allow anonymous access to cells in public spaces
+          allow read: if isAuthenticated() || 
+                       (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+                        isPublicSpace(get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data));
+          
+          // Allow authenticated users to create/update cells
+          allow create, update: if isAuthenticated() && (
+            request.auth.uid == userId || 
+            (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+             isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
+          );
+          
+          // Only space owner can delete cells
+          allow delete: if isAuthenticated() && request.auth.uid == userId;
         }
       }
     }

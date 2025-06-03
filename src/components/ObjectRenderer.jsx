@@ -52,7 +52,7 @@ const ObjectRenderer = ({
         textStyle={
           obj.textStyle || {
             fontSize: 1.5,
-            color: 'white',
+            color: 'black',
             underline: false,
           }
         }
@@ -60,32 +60,32 @@ const ObjectRenderer = ({
           obj.faceTextStyles || {
             front: {
               fontSize: 0.5,
-              color: 'white',
+              color: 'black',
               underline: false,
             },
             back: {
               fontSize: 0.5,
-              color: 'white',
+              color: 'black',
               underline: false,
             },
             top: {
               fontSize: 0.5,
-              color: 'white',
+              color: 'black',
               underline: false,
             },
             bottom: {
               fontSize: 0.5,
-              color: 'white',
+              color: 'black',
               underline: false,
             },
             right: {
               fontSize: 0.5,
-              color: 'white',
+              color: 'black',
               underline: false,
             },
             left: {
               fontSize: 0.5,
-              color: 'white',
+              color: 'black',
               underline: false,
             },
           }
@@ -132,11 +132,11 @@ const ObjectRenderer = ({
         headerStyle={
           obj.headerStyle || {
             fontSize: 'medium',
-            color: 'white',
+            color: 'black',
             underline: false,
           }
         }
-        lineColor={obj.lineColor || 'white'}
+        lineColor={obj.lineColor || 'black'}
         faceColors={obj.faceColors || {}}
         faceTexts={obj.faceTexts || {}}
         faceTextStyles={obj.faceTextStyles || {}}
@@ -207,7 +207,7 @@ const ObjectRenderer = ({
         indicatorMode={indicatorMode}
         onUpdate={handleObjectUpdate}
         initialText={obj.text || ''}
-        initialTextStyle={obj.textStyle || { fontSize: 32, color: 'white' }}
+        initialTextStyle={obj.textStyle || { fontSize: 32, color: 'black' }}
         initialScale={obj.scale || [15, 10, 1]}
         onDelete={() => handleObjectDelete(obj.id)}
         registerTransformingObject={registerTransformingObject}

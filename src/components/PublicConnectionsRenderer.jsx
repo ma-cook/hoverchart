@@ -120,7 +120,7 @@ const PublicConnection = ({ connection, objects }) => {
       {/* Main connection line */}
       <Line
         points={pathPoints}
-        color={connection.color || 'white'}
+        color={connection.color || 'black'}
         lineWidth={2}
         dashed={
           connection.lineStyle === 'dashed' || connection.lineStyle === 'dotted'
@@ -139,7 +139,7 @@ const PublicConnection = ({ connection, objects }) => {
           position={[midpoint[0], midpoint[1] + 2, midpoint[2]]}
           style={{
             fontSize: connection.textStyle?.fontSize || 1.5,
-            color: connection.textStyle?.color || 'white',
+            color: connection.textStyle?.color || 'black',
             underline: connection.textStyle?.underline || false,
             fixedSize: true,
             backgroundOpacity: 0.4,
