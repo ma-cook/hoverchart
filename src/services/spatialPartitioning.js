@@ -756,3 +756,332 @@ export const getCellsToUnload = (
 
   return cellsToUnload;
 };
+
+/**
+ * Add connection to the appropriate cells based on endpoint positions
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {Object} connectionData - Complete connection data
+ * @returns {Promise<boolean>} - Success status
+ */
+export const addConnectionToCells = async (userId, spaceId, connectionData) => {
+  if (!userId || !spaceId || !connectionData || !connectionData.id) {
+    return false;
+  }
+
+  try {
+    // Get start and end positions
+    const startPosition = connectionData.start?.position;
+    const endPosition = connectionData.end?.position;
+
+    if (!startPosition || !endPosition) {
+      return false;
+    }
+
+    // Get cell coordinates for both endpoints
+    const startCellCoords = getCellCoordinates(startPosition);
+    const endCellCoords = getCellCoordinates(endPosition);
+
+    // Add connection to start cell
+    const startCellId = getCellId(
+      startCellCoords.x,
+      startCellCoords.y,
+      startCellCoords.z
+    );
+    await addConnectionToCell(userId, spaceId, startCellId, connectionData);
+
+    // Add connection to end cell if different from start cell
+    const endCellId = getCellId(
+      endCellCoords.x,
+      endCellCoords.y,
+      endCellCoords.z
+    );
+    if (startCellId !== endCellId) {
+      await addConnectionToCell(userId, spaceId, endCellId, connectionData);
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Add connection to a specific cell
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {string} cellId - Cell ID
+ * @param {Object} connectionData - Complete connection data
+ * @returns {Promise<boolean>} - Success status
+ */
+export const addConnectionToCell = async (
+  userId,
+  spaceId,
+  cellId,
+  connectionData
+) => {
+  if (!userId || !spaceId || !cellId || !connectionData) {
+    return false;
+  }
+
+  try {
+    const cellRef = doc(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells',
+      cellId
+    );
+
+    // Get current cell data
+    const cellDoc = await getDoc(cellRef);
+    let cellData;
+
+    if (cellDoc.exists()) {
+      cellData = cellDoc.data();
+    } else {
+      // Cell doesn't exist, create it
+      const [x, y, z] = cellId.split(',').map(Number);
+      await createCell(userId, spaceId, x, y, z);
+      cellData = {
+        id: cellId,
+        x,
+        y,
+        z,
+        bounds: getCellBounds(x, y, z),
+        createdAt: new Date(),
+        objects: {},
+        connections: {},
+      };
+    }
+
+    // Ensure connections is an object
+    if (!cellData.connections || Array.isArray(cellData.connections)) {
+      cellData.connections = {};
+    }
+
+    // Add connection data to cell
+    cellData.connections[connectionData.id] = {
+      ...connectionData,
+      lastUpdated: new Date(),
+      cellId: cellId,
+    };
+
+    await setDoc(cellRef, cellData, { merge: true });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Remove connection from cells
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {string} connectionId - Connection ID
+ * @param {Object} connectionData - Connection data with positions
+ * @returns {Promise<boolean>} - Success status
+ */
+export const removeConnectionFromCells = async (
+  userId,
+  spaceId,
+  connectionId,
+  connectionData
+) => {
+  if (!userId || !spaceId || !connectionId) {
+    return false;
+  }
+
+  try {
+    const startPosition = connectionData?.start?.position;
+    const endPosition = connectionData?.end?.position;
+
+    if (!startPosition || !endPosition) {
+      return false;
+    }
+
+    // Get cell coordinates for both endpoints
+    const startCellCoords = getCellCoordinates(startPosition);
+    const endCellCoords = getCellCoordinates(endPosition);
+
+    // Remove connection from start cell
+    const startCellId = getCellId(
+      startCellCoords.x,
+      startCellCoords.y,
+      startCellCoords.z
+    );
+    await removeConnectionFromCell(userId, spaceId, startCellId, connectionId);
+
+    // Remove connection from end cell if different from start cell
+    const endCellId = getCellId(
+      endCellCoords.x,
+      endCellCoords.y,
+      endCellCoords.z
+    );
+    if (startCellId !== endCellId) {
+      await removeConnectionFromCell(userId, spaceId, endCellId, connectionId);
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Remove connection from a specific cell
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {string} cellId - Cell ID
+ * @param {string} connectionId - Connection ID
+ * @returns {Promise<boolean>} - Success status
+ */
+export const removeConnectionFromCell = async (
+  userId,
+  spaceId,
+  cellId,
+  connectionId
+) => {
+  if (!userId || !spaceId || !cellId || !connectionId) {
+    return false;
+  }
+
+  try {
+    const cellRef = doc(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells',
+      cellId
+    );
+    const cellDoc = await getDoc(cellRef);
+
+    if (!cellDoc.exists()) {
+      return true; // Cell doesn't exist, connection already not present
+    }
+
+    const cellData = cellDoc.data();
+
+    // Ensure connections is an object
+    if (cellData.connections && typeof cellData.connections === 'object') {
+      if (cellData.connections[connectionId]) {
+        delete cellData.connections[connectionId];
+        await setDoc(cellRef, cellData, { merge: true });
+      }
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Get all connections from loaded cells
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {Array} cellCoords - Array of {x, y, z} cell coordinates
+ * @returns {Promise<Array>} - Array of connections from all specified cells
+ */
+export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
+  if (!userId || !spaceId || !cellCoords || cellCoords.length === 0) {
+    return [];
+  }
+
+  // Filter out invalid cell coordinates
+  const validCellCoords = cellCoords.filter(
+    (coords) =>
+      coords &&
+      typeof coords.x === 'number' &&
+      typeof coords.y === 'number' &&
+      typeof coords.z === 'number' &&
+      !isNaN(coords.x) &&
+      !isNaN(coords.y) &&
+      !isNaN(coords.z)
+  );
+
+  if (validCellCoords.length === 0) {
+    return [];
+  }
+
+  try {
+    const allConnections = [];
+    const seenConnectionIds = new Set(); // To avoid duplicates across cells
+
+    for (const coords of validCellCoords) {
+      const cellId = getCellId(coords.x, coords.y, coords.z);
+
+      const cellRef = doc(
+        db,
+        'users',
+        userId,
+        'spaces',
+        spaceId,
+        'cells',
+        cellId
+      );
+      const cellDoc = await getDoc(cellRef);
+
+      if (cellDoc.exists()) {
+        const cellData = cellDoc.data();
+
+        if (cellData.connections && typeof cellData.connections === 'object') {
+          const cellConnections = Object.values(cellData.connections);
+
+          // Only add connections we haven't seen before
+          cellConnections.forEach((connection) => {
+            if (!seenConnectionIds.has(connection.id)) {
+              seenConnectionIds.add(connection.id);
+              allConnections.push(connection);
+            }
+          });
+        }
+      }
+    }
+
+    return allConnections;
+  } catch (error) {
+    console.error('❌ Error in getConnectionsFromCells:', error);
+    return [];
+  }
+};
+
+/**
+ * Update connection in cells when endpoint positions change
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {Object} oldConnectionData - Old connection data
+ * @param {Object} newConnectionData - New connection data
+ * @returns {Promise<boolean>} - Success status
+ */
+export const updateConnectionInCells = async (
+  userId,
+  spaceId,
+  oldConnectionData,
+  newConnectionData
+) => {
+  if (!userId || !spaceId || !oldConnectionData || !newConnectionData) {
+    return false;
+  }
+
+  try {
+    // Remove connection from old cells
+    await removeConnectionFromCells(
+      userId,
+      spaceId,
+      oldConnectionData.id,
+      oldConnectionData
+    );
+
+    // Add connection to new cells
+    await addConnectionToCells(userId, spaceId, newConnectionData);
+
+    return true;
+  } catch {
+    return false;
+  }
+};

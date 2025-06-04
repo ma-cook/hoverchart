@@ -1,22 +1,12 @@
 import { db } from '../firebase';
-import {
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  collection,
-  onSnapshot,
-  query,
-  deleteDoc,
-  enableNetwork,
-  disableNetwork,
-} from 'firebase/firestore';
+import { enableNetwork, disableNetwork } from 'firebase/firestore';
 import { enableIndexedDbPersistence } from 'firebase/firestore';
-import {
-  registerObjectConnection,
-  unregisterObjectConnection,
-} from './connectionManager';
+import { registerObjectConnection } from './connectionManager';
 import { isSharedSpace } from './sharedSpacesService';
+import {
+  addConnectionToCells,
+  removeConnectionFromCells,
+} from './spatialPartitioning';
 
 // Enable offline persistence
 enableIndexedDbPersistence(db).catch((err) => {
@@ -126,7 +116,7 @@ const clearConnectionCache = (spaceId, connectionId) => {
   }
 };
 
-// Modified to include spaceId parameter and handle shared spaces
+// Modified to use cell-based storage instead of space-level storage
 export const saveConnection = async (userId, spaceId, connection) => {
   if (!userId || !spaceId || !connection?.id) return;
 
@@ -144,16 +134,6 @@ export const saveConnection = async (userId, spaceId, connection) => {
 
     // Use the owner's ID to save to the correct collection
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-
-    const connectionRef = doc(
-      db,
-      'users',
-      ownerUserId,
-      'spaces',
-      spaceId,
-      'connections',
-      connection.id.toString()
-    );
 
     // Ensure IDs are strings for consistency
     if (connection.start?.objectId) {
@@ -173,8 +153,18 @@ export const saveConnection = async (userId, spaceId, connection) => {
     serializedConnection.creatorId = userId;
     serializedConnection.lastUpdated = new Date().toISOString();
 
-    await setDoc(connectionRef, serializedConnection);
-    return true; // Indicate success
+    // Save connection to appropriate cells instead of space-level collection
+    const success = await addConnectionToCells(
+      ownerUserId,
+      spaceId,
+      serializedConnection
+    );
+
+    if (success) {
+      return true; // Indicate success
+    } else {
+      throw new Error('Failed to save connection to cells');
+    }
   } catch (error) {
     console.error('Error saving connection:', error);
     // Simple fallback
@@ -191,8 +181,13 @@ export const saveConnection = async (userId, spaceId, connection) => {
 // Simplify the subscription logic by removing reconnection attempts
 // Remove the unused createSubscription function
 
-// Update the export to use subscribe function directly
-export const subscribeToConnections = (userId, spaceId, callback) => {
+// Update the export to use cell-based connection loading
+export const subscribeToConnections = (
+  userId,
+  spaceId,
+  callback,
+  loadedCells = []
+) => {
   if (!spaceId) return () => {};
 
   // Support anonymous access for public spaces
@@ -208,186 +203,105 @@ export const subscribeToConnections = (userId, spaceId, callback) => {
   // Use the URL owner ID for anonymous access, or user ID for authenticated users
   const effectiveOwnerId = isAnonymous ? ownerIdFromUrl : userId;
 
-  // Remove the unused startSubscription function
-  // Just call subscribe directly
-  return subscribe(effectiveOwnerId, spaceId, callback);
+  // Use cell-based connection loading instead of Firebase subscription
+  return subscribeToCellConnections(
+    effectiveOwnerId,
+    spaceId,
+    callback,
+    loadedCells
+  );
 };
 
-// Keep the subscribe function as is, it's being used
-const subscribe = (userId, spaceId, callback) => {
-  // Create a unique key for this subscription
-  const subscriptionKey = `${userId}-${spaceId}`;
-
-  // Clear caches when creating new subscription
-  if (!activeSubscriptions.has(subscriptionKey)) {
-    processedChanges.clear();
-    connectionCache.clear();
+// New cell-based connection subscription
+const subscribeToCellConnections = (
+  userId,
+  spaceId,
+  callback,
+  loadedCells = []
+) => {
+  if (!userId || !spaceId) {
+    return () => {};
   }
 
-  // Clear any previously processed changes when creating a new subscription
-  processedChanges.clear();
-
-  let unsubscribe = null;
   let isSubscribed = true;
+  let currentConnections = new Map();
 
-  // Store the last received data to handle reconnection
-  const lastReceivedData = new Map();
-
-  const subscribe = async () => {
-    if (!userId || !spaceId) {
-      return () => {};
-    }
+  const updateConnections = async () => {
+    if (!isSubscribed) return;
 
     try {
       // Check if this is a shared space
       const sharedStatus = await isSharedSpace(userId, spaceId);
+      if (!isSubscribed) return;
 
-      // If we unsubscribed while waiting for the async operation, return early
-      if (!isSubscribed) {
-        return () => {};
-      }
-
-      // Use the owner's ID to subscribe to the correct collection
+      // Use the owner's ID to get connections from the correct cells
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-
-      // Store owner ID for future reference
-      window.currentSpaceOwner = ownerUserId;
-
-      const connectionsRef = collection(
-        db,
-        'users',
+      // Get connections from all loaded cells
+      const { getConnectionsFromCells } = await import('./spatialPartitioning');
+      const cellConnections = await getConnectionsFromCells(
         ownerUserId,
-        'spaces',
         spaceId,
-        'connections'
+        loadedCells
       );
-      const q = query(connectionsRef);
 
-      try {
-        unsubscribe = onSnapshot(
-          q,
-          { includeMetadataChanges: false }, // Only interested in actual data changes
-          (snapshot) => {
-            // Count unique changes to actually process to reduce noise
-            const newChangesToProcess = snapshot
-              .docChanges()
-              .filter((change) => {
-                // Create a unique key that includes document data hash
-                const data = change.doc.data();
-                const dataHash = JSON.stringify(data);
-                const changeKey = `${change.type}-${change.doc.id}-${dataHash}`;
+      // Process new connections
+      const newConnectionMap = new Map();
+      const seenConnections = new Set();
 
-                if (processedChanges.has(changeKey)) {
-                  return false; // We've seen this exact change before
-                }
+      cellConnections.forEach((connection) => {
+        // Avoid duplicate connections that appear in multiple cells
+        if (seenConnections.has(connection.id)) return;
+        seenConnections.add(connection.id);
 
-                // Only keep the most recent 300 processed changes to prevent memory leaks
-                if (processedChanges.size > 300) {
-                  const oldestChange = Array.from(processedChanges)[0];
-                  processedChanges.delete(oldestChange);
-                }
+        newConnectionMap.set(connection.id, connection);
 
-                processedChanges.add(changeKey);
-                return true;
-              });
-
-            // Only process changes we haven't seen before
-            newChangesToProcess.forEach((change) => {
-              // Store the latest data
-              if (change.type !== 'removed') {
-                lastReceivedData.set(change.doc.id, change.doc.data());
-              } else {
-                lastReceivedData.delete(change.doc.id);
-
-                // If we're removing a connection, unregister it from any objects
-                const connectionData = change.doc.data();
-                if (connectionData.start?.objectId) {
-                  unregisterObjectConnection(
-                    connectionData.start.objectId,
-                    change.doc.id
-                  );
-                }
-                if (connectionData.end?.objectId) {
-                  unregisterObjectConnection(
-                    connectionData.end.objectId,
-                    change.doc.id
-                  );
-                }
-              }
-
-              // Send the raw connection data without processing
-              try {
-                callback({
-                  type: change.type,
-                  id: change.doc.id,
-                  connection: change.doc.data(),
-                });
-              } catch (callbackErr) {
-                console.error('Error in connection callback:', callbackErr);
-              }
+        // If this is a new connection, notify callback
+        if (!currentConnections.has(connection.id)) {
+          callback({
+            type: 'added',
+            id: connection.id,
+            connection: connection,
+          });
+        } else {
+          // Check if connection was modified
+          const existing = currentConnections.get(connection.id);
+          if (JSON.stringify(existing) !== JSON.stringify(connection)) {
+            callback({
+              type: 'modified',
+              id: connection.id,
+              connection: connection,
             });
-          },
-          async (error) => {
-            console.error('Error in connections subscription:', error);
-
-            // Special handling for permission errors with anonymous access
-            if (error.code === 'permission-denied' && !userId) {
-              console.error(
-                'Anonymous access denied for connections. Space may not be public.'
-              );
-              return;
-            }
           }
-        );
+        }
+      });
 
-        const cleanupFn = () => {
-          isSubscribed = false;
-          if (unsubscribe) {
-            try {
-              unsubscribe();
-            } catch (err) {
-              console.warn('Error during unsubscribe:', err);
-            }
-          }
-          activeSubscriptions.delete(subscriptionKey);
-        };
+      // Check for removed connections
+      currentConnections.forEach((connection, id) => {
+        if (!newConnectionMap.has(id)) {
+          callback({
+            type: 'removed',
+            id: id,
+            connection: connection,
+          });
+        }
+      });
 
-        activeSubscriptions.set(subscriptionKey, cleanupFn);
-        return cleanupFn;
-      } catch (error) {
-        console.error('Subscription setup error:', error);
-        activeSubscriptions.delete(subscriptionKey);
-        return () => {};
-      }
+      currentConnections = newConnectionMap;
     } catch (error) {
-      console.error('Error checking shared space status:', error);
-      activeSubscriptions.delete(subscriptionKey);
-      return () => {};
+      console.error('Error updating cell connections:', error);
     }
   };
+  // Initial load only
+  updateConnections();
 
-  // Return a function that will properly clean up the subscription
-  const unsubscribeFn = () => {
+  // Return cleanup function
+  return () => {
     isSubscribed = false;
-    if (unsubscribe) {
-      try {
-        unsubscribe();
-      } catch (err) {
-        console.warn('Error during unsubscribe:', err);
-      }
-    }
-    activeSubscriptions.delete(subscriptionKey);
+    currentConnections.clear();
   };
-
-  // Start the subscription process
-  subscribe().catch((error) => {
-    console.error('Error in subscription process:', error);
-  });
-
-  return unsubscribeFn;
 };
 
-// Add function to delete connections
+// Add function to delete connections using cell-based storage
 export const deleteConnection = async (userId, spaceId, connectionId) => {
   if (!userId || !spaceId || !connectionId) return;
 
@@ -403,32 +317,19 @@ export const deleteConnection = async (userId, spaceId, connectionId) => {
       return;
     }
 
-    // Use the owner's ID to delete from the correct collection
+    // Use the owner's ID to delete from the correct cells
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
 
-    const connectionRef = doc(
-      db,
-      'users',
+    // Remove connection from cells using the spatial partitioning service
+    const success = await removeConnectionFromCells(
       ownerUserId,
-      'spaces',
       spaceId,
-      'connections',
-      connectionId.toString()
+      connectionId
     );
 
-    // Get the connection data to find object IDs
-    const connDoc = await getDoc(connectionRef);
-    if (connDoc.exists()) {
-      const connData = connDoc.data();
-      if (connData.start?.objectId) {
-        unregisterObjectConnection(connData.start.objectId, connectionId);
-      }
-      if (connData.end?.objectId) {
-        unregisterObjectConnection(connData.end.objectId, connectionId);
-      }
+    if (!success) {
+      console.warn('Failed to remove connection from cells');
     }
-
-    await deleteDoc(connectionRef);
   } catch (error) {
     console.error('Error deleting connection:', error);
   }
@@ -446,83 +347,4 @@ export const enableConnectionDebugMode = () => {
 export const disableConnectionDebugMode = () => {
   window.DEBUG_CONNECTIONS = false;
   console.log('Connection debug mode disabled');
-};
-
-// Add debug utility for connection text
-export const logConnectionData = (connectionId) => {
-  return async (userId, spaceId) => {
-    if (!userId || !spaceId || !connectionId) return null;
-
-    try {
-      // Determine owner ID
-      const sharedStatus = await isSharedSpace(userId, spaceId);
-      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-
-      const connectionRef = doc(
-        db,
-        'users',
-        ownerUserId,
-        'spaces',
-        spaceId,
-        'connections',
-        connectionId.toString()
-      );
-
-      const snapshot = await getDoc(connectionRef);
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        console.log('Connection data:', data);
-        return data;
-      }
-      return null;
-    } catch (e) {
-      console.error('Error fetching connection:', e);
-      return null;
-    }
-  };
-};
-
-// Add this function to help users debug connection text issues
-export const debugConnectionText = async (userId, spaceId) => {
-  if (!userId || !spaceId) return;
-
-  try {
-    // Determine owner ID
-    const sharedStatus = await isSharedSpace(userId, spaceId);
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-
-    // Get all connections
-    const connectionsRef = collection(
-      db,
-      'users',
-      ownerUserId,
-      'spaces',
-      spaceId,
-      'connections'
-    );
-
-    const snapshot = await getDocs(connectionsRef);
-
-    console.log(`Found ${snapshot.size} connections`);
-
-    // Log all connections with text
-    let hasText = false;
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      if (data.text && data.text.trim() !== '') {
-        hasText = true;
-        console.log(`Connection ${doc.id} has text: "${data.text}"`);
-        console.log('Full connection data:', data);
-      }
-    });
-
-    if (!hasText) {
-      console.log('No connections with text found.');
-    }
-
-    return snapshot.size;
-  } catch (e) {
-    console.error('Error debugging connections:', e);
-    return 0;
-  }
 };

@@ -72,17 +72,6 @@ const App = () => {
     };
   }, [loadedCells, currentCellCoords, isSpatialInitialized]);
 
-  // Memoize the objects parameter to useConnections to prevent identity changes
-  const objectsParam = useMemo(() => {
-    // Only include necessary data to avoid excessive object references
-    return objects.map((obj) => ({
-      id: obj.id,
-      position: obj.position,
-      scale: obj.scale,
-      type: obj.type,
-    }));
-  }, [objects]);
-
   // Connections hooks (now with objects already initialized)
   const {
     connections,
@@ -104,7 +93,7 @@ const App = () => {
   } = useConnections({
     user,
     currentSpaceId,
-    objects: objectsParam, // Use the memoized objects param
+    loadedCells,
   });
   // Objects hook gets the connections from above
   const {
@@ -617,13 +606,6 @@ const App = () => {
           ))}{' '}
           {/* Render cell boundaries */}
           <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
-          {/* Debug output for cell boundaries */}
-          {console.log(
-            'App Debug - loadedCells:',
-            loadedCells,
-            'isSpatialInitialized:',
-            isSpatialInitialized
-          )}
         </group>
 
         <EffectComposer>

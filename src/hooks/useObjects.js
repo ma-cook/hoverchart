@@ -164,10 +164,7 @@ export function useObjects({
             newObject.position
           );
           if (success) {
-            console.log(
-              `Object ${uniqueId} added to spatial system at position`,
-              newObject.position
-            );
+            // Object added to spatial system successfully
           } else {
             console.warn(`Failed to add object ${uniqueId} to spatial system`);
           }

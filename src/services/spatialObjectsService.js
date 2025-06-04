@@ -118,11 +118,6 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
 
           // Save to appropriate cell instead of global objects collection
           await addObjectToCell(ownerUserId, spaceId, objectToSave);
-
-          console.log(
-            `Object ${objectId} saved to cell at position`,
-            object.position
-          );
         } catch (error) {
           console.error('Error saving object to cell:', error);
           objectsCache.delete(cacheKey);
@@ -175,8 +170,6 @@ export const deleteObjectFromSpatialCell = async (
       objectId.toString(),
       position
     );
-
-    console.log(`Object ${objectId} deleted from cell`);
   } catch (error) {
     console.error('Error deleting object from cell:', error);
   }
@@ -214,8 +207,6 @@ export const updateObjectInSpatialCell = async (
     };
 
     await updateObjectInCellSpatial(ownerUserId, spaceId, objectToUpdate);
-
-    console.log(`Object ${objectData.id} updated in cell`);
   } catch (error) {
     console.error(
       `[updateObjectInSpatialCell] Failed to update object ${objectData.id}:`,
@@ -265,19 +256,10 @@ export const subscribeToSpatialObjects = (
           ownerUserId = window.currentSpaceOwner || userId;
         }
       }
-
       window.currentSpaceOwner = ownerUserId;
-      console.log(
-        `[SpatialObjects] Setting up subscriptions for ${
-          safeCells.length
-        } cells in space ${spaceId} owned by ${ownerUserId}${
-          isAnonymous ? ' (anonymous access)' : ''
-        }`
-      );
 
       // Guard against empty cells
       if (safeCells.length === 0) {
-        console.log('[SpatialObjects] No loaded cells to subscribe to yet');
         return;
       } // Subscribe to each loaded cell
       for (const cellKey of safeCells) {
@@ -486,9 +468,7 @@ export const moveObjectBetweenCells = async (
       newPosition,
       { ...objectData, position: newPosition }
     );
-    console.log(
-      `Object ${objectData.id} moved from cell (${oldCellCoords.x},${oldCellCoords.y}) to (${newCellCoords.x},${newCellCoords.y})`
-    );
+
     return true;
   } catch (error) {
     console.error('Error moving object between cells:', error);
@@ -514,9 +494,6 @@ export const loadObjectsFromCells = async (userId, spaceId, loadedCells) => {
 
     const objects = await getObjectsFromCells(ownerUserId, spaceId, cellCoords);
 
-    console.log(
-      `Loaded ${objects.length} objects from ${cellCoords.length} cells`
-    );
     return objects;
   } catch (error) {
     console.error('Error loading objects from cells:', error);

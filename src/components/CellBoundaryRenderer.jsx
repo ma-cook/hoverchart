@@ -22,31 +22,22 @@ const fragmentShader = `
  * Component that renders cell boundary outlines using GLSL shaders
  */
 const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
-  // Debug logging
-  console.log('CellBoundaryRenderer:', {
-    loadedCells,
-    visible,
-    cellCount: loadedCells?.length,
-  });
-  // Test mode: if no cells are loaded, show origin cell for testing
-  const testCells = useMemo(() => {
+  // Use loadedCells directly, or fallback to origin cell only for testing when completely empty
+  const cellsToRender = useMemo(() => {
     return loadedCells.length === 0 ? ['0,0,0'] : loadedCells;
   }, [loadedCells]);
 
-  console.log('Using cells for rendering:', testCells);
   // Create geometry for all cell boundaries
   const geometry = useMemo(() => {
-    if (!testCells || testCells.length === 0) {
+    if (!cellsToRender || cellsToRender.length === 0) {
       return new THREE.BufferGeometry();
     }
 
     const positions = [];
-    testCells.forEach((cellId) => {
+    cellsToRender.forEach((cellId) => {
       // Parse 3D cell coordinates
       const [cellX, cellY, cellZ] = cellId.split(',').map(Number);
       const bounds = getCellBounds(cellX, cellY, cellZ);
-
-      console.log(`Cell ${cellId}:`, { cellX, cellY, cellZ, bounds });
 
       // Create a 3D wireframe cube for the cell boundaries
       // Define the 8 corners of the cell cube
@@ -90,11 +81,8 @@ const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
       'position',
       new THREE.Float32BufferAttribute(positions, 3)
     );
-
-    console.log('Generated geometry with', positions.length / 3, 'vertices');
-
     return geo;
-  }, [testCells]); // Create shader material
+  }, [cellsToRender]); // Create shader material
   const material = useMemo(() => {
     return new THREE.ShaderMaterial({
       vertexShader,
@@ -108,7 +96,7 @@ const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
     });
   }, []);
   // Update material reference
-  if (!visible || !testCells || testCells.length === 0) {
+  if (!visible || !cellsToRender || cellsToRender.length === 0) {
     return null;
   }
   return (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   getCellCoordinates,
   getCellId,
@@ -34,41 +34,19 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
    */
   const initializeSpatialSystem = useCallback(async () => {
     if (!currentSpaceId || isInitialized || initializationPromise.current) {
-      console.log('initializeSpatialSystem: Skipping initialization', {
-        currentSpaceId,
-        isInitialized,
-        hasPromise: !!initializationPromise.current,
-      });
       return;
-    }
-
-    console.log('initializeSpatialSystem: Starting initialization', {
-      currentSpaceId,
-      user: user?.uid,
-    });
-
-    // Prevent multiple initialization attempts
+    } // Prevent multiple initialization attempts
     initializationPromise.current = (async () => {
       try {
         // Get the correct owner ID (could be from URL for public spaces)
         const ownerUserId = window.currentSpaceOwner || user?.uid;
 
         if (!ownerUserId) {
-          console.log('initializeSpatialSystem: No owner user ID found');
           return;
-        }
-
-        console.log('initializeSpatialSystem: Using owner ID', ownerUserId);
-
-        // Discover existing cells that contain objects
+        } // Discover existing cells that contain objects
         const existingCells = await getOccupiedCells(
           ownerUserId,
           currentSpaceId
-        );
-
-        console.log(
-          'initializeSpatialSystem: Found existing cells',
-          existingCells
         );
 
         // Always ensure the origin cell exists
@@ -80,38 +58,16 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
           0
         );
 
-        console.log(
-          'initializeSpatialSystem: Origin cell creation result',
-          originCellSuccess
-        );
-
         // Combine origin cell with existing occupied cells
-        const cellsToLoad = new Set(['0,0,0']); // Always start with origin
-        existingCells.forEach((cellId) => cellsToLoad.add(cellId));
-
-        console.log(
-          'initializeSpatialSystem: Cells to load',
-          Array.from(cellsToLoad)
-        );
+        const cellsToLoad = new Set(['0,0,0']); // Always start with origin        existingCells.forEach((cellId) => cellsToLoad.add(cellId));
 
         if (originCellSuccess || existingCells.length > 0) {
           setLoadedCells(cellsToLoad);
           setCurrentCellCoords({ x: 0, y: 0, z: 0 });
           setIsInitialized(true);
-          console.log('initializeSpatialSystem: Initialization complete', {
-            cellsToLoad,
-            isInitialized: true,
-          });
-        } else {
-          console.log(
-            'initializeSpatialSystem: Failed to initialize - no cells loaded'
-          );
         }
       } catch (error) {
-        console.error(
-          'initializeSpatialSystem: Error during initialization',
-          error
-        );
+        // Error during initialization - continue silently
       }
     })();
 
@@ -199,14 +155,7 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
    */
   const updateCameraPosition = useCallback(
     async (position) => {
-      if (!isInitialized || !currentSpaceId) {
-        console.log('updateCameraPosition: Skipping update', {
-          isInitialized,
-          currentSpaceId,
-          position: position ? [position.x, position.y, position.z] : null,
-        });
-        return;
-      }
+      if (!isInitialized || !currentSpaceId) return;
 
       // Convert position to array if it's a Vector3
       const posArray = Array.isArray(position)
@@ -225,18 +174,10 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
       // Only update if camera moved more than 10 units
       if (distance < 10) return;
 
-      console.log('updateCameraPosition: Camera moved significantly', {
-        from: lastCameraPosition.current,
-        to: posArray,
-        distance,
-      });
-
       lastCameraPosition.current = posArray;
 
       // Get current cell coordinates
       const newCellCoords = getCellCoordinates(posArray);
-
-      console.log('updateCameraPosition: New cell coordinates', newCellCoords);
 
       // Update current cell if changed
       if (
@@ -244,10 +185,6 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         newCellCoords.y !== currentCellCoords.y ||
         newCellCoords.z !== currentCellCoords.z
       ) {
-        console.log('updateCameraPosition: Cell changed', {
-          from: currentCellCoords,
-          to: newCellCoords,
-        });
         setCurrentCellCoords(newCellCoords);
       }
 
@@ -257,11 +194,6 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         CELL_LOAD_DISTANCE
       );
 
-      console.log(
-        'updateCameraPosition: Adjacent cells to check',
-        adjacentCells
-      );
-
       // Load current cell if not loaded
       const currentCellId = getCellId(
         newCellCoords.x,
@@ -269,18 +201,7 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         newCellCoords.z
       );
 
-      console.log(
-        'updateCameraPosition: Current cell ID',
-        currentCellId,
-        'loaded cells',
-        Array.from(loadedCells)
-      );
-
       if (!loadedCells.has(currentCellId)) {
-        console.log(
-          'updateCameraPosition: Loading current cell',
-          currentCellId
-        );
         await loadCell(newCellCoords.x, newCellCoords.y, newCellCoords.z);
       }
 
@@ -288,11 +209,6 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
       for (const cellCoords of adjacentCells) {
         const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
         if (!loadedCells.has(cellId)) {
-          console.log(
-            'updateCameraPosition: Loading adjacent cell',
-            cellId,
-            cellCoords
-          );
           await loadCell(cellCoords.x, cellCoords.y, cellCoords.z);
         }
       }
@@ -303,10 +219,6 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         Array.from(loadedCells),
         CELL_UNLOAD_DISTANCE
       );
-
-      if (cellsToUnload.length > 0) {
-        console.log('updateCameraPosition: Unloading cells', cellsToUnload);
-      }
 
       for (const cellId of cellsToUnload) {
         unloadCell(cellId);
@@ -388,12 +300,6 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
 
   // Track camera position
   useEffect(() => {
-    console.log('Camera tracking effect:', {
-      cameraRefExists: !!cameraRef?.current,
-      cameraExists: !!cameraRef?.current?.camera,
-      isInitialized,
-    });
-
     if (!cameraRef?.current?.camera || !isInitialized) return;
 
     const camera = cameraRef.current.camera;
@@ -406,12 +312,10 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
       animationId = requestAnimationFrame(trackCameraPosition);
     };
 
-    console.log('Starting camera position tracking');
     // Start tracking
     trackCameraPosition();
 
     return () => {
-      console.log('Stopping camera position tracking');
       if (animationId) {
         cancelAnimationFrame(animationId);
       }
@@ -424,10 +328,15 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
       subscriptions.forEach((unsubscribe) => unsubscribe());
       subscriptions.clear();
     };
-  }, []);
+  }, []); // Convert loadedCells Set to Array for consumers with stable reference
+  const loadedCellsArray = useMemo(() => {
+    const cellsArray = Array.from(loadedCells || new Set()).sort();
+    return cellsArray;
+  }, [loadedCells]);
+
   return {
     // State
-    loadedCells: Array.from(loadedCells || new Set()), // Ensure it's always an array
+    loadedCells: loadedCellsArray, // Always return as array
     currentCellCoords: currentCellCoords || { x: 0, y: 0 },
     isInitialized: isInitialized || false,
 

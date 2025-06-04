@@ -27,7 +27,7 @@ const getRTCConfiguration = () => ({
 });
 
 export const initWebRTC = (userId) => {
-  console.log('WebRTC service initialized for user:', userId);
+  // WebRTC service initialized
 };
 
 class BroadcastSession {
@@ -812,8 +812,6 @@ export const registerUserPresence = async (userId, spaceId) => {
     },
     { merge: true }
   );
-
-  console.log(`User ${userId} presence registered in space ${spaceId}`);
 };
 
 export const subscribeToUsersInSpace = (spaceId, callback) => {

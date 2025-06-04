@@ -27,9 +27,6 @@ export const setUserPresence = (userId, spaceId = null) => {
       timestamp: new Date().toISOString(),
     });
 
-    // Clear presence when disconnected
-    onDisconnect(spacePresenceRef).remove();
-
-    console.log(`User ${userId} presence registered in space ${spaceId}`);
+    // Clear presence when disconnected    onDisconnect(spacePresenceRef).remove();
   }
 };

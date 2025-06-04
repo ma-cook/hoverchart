@@ -39,13 +39,6 @@ export const handleFaceIndicatorClick = ({
   currentSpaceId,
   isConnectMode,
 }) => {
-  // Debug output to help diagnose issues
-  console.log('Face indicator clicked:', {
-    indicator,
-    selectedIndicatorsRef: selectedIndicatorsRef.current,
-    isConnectMode,
-  });
-
   // If not in connect mode, enter connect mode first
   if (!isConnectMode) {
     setIsConnectMode(true);
@@ -55,7 +48,6 @@ export const handleFaceIndicatorClick = ({
     // Store the first indicator
     selectedIndicatorsRef.current = [indicator];
     setSelectedIndicators([indicator]);
-    console.log('Entered connect mode with first indicator:', indicator);
     return {
       success: true,
       complete: false,

@@ -332,6 +332,8 @@ const ConnectionsRenderer = ({
   setShowLineTextStyleUI,
   setShowLineTextInput,
 }) => {
+  // DEBUG: Removed console.log to prevent infinite re-render loop
+
   // Check if we're in read-only public mode (anonymous access)
   const isAnonymous = !window.currentUser;
   const isPublicSpace = window.publicAccessSpace && window.currentSpaceOwner;
