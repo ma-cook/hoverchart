@@ -2,33 +2,149 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   getCellCoordinates,
   getCellId,
-  getAdjacentCellsToLoad,
-  createCell,
-  cellExists,
+  getNeighborCells,
+  createCellsBatch,
   addObjectToCell,
   moveObjectBetweenCells,
   getOccupiedCells,
   getCellsToUnload,
-  CELL_LOAD_DISTANCE,
+  CELL_NEIGHBOR_RADIUS,
   CELL_UNLOAD_DISTANCE,
 } from '../services/spatialPartitioning';
 
 /**
  * Hook to manage spatial partitioning and camera-based cell loading
  */
-export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
+export const useSpatialManager = ({
+  user,
+  currentSpaceId,
+  cameraRef,
+  onObjectsChange,
+}) => {
   const [loadedCells, setLoadedCells] = useState(new Set());
   const [currentCellCoords, setCurrentCellCoords] = useState({
     x: 0,
     y: 0,
     z: 0,
   });
-  const [isInitialized, setIsInitialized] = useState(false);
-
-  // Refs for tracking
+  const [isInitialized, setIsInitialized] = useState(false); // Refs for tracking
   const lastCameraPosition = useRef([0, 0, 0]);
   const cellSubscriptions = useRef(new Map());
   const initializationPromise = useRef(null);
+  const lastUpdateTime = useRef(0);
+  const loadingCellsRef = useRef(new Set()); // Track cells currently being loaded
+  const MAX_CONCURRENT_LOADS = 5; // Limit concurrent cell loading operations
+  // Track objects by cell for cleanup during cell unloading
+  const objectsByCellRef = useRef(new Map()); // Map of cellId -> Set of objectIds
+  /**
+   * Add object to cell tracking
+   */
+  const trackObjectInCell = useCallback((objectId, cellId) => {
+    const objIdStr = objectId.toString();
+    if (!objectsByCellRef.current.has(cellId)) {
+      objectsByCellRef.current.set(cellId, new Set());
+    }
+    objectsByCellRef.current.get(cellId).add(objIdStr);
+    console.log(`📍 Tracked object ${objIdStr} in cell ${cellId}`);
+    console.log(
+      `📊 Total tracking state:`,
+      Object.fromEntries(objectsByCellRef.current)
+    );
+  }, []);
+  /**
+   * Remove object from cell tracking
+   */
+  const untrackObjectInCell = useCallback((objectId, cellId) => {
+    const objIdStr = objectId.toString();
+    const cellObjects = objectsByCellRef.current.get(cellId);
+    if (cellObjects) {
+      cellObjects.delete(objIdStr);
+      console.log(`📍 Untracked object ${objIdStr} from cell ${cellId}`);
+      if (cellObjects.size === 0) {
+        objectsByCellRef.current.delete(cellId);
+        console.log(`📍 Removed empty cell ${cellId} from tracking`);
+      }
+    }
+  }, []);
+
+  const POSITION_UPDATE_THROTTLE = 100; // Only update every 100ms
+
+  /**
+   * Load multiple cells in parallel for better performance
+   */
+  const loadCellsBatch = useCallback(
+    async (cellCoordsList) => {
+      if (!currentSpaceId || !cellCoordsList?.length) return [];
+
+      const ownerUserId = window.currentSpaceOwner || user?.uid;
+      if (!ownerUserId) return [];
+
+      // Filter out cells that are already loaded OR currently being loaded
+      const cellsToLoad = cellCoordsList.filter((coords) => {
+        const cellId = getCellId(coords.x, coords.y, coords.z);
+        return !loadedCells.has(cellId) && !loadingCellsRef.current.has(cellId);
+      });
+
+      if (cellsToLoad.length === 0) {
+        return [];
+      }
+
+      // Apply concurrency limit
+      const currentlyLoading = loadingCellsRef.current.size;
+      if (currentlyLoading >= MAX_CONCURRENT_LOADS) {
+        console.log(
+          `⏳ Skipping cell loading - too many concurrent operations (${currentlyLoading}/${MAX_CONCURRENT_LOADS})`
+        );
+        return [];
+      }
+
+      const availableSlots = MAX_CONCURRENT_LOADS - currentlyLoading;
+      const cellsToLoadNow = cellsToLoad.slice(0, availableSlots);
+
+      // Mark cells as being loaded
+      cellsToLoadNow.forEach((coords) => {
+        const cellId = getCellId(coords.x, coords.y, coords.z);
+        loadingCellsRef.current.add(cellId);
+      });
+
+      try {
+        // Use batch creation for better performance
+        console.log(
+          `🚀 Batch creating ${cellsToLoadNow.length} cells (${loadingCellsRef.current.size} total loading)...`
+        );
+        const results = await createCellsBatch(
+          ownerUserId,
+          currentSpaceId,
+          cellsToLoadNow
+        );
+
+        // Update loaded cells with successful loads
+        const newCellIds = cellsToLoadNow
+          .filter((coords, index) => results[index]) // Only successful creations
+          .map((coords) => getCellId(coords.x, coords.y, coords.z));
+
+        if (newCellIds.length > 0) {
+          setLoadedCells((prev) => new Set([...prev, ...newCellIds]));
+          console.log(
+            `✅ Successfully loaded ${newCellIds.length} cells in batch`
+          );
+        }
+
+        return results;
+      } catch (error) {
+        console.error('❌ Error in batch cell loading:', error);
+        return [];
+      } finally {
+        // Remove cells from loading tracker
+        cellsToLoadNow.forEach((coords) => {
+          const cellId = getCellId(coords.x, coords.y, coords.z);
+          loadingCellsRef.current.delete(cellId);
+        });
+      }
+    },
+    [user, currentSpaceId, loadedCells]
+  );
+
   /**
    * Initialize the spatial system by discovering existing cells and loading the origin cell
    */
@@ -47,115 +163,160 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         const existingCells = await getOccupiedCells(
           ownerUserId,
           currentSpaceId
+        ); // Get initial camera position and load neighbor cells
+        // Use actual camera position if available, otherwise use default
+        const actualCameraPosition = cameraRef?.current?.camera?.position;
+        const initialCameraPosition = actualCameraPosition
+          ? [
+              actualCameraPosition.x,
+              actualCameraPosition.y,
+              actualCameraPosition.z,
+            ]
+          : [20, 20, 50]; // Default camera position
+        const initialCells = getNeighborCells(
+          initialCameraPosition,
+          CELL_NEIGHBOR_RADIUS
+        );
+        console.log(
+          `Loading ${initialCells.length} neighbor cells within radius ${CELL_NEIGHBOR_RADIUS} from camera position:`,
+          initialCameraPosition
         );
 
-        // Always ensure the origin cell exists
-        const originCellSuccess = await createCell(
-          ownerUserId,
-          currentSpaceId,
-          0,
-          0,
-          0
+        // Debug: Log all cells that should be loaded
+        console.log('Detailed neighbor cells to load:');
+        initialCells.forEach((cell, index) => {
+          console.log(
+            `  ${index + 1}. Cell (${cell.x}, ${cell.y}, ${
+              cell.z
+            }) -> ID: ${getCellId(cell.x, cell.y, cell.z)}`
+          );
+        }); // Combine existing occupied cells and initial camera radius cells
+        const cellsToLoad = new Set();
+        existingCells.forEach((cellId) => cellsToLoad.add(cellId)); // Add initial camera radius cells
+        for (const cellCoords of initialCells) {
+          const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+          cellsToLoad.add(cellId);
+          console.log(`Adding cell ${cellId} to load set`);
+        }
+
+        // Convert Set to array of coordinates and load all cells in parallel
+        const cellCoordsToLoad = initialCells.filter((cellCoords) => {
+          const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+          return !existingCells.includes(cellId); // Only load cells that don't already exist
+        });
+
+        if (cellCoordsToLoad.length > 0) {
+          console.log(
+            `🚀 Batch loading ${cellCoordsToLoad.length} cells during initialization...`
+          );
+          await loadCellsBatch(cellCoordsToLoad);
+        }
+
+        console.log('Final cellsToLoad set:', Array.from(cellsToLoad));
+        console.log(
+          `Total cells loaded during initialization: ${cellsToLoad.size}`
         );
-
-        // Combine origin cell with existing occupied cells
-        const cellsToLoad = new Set(['0,0,0']); // Always start with origin        existingCells.forEach((cellId) => cellsToLoad.add(cellId));
-
-        if (originCellSuccess || existingCells.length > 0) {
+        if (existingCells.length > 0 || initialCells.length > 0) {
           setLoadedCells(cellsToLoad);
           setCurrentCellCoords({ x: 0, y: 0, z: 0 });
           setIsInitialized(true);
         }
-      } catch (error) {
+      } catch {
         // Error during initialization - continue silently
       }
     })();
 
     return initializationPromise.current;
-  }, [user, currentSpaceId, isInitialized]);
+  }, [user, currentSpaceId, isInitialized, cameraRef, loadCellsBatch]);
+
   /**
-   * Load a cell and its objects
+   * Load a single cell (kept for backward compatibility)
    */
   const loadCell = useCallback(
     async (cellX, cellY, cellZ = 0) => {
-      if (!currentSpaceId) return false;
-
-      const cellId = getCellId(cellX, cellY, cellZ);
-
-      // Skip if already loaded
-      if (loadedCells.has(cellId)) {
-        return true;
-      }
-
-      try {
-        // Get the correct owner ID
-        const ownerUserId = window.currentSpaceOwner || user?.uid;
-        if (!ownerUserId) {
-          return false;
-        }
-
-        // Check if cell exists, create if it doesn't
-        const exists = await cellExists(
-          ownerUserId,
-          currentSpaceId,
-          cellX,
-          cellY,
-          cellZ
-        );
-        if (!exists) {
-          const created = await createCell(
-            ownerUserId,
-            currentSpaceId,
-            cellX,
-            cellY,
-            cellZ
-          );
-          if (!created) {
-            return false;
-          }
-        }
-        // Add to loaded cells
-        setLoadedCells((prev) => new Set([...prev, cellId]));
-        return true;
-      } catch {
-        // Error loading cell
-        return false;
-      }
+      const results = await loadCellsBatch([{ x: cellX, y: cellY, z: cellZ }]);
+      return results[0]?.success || false;
     },
-    [user, currentSpaceId, loadedCells]
+    [loadCellsBatch]
   );
-
   /**
-   * Unload a cell that's too far from the camera
+   * Unload multiple cells in batch for better performance
    */
-  const unloadCell = useCallback(
-    (cellId) => {
-      if (!loadedCells.has(cellId)) {
-        return false; // Cell not loaded
-      }
+  const unloadCellsBatch = useCallback(
+    (cellIds, onObjectsChange) => {
+      if (!cellIds?.length) return;
 
-      try {
-        // Remove from loaded cells
+      const cellsToRemove = cellIds.filter((cellId) => loadedCells.has(cellId));
+
+      if (cellsToRemove.length > 0) {
+        // Notify about objects that should be removed
+        if (onObjectsChange && objectsByCellRef.current.size > 0) {
+          const objectsToRemove = [];
+          console.log(`🔍 Checking cells for unloading:`, cellsToRemove);
+          console.log(
+            `🔍 Current object tracking:`,
+            Object.fromEntries(objectsByCellRef.current)
+          );
+
+          cellsToRemove.forEach((cellId) => {
+            const cellObjects = objectsByCellRef.current.get(cellId);
+            console.log(
+              `🔍 Cell ${cellId} has objects:`,
+              cellObjects ? Array.from(cellObjects) : 'none'
+            );
+            if (cellObjects) {
+              objectsToRemove.push(...Array.from(cellObjects));
+              objectsByCellRef.current.delete(cellId);
+            }
+          });
+          if (objectsToRemove.length > 0) {
+            console.log(
+              `🧹 Removing ${objectsToRemove.length} objects from unloaded cells:`,
+              objectsToRemove
+            );
+            objectsToRemove.forEach((objectId) => {
+              onObjectsChange({
+                type: 'removed',
+                id: objectId.toString(),
+                source: 'cell-unload',
+              });
+            });
+          } else {
+            console.log(
+              `⚠️ No objects found to remove despite having tracking data`
+            );
+          }
+        } else {
+          console.log(
+            `⚠️ No object tracking or onObjectsChange callback available`
+          );
+        }
+
         setLoadedCells((prev) => {
           const newSet = new Set(prev);
-          newSet.delete(cellId);
+          cellsToRemove.forEach((cellId) => newSet.delete(cellId));
           return newSet;
         });
-
-        return true;
-      } catch {
-        return false;
+        console.log(
+          `🗑️ Unloaded ${cellsToRemove.length} cells in batch:`,
+          cellsToRemove
+        );
       }
     },
     [loadedCells]
   );
-
   /**
    * Update camera position and manage cell loading
-   */
-  const updateCameraPosition = useCallback(
+   */ const updateCameraPosition = useCallback(
     async (position) => {
       if (!isInitialized || !currentSpaceId) return;
+
+      // Throttle position updates to improve performance
+      const now = Date.now();
+      if (now - lastUpdateTime.current < POSITION_UPDATE_THROTTLE) {
+        return;
+      }
+      lastUpdateTime.current = now;
 
       // Convert position to array if it's a Vector3
       const posArray = Array.isArray(position)
@@ -171,8 +332,11 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
           Math.pow(newZ - lastZ, 2)
       );
 
-      // Only update if camera moved more than 10 units
-      if (distance < 10) return;
+      // Check if this is the first position update (initial camera position)
+      const isFirstUpdate = lastX === 0 && lastY === 0 && lastZ === 0;
+
+      // Only update if camera moved more than 10 units OR this is the first update
+      if (distance < 10 && !isFirstUpdate) return;
 
       lastCameraPosition.current = posArray;
 
@@ -188,40 +352,33 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
         setCurrentCellCoords(newCellCoords);
       }
 
-      // Check if we need to load adjacent cells
-      const adjacentCells = getAdjacentCellsToLoad(
-        posArray,
-        CELL_LOAD_DISTANCE
-      );
-
-      // Load current cell if not loaded
-      const currentCellId = getCellId(
-        newCellCoords.x,
-        newCellCoords.y,
-        newCellCoords.z
-      );
-
-      if (!loadedCells.has(currentCellId)) {
-        await loadCell(newCellCoords.x, newCellCoords.y, newCellCoords.z);
-      }
-
-      // Load adjacent cells that should be loaded
-      for (const cellCoords of adjacentCells) {
-        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-        if (!loadedCells.has(cellId)) {
-          await loadCell(cellCoords.x, cellCoords.y, cellCoords.z);
-        }
-      }
-
-      // Unload cells that are too far away
+      // PRIORITY 1: Unload distant cells FIRST (non-blocking)
       const cellsToUnload = getCellsToUnload(
         posArray,
         Array.from(loadedCells),
         CELL_UNLOAD_DISTANCE
       );
 
-      for (const cellId of cellsToUnload) {
-        unloadCell(cellId);
+      if (cellsToUnload.length > 0) {
+        console.log(`🗑️ Unloading ${cellsToUnload.length} distant cells...`);
+        unloadCellsBatch(cellsToUnload, onObjectsChange);
+      }
+
+      // PRIORITY 2: Load new cells (non-blocking, fire-and-forget)
+      const neighborCells = getNeighborCells(posArray, CELL_NEIGHBOR_RADIUS);
+      const cellsToLoad = neighborCells.filter((cellCoords) => {
+        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+        return !loadedCells.has(cellId);
+      });
+
+      if (cellsToLoad.length > 0) {
+        console.log(
+          `📦 Loading ${cellsToLoad.length} cells in parallel (non-blocking)...`
+        );
+        // Use fire-and-forget loading - don't await
+        loadCellsBatch(cellsToLoad).catch((error) => {
+          console.error('❌ Error in background cell loading:', error);
+        });
       }
     },
     [
@@ -229,8 +386,9 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
       currentSpaceId,
       currentCellCoords,
       loadedCells,
-      loadCell,
-      unloadCell,
+      loadCellsBatch,
+      unloadCellsBatch,
+      onObjectsChange,
     ]
   );
   /**
@@ -304,7 +462,6 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
 
     const camera = cameraRef.current.camera;
     let animationId;
-
     const trackCameraPosition = () => {
       if (camera && camera.position) {
         updateCameraPosition(camera.position);
@@ -333,7 +490,6 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
     const cellsArray = Array.from(loadedCells || new Set()).sort();
     return cellsArray;
   }, [loadedCells]);
-
   return {
     // State
     loadedCells: loadedCellsArray, // Always return as array
@@ -346,5 +502,9 @@ export const useSpatialManager = ({ user, currentSpaceId, cameraRef }) => {
     getCellForPosition,
     loadCell,
     updateCameraPosition,
+
+    // Object tracking methods for cell integration
+    trackObjectInCell,
+    untrackObjectInCell,
   };
 };

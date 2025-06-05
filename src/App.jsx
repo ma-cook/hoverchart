@@ -30,6 +30,7 @@ import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 
 import { signInUser } from './services/authService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
+import { CELL_SIZE } from './services/spatialPartitioning'; // Import CELL_SIZE constant
 import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
@@ -51,26 +52,54 @@ const App = () => {
   const { currentSpaceId } = useSpaceManager({
     user,
     intentionalSpaceChangeRef,
-  }); // Spatial partitioning hook
+  }); // Spatial partitioning hook with object change handler
+  const handleSpatialObjectChange = useCallback((change) => {
+    console.log(`🔍 handleSpatialObjectChange called with:`, change);
+    if (change.source === 'cell-unload') {
+      // Remove objects when their cells are unloaded
+      setObjects((prev) => {
+        const filtered = prev.filter(
+          (obj) => obj.id.toString() !== change.id.toString()
+        );
+        console.log(
+          `🧹 Removed object ${change.id} due to cell unload. Objects before: ${prev.length}, after: ${filtered.length}`
+        );
+        return filtered;
+      });
+    }
+  }, []);
+
   const {
     addObjectToSpatialSystem,
     moveObjectInSpatialSystem,
     loadedCells,
     isInitialized: isSpatialInitialized,
     currentCellCoords,
+    trackObjectInCell,
+    untrackObjectInCell,
   } = useSpatialManager({
     user,
     currentSpaceId,
     cameraRef,
-  });
-  // Setup debug context for spatial partitioning
+    onObjectsChange: handleSpatialObjectChange,
+  }); // Setup debug context for spatial partitioning
   useEffect(() => {
     window._spatialManagerDebug = {
       loadedCells,
       currentCellCoords,
       isInitialized: isSpatialInitialized,
+      objects: objects.length,
+      trackObjectInCell,
+      untrackObjectInCell,
     };
-  }, [loadedCells, currentCellCoords, isSpatialInitialized]);
+  }, [
+    loadedCells,
+    currentCellCoords,
+    isSpatialInitialized,
+    objects.length,
+    trackObjectInCell,
+    untrackObjectInCell,
+  ]);
 
   // Connections hooks (now with objects already initialized)
   const {
@@ -193,16 +222,32 @@ const App = () => {
 
     const spaceToLoad = effectiveSpaceId;
     const ownerUserId = window.currentSpaceOwner || user?.uid;
-
     const unsubscribe = subscribeToSpatialObjects(
       ownerUserId, // May be null for anonymous access
       spaceToLoad,
       loadedCells, // Array of loaded cell IDs
       (change) => {
         setObjects((prev) => {
-          switch (change.type) {
-            case 'added':
+          switch (change.type) {            case 'added':
               if (!prev.find((obj) => obj.id === change.id)) {
+                // Track object in its cell when added
+                console.log(`🔍 Object ${change.id} added with data:`, change);
+                if (change.cellCoords && trackObjectInCell) {
+                  const cellId = `${change.cellCoords.x},${
+                    change.cellCoords.y
+                  },${change.cellCoords.z || 0}`;
+                  console.log(
+                    `📍 Adding object ${change.id} to cell ${cellId} (spatial initialized: ${isSpatialInitialized})`,
+                    change.cellCoords
+                  );
+                  trackObjectInCell(change.id.toString(), cellId);
+                } else {
+                  console.log(
+                    `⚠️ Cannot track object ${
+                      change.id
+                    }: cellCoords=${!!change.cellCoords}, trackObjectInCell=${!!trackObjectInCell}, spatialInitialized=${isSpatialInitialized}`
+                  );
+                }
                 return [...prev, change.object];
               }
               return prev;
@@ -240,6 +285,18 @@ const App = () => {
               }
               return prev;
             case 'removed':
+              // Untrack object when removed
+              console.log(`🔍 Object ${change.id} removed with data:`, change);
+              if (change.cellCoords && untrackObjectInCell) {
+                const cellId = `${change.cellCoords.x},${change.cellCoords.y},${
+                  change.cellCoords.z || 0
+                }`;
+                console.log(
+                  `📍 Removing object ${change.id} from cell ${cellId}`,
+                  change.cellCoords
+                );
+                untrackObjectInCell(change.id.toString(), cellId);
+              }
               delete lastUpdateRef.current[change.id];
               return prev.filter((obj) => obj.id.toString() !== change.id);
             default:
@@ -259,7 +316,33 @@ const App = () => {
     lastUpdateRef,
     draggingObjectsRef,
     transformingObjectsRef,
+    trackObjectInCell,
+    untrackObjectInCell,
   ]);
+  // Retroactively track existing objects when spatial manager becomes initialized
+  const hasRetroTrackedRef = useRef(false);
+  useEffect(() => {
+    if (isSpatialInitialized && trackObjectInCell && objects.length > 0 && !hasRetroTrackedRef.current) {
+      console.log(`🔄 Spatial manager initialized - retroactively tracking ${objects.length} existing objects`);
+      
+      objects.forEach(obj => {        if (obj.position && Array.isArray(obj.position) && obj.position.length >= 3) {
+          // Calculate which cell this object belongs to
+          const cellCoords = {
+            x: Math.floor(obj.position[0] / CELL_SIZE), // Use imported CELL_SIZE constant
+            y: Math.floor(obj.position[1] / CELL_SIZE),
+            z: Math.floor((obj.position[2] || 0) / CELL_SIZE)
+          };
+          
+          const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+          
+          console.log(`📍 Retroactively tracking object ${obj.id} in cell ${cellId}`);
+          trackObjectInCell(obj.id.toString(), cellId);
+        }
+      });
+      
+      hasRetroTrackedRef.current = true; // Mark that we've done the initial tracking
+    }
+  }, [isSpatialInitialized, trackObjectInCell, objects]); // Include objects but use ref to prevent re-runs
 
   // Matrix updates tracking to prevent recursion
   const handleObjectMatrixChanged = useCallback((id, matrixWorld) => {

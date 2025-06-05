@@ -9,9 +9,9 @@ import {
 } from 'firebase/firestore';
 
 // Cell size constants
-export const CELL_SIZE = 2000;
-export const CELL_LOAD_DISTANCE = 4; // Distance from edge to trigger adjacent cell loading
-export const CELL_UNLOAD_DISTANCE = 2; // Distance in cell blocks to unload cells
+export const CELL_SIZE = 10000;
+export const CELL_NEIGHBOR_RADIUS = 1; // Load 3x3 horizontal grid around camera (9 cells)
+export const CELL_UNLOAD_DISTANCE = 2; // Distance in cell blocks to unload cells (reduced for testing)
 
 /**
  * Calculate which cell a position belongs to
@@ -72,86 +72,6 @@ export const getCellBounds = (cellX, cellY, cellZ) => {
 };
 
 /**
- * Check if position is within distance of cell edge
- * @param {Array} position - [x, y, z] world position
- * @param {number} distance - Distance threshold
- * @returns {Array} - Array of adjacent cell coordinates that should be loaded
- */
-export const getAdjacentCellsToLoad = (
-  position,
-  distance = CELL_LOAD_DISTANCE
-) => {
-  if (!Array.isArray(position) || position.length < 3) {
-    return [];
-  }
-
-  const [x, y, z] = position;
-  const currentCell = getCellCoordinates(position);
-  const bounds = getCellBounds(currentCell.x, currentCell.y, currentCell.z);
-
-  const adjacentCells = [];
-
-  // Check distance to each edge and determine which adjacent cells to load
-  const distanceToLeftEdge = x - bounds.minX;
-  const distanceToRightEdge = bounds.maxX - x;
-  const distanceToBottomEdge = y - bounds.minY;
-  const distanceToTopEdge = bounds.maxY - y;
-  const distanceToFrontEdge = z - bounds.minZ;
-  const distanceToBackEdge = bounds.maxZ - z;
-
-  // Load adjacent cells if within threshold distance in any direction
-  // X-axis neighbors
-  if (distanceToLeftEdge <= distance) {
-    adjacentCells.push({
-      x: currentCell.x - 1,
-      y: currentCell.y,
-      z: currentCell.z,
-    });
-  }
-  if (distanceToRightEdge <= distance) {
-    adjacentCells.push({
-      x: currentCell.x + 1,
-      y: currentCell.y,
-      z: currentCell.z,
-    });
-  }
-
-  // Y-axis neighbors
-  if (distanceToBottomEdge <= distance) {
-    adjacentCells.push({
-      x: currentCell.x,
-      y: currentCell.y - 1,
-      z: currentCell.z,
-    });
-  }
-  if (distanceToTopEdge <= distance) {
-    adjacentCells.push({
-      x: currentCell.x,
-      y: currentCell.y + 1,
-      z: currentCell.z,
-    });
-  }
-
-  // Z-axis neighbors
-  if (distanceToFrontEdge <= distance) {
-    adjacentCells.push({
-      x: currentCell.x,
-      y: currentCell.y,
-      z: currentCell.z - 1,
-    });
-  }
-  if (distanceToBackEdge <= distance) {
-    adjacentCells.push({
-      x: currentCell.x,
-      y: currentCell.y,
-      z: currentCell.z + 1,
-    });
-  }
-
-  return adjacentCells;
-};
-
-/**
  * Create a new cell in the database
  * @param {string} userId - User ID (or space owner ID)
  * @param {string} spaceId - Space ID
@@ -200,6 +120,27 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
   } catch {
     return false;
   }
+};
+
+/**
+ * Create multiple cells in batch for better performance
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {Array} cellCoordsList - Array of {x, y, z} cell coordinates
+ * @returns {Promise<Array>} - Array of success status for each cell
+ */
+export const createCellsBatch = async (userId, spaceId, cellCoordsList) => {
+  if (!userId || !spaceId || !cellCoordsList?.length) {
+    return [];
+  }
+
+  const results = await Promise.all(
+    cellCoordsList.map(async ({ x, y, z }) => {
+      return createCell(userId, spaceId, x, y, z);
+    })
+  );
+
+  return results;
 };
 
 /**
@@ -745,15 +686,28 @@ export const getCellsToUnload = (
   const currentCell = getCellCoordinates(position);
   const cellsToUnload = [];
 
+  console.log(
+    `🔍 Checking cells to unload. Camera at cell (${currentCell.x}, ${currentCell.y}, ${currentCell.z}), unload distance: ${unloadDistance}`
+  );
+  console.log(`🔍 Currently loaded cells:`, loadedCellIds);
+
   for (const cellId of loadedCellIds) {
     const cellCoords = parseCellId(cellId);
     const distance = getCellDistance(currentCell, cellCoords);
 
+    console.log(
+      `🔍 Cell ${cellId} at (${cellCoords.x}, ${cellCoords.y}, ${cellCoords.z}) is distance ${distance} from camera`
+    );
+
     if (distance >= unloadDistance) {
       cellsToUnload.push(cellId);
+      console.log(
+        `🗑️ Cell ${cellId} marked for unloading (distance ${distance} >= ${unloadDistance})`
+      );
     }
   }
 
+  console.log(`🔍 Final cells to unload:`, cellsToUnload);
   return cellsToUnload;
 };
 
@@ -1085,3 +1039,187 @@ export const updateConnectionInCells = async (
     return false;
   }
 };
+
+/**
+ * Get all cells within a radius of the given position
+ * @param {Array} position - [x, y, z] world position
+ * @param {number} radius - Radius in cell blocks
+ * @returns {Array} - Array of cell coordinates within the radius
+ */
+export const getCellsInRadius = (position, radius = CELL_NEIGHBOR_RADIUS) => {
+  if (!Array.isArray(position) || position.length < 3) {
+    return [];
+  }
+
+  const centerCell = getCellCoordinates(position);
+  const cellsInRadius = [];
+
+  // Generate all cells within radius using Manhattan distance
+  for (let x = centerCell.x - radius; x <= centerCell.x + radius; x++) {
+    for (let y = centerCell.y - radius; y <= centerCell.y + radius; y++) {
+      for (let z = centerCell.z - radius; z <= centerCell.z + radius; z++) {
+        const distance = Math.max(
+          Math.abs(x - centerCell.x),
+          Math.abs(y - centerCell.y),
+          Math.abs(z - centerCell.z)
+        );
+
+        if (distance <= radius) {
+          cellsInRadius.push({ x, y, z });
+        }
+      }
+    }
+  }
+
+  return cellsInRadius;
+};
+
+/**
+ * Get immediate neighbor cells around a position (3x3 horizontal grid)
+ * @param {Array} position - [x, y, z] world position
+ * @param {number} neighborRadius - Radius in cell blocks (default 1 for 3x3 grid)
+ * @returns {Array} - Array of cell coordinates within the neighbor radius (horizontal only)
+ */
+export const getNeighborCells = (
+  position,
+  neighborRadius = CELL_NEIGHBOR_RADIUS
+) => {
+  if (!Array.isArray(position) || position.length < 3) {
+    return [];
+  }
+
+  const centerCell = getCellCoordinates(position);
+  const neighborCells = [];
+
+  // Generate cells in a 3x3 horizontal grid (X and Z only, Y stays constant)
+  for (
+    let x = centerCell.x - neighborRadius;
+    x <= centerCell.x + neighborRadius;
+    x++
+  ) {
+    for (
+      let z = centerCell.z - neighborRadius;
+      z <= centerCell.z + neighborRadius;
+      z++
+    ) {
+      // Y coordinate stays the same as the camera's current Y cell
+      neighborCells.push({ x, y: centerCell.y, z });
+    }
+  }
+
+  return neighborCells;
+};
+
+/**
+ * Debug function to test cell radius loading
+ */
+export const debugCellRadius = () => {
+  console.log('=== DEBUG: Testing cell radius loading ===');
+
+  const cameraPosition = [20, 20, 50];
+  console.log('Camera position:', cameraPosition);
+  console.log('Load radius:', CELL_NEIGHBOR_RADIUS);
+
+  // Get the camera's cell coordinates
+  const cameraCell = getCellCoordinates(cameraPosition);
+  console.log('Camera cell coordinates:', cameraCell);
+
+  // Get all cells within radius
+  const cellsInRadius = getCellsInRadius(cameraPosition, CELL_NEIGHBOR_RADIUS);
+  console.log(
+    `Cells within radius ${CELL_NEIGHBOR_RADIUS}:`,
+    cellsInRadius.length
+  );
+
+  // Show a sampling of cells
+  console.log(
+    'First 10 cells:',
+    cellsInRadius.slice(0, 10).map((c) => `(${c.x},${c.y},${c.z})`)
+  );
+  console.log(
+    'Last 10 cells:',
+    cellsInRadius.slice(-10).map((c) => `(${c.x},${c.y},${c.z})`)
+  );
+
+  // Calculate expected number of cells
+  const expectedCells = Math.pow(2 * CELL_NEIGHBOR_RADIUS + 1, 3);
+  console.log(
+    `Expected cells for radius ${CELL_NEIGHBOR_RADIUS}: ${expectedCells}`
+  );
+  console.log(`Actual cells: ${cellsInRadius.length}`);
+
+  // Check if origin cell is included
+  const hasOrigin = cellsInRadius.some(
+    (c) => c.x === 0 && c.y === 0 && c.z === 0
+  );
+  console.log('Includes origin cell (0,0,0):', hasOrigin);
+
+  // Check if camera cell is included
+  const hasCameraCell = cellsInRadius.some(
+    (c) => c.x === cameraCell.x && c.y === cameraCell.y && c.z === cameraCell.z
+  );
+  console.log('Includes camera cell:', hasCameraCell);
+
+  return cellsInRadius;
+};
+
+/**
+ * Debug function to test getNeighborCells specifically
+ */
+export const debugNeighborCells = (position = [20, 20, 50]) => {
+  console.log('=== DEBUG: Testing getNeighborCells function ===');
+  console.log('Position:', position);
+  console.log('CELL_NEIGHBOR_RADIUS:', CELL_NEIGHBOR_RADIUS);
+
+  const neighborCells = getNeighborCells(position, CELL_NEIGHBOR_RADIUS);
+  console.log('Neighbor cells count:', neighborCells.length);
+  console.log('Expected count for radius 1:', Math.pow(3, 3), '(3x3x3)');
+
+  // Show all cells
+  console.log('All neighbor cells:');
+  neighborCells.forEach((cell, index) => {
+    console.log(`  ${index + 1}. (${cell.x}, ${cell.y}, ${cell.z})`);
+  });
+
+  return neighborCells;
+};
+
+/**
+ * Debug function to test current cell loading state
+ */
+export const debugCurrentCellLoading = () => {
+  console.log('=== DEBUG: Current Cell Loading State ===');
+  console.log('CELL_NEIGHBOR_RADIUS:', CELL_NEIGHBOR_RADIUS);
+  console.log('CELL_SIZE:', CELL_SIZE);
+
+  // Test getNeighborCells function
+  const testPosition = [0, 0, 0]; // Origin position
+  const neighborCells = getNeighborCells(testPosition, CELL_NEIGHBOR_RADIUS);
+  console.log(`\ngetNeighborCells([0,0,0], ${CELL_NEIGHBOR_RADIUS}):`);
+  console.log('- Expected cells:', Math.pow(3, 3), '(3x3x3)');
+  console.log('- Actual cells:', neighborCells.length);
+  console.log('- Cell coordinates:');
+  neighborCells.forEach((cell, index) => {
+    console.log(`  ${index + 1}. (${cell.x}, ${cell.y}, ${cell.z})`);
+  });
+
+  // Test getCellsInRadius function
+  const cellsInRadius = getCellsInRadius(testPosition, CELL_NEIGHBOR_RADIUS);
+  console.log(`\ngetCellsInRadius([0,0,0], ${CELL_NEIGHBOR_RADIUS}):`);
+  console.log('- Expected cells:', Math.pow(3, 3), '(3x3x3)');
+  console.log('- Actual cells:', cellsInRadius.length);
+
+  return {
+    neighborCells,
+    cellsInRadius,
+    radius: CELL_NEIGHBOR_RADIUS,
+    cellSize: CELL_SIZE,
+  };
+};
+
+// Make it available globally for testing
+if (typeof window !== 'undefined') {
+  window.debugCellRadius = debugCellRadius;
+  window.debugNeighborCells = debugNeighborCells;
+  window.debugCurrentCellLoading = debugCurrentCellLoading;
+}

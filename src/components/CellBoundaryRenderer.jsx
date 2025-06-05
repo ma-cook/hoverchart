@@ -25,9 +25,7 @@ const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
   // Use loadedCells directly, or fallback to origin cell only for testing when completely empty
   const cellsToRender = useMemo(() => {
     return loadedCells.length === 0 ? ['0,0,0'] : loadedCells;
-  }, [loadedCells]);
-
-  // Create geometry for all cell boundaries
+  }, [loadedCells]); // Create geometry for all cell boundaries
   const geometry = useMemo(() => {
     if (!cellsToRender || cellsToRender.length === 0) {
       return new THREE.BufferGeometry();
@@ -69,9 +67,7 @@ const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
         [1, 5],
         [2, 6],
         [3, 7],
-      ];
-
-      // Create line segments for each edge
+      ]; // Create line segments for each edge
       edges.forEach(([startIdx, endIdx]) => {
         positions.push(...corners[startIdx], ...corners[endIdx]);
       });

@@ -268,7 +268,7 @@ export const subscribeToSpatialObjects = (
           continue;
         }
 
-        const [x, y] = cellKey.split(',').map(Number);
+        const [x, y, z] = cellKey.split(',').map(Number);
 
         if (unsubscribeFunctions.has(cellKey)) {
           continue; // Already subscribed to this cell
@@ -322,13 +322,12 @@ export const subscribeToSpatialObjects = (
                 objectsCache.set(
                   cacheKey,
                   JSON.parse(JSON.stringify(objectData))
-                );
-                lastReceivedObjects.set(cacheKey, objectData);
+                );                lastReceivedObjects.set(cacheKey, objectData);
                 callback({
                   type: 'added',
                   id: objectId,
                   object: objectData,
-                  cellCoords: { x, y },
+                  cellCoords: { x, y, z: z || 0 }, // Include proper z coordinate for cell tracking
                 });
               }
             });
@@ -354,11 +353,10 @@ export const subscribeToSpatialObjects = (
               if (!currentObjectIds.has(objectId)) {
                 const cacheKey = `${spaceId}_${objectId}`;
                 objectsCache.delete(cacheKey);
-                lastReceivedObjects.delete(cacheKey);
-                callback({
+                lastReceivedObjects.delete(cacheKey);                callback({
                   type: 'removed',
                   id: objectId,
-                  cellCoords: { x, y },
+                  cellCoords: { x, y, z: z || 0 }, // Include proper z coordinate for cell tracking
                 });
               }
             }
