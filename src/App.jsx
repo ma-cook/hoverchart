@@ -228,7 +228,8 @@ const App = () => {
       loadedCells, // Array of loaded cell IDs
       (change) => {
         setObjects((prev) => {
-          switch (change.type) {            case 'added':
+          switch (change.type) {
+            case 'added':
               if (!prev.find((obj) => obj.id === change.id)) {
                 // Track object in its cell when added
                 console.log(`🔍 Object ${change.id} added with data:`, change);
@@ -322,24 +323,38 @@ const App = () => {
   // Retroactively track existing objects when spatial manager becomes initialized
   const hasRetroTrackedRef = useRef(false);
   useEffect(() => {
-    if (isSpatialInitialized && trackObjectInCell && objects.length > 0 && !hasRetroTrackedRef.current) {
-      console.log(`🔄 Spatial manager initialized - retroactively tracking ${objects.length} existing objects`);
-      
-      objects.forEach(obj => {        if (obj.position && Array.isArray(obj.position) && obj.position.length >= 3) {
+    if (
+      isSpatialInitialized &&
+      trackObjectInCell &&
+      objects.length > 0 &&
+      !hasRetroTrackedRef.current
+    ) {
+      console.log(
+        `🔄 Spatial manager initialized - retroactively tracking ${objects.length} existing objects`
+      );
+
+      objects.forEach((obj) => {
+        if (
+          obj.position &&
+          Array.isArray(obj.position) &&
+          obj.position.length >= 3
+        ) {
           // Calculate which cell this object belongs to
           const cellCoords = {
             x: Math.floor(obj.position[0] / CELL_SIZE), // Use imported CELL_SIZE constant
             y: Math.floor(obj.position[1] / CELL_SIZE),
-            z: Math.floor((obj.position[2] || 0) / CELL_SIZE)
+            z: Math.floor((obj.position[2] || 0) / CELL_SIZE),
           };
-          
+
           const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
-          
-          console.log(`📍 Retroactively tracking object ${obj.id} in cell ${cellId}`);
+
+          console.log(
+            `📍 Retroactively tracking object ${obj.id} in cell ${cellId}`
+          );
           trackObjectInCell(obj.id.toString(), cellId);
         }
       });
-      
+
       hasRetroTrackedRef.current = true; // Mark that we've done the initial tracking
     }
   }, [isSpatialInitialized, trackObjectInCell, objects]); // Include objects but use ref to prevent re-runs

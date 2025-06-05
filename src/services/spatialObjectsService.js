@@ -322,7 +322,8 @@ export const subscribeToSpatialObjects = (
                 objectsCache.set(
                   cacheKey,
                   JSON.parse(JSON.stringify(objectData))
-                );                lastReceivedObjects.set(cacheKey, objectData);
+                );
+                lastReceivedObjects.set(cacheKey, objectData);
                 callback({
                   type: 'added',
                   id: objectId,
@@ -353,7 +354,8 @@ export const subscribeToSpatialObjects = (
               if (!currentObjectIds.has(objectId)) {
                 const cacheKey = `${spaceId}_${objectId}`;
                 objectsCache.delete(cacheKey);
-                lastReceivedObjects.delete(cacheKey);                callback({
+                lastReceivedObjects.delete(cacheKey);
+                callback({
                   type: 'removed',
                   id: objectId,
                   cellCoords: { x, y, z: z || 0 }, // Include proper z coordinate for cell tracking
