@@ -115,6 +115,7 @@ const FaceUI = ({
         setShowColorPicker(false);
         break;
       case 'webcam': // Handle webcam toggle
+        console.log('Webcam button clicked in FaceUI');
         onWebcamToggle?.();
         break;
       case 'delete':

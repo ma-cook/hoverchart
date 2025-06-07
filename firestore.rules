@@ -91,11 +91,16 @@ service cloud.firestore {
           request.auth.uid == userId || 
           isSpaceSharedWithUser(request.auth.uid, resource.data)
         );
-        
-        // NEW: Allow access to presence subcollection
+          // NEW: Allow access to presence subcollection
         match /presence/{presenceId} {
           allow read: if isAuthenticated();
           allow write: if isAuthenticated(); // Any authenticated user can update their presence
+        }
+        
+        // NEW: Allow access to signaling subcollection for WebRTC
+        match /signaling/{signalingId} {
+          allow read: if isAuthenticated();
+          allow write: if isAuthenticated(); // Any authenticated user can write signaling data
         }
         
         // Objects within spaces
@@ -118,8 +123,7 @@ service cloud.firestore {
           // Keep write access restricted to authenticated users
           allow write: if isAuthenticated();
         }
-        
-        // NEW: Spatial partitioning cells
+          // NEW: Spatial partitioning cells
         match /cells/{cellId} {
           // Allow anonymous access to cells in public spaces
           allow read: if isAuthenticated() || 
@@ -135,6 +139,36 @@ service cloud.firestore {
           
           // Only space owner can delete cells
           allow delete: if isAuthenticated() && request.auth.uid == userId;
+          
+          // Objects within cells (for spatial partitioning)
+          match /objects/{objectId} {
+            // Allow anonymous access to objects in cells within public spaces
+            allow read: if isAuthenticated() || 
+                         (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+                          isPublicSpace(get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data));
+            
+            // Allow authenticated users to write objects in cells
+            allow write: if isAuthenticated() && (
+              request.auth.uid == userId || 
+              (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+               isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
+            );
+          }
+          
+          // Connections within cells (for spatial partitioning)
+          match /connections/{connectionId} {
+            // Allow anonymous access to connections in cells within public spaces
+            allow read: if isAuthenticated() || 
+                         (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+                          isPublicSpace(get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data));
+            
+            // Allow authenticated users to write connections in cells
+            allow write: if isAuthenticated() && (
+              request.auth.uid == userId || 
+              (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
+               isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
+            );
+          }
         }
       }
     }

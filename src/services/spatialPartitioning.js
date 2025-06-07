@@ -686,28 +686,15 @@ export const getCellsToUnload = (
   const currentCell = getCellCoordinates(position);
   const cellsToUnload = [];
 
-  console.log(
-    `🔍 Checking cells to unload. Camera at cell (${currentCell.x}, ${currentCell.y}, ${currentCell.z}), unload distance: ${unloadDistance}`
-  );
-  console.log(`🔍 Currently loaded cells:`, loadedCellIds);
-
   for (const cellId of loadedCellIds) {
     const cellCoords = parseCellId(cellId);
     const distance = getCellDistance(currentCell, cellCoords);
 
-    console.log(
-      `🔍 Cell ${cellId} at (${cellCoords.x}, ${cellCoords.y}, ${cellCoords.z}) is distance ${distance} from camera`
-    );
-
     if (distance >= unloadDistance) {
       cellsToUnload.push(cellId);
-      console.log(
-        `🗑️ Cell ${cellId} marked for unloading (distance ${distance} >= ${unloadDistance})`
-      );
     }
   }
 
-  console.log(`🔍 Final cells to unload:`, cellsToUnload);
   return cellsToUnload;
 };
 
@@ -1222,4 +1209,102 @@ if (typeof window !== 'undefined') {
   window.debugCellRadius = debugCellRadius;
   window.debugNeighborCells = debugNeighborCells;
   window.debugCurrentCellLoading = debugCurrentCellLoading;
+}
+
+/**
+ * Find an object by ID across all cells in a space
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {string} objectId - Object ID to find
+ * @returns {Promise<Object|null>} - Object data and cell info or null if not found
+ */
+export const findObjectInCells = async (userId, spaceId, objectId) => {
+  if (!userId || !spaceId || !objectId) return null;
+
+  try {
+    // Get all cells in the space
+    const cellsRef = collection(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells'
+    );
+    const snapshot = await getDocs(cellsRef);
+
+    // Search through all cells for the object
+    for (const cellDoc of snapshot.docs) {
+      const cellData = cellDoc.data();
+
+      if (cellData.objects && typeof cellData.objects === 'object') {
+        if (cellData.objects[objectId]) {
+          return {
+            object: cellData.objects[objectId],
+            cellId: cellDoc.id,
+            cellRef: doc(
+              db,
+              'users',
+              userId,
+              'spaces',
+              spaceId,
+              'cells',
+              cellDoc.id
+            ),
+          };
+        }
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error finding object in cells:', error);
+    return null;
+  }
+};
+
+/**
+ * Get all objects in a space across all cells
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @returns {Promise<Object>} - Object with objectId as key and object data as value
+ */
+export const getAllObjectsInSpace = async (userId, spaceId) => {
+  if (!userId || !spaceId) return {};
+
+  try {
+    // Get all cells in the space
+    const cellsRef = collection(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells'
+    );
+    const snapshot = await getDocs(cellsRef);
+
+    const allObjects = {};
+
+    // Search through all cells for objects
+    for (const cellDoc of snapshot.docs) {
+      const cellData = cellDoc.data();
+
+      if (cellData.objects && typeof cellData.objects === 'object') {
+        // Merge objects from this cell into the result
+        Object.assign(allObjects, cellData.objects);
+      }
+    }
+
+    return allObjects;
+  } catch (error) {
+    console.error('Error getting all objects in space:', error);
+    return {};
+  }
+};
+
+// Make it available globally for testing
+if (typeof window !== 'undefined') {
+  window.findObjectInCells = findObjectInCells;
+  window.getAllObjectsInSpace = getAllObjectsInSpace;
 }

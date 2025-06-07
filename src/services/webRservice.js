@@ -26,7 +26,7 @@ const getRTCConfiguration = () => ({
   ],
 });
 
-export const initWebRTC = (userId) => {
+export const initWebRTC = () => {
   // WebRTC service initialized
 };
 
@@ -321,22 +321,35 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
     const spaceOwner = window.currentSpaceOwner || userId;
     console.log('Using space owner path:', spaceOwner);
 
-    const planeRef = doc(
-      db,
-      'users',
-      spaceOwner,
-      'spaces',
-      spaceId,
-      'objects',
-      planeId
-    );
+    // Find the plane object in the spatial partitioning system
+    const { findObjectInCells } = await import('./spatialPartitioning');
+    const planeResult = await findObjectInCells(spaceOwner, spaceId, planeId);
 
-    await updateDoc(planeRef, {
+    if (!planeResult) {
+      console.error(`Plane ${planeId} not found in any cell`);
+      throw new Error(`Plane ${planeId} not found`);
+    }
+
+    // Update the plane object in its cell
+    const updatedPlane = {
+      ...planeResult.object,
       broadcastId,
       broadcasting: true,
       broadcasterId: userId,
-    });
-    console.log(`Plane ${planeId} updated with broadcastId ${broadcastId}`);
+      lastUpdated: new Date(),
+    };
+
+    // Update the cell with the modified plane object
+    const cellRef = planeResult.cellRef;
+    const cellDoc = await getDoc(cellRef);
+    const cellData = cellDoc.data();
+
+    cellData.objects[planeId] = updatedPlane;
+    await setDoc(cellRef, cellData, { merge: true });
+
+    console.log(
+      `Plane ${planeId} updated with broadcastId ${broadcastId} in cell ${planeResult.cellId}`
+    );
 
     const broadcastSession = new BroadcastSession(
       broadcastId,
@@ -387,18 +400,41 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
         unsubscribeSignaling();
         broadcastSession.cleanup();
         activeStreams.delete(`${spaceId}-${planeId}`);
-
         try {
-          await updateDoc(planeRef, {
-            broadcastId: null,
-            broadcasting: false,
-            broadcasterId: null,
-          });
-          console.log(`Plane ${planeId} updated to stop broadcasting.`);
-        } catch (error) {
+          // Find the plane object in the spatial partitioning system to stop broadcasting
+          const { findObjectInCells } = await import('./spatialPartitioning');
+          const planeResult = await findObjectInCells(
+            spaceOwner,
+            spaceId,
+            planeId
+          );
+
+          if (planeResult) {
+            // Update the plane object in its cell
+            const updatedPlane = {
+              ...planeResult.object,
+              broadcastId: null,
+              broadcasting: false,
+              broadcasterId: null,
+              lastUpdated: new Date(),
+            };
+
+            // Update the cell with the modified plane object
+            const cellDoc = await getDoc(planeResult.cellRef);
+            const cellData = cellDoc.data();
+            cellData.objects[planeId] = updatedPlane;
+            await setDoc(planeResult.cellRef, cellData, { merge: true });
+
+            console.log(
+              `Plane ${planeId} updated to stop broadcasting in cell ${planeResult.cellId}.`
+            );
+          } else {
+            console.warn(`Plane ${planeId} not found when stopping broadcast`);
+          }
+        } catch (stopError) {
           console.error(
             `Error updating plane ${planeId} on broadcast stop:`,
-            error
+            stopError
           );
         }
       },
@@ -742,35 +778,36 @@ export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
     );
     const planeDoc = await getDoc(planeRef);
     return planeDoc.exists() && !!planeDoc.data().broadcasting;
-  } catch (err) {
+  } catch {
     return false;
   }
 };
 
 export const findAvailableBroadcasts = async (spaceId) => {
   try {
-    const objectsRef = collection(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      spaceId,
-      'objects'
-    );
-    const snapshot = await getDocs(
-      query(objectsRef, where('broadcasting', '==', true))
-    );
+    // Import spatial partitioning helper
+    const { getAllObjectsInSpace } = await import('./spatialPartitioning');
+    const spaceOwner = window.currentSpaceOwner;
 
-    return snapshot.docs
-      .map((doc) => ({
-        id: doc.data().broadcastId,
-        planeId: doc.id,
-        broadcasterId: doc.data().broadcasterId,
-        active: true,
-        startTime: doc.data().broadcastStartTime || Date.now(),
-      }))
-      .filter((b) => b.id && b.id !== 'pending');
-  } catch (error) {
+    // Get all objects in the space across all cells
+    const allObjects = await getAllObjectsInSpace(spaceOwner, spaceId);
+
+    // Filter for broadcasting objects
+    const broadcasts = [];
+    Object.entries(allObjects).forEach(([objectId, objectData]) => {
+      if (objectData.broadcasting && objectData.broadcastId) {
+        broadcasts.push({
+          id: objectData.broadcastId,
+          planeId: objectId,
+          broadcasterId: objectData.broadcasterId,
+          active: true,
+          startTime: objectData.broadcastStartTime || Date.now(),
+        });
+      }
+    });
+
+    return broadcasts.filter((b) => b.id && b.id !== 'pending');
+  } catch {
     return [];
   }
 };

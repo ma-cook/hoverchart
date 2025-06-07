@@ -181,6 +181,7 @@ const ObjectRenderer = ({
         headerStyle={obj.headerStyle}
         faceText={obj.faceText}
         faceTextStyle={obj.faceTextStyle}
+        webcamActive={obj.webcamActive}
         activeTextStyleUI={activeTextStyleUI}
         setActiveTextStyleUI={setActiveTextStyleUI}
         onDelete={() => handleObjectDelete(obj.id)}

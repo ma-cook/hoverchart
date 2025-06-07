@@ -15,11 +15,7 @@ import FaceIndicator from './FaceIndicator';
 import WebcamStream from './WebcamStream';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
-import { debounce } from 'lodash';
-
-const UPDATE_DEBOUNCE_TIME = 500;
+import { onSnapshot } from 'firebase/firestore';
 
 const Plane = ({
   position = [0, 0, 0],
@@ -90,12 +86,26 @@ const Plane = ({
   const [currentFaceText, setCurrentFaceText] = useState(initialFaceText);
   const [currentFaceTextStyle, setCurrentFaceTextStyle] =
     useState(initialFaceTextStyle);
-
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isViewingBroadcast, setIsViewingBroadcast] = useState(false);
   const [broadcastInfo, setBroadcastInfo] = useState(null);
   const [viewerCount, setViewerCount] = useState(0);
 
+  // Add logging for critical state changes
+  useEffect(() => {
+    console.log('🟡 PLANE: State change - webcamActive:', webcamActive);
+  }, [webcamActive]);
+
+  useEffect(() => {
+    console.log('🟡 PLANE: State change - isBroadcasting:', isBroadcasting);
+  }, [isBroadcasting]);
+
+  useEffect(() => {
+    console.log(
+      '🟡 PLANE: State change - webcamInitialized:',
+      webcamInitialized
+    );
+  }, [webcamInitialized]);
   const lastWebcamStateRef = useRef(initialWebcamActive);
   const lastWorldPosRef = useRef(null);
   const lastBroadcastSeenRef = useRef(Date.now());
@@ -103,6 +113,7 @@ const Plane = ({
   const pendingScaleRef = useRef(null);
   const isTransformingRef = useRef(false);
   const isMountedRef = useRef(true);
+  const userJustToggledWebcamRef = useRef(false); // Track user actions
 
   // Define closeAllUIs before it's used in useEffect
   const closeAllUIs = useCallback(() => {
@@ -132,17 +143,42 @@ const Plane = ({
     setCurrentHeaderStyle(initialHeaderStyle);
     setCurrentFaceText(initialFaceText);
     setCurrentFaceTextStyle(initialFaceTextStyle);
-
+    console.log('State sync effect running:', {
+      initialWebcamActive,
+      lastWebcamStateRef: lastWebcamStateRef.current,
+      webcamInitialized,
+      id,
+    });
     if (initialWebcamActive !== lastWebcamStateRef.current) {
-      setWebcamActive(initialWebcamActive);
-      lastWebcamStateRef.current = initialWebcamActive;
-      if (initialWebcamActive && !webcamInitialized) {
-        setWebcamInitialized(true);
+      console.log('Syncing webcam state from props:', initialWebcamActive);
+
+      // Don't force sync if user just toggled webcam - wait for prop to catch up
+      if (!userJustToggledWebcamRef.current) {
+        setWebcamActive(initialWebcamActive);
+        lastWebcamStateRef.current = initialWebcamActive;
+        if (initialWebcamActive && !webcamInitialized) {
+          console.log('Setting webcamInitialized to true (case 1)');
+          setWebcamInitialized(true);
+        }
+      } else {
+        console.log(
+          'Skipping sync - user just toggled webcam, waiting for prop update'
+        );
       }
     } else if (initialWebcamActive && !webcamInitialized) {
+      console.log('Setting webcamInitialized to true (case 2)');
       setWebcamInitialized(true);
       setWebcamActive(true);
       lastWebcamStateRef.current = true;
+    }
+
+    // Reset the flag after effect runs
+    if (userJustToggledWebcamRef.current) {
+      // Check if props have caught up
+      if (initialWebcamActive === lastWebcamStateRef.current) {
+        console.log('Props caught up, resetting user toggle flag');
+        userJustToggledWebcamRef.current = false;
+      }
     }
   }, [
     id,
@@ -156,7 +192,7 @@ const Plane = ({
     initialFaceText,
     initialFaceTextStyle,
     initialWebcamActive,
-    webcamInitialized,
+    // Removed webcamInitialized to prevent infinite loop when effect calls setWebcamInitialized
   ]);
 
   useFrame(() => {
@@ -189,14 +225,13 @@ const Plane = ({
       lastWorldPosRef.current = [worldPos.x, worldPos.y, worldPos.z];
     }
   }, [position, currentScale]);
-
-  const debouncedUpdate = useMemo(
-    () =>
-      debounce((updates) => {
-        if (onUpdate && id && isMountedRef.current) {
-          onUpdate(id, { type: 'plane', ...updates });
-        }
-      }, UPDATE_DEBOUNCE_TIME),
+  const directUpdate = useMemo(
+    () => (updates) => {
+      console.log('🔄 DIRECT UPDATE EXECUTING (no debounce):', updates);
+      if (onUpdate && id && isMountedRef.current) {
+        onUpdate(id, { type: 'plane', ...updates });
+      }
+    },
     [onUpdate, id]
   );
 
@@ -216,11 +251,9 @@ const Plane = ({
       webcamActive,
       broadcasting: webcamActive && isBroadcasting,
     };
-    debouncedUpdate(updates);
+    directUpdate(updates);
 
-    return () => {
-      debouncedUpdate.cancel();
-    };
+    // No cleanup needed for direct updates
   }, [
     currentScale,
     currentColor,
@@ -233,7 +266,7 @@ const Plane = ({
     currentFaceTextStyle,
     webcamActive,
     isBroadcasting,
-    debouncedUpdate,
+    directUpdate,
   ]);
 
   const handleScale = useCallback(
@@ -335,7 +368,7 @@ const Plane = ({
       const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
       const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
 
-      debouncedUpdate.flush();
+      // Direct update - no need to flush
       onUpdate(id, {
         type: 'plane',
         position: [newPos.x, newPos.y, newPos.z],
@@ -378,7 +411,7 @@ const Plane = ({
     webcamActive,
     isBroadcasting,
     onTransformEnd,
-    debouncedUpdate,
+    directUpdate,
   ]);
 
   const handleClick = useCallback(
@@ -548,7 +581,6 @@ const Plane = ({
     indicatorSelected,
     selected,
   ]);
-
   useEffect(() => {
     if (!currentSpaceId || !id || !user || !window.currentSpaceOwner) return;
 
@@ -560,67 +592,98 @@ const Plane = ({
       return;
     }
 
-    const planeRef = doc(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      currentSpaceId,
-      'objects',
-      id
-    );
+    // Use spatial partitioning to find and listen to the object
+    const setupSpatialListener = async () => {
+      try {
+        // Import spatial partitioning helper
+        const { findObjectInCells } = await import(
+          '../services/spatialPartitioning'
+        );
 
-    const unsubscribe = onSnapshot(
-      planeRef,
-      (docSnap) => {
-        if (!isMountedRef.current || webcamActive) return;
+        // Find the plane object in the spatial partitioning system
+        const planeResult = await findObjectInCells(
+          window.currentSpaceOwner,
+          currentSpaceId,
+          id
+        );
 
-        const data = docSnap.exists() ? docSnap.data() : null;
-        const isRemoteBroadcastingNow =
-          data?.broadcasting === true && data?.broadcasterId !== user.uid;
-        const newBroadcastId = data?.broadcastId || null;
-        const newBroadcasterId = data?.broadcasterId || null;
+        if (!planeResult) {
+          console.warn(
+            `Plane ${id} not found in any cell for broadcast listening`
+          );
+          return () => {};
+        }
 
-        if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
-          lastBroadcastSeenRef.current = Date.now();
+        // Listen to the cell containing this object
+        const unsubscribe = onSnapshot(
+          planeResult.cellRef,
+          (cellSnap) => {
+            if (!isMountedRef.current || webcamActive) return;
 
-          const newBroadcastInfo = {
-            broadcastId: newBroadcastId,
-            broadcasterId: newBroadcasterId,
-            planeId: id,
-          };
+            if (!cellSnap.exists()) return;
 
-          if (!isEqual(broadcastInfo, newBroadcastInfo)) {
-            setBroadcastInfo(newBroadcastInfo);
-            if (!isViewingBroadcast) {
-              setIsViewingBroadcast(true);
+            const cellData = cellSnap.data();
+            const objectData = cellData.objects?.[id];
+
+            if (!objectData) return;
+
+            const isRemoteBroadcastingNow =
+              objectData?.broadcasting === true &&
+              objectData?.broadcasterId !== user.uid;
+            const newBroadcastId = objectData?.broadcastId || null;
+            const newBroadcasterId = objectData?.broadcasterId || null;
+
+            if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
+              lastBroadcastSeenRef.current = Date.now();
+
+              const newBroadcastInfo = {
+                broadcastId: newBroadcastId,
+                broadcasterId: newBroadcasterId,
+                planeId: id,
+              };
+
+              if (!isEqual(broadcastInfo, newBroadcastInfo)) {
+                setBroadcastInfo(newBroadcastInfo);
+                if (!isViewingBroadcast) {
+                  setIsViewingBroadcast(true);
+                }
+              }
+            } else {
+              if (isViewingBroadcast) {
+                const now = Date.now();
+                if (now - lastBroadcastSeenRef.current > 5000) {
+                  setBroadcastInfo(null);
+                  setIsViewingBroadcast(false);
+                }
+              } else if (broadcastInfo !== null) {
+                setBroadcastInfo(null);
+              }
+            }
+          },
+          () => {
+            if (isViewingBroadcast && isMountedRef.current) {
+              const now = Date.now();
+              if (now - lastBroadcastSeenRef.current > 10000) {
+                setBroadcastInfo(null);
+                setIsViewingBroadcast(false);
+              }
             }
           }
-        } else {
-          if (isViewingBroadcast) {
-            const now = Date.now();
-            if (now - lastBroadcastSeenRef.current > 5000) {
-              setBroadcastInfo(null);
-              setIsViewingBroadcast(false);
-            }
-          } else if (broadcastInfo !== null) {
-            setBroadcastInfo(null);
-          }
-        }
-      },
-      () => {
-        if (isViewingBroadcast && isMountedRef.current) {
-          const now = Date.now();
-          if (now - lastBroadcastSeenRef.current > 10000) {
-            setBroadcastInfo(null);
-            setIsViewingBroadcast(false);
-          }
-        }
+        );
+
+        return unsubscribe;
+      } catch (error) {
+        console.error('Error setting up spatial listener:', error);
+        return () => {};
       }
-    );
+    };
+
+    let unsubscribePromise = setupSpatialListener();
 
     return () => {
-      unsubscribe();
+      unsubscribePromise.then((unsubscribe) => {
+        if (unsubscribe) unsubscribe();
+      });
     };
   }, [
     currentSpaceId,
@@ -644,30 +707,67 @@ const Plane = ({
       });
     }
   }, [onUpdate, id, isBroadcasting]);
-
   const handleWebcamToggle = useCallback(() => {
+    console.log('handleWebcamToggle called:', {
+      webcamActive,
+      isBroadcasting,
+      webcamInitialized,
+    });
+
+    // Set flag to prevent immediate sync interference
+    userJustToggledWebcamRef.current = true;
+
     const currentWebcamState = webcamActive;
     const newWebcamState = !currentWebcamState;
 
-    if (newWebcamState) {
-      setWebcamInitialized(true);
+    console.log('Webcam state transition:', {
+      currentWebcamState,
+      newWebcamState,
+    });
 
+    if (newWebcamState) {
+      console.log('Enabling webcam...');
+      setWebcamInitialized(true);
       if (
         confirm(
           'Do you want to broadcast this webcam to other users in this space?'
         )
       ) {
+        console.log('User confirmed broadcasting');
         setWebcamActive(true);
         setIsBroadcasting(true);
         lastWebcamStateRef.current = true;
+        // Update object data to reflect webcam being enabled
+        console.log(
+          '🔄 Calling onUpdate with webcamActive: true (broadcasting)'
+        );
+        onUpdate?.(id, {
+          type: 'plane',
+          webcamActive: true,
+        });
       } else {
+        console.log('User declined broadcasting, enabling local only');
         setWebcamActive(true);
         setIsBroadcasting(false);
         lastWebcamStateRef.current = true;
+        // Update object data to reflect webcam being enabled (local only)
+        console.log('🔄 Calling onUpdate with webcamActive: true (local only)');
+        onUpdate?.(id, {
+          type: 'plane',
+          webcamActive: true,
+        });
       }
     } else {
+      console.log('Disabling webcam...');
       if (isBroadcasting) {
-        handleBroadcastStopped();
+        // Inline handleBroadcastStopped logic to avoid dependency issues
+        setViewerCount(0);
+        onUpdate?.(id, {
+          type: 'plane',
+          broadcasting: false,
+          broadcastId: null,
+          webcamActive: false,
+        });
       }
       setWebcamActive(false);
       setIsBroadcasting(false);
@@ -677,7 +777,7 @@ const Plane = ({
     }
 
     setShowUI(false);
-  }, [webcamActive, isBroadcasting, handleBroadcastStopped]);
+  }, [webcamActive, isBroadcasting, webcamInitialized, onUpdate, id]);
 
   const handleBroadcastStarted = useCallback(
     (info) => {
@@ -700,14 +800,28 @@ const Plane = ({
       setViewerCount(count);
     }
   }, []);
+  const isBroadcastingRef = useRef(false);
+
+  // Update the ref whenever isBroadcasting changes
+  useEffect(() => {
+    isBroadcastingRef.current = isBroadcasting;
+  }, [isBroadcasting]);
 
   useEffect(() => {
     return () => {
-      if (isBroadcasting) {
-        handleBroadcastStopped();
+      // Use ref to get current broadcasting state without dependencies
+      if (isBroadcastingRef.current) {
+        setIsBroadcasting(false);
+        setViewerCount(0);
+        onUpdate?.(id, {
+          type: 'plane',
+          broadcasting: false,
+          broadcastId: null,
+          webcamActive: false,
+        });
       }
     };
-  }, [isBroadcasting, handleBroadcastStopped]);
+  }, [onUpdate, id]); // Only depend on stable values
 
   const uiPositions = useMemo(() => {
     const planeHeight = 10 * currentScale[1];
@@ -769,33 +883,39 @@ const Plane = ({
           <mesh ref={meshRef} onClick={handleClick}>
             <planeGeometry args={[size * 2, size * 2]} />
             {meshMaterial}
-          </mesh>
-
+          </mesh>{' '}
           {(webcamActive || isViewingBroadcast) &&
             (webcamInitialized || isViewingBroadcast) && (
-              <WebcamStream
-                key={`${id}-${broadcastInfo?.broadcastId || 'local'}`}
-                meshRef={meshRef}
-                active={webcamActive || isViewingBroadcast}
-                userId={user?.uid}
-                spaceId={currentSpaceId}
-                planeId={id}
-                isBroadcasting={webcamActive && isBroadcasting}
-                isReceiving={isViewingBroadcast}
-                broadcastData={broadcastInfo}
-                onBroadcastStarted={handleBroadcastStarted}
-                onBroadcastStopped={handleBroadcastStopped}
-                onViewerCountChange={handleViewerCountChange}
-              />
+              <>
+                {console.log('🔵 PLANE: Rendering WebcamStream with state:', {
+                  webcamActive,
+                  isViewingBroadcast,
+                  webcamInitialized,
+                  key: `${id}-webcam`,
+                  componentShouldRender: true,
+                })}{' '}
+                <WebcamStream
+                  key={`${id}-webcam`}
+                  meshRef={meshRef}
+                  active={webcamActive || isViewingBroadcast}
+                  userId={user?.uid}
+                  spaceId={currentSpaceId}
+                  planeId={id}
+                  isBroadcasting={webcamActive && isBroadcasting}
+                  isReceiving={isViewingBroadcast}
+                  broadcastData={broadcastInfo}
+                  onBroadcastStarted={handleBroadcastStarted}
+                  onBroadcastStopped={handleBroadcastStopped}
+                  onViewerCountChange={handleViewerCountChange}
+                />
+              </>
             )}
           {webcamActive && !webcamInitialized && (
             <Html center position={[0, 0, 0.1]}>
               <div className="initializing-cam">Initializing...</div>
             </Html>
           )}
-
           <Line points={points} {...lineMaterialProps} />
-
           {shouldShowIndicator && (
             <FaceIndicator
               position={indicatorPosition}
@@ -803,7 +923,6 @@ const Plane = ({
               isActive={indicatorSelected || isIndicatorConnected}
             />
           )}
-
           {currentFaceText && (
             <TextSprite
               text={currentFaceText}
