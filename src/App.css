@@ -38,6 +38,55 @@ canvas {
   z-index: 1000;
 }
 
+/* Menu button styles */
+.menu-button-container {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 2000;
+}
+
+.menu-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.8);
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.menu-button:hover {
+  background-color: rgba(0, 0, 0, 0.9);
+}
+
+/* Sliding menu styles */
+.sidebar-menu {
+  position: fixed;
+  top: 70px; /* Position below the menu button */
+  left: 0;
+  height: calc(100vh - 70px);
+  width: 250px;
+  background-color: rgba(0, 0, 0, 0.8);
+  z-index: 1900;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease-in-out;
+}
+
+.sidebar-menu.open {
+  transform: translateX(0);
+}
+
+.menu-content {
+  padding: 20px;
+  color: white;
+}
+
 .shape-button {
   width: 40px;
   height: 40px;

@@ -45,11 +45,6 @@ export const useSpatialManager = ({
       objectsByCellRef.current.set(cellId, new Set());
     }
     objectsByCellRef.current.get(cellId).add(objIdStr);
-    console.log(`📍 Tracked object ${objIdStr} in cell ${cellId}`);
-    console.log(
-      `📊 Total tracking state:`,
-      Object.fromEntries(objectsByCellRef.current)
-    );
   }, []);
   /**
    * Remove object from cell tracking
@@ -59,10 +54,9 @@ export const useSpatialManager = ({
     const cellObjects = objectsByCellRef.current.get(cellId);
     if (cellObjects) {
       cellObjects.delete(objIdStr);
-      console.log(`📍 Untracked object ${objIdStr} from cell ${cellId}`);
+
       if (cellObjects.size === 0) {
         objectsByCellRef.current.delete(cellId);
-        console.log(`📍 Removed empty cell ${cellId} from tracking`);
       }
     }
   }, []);
@@ -92,9 +86,6 @@ export const useSpatialManager = ({
       // Apply concurrency limit
       const currentlyLoading = loadingCellsRef.current.size;
       if (currentlyLoading >= MAX_CONCURRENT_LOADS) {
-        console.log(
-          `⏳ Skipping cell loading - too many concurrent operations (${currentlyLoading}/${MAX_CONCURRENT_LOADS})`
-        );
         return [];
       }
 
@@ -109,9 +100,7 @@ export const useSpatialManager = ({
 
       try {
         // Use batch creation for better performance
-        console.log(
-          `🚀 Batch creating ${cellsToLoadNow.length} cells (${loadingCellsRef.current.size} total loading)...`
-        );
+
         const results = await createCellsBatch(
           ownerUserId,
           currentSpaceId,
@@ -125,9 +114,6 @@ export const useSpatialManager = ({
 
         if (newCellIds.length > 0) {
           setLoadedCells((prev) => new Set([...prev, ...newCellIds]));
-          console.log(
-            `✅ Successfully loaded ${newCellIds.length} cells in batch`
-          );
         }
 
         return results;
@@ -177,26 +163,15 @@ export const useSpatialManager = ({
           initialCameraPosition,
           CELL_NEIGHBOR_RADIUS
         );
-        console.log(
-          `Loading ${initialCells.length} neighbor cells within radius ${CELL_NEIGHBOR_RADIUS} from camera position:`,
-          initialCameraPosition
-        );
 
         // Debug: Log all cells that should be loaded
-        console.log('Detailed neighbor cells to load:');
-        initialCells.forEach((cell, index) => {
-          console.log(
-            `  ${index + 1}. Cell (${cell.x}, ${cell.y}, ${
-              cell.z
-            }) -> ID: ${getCellId(cell.x, cell.y, cell.z)}`
-          );
-        }); // Combine existing occupied cells and initial camera radius cells
+
+        // Combine existing occupied cells and initial camera radius cells
         const cellsToLoad = new Set();
         existingCells.forEach((cellId) => cellsToLoad.add(cellId)); // Add initial camera radius cells
         for (const cellCoords of initialCells) {
           const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
           cellsToLoad.add(cellId);
-          console.log(`Adding cell ${cellId} to load set`);
         }
 
         // Convert Set to array of coordinates and load all cells in parallel
@@ -206,16 +181,9 @@ export const useSpatialManager = ({
         });
 
         if (cellCoordsToLoad.length > 0) {
-          console.log(
-            `🚀 Batch loading ${cellCoordsToLoad.length} cells during initialization...`
-          );
           await loadCellsBatch(cellCoordsToLoad);
         }
 
-        console.log('Final cellsToLoad set:', Array.from(cellsToLoad));
-        console.log(
-          `Total cells loaded during initialization: ${cellsToLoad.size}`
-        );
         if (existingCells.length > 0 || initialCells.length > 0) {
           setLoadedCells(cellsToLoad);
           setCurrentCellCoords({ x: 0, y: 0, z: 0 });
@@ -252,28 +220,16 @@ export const useSpatialManager = ({
         // Notify about objects that should be removed
         if (onObjectsChange && objectsByCellRef.current.size > 0) {
           const objectsToRemove = [];
-          console.log(`🔍 Checking cells for unloading:`, cellsToRemove);
-          console.log(
-            `🔍 Current object tracking:`,
-            Object.fromEntries(objectsByCellRef.current)
-          );
 
           cellsToRemove.forEach((cellId) => {
             const cellObjects = objectsByCellRef.current.get(cellId);
-            console.log(
-              `🔍 Cell ${cellId} has objects:`,
-              cellObjects ? Array.from(cellObjects) : 'none'
-            );
+
             if (cellObjects) {
               objectsToRemove.push(...Array.from(cellObjects));
               objectsByCellRef.current.delete(cellId);
             }
           });
           if (objectsToRemove.length > 0) {
-            console.log(
-              `🧹 Removing ${objectsToRemove.length} objects from unloaded cells:`,
-              objectsToRemove
-            );
             objectsToRemove.forEach((objectId) => {
               onObjectsChange({
                 type: 'removed',
@@ -281,15 +237,7 @@ export const useSpatialManager = ({
                 source: 'cell-unload',
               });
             });
-          } else {
-            console.log(
-              `⚠️ No objects found to remove despite having tracking data`
-            );
           }
-        } else {
-          console.log(
-            `⚠️ No object tracking or onObjectsChange callback available`
-          );
         }
 
         setLoadedCells((prev) => {
@@ -297,10 +245,6 @@ export const useSpatialManager = ({
           cellsToRemove.forEach((cellId) => newSet.delete(cellId));
           return newSet;
         });
-        console.log(
-          `🗑️ Unloaded ${cellsToRemove.length} cells in batch:`,
-          cellsToRemove
-        );
       }
     },
     [loadedCells]
@@ -360,7 +304,6 @@ export const useSpatialManager = ({
       );
 
       if (cellsToUnload.length > 0) {
-        console.log(`🗑️ Unloading ${cellsToUnload.length} distant cells...`);
         unloadCellsBatch(cellsToUnload, onObjectsChange);
       }
 
@@ -372,9 +315,6 @@ export const useSpatialManager = ({
       });
 
       if (cellsToLoad.length > 0) {
-        console.log(
-          `📦 Loading ${cellsToLoad.length} cells in parallel (non-blocking)...`
-        );
         // Use fire-and-forget loading - don't await
         loadCellsBatch(cellsToLoad).catch((error) => {
           console.error('❌ Error in background cell loading:', error);

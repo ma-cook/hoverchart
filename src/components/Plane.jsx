@@ -92,20 +92,7 @@ const Plane = ({
   const [viewerCount, setViewerCount] = useState(0);
 
   // Add logging for critical state changes
-  useEffect(() => {
-    console.log('🟡 PLANE: State change - webcamActive:', webcamActive);
-  }, [webcamActive]);
 
-  useEffect(() => {
-    console.log('🟡 PLANE: State change - isBroadcasting:', isBroadcasting);
-  }, [isBroadcasting]);
-
-  useEffect(() => {
-    console.log(
-      '🟡 PLANE: State change - webcamInitialized:',
-      webcamInitialized
-    );
-  }, [webcamInitialized]);
   const lastWebcamStateRef = useRef(initialWebcamActive);
   const lastWorldPosRef = useRef(null);
   const lastBroadcastSeenRef = useRef(Date.now());
@@ -143,30 +130,17 @@ const Plane = ({
     setCurrentHeaderStyle(initialHeaderStyle);
     setCurrentFaceText(initialFaceText);
     setCurrentFaceTextStyle(initialFaceTextStyle);
-    console.log('State sync effect running:', {
-      initialWebcamActive,
-      lastWebcamStateRef: lastWebcamStateRef.current,
-      webcamInitialized,
-      id,
-    });
-    if (initialWebcamActive !== lastWebcamStateRef.current) {
-      console.log('Syncing webcam state from props:', initialWebcamActive);
 
+    if (initialWebcamActive !== lastWebcamStateRef.current) {
       // Don't force sync if user just toggled webcam - wait for prop to catch up
       if (!userJustToggledWebcamRef.current) {
         setWebcamActive(initialWebcamActive);
         lastWebcamStateRef.current = initialWebcamActive;
         if (initialWebcamActive && !webcamInitialized) {
-          console.log('Setting webcamInitialized to true (case 1)');
           setWebcamInitialized(true);
         }
-      } else {
-        console.log(
-          'Skipping sync - user just toggled webcam, waiting for prop update'
-        );
       }
     } else if (initialWebcamActive && !webcamInitialized) {
-      console.log('Setting webcamInitialized to true (case 2)');
       setWebcamInitialized(true);
       setWebcamActive(true);
       lastWebcamStateRef.current = true;
@@ -176,7 +150,6 @@ const Plane = ({
     if (userJustToggledWebcamRef.current) {
       // Check if props have caught up
       if (initialWebcamActive === lastWebcamStateRef.current) {
-        console.log('Props caught up, resetting user toggle flag');
         userJustToggledWebcamRef.current = false;
       }
     }
@@ -227,7 +200,6 @@ const Plane = ({
   }, [position, currentScale]);
   const directUpdate = useMemo(
     () => (updates) => {
-      console.log('🔄 DIRECT UPDATE EXECUTING (no debounce):', updates);
       if (onUpdate && id && isMountedRef.current) {
         onUpdate(id, { type: 'plane', ...updates });
       }
@@ -708,57 +680,40 @@ const Plane = ({
     }
   }, [onUpdate, id, isBroadcasting]);
   const handleWebcamToggle = useCallback(() => {
-    console.log('handleWebcamToggle called:', {
-      webcamActive,
-      isBroadcasting,
-      webcamInitialized,
-    });
-
     // Set flag to prevent immediate sync interference
     userJustToggledWebcamRef.current = true;
 
     const currentWebcamState = webcamActive;
     const newWebcamState = !currentWebcamState;
 
-    console.log('Webcam state transition:', {
-      currentWebcamState,
-      newWebcamState,
-    });
-
     if (newWebcamState) {
-      console.log('Enabling webcam...');
       setWebcamInitialized(true);
       if (
         confirm(
           'Do you want to broadcast this webcam to other users in this space?'
         )
       ) {
-        console.log('User confirmed broadcasting');
         setWebcamActive(true);
         setIsBroadcasting(true);
         lastWebcamStateRef.current = true;
         // Update object data to reflect webcam being enabled
-        console.log(
-          '🔄 Calling onUpdate with webcamActive: true (broadcasting)'
-        );
+
         onUpdate?.(id, {
           type: 'plane',
           webcamActive: true,
         });
       } else {
-        console.log('User declined broadcasting, enabling local only');
         setWebcamActive(true);
         setIsBroadcasting(false);
         lastWebcamStateRef.current = true;
         // Update object data to reflect webcam being enabled (local only)
-        console.log('🔄 Calling onUpdate with webcamActive: true (local only)');
+
         onUpdate?.(id, {
           type: 'plane',
           webcamActive: true,
         });
       }
     } else {
-      console.log('Disabling webcam...');
       if (isBroadcasting) {
         // Inline handleBroadcastStopped logic to avoid dependency issues
         setViewerCount(0);
@@ -887,13 +842,6 @@ const Plane = ({
           {(webcamActive || isViewingBroadcast) &&
             (webcamInitialized || isViewingBroadcast) && (
               <>
-                {console.log('🔵 PLANE: Rendering WebcamStream with state:', {
-                  webcamActive,
-                  isViewingBroadcast,
-                  webcamInitialized,
-                  key: `${id}-webcam`,
-                  componentShouldRender: true,
-                })}{' '}
                 <WebcamStream
                   key={`${id}-webcam`}
                   meshRef={meshRef}
