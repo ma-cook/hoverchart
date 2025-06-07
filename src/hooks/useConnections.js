@@ -1,6 +1,9 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import isEqual from 'lodash/isEqual';
-import { subscribeToConnections } from '../services/connectionsService';
+import {
+  subscribeToConnections,
+  saveConnection,
+} from '../services/connectionsService';
 
 /**
  * Custom hook to manage connections
@@ -260,6 +263,208 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     }, 100); // 100ms debounce for connection updates
   }, [connections]);
 
+  // Connection handler functions
+  const handleConnectionClick = useCallback(
+    (e, connectionId) => {
+      e.stopPropagation();
+      setSelectedConnection(
+        selectedConnection === connectionId ? null : connectionId
+      );
+    },
+    [selectedConnection]
+  );
+
+  const handleLineTextClick = useCallback((e, connectionId) => {
+    e.stopPropagation();
+    setShowLineTextInput(connectionId);
+  }, []);
+  const handleLineTextSubmit = useCallback(
+    async (connectionId, text) => {
+      // Update local state first for immediate feedback
+      setLineTexts((prev) => ({
+        ...prev,
+        [connectionId]: text,
+      }));
+      setShowLineTextInput(null);
+
+      // Find the connection and update it in the database
+      const connection = connections.find((conn) => conn.id === connectionId);
+      if (connection && user && currentSpaceId) {
+        try {
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+          const updatedConnection = {
+            ...connection,
+            text,
+            lastUpdated: new Date().toISOString(),
+          };
+
+          // Update local connections state
+          setConnections((prev) =>
+            prev.map((conn) =>
+              conn.id === connectionId ? updatedConnection : conn
+            )
+          );
+
+          // Save to database
+          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
+          console.log(`💾 Saved connection text for ${connectionId}`);
+        } catch (error) {
+          console.error(`❌ Failed to save connection text:`, error);
+          // Revert local state on error
+          setLineTexts((prev) => {
+            const newState = { ...prev };
+            delete newState[connectionId];
+            return newState;
+          });
+        }
+      }
+    },
+    [connections, user, currentSpaceId, setConnections]
+  );
+  const handleLineTextStyleChange = useCallback(
+    async (connectionId, style) => {
+      // Update local state first for immediate feedback
+      setLineTextStyles((prev) => ({
+        ...prev,
+        [connectionId]: { ...prev[connectionId], ...style },
+      }));
+
+      // Find the connection and update it in the database
+      const connection = connections.find((conn) => conn.id === connectionId);
+      if (connection && user && currentSpaceId) {
+        try {
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+          const updatedConnection = {
+            ...connection,
+            textStyle: {
+              ...connection.textStyle,
+              ...style,
+            },
+            lastUpdated: new Date().toISOString(),
+          };
+
+          // Update local connections state
+          setConnections((prev) =>
+            prev.map((conn) =>
+              conn.id === connectionId ? updatedConnection : conn
+            )
+          );
+
+          // Save to database
+          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
+          console.log(`💾 Saved connection text style for ${connectionId}`);
+        } catch (error) {
+          console.error(`❌ Failed to save connection text style:`, error);
+          // Revert local state on error
+          setLineTextStyles((prev) => {
+            const newState = { ...prev };
+            if (newState[connectionId]) {
+              // Remove the failed style changes
+              Object.keys(style).forEach((key) => {
+                delete newState[connectionId][key];
+              });
+            }
+            return newState;
+          });
+        }
+      }
+    },
+    [connections, user, currentSpaceId, setConnections]
+  );
+  const handleLineColorChange = useCallback(
+    async (connectionId, color) => {
+      // Update local state first for immediate feedback
+      setConnections((prev) =>
+        prev.map((conn) =>
+          conn.id === connectionId ? { ...conn, color } : conn
+        )
+      );
+
+      // Find the connection and save it to the database
+      const connection = connections.find((conn) => conn.id === connectionId);
+      if (connection && user && currentSpaceId) {
+        try {
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+          const updatedConnection = {
+            ...connection,
+            color,
+            lastUpdated: new Date().toISOString(),
+          };
+
+          // Save to database
+          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
+          console.log(`💾 Saved connection color for ${connectionId}`);
+        } catch (error) {
+          console.error(`❌ Failed to save connection color:`, error);
+          // Revert local state on error
+          setConnections((prev) =>
+            prev.map((conn) =>
+              conn.id === connectionId
+                ? { ...conn, color: connection.color }
+                : conn
+            )
+          );
+        }
+      }
+    },
+    [connections, user, currentSpaceId]
+  );
+  const handleLineStyleChange = useCallback(
+    async (connectionId, styleType) => {
+      // Determine style properties
+      const [lineStyle, direction] = styleType.includes('-')
+        ? styleType.split('-')
+        : [styleType, null];
+
+      // Update local state first for immediate feedback
+      setConnections((prev) =>
+        prev.map((conn) => {
+          if (conn.id === connectionId) {
+            return {
+              ...conn,
+              lineStyle,
+              dashDirection: direction || null,
+            };
+          }
+          return conn;
+        })
+      );
+
+      // Find the connection and save it to the database
+      const connection = connections.find((conn) => conn.id === connectionId);
+      if (connection && user && currentSpaceId) {
+        try {
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+          const updatedConnection = {
+            ...connection,
+            lineStyle,
+            dashDirection: direction || null,
+            lastUpdated: new Date().toISOString(),
+          };
+
+          // Save to database
+          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
+          console.log(`💾 Saved connection line style for ${connectionId}`);
+        } catch (error) {
+          console.error(`❌ Failed to save connection line style:`, error);
+          // Revert local state on error
+          setConnections((prev) =>
+            prev.map((conn) =>
+              conn.id === connectionId
+                ? {
+                    ...conn,
+                    lineStyle: connection.lineStyle,
+                    dashDirection: connection.dashDirection,
+                  }
+                : conn
+            )
+          );
+        }
+      }
+    },
+    [connections, user, currentSpaceId]
+  );
+
   // Public API for the hook
   return {
     connections,
@@ -275,5 +480,11 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     showLineTextStyleUI,
     setShowLineTextStyleUI,
     connectionsLoaded,
+    handleConnectionClick,
+    handleLineTextClick,
+    handleLineTextSubmit,
+    handleLineTextStyleChange,
+    handleLineColorChange,
+    handleLineStyleChange,
   };
 }

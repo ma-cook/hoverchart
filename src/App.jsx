@@ -450,13 +450,15 @@ const App = () => {
       draggingObjectsRef,
     ]
   );
-  // Object update handler
   const handleObjectUpdateCallback = useCallback(
     (id, updates) => {
       // Skip position updates for objects being transformed
-      // Or for position updates that look like jitter
+      // UNLESS it's a final position update
       if (updates.position) {
-        if (transformingObjectsRef.current.has(id.toString())) {
+        if (
+          transformingObjectsRef.current.has(id.toString()) &&
+          !updates._finalPosition
+        ) {
           // Skip position updates during transform, keep other properties
           const updatesWithoutPosition = { ...updates };
           delete updatesWithoutPosition.position;
@@ -474,8 +476,11 @@ const App = () => {
             });
           }
           return;
-        } // If position looks like jitter (oscillation), skip it
-        if (checkPositionJitter(id, updates.position)) {
+        } // If position looks like jitter (oscillation), skip it - but not for final positions
+        if (
+          !updates._finalPosition &&
+          checkPositionJitter(id, updates.position)
+        ) {
           const updatesWithoutPosition = { ...updates };
           delete updatesWithoutPosition.position;
 
@@ -495,7 +500,7 @@ const App = () => {
         }
       }
 
-      // For non-position updates or non-jittery updates
+      // For non-position updates or non-jittery updates, or final position updates
       handleObjectUpdate({
         id,
         updates,

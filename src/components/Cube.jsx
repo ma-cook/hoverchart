@@ -1089,6 +1089,18 @@ const Cube = ({
               window.orbitControls.enabled = true;
             }
             registerTransformingObject?.(id, false);
+
+            // Save the final position to database like TextObject does
+            if (groupRef.current && onUpdate) {
+              const newPos = groupRef.current.position;
+              onUpdate(id, {
+                type: 'cube',
+                position: [newPos.x, newPos.y, newPos.z],
+                _finalPosition: true, // This flag tells objectUpdateHandlers to save it
+                _moveComplete: true, // Additional flag used by database handler
+              });
+            }
+
             onTransformEnd?.(id);
           }}
           mode="translate"

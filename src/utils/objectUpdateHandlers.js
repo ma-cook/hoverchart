@@ -197,10 +197,17 @@ export const handleObjectUpdate = ({ id, updates, user, currentSpaceId }) => {
     return;
   }
 
-  // --- Optional: Add checks here if needed (e.g., filtering updates) ---
-  // Example: const filteredUpdates = { ...updates }; delete filteredUpdates.someProperty;  // Update Firestore using spatial cell-based function
+  // Clean up internal flags before saving to database
+  const cleanedUpdates = { ...updates };
+  delete cleanedUpdates._finalPosition;
+  delete cleanedUpdates._moveComplete;
+  delete cleanedUpdates._transformActive;
+  delete cleanedUpdates._isDragging;
+  delete cleanedUpdates._moveTimestamp;
+
+  // Update Firestore using spatial cell-based function
   const spaceOwnerId = window.currentSpaceOwner || user.uid;
-  const objectData = { id, ...updates };
+  const objectData = { id, ...cleanedUpdates };
   updateObjectInSpatialCell(spaceOwnerId, currentSpaceId, objectData)
     .then(() => {
       // --- Optional: Update local state optimistically if needed ---
