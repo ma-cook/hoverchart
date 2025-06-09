@@ -96,7 +96,7 @@ export const getOrCreateDefaultSpace = async (userId) => {
   }
 };
 
-// Migrate existing user data to default space (one-time operation)
+// Migrate existing user data to default space using spatial partitioning (one-time operation)
 export const migrateToDefaultSpace = async (userId) => {
   if (!userId) return false;
 
@@ -113,19 +113,25 @@ export const migrateToDefaultSpace = async (userId) => {
     const connectionsRef = collection(db, 'users', userId, 'connections');
     const connectionsSnapshot = await getDocs(connectionsRef);
 
-    // Migrate objects to space
-    const objectPromises = objectsSnapshot.docs.map((docSnapshot) => {
+    // Import spatial partitioning functions
+    const { addObjectToCell } = await import('./spatialPartitioning');
+
+    // Migrate objects to spatial cells instead of flat objects collection
+    const objectPromises = objectsSnapshot.docs.map(async (docSnapshot) => {
       const data = docSnapshot.data();
-      const objectRef = doc(
-        db,
-        'users',
-        userId,
-        'spaces',
-        defaultSpace.id,
-        'objects',
-        docSnapshot.id
-      );
-      return setDoc(objectRef, data);
+      // Add object to appropriate cell based on its position
+      if (data.position) {
+        return addObjectToCell(userId, defaultSpace.id, {
+          ...data,
+          id: docSnapshot.id,
+        });
+      }
+      // If object has no position, place it at origin
+      return addObjectToCell(userId, defaultSpace.id, {
+        ...data,
+        id: docSnapshot.id,
+        position: [0, 0, 0],
+      });
     });
 
     // Migrate connections to space

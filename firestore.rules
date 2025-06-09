@@ -57,16 +57,10 @@ service cloud.firestore {
       allow read: if isAuthenticated() || 
                    exists(/databases/$(database)/documents/users/$(userId)/spaces) &&
                    (resource.data.ownerId == userId);
-      
-      // Allow write to own user document
+        // Allow write to own user document
       allow create, update: if isAuthenticated() && request.auth.uid == userId;
       
-      // Personal objects/connections (not in spaces)
-      match /objects/{objectId} {
-        allow read: if isAuthenticated();
-        allow write: if isAuthenticated() && request.auth.uid == userId;
-      }
-
+      // Personal connections (not in spaces) - keeping for backward compatibility
       match /connections/{connectionId} {
         allow read: if isAuthenticated();
         allow write: if isAuthenticated() && request.auth.uid == userId;
@@ -97,23 +91,12 @@ service cloud.firestore {
           allow write: if isAuthenticated(); // Any authenticated user can update their presence
         }
         
-        // NEW: Allow access to signaling subcollection for WebRTC
-        match /signaling/{signalingId} {
+        // NEW: Allow access to signaling subcollection for WebRTC        match /signaling/{signalingId} {
           allow read: if isAuthenticated();
           allow write: if isAuthenticated(); // Any authenticated user can write signaling data
         }
         
-        // Objects within spaces
-        match /objects/{objectId} {
-          // MODIFIED: Allow anonymous access to objects in public spaces
-          allow read: if isAuthenticated() || 
-                       (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
-                        isPublicSpace(get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data));
-          
-          // Keep write access restricted to authenticated users
-          allow write: if isAuthenticated();
-        }
-          // Connections within spaces
+        // Connections within spaces
         match /connections/{connectionId} {
           // MODIFIED: Allow anonymous access to connections in public spaces
           allow read: if isAuthenticated() || 

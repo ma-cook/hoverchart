@@ -8,6 +8,7 @@ import {
   deleteObjectFromCell as deleteObjectFromCellSpatial,
   getObjectsFromCells,
   getCellCoordinates,
+  getCellId,
   moveObjectBetweenCells as moveObjectBetweenCellsSpatial,
 } from './spatialPartitioning';
 
@@ -15,6 +16,7 @@ const objectsCache = new Map();
 const saveTimeouts = new Map();
 const updateThrottles = new Map();
 const lastReceivedObjects = new Map();
+const movingObjects = new Map(); // Track objects currently being moved to prevent race conditions
 
 // Helper function for position-only comparison
 const positionsEqual = (posA, posB) => {
@@ -33,8 +35,26 @@ const positionsEqual = (posA, posB) => {
  * Save object to the appropriate cell based on its position
  */
 export const saveObjectToCell = async (userId, spaceId, object) => {
-  if (!userId || !spaceId || !object.id || !object.position) {
+  if (!userId || !spaceId || !object.id) {
+    // console.warn('[SaveDebug] saveObjectToCell: Missing required parameters. Aborting.', { userId, spaceId, objectId: object?.id });
     return;
+  }
+
+  // For non-position updates, we need to find the object's current position from cache or existing data
+  if (!object.position) {
+    const objectId = object.id.toString();
+    const cacheKey = `${spaceId}_${objectId}`;
+    const cachedData = objectsCache.get(cacheKey);
+    
+    if (cachedData && cachedData.position) {
+      // Use cached position for the update
+      object = { ...object, position: cachedData.position };
+    } else {
+      console.warn('[SaveDebug] saveObjectToCell: No position available for non-position update. Skipping save.', { 
+        userId, spaceId, objectId: object?.id 
+      });
+      return;
+    }
   }
 
   try {
@@ -56,6 +76,7 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
     }
 
     if (now - lastUpdateTime < throttleTime) {
+      // console.log(`[SaveDebug] Throttled save for object ${objectId}. Last update: ${lastUpdateTime}, Now: ${now}, Diff: ${now - lastUpdateTime}, Throttle: ${throttleTime}`);
       return;
     }
 
@@ -65,6 +86,7 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
     const sharedStatus = await isSharedSpace(userId, spaceId);
 
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
+      // console.log(`[SaveDebug] User ${userId} has read-only permissions for shared space ${spaceId}. Skipping save for object ${objectId}.`);
       return;
     }
 
@@ -80,6 +102,20 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
     // Deep clone the object to prevent reference issues
     const newData = JSON.parse(JSON.stringify(object));
 
+    let oldCellId = null;
+    let newCellId = null;
+    let oldPosition = null;
+
+    if (cachedData && cachedData.position) {
+      oldPosition = cachedData.position; // Keep the actual old position
+      const oldCellCoords = getCellCoordinates(cachedData.position);
+      oldCellId = getCellId(oldCellCoords.x, oldCellCoords.y, oldCellCoords.z);
+    }
+
+    const newCellCoords = getCellCoordinates(newData.position);
+    newCellId = getCellId(newCellCoords.x, newCellCoords.y, newCellCoords.z);
+    // console.log(`[SaveDebug] Object ${objectId}: Old Cell: ${oldCellId}, New Cell: ${newCellId}. Old Pos: ${JSON.stringify(oldPosition)}, New Pos: ${JSON.stringify(newData.position)}`);
+
     // Enhanced comparison logic
     if (cachedData) {
       const positionChanged = !positionsEqual(
@@ -87,21 +123,36 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
         newData.position
       );
 
-      const nonPositionChanged = !isEqual(
-        { ...cachedData, position: undefined },
-        { ...newData, position: undefined }
+      const nonPositionDataChanged = !isEqual(
+        // Renamed for clarity
+        {
+          ...cachedData,
+          position: undefined,
+          lastUpdated: undefined,
+          cellId: undefined,
+          creatorId: undefined,
+        }, // Exclude volatile fields
+        {
+          ...newData,
+          position: undefined,
+          lastUpdated: undefined,
+          cellId: undefined,
+          creatorId: undefined,
+        } // Exclude volatile fields
       );
 
-      if (!positionChanged && !nonPositionChanged) {
+      if (!positionChanged && !nonPositionDataChanged) {
+        // console.log(`[SaveDebug] Object ${objectId} data unchanged (posChanged: ${positionChanged}, nonPosChanged: ${nonPositionDataChanged}). Skipping save.`);
         return;
       }
+      // console.log(`[SaveDebug] Object ${objectId} data changed. PosChanged: ${positionChanged}, NonPosDataChanged: ${nonPositionDataChanged}`);
     }
 
     // Update cache before saving
     objectsCache.set(cacheKey, newData);
 
     // Save with timeout to batch changes
-    const saveTimeout = object.position ? 300 : 150;
+    const saveTimeoutDelay = object.position ? 300 : 150;
 
     saveTimeouts.set(
       cacheKey,
@@ -109,23 +160,49 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
         try {
           const objectToSave = {
             ...newData,
-            lastUpdated: Timestamp.fromDate(new Date()),
-            creatorId: userId,
+            lastUpdated: Timestamp.fromDate(new Date()), // Firestore Timestamp
+            creatorId: ownerUserId, // Ensure creatorId is the space owner or original user
           };
 
           // Store in last received cache for reconnection scenarios
           lastReceivedObjects.set(`${spaceId}_${objectId}`, objectToSave);
 
-          // Save to appropriate cell instead of global objects collection
-          await addObjectToCell(ownerUserId, spaceId, objectToSave);
+          if (
+            oldCellId &&
+            newCellId &&
+            oldCellId !== newCellId &&
+            oldPosition
+          ) {
+            console.log(
+              `[SaveDebug] Object ${objectId} MOVED from cell ${oldCellId} to ${newCellId}. Calling moveObjectBetweenCellsSpatial.`
+            );
+            await moveObjectBetweenCellsSpatial(
+              ownerUserId,
+              spaceId,
+              objectId, // Pass objectId string
+              oldPosition, // Pass the actual old position
+              newData.position, // Pass the new position
+              objectToSave // Pass the full new object data for the new cell
+            );
+          } else {
+            // console.log(`[SaveDebug] Object ${objectId} ADDED/UPDATED in cell ${newCellId}. Calling addObjectToCell.`);
+            // This will update if object exists in this cell, or add if new to this cell / or if only non-positional data changed
+            await addObjectToCell(ownerUserId, spaceId, objectToSave);
+          }
         } catch (error) {
-          console.error('Error saving object to cell:', error);
-          objectsCache.delete(cacheKey);
+          console.error(
+            `[SaveDebug] Error in throttled save for object ${objectId}:`,
+            error
+          );
+          objectsCache.delete(cacheKey); // Remove from cache on error
         }
-      }, saveTimeout)
+      }, saveTimeoutDelay)
     );
   } catch (error) {
-    console.error('Error in saveObjectToCell:', error);
+    console.error(
+      '[SaveDebug] Error in saveObjectToCell (outer try-catch):',
+      error
+    );
   }
 };
 
@@ -176,7 +253,7 @@ export const deleteObjectFromSpatialCell = async (
 };
 
 /**
- * Update an object within its cell
+ * Update an object within its cell (with cell boundary detection)
  */
 export const updateObjectInSpatialCell = async (
   userId,
@@ -190,23 +267,118 @@ export const updateObjectInSpatialCell = async (
     throw new Error('Missing required IDs for object update.');
   }
 
-  try {
-    // Check if this is a shared space
-    const sharedStatus = await isSharedSpace(userId, spaceId);
+  // Validate position data
+  if (
+    !objectData.position ||
+    !Array.isArray(objectData.position) ||
+    objectData.position.length !== 3
+  ) {
+    console.error(
+      '[updateObjectInSpatialCell] Invalid or missing position data:',
+      {
+        id: objectData.id,
+        position: objectData.position,
+        positionType: typeof objectData.position,
+        isArray: Array.isArray(objectData.position),
+      }
+    );
+    throw new Error('Invalid position data for spatial object update.');
+  }
 
-    if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      return;
+  try {
+    const objectId = objectData.id.toString();
+    const moveKey = `${spaceId}_${objectId}`;
+
+    // Race condition protection: Check if object is already being moved
+    if (movingObjects.has(moveKey)) {
+      const moveInfo = movingObjects.get(moveKey);
+      const timeSinceMove = Date.now() - moveInfo.timestamp;
+
+      // If a move is already in progress and it's recent (less than 2 seconds), skip this update
+      if (timeSinceMove < 2000) {
+        console.log(
+          `[updateObjectInSpatialCell] Object ${objectId} is already being moved. Skipping concurrent update.`
+        );
+        return;
+      } else {
+        // Clean up stale move tracking
+        movingObjects.delete(moveKey);
+      }
     }
 
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+    // Mark object as being moved
+    movingObjects.set(moveKey, { timestamp: Date.now() });
 
-    const objectToUpdate = {
-      ...objectData,
-      lastUpdated: Timestamp.fromDate(new Date()),
-      updatedBy: userId,
-    };
+    // Set up cleanup timeout
+    const cleanupTimeout = setTimeout(() => {
+      movingObjects.delete(moveKey);
+    }, 3000); // Clean up after 3 seconds
 
-    await updateObjectInCellSpatial(ownerUserId, spaceId, objectToUpdate);
+    try {
+      // Check if this is a shared space
+      const sharedStatus = await isSharedSpace(userId, spaceId);
+
+      if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
+        return;
+      }
+
+      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
+      const objectToUpdate = {
+        ...objectData,
+        lastUpdated: Timestamp.fromDate(new Date()),
+        updatedBy: userId,
+      };
+
+      // If object has position, check for cell boundary crossings
+      if (objectData.position && Array.isArray(objectData.position)) {
+        const cacheKey = `${spaceId}_${objectData.id}`;
+        const cachedData = objectsCache.get(cacheKey);
+
+        if (cachedData && cachedData.position) {
+          // Calculate old and new cell IDs
+          const oldCellCoords = getCellCoordinates(cachedData.position);
+          const newCellCoords = getCellCoordinates(objectData.position);
+          const oldCellId = getCellId(
+            oldCellCoords.x,
+            oldCellCoords.y,
+            oldCellCoords.z
+          );
+          const newCellId = getCellId(
+            newCellCoords.x,
+            newCellCoords.y,
+            newCellCoords.z
+          );
+
+          if (oldCellId !== newCellId) {
+            console.log(
+              `[updateObjectInSpatialCell] Object ${objectData.id} crossed cell boundary from ${oldCellId} to ${newCellId}. Using moveObjectBetweenCells.`
+            );
+
+            // Use moveObjectBetweenCells for cell boundary crossings
+            await moveObjectBetweenCellsSpatial(
+              ownerUserId,
+              spaceId,
+              objectData.id,
+              cachedData.position,
+              objectData.position,
+              objectToUpdate
+            );
+
+            // Update cache with new position
+            objectsCache.set(cacheKey, { ...objectToUpdate });
+            return;
+          }
+        }
+      }
+
+      // No cell boundary crossing - use direct update
+      await updateObjectInCellSpatial(ownerUserId, spaceId, objectToUpdate);
+    } finally {
+      // Always clean up the moving object tracking
+      clearTimeout(cleanupTimeout);
+      movingObjects.delete(moveKey);
+    }
   } catch (error) {
     console.error(
       `[updateObjectInSpatialCell] Failed to update object ${objectData.id}:`,
@@ -216,8 +388,15 @@ export const updateObjectInSpatialCell = async (
   }
 };
 
+// Import global subscription manager
+import {
+  getOrCreateSubscription,
+  generateSubscriptionKey,
+  SUBSCRIPTION_TYPES,
+} from './globalSubscriptionManager';
+
 /**
- * Subscribe to objects in loaded cells
+ * Subscribe to objects in loaded cells with deduplication
  */
 export const subscribeToSpatialObjects = (
   userId,
@@ -233,6 +412,7 @@ export const subscribeToSpatialObjects = (
   const isAnonymous = !userId;
   let isSubscribed = true;
   const unsubscribeFunctions = new Map();
+  const localSubscriptionKeys = new Set(); // Track which subscriptions this instance uses
 
   const startCellSubscriptions = async () => {
     try {
@@ -261,7 +441,9 @@ export const subscribeToSpatialObjects = (
       // Guard against empty cells
       if (safeCells.length === 0) {
         return;
-      } // Subscribe to each loaded cell
+      }
+
+      // Subscribe to each loaded cell with deduplication
       for (const cellKey of safeCells) {
         if (!cellKey || typeof cellKey !== 'string') {
           console.warn('[SpatialObjects] Invalid cellKey:', cellKey);
@@ -269,11 +451,12 @@ export const subscribeToSpatialObjects = (
         }
 
         const [x, y, z] = cellKey.split(',').map(Number);
+        const subscriptionKey = generateSubscriptionKey.spatialObjects(
+          spaceId,
+          cellKey
+        );
 
-        if (unsubscribeFunctions.has(cellKey)) {
-          continue; // Already subscribed to this cell
-        }
-
+        // Create cell reference
         const cellRef = doc(
           db,
           'users',
@@ -284,100 +467,110 @@ export const subscribeToSpatialObjects = (
           cellKey
         );
 
-        const unsubscribe = onSnapshot(
-          cellRef,
-          { includeMetadataChanges: true },
-          (snapshot) => {
-            if (!snapshot.exists()) {
-              return;
-            }
+        // Use global subscription manager
+        const { unsubscribe: globalUnsubscribe } = getOrCreateSubscription(
+          subscriptionKey,
+          SUBSCRIPTION_TYPES.SPATIAL_OBJECTS,
+          () => {
+            // Create the actual Firebase subscription
+            return onSnapshot(
+              cellRef,
+              { includeMetadataChanges: true },
+              (snapshot) => {
+                if (!snapshot.exists()) {
+                  return;
+                }
 
-            const cellData = snapshot.data();
-            const cellObjects = cellData.objects || {};
+                const cellData = snapshot.data();
+                const cellObjects = cellData.objects || {};
 
-            // Process each object in the cell
-            Object.entries(cellObjects).forEach(([objectId, objectData]) => {
-              const cacheKey = `${spaceId}_${objectId}`;
+                // Process each object in the cell
+                Object.entries(cellObjects).forEach(
+                  ([objectId, objectData]) => {
+                    const cacheKey = `${spaceId}_${objectId}`;
 
-              // Check if object data has changed
-              const cachedData = objectsCache.get(cacheKey);
-              let hasChanged = false;
+                    // Check if object data has changed
+                    const cachedData = objectsCache.get(cacheKey);
+                    let hasChanged = false;
 
-              if (cachedData) {
-                const positionChanged = !positionsEqual(
-                  cachedData.position,
-                  objectData.position
+                    if (cachedData) {
+                      const positionChanged = !positionsEqual(
+                        cachedData.position,
+                        objectData.position
+                      );
+                      const otherDataChanged = !isEqual(
+                        { ...cachedData, position: undefined },
+                        { ...objectData, position: undefined }
+                      );
+
+                      hasChanged = positionChanged || otherDataChanged;
+                    } else {
+                      hasChanged = true;
+                    }
+
+                    if (hasChanged) {
+                      objectsCache.set(
+                        cacheKey,
+                        JSON.parse(JSON.stringify(objectData))
+                      );
+                      lastReceivedObjects.set(cacheKey, objectData);
+                      callback({
+                        type: 'added',
+                        id: objectId,
+                        object: objectData,
+                        cellCoords: { x, y, z: z || 0 },
+                      });
+                    }
+                  }
                 );
-                const otherDataChanged = !isEqual(
-                  { ...cachedData, position: undefined },
-                  { ...objectData, position: undefined }
-                );
 
-                hasChanged = positionChanged || otherDataChanged;
-              } else {
-                hasChanged = true;
-              }
+                // Handle removed objects (compare with cache)
+                const currentObjectIds = new Set(Object.keys(cellObjects));
+                const cachedObjectIds = new Set();
 
-              if (hasChanged) {
-                objectsCache.set(
-                  cacheKey,
-                  JSON.parse(JSON.stringify(objectData))
-                );
-                lastReceivedObjects.set(cacheKey, objectData);
-                callback({
-                  type: 'added',
-                  id: objectId,
-                  object: objectData,
-                  cellCoords: { x, y, z: z || 0 }, // Include proper z coordinate for cell tracking
-                });
-              }
-            });
+                for (const cacheKey of objectsCache.keys()) {
+                  if (cacheKey.startsWith(`${spaceId}_`)) {
+                    const objectId = cacheKey.substring(`${spaceId}_`.length);
+                    const objectData = objectsCache.get(cacheKey);
 
-            // Handle removed objects (compare with cache)
-            const currentObjectIds = new Set(Object.keys(cellObjects));
-            const cachedObjectIds = new Set();
+                    // Check if this object belongs to this cell
+                    if (objectData && objectData.cellId === cellKey) {
+                      cachedObjectIds.add(objectId);
+                    }
+                  }
+                }
 
-            for (const cacheKey of objectsCache.keys()) {
-              if (cacheKey.startsWith(`${spaceId}_`)) {
-                const objectId = cacheKey.substring(`${spaceId}_`.length);
-                const objectData = objectsCache.get(cacheKey);
+                // Find removed objects
+                for (const objectId of cachedObjectIds) {
+                  if (!currentObjectIds.has(objectId)) {
+                    const cacheKey = `${spaceId}_${objectId}`;
+                    objectsCache.delete(cacheKey);
+                    lastReceivedObjects.delete(cacheKey);
+                    callback({
+                      type: 'removed',
+                      id: objectId,
+                      cellCoords: { x, y, z: z || 0 },
+                    });
+                  }
+                }
+              },
+              (error) => {
+                console.error(`Subscription error for cell ${cellKey}:`, error);
 
-                // Check if this object belongs to this cell
-                if (objectData && objectData.cellId === cellKey) {
-                  cachedObjectIds.add(objectId);
+                if (error.code === 'permission-denied' && isAnonymous) {
+                  console.error(
+                    'Anonymous access denied. This space may not be public.'
+                  );
+                  return;
                 }
               }
-            }
-
-            // Find removed objects
-            for (const objectId of cachedObjectIds) {
-              if (!currentObjectIds.has(objectId)) {
-                const cacheKey = `${spaceId}_${objectId}`;
-                objectsCache.delete(cacheKey);
-                lastReceivedObjects.delete(cacheKey);
-                callback({
-                  type: 'removed',
-                  id: objectId,
-                  cellCoords: { x, y, z: z || 0 }, // Include proper z coordinate for cell tracking
-                });
-              }
-            }
-          },
-          (error) => {
-            console.error(`Subscription error for cell ${cellKey}:`, error);
-
-            if (error.code === 'permission-denied' && isAnonymous) {
-              console.error(
-                'Anonymous access denied. This space may not be public.'
-              );
-              return;
-            }
-
-            // Handle other errors similar to the original service
+            );
           }
         );
 
-        unsubscribeFunctions.set(cellKey, unsubscribe);
+        // Store the cleanup function
+        localSubscriptionKeys.add(subscriptionKey);
+        unsubscribeFunctions.set(cellKey, globalUnsubscribe);
       }
     } catch (error) {
       console.error('Error starting spatial objects subscriptions:', error);
@@ -385,10 +578,10 @@ export const subscribeToSpatialObjects = (
   };
 
   startCellSubscriptions();
-
   // Return cleanup function
   return () => {
     isSubscribed = false;
+    // Clean up all subscriptions created by this instance
     for (const unsubscribe of unsubscribeFunctions.values()) {
       unsubscribe();
     }
@@ -499,6 +692,56 @@ export const loadObjectsFromCells = async (userId, spaceId, loadedCells) => {
     console.error('Error loading objects from cells:', error);
     return [];
   }
+};
+
+// Convenience functions that provide a simpler API for common operations
+// These wrap the spatial-aware functions for cases where you don't need to manage cells directly
+
+/**
+ * Save object using spatial partitioning (convenience wrapper)
+ * @param {string} userId - User ID
+ * @param {string} spaceId - Space ID
+ * @param {Object} object - Object data (must include position)
+ * @returns {Promise<void>}
+ */
+export const saveObject = async (userId, spaceId, object) => {
+  return saveObjectToCell(userId, spaceId, object);
+};
+
+/**
+ * Delete object using spatial partitioning (convenience wrapper)
+ * @param {string} userId - User ID
+ * @param {string} spaceId - Space ID
+ * @param {string} objectId - Object ID
+ * @param {Array} position - Object position [x, y, z] (needed to find the correct cell)
+ * @returns {Promise<void>}
+ */
+export const deleteObject = async (userId, spaceId, objectId, position) => {
+  return deleteObjectFromSpatialCell(userId, spaceId, objectId, position);
+};
+
+/**
+ * Update object using spatial partitioning (convenience wrapper)
+ * @param {string} userId - User ID
+ * @param {string} spaceId - Space ID
+ * @param {Object} objectData - Updated object data
+ * @returns {Promise<void>}
+ */
+export const updateObject = async (userId, spaceId, objectData) => {
+  return updateObjectInSpatialCell(userId, spaceId, objectData);
+};
+
+/**
+ * Subscribe to all objects in a space using spatial partitioning
+ * Note: This subscribes to objects in the provided loaded cells only
+ * @param {string} userId - User ID
+ * @param {string} spaceId - Space ID
+ * @param {Array} loadedCells - Array of loaded cell IDs
+ * @param {Function} callback - Callback for object changes
+ * @returns {Function} - Unsubscribe function
+ */
+export const subscribeToObjects = (userId, spaceId, loadedCells, callback) => {
+  return subscribeToSpatialObjects(userId, spaceId, loadedCells, callback);
 };
 
 export { positionsEqual };

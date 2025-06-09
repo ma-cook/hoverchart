@@ -16,22 +16,6 @@ const WebcamStream = ({
   onBroadcastStopped,
   onViewerCountChange,
 }) => {
-  // Create unique instance ID for this component
-  const instanceId = useRef(Math.random().toString(36).substr(2, 9));
-
-  console.log(
-    `🔵 WebcamStream [${instanceId.current}] component rendered with props:`,
-    {
-      active,
-      isBroadcasting,
-      isReceiving,
-      userId,
-      spaceId,
-      planeId,
-      broadcastData,
-    }
-  ); // Add mount/unmount tracking
-
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -45,19 +29,15 @@ const WebcamStream = ({
   const viewerConnectionRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const isMounted = useRef(true);
-
   // Stable refs for callback functions to avoid effect re-runs
   const onBroadcastStartedRef = useRef(onBroadcastStarted);
   const onViewerCountChangeRef = useRef(onViewerCountChange);
+  const onBroadcastStoppedRef = useRef(onBroadcastStopped);
 
-  // Update refs when callbacks change
-  useEffect(() => {
-    onBroadcastStartedRef.current = onBroadcastStarted;
-  }, [onBroadcastStarted]);
-
-  useEffect(() => {
-    onViewerCountChangeRef.current = onViewerCountChange;
-  }, [onViewerCountChange]);
+  // Update refs when callbacks change (but don't trigger effects)
+  onBroadcastStartedRef.current = onBroadcastStarted;
+  onViewerCountChangeRef.current = onViewerCountChange;
+  onBroadcastStoppedRef.current = onBroadcastStopped;
   // Optimized webcam constraints for better performance
   const webcamConstraints = useMemo(
     () => ({
@@ -443,23 +423,23 @@ const WebcamStream = ({
         lastUpdateTime = currentTime;
       }
       frameId = requestAnimationFrame(updateTexture);
-    };
-
-    frameId = requestAnimationFrame(updateTexture);
+    };    frameId = requestAnimationFrame(updateTexture);
 
     return () => {
       if (frameId) {
         cancelAnimationFrame(frameId);
       }
     };
-  }, [active, meshRef]); // Cleanup on unmount
+  }, [active, meshRef]);
+
+  // Cleanup on unmount
   useEffect(() => {
     const currentMesh = meshRef.current; // Capture reference
     return () => {
       console.log('Component unmounting - setting isMounted to false');
       isMounted.current = false;
-      if (isBroadcasting && broadcastControlRef.current && onBroadcastStopped) {
-        onBroadcastStopped();
+      if (isBroadcasting && broadcastControlRef.current && onBroadcastStoppedRef.current) {
+        onBroadcastStoppedRef.current();
       }
 
       // Direct cleanup without dependency issues
@@ -518,10 +498,9 @@ const WebcamStream = ({
           currentMesh.material.map.dispose();
           currentMesh.material.map = null;
         }
-        currentMesh.material.needsUpdate = true;
-      }
+        currentMesh.material.needsUpdate = true;      }
     };
-  }, [isBroadcasting, onBroadcastStopped, meshRef]);
+  }, [isBroadcasting, meshRef]);
 
   // Error display
   if (hasError) {

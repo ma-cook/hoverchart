@@ -9,6 +9,13 @@ import {
   generateCurvedPath,
 } from '../utils/pathfindingUtils';
 
+// Import global subscription manager
+import {
+  getOrCreateSubscription,
+  generateSubscriptionKey,
+  SUBSCRIPTION_TYPES,
+} from '../services/globalSubscriptionManager';
+
 /**
  * Special component for rendering connections in public spaces
  * when the user is not authenticated
@@ -23,33 +30,48 @@ const PublicConnectionsRenderer = ({ spaceId, ownerId, objects }) => {
     setLoading(true);
 
     try {
-      const connectionsRef = collection(
-        db,
-        'users',
-        ownerId,
-        'spaces',
-        spaceId,
-        'connections'
+      const subscriptionKey = generateSubscriptionKey.legacyObjects(
+        `connections_${spaceId}`
       );
-      const q = query(connectionsRef);
 
-      const unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const connectionsData = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }));
-
+      // Use global subscription manager
+      const { unsubscribe } = getOrCreateSubscription(
+        subscriptionKey,
+        SUBSCRIPTION_TYPES.LEGACY_OBJECTS,
+        () => {
           console.log(
-            `Loaded ${connectionsData.length} connections for public space`
+            `🔥 Creating NEW public connections subscription for space: ${spaceId}`
           );
-          setConnections(connectionsData);
-          setLoading(false);
-        },
-        (error) => {
-          console.error('Error loading public connections:', error);
-          setLoading(false);
+
+          const connectionsRef = collection(
+            db,
+            'users',
+            ownerId,
+            'spaces',
+            spaceId,
+            'connections'
+          );
+          const q = query(connectionsRef);
+
+          return onSnapshot(
+            q,
+            (snapshot) => {
+              const connectionsData = snapshot.docs.map((doc) => ({
+                id: doc.id,
+                ...doc.data(),
+              }));
+
+              console.log(
+                `Loaded ${connectionsData.length} connections for public space`
+              );
+              setConnections(connectionsData);
+              setLoading(false);
+            },
+            (error) => {
+              console.error('Error loading public connections:', error);
+              setLoading(false);
+            }
+          );
         }
       );
 

@@ -15,7 +15,6 @@ import FaceIndicator from './FaceIndicator';
 import WebcamStream from './WebcamStream';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
-import { onSnapshot } from 'firebase/firestore';
 
 const Plane = ({
   position = [0, 0, 0],
@@ -207,25 +206,49 @@ const Plane = ({
     [onUpdate, id]
   );
 
+  // Add debounced update to prevent excessive database calls
+  const debouncedUpdateTimeoutRef = useRef(null);
+  const isInitialRenderRef = useRef(true);
+
   useEffect(() => {
     if (!isMountedRef.current) return;
 
-    const updates = {
-      scale: currentScale,
-      color: currentColor,
-      headerText: currentHeaderText,
-      headerStyle: currentHeaderStyle,
-      borderStyle: currentBorderStyle,
-      borderColor: currentBorderColor,
-      lineThickness: currentLineThickness,
-      faceText: currentFaceText,
-      faceTextStyle: currentFaceTextStyle,
-      webcamActive,
-      broadcasting: webcamActive && isBroadcasting,
-    };
-    directUpdate(updates);
+    // Skip updates during initial render to prevent thousands of simultaneous calls
+    // when camera moves between cells and loads many objects at once
+    if (isInitialRenderRef.current) {
+      isInitialRenderRef.current = false;
+      return;
+    }
 
-    // No cleanup needed for direct updates
+    // Clear any pending update
+    if (debouncedUpdateTimeoutRef.current) {
+      clearTimeout(debouncedUpdateTimeoutRef.current);
+    }
+
+    // Debounce property updates to prevent excessive calls
+    debouncedUpdateTimeoutRef.current = setTimeout(() => {
+      const updates = {
+        scale: currentScale,
+        color: currentColor,
+        headerText: currentHeaderText,
+        headerStyle: currentHeaderStyle,
+        borderStyle: currentBorderStyle,
+        borderColor: currentBorderColor,
+        lineThickness: currentLineThickness,
+        faceText: currentFaceText,
+        faceTextStyle: currentFaceTextStyle,
+        webcamActive,
+        broadcasting: webcamActive && isBroadcasting,
+      };
+      directUpdate(updates);
+    }, 100); // 100ms debounce delay
+
+    // Cleanup timeout on unmount
+    return () => {
+      if (debouncedUpdateTimeoutRef.current) {
+        clearTimeout(debouncedUpdateTimeoutRef.current);
+      }
+    };
   }, [
     currentScale,
     currentColor,
@@ -564,12 +587,15 @@ const Plane = ({
       return;
     }
 
-    // Use spatial partitioning to find and listen to the object
-    const setupSpatialListener = async () => {
+    // Use optimized broadcast subscription service
+    const setupBroadcastListener = async () => {
       try {
-        // Import spatial partitioning helper
+        // Import spatial partitioning helper and broadcast manager
         const { findObjectInCells } = await import(
           '../services/spatialPartitioning'
+        );
+        const { subscribeToBroadcastChanges } = await import(
+          '../services/broadcastManager'
         );
 
         // Find the plane object in the spatial partitioning system
@@ -586,18 +612,14 @@ const Plane = ({
           return () => {};
         }
 
-        // Listen to the cell containing this object
-        const unsubscribe = onSnapshot(
-          planeResult.cellRef,
-          (cellSnap) => {
+        // Use the optimized broadcast subscription service
+        const unsubscribe = subscribeToBroadcastChanges(
+          window.currentSpaceOwner,
+          currentSpaceId,
+          id,
+          planeResult.cellId,
+          (objectData) => {
             if (!isMountedRef.current || webcamActive) return;
-
-            if (!cellSnap.exists()) return;
-
-            const cellData = cellSnap.data();
-            const objectData = cellData.objects?.[id];
-
-            if (!objectData) return;
 
             const isRemoteBroadcastingNow =
               objectData?.broadcasting === true &&
@@ -631,26 +653,17 @@ const Plane = ({
                 setBroadcastInfo(null);
               }
             }
-          },
-          () => {
-            if (isViewingBroadcast && isMountedRef.current) {
-              const now = Date.now();
-              if (now - lastBroadcastSeenRef.current > 10000) {
-                setBroadcastInfo(null);
-                setIsViewingBroadcast(false);
-              }
-            }
           }
         );
 
         return unsubscribe;
       } catch (error) {
-        console.error('Error setting up spatial listener:', error);
+        console.error('Error setting up broadcast listener:', error);
         return () => {};
       }
     };
 
-    let unsubscribePromise = setupSpatialListener();
+    let unsubscribePromise = setupBroadcastListener();
 
     return () => {
       unsubscribePromise.then((unsubscribe) => {
@@ -729,15 +742,15 @@ const Plane = ({
       setIsViewingBroadcast(false);
       setBroadcastInfo(null);
       lastWebcamStateRef.current = false;
-    }
+    }    setShowUI(false);
+  }, [webcamActive, isBroadcasting, onUpdate, id]);
 
-    setShowUI(false);
-  }, [webcamActive, isBroadcasting, webcamInitialized, onUpdate, id]);
+  const isBroadcastingRef = useRef(false);
 
   const handleBroadcastStarted = useCallback(
     (info) => {
       if (!info || !info.broadcastId || !isMountedRef.current) return;
-      if (!isBroadcasting) setIsBroadcasting(true);
+      if (!isBroadcastingRef.current) setIsBroadcasting(true);
       onUpdate?.(id, {
         type: 'plane',
         broadcasting: true,
@@ -747,15 +760,13 @@ const Plane = ({
         webcamActive: true,
       });
     },
-    [onUpdate, id, user?.uid, isBroadcasting]
+    [onUpdate, id, user?.uid]
   );
-
   const handleViewerCountChange = useCallback((count) => {
     if (isMountedRef.current) {
       setViewerCount(count);
     }
   }, []);
-  const isBroadcastingRef = useRef(false);
 
   // Update the ref whenever isBroadcasting changes
   useEffect(() => {

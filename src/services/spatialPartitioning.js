@@ -2,16 +2,67 @@ import { db } from '../firebase';
 import {
   doc,
   setDoc,
+  updateDoc,
   getDoc,
   getDocs,
   collection,
   onSnapshot,
+  deleteField,
 } from 'firebase/firestore';
+
+// Import global subscription manager
+import {
+  getOrCreateSubscription,
+  generateSubscriptionKey,
+  SUBSCRIPTION_TYPES,
+} from './globalSubscriptionManager';
 
 // Cell size constants
 export const CELL_SIZE = 10000;
 export const CELL_NEIGHBOR_RADIUS = 1; // Load 3x3 horizontal grid around camera (9 cells)
-export const CELL_UNLOAD_DISTANCE = 2; // Distance in cell blocks to unload cells (reduced for testing)
+export const CELL_UNLOAD_DISTANCE = 3; // Distance in cell blocks to unload cells (increased to reduce reload)
+
+// Cache for cell existence checks to reduce redundant fetch calls
+const cellExistenceCache = new Map(); // cellId -> { exists: boolean, timestamp: number }
+const CACHE_DURATION = 60000; // 1 minute cache for cell existence checks
+const MAX_CACHE_SIZE = 1000; // Limit cache size to prevent memory leaks
+
+// Periodic cache cleanup
+const cleanupCache = () => {
+  const now = Date.now();
+  const keysToDelete = [];
+
+  for (const [key, value] of cellExistenceCache.entries()) {
+    if (now - value.timestamp > CACHE_DURATION) {
+      keysToDelete.push(key);
+    }
+  }
+
+  keysToDelete.forEach((key) => cellExistenceCache.delete(key));
+
+  // If cache is still too large, remove oldest entries
+  if (cellExistenceCache.size > MAX_CACHE_SIZE) {
+    const entries = Array.from(cellExistenceCache.entries()).sort(
+      (a, b) => a[1].timestamp - b[1].timestamp
+    );
+
+    const excessCount = cellExistenceCache.size - MAX_CACHE_SIZE;
+    for (let i = 0; i < excessCount; i++) {
+      cellExistenceCache.delete(entries[i][0]);
+    }
+  }
+};
+
+// Run cache cleanup every 5 minutes
+if (typeof window !== 'undefined') {
+  setInterval(cleanupCache, 5 * 60 * 1000);
+}
+
+console.log('--- SPATIAL_PARTITIONING_JS LOADED - V3 ---'); // Version marker
+
+// Race condition protection for concurrent object moves
+const movingObjects = new Map(); // objectId -> { timestamp, promise }
+const MOVE_TIMEOUT = 500; // Reduced to 500ms timeout for moves
 
 /**
  * Calculate which cell a position belongs to
@@ -122,8 +173,11 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
   }
 };
 
+// Request deduplication for concurrent cell loading
+const cellLoadingPromises = new Map(); // cellKey -> Promise
+
 /**
- * Create multiple cells in batch for better performance
+ * Create multiple cells in batch for better performance with optimized existence checks
  * @param {string} userId - User ID (or space owner ID)
  * @param {string} spaceId - Space ID
  * @param {Array} cellCoordsList - Array of {x, y, z} cell coordinates
@@ -134,17 +188,66 @@ export const createCellsBatch = async (userId, spaceId, cellCoordsList) => {
     return [];
   }
 
-  const results = await Promise.all(
+  // First, check which cells already exist using cached existence checks
+  const existenceChecks = await Promise.all(
     cellCoordsList.map(async ({ x, y, z }) => {
-      return createCell(userId, spaceId, x, y, z);
+      const exists = await cellExists(userId, spaceId, x, y, z);
+      return { coords: { x, y, z }, exists };
     })
   );
 
-  return results;
+  // Filter out cells that already exist
+  const cellsToCreate = existenceChecks
+    .filter(({ exists }) => !exists)
+    .map(({ coords }) => coords);
+
+  if (cellsToCreate.length === 0) {
+    // All cells already exist
+    return cellCoordsList.map(() => true);
+  }
+
+  // Deduplicate concurrent requests
+  const results = await Promise.all(
+    cellsToCreate.map(async ({ x, y, z }) => {
+      const cellKey = `${userId}:${spaceId}:${getCellId(x, y, z)}`;
+
+      // Check if this cell is already being created
+      if (cellLoadingPromises.has(cellKey)) {
+        return await cellLoadingPromises.get(cellKey);
+      }
+
+      // Create new loading promise
+      const loadingPromise = createCell(userId, spaceId, x, y, z);
+      cellLoadingPromises.set(cellKey, loadingPromise);
+
+      try {
+        const result = await loadingPromise;
+        return result;
+      } finally {
+        // Clean up the promise when done
+        cellLoadingPromises.delete(cellKey);
+      }
+    })
+  );
+
+  // Reconstruct full results array matching original input order
+  const fullResults = [];
+  let createIndex = 0;
+
+  for (const { exists } of existenceChecks) {
+    if (exists) {
+      fullResults.push(true); // Cell already existed
+    } else {
+      fullResults.push(results[createIndex] || false);
+      createIndex++;
+    }
+  }
+
+  return fullResults;
 };
 
 /**
- * Check if a cell exists
+ * Check if cell exists in cache first, then database
  * @param {string} userId - User ID (or space owner ID)
  * @param {string} spaceId - Space ID
  * @param {number} cellX - Cell x coordinate
@@ -155,8 +258,16 @@ export const createCellsBatch = async (userId, spaceId, cellCoordsList) => {
 export const cellExists = async (userId, spaceId, cellX, cellY, cellZ) => {
   if (!userId || !spaceId) return false;
 
+  const cellId = getCellId(cellX, cellY, cellZ);
+  const cacheKey = `${userId}:${spaceId}:${cellId}`;
+
+  // Check cache first
+  const cached = cellExistenceCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    return cached.exists;
+  }
+
   try {
-    const cellId = getCellId(cellX, cellY, cellZ);
     const cellRef = doc(
       db,
       'users',
@@ -167,7 +278,15 @@ export const cellExists = async (userId, spaceId, cellX, cellY, cellZ) => {
       cellId
     );
     const cellDoc = await getDoc(cellRef);
-    return cellDoc.exists();
+    const exists = cellDoc.exists();
+
+    // Cache the result
+    cellExistenceCache.set(cacheKey, {
+      exists,
+      timestamp: Date.now(),
+    });
+
+    return exists;
   } catch {
     return false;
   }
@@ -220,8 +339,11 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
     !objectData ||
     !objectData.id ||
     !objectData.position
-  )
+  ) {
+    console.warn('addObjectToCell: Missing required parameters');
     return false;
+  }
+
   try {
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
@@ -243,6 +365,7 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
       cellData = cellDoc.data();
     } else {
       // Create cell if it doesn't exist
+      console.log(`📦 Creating new cell ${cellId} for object ${objectData.id}`);
       await createCell(
         userId,
         spaceId,
@@ -267,16 +390,33 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
       cellData.objects = {};
     }
 
-    // Add object data to cell with object ID as key
-    cellData.objects[objectData.id] = {
+    // Check if object already exists in this cell
+    const objectExists = cellData.objects[objectData.id];
+    if (objectExists) {
+      console.log(
+        `🔄 Updating existing object ${objectData.id} in cell ${cellId}`
+      );
+    } else {
+      console.log(`➕ Adding new object ${objectData.id} to cell ${cellId}`);
+    } // Add object data to cell with object ID as key
+    const objectToAdd = {
       ...objectData,
       lastUpdated: new Date(),
       cellId: cellId,
     };
-    await setDoc(cellRef, cellData, { merge: true });
+
+    // Use updateDoc for atomic operation to prevent race conditions
+    await updateDoc(cellRef, {
+      [`objects.${objectData.id}`]: objectToAdd,
+    });
+
+    console.log(
+      `✅ Successfully saved object ${objectData.id} to cell ${cellId}`
+    );
 
     return true;
-  } catch {
+  } catch (error) {
+    console.error(`❌ Error adding object ${objectData.id} to cell:`, error);
     return false;
   }
 };
@@ -295,7 +435,10 @@ export const removeObjectFromCell = async (
   objectId,
   position
 ) => {
-  if (!userId || !spaceId || !objectId || !position) return false;
+  if (!userId || !spaceId || !objectId || !position) {
+    console.warn('removeObjectFromCell: Missing required parameters');
+    return false;
+  }
 
   try {
     const cellCoords = getCellCoordinates(position);
@@ -311,26 +454,99 @@ export const removeObjectFromCell = async (
     );
 
     const cellDoc = await getDoc(cellRef);
-    if (!cellDoc.exists()) return true; // Cell doesn't exist, object not in any cell
+    if (!cellDoc.exists()) {
+      console.log(
+        `📍 Cell ${cellId} doesn't exist, object ${objectId} already removed`
+      );
+      return true; // Cell doesn't exist, object not in any cell
+    }
 
     const cellData = cellDoc.data();
+    let objectRemoved = false;
 
     // Handle both old array format and new object format
     if (Array.isArray(cellData.objects)) {
       const objectIndex = cellData.objects.indexOf(objectId);
       if (objectIndex > -1) {
         cellData.objects.splice(objectIndex, 1);
-        await setDoc(cellRef, cellData, { merge: true });
+        objectRemoved = true;
       }
     } else if (cellData.objects && typeof cellData.objects === 'object') {
       if (cellData.objects[objectId]) {
         delete cellData.objects[objectId];
-        await setDoc(cellRef, cellData, { merge: true });
+        objectRemoved = true;
       }
+    }
+    if (objectRemoved) {
+      console.log(
+        `🗑️ BEFORE SAVE: Attempting to remove object ${objectId} from cell ${cellId}`
+      );
+      console.log(
+        `🗑️ Cell data objects after removal:`,
+        Object.keys(cellData.objects || {})
+      );
+
+      // Use updateDoc with FieldValue.delete for atomic removal
+      await updateDoc(cellRef, {
+        [`objects.${objectId}`]: deleteField(),
+      });
+
+      console.log(
+        `🗑️ AFTER SAVE: Successfully removed object ${objectId} from cell ${cellId}`
+      );
+
+      // Add a small delay before verification to allow Firestore to propagate changes
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Verify the removal by reading the cell again
+      const verifyDoc = await getDoc(cellRef);
+      if (verifyDoc.exists()) {
+        const verifyData = verifyDoc.data();
+        if (verifyData.objects && verifyData.objects[objectId]) {
+          console.error(
+            `❌ VERIFICATION FAILED: Object ${objectId} still exists in cell ${cellId} after removal!`
+          );
+
+          // Retry removal once more
+          console.log(
+            `🔄 RETRY: Attempting removal again for object ${objectId} from cell ${cellId}`
+          );
+          await updateDoc(cellRef, {
+            [`objects.${objectId}`]: deleteField(),
+          });
+
+          // Final verification
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const finalVerifyDoc = await getDoc(cellRef);
+          if (finalVerifyDoc.exists()) {
+            const finalVerifyData = finalVerifyDoc.data();
+            if (finalVerifyData.objects && finalVerifyData.objects[objectId]) {
+              console.error(
+                `❌ FINAL VERIFICATION FAILED: Object ${objectId} still exists after retry!`
+              );
+            } else {
+              console.log(
+                `✅ RETRY SUCCESS: Object ${objectId} confirmed removed after retry`
+              );
+            }
+          }
+        } else {
+          console.log(
+            `✅ VERIFICATION SUCCESS: Object ${objectId} confirmed removed from cell ${cellId}`
+          );
+        }
+      }
+    } else {
+      console.log(`ℹ️ Object ${objectId} was not found in cell ${cellId}`);
+      console.log(
+        `ℹ️ Available objects in cell ${cellId}:`,
+        Object.keys(cellData.objects || {})
+      );
     }
 
     return true;
-  } catch {
+  } catch (error) {
+    console.error(`❌ Error removing object ${objectId} from cell:`, error);
     return false;
   }
 };
@@ -339,45 +555,215 @@ export const removeObjectFromCell = async (
  * Move object between cells
  * @param {string} userId - User ID (or space owner ID)
  * @param {string} spaceId - Space ID
- * @param {Object} objectData - Complete object data
+ * @param {string|Object} objectIdOrData - Object ID string or complete object data
  * @param {Array} oldPosition - Old position [x, y, z]
  * @param {Array} newPosition - New position [x, y, z]
+ * @param {Object} [objectData] - Complete object data (when first param is objectId)
  * @returns {Promise<boolean>} - Success status
  */
 export const moveObjectBetweenCells = async (
   userId,
   spaceId,
-  objectData,
+  objectIdOrData,
   oldPosition,
-  newPosition
+  newPosition,
+  objectData = null // This is the optional one if objectIdOrData is a string
 ) => {
-  if (!userId || !spaceId || !objectData || !oldPosition || !newPosition)
-    return false;
+  console.log(
+    `[MoveDebug] moveObjectBetweenCells ENTER. User: ${userId}, Space: ${spaceId}`,
+    `objectIdOrData:`,
+    objectIdOrData,
+    `oldPosition:`,
+    oldPosition,
+    `newPosition:`,
+    newPosition,
+    `objectData (param):`,
+    objectData
+  );
 
-  const oldCellCoords = getCellCoordinates(oldPosition);
-  const newCellCoords = getCellCoordinates(newPosition);
-  // If object didn't change cells, just update the object data in the current cell
-  if (
-    oldCellCoords.x === newCellCoords.x &&
-    oldCellCoords.y === newCellCoords.y &&
-    oldCellCoords.z === newCellCoords.z
-  ) {
-    // Update object in current cell with new position
-    const updatedObjectData = { ...objectData, position: newPosition };
-    await addObjectToCell(userId, spaceId, updatedObjectData);
-    return true;
-  }
-
-  try {
-    // Remove from old cell
-    await removeObjectFromCell(userId, spaceId, objectData.id, oldPosition); // Add to new cell with updated position
-    const updatedObjectData = { ...objectData, position: newPosition };
-    await addObjectToCell(userId, spaceId, updatedObjectData);
-
-    return true;
-  } catch {
+  if (!userId || !spaceId || !objectIdOrData || !oldPosition || !newPosition) {
+    console.warn(
+      '[MoveDebug] Missing required parameters for moveObjectBetweenCells. Aborting.'
+    );
     return false;
   }
+
+  let objectId;
+  let effectiveObjectData; // This will hold the most complete object data, intended for the new state/position
+
+  if (typeof objectIdOrData === 'string') {
+    objectId = objectIdOrData;
+    effectiveObjectData = objectData
+      ? { ...objectData, id: objectId, position: newPosition }
+      : { id: objectId, position: newPosition };
+    console.log(
+      `[MoveDebug] Signature: objectId string. Derived objectId: ${objectId}, effectiveObjectData prepared:`,
+      effectiveObjectData
+    );
+  } else {
+    effectiveObjectData = { ...objectIdOrData, position: newPosition };
+    objectId = effectiveObjectData.id;
+    console.log(
+      `[MoveDebug] Signature: objectData object. Derived objectId: ${objectId}, effectiveObjectData prepared:`,
+      effectiveObjectData
+    );
+  }
+
+  if (!objectId) {
+    console.error(
+      '[MoveDebug] No object ID could be determined. Aborting moveObjectBetweenCells.'
+    );
+    return false;
+  }
+  if (!effectiveObjectData.id) {
+    effectiveObjectData.id = objectId;
+  }
+
+  // Race condition protection: Check if object is already being moved
+  const now = Date.now();
+  const existing = movingObjects.get(objectId);
+
+  if (existing) {
+    const timeSinceLastMove = now - existing.timestamp;
+    if (timeSinceLastMove < MOVE_TIMEOUT) {
+      console.log(
+        `[MoveDebug] ⚠️ Object ${objectId} is already being moved (${timeSinceLastMove}ms ago). Waiting for existing operation...`
+      );
+      try {
+        await existing.promise;
+        console.log(
+          `[MoveDebug] ✅ Previous move operation for ${objectId} completed. Proceeding with new move.`
+        );
+      } catch (error) {
+        console.warn(
+          `[MoveDebug] ⚠️ Previous move operation for ${objectId} failed:`,
+          error
+        );
+      }
+    } else {
+      console.log(
+        `[MoveDebug] 🕐 Previous move for ${objectId} timed out (${timeSinceLastMove}ms). Proceeding with new move.`
+      );
+    }
+  }
+
+  // Create a promise for this move operation
+  const movePromise = (async () => {
+    try {
+      const oldCellCoords = getCellCoordinates(oldPosition);
+      const newCellCoords = getCellCoordinates(newPosition);
+      const oldCellId = getCellId(
+        oldCellCoords.x,
+        oldCellCoords.y,
+        oldCellCoords.z
+      );
+      const newCellId = getCellId(
+        newCellCoords.x,
+        newCellCoords.y,
+        newCellCoords.z
+      );
+
+      console.log(`[MoveDebug] Object ID for move: ${objectId}`);
+      console.log(
+        `[MoveDebug] Old position: ${JSON.stringify(
+          oldPosition
+        )} -> Old cell ID: ${oldCellId} (Coords: ${JSON.stringify(
+          oldCellCoords
+        )})`
+      );
+      console.log(
+        `[MoveDebug] New position: ${JSON.stringify(
+          newPosition
+        )} -> New cell ID: ${newCellId} (Coords: ${JSON.stringify(
+          newCellCoords
+        )})`
+      );
+
+      if (oldCellId === newCellId) {
+        console.log(
+          `[MoveDebug] Object ${objectId} remains in the same cell: ${oldCellId}. Attempting to update object data in this cell.`
+        );
+        console.log(
+          `[MoveDebug] Calling addObjectToCell (for same-cell update) for object ${objectId} with data:`,
+          effectiveObjectData
+        );
+        const updateResult = await addObjectToCell(
+          userId,
+          spaceId,
+          effectiveObjectData
+        );
+        console.log(
+          `[MoveDebug] addObjectToCell (for same-cell update) for object ${objectId} result: ${updateResult}`
+        );
+        return updateResult;
+      }
+
+      // If cells are different, proceed with move
+      console.log(
+        `[MoveDebug] Object ${objectId} is moving from cell ${oldCellId} to ${newCellId}.`
+      );
+
+      console.log(
+        `[MoveDebug] Step 1: Attempting to remove object ${objectId} from old cell ${oldCellId} (using oldPosition: ${JSON.stringify(
+          oldPosition
+        )})`
+      );
+      const removed = await removeObjectFromCell(
+        userId,
+        spaceId,
+        objectId,
+        oldPosition
+      );
+      console.log(
+        `[MoveDebug] removeObjectFromCell result for object ${objectId} from old cell ${oldCellId}: ${removed}`
+      );
+
+      console.log(
+        `[MoveDebug] Step 2: Attempting to add object ${objectId} to new cell ${newCellId} with data:`,
+        effectiveObjectData
+      );
+      const added = await addObjectToCell(userId, spaceId, effectiveObjectData);
+      console.log(
+        `[MoveDebug] addObjectToCell result for object ${objectId} to new cell ${newCellId}: ${added}`
+      );
+
+      if (added) {
+        console.log(
+          `[MoveDebug] ✅ Successfully moved object ${objectId} from ${oldCellId} to ${newCellId}.`
+        );
+        return true;
+      } else {
+        console.error(
+          `[MoveDebug] ❌ Failed to add object ${objectId} to new cell ${newCellId}. The object might be in an inconsistent state (potentially removed from old, but not added to new).`
+        );
+        return false;
+      }
+    } catch (error) {
+      console.error(
+        `[MoveDebug] ❌ CRITICAL ERROR during moveObjectBetweenCells for ${objectId}:`,
+        error
+      );
+      return false;
+    } finally {
+      // Clean up the moving objects cache
+      movingObjects.delete(objectId);
+      console.log(
+        `[MoveDebug] 🧹 Cleaned up move tracking for object ${objectId}`
+      );
+    }
+  })();
+
+  // Store the move operation in our cache
+  movingObjects.set(objectId, {
+    timestamp: now,
+    promise: movePromise,
+  });
+
+  console.log(
+    `[MoveDebug] 📝 Registered move operation for object ${objectId}`
+  );
+
+  return await movePromise;
 };
 
 /**
@@ -471,11 +857,17 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
     !objectData ||
     !objectData.id ||
     !objectData.position
-  )
+  ) {
+    console.warn(
+      '[updateObjectInCell] Missing required parameters. Aborting update for object:',
+      objectData?.id || 'unknown'
+    );
     return false;
+  }
   try {
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+
     const cellRef = doc(
       db,
       'users',
@@ -488,27 +880,46 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
 
     const cellDoc = await getDoc(cellRef);
     if (!cellDoc.exists()) {
-      // Cell doesn't exist, create it and add the object
+      console.log(
+        `[updateObjectInCell] Cell ${cellId} does not exist. Calling addObjectToCell for object ${objectData.id}.`
+      );
       return await addObjectToCell(userId, spaceId, objectData);
     }
 
+    console.log(
+      `[updateObjectInCell] Cell ${cellId} exists. Directly updating object ${objectData.id} in this cell's object map.`
+    );
     const cellData = cellDoc.data();
-
-    // Ensure objects is an object (for backward compatibility)
     if (Array.isArray(cellData.objects)) {
+      console.warn(
+        `[updateObjectInCell] Cell ${cellId} has legacy array for objects. Converting to map for object ${objectData.id}.`
+      );
+      cellData.objects = {}; // Convert or handle appropriately
+    }
+
+    // Ensure cellData.objects is an object map
+    if (typeof cellData.objects !== 'object' || cellData.objects === null) {
+      console.warn(
+        `[updateObjectInCell] cellData.objects for cell ${cellId} is not an object or is null. Initializing to empty object.`
+      );
       cellData.objects = {};
     }
 
-    // Update object data in cell
     cellData.objects[objectData.id] = {
       ...objectData,
       lastUpdated: new Date(),
       cellId: cellId,
     };
     await setDoc(cellRef, cellData, { merge: true });
-
+    console.log(
+      `[updateObjectInCell] ✅ Successfully updated object ${objectData.id} directly in cell ${cellId}.`
+    );
     return true;
-  } catch {
+  } catch (error) {
+    console.error(
+      `[updateObjectInCell] ❌ Error updating object ${objectData.id} in cell:`,
+      error
+    );
     return false;
   }
 };
@@ -566,8 +977,11 @@ export const deleteObjectFromCell = async (
   }
 };
 
+// Track callbacks for cell subscriptions
+const cellCallbacks = new Map(); // subscriptionKey -> Set(callbacks)
+
 /**
- * Subscribe to cell changes
+ * Subscribe to cell changes with global subscription deduplication
  * @param {string} userId - User ID (or space owner ID)
  * @param {string} spaceId - Space ID
  * @param {Array} cellCoords - Array of {x, y} cell coordinates to watch
@@ -579,41 +993,74 @@ export const subscribeToCells = (userId, spaceId, cellCoords, callback) => {
     return () => {};
   }
 
-  const unsubscribes = [];
+  const unsubscribeFunctions = [];
+
   cellCoords.forEach((coords) => {
     const cellId = getCellId(coords.x, coords.y, coords.z);
-    const cellRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId
-    );
+    const subscriptionKey = generateSubscriptionKey.cells(spaceId, cellId);
 
-    const unsubscribe = onSnapshot(
-      cellRef,
-      (doc) => {
-        if (doc.exists()) {
-          callback({
-            type: 'cell_updated',
-            cellId,
-            data: { id: cellId, ...doc.data() },
-          });
-        }
-      },
+    // Add callback to tracking
+    if (!cellCallbacks.has(subscriptionKey)) {
+      cellCallbacks.set(subscriptionKey, new Set());
+    }
+    cellCallbacks.get(subscriptionKey).add(callback);
+
+    // Use global subscription manager
+    const { unsubscribe } = getOrCreateSubscription(
+      subscriptionKey,
+      SUBSCRIPTION_TYPES.CELLS,
       () => {
-        // Error handler - silently handle errors
+        console.log(`🔥 Creating NEW cell subscription for: ${cellId}`);
+
+        const cellRef = doc(
+          db,
+          'users',
+          userId,
+          'spaces',
+          spaceId,
+          'cells',
+          cellId
+        );
+
+        return onSnapshot(
+          cellRef,
+          (doc) => {
+            if (doc.exists()) {
+              const cellData = {
+                type: 'cell_updated',
+                cellId,
+                data: { id: cellId, ...doc.data() },
+              };
+
+              // Notify all registered callbacks for this cell
+              const callbacks = cellCallbacks.get(subscriptionKey);
+              if (callbacks) {
+                callbacks.forEach((cb) => cb(cellData));
+              }
+            }
+          },
+          (error) => {
+            console.error(`Cell subscription error for ${cellId}:`, error);
+          }
+        );
       }
     );
 
-    unsubscribes.push(unsubscribe);
+    unsubscribeFunctions.push(() => {
+      const callbacks = cellCallbacks.get(subscriptionKey);
+      if (callbacks) {
+        callbacks.delete(callback);
+        if (callbacks.size === 0) {
+          cellCallbacks.delete(subscriptionKey);
+        }
+      }
+      unsubscribe();
+    });
   });
 
-  // Return a function to unsubscribe from all cells
+  // Return cleanup function
   return () => {
-    unsubscribes.forEach((unsubscribe) => unsubscribe());
+    unsubscribeFunctions.forEach((cleanup) => cleanup());
   };
 };
 

@@ -7,11 +7,17 @@ import {
   serverTimestamp,
   query,
   where,
-  getDocs,
   arrayUnion,
   onSnapshot,
   setDoc,
 } from 'firebase/firestore';
+
+// Import global subscription manager
+import {
+  getOrCreateSubscription,
+  generateSubscriptionKey,
+  SUBSCRIPTION_TYPES,
+} from './globalSubscriptionManager';
 
 const activeStreams = new Map();
 
@@ -455,28 +461,33 @@ export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
       `Viewer ${viewerId} attempting to join broadcast: ${broadcastId} in space: ${spaceId}`
     );
 
-    const objectsRef = collection(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      spaceId,
-      'objects'
-    );
-    let snapshot = await getDocs(
-      query(
-        objectsRef,
-        where('broadcastId', '==', broadcastId),
-        where('broadcasting', '==', true)
-      )
-    );
-    if (snapshot.empty) {
+    // Use spatial partitioning to find broadcast objects
+    const { getAllObjectsInSpace } = await import('./spatialPartitioning');
+    const spaceOwner = window.currentSpaceOwner;
+
+    // Get all objects in the space across all cells
+    const allObjects = await getAllObjectsInSpace(spaceOwner, spaceId);
+
+    // Find the broadcasting object with the specified broadcastId
+    let planeId = null;
+    let planeData = null;
+
+    for (const [objectId, objectData] of Object.entries(allObjects)) {
+      if (
+        objectData.broadcastId === broadcastId &&
+        objectData.broadcasting === true
+      ) {
+        planeId = objectId;
+        planeData = objectData;
+        break;
+      }
+    }
+
+    if (!planeId || !planeData) {
       throw new Error(`Broadcast plane not found with ID: ${broadcastId}`);
     }
-    const planeDoc = snapshot.docs[0];
-    const planeData = planeDoc.data();
     console.log('Found broadcast plane to join:', {
-      planeId: planeDoc.id,
+      planeId: planeId,
       broadcasterId: planeData.broadcasterId,
     });
 
@@ -767,17 +778,16 @@ export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
 
 export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
   try {
-    const planeRef = doc(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      spaceId,
-      'objects',
-      planeId
-    );
-    const planeDoc = await getDoc(planeRef);
-    return planeDoc.exists() && !!planeDoc.data().broadcasting;
+    // Use spatial partitioning to find the plane object
+    const { getAllObjectsInSpace } = await import('./spatialPartitioning');
+    const spaceOwner = window.currentSpaceOwner;
+
+    // Get all objects in the space across all cells
+    const allObjects = await getAllObjectsInSpace(spaceOwner, spaceId);
+
+    // Check if the specific plane exists and is broadcasting
+    const planeData = allObjects[planeId];
+    return planeData && !!planeData.broadcasting;
   } catch {
     return false;
   }
@@ -859,75 +869,94 @@ export const subscribeToUsersInSpace = (spaceId, callback) => {
     return () => {};
   }
 
-  const presenceRef = collection(
-    db,
-    'users',
-    window.currentSpaceOwner,
-    'spaces',
+  const subscriptionKey = generateSubscriptionKey.webrtcSignaling(
     spaceId,
-    'presence'
+    window.currentSpaceOwner
   );
 
-  const currentUserId = window.currentUser?.uid;
+  // Use global subscription manager for WebRTC signaling
+  const { unsubscribe } = getOrCreateSubscription(
+    subscriptionKey,
+    SUBSCRIPTION_TYPES.WEBRTC_SIGNALING,
+    () => {
+      console.log(
+        `🔥 Creating NEW WebRTC signaling subscription for space: ${spaceId}`
+      );
 
-  const unsubscribePresence = onSnapshot(
-    presenceRef,
-    (snapshot) => {
-      const activeUsers = new Set();
-      snapshot.forEach((doc) => {
-        const userData = doc.data();
-        if (userData.online && doc.id !== currentUserId) {
-          activeUsers.add(doc.id);
-        }
-      });
-      callback(Array.from(activeUsers));
-    },
-    (error) => {
-      console.error('Error listening to presence collection:', error);
-    }
-  );
+      const presenceRef = collection(
+        db,
+        'users',
+        window.currentSpaceOwner,
+        'spaces',
+        spaceId,
+        'presence'
+      );
 
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-  const signalingRef = collection(
-    db,
-    'users',
-    window.currentSpaceOwner,
-    'spaces',
-    spaceId,
-    'signaling'
-  );
-  const q = query(signalingRef, where('viewerId', '==', currentUserId));
+      const currentUserId = window.currentUser?.uid;
 
-  const unsubscribeSignaling = onSnapshot(
-    q,
-    (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added' || change.type === 'modified') {
-          const data = change.doc.data();
-          if (data?.viewerId === currentUserId) {
-            let creationTime = data.created?.toDate
-              ? data.created.toDate()
-              : new Date(0);
-            if (creationTime >= fiveMinutesAgo) {
-              console.log(
-                `ℹ️ Signaling document change detected: ${change.doc.id}`,
-                data?.status
-              );
+      const unsubscribePresence = onSnapshot(
+        presenceRef,
+        (snapshot) => {
+          const activeUsers = new Set();
+          snapshot.forEach((doc) => {
+            const userData = doc.data();
+            if (userData.online && doc.id !== currentUserId) {
+              activeUsers.add(doc.id);
             }
-          }
+          });
+          callback(Array.from(activeUsers));
+        },
+        (error) => {
+          console.error('Error listening to presence collection:', error);
         }
-      });
-    },
-    (error) => {
-      console.error('Error listening to signaling collection:', error);
+      );
+
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+      const signalingRef = collection(
+        db,
+        'users',
+        window.currentSpaceOwner,
+        'spaces',
+        spaceId,
+        'signaling'
+      );
+      const q = query(signalingRef, where('viewerId', '==', currentUserId));
+
+      const unsubscribeSignaling = onSnapshot(
+        q,
+        (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'added' || change.type === 'modified') {
+              const data = change.doc.data();
+              if (data?.viewerId === currentUserId) {
+                let creationTime = data.created?.toDate
+                  ? data.created.toDate()
+                  : new Date(0);
+                if (creationTime >= fiveMinutesAgo) {
+                  console.log(
+                    `ℹ️ Signaling document change detected: ${change.doc.id}`,
+                    data?.status
+                  );
+                }
+              }
+            }
+          });
+        },
+        (error) => {
+          console.error('Error listening to signaling collection:', error);
+        }
+      );
+
+      // Combined unsubscribe function
+      return () => {
+        console.log(
+          `Unsubscribing from presence and signaling for space ${spaceId}`
+        );
+        unsubscribeSignaling();
+        unsubscribePresence();
+      };
     }
   );
 
-  return () => {
-    console.log(
-      `Unsubscribing from presence and signaling for space ${spaceId}`
-    );
-    unsubscribeSignaling();
-    unsubscribePresence();
-  };
+  return unsubscribe;
 };

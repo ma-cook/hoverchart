@@ -337,10 +337,34 @@ const Sphere = ({
     faceTextStyles,
     onUpdate,
   ]);
+  // Add debounced update to prevent excessive database calls
+  const debouncedUpdateTimeoutRef = useRef(null);
+  const isInitialRenderRef = useRef(true);
 
-  // Add effect to trigger updates
   useEffect(() => {
-    updateDatabase();
+    // Skip updates during initial render to prevent thousands of simultaneous calls
+    // when camera moves between cells and loads many objects at once
+    if (isInitialRenderRef.current) {
+      isInitialRenderRef.current = false;
+      return;
+    }
+
+    // Clear any pending update
+    if (debouncedUpdateTimeoutRef.current) {
+      clearTimeout(debouncedUpdateTimeoutRef.current);
+    }
+
+    // Debounce property updates to prevent excessive calls
+    debouncedUpdateTimeoutRef.current = setTimeout(() => {
+      updateDatabase();
+    }, 100); // 100ms debounce delay
+
+    // Cleanup timeout on unmount
+    return () => {
+      if (debouncedUpdateTimeoutRef.current) {
+        clearTimeout(debouncedUpdateTimeoutRef.current);
+      }
+    };
   }, [updateDatabase]);
 
   const handleTransformToggle = () => {

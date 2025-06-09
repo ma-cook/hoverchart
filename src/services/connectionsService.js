@@ -8,6 +8,13 @@ import {
   removeConnectionFromCells,
 } from './spatialPartitioning';
 
+// Import global subscription manager
+import {
+  getOrCreateSubscription,
+  generateSubscriptionKey,
+  SUBSCRIPTION_TYPES,
+} from './globalSubscriptionManager';
+
 // Enable offline persistence
 enableIndexedDbPersistence(db).catch((err) => {
   if (err.code === 'failed-precondition') {
@@ -94,26 +101,13 @@ const serializeConnection = (connection) => {
   };
 };
 
-// Track active subscriptions to prevent duplicates
-const activeSubscriptions = new Map();
-
-// Track changes that we've already processed to avoid duplicates
-const processedChanges = new Set();
-
-// Add connection cache tracking
+// Remove old subscription tracking - now handled by global manager
 const connectionCache = new Map();
 
 // Add this function at the top level
 const clearConnectionCache = (spaceId, connectionId) => {
   const cacheKey = `${spaceId}_${connectionId}`;
   connectionCache.delete(cacheKey);
-  processedChanges.delete(cacheKey);
-
-  // Also clear from lastReceivedData if it exists
-  const subscription = activeSubscriptions.get(`${spaceId}_${connectionId}`);
-  if (subscription?.lastReceivedData) {
-    subscription.lastReceivedData.delete(connectionId);
-  }
 };
 
 // Modified to use cell-based storage instead of space-level storage

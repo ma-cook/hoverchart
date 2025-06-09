@@ -197,7 +197,7 @@ export const handleObjectUpdate = ({ id, updates, user, currentSpaceId }) => {
     return;
   }
 
-  // Clean up internal flags before saving to database
+  // Clean up internal flags before processing
   const cleanedUpdates = { ...updates };
   delete cleanedUpdates._finalPosition;
   delete cleanedUpdates._moveComplete;
@@ -205,16 +205,37 @@ export const handleObjectUpdate = ({ id, updates, user, currentSpaceId }) => {
   delete cleanedUpdates._isDragging;
   delete cleanedUpdates._moveTimestamp;
 
-  // Update Firestore using spatial cell-based function
+  // Check if this is a position update (spatial partitioning required)
+  const hasPosition =
+    cleanedUpdates.position && Array.isArray(cleanedUpdates.position);
+
+  // FIXED: Always save changes to database, not just position updates
+  // UI settings like colors, styles, text, etc. should persist immediately
   const spaceOwnerId = window.currentSpaceOwner || user.uid;
   const objectData = { id, ...cleanedUpdates };
-  updateObjectInSpatialCell(spaceOwnerId, currentSpaceId, objectData)
-    .then(() => {
-      // --- Optional: Update local state optimistically if needed ---
-      // setObjects(prevObjects => ... );
-      // lastUpdateRef.current[id] = { ...lastUpdateRef.current[id], ...updates };
-    })
-    .catch(() => {
-      // Error updating Firestore - continue silently
-    });
+
+  if (hasPosition) {
+    // For position updates, use spatial cell system
+    updateObjectInSpatialCell(spaceOwnerId, currentSpaceId, objectData)
+      .then(() => {
+        // Position update successful
+      })
+      .catch((error) => {
+        console.warn(
+          '[handleObjectUpdate] Error updating object position in spatial cell:',
+          error
+        );
+      });
+  } else {
+    // For non-position updates (UI settings like color, style, text, etc.)
+    // use a more lightweight update that doesn't require spatial partitioning
+    saveObjectToCell(spaceOwnerId, currentSpaceId, objectData).catch(
+      (error) => {
+        console.warn(
+          '[handleObjectUpdate] Error saving object settings:',
+          error
+        );
+      }
+    );
+  }
 };
