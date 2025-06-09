@@ -742,7 +742,8 @@ const Plane = ({
       setIsViewingBroadcast(false);
       setBroadcastInfo(null);
       lastWebcamStateRef.current = false;
-    }    setShowUI(false);
+    }
+    setShowUI(false);
   }, [webcamActive, isBroadcasting, onUpdate, id]);
 
   const isBroadcastingRef = useRef(false);

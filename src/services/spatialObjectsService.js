@@ -45,14 +45,19 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
     const objectId = object.id.toString();
     const cacheKey = `${spaceId}_${objectId}`;
     const cachedData = objectsCache.get(cacheKey);
-    
+
     if (cachedData && cachedData.position) {
       // Use cached position for the update
       object = { ...object, position: cachedData.position };
     } else {
-      console.warn('[SaveDebug] saveObjectToCell: No position available for non-position update. Skipping save.', { 
-        userId, spaceId, objectId: object?.id 
-      });
+      console.warn(
+        '[SaveDebug] saveObjectToCell: No position available for non-position update. Skipping save.',
+        {
+          userId,
+          spaceId,
+          objectId: object?.id,
+        }
+      );
       return;
     }
   }

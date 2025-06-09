@@ -423,7 +423,8 @@ const WebcamStream = ({
         lastUpdateTime = currentTime;
       }
       frameId = requestAnimationFrame(updateTexture);
-    };    frameId = requestAnimationFrame(updateTexture);
+    };
+    frameId = requestAnimationFrame(updateTexture);
 
     return () => {
       if (frameId) {
@@ -438,7 +439,11 @@ const WebcamStream = ({
     return () => {
       console.log('Component unmounting - setting isMounted to false');
       isMounted.current = false;
-      if (isBroadcasting && broadcastControlRef.current && onBroadcastStoppedRef.current) {
+      if (
+        isBroadcasting &&
+        broadcastControlRef.current &&
+        onBroadcastStoppedRef.current
+      ) {
         onBroadcastStoppedRef.current();
       }
 
@@ -498,7 +503,8 @@ const WebcamStream = ({
           currentMesh.material.map.dispose();
           currentMesh.material.map = null;
         }
-        currentMesh.material.needsUpdate = true;      }
+        currentMesh.material.needsUpdate = true;
+      }
     };
   }, [isBroadcasting, meshRef]);
 
