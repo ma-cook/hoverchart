@@ -29,23 +29,27 @@ const Connection = ({
   setShowLineTextInput,
 }) => {
   // Always call hooks first, before any conditional returns
-  // Declare all useMemo hooks unconditionally
-
-  // First hook: Calculate basic connection data
+  // Declare all useMemo hooks unconditionally  // First hook: Calculate basic connection data with real-time object positions
   const connectionData = useMemo(() => {
     // Handle invalid connections gracefully inside the hook
     if (!connection) {
       return { isValid: false, midpoint: [0, 0, 0] };
     }
 
-    // Extract positions with proper priority:
-    // 1. facePosition (face-specific position)
-    // 2. worldPosition (world-space position)
-    // 3. position (object position)
+    // Find current object positions to ensure real-time updates
+    const startObject = objects?.find(
+      (obj) => obj.id.toString() === connection.start?.objectId?.toString()
+    );
+    const endObject = objects?.find(
+      (obj) => obj.id.toString() === connection.end?.objectId?.toString()
+    );
 
-    // For start position
+    // Calculate real-time positions based on current object locations
     let startPosition;
-    if (Array.isArray(connection.start?.facePosition)) {
+    if (startObject && startObject.position) {
+      // Use current object position if available
+      startPosition = startObject.position;
+    } else if (Array.isArray(connection.start?.facePosition)) {
       startPosition = connection.start.facePosition;
     } else if (Array.isArray(connection.start?.worldPosition)) {
       startPosition = connection.start.worldPosition;
@@ -57,7 +61,10 @@ const Connection = ({
 
     // For end position
     let endPosition;
-    if (Array.isArray(connection.end?.facePosition)) {
+    if (endObject && endObject.position) {
+      // Use current object position if available
+      endPosition = endObject.position;
+    } else if (Array.isArray(connection.end?.facePosition)) {
       endPosition = connection.end.facePosition;
     } else if (Array.isArray(connection.end?.worldPosition)) {
       endPosition = connection.end.worldPosition;
@@ -79,7 +86,7 @@ const Connection = ({
       startPosition,
       endPosition,
     };
-  }, [connection]);
+  }, [connection, objects]);
 
   // Second hook: Filter relevant objects
   const filteredObjects = useMemo(() => {

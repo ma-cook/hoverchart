@@ -3,6 +3,7 @@ import {
   saveObjectToCell,
   updateObjectInSpatialCell,
 } from '../services/spatialObjectsService';
+import { updateObjectConnections } from '../services/connectionManager';
 
 /**
  * Handle object movement with position updates
@@ -178,7 +179,15 @@ export const handleObjectMove = ({
       delete updatedObject._transformActive; // Adding a brief delay before saving to avoid race conditions
       setTimeout(() => {
         const spaceOwnerId = window.currentSpaceOwner || user.uid;
-        saveObjectToCell(spaceOwnerId, currentSpaceId, updatedObject);
+        saveObjectToCell(spaceOwnerId, currentSpaceId, updatedObject); // IMPORTANT: Update connection positions in database when object moves
+        // This ensures that connection line positions are persisted
+        updateObjectConnections(spaceOwnerId, currentSpaceId, objectId, [
+          newPosition.x,
+          newPosition.y,
+          newPosition.z,
+        ]).catch((error) => {
+          console.warn('Failed to update connection positions:', error);
+        });
 
         // Remove from dragging set when drag ends after save completes
         setTimeout(() => {

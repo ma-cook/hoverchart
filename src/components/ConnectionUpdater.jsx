@@ -46,15 +46,14 @@ const ConnectionUpdater = ({
     pendingUpdates.current.clear();
     lastUpdateTime.current = Date.now();
   };
-
   // Update positions on each frame
   useFrame(() => {
     frameCount.current++;
     if (frameCount.current % 2 !== 0) return; // Update every other frame
-    if (transformingObjects.current.size > 0) return; // Skip during transformations
 
     connections.forEach((conn) => {
-      if (conn._transformLocked) return;
+      // Skip connections that are explicitly locked but allow updates during object transforms
+      if (conn._transformLocked && !conn._allowTransformUpdates) return;
 
       const newStartPos = calculateFacePosition(conn.start);
       const newEndPos = calculateFacePosition(conn.end);
@@ -80,10 +79,14 @@ const ConnectionUpdater = ({
           ...(endChanged ? { end: newEndPos } : {}),
         });
 
-        // Apply updates if enough have accumulated or enough time has passed
+        // Apply updates more frequently during transformations for smoother visuals
+        const isTransforming = transformingObjects.current.size > 0;
+        const updateThreshold = isTransforming ? 1 : 2; // More frequent updates during transforms
+        const timeThreshold = isTransforming ? 16 : 50; // ~60fps during transforms, 20fps otherwise
+
         if (
-          pendingUpdates.current.size > 2 ||
-          Date.now() - lastUpdateTime.current > 50
+          pendingUpdates.current.size >= updateThreshold ||
+          Date.now() - lastUpdateTime.current > timeThreshold
         ) {
           applyUpdates();
         }

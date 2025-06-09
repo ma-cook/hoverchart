@@ -1,14 +1,19 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import isEqual from 'lodash/isEqual';
 import {
   subscribeToConnections,
   saveConnection,
 } from '../services/connectionsService';
+import { resolveConnectionPositions } from '../services/connectionPositionResolver';
 
 /**
  * Custom hook to manage connections
  */
-export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
+export function useConnections({
+  user,
+  currentSpaceId,
+  loadedCells = [],
+  objects = [],
+}) {
   // Connection state
   const [connections, setConnections] = useState([]);
   const [lineTexts, setLineTexts] = useState({});
@@ -16,19 +21,22 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
   const [showLineTextInput, setShowLineTextInput] = useState(null);
   const [lineTextStyles, setLineTextStyles] = useState({});
   const [showLineTextStyleUI, setShowLineTextStyleUI] = useState(null);
-  const [connectionsLoaded, setConnectionsLoaded] = useState(false); // Track loading state
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   // Connection management refs
-  const connectionUpdateTimeoutRef = useRef(null);
-  const lastKnownConnectionsRef = useRef([]); // Should be an array, not an object
+  const lastKnownConnectionsRef = useRef([]);
   const lastConnectionUpdateTimeRef = useRef(Date.now());
   const activeConnectionSubscriptionRef = useRef(null);
-  const initialLoadCompletedRef = useRef(false); // Track initial load
-  const connectionBatchRef = useRef([]); // Batch of connections to process
-
-  // Add new refs to track subscription state and prevent duplicates
+  const initialLoadCompletedRef = useRef(false);
+  const connectionBatchRef = useRef([]); // Add new refs to track subscription state and prevent duplicates
   const isSubscribingRef = useRef(false);
   const lastSubscriptionKeyRef = useRef(null);
   const subscriptionDebounceTimerRef = useRef(null);
+  const objectsRef = useRef(objects); // Add ref to track current objects
+
+  // Update objects ref whenever objects change
+  useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
 
   // Memoize the subscription key to make it stable
   const subscriptionKey = useMemo(() => {
@@ -39,7 +47,9 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
   // Check for public access parameters
   const publicSpaceId = window.publicAccessSpace;
   const effectiveSpaceId = publicSpaceId || currentSpaceId;
-  const canViewSpace = !!(user || publicSpaceId); // Memoize the cell coordinates conversion to prevent constant re-subscriptions
+  const canViewSpace = !!(user || publicSpaceId);
+
+  // Memoize the cell coordinates conversion to prevent constant re-subscriptions
   const cellCoords = useMemo(() => {
     if (!Array.isArray(loadedCells) || loadedCells.length === 0) {
       return [];
@@ -71,25 +81,33 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       .map((c) => `${c.x},${c.y},${c.z}`)
       .sort()
       .join('|');
-  }, [cellCoords]); // Subscribe to connection changes - improved to handle initial load better
+  }, [cellCoords]);
+
+  // Subscribe to connection changes - improved to handle initial load better
   useEffect(() => {
     // Create a stable subscription key that includes cell info
     const fullSubscriptionKey = subscriptionKey
       ? `${subscriptionKey}-${cellCoordsKey}`
-      : null; // Skip if no key or if already subscribing to the same data
+      : null;
+
+    // Skip if no key or if already subscribing to the same data
     if (
       !fullSubscriptionKey ||
       isSubscribingRef.current ||
       lastSubscriptionKeyRef.current === fullSubscriptionKey
     ) {
       return () => {};
-    } // Check if we have viewing permissions
+    }
+
+    // Check if we have viewing permissions
     if (!canViewSpace || (!user && !window.currentSpaceOwner)) {
       return () => {};
     }
 
     // Set flag to prevent parallel subscription attempts
-    isSubscribingRef.current = true; // If we have a subscription for this key, reuse it
+    isSubscribingRef.current = true;
+
+    // If we have a subscription for this key, reuse it
     if (
       activeConnectionSubscriptionRef.current?.key === fullSubscriptionKey &&
       typeof activeConnectionSubscriptionRef.current?.unsubscribe === 'function'
@@ -105,7 +123,9 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
     subscriptionDebounceTimerRef.current = setTimeout(() => {
       setConnectionsLoaded(false);
-      initialLoadCompletedRef.current = false; // Clean up any existing subscription
+      initialLoadCompletedRef.current = false;
+
+      // Clean up any existing subscription
       if (
         typeof activeConnectionSubscriptionRef.current?.unsubscribe ===
           'function' &&
@@ -124,7 +144,9 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
         spaceOwnerId,
         effectiveSpaceId,
         (change) => {
-          lastConnectionUpdateTimeRef.current = Date.now(); // For the initial load, batch changes to process them all at once
+          lastConnectionUpdateTimeRef.current = Date.now();
+
+          // For the initial load, batch changes to process them all at once
           if (!initialLoadCompletedRef.current) {
             connectionBatchRef.current.push(change);
 
@@ -132,18 +154,22 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
             if (initialBatchTimeout) {
               clearTimeout(initialBatchTimeout);
               initialBatchTimeout = null;
-            } // Set a timeout to process the initial batch
+            }
+
+            // Set a timeout to process the initial batch
             initialBatchTimeout = setTimeout(() => {
               setConnections((prevConnections) => {
                 const updatedConnections = [...prevConnections];
+                const newConnections = [];
+
                 connectionBatchRef.current.forEach((change) => {
                   const index = updatedConnections.findIndex(
                     (conn) => conn.id === change.id
                   );
 
                   if (change.type === 'added' && index === -1) {
-                    // New connection, add to state
-                    updatedConnections.push(change.connection);
+                    // New connection, add to collection for position resolution
+                    newConnections.push(change.connection);
                   } else if (change.type === 'modified' && index !== -1) {
                     // Existing connection updated, merge changes
                     updatedConnections[index] = {
@@ -154,14 +180,33 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
                     // Connection removed, filter out
                     updatedConnections.splice(index, 1);
                   }
-                });
+                }); // Resolve positions for new connections against current objects
+                if (
+                  newConnections.length > 0 &&
+                  objectsRef.current.length > 0
+                ) {
+                  console.log(
+                    `🔧 Resolving positions for ${newConnections.length} new connections during initial load`
+                  );
+                  const resolvedConnections = resolveConnectionPositions(
+                    newConnections,
+                    objectsRef.current
+                  );
+                  updatedConnections.push(...resolvedConnections);
+                } else {
+                  // No objects available yet, add connections as-is
+                  updatedConnections.push(...newConnections);
+                }
+
                 return updatedConnections;
               });
 
               setConnections((updatedConnections) => {
                 lastKnownConnectionsRef.current = updatedConnections;
                 return updatedConnections;
-              }); // Mark initial load as completed
+              });
+
+              // Mark initial load as completed
               initialLoadCompletedRef.current = true;
               setConnectionsLoaded(true);
             }, 50); // 50ms timeout for batch processing
@@ -173,8 +218,15 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
                 (conn) => conn.id === change.id
               );
               if (change.type === 'added' && index === -1) {
-                // New connection, add to state
-                updatedConnections.push(change.connection);
+                // New connection, resolve position and add to state
+                const resolvedConnections =
+                  objectsRef.current.length > 0
+                    ? resolveConnectionPositions(
+                        [change.connection],
+                        objectsRef.current
+                      )
+                    : [change.connection];
+                updatedConnections.push(resolvedConnections[0]);
               } else if (change.type === 'modified' && index !== -1) {
                 // Existing connection updated, merge changes
                 updatedConnections[index] = {
@@ -236,33 +288,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     cellCoords, // Still needed for the actual subscription call
     user,
   ]);
-
-  // Connection update handler - improved to batch updates and reduce re-renders
-  useEffect(() => {
-    // Skip if no connections or if already processing
-    if (!connections.length || connectionUpdateTimeoutRef.current) return;
-
-    connectionUpdateTimeoutRef.current = setTimeout(() => {
-      setConnections((prevConnections) => {
-        const updatedConnections = [...prevConnections];
-
-        // Apply any necessary updates to the connections
-        updatedConnections.forEach((conn, index) => {
-          const lastKnown = lastKnownConnectionsRef.current.find(
-            (c) => c.id === conn.id
-          );
-          if (lastKnown && !isEqual(conn, lastKnown)) {
-            updatedConnections[index] = { ...lastKnown };
-          }
-        });
-
-        return updatedConnections;
-      });
-
-      connectionUpdateTimeoutRef.current = null;
-    }, 100); // 100ms debounce for connection updates
-  }, [connections]);
-
   // Connection handler functions
   const handleConnectionClick = useCallback(
     (e, connectionId) => {
@@ -278,6 +303,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     e.stopPropagation();
     setShowLineTextInput(connectionId);
   }, []);
+
   const handleLineTextSubmit = useCallback(
     async (connectionId, text) => {
       // Update local state first for immediate feedback
@@ -321,6 +347,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     },
     [connections, user, currentSpaceId, setConnections]
   );
+
   const handleLineTextStyleChange = useCallback(
     async (connectionId, style) => {
       // Update local state first for immediate feedback
@@ -371,6 +398,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     },
     [connections, user, currentSpaceId, setConnections]
   );
+
   const handleLineColorChange = useCallback(
     async (connectionId, color) => {
       // Update local state first for immediate feedback
@@ -409,6 +437,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     },
     [connections, user, currentSpaceId]
   );
+
   const handleLineStyleChange = useCallback(
     async (connectionId, styleType) => {
       // Determine style properties

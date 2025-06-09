@@ -340,9 +340,7 @@ export function useObjects({
         transformLockTimeRef.current.set(objId, now);
 
         // Block any db updates for this object AND its connected objects/lines
-        draggingObjectsRef.current.add(objId);
-
-        // Update connections to mark them as locked
+        draggingObjectsRef.current.add(objId); // Update connections to mark them as locked but allow visual updates
         if (connections && connections.length > 0) {
           setConnections((prevConnections) => {
             const updated = prevConnections.map((conn) => {
@@ -353,6 +351,7 @@ export function useObjects({
                 return {
                   ...conn,
                   _transformLocked: true,
+                  _allowTransformUpdates: true, // Allow visual updates during transform
                   _lockTime: now,
                   _controlledBy: objId,
                 };
@@ -399,15 +398,14 @@ export function useObjects({
                 timestamp: now,
                 isFinal: true,
               });
-            }
-
-            // Unlock connections
+            } // Unlock connections and save final positions to database
             if (connections && connections.length > 0) {
               setConnections((prevConnections) => {
-                return prevConnections.map((conn) => {
+                const updatedConnections = prevConnections.map((conn) => {
                   if (conn._controlledBy === objId) {
                     const newConn = { ...conn };
                     delete newConn._transformLocked;
+                    delete newConn._allowTransformUpdates;
                     delete newConn._lockTime;
                     delete newConn._controlledBy;
 
@@ -420,8 +418,11 @@ export function useObjects({
                       );
                       if (startPos) {
                         newConn.start.position = startPos;
+                        newConn.start.facePosition = startPos;
+                        newConn.start.worldPosition = startPos;
                         // Mark this as a confirmed position after transform
                         newConn._positionConfirmed = now;
+                        newConn._needsDatabaseSave = true;
                       }
                     }
 
@@ -433,8 +434,11 @@ export function useObjects({
                       );
                       if (endPos) {
                         newConn.end.position = endPos;
+                        newConn.end.facePosition = endPos;
+                        newConn.end.worldPosition = endPos;
                         // Mark this as a confirmed position after transform
                         newConn._positionConfirmed = now;
+                        newConn._needsDatabaseSave = true;
                       }
                     }
 
@@ -442,6 +446,37 @@ export function useObjects({
                   }
                   return conn;
                 });
+
+                // Save connections that need database updates
+                updatedConnections.forEach(async (conn) => {
+                  if (conn._needsDatabaseSave && user && currentSpaceId) {
+                    try {
+                      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+                      const connectionToSave = { ...conn };
+                      delete connectionToSave._needsDatabaseSave;
+                      delete connectionToSave._positionConfirmed;
+
+                      const { saveConnection } = await import(
+                        '../services/connectionsService'
+                      );
+                      await saveConnection(
+                        spaceOwnerId,
+                        currentSpaceId,
+                        connectionToSave
+                      );
+                      console.log(
+                        `💾 Saved connection position for ${conn.id} after object ${objId} moved`
+                      );
+                    } catch (error) {
+                      console.error(
+                        `❌ Failed to save connection position:`,
+                        error
+                      );
+                    }
+                  }
+                });
+
+                return updatedConnections;
               });
             }
 
@@ -477,7 +512,7 @@ export function useObjects({
         }, 150);
       }
     },
-    [objects, setObjects, connections, setConnections]
+    [objects, setObjects, connections, setConnections, user, currentSpaceId]
   );
 
   // Helper function to calculate new connection position after object move

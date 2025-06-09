@@ -1,6 +1,7 @@
 import { saveConnection } from './connectionsService';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
+import { calculateFaceWorldPosition } from '../components/cubeHelpers';
 
 // Connection cache for performance
 const connectionCache = new Map();
@@ -475,6 +476,7 @@ export const createConnection = async (
 // Update connections when an object moves - improve logging and ID handling
 export const updateObjectConnections = async (
   userId,
+  spaceId,
   objectId,
   newPosition
 ) => {
@@ -521,20 +523,60 @@ export const updateObjectConnections = async (
 
     if (connection.start.objectId === objectId) {
       console.log(`Updating start position for connection ${connectionId}`);
+
+      // Update all position-related fields for proper face attachment
       connection.start.position = newPosition;
+
+      // Recalculate face-specific position based on the face and new object position
+      if (connection.start.face && connection.start.faceCenter) {
+        const faceWorldPosition = calculateFaceWorldPosition(
+          newPosition,
+          connection.start.cube?.scale || [1, 1, 1],
+          connection.start.face,
+          connection.start.faceCenter
+        );
+
+        connection.start.facePosition = faceWorldPosition;
+        connection.start.worldPosition = faceWorldPosition;
+      } else {
+        // Fallback to basic position if no face info
+        connection.start.worldPosition = newPosition;
+        connection.start.facePosition = newPosition;
+      }
+
       updated = true;
     }
 
     if (connection.end.objectId === objectId) {
       console.log(`Updating end position for connection ${connectionId}`);
+
+      // Update all position-related fields for proper face attachment
       connection.end.position = newPosition;
+
+      // Recalculate face-specific position based on the face and new object position
+      if (connection.end.face && connection.end.faceCenter) {
+        const faceWorldPosition = calculateFaceWorldPosition(
+          newPosition,
+          connection.end.cube?.scale || [1, 1, 1],
+          connection.end.face,
+          connection.end.faceCenter
+        );
+
+        connection.end.facePosition = faceWorldPosition;
+        connection.end.worldPosition = faceWorldPosition;
+      } else {
+        // Fallback to basic position if no face info
+        connection.end.worldPosition = newPosition;
+        connection.end.facePosition = newPosition;
+      }
+
       updated = true;
     }
 
     // Save the updated connection
     if (updated) {
       console.log(`Saving updated connection ${connectionId}`);
-      await saveConnection(userId, connection);
+      await saveConnection(userId, spaceId, connection);
     }
   }
 };

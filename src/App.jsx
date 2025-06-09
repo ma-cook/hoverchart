@@ -7,6 +7,7 @@ import './App.css';
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
 import ConnectionUpdater from './components/ConnectionUpdater';
+import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
 import ObjectRenderer from './components/ObjectRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
@@ -123,6 +124,7 @@ const App = () => {
     user,
     currentSpaceId,
     loadedCells,
+    objects, // Add objects to resolve connection positions
   });
   // Objects hook gets the connections from above
   const {
@@ -646,8 +648,7 @@ const App = () => {
         }}
         dpr={[1, 2]}
       >
-        <CustomCamera ref={cameraRef} />
-
+        <CustomCamera ref={cameraRef} />{' '}
         <group>
           {/* Connection updater component */}
           <ConnectionUpdater
@@ -657,6 +658,14 @@ const App = () => {
             transformingObjects={transformingObjectsRef} // Use transforming ref here too
             userId={user?.uid} // Add this prop
             spaceId={effectiveSpaceId} // Add this prop
+          />
+          {/* Real-time connection position updater */}
+          <RealTimeConnectionUpdater
+            connections={connections}
+            setConnections={setConnections}
+            objects={objects}
+            user={user}
+            currentSpaceId={effectiveSpaceId}
           />
           {/* Render all connections */}
           <ConnectionsRenderer
@@ -710,7 +719,6 @@ const App = () => {
           {/* Render cell boundaries */}
           <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
         </group>
-
         <EffectComposer>
           <SMAA />
         </EffectComposer>
