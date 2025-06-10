@@ -55,14 +55,22 @@ const Cube = ({
   onDelete,
   onTransformStart,
   onTransformEnd,
-  onMove,
   registerTransformingObject,
+  // Add these new props for spatial routing
+  handleObjectMove,
+  draggingObjectsRef,
+  setObjects,
+  setConnections,
+  user,
+  currentSpaceId,
+  checkPositionJitter,
 }) => {
   // Refs
   const groupRef = useRef();
   const meshRef = useRef();
   const transformRef = useRef();
   const lastPositionRef = useRef(position);
+  const dragStartPositionRef = useRef(null); // Track position at drag start
   const lastUpdateTimeRef = useRef(0);
 
   // State
@@ -74,6 +82,7 @@ const Cube = ({
   const [showFaceTextInput, setShowFaceTextInput] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [showObjectUI, setShowObjectUI] = useState(true);
+
   const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
   const [activeTextFace, setActiveTextFace] = useState(null);
   const [localColor, setLocalColor] = useState(color);
@@ -115,18 +124,16 @@ const Cube = ({
   useEffect(() => {
     setLocalFaceTexts(faceTexts);
   }, [faceTexts]);
-
   useEffect(() => {
     if (!isEqual(localFaceTextStyles, faceTextStyles)) {
       setLocalFaceTextStyles(faceTextStyles);
     }
-  }, [faceTextStyles]);
-
+  }, [faceTextStyles, localFaceTextStyles]);
   useEffect(() => {
     if (!isEqual(localTextStyle, textStyle)) {
       setLocalTextStyle(textStyle);
     }
-  }, [textStyle]);
+  }, [textStyle, localTextStyle]);
 
   // Update lastPositionRef when position changes
   useEffect(() => {
@@ -169,7 +176,7 @@ const Cube = ({
 
   // Calculate UI positions based on cube scale
   const getUIPositions = useMemo(() => {
-    const uiOffset = 0.1; // Small z-offset to avoid z-fighting
+    const uiOffset = 0.01; // Small z-offset to avoid z-fighting
 
     return {
       objectUI: [0, CUBE_SIZE + 20 / localScale[1], uiOffset],
@@ -650,49 +657,13 @@ const Cube = ({
       activeTextFace,
     ]
   );
-
-  const handleDrag = useCallback(
-    (e) => {
-      const newPos = e.target.object.position;
-      lastPositionRef.current = [newPos.x, newPos.y, newPos.z];
-
-      // Update object
-      if (onUpdate) {
-        onUpdate(id, {
-          type: 'cube',
-          position: [newPos.x, newPos.y, newPos.z],
-          scale: localScale,
-          color: localColor,
-          headerText: localHeaderText,
-          faceColors: localFaceColors,
-          faceTexts: localFaceTexts,
-          faceTextStyles: localFaceTextStyles,
-          textStyle: localTextStyle,
-        });
-      }
-
-      // Call onMove for immediate UI updates
-      if (onMove) {
-        onMove({
-          x: newPos.x,
-          y: newPos.y,
-          z: newPos.z,
-        });
-      }
-    },
-    [
-      id,
-      onUpdate,
-      onMove,
-      localScale,
-      localColor,
-      localHeaderText,
-      localFaceColors,
-      localFaceTexts,
-      localFaceTextStyles,
-      localTextStyle,
-    ]
-  );
+  const handleDrag = useCallback(() => {
+    console.log(
+      '🔄 TransformControls onChange fired - this should appear during drag'
+    );
+    // Note: Don't call handleObjectMove here as it interferes with drag start/end logic
+    // The onDragStart and onDragEnd events handle the proper movement tracking
+  }, []);
 
   const handleScale = useCallback(
     (e) => {
@@ -971,17 +942,21 @@ const Cube = ({
   return (
     <>
       {/* Main cube group */}
-      <group ref={groupRef} position={position} scale={localScale}>
+      <group
+        ref={groupRef}
+        position={position}
+        scale={localScale}
+        userData={{
+          isCube: true,
+          objectId: id.toString(),
+        }}
+      >
         {/* Invisible hit box */}
         <mesh
           ref={meshRef}
           onClick={(e) => {
             e.stopPropagation();
             handleSceneClick();
-          }}
-          userData={{
-            isCube: true,
-            objectId: id.toString(),
           }}
         >
           <boxGeometry args={[10, 10, 10]} />
@@ -1044,22 +1019,6 @@ const Cube = ({
           </group>
         )}
 
-        {/* Object UI */}
-        {selected && !showHeader && showObjectUI && (
-          <ObjectUI
-            position={getUIPositions.objectUI}
-            onTransformToggle={handleTransformToggle}
-            onHeaderToggle={handleHeaderToggle}
-            onResizeToggle={handleResizeToggle}
-            onLineColorChange={handleLineColorChange}
-            onDelete={() => onDelete?.(id)}
-            showTransform={showTransform}
-            showHeader={showHeader}
-            followTarget={null}
-            objectId={id}
-          />
-        )}
-
         {/* Header input */}
         {selected && showHeader && (
           <HeaderInput
@@ -1071,60 +1030,212 @@ const Cube = ({
         )}
       </group>
 
-      {/* Transform controls */}
+      {/* Object UI - moved outside the cube group to avoid scale transformation */}
+      {selected && !showHeader && showObjectUI && (
+        <ObjectUI
+          onTransformToggle={handleTransformToggle}
+          onHeaderToggle={handleHeaderToggle}
+          onResizeToggle={handleResizeToggle}
+          onLineColorChange={handleLineColorChange}
+          onDelete={() => onDelete?.(id)}
+          showTransform={showTransform}
+          showHeader={showHeader}
+          followTarget={groupRef}
+          objectId={id}
+        />
+      )}
+
+      {/* Transform controls - Use proper onMouseDown and onMouseUp events */}
       {selected && showTransform && groupRef.current && (
         <DreiTransformControls
           ref={transformRef}
           object={groupRef.current}
-          onObjectChange={handleDrag}
-          onDragStart={() => {
+          onChange={handleDrag}
+          onMouseDown={(e) => {
+            console.log(`🚀 MOUSE DOWN EVENT FIRED for Cube ${id}`, e);
+            console.log(
+              `🔧 Cube ${id} drag started - registerTransformingObject available:`,
+              !!registerTransformingObject
+            );
+
+            // Capture the current position at drag start for later use in drag end
+            const currentPos = groupRef.current?.position || position;
+            if (
+              currentPos &&
+              (currentPos.x !== undefined || Array.isArray(currentPos))
+            ) {
+              dragStartPositionRef.current = Array.isArray(currentPos)
+                ? [...currentPos]
+                : [currentPos.x, currentPos.y, currentPos.z];
+            } else {
+              dragStartPositionRef.current = Array.isArray(position)
+                ? [...position]
+                : [0, 0, 0];
+            }
+            console.log(
+              `📍 Captured drag start position for ${id}:`,
+              dragStartPositionRef.current
+            );
+
             if (window.orbitControls) {
               window.orbitControls.enabled = false;
             }
             registerTransformingObject?.(id, true, position);
             onTransformStart?.(id);
+
+            // Mark drag start in spatial system
+            if (handleObjectMove && dragStartPositionRef.current) {
+              try {
+                console.log(`🔧 Calling handleObjectMove for DRAG START...`);
+                handleObjectMove({
+                  id,
+                  newPosition: {
+                    x: dragStartPositionRef.current[0],
+                    y: dragStartPositionRef.current[1],
+                    z: dragStartPositionRef.current[2],
+                  },
+                  isDragStart: true,
+                  isDragEnd: false,
+                  draggingObjectsRef,
+                  objects: [],
+                  setObjects,
+                  setConnections,
+                  connections,
+                  user,
+                  currentSpaceId,
+                  checkPositionJitter,
+                });
+                console.log(`✅ handleObjectMove DRAG START call completed`);
+              } catch (error) {
+                console.error(
+                  `❌ Error calling handleObjectMove for drag start:`,
+                  error
+                );
+              }
+            } else {
+              console.warn(
+                `⚠️ Cannot call handleObjectMove for drag start - invalid position or function not available:`,
+                dragStartPositionRef.current
+              );
+            }
           }}
-          onDragEnd={() => {
+          onMouseUp={(e) => {
+            console.log(`🏁 MOUSE UP EVENT FIRED for Cube ${id}`, e);
+            console.log(
+              `🔧 Cube ${id} drag ended - calling spatial save system`
+            );
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
-            registerTransformingObject?.(id, false);
 
-            // Save the final position to database like TextObject does
-            if (groupRef.current && onUpdate) {
-              const newPos = groupRef.current.position;
-              onUpdate(id, {
-                type: 'cube',
-                position: [newPos.x, newPos.y, newPos.z],
-                _finalPosition: true, // This flag tells objectUpdateHandlers to save it
-                _moveComplete: true, // Additional flag used by database handler
-              });
+            // Get final position with proper fallback
+            const finalPos =
+              e?.target?.object?.position || groupRef.current?.position;
+            let finalPosition;
+
+            if (finalPos && typeof finalPos.x === 'number') {
+              finalPosition = [finalPos.x, finalPos.y, finalPos.z];
+            } else {
+              // Fallback to current position prop or lastPositionRef with guaranteed array
+              const fallbackPos = position || lastPositionRef.current;
+              if (Array.isArray(fallbackPos) && fallbackPos.length >= 3) {
+                finalPosition = fallbackPos;
+              } else {
+                finalPosition = [0, 0, 0]; // Safe default
+              }
             }
 
+            // Get the old position from drag start
+            const oldPosition = dragStartPositionRef.current;
+            console.log(
+              `📍 Using drag start position as oldPosition for ${id}:`,
+              oldPosition
+            );
+
+            console.log(
+              `🔧 About to call handleObjectMove with isDragEnd: true for object ${id}`,
+              {
+                finalPos,
+                finalPosition,
+                oldPosition,
+                position,
+                lastPosition: lastPositionRef.current,
+              }
+            );
+
+            // Route through spatial partitioning system for drag end
+            if (
+              handleObjectMove &&
+              Array.isArray(finalPosition) &&
+              finalPosition.length >= 3
+            ) {
+              try {
+                console.log(`🔧 Calling handleObjectMove function...`);
+                handleObjectMove({
+                  id,
+                  newPosition: {
+                    x: finalPosition[0],
+                    y: finalPosition[1],
+                    z: finalPosition[2],
+                  },
+                  oldPosition: oldPosition
+                    ? {
+                        x: oldPosition[0],
+                        y: oldPosition[1],
+                        z: oldPosition[2],
+                      }
+                    : undefined,
+                  isDragStart: false,
+                  isDragEnd: true,
+                  draggingObjectsRef,
+                  objects: [],
+                  setObjects,
+                  setConnections,
+                  connections,
+                  user,
+                  currentSpaceId,
+                  checkPositionJitter,
+                });
+                console.log(`✅ handleObjectMove call completed successfully`);
+              } catch (error) {
+                console.error(`❌ Error calling handleObjectMove:`, error);
+              }
+            } else {
+              console.warn(
+                `⚠️ Cannot call handleObjectMove - invalid finalPosition or function not available:`,
+                finalPosition
+              );
+            }
+
+            // Mark transform as complete
+            registerTransformingObject?.(id, false);
             onTransformEnd?.(id);
+
+            // Clear the drag start position after use
+            dragStartPositionRef.current = null;
           }}
           mode="translate"
           size={0.5}
         />
       )}
-
       {/* Scale transform controls */}
       {selected && isResizing && groupRef.current && (
         <DreiTransformControls
           object={groupRef.current}
-          onObjectChange={handleScale}
-          onDragStart={() => {
+          onChange={handleScale}
+          onMouseDown={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = false;
             }
             registerTransformingObject?.(id, true, position);
             onTransformStart?.(id);
           }}
-          onDragEnd={() => {
+          onMouseUp={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
-            // No call to onTransformEnd here - it's handled by the isScaleModified effect
+            registerTransformingObject?.(id, false);
+            // Scale updates are handled by the isScaleModified effect
           }}
           mode="scale"
           size={0.5}

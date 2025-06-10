@@ -1,5 +1,5 @@
-import { useRef, useEffect } from 'react';
-
+import { useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 
 /**
@@ -18,77 +18,57 @@ const AnimatedConnectionLine = ({
   onPointerOver,
   onPointerOut,
 }) => {
-  const materialRef = useRef();
   const lineRef = useRef();
+  const animatedOffsetRef = useRef(0);
 
-  // Optimization: Register with animation system only once material is ready
-  useEffect(() => {
-    // Skip registration for non-animated lines
-    const isAnimated =
-      (lineStyle === 'dashed' || lineStyle === 'dotted') &&
-      (dashDirection === 'left' || dashDirection === 'right');
+  // Determine if this line should be animated
+  const isAnimated =
+    (lineStyle === 'dashed' || lineStyle === 'dotted') &&
+    (dashDirection === 'left' || dashDirection === 'right');
+  // Use frame-based animation for smooth dash movement without re-renders
+  useFrame((state, delta) => {
+    if (!isAnimated || !lineRef.current) return;
 
-    if (!isAnimated) return;
+    // Find the line material in the drei Line component
+    const line = lineRef.current;
+    let material = null;
 
-    // Check if we have a material reference
-    const registerMaterial = () => {
-      if (!window._connectionAnimationSystem) return;
+    // drei Line component stores material in different ways depending on version
+    if (line.material) {
+      material = line.material;
+    } else if (line.children && line.children[0] && line.children[0].material) {
+      material = line.children[0].material;
+    }
 
-      // Try to find the line material
-      let material = null;
+    if (material && material.uniforms && material.uniforms.dashOffset) {
+      // Animate the dash offset based on direction
+      const speed = 2.0; // Animation speed
+      const direction = dashDirection === 'right' ? 1 : -1;
 
-      // First check if we have a direct material reference
-      if (materialRef.current) {
-        material = materialRef.current;
-      }
-      // Otherwise check the line's material
-      else if (lineRef.current && lineRef.current.material) {
-        material = lineRef.current.material;
-      }
+      animatedOffsetRef.current += delta * speed * direction;
 
-      if (material) {
-        window._connectionAnimationSystem.registerLineMaterial(
-          connectionId,
-          material
+      // Update the material's dash offset uniform directly
+      material.uniforms.dashOffset.value = animatedOffsetRef.current;
+      material.needsUpdate = true;
+
+      // Debug logging (only once per second to avoid spam)
+      if (
+        Math.floor(state.clock.elapsedTime) % 5 === 0 &&
+        animatedOffsetRef.current % 1 < 0.1
+      ) {
+        console.log(
+          `🎬 Animating connection ${connectionId}: offset=${animatedOffsetRef.current.toFixed(
+            2
+          )}, direction=${dashDirection}`
         );
-
-        // Add debug info
-        material._connectionId = connectionId;
-        material._dashDirection = dashDirection;
       }
-    };
-
-    // Wait a short time to ensure material is initialized
-    const timer = setTimeout(registerMaterial, 50);
-
-    return () => {
-      clearTimeout(timer);
-      if (window._connectionAnimationSystem) {
-        window._connectionAnimationSystem.unregisterLineMaterial(connectionId);
-      }
-    };
-  }, [connectionId, lineStyle, dashDirection]);
-
+    }
+  });
   // Parameters for the line visual style
   const isDashed = lineStyle === 'dashed' || lineStyle === 'dotted';
   const dashScale = lineStyle === 'dotted' ? 1 : 0.5;
   const dashSize = lineStyle === 'dotted' ? 0.5 : 4;
   const gapSize = lineStyle === 'dotted' ? 1 : 10;
-
-  // Material callback ref to capture the material when it's created
-  const handleMaterialRef = (material) => {
-    if (material) {
-      materialRef.current = material;
-
-      // Register this material with animation system immediately
-      if (window._connectionAnimationSystem && isDashed && dashDirection) {
-        window._connectionAnimationSystem.registerLineMaterial(
-          connectionId,
-          material
-        );
-      }
-    }
-  };
 
   return (
     <>
@@ -112,14 +92,6 @@ const AnimatedConnectionLine = ({
         polygonOffsetUnits={-1}
         toneMapped={false}
         resolution={2} // Reduced for better performance
-        materialParams={{
-          onUpdate: handleMaterialRef,
-          linewidth: isSelected ? 4 : lineWidth,
-          dashsize: dashSize,
-          dashscale: dashScale,
-          gapsize: gapSize,
-          dashoffset: dashOffset || 0,
-        }}
       />
 
       {/* Invisible hitbox for interaction */}

@@ -18,24 +18,15 @@ const ObjectUI = ({
   const lastPosition = useRef(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const { camera } = useThree(); // <-- Get camera from Three.js context
-
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
-      // Get the target's position and scale
-      const targetPos = followTarget.current.position;
-      const targetScale =
-        followTarget.current.scale || new THREE.Vector3(1, 1, 1);
+      // Get the target's world position
+      const worldPosition = new THREE.Vector3();
+      followTarget.current.getWorldPosition(worldPosition);
 
-      // Calculate offset based on cube dimensions - use actual cube scale
-      const cubeHeight = 10 * (targetScale.y || 1); // 10 is the base cube height
-      const topEdgeOffset = cubeHeight / 2; // Half height since cube is centered
-
-      // Calculate the position above the cube with increased offset
-      const newPos = new THREE.Vector3(
-        targetPos.x,
-        targetPos.y + topEdgeOffset + 16, // Increased vertical offset
-        targetPos.z
-      );
+      // Position the UI at the target's position
+      // The CSS transform will handle moving it above the object
+      const newPos = worldPosition.clone();
 
       // Only update if position has changed significantly
       if (
@@ -141,18 +132,18 @@ const ObjectUI = ({
         break;
     }
   };
-
   return (
     <group ref={groupRef}>
+      {' '}
       <Html
-        // Remove position prop from Html since we're controlling it via the group
-        style={{
-          background: 'black',
-          pointerEvents: 'auto',
-          zIndex: 999999,
-        }}
         center
         className="object-ui-container"
+        style={{
+          pointerEvents: 'auto',
+          transform: 'translate3d(-50%, -150%, 0)', // Move UI up by 150% like FaceUI
+          background: 'black',
+          zIndex: 999999,
+        }}
       >
         <div className="object-ui-content">
           {tools.map((tool) => (

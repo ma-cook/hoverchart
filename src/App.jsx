@@ -35,6 +35,7 @@ import { CELL_SIZE } from './services/spatialPartitioning'; // Import CELL_SIZE 
 import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
+import { initAnimationSystem } from './utils/animationUtils';
 
 /**
  * Main application component
@@ -83,7 +84,16 @@ const App = () => {
     currentSpaceId,
     cameraRef,
     onObjectsChange: handleSpatialObjectChange,
-  }); // Setup debug context for spatial partitioning
+  });
+
+  // Initialize animation system for connection line animations
+  useEffect(() => {
+    console.log('🎬 Initializing animation system...');
+    initAnimationSystem();
+    console.log('✅ Animation system initialized');
+  }, []);
+
+  // Setup debug context for spatial partitioning
   useEffect(() => {
     window._spatialManagerDebug = {
       loadedCells,
