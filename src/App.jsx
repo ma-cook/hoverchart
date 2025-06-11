@@ -70,10 +70,7 @@ const App = () => {
       });
     }
   }, []);
-
   const {
-    addObjectToSpatialSystem,
-    moveObjectInSpatialSystem,
     loadedCells,
     isInitialized: isSpatialInitialized,
     currentCellCoords,
@@ -144,7 +141,6 @@ const App = () => {
     handleObjectDelete,
     lastUpdateRef,
     draggingObjectsRef,
-
     registerTransformingObject, // Get the transform function
     transformingObjectsRef, // Get the transform ref
     getTransformStartPosition, // Add this new property
@@ -157,8 +153,6 @@ const App = () => {
     setConnections,
     objects,
     setObjects,
-    addObjectToSpatialSystem,
-    moveObjectInSpatialSystem,
   });
 
   // Indicators hook
@@ -243,23 +237,11 @@ const App = () => {
           switch (change.type) {
             case 'added':
               if (!prev.find((obj) => obj.id === change.id)) {
-                // Track object in its cell when added
-                console.log(`🔍 Object ${change.id} added with data:`, change);
                 if (change.cellCoords && trackObjectInCell) {
                   const cellId = `${change.cellCoords.x},${
                     change.cellCoords.y
                   },${change.cellCoords.z || 0}`;
-                  console.log(
-                    `📍 Adding object ${change.id} to cell ${cellId} (spatial initialized: ${isSpatialInitialized})`,
-                    change.cellCoords
-                  );
                   trackObjectInCell(change.id.toString(), cellId);
-                } else {
-                  console.log(
-                    `⚠️ Cannot track object ${
-                      change.id
-                    }: cellCoords=${!!change.cellCoords}, trackObjectInCell=${!!trackObjectInCell}, spatialInitialized=${isSpatialInitialized}`
-                  );
                 }
                 return [...prev, change.object];
               }
@@ -474,17 +456,13 @@ const App = () => {
           // Skip position updates during transform, keep other properties
           const updatesWithoutPosition = { ...updates };
           delete updatesWithoutPosition.position;
-
           if (Object.keys(updatesWithoutPosition).length > 0) {
             handleObjectUpdate({
               id,
               updates: updatesWithoutPosition,
-              transformingObjects: transformingObjectsRef,
               lastUpdateRef,
-              setObjects,
               user,
               currentSpaceId: effectiveSpaceId, // Use effectiveSpaceId
-              checkPositionJitter,
             });
           }
           return;
@@ -500,12 +478,9 @@ const App = () => {
             handleObjectUpdate({
               id,
               updates: updatesWithoutPosition,
-              transformingObjects: transformingObjectsRef,
               lastUpdateRef,
-              setObjects,
               user,
               currentSpaceId: effectiveSpaceId, // Use effectiveSpaceId
-              checkPositionJitter,
             });
           }
           return;
@@ -516,18 +491,14 @@ const App = () => {
       handleObjectUpdate({
         id,
         updates,
-        transformingObjects: transformingObjectsRef,
         lastUpdateRef,
-        setObjects,
         user,
         currentSpaceId: effectiveSpaceId, // Use effectiveSpaceId
-        checkPositionJitter,
       });
     },
     [
       user,
       effectiveSpaceId, // Use effectiveSpaceId
-      setObjects,
       lastUpdateRef,
       transformingObjectsRef,
       checkPositionJitter,
@@ -732,8 +703,7 @@ const App = () => {
         <EffectComposer>
           <SMAA />
         </EffectComposer>
-      </Canvas>
-
+      </Canvas>{' '}
       <UIOverlay
         onCreateObject={handleCreateObject}
         onToggleIndicators={handleToggleIndicators}
@@ -743,6 +713,7 @@ const App = () => {
         isLoading={!isAuthReady}
         showLoginButton={!isCheckingUrlAuth && !user}
         isConnectMode={isConnectMode}
+        currentCell={currentCellCoords}
       />
     </>
   );

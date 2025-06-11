@@ -210,7 +210,6 @@ const TextObject = ({
     setShowResizeControls(false);
     setIsEditing(false);
   }, []);
-
   // Handle selection/deselection
   useEffect(() => {
     if (!selected) {
@@ -218,27 +217,57 @@ const TextObject = ({
       setIndicatorSelected(false);
       onIndicatorDeselected?.();
 
-      // Save pending changes when deselected
+      // Save pending changes when deselected - but ensure it's a complete object
       if (pendingChangesRef.current && onUpdate) {
-        onUpdate(id, pendingChangesRef.current);
+        // FIXED: Create a complete object instead of partial update
+        const completeUpdate = {
+          type: 'text', // ALWAYS include type
+          id,
+          position,
+          scale,
+          text: textContentRef.current,
+          textStyle,
+          bulletPointMode,
+          ...pendingChangesRef.current, // Apply pending changes on top
+        };
+        onUpdate(id, completeUpdate);
         pendingChangesRef.current = null;
       }
     }
-  }, [selected, closeAllUIs, onIndicatorDeselected, id, onUpdate]);
-
-  // Optimized database update to reduce unnecessary saves
+  }, [
+    selected,
+    closeAllUIs,
+    onIndicatorDeselected,
+    id,
+    onUpdate,
+    position,
+    scale,
+    textStyle,
+    bulletPointMode,
+  ]); // Optimized database update to reduce unnecessary saves
   const updateDatabase = useCallback(() => {
     if (!onUpdate || !id) return;
 
+    // CRITICAL: Always ensure type is included in every update
     const currentState = {
-      type: 'text',
+      type: 'text', // ALWAYS include type field first
+      id, // Include ID for safety
       position,
       scale,
-      text,
+      text: textContentRef.current, // Use ref value for real-time text
       textStyle,
       bulletPointMode,
-      lastEditTime: isActivelyEditing ? Date.now() : undefined,
+      ...(isActivelyEditing && { lastEditTime: Date.now() }),
     };
+
+    console.log('🔍 TextObject updateDatabase called:', {
+      id,
+      type: currentState.type,
+      text: currentState.text,
+      textStyle: currentState.textStyle,
+      hasTypeInTextStyle: 'type' in (currentState.textStyle || {}),
+      fullState: currentState,
+    });
 
     // Only update if state has changed
     if (
@@ -266,7 +295,6 @@ const TextObject = ({
     onUpdate,
     position,
     scale,
-    text,
     textStyle,
     bulletPointMode,
     isActivelyEditing,
@@ -297,7 +325,6 @@ const TextObject = ({
       height: scrollHeight,
     };
   }, []);
-
   // Event handlers
   // Modified text change handler to preserve cursor position
   const handleTextChange = (e) => {
@@ -305,9 +332,16 @@ const TextObject = ({
     textContentRef.current = e.target.value;
     setIsActivelyEditing(true);
 
+    // FIXED: Store complete object in pending changes instead of partial
     pendingChangesRef.current = {
-      ...pendingChangesRef.current,
+      type: 'text', // ALWAYS include type
+      id,
+      position,
+      scale,
       text: e.target.value,
+      textStyle,
+      bulletPointMode,
+      lastEditTime: Date.now(),
     };
 
     if (textUpdateTimeoutRef.current) {
@@ -326,11 +360,8 @@ const TextObject = ({
     // Auto-resize without affecting cursor
     autoResizeTextArea();
 
-    // Update the text state less frequently to avoid cursor jumps
-    clearTimeout(textUpdateTimeoutRef.current);
-    textUpdateTimeoutRef.current = setTimeout(() => {
-      setText(textContentRef.current);
-    }, 300); // Debounce state updates
+    // Note: Removed setText timeout that was causing duplicate database calls
+    // The text state should only be updated on blur to avoid cursor jumps
   };
 
   const handleBlur = (e) => {
@@ -697,7 +728,6 @@ const TextObject = ({
       }, 0);
     }
   };
-
   const handleStyleChange = (newStyle) => {
     if ('bulletPointMode' in newStyle) {
       setBulletPointMode(newStyle.bulletPointMode);
@@ -705,7 +735,12 @@ const TextObject = ({
         setText('• ' + text);
       }
     }
-    setTextStyle((prev) => ({ ...prev, ...newStyle }));
+
+    // Filter out any 'type' field that shouldn't be in textStyle
+    // eslint-disable-next-line no-unused-vars
+    const { type, ...actualStyleChanges } = newStyle;
+
+    setTextStyle((prev) => ({ ...prev, ...actualStyleChanges }));
     updateDatabase();
   };
 

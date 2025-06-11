@@ -190,7 +190,6 @@ const ObjectRenderer = ({
       />
     );
   }
-
   if (obj.type === 'text') {
     return (
       <TextObject
@@ -208,7 +207,13 @@ const ObjectRenderer = ({
         indicatorMode={indicatorMode}
         onUpdate={handleObjectUpdate}
         initialText={obj.text || ''}
-        initialTextStyle={obj.textStyle || { fontSize: 32, color: 'black' }}
+        initialTextStyle={(() => {
+          const textStyle = obj.textStyle || { fontSize: 32, color: 'black' };
+          // Filter out 'type' field that shouldn't be in textStyle
+          // eslint-disable-next-line no-unused-vars
+          const { type, ...cleanTextStyle } = textStyle;
+          return cleanTextStyle;
+        })()}
         initialScale={obj.scale || [15, 10, 1]}
         onDelete={() => handleObjectDelete(obj.id)}
         registerTransformingObject={registerTransformingObject}

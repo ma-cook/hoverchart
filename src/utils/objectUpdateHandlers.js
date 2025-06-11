@@ -201,7 +201,13 @@ export const handleObjectMove = ({
 /**
  * Handle object updates including scale, position, and other properties
  */
-export const handleObjectUpdate = ({ id, updates, user, currentSpaceId }) => {
+export const handleObjectUpdate = ({
+  id,
+  updates,
+  user,
+  currentSpaceId,
+  lastUpdateRef,
+}) => {
   if (!id || !currentSpaceId || !user?.uid) {
     return;
   }
@@ -218,14 +224,41 @@ export const handleObjectUpdate = ({ id, updates, user, currentSpaceId }) => {
   const hasPosition =
     cleanedUpdates.position && Array.isArray(cleanedUpdates.position);
 
+  // CRITICAL FIX: Get the complete current object to merge updates properly
+  // This prevents partial objects from overwriting complete object data in the database
+  const currentObjectData = lastUpdateRef?.current?.[id] || {};
+  const completeObjectData = {
+    id,
+    ...currentObjectData, // Start with current complete state
+    ...cleanedUpdates, // Apply updates on top
+  };
+
+  // DEBUG: Log what's happening to text objects specifically
+  if (
+    updates.type === 'text' ||
+    currentObjectData.type === 'text' ||
+    cleanedUpdates.text !== undefined
+  ) {
+    console.log('🔍 TEXT OBJECT UPDATE DEBUG:', {
+      id,
+      updateType: hasPosition ? 'position' : 'non-position',
+      receivedUpdates: updates,
+      cleanedUpdates,
+      currentObjectData,
+      completeObjectData,
+      hasType: 'type' in completeObjectData,
+      typeValue: completeObjectData.type,
+      allKeys: Object.keys(completeObjectData),
+    });
+  }
+
   // FIXED: Always save changes to database, not just position updates
   // UI settings like colors, styles, text, etc. should persist immediately
   const spaceOwnerId = window.currentSpaceOwner || user.uid;
-  const objectData = { id, ...cleanedUpdates };
 
   if (hasPosition) {
     // For position updates, use spatial cell system
-    updateObjectInSpatialCell(spaceOwnerId, currentSpaceId, objectData)
+    updateObjectInSpatialCell(spaceOwnerId, currentSpaceId, completeObjectData)
       .then(() => {
         // Position update successful
       })
@@ -238,7 +271,7 @@ export const handleObjectUpdate = ({ id, updates, user, currentSpaceId }) => {
   } else {
     // For non-position updates (UI settings like color, style, text, etc.)
     // use a more lightweight update that doesn't require spatial partitioning
-    saveObjectToCell(spaceOwnerId, currentSpaceId, objectData).catch(
+    saveObjectToCell(spaceOwnerId, currentSpaceId, completeObjectData).catch(
       (error) => {
         console.warn(
           '[handleObjectUpdate] Error saving object settings:',

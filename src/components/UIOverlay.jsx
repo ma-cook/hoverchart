@@ -9,6 +9,7 @@ const UIOverlay = ({
   isLoading,
   showLoginButton,
   isConnectMode,
+  currentCell, // Add currentCell prop
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -34,12 +35,20 @@ const UIOverlay = ({
         >
           ☰
         </button>
-      </div>
-
+      </div>{' '}
       <div className={`sidebar-menu ${menuOpen ? 'open' : ''}`}>
-        <div className="menu-content">{/* Menu content will go here */}</div>
+        <div className="menu-content">
+          <div className="current-cell-info">
+            <span>Current cell: </span>
+            <span className="cell-coordinates">
+              {currentCell
+                ? `${currentCell.x},${currentCell.y},${currentCell.z}`
+                : '0,0,0'}
+            </span>
+          </div>
+          {/* Menu content will go here */}
+        </div>
       </div>
-
       <div className="ui-overlay" onClick={(e) => e.stopPropagation()}>
         {isLoading ? (
           <div>Loading...</div>

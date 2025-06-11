@@ -18,7 +18,6 @@ export function useObjects({
   setConnections,
   objects, // Now passed from parent
   setObjects, // Now passed from parent
-  addObjectToSpatialSystem, // Spatial partitioning function
 }) {
   const [selectedId, setSelectedId] = useState(null);
 
@@ -31,6 +30,22 @@ export function useObjects({
   const transformPositionsRef = useRef(new Map()); // Track positions during transforms
   const transformLockTimeRef = useRef(new Map()); // Track when transforms started
   const positionHistoryRef = useRef(new Map()); // Track recent positions to prevent oscillation
+  const isInitialLoadingRef = useRef(true); // Track if we're in initial loading phase
+  const hasLoadedInitialObjectsRef = useRef(false); // Track if we've seen the first objects
+
+  // Detect when initial loading is complete
+  useEffect(() => {
+    if (objects.length > 0 && !hasLoadedInitialObjectsRef.current) {
+      hasLoadedInitialObjectsRef.current = true;
+      // Give time for all initial objects to load before enabling saves
+      setTimeout(() => {
+        isInitialLoadingRef.current = false;
+        console.log(
+          '🔧 Initial object loading complete, enabling automatic saves'
+        );
+      }, 2000); // 2 second grace period for initial loading
+    }
+  }, [objects.length]);
 
   // Save objects periodically with transform prevention - skip for read-only
   useEffect(() => {
@@ -38,9 +53,22 @@ export function useObjects({
     const isReadOnly =
       window.publicAccessSpace === currentSpaceId &&
       window.currentSpaceOwner &&
-      window.currentSpaceOwner !== user?.uid;
-
-    if (!user || !objects?.length || !currentSpaceId || isReadOnly) return;
+      window.currentSpaceOwner !== user?.uid; // CRITICAL FIX: Skip saves during initial loading phase
+    if (
+      !user ||
+      !objects?.length ||
+      !currentSpaceId ||
+      isReadOnly ||
+      isInitialLoadingRef.current
+    ) {
+      if (isInitialLoadingRef.current && objects?.length > 0) {
+        console.log(
+          '🔧 Skipping automatic save during initial loading phase, objects:',
+          objects.length
+        );
+      }
+      return;
+    }
 
     const saveTimeout = setTimeout(() => {
       if (isEqual(lastSavedRef.current, objects)) return;
@@ -143,37 +171,35 @@ export function useObjects({
                 underline: false,
               },
             }
+          : type === 'text'
+          ? {
+              text: '',
+              textStyle: {
+                fontSize: 32,
+                color: 'black',
+              },
+              bulletPointMode: false,
+            }
           : {}),
-      };
-
-      // Add to tracking set to prevent duplicate addition
+      }; // Add to tracking set to prevent duplicate addition
       createdObjectIds.current.add(uniqueId.toString());
 
       // Update local state first for immediate feedback
       setObjects((prev) => [...prev, newObject]);
 
-      // Save to database
+      // For user-created objects, enable saves immediately (bypass loading phase)
+      if (isInitialLoadingRef.current) {
+        console.log(
+          '🔧 User created object during loading phase, enabling saves'
+        );
+        isInitialLoadingRef.current = false;
+      }
+
+      // Save to database (this handles spatial partitioning automatically)
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
       saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
-
-      // Add object to spatial partitioning system
-      if (addObjectToSpatialSystem) {
-        try {
-          const success = await addObjectToSpatialSystem(
-            uniqueId,
-            newObject.position
-          );
-          if (success) {
-            // Object added to spatial system successfully
-          } else {
-            console.warn(`Failed to add object ${uniqueId} to spatial system`);
-          }
-        } catch (error) {
-          console.error('Error adding object to spatial system:', error);
-        }
-      }
     },
-    [user, currentSpaceId, setObjects, addObjectToSpatialSystem]
+    [user, currentSpaceId, setObjects]
   );
 
   // Create a new object with a guaranteed unique ID
