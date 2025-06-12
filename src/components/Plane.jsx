@@ -669,7 +669,8 @@ const Plane = ({
     isIndicatorConnected,
     indicatorSelected,
     selected,
-  ]);  useEffect(() => {
+  ]);
+  useEffect(() => {
     if (!currentSpaceId || !id || !user || !window.currentSpaceOwner) return;
 
     if (webcamActive || isViewingBroadcast) {
@@ -677,7 +678,8 @@ const Plane = ({
         setIsViewingBroadcast(false);
         setBroadcastInfo(null);
       }
-      return;    }
+      return;
+    }
 
     // console.log(`[Plane ${id}] Setting up broadcast listener`);
 
@@ -702,7 +704,8 @@ const Plane = ({
             broadcastId: newBroadcastId,
             broadcasterId: newBroadcasterId,
             planeId: id,
-          };          if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
+          };
+          if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
             setBroadcastInfo(newBroadcastInfo);
             broadcastInfoRef.current = newBroadcastInfo;
             if (!isViewingBroadcast) {
@@ -723,17 +726,13 @@ const Plane = ({
           }
         }
       }
-    );    return () => {
+    );
+    return () => {
       console.log(`[Plane ${id}] Cleaning up broadcast listener`);
       unsubscribe();
-    };  }, [
-    currentSpaceId,
-    id,
-    user,
-    webcamActive,
-    isViewingBroadcast,
-  ]); // Removed broadcastInfo to prevent reactive loop
-  
+    };
+  }, [currentSpaceId, id, user, webcamActive, isViewingBroadcast]); // Removed broadcastInfo to prevent reactive loop
+
   const handleBroadcastStopped = useCallback(async () => {
     if (!isMountedRef.current) return;
     if (isBroadcasting) {
@@ -781,7 +780,8 @@ const Plane = ({
           type: 'plane',
           webcamActive: true,
         });
-      }    } else {
+      }
+    } else {
       if (isBroadcasting) {
         setViewerCount(0);
         onUpdate?.(id, {
@@ -933,7 +933,8 @@ const Plane = ({
     [user, currentSpaceId, onUpdate, id]
   );
 
-  const isBroadcastingRef = useRef(false);  const handleBroadcastStarted = useCallback(
+  const isBroadcastingRef = useRef(false);
+  const handleBroadcastStarted = useCallback(
     async (info) => {
       if (!info || !info.broadcastId || !isMountedRef.current) return;
       if (!isBroadcastingRef.current) setIsBroadcasting(true);
@@ -958,7 +959,8 @@ const Plane = ({
   // Update the ref whenever isBroadcasting changes
   useEffect(() => {
     isBroadcastingRef.current = isBroadcasting;
-  }, [isBroadcasting]);  useEffect(() => {
+  }, [isBroadcasting]);
+  useEffect(() => {
     return () => {
       // Use ref to get current broadcasting state without dependencies
       if (isBroadcastingRef.current) {

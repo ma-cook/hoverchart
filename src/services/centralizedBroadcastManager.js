@@ -15,9 +15,9 @@ class CentralizedBroadcastManager {
    * @param {string} planeId - The plane ID to monitor
    * @param {Function} callback - Callback function for broadcast changes
    * @returns {Function} Unsubscribe function
-   */  subscribePlaneToBroadcasts(spaceOwnerId, spaceId, planeId, callback) {
+   */ subscribePlaneToBroadcasts(spaceOwnerId, spaceId, planeId, callback) {
     // console.log(`[CentralBroadcast] Subscribing plane ${planeId} to broadcasts in space ${spaceId}`);
-    
+
     // Store the plane's callback
     this.planeSubscribers.set(planeId, callback);
 
@@ -32,7 +32,9 @@ class CentralizedBroadcastManager {
 
     // Return unsubscribe function
     return () => {
-      console.log(`[CentralBroadcast] Unsubscribing plane ${planeId} from broadcasts`);
+      console.log(
+        `[CentralBroadcast] Unsubscribing plane ${planeId} from broadcasts`
+      );
       this.unsubscribePlane(spaceId, planeId);
     };
   }
@@ -41,29 +43,33 @@ class CentralizedBroadcastManager {
    * Create a simplified space-level listener using existing collections
    * @param {string} spaceOwnerId - The space owner's user ID
    * @param {string} spaceId - The space ID
-   */  createSpaceListener(spaceOwnerId, spaceId) {
+   */ createSpaceListener(spaceOwnerId, spaceId) {
     // console.log(`[CentralBroadcast] Creating simplified space listener for space ${spaceId}`);
 
     try {
       // For now, fall back to the old approach until we can properly implement
       // the cross-cell listening. This ensures we don't break existing functionality.
       // console.log(`[CentralBroadcast] Using fallback approach for space ${spaceId}`);
-      
+
       // Create a dummy listener that doesn't actually listen to anything
       // The individual planes will handle their own broadcast listening for now
       const dummyUnsubscribe = () => {
-        console.log(`[CentralBroadcast] Dummy unsubscribe for space ${spaceId}`);
+        console.log(
+          `[CentralBroadcast] Dummy unsubscribe for space ${spaceId}`
+        );
       };
 
       // Store the listener
       this.spaceListeners.set(spaceId, {
         unsubscribe: dummyUnsubscribe,
         subscribers: new Set(),
-        cellListeners: new Map()
+        cellListeners: new Map(),
       });
-
     } catch (error) {
-      console.error(`[CentralBroadcast] Failed to create space listener for ${spaceId}:`, error);
+      console.error(
+        `[CentralBroadcast] Failed to create space listener for ${spaceId}:`,
+        error
+      );
     }
   }
 
@@ -83,15 +89,17 @@ class CentralizedBroadcastManager {
 
       // If no more subscribers for this space, clean up the space listener
       if (spaceListener.subscribers.size === 0) {
-        console.log(`[CentralBroadcast] No more subscribers for space ${spaceId}, cleaning up listener`);
-        
+        console.log(
+          `[CentralBroadcast] No more subscribers for space ${spaceId}, cleaning up listener`
+        );
+
         // Clean up any cell listeners
         if (spaceListener.cellListeners) {
           spaceListener.cellListeners.forEach((unsubscribe) => {
             unsubscribe();
           });
         }
-        
+
         spaceListener.unsubscribe();
         this.spaceListeners.delete(spaceId);
       }
@@ -108,17 +116,17 @@ class CentralizedBroadcastManager {
       spaceSubscriberCounts: Object.fromEntries(
         Array.from(this.spaceListeners.entries()).map(([spaceId, listener]) => [
           spaceId,
-          listener.subscribers.size
+          listener.subscribers.size,
         ])
-      )
+      ),
     };
   }
 
   /**
    * Clean up all listeners (for app shutdown)
-   */  cleanup() {
+   */ cleanup() {
     console.log('[CentralBroadcast] Cleaning up all listeners');
-    
+
     this.spaceListeners.forEach((listener) => {
       // Clean up cell listeners first
       if (listener.cellListeners) {
@@ -128,7 +136,7 @@ class CentralizedBroadcastManager {
       }
       listener.unsubscribe();
     });
-    
+
     this.spaceListeners.clear();
     this.planeSubscribers.clear();
   }
