@@ -201,13 +201,23 @@ export function useObjects({
     },
     [user, currentSpaceId, setObjects]
   );
-
   // Create a new object with a guaranteed unique ID
   const handleCreateObject = useCallback(
-    (type) => {
+    (type, position = null) => {
       if (!user || !currentSpaceId) return;
 
       try {
+        // If a position is provided (e.g., from template creation), use it directly
+        if (position && Array.isArray(position) && position.length >= 3) {
+          const newPosition = new THREE.Vector3(
+            position[0],
+            position[1],
+            position[2]
+          );
+          createObjectWithPosition(type, newPosition);
+          return;
+        }
+
         // Try multiple approaches to access the camera
         let camera = null;
 
@@ -249,7 +259,6 @@ export function useObjects({
         createObjectWithPosition(type, newPosition);
       } catch (err) {
         console.error('Error creating object:', err);
-
         // Fallback - create object at origin if all else fails
         const newPosition = new THREE.Vector3(0, 0, 0);
         createObjectWithPosition(type, newPosition);

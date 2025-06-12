@@ -13,8 +13,11 @@ import TextStyleUI from './TextStyleUI';
 import HeaderInput from './HeaderInput';
 import FaceIndicator from './FaceIndicator';
 import WebcamStream from './WebcamStream';
+import ScreenShareStream from './ScreenShareStream';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
+import { uploadImageToStorage } from '../services/storageService';
+import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
 
 const Plane = ({
   position = [0, 0, 0],
@@ -48,6 +51,7 @@ const Plane = ({
     color: 'black',
     underline: false,
   },
+  imageUrl: initialImageUrl = null,
   onTransformStart,
   onTransformEnd,
   webcamActive: initialWebcamActive = false,
@@ -59,9 +63,10 @@ const Plane = ({
   const contentRef = useRef();
   const { camera } = useThree();
   const size = 5;
-
   const [webcamActive, setWebcamActive] = useState(initialWebcamActive);
   const [webcamInitialized, setWebcamInitialized] = useState(false);
+  const [screenShareActive, setScreenShareActive] = useState(false);
+  const [screenShareInitialized, setScreenShareInitialized] = useState(false);
   const [showUI, setShowUI] = useState(false);
   const [showTextInput, setShowTextInput] = useState(false);
   const [showTextStyleUI, setShowTextStyleUI] = useState(false);
@@ -87,14 +92,17 @@ const Plane = ({
     useState(initialFaceTextStyle);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isViewingBroadcast, setIsViewingBroadcast] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [broadcastInfo, setBroadcastInfo] = useState(null);
   const [viewerCount, setViewerCount] = useState(0);
+  const [imageTexture, setImageTexture] = useState(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Add logging for critical state changes
-
   const lastWebcamStateRef = useRef(initialWebcamActive);
   const lastWorldPosRef = useRef(null);
   const lastBroadcastSeenRef = useRef(Date.now());
+  const broadcastInfoRef = useRef(null); // Track current broadcast info to avoid reactive loops
   const scaleTimeoutRef = useRef(null);
   const pendingScaleRef = useRef(null);
   const isTransformingRef = useRef(false);
@@ -111,13 +119,60 @@ const Plane = ({
     setShowHeader(false);
     setShowHeaderStyleUI(false);
   }, []);
-
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
   }, []);
+  // Effect to load existing image texture
+  useEffect(() => {
+    if (initialImageUrl && !imageTexture) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous'; // Enable CORS
+
+      img.onload = () => {
+        try {
+          const texture = new THREE.Texture(img);
+          texture.needsUpdate = true;
+          texture.minFilter = THREE.LinearFilter;
+          texture.magFilter = THREE.LinearFilter;
+          texture.format = THREE.RGBAFormat;
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.flipY = false;
+
+          if (meshRef.current && isMountedRef.current) {
+            // Dispose of the previous material if it exists
+            if (meshRef.current.material && meshRef.current.material.map) {
+              meshRef.current.material.map.dispose();
+            }
+            if (meshRef.current.material) {
+              meshRef.current.material.dispose();
+            }
+
+            const material = new THREE.MeshBasicMaterial({
+              map: texture,
+              transparent: true,
+              opacity: 1,
+              side: THREE.DoubleSide,
+            });
+
+            meshRef.current.material = material;
+            setImageTexture(texture);
+            console.log('Existing image texture loaded successfully');
+          }
+        } catch (error) {
+          console.error('Error creating texture from existing image:', error);
+        }
+      };
+
+      img.onerror = (error) => {
+        console.error('Error loading existing image texture:', error);
+      };
+
+      img.src = initialImageUrl;
+    }
+  }, [initialImageUrl, imageTexture]);
 
   useEffect(() => {
     setCurrentScale(initialScale);
@@ -238,7 +293,9 @@ const Plane = ({
         faceText: currentFaceText,
         faceTextStyle: currentFaceTextStyle,
         webcamActive,
+        screenShareActive,
         broadcasting: webcamActive && isBroadcasting,
+        screenSharing: screenShareActive && isScreenSharing,
       };
       directUpdate(updates);
     }, 100); // 100ms debounce delay
@@ -260,7 +317,9 @@ const Plane = ({
     currentFaceText,
     currentFaceTextStyle,
     webcamActive,
+    screenShareActive,
     isBroadcasting,
+    isScreenSharing,
     directUpdate,
   ]);
 
@@ -384,7 +443,9 @@ const Plane = ({
         faceText: currentFaceText,
         faceTextStyle: currentFaceTextStyle,
         webcamActive,
+        screenShareActive,
         broadcasting: webcamActive && isBroadcasting,
+        screenSharing: screenShareActive && isScreenSharing,
         _finalPosition: true,
         _indicatorWorldPosition: worldPosArray,
       });
@@ -404,7 +465,9 @@ const Plane = ({
     currentFaceText,
     currentFaceTextStyle,
     webcamActive,
+    screenShareActive,
     isBroadcasting,
+    isScreenSharing,
     onTransformEnd,
     directUpdate,
   ]);
@@ -459,10 +522,41 @@ const Plane = ({
     });
     setShowUI(false);
   }, []);
+  const handleColorChange = useCallback(
+    (newColor) => {
+      setCurrentColor(newColor);
 
-  const handleColorChange = useCallback((newColor) => {
-    setCurrentColor(newColor);
-  }, []);
+      // Clear image texture when color is applied
+      if (imageTexture) {
+        imageTexture.dispose();
+        setImageTexture(null);
+
+        // Reset mesh material to color-based material
+        if (meshRef.current) {
+          if (meshRef.current.material) {
+            meshRef.current.material.dispose();
+          }
+
+          const material = new THREE.MeshBasicMaterial({
+            color: newColor,
+            transparent: true,
+            opacity: 1,
+            side: THREE.DoubleSide,
+          });
+
+          meshRef.current.material = material;
+        }
+
+        // Update database to clear image URL
+        onUpdate?.(id, {
+          type: 'plane',
+          color: newColor,
+          imageUrl: null,
+        });
+      }
+    },
+    [imageTexture, onUpdate, id]
+  );
 
   const handleHeaderToggle = useCallback(() => {
     closeAllUIs();
@@ -575,8 +669,7 @@ const Plane = ({
     isIndicatorConnected,
     indicatorSelected,
     selected,
-  ]);
-  useEffect(() => {
+  ]);  useEffect(() => {
     if (!currentSpaceId || !id || !user || !window.currentSpaceOwner) return;
 
     if (webcamActive || isViewingBroadcast) {
@@ -584,106 +677,69 @@ const Plane = ({
         setIsViewingBroadcast(false);
         setBroadcastInfo(null);
       }
-      return;
-    }
+      return;    }
 
-    // Use optimized broadcast subscription service
-    const setupBroadcastListener = async () => {
-      try {
-        // Import spatial partitioning helper and broadcast manager
-        const { findObjectInCells } = await import(
-          '../services/spatialPartitioning'
-        );
-        const { subscribeToBroadcastChanges } = await import(
-          '../services/broadcastManager'
-        );
+    // console.log(`[Plane ${id}] Setting up broadcast listener`);
 
-        // Find the plane object in the spatial partitioning system
-        const planeResult = await findObjectInCells(
-          window.currentSpaceOwner,
-          currentSpaceId,
-          id
-        );
+    // Use centralized broadcast manager with fallback to individual listening
+    const unsubscribe = subscribePlaneToBroadcasts(
+      window.currentSpaceOwner,
+      currentSpaceId,
+      id,
+      (objectData) => {
+        if (!isMountedRef.current || webcamActive) return;
 
-        if (!planeResult) {
-          console.warn(
-            `Plane ${id} not found in any cell for broadcast listening`
-          );
-          return () => {};
-        }
+        const isRemoteBroadcastingNow =
+          objectData?.broadcasting === true &&
+          objectData?.broadcasterId !== user.uid;
+        const newBroadcastId = objectData?.broadcastId || null;
+        const newBroadcasterId = objectData?.broadcasterId || null;
 
-        // Use the optimized broadcast subscription service
-        const unsubscribe = subscribeToBroadcastChanges(
-          window.currentSpaceOwner,
-          currentSpaceId,
-          id,
-          planeResult.cellId,
-          (objectData) => {
-            if (!isMountedRef.current || webcamActive) return;
+        if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
+          lastBroadcastSeenRef.current = Date.now();
 
-            const isRemoteBroadcastingNow =
-              objectData?.broadcasting === true &&
-              objectData?.broadcasterId !== user.uid;
-            const newBroadcastId = objectData?.broadcastId || null;
-            const newBroadcasterId = objectData?.broadcasterId || null;
-
-            if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
-              lastBroadcastSeenRef.current = Date.now();
-
-              const newBroadcastInfo = {
-                broadcastId: newBroadcastId,
-                broadcasterId: newBroadcasterId,
-                planeId: id,
-              };
-
-              if (!isEqual(broadcastInfo, newBroadcastInfo)) {
-                setBroadcastInfo(newBroadcastInfo);
-                if (!isViewingBroadcast) {
-                  setIsViewingBroadcast(true);
-                }
-              }
-            } else {
-              if (isViewingBroadcast) {
-                const now = Date.now();
-                if (now - lastBroadcastSeenRef.current > 5000) {
-                  setBroadcastInfo(null);
-                  setIsViewingBroadcast(false);
-                }
-              } else if (broadcastInfo !== null) {
-                setBroadcastInfo(null);
-              }
+          const newBroadcastInfo = {
+            broadcastId: newBroadcastId,
+            broadcasterId: newBroadcasterId,
+            planeId: id,
+          };          if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
+            setBroadcastInfo(newBroadcastInfo);
+            broadcastInfoRef.current = newBroadcastInfo;
+            if (!isViewingBroadcast) {
+              setIsViewingBroadcast(true);
             }
           }
-        );
-
-        return unsubscribe;
-      } catch (error) {
-        console.error('Error setting up broadcast listener:', error);
-        return () => {};
+        } else {
+          if (isViewingBroadcast) {
+            const now = Date.now();
+            if (now - lastBroadcastSeenRef.current > 5000) {
+              setBroadcastInfo(null);
+              broadcastInfoRef.current = null;
+              setIsViewingBroadcast(false);
+            }
+          } else if (broadcastInfoRef.current !== null) {
+            setBroadcastInfo(null);
+            broadcastInfoRef.current = null;
+          }
+        }
       }
-    };
-
-    let unsubscribePromise = setupBroadcastListener();
-
-    return () => {
-      unsubscribePromise.then((unsubscribe) => {
-        if (unsubscribe) unsubscribe();
-      });
-    };
-  }, [
+    );    return () => {
+      console.log(`[Plane ${id}] Cleaning up broadcast listener`);
+      unsubscribe();
+    };  }, [
     currentSpaceId,
     id,
     user,
     webcamActive,
     isViewingBroadcast,
-    broadcastInfo,
-  ]);
-
-  const handleBroadcastStopped = useCallback(() => {
+  ]); // Removed broadcastInfo to prevent reactive loop
+  
+  const handleBroadcastStopped = useCallback(async () => {
     if (!isMountedRef.current) return;
     if (isBroadcasting) {
       setIsBroadcasting(false);
       setViewerCount(0);
+
       onUpdate?.(id, {
         type: 'plane',
         broadcasting: false,
@@ -692,7 +748,7 @@ const Plane = ({
       });
     }
   }, [onUpdate, id, isBroadcasting]);
-  const handleWebcamToggle = useCallback(() => {
+  const handleWebcamToggle = useCallback(async () => {
     // Set flag to prevent immediate sync interference
     userJustToggledWebcamRef.current = true;
 
@@ -725,10 +781,8 @@ const Plane = ({
           type: 'plane',
           webcamActive: true,
         });
-      }
-    } else {
+      }    } else {
       if (isBroadcasting) {
-        // Inline handleBroadcastStopped logic to avoid dependency issues
         setViewerCount(0);
         onUpdate?.(id, {
           type: 'plane',
@@ -745,13 +799,145 @@ const Plane = ({
     }
     setShowUI(false);
   }, [webcamActive, isBroadcasting, onUpdate, id]);
+  const handleScreenShareToggle = useCallback(() => {
+    // Set flag to prevent immediate sync interference
+    userJustToggledWebcamRef.current = true;
 
-  const isBroadcastingRef = useRef(false);
+    const currentScreenShareState = screenShareActive;
+    const newScreenShareState = !currentScreenShareState;
 
-  const handleBroadcastStarted = useCallback(
-    (info) => {
+    if (newScreenShareState) {
+      setScreenShareInitialized(true);
+      if (
+        confirm(
+          'Do you want to share your screen to other users in this space?'
+        )
+      ) {
+        setScreenShareActive(true);
+        setIsScreenSharing(true);
+        // Update object data to reflect screen share being enabled
+
+        onUpdate?.(id, {
+          type: 'plane',
+          screenShareActive: true,
+        });
+      } else {
+        setScreenShareActive(true);
+        setIsScreenSharing(false);
+        // Update object data to reflect screen share being enabled (local only)
+
+        onUpdate?.(id, {
+          type: 'plane',
+          screenShareActive: true,
+        });
+      }
+    } else {
+      if (isScreenSharing) {
+        // Stop screen sharing
+        onUpdate?.(id, {
+          type: 'plane',
+          screenSharing: false,
+          screenShareActive: false,
+        });
+      }
+      setScreenShareActive(false);
+      setIsScreenSharing(false);
+    }
+    setShowUI(false);
+  }, [screenShareActive, isScreenSharing, onUpdate, id]);
+  const handleImageUpload = useCallback(
+    async (file) => {
+      if (!user?.uid || !currentSpaceId) {
+        alert('You must be logged in to upload images');
+        return;
+      }
+
+      setIsUploadingImage(true);
+
+      try {
+        console.log('Uploading image:', file.name);
+        const imageUrl = await uploadImageToStorage(
+          file,
+          user.uid,
+          currentSpaceId
+        );
+        console.log('Image uploaded successfully:', imageUrl);
+
+        // Create an Image object to load the texture properly
+        const img = new Image();
+        img.crossOrigin = 'anonymous'; // Enable CORS
+
+        img.onload = () => {
+          try {
+            // Create texture from the loaded image
+            const texture = new THREE.Texture(img);
+            texture.needsUpdate = true;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.format = THREE.RGBAFormat;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.flipY = false; // Important for proper orientation
+
+            // Apply the texture to the mesh
+            if (meshRef.current) {
+              // Dispose of the previous material if it exists
+              if (meshRef.current.material && meshRef.current.material.map) {
+                meshRef.current.material.map.dispose();
+              }
+              if (meshRef.current.material) {
+                meshRef.current.material.dispose();
+              }
+
+              // Create new material with the texture
+              const material = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true,
+                opacity: 1,
+                side: THREE.DoubleSide,
+              });
+
+              meshRef.current.material = material;
+              setImageTexture(texture);
+
+              // Update the object in the database with the image URL
+              onUpdate?.(id, {
+                type: 'plane',
+                imageUrl: imageUrl,
+                color: null, // Clear color when image is applied
+              });
+
+              console.log('Texture applied to plane successfully');
+            }
+          } catch (error) {
+            console.error('Error creating texture:', error);
+            alert('Failed to create texture from uploaded image');
+          } finally {
+            setIsUploadingImage(false);
+          }
+        };
+
+        img.onerror = (error) => {
+          console.error('Error loading image:', error);
+          alert('Failed to load the uploaded image');
+          setIsUploadingImage(false);
+        };
+
+        // Load the image
+        img.src = imageUrl;
+      } catch (error) {
+        console.error('Image upload failed:', error);
+        alert(`Image upload failed: ${error.message}`);
+        setIsUploadingImage(false);
+      }
+    },
+    [user, currentSpaceId, onUpdate, id]
+  );
+
+  const isBroadcastingRef = useRef(false);  const handleBroadcastStarted = useCallback(
+    async (info) => {
       if (!info || !info.broadcastId || !isMountedRef.current) return;
       if (!isBroadcastingRef.current) setIsBroadcasting(true);
+
       onUpdate?.(id, {
         type: 'plane',
         broadcasting: true,
@@ -772,14 +958,13 @@ const Plane = ({
   // Update the ref whenever isBroadcasting changes
   useEffect(() => {
     isBroadcastingRef.current = isBroadcasting;
-  }, [isBroadcasting]);
-
-  useEffect(() => {
+  }, [isBroadcasting]);  useEffect(() => {
     return () => {
       // Use ref to get current broadcasting state without dependencies
       if (isBroadcastingRef.current) {
         setIsBroadcasting(false);
         setViewerCount(0);
+
         onUpdate?.(id, {
           type: 'plane',
           broadcasting: false,
@@ -788,7 +973,7 @@ const Plane = ({
         });
       }
     };
-  }, [onUpdate, id]); // Only depend on stable values
+  }, [onUpdate, id]); // Removed unused dependencies
 
   const uiPositions = useMemo(() => {
     const planeHeight = 10 * currentScale[1];
@@ -806,8 +991,22 @@ const Plane = ({
   }, [currentScale]);
 
   const indicatorPosition = useMemo(() => [0, -size - 1, 0], []);
-  const meshMaterial = useMemo(
-    () => (
+  const meshMaterial = useMemo(() => {
+    // If we have an image texture, use it
+    if (imageTexture) {
+      return (
+        <meshBasicMaterial
+          map={imageTexture}
+          transparent
+          opacity={1}
+          side={THREE.DoubleSide}
+          needsUpdate={true}
+        />
+      );
+    }
+
+    // Otherwise use the color-based material
+    return (
       <meshBasicMaterial
         color={currentColor || (selected ? '#99ccff' : 'black')}
         transparent
@@ -816,9 +1015,8 @@ const Plane = ({
         side={THREE.DoubleSide}
         needsUpdate={true}
       />
-    ),
-    [currentColor, selected]
-  );
+    );
+  }, [currentColor, selected, imageTexture]);
 
   const lineMaterialProps = useMemo(
     () => ({
@@ -870,9 +1068,52 @@ const Plane = ({
                 />
               </>
             )}
+          {(screenShareActive || isViewingBroadcast) &&
+            (screenShareInitialized || isViewingBroadcast) && (
+              <>
+                <ScreenShareStream
+                  key={`${id}-screenshare`}
+                  meshRef={meshRef}
+                  active={screenShareActive || isViewingBroadcast}
+                  userId={user?.uid}
+                  spaceId={currentSpaceId}
+                  planeId={id}
+                  isScreenSharing={screenShareActive && isScreenSharing}
+                  isReceiving={isViewingBroadcast}
+                  broadcastData={broadcastInfo}
+                  onBroadcastStarted={handleBroadcastStarted}
+                  onBroadcastStopped={handleBroadcastStopped}
+                  onViewerCountChange={handleViewerCountChange}
+                />
+              </>
+            )}
           {webcamActive && !webcamInitialized && (
             <Html center position={[0, 0, 0.1]}>
               <div className="initializing-cam">Initializing...</div>
+            </Html>
+          )}
+          {screenShareActive && !screenShareInitialized && (
+            <Html center position={[0, 0, 0.1]}>
+              <div className="initializing-cam">
+                Initializing Screen Share...
+              </div>
+            </Html>
+          )}
+          {isUploadingImage && (
+            <Html center position={[0, 0, 0.1]}>
+              <div
+                style={{
+                  color: 'white',
+                  background: 'rgba(0,0,0,0.7)',
+                  padding: '10px',
+                  borderRadius: '5px',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  textAlign: 'center',
+                }}
+              >
+                Uploading Image...
+              </div>
             </Html>
           )}
           <Line points={points} {...lineMaterialProps} />
@@ -892,8 +1133,7 @@ const Plane = ({
               billboard={false}
             />
           )}
-        </group>
-
+        </group>{' '}
         {selected && showUI && (
           <FaceUI
             position={uiPositions.faceUI}
@@ -907,12 +1147,15 @@ const Plane = ({
             followTarget={groupRef}
             onDelete={() => onDelete?.(id)}
             onWebcamToggle={handleWebcamToggle}
+            onScreenShareToggle={handleScreenShareToggle}
+            onImageUpload={handleImageUpload}
             webcamActive={webcamActive}
+            screenShareActive={screenShareActive}
             isBroadcasting={isBroadcasting}
+            isScreenSharing={isScreenSharing}
             viewerCount={viewerCount}
           />
         )}
-
         {showTextInput && (
           <FaceTextInput
             position={uiPositions.textInput}
@@ -920,7 +1163,6 @@ const Plane = ({
             followTarget={groupRef}
           />
         )}
-
         {showTextStyleUI && (
           <TextStyleUI
             position={uiPositions.textStyleUI}
@@ -929,7 +1171,6 @@ const Plane = ({
             followTarget={groupRef}
           />
         )}
-
         {showHeader && (
           <HeaderInput
             position={uiPositions.headerInput}

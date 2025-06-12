@@ -19,6 +19,7 @@ import { useConnections } from './hooks/useConnections';
 import { useObjects } from './hooks/useObjects';
 import { useIndicators } from './hooks/useIndicators';
 import { useSpatialManager } from './hooks/useSpatialManager';
+import { useCentralizedBroadcastManager } from './hooks/useCentralizedBroadcastManager';
 
 // Utility imports
 import { memoize } from './utils/perfUtils';
@@ -82,13 +83,15 @@ const App = () => {
     cameraRef,
     onObjectsChange: handleSpatialObjectChange,
   });
-
   // Initialize animation system for connection line animations
   useEffect(() => {
     console.log('🎬 Initializing animation system...');
     initAnimationSystem();
     console.log('✅ Animation system initialized');
   }, []);
+
+  // Initialize centralized broadcast manager
+  useCentralizedBroadcastManager();
 
   // Setup debug context for spatial partitioning
   useEffect(() => {

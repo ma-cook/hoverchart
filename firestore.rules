@@ -149,10 +149,9 @@ service cloud.firestore {
             allow write: if isAuthenticated() && (
               request.auth.uid == userId || 
               (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
-               isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
-            );
-          }
-        }
+               isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))            );
+          }        }
+        
       }
     }
     // Updates collection

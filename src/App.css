@@ -347,3 +347,99 @@ canvas {
 .face-tool-button[title='Disable Camera']:hover {
   background-color: #e7f5fd;
 }
+
+/* Template dropdown styles */
+.current-cell-info {
+  margin-bottom: 20px;
+  padding: 10px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.cell-coordinates {
+  font-family: monospace;
+  font-weight: bold;
+  color: #4caf50;
+}
+
+.template-section {
+  margin-bottom: 20px;
+}
+
+.template-toggle-button {
+  width: 100%;
+  padding: 10px;
+  background-color: rgba(76, 175, 80, 0.8);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  transition: background-color 0.2s;
+}
+
+.template-toggle-button:hover {
+  background-color: rgba(76, 175, 80, 1);
+}
+
+.template-dropdown {
+  margin-top: 10px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 15px;
+}
+
+.template-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-group label {
+  font-size: 12px;
+  color: #ccc;
+  font-weight: bold;
+}
+
+.config-group select,
+.config-group input {
+  padding: 6px 8px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.9);
+  color: #333;
+  font-size: 14px;
+}
+
+.config-group select:focus,
+.config-group input:focus {
+  outline: none;
+  border-color: #4caf50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.create-template-button {
+  margin-top: 10px;
+  width: 100%;
+  padding: 10px;
+  background-color: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  transition: background-color 0.2s;
+}
+
+.create-template-button:hover {
+  background-color: #1976d2;
+}

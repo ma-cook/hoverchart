@@ -17,8 +17,12 @@ const FaceUI = ({
   onBorderToggle, // Update this to handle more options
   onDelete, // Add this prop
   onWebcamToggle, // Add webcam toggle handler
+  onScreenShareToggle, // Add screen share toggle handler
+  onImageUpload, // Add image upload handler
   webcamActive = false, // Add webcam state
+  screenShareActive = false, // Add screen share state
   isBroadcasting = false, // Add broadcasting state
+  isScreenSharing = false, // Add screen sharing state
 }) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showBorderMenu, setShowBorderMenu] = useState(false); // Add this state
@@ -77,19 +81,23 @@ const FaceUI = ({
     { name: 'arrow', icon: '↗' },
     { name: 'paint', icon: '🎨' },
     { name: 'opacity', icon: '○' },
-  ];
-
-  // Add transform, resize, border, webcam, and delete tools conditionally
+  ]; // Add transform, resize, border, webcam, screen share, image upload, and delete tools conditionally
   const tools = isPlane
     ? [
         ...baseTools,
         { name: 'transform', icon: '✥' },
         { name: 'resize', icon: '↔' }, // Add resize button
         { name: 'border', icon: '▢' }, // Add border tool for planes
+        { name: 'image', icon: '🖼️' }, // Add image upload button
         {
           name: 'webcam',
           icon: isBroadcasting ? `📹` : '📹', // Show viewer count if broadcasting
           active: webcamActive, // Show active state
+        },
+        {
+          name: 'screenshare',
+          icon: isScreenSharing ? `🖥️` : '🖥️', // Screen share icon
+          active: screenShareActive, // Show active state
         },
         { name: 'delete', icon: '🗑️' }, // Add delete tool for planes
       ]
@@ -114,9 +122,28 @@ const FaceUI = ({
         setShowBorderMenu((prev) => !prev);
         setShowColorPicker(false);
         break;
+      case 'image': {
+        // Handle image upload
+        console.log('Image upload button clicked in FaceUI');
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = (event) => {
+          const file = event.target.files[0];
+          if (file) {
+            onImageUpload?.(file);
+          }
+        };
+        input.click();
+        break;
+      }
       case 'webcam': // Handle webcam toggle
         console.log('Webcam button clicked in FaceUI');
         onWebcamToggle?.();
+        break;
+      case 'screenshare': // Handle screen share toggle
+        console.log('Screen share button clicked in FaceUI');
+        onScreenShareToggle?.();
         break;
       case 'delete':
         if (window.confirm('Are you sure you want to delete this object?')) {
@@ -162,6 +189,8 @@ const FaceUI = ({
                       backgroundColor:
                         tool.name === 'webcam' && isBroadcasting
                           ? '#ff4444'
+                          : tool.name === 'screenshare' && isScreenSharing
+                          ? '#4444ff'
                           : '#4CAF50',
                       color: 'white',
                     }
@@ -174,6 +203,14 @@ const FaceUI = ({
                       ? `Broadcasting`
                       : 'Disable Camera'
                     : 'Enable Camera'
+                  : tool.name === 'screenshare'
+                  ? screenShareActive
+                    ? isScreenSharing
+                      ? 'Stop Screen Share'
+                      : 'Disable Screen Share'
+                    : 'Share Screen'
+                  : tool.name === 'image'
+                  ? 'Upload Image'
                   : tool.name
               }
             >

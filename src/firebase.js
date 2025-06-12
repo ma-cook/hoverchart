@@ -8,6 +8,7 @@ import {
 } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -49,5 +50,6 @@ provider.setCustomParameters({
 
 const db = getFirestore(app);
 const database = getDatabase(app);
+const storage = getStorage(app);
 
-export { auth, provider, db, database };
+export { auth, provider, db, database, storage };
