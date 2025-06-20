@@ -1,10 +1,43 @@
-import { useState, useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { Html } from '@react-three/drei';
-
 import { useFrame } from '@react-three/fiber';
-const HeaderInput = ({ position, onTextSubmit }) => {
-  const [headerText, setHeaderText] = useState('');
+import { useTextInputStore } from '../stores';
+
+const HeaderInput = ({
+  position,
+  onTextSubmit,
+  inputId = 'default-header',
+  initialText = '',
+}) => {
   const groupRef = useRef();
+  const inputRef = useRef(null);
+  const setText = useTextInputStore((state) => state.setText);
+  const submitText = useTextInputStore((state) => state.submitText);
+
+  // Get text directly from store to avoid calling getTextInput on every render
+  const headerText = useTextInputStore((state) => {
+    const textInput = state.textInputs[inputId];
+    return textInput ? textInput.text : initialText;
+  });
+
+  // Initialize text in store if it doesn't exist and we have initial text
+  useEffect(() => {
+    if (initialText && !useTextInputStore.getState().textInputs[inputId]) {
+      setText(inputId, initialText, 'header');
+    }
+  }, [inputId, initialText, setText]);
+
+  // Force focus when component mounts
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select(); // Select all text for easier editing
+      }
+    }, 100); // Small delay to ensure HTML is rendered
+
+    return () => clearTimeout(timer);
+  }, []);
 
   useFrame(({ camera }) => {
     if (groupRef.current) {
@@ -13,11 +46,28 @@ const HeaderInput = ({ position, onTextSubmit }) => {
     }
   });
 
-  const handleKeyPress = (e) => {
+  const handleKeyDown = (e) => {
+    // Prevent the 3D canvas from capturing these events
+    e.stopPropagation();
+
     if (e.key === 'Enter') {
-      onTextSubmit?.(headerText);
-      setHeaderText('');
+      submitText(inputId, onTextSubmit);
+    } else if (e.key === 'Escape') {
+      // Allow escaping without submitting
+      onTextSubmit?.(''); // Submit empty text to close
     }
+  };
+
+  const handleChange = (e) => {
+    e.stopPropagation(); // Prevent event bubbling
+    setText(inputId, e.target.value, 'header');
+  };
+  const handleFocus = (e) => {
+    e.stopPropagation();
+  };
+
+  const handleBlur = (e) => {
+    e.stopPropagation();
   };
 
   return (
@@ -34,12 +84,20 @@ const HeaderInput = ({ position, onTextSubmit }) => {
         }}
       >
         <input
+          ref={inputRef}
           type="text"
           value={headerText}
-          onChange={(e) => setHeaderText(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
           placeholder="Enter header text..."
           className="header-input"
+          style={{
+            pointerEvents: 'auto',
+            zIndex: 1000,
+            position: 'relative',
+          }}
           onClick={(e) => e.stopPropagation()}
           autoFocus
         />

@@ -1,9 +1,8 @@
-import * as THREE from 'three';
 import {
   saveObjectToCell,
   updateObjectInSpatialCell,
 } from '../services/spatialObjectsService';
-import { updateObjectConnections } from '../services/connectionManager';
+import useObjectsStore from '../stores/objectsStore';
 
 /**
  * Handle object movement with position updates
@@ -17,11 +16,18 @@ export const handleObjectMove = ({
   draggingObjectsRef,
   objects,
   setObjects,
-  setConnections,
   user,
   currentSpaceId,
   checkPositionJitter,
 }) => {
+  console.log(`🎯 [handleObjectMove] Called for ${id}:`, {
+    newPosition,
+    isDragStart,
+    isDragEnd,
+    hasUser: !!user,
+    hasSpaceId: !!currentSpaceId,
+  });
+
   const objectId = id.toString();
 
   if (isDragStart) {
@@ -30,9 +36,7 @@ export const handleObjectMove = ({
   }
 
   // Store the movement timestamp to track the most recent change
-  const moveTimestamp = Date.now();
-
-  // Update local object state immediately for smooth UI
+  const moveTimestamp = Date.now(); // Update local object state immediately for smooth UI
   setObjects((prev) => {
     // Find the existing object
     const existingObject = prev.find((obj) => obj.id === id);
@@ -62,10 +66,8 @@ export const handleObjectMove = ({
       ])
     ) {
       return prev;
-    }
-
-    // Create updated objects array - prevent jitter by not changing refs
-    return prev.map((obj) => {
+    } // Create updated objects array - prevent jitter by not changing refs
+    const updatedObjects = prev.map((obj) => {
       if (obj.id === id) {
         // Form new object carefully to avoid unnecessary re-renders
         const newObj = {
@@ -78,9 +80,20 @@ export const handleObjectMove = ({
       }
       return obj;
     });
+    console.log(
+      `🔄 [setObjects] Objects array updated, triggering store change`
+    );
+    console.log(`🔄 [setObjects] Updated object ${id} position to:`, [
+      newPosition.x,
+      newPosition.y,
+      newPosition.z,
+    ]);
+    return updatedObjects;
   });
-
   // Find connections related to this object and update them
+  // NOTE: Connection updates are now handled by RealTimeConnectionUpdater
+  // to avoid conflicts and ensure real-time visual updates
+  /*
   setConnections((prev) => {
     // Check if any connections need updating
     const needsUpdate = prev.some(
@@ -151,17 +164,31 @@ export const handleObjectMove = ({
       return updatedConn;
     });
   });
-
+  */
   // ONLY save to database when drag ends
   if (user && isDragEnd) {
+    console.log(
+      `🎯 [handleObjectMove] DRAG END - Starting save process for ${id}`
+    );
+
     // Find the object from current state, not the passed objects array
     // to ensure we have the most recent state
     const currentObjects = objects || [];
     const object = currentObjects.find((obj) => obj.id === id);
 
     if (object) {
+      console.log(`🎯 [handleObjectMove] Found object for saving:`, {
+        id: object.id,
+        currentPosition: object.position,
+        newPosition: [newPosition.x, newPosition.y, newPosition.z],
+        transformLocked: object._transformLocked,
+      });
+
       // Skip saving if this object is transform locked
       if (object._transformLocked) {
+        console.log(
+          `🎯 [handleObjectMove] Skipping save - object is transform locked`
+        );
         draggingObjectsRef.current.delete(objectId);
         return;
       }
@@ -171,29 +198,88 @@ export const handleObjectMove = ({
         ...object,
         position: [newPosition.x, newPosition.y, newPosition.z],
         _finalPosition: true, // Mark this as a final confirmed position
-      };
-
-      // Remove tracking flags before saving to database
+      }; // Remove tracking flags before saving to database
       delete updatedObject._isDragging;
       delete updatedObject._moveTimestamp;
-      delete updatedObject._transformActive; // Adding a brief delay before saving to avoid race conditions
-      setTimeout(() => {
-        const spaceOwnerId = window.currentSpaceOwner || user.uid;
-        saveObjectToCell(spaceOwnerId, currentSpaceId, updatedObject); // IMPORTANT: Update connection positions in database when object moves
-        // This ensures that connection line positions are persisted
-        updateObjectConnections(spaceOwnerId, currentSpaceId, objectId, [
-          newPosition.x,
-          newPosition.y,
-          newPosition.z,
-        ]).catch((error) => {
-          console.warn('Failed to update connection positions:', error);
-        });
+      delete updatedObject._transformActive;
 
-        // Remove from dragging set when drag ends after save completes
-        setTimeout(() => {
-          draggingObjectsRef.current.delete(objectId);
-        }, 300); // Longer timeout to prevent jitter after drag end
-      }, 150);
+      console.log(`🎯 [handleObjectMove] About to save object to database:`, {
+        id: updatedObject.id,
+        position: updatedObject.position,
+        spaceOwnerId: window.currentSpaceOwner || user.uid,
+        currentSpaceId,
+      }); // Save immediately to prevent Firebase from overriding with old position
+      (async () => {
+        try {
+          // Check if we're still in initial loading phase
+          const { isInitialLoading } = useObjectsStore.getState();
+          if (isInitialLoading) {
+            console.log(
+              `⏸️ [handleObjectMove] Skipping save for object ${id} - still in initial loading phase`
+            );
+            // Still remove from dragging set and clear flags
+            setTimeout(() => {
+              draggingObjectsRef.current.delete(objectId);
+            }, 300);
+            return;
+          }
+
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+          console.log(`🎯 [handleObjectMove] Calling saveObjectToCell...`);
+          await saveObjectToCell(spaceOwnerId, currentSpaceId, updatedObject);
+          console.log(
+            `🎯 [handleObjectMove] ✅ Successfully saved object ${id} to database`
+          );
+
+          // Clear transitioning flag if object was being transitioned between cells
+          if (window.transitioningObjectsRef?.current?.has(id.toString())) {
+            window.transitioningObjectsRef.current.delete(id.toString());
+            console.log(
+              `🔄 Cleared transitioning flag for object ${id} after successful save`
+            );
+          }
+
+          // IMPORTANT: Trigger immediate connection saves when object movement ends
+          // This ensures that connection line positions are persisted immediately
+          try {
+            const { useConnectionStore } = await import('../stores');
+            const { usePublicSpaceStore } = await import('../stores');
+
+            const connections = useConnectionStore.getState().connections;
+            const saveConnectionsImmediately =
+              usePublicSpaceStore.getState().saveConnectionsImmediately; // Save connections that were updated during this object movement
+            // BUT EXCLUDE visual-only updates from RealTimeConnectionUpdater
+            const connectionsToSave = connections.filter(
+              (conn) =>
+                !conn._visualUpdate && // Skip visual-only updates
+                (conn._moveTimestamp || conn._needsSave) // Only save if explicitly marked for saving
+            );
+
+            if (connectionsToSave.length > 0) {
+              await saveConnectionsImmediately(
+                connectionsToSave,
+                user,
+                currentSpaceId
+              );
+            }
+          } catch (error) {
+            console.warn(
+              'Failed to save connection positions immediately:',
+              error
+            );
+          }
+
+          // Remove from dragging set when drag ends after save completes
+          setTimeout(() => {
+            draggingObjectsRef.current.delete(objectId);
+          }, 300); // Longer timeout to prevent jitter after drag end
+        } catch (error) {
+          console.error(
+            `🎯 [handleObjectMove] ❌ Failed to save object ${id}:`,
+            error
+          );
+        }
+      })();
     }
   }
 };
@@ -218,46 +304,48 @@ export const handleObjectUpdate = ({
   delete cleanedUpdates._moveComplete;
   delete cleanedUpdates._transformActive;
   delete cleanedUpdates._isDragging;
-  delete cleanedUpdates._moveTimestamp;
+  delete cleanedUpdates._moveTimestamp; // CRITICAL FIX: Get the complete current object to merge updates properly
+  // This prevents partial objects from overwriting complete object data in the database
+  let currentObjectData = lastUpdateRef?.current?.[id];
+
+  // If we don't have the object in lastUpdateRef, get it from the objects store
+  if (!currentObjectData) {
+    const objectsStore = useObjectsStore.getState();
+    currentObjectData = objectsStore.objects.find((obj) => obj.id === id) || {};
+  }
 
   // Check if this is a position update (spatial partitioning required)
   const hasPosition =
     cleanedUpdates.position && Array.isArray(cleanedUpdates.position);
 
-  // CRITICAL FIX: Get the complete current object to merge updates properly
-  // This prevents partial objects from overwriting complete object data in the database
-  const currentObjectData = lastUpdateRef?.current?.[id] || {};
+  // Check if position actually changed (only if both old and new positions exist)
+  const positionChanged =
+    hasPosition &&
+    (!currentObjectData.position ||
+      !Array.isArray(currentObjectData.position) ||
+      cleanedUpdates.position[0] !== currentObjectData.position[0] ||
+      cleanedUpdates.position[1] !== currentObjectData.position[1] ||
+      cleanedUpdates.position[2] !== currentObjectData.position[2]);
   const completeObjectData = {
     id,
     ...currentObjectData, // Start with current complete state
     ...cleanedUpdates, // Apply updates on top
   };
-
-  // DEBUG: Log what's happening to text objects specifically
-  if (
-    updates.type === 'text' ||
-    currentObjectData.type === 'text' ||
-    cleanedUpdates.text !== undefined
-  ) {
-    console.log('🔍 TEXT OBJECT UPDATE DEBUG:', {
-      id,
-      updateType: hasPosition ? 'position' : 'non-position',
-      receivedUpdates: updates,
-      cleanedUpdates,
-      currentObjectData,
-      completeObjectData,
-      hasType: 'type' in completeObjectData,
-      typeValue: completeObjectData.type,
-      allKeys: Object.keys(completeObjectData),
-    });
-  }
-
   // FIXED: Always save changes to database, not just position updates
   // UI settings like colors, styles, text, etc. should persist immediately
-  const spaceOwnerId = window.currentSpaceOwner || user.uid;
 
-  if (hasPosition) {
-    // For position updates, use spatial cell system
+  // Check if we're still in initial loading phase
+  const { isInitialLoading } = useObjectsStore.getState();
+  if (isInitialLoading) {
+    console.log(
+      `⏸️ [handleObjectUpdate] Skipping save for object ${id} - still in initial loading phase`
+    );
+    return;
+  }
+
+  const spaceOwnerId = window.currentSpaceOwner || user.uid;
+  if (positionChanged) {
+    // For actual position updates, use spatial cell system
     updateObjectInSpatialCell(spaceOwnerId, currentSpaceId, completeObjectData)
       .then(() => {
         // Position update successful

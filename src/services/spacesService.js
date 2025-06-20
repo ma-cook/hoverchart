@@ -158,3 +158,85 @@ export const migrateToDefaultSpace = async (userId) => {
     return false;
   }
 };
+
+// Get public space metadata without authentication - simplified approach
+export const getPublicSpaceMetadata = async (spaceId) => {
+  if (!spaceId) return null;
+
+  try {
+    console.log('🔍 getPublicSpaceMetadata called with spaceId:', spaceId);
+
+    // Instead of using collection group queries, try a direct approach
+    // We'll check the known owner first (if available from session storage)
+    const sessionOwner = sessionStorage.getItem(`sharedSpaceOwner_${spaceId}`);
+
+    if (sessionOwner) {
+      console.log('📋 Found cached owner from session:', sessionOwner);
+      try {
+        const spaceRef = doc(db, 'users', sessionOwner, 'spaces', spaceId);
+        const spaceDoc = await getDoc(spaceRef);
+
+        if (spaceDoc.exists()) {
+          const data = spaceDoc.data();
+          console.log('📋 Space data from cached owner:', data);
+
+          if (
+            data.isPublic &&
+            data.sharedWith &&
+            data.sharedWith.includes('everyone')
+          ) {
+            console.log('✅ Found matching public space! Owner:', sessionOwner);
+            return {
+              id: spaceDoc.id,
+              ...data,
+              ownerId: sessionOwner,
+            };
+          }
+        }
+      } catch (error) {
+        console.log('❌ Failed to fetch with cached owner:', error.message);
+      }
+    }
+
+    // For now, try with a hardcoded owner ID from your example
+    // This is a temporary workaround - in production you'd want to implement
+    // a proper public spaces index
+    const knownOwnerIds = [
+      'VsKDyU5XjiNYHzKVuwVanCPd90A2', // Your owner ID from the example
+    ];
+
+    for (const ownerId of knownOwnerIds) {
+      console.log('🔍 Checking space with owner:', ownerId);
+      try {
+        const spaceRef = doc(db, 'users', ownerId, 'spaces', spaceId);
+        const spaceDoc = await getDoc(spaceRef);
+
+        if (spaceDoc.exists()) {
+          const data = spaceDoc.data();
+          console.log('📋 Space data:', data);
+
+          if (
+            data.isPublic &&
+            data.sharedWith &&
+            data.sharedWith.includes('everyone')
+          ) {
+            console.log('✅ Found matching public space! Owner:', ownerId);
+            return {
+              id: spaceDoc.id,
+              ...data,
+              ownerId: ownerId,
+            };
+          }
+        }
+      } catch (error) {
+        console.log('❌ Failed to check owner', ownerId, ':', error.message);
+      }
+    }
+
+    console.log('❌ No matching public space found for:', spaceId);
+    return null;
+  } catch (error) {
+    console.error('💥 Error getting public space metadata:', error);
+    return null;
+  }
+};

@@ -1,12 +1,14 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import { useFaceIndicatorStore } from '../stores';
 
 // Debug flag - set to false to disable console logs
 const DEBUG = false;
 
 const FaceIndicator = ({
+  id,
   position = [0, 0, 0],
   rotation = [0, 0, 0],
   onClick,
@@ -15,28 +17,41 @@ const FaceIndicator = ({
 }) => {
   const meshRef = useRef();
   const groupRef = useRef();
-  const [hovered, setHovered] = useState(false);
+
+  // Use Zustand store for hover state
+  const isHovered = useFaceIndicatorStore((state) =>
+    state.isIndicatorHovered(id)
+  );
+  const setIndicatorHovered = useFaceIndicatorStore(
+    (state) => state.setIndicatorHovered
+  );
 
   // Only log when DEBUG is true
-
   useFrame(() => {
     if (meshRef.current && groupRef.current) {
-      const worldScale = new THREE.Vector3();
-      groupRef.current.getWorldScale(worldScale);
-      // Make indicator size consistent regardless of parent scale
-      meshRef.current.scale.set(
-        1 / Math.max(0.1, worldScale.x),
-        1 / Math.max(0.1, worldScale.y),
-        1 / Math.max(0.1, worldScale.z)
-      );
+      // Throttle updates for performance
+      if (
+        !meshRef.current._lastIndicatorUpdate ||
+        Date.now() - meshRef.current._lastIndicatorUpdate > 16
+      ) {
+        // ~60fps throttle
+        const worldScale = new THREE.Vector3();
+        groupRef.current.getWorldScale(worldScale);
+        // Make indicator size consistent regardless of parent scale
+        meshRef.current.scale.set(
+          1 / Math.max(0.1, worldScale.x),
+          1 / Math.max(0.1, worldScale.y),
+          1 / Math.max(0.1, worldScale.z)
+        );
+        meshRef.current._lastIndicatorUpdate = Date.now();
+      }
     }
-  });
-  // Determine color based on state
+  }); // Determine color based on state
   const color = isConnected
     ? '#000000' // Black for connected indicators
     : isActive
     ? '#0088ff' // Blue for selected (not connected)
-    : hovered
+    : isHovered
     ? '#aaaaaa' // Light gray for hover
     : '#aaaaaa'; // Darker gray for normal state
 
@@ -55,12 +70,12 @@ const FaceIndicator = ({
         }}
         onPointerOver={(e) => {
           e.stopPropagation();
-          setHovered(true);
+          setIndicatorHovered(id, true);
           document.body.style.cursor = 'pointer';
         }}
         onPointerOut={(e) => {
           e.stopPropagation();
-          setHovered(false);
+          setIndicatorHovered(id, false);
           document.body.style.cursor = 'auto';
         }}
       >

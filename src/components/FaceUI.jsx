@@ -2,6 +2,7 @@ import { Html } from '@react-three/drei';
 import { useState, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
+import { useColorPickerStore } from '../stores';
 import * as THREE from 'three';
 
 const FaceUI = ({
@@ -24,25 +25,41 @@ const FaceUI = ({
   isBroadcasting = false, // Add broadcasting state
   isScreenSharing = false, // Add screen sharing state
 }) => {
-  const [showColorPicker, setShowColorPicker] = useState(false);
   const [showBorderMenu, setShowBorderMenu] = useState(false); // Add this state
   const [isBorderColor, setIsBorderColor] = useState(false); // Add this state
   const groupRef = useRef();
   const lastPosition = useRef(null);
-
+  // Use color picker store
+  const openColorPicker = useColorPickerStore((state) => state.openColorPicker);
+  const closeColorPicker = useColorPickerStore(
+    (state) => state.closeColorPicker
+  );
+  const pickerId = `face-ui-${face?.id || 'default'}`;
+  // Make color picker visibility reactive to store changes
+  const showColorPicker = useColorPickerStore((state) =>
+    state.isColorPickerOpen(pickerId)
+  );
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
-      // Keep UI facing camera
-      groupRef.current.quaternion.copy(camera.quaternion);
-
-      // Only update position if it has changed significantly
-      const newPos = new THREE.Vector3(...position);
+      // Throttle updates for performance
       if (
-        !lastPosition.current ||
-        lastPosition.current.distanceTo(newPos) > 0.001
+        !groupRef.current._lastFaceUIUpdate ||
+        Date.now() - groupRef.current._lastFaceUIUpdate > 16
       ) {
-        groupRef.current.position.copy(newPos);
-        lastPosition.current = newPos.clone();
+        // ~60fps throttle
+        // Keep UI facing camera
+        groupRef.current.quaternion.copy(camera.quaternion);
+
+        // Only update position if it has changed significantly
+        const newPos = new THREE.Vector3(...position);
+        if (
+          !lastPosition.current ||
+          lastPosition.current.distanceTo(newPos) > 0.001
+        ) {
+          groupRef.current.position.copy(newPos);
+          lastPosition.current = newPos.clone();
+        }
+        groupRef.current._lastFaceUIUpdate = Date.now();
       }
     }
   });
@@ -51,18 +68,16 @@ const FaceUI = ({
     onBorderToggle?.({ type: 'style', value: style });
     setShowBorderMenu(false);
   };
-
   const handleBorderColorClick = (e) => {
     e.stopPropagation();
     setIsBorderColor(true);
-    setShowColorPicker(true);
+    openColorPicker(pickerId, 'border-color');
   };
 
   const handleLineThicknessClick = (e) => {
     e.stopPropagation();
     onBorderToggle?.({ type: 'thickness' });
   };
-
   const handleColorSelect = (color) => {
     if (isBorderColor) {
       // Pass color directly to parent for border color change
@@ -72,7 +87,7 @@ const FaceUI = ({
     } else {
       onColorChange?.(color, face);
     }
-    setShowColorPicker(false);
+    closeColorPicker(pickerId);
   };
 
   // Create base tools array
@@ -107,7 +122,7 @@ const FaceUI = ({
     e.stopPropagation();
     switch (tool.name) {
       case 'paint':
-        setShowColorPicker(true);
+        openColorPicker(pickerId, 'face-color');
         break;
       case 'text':
         onTextClick?.(face);
@@ -120,11 +135,10 @@ const FaceUI = ({
         break;
       case 'border':
         setShowBorderMenu((prev) => !prev);
-        setShowColorPicker(false);
+        closeColorPicker(pickerId);
         break;
       case 'image': {
         // Handle image upload
-        console.log('Image upload button clicked in FaceUI');
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = 'image/*';
@@ -138,11 +152,9 @@ const FaceUI = ({
         break;
       }
       case 'webcam': // Handle webcam toggle
-        console.log('Webcam button clicked in FaceUI');
         onWebcamToggle?.();
         break;
       case 'screenshare': // Handle screen share toggle
-        console.log('Screen share button clicked in FaceUI');
         onScreenShareToggle?.();
         break;
       case 'delete':
@@ -151,7 +163,6 @@ const FaceUI = ({
         }
         break;
     }
-    console.log(`Face ${tool.name} clicked`);
   };
 
   return (
@@ -278,7 +289,7 @@ const FaceUI = ({
             <ColorPicker
               onColorSelect={handleColorSelect}
               onClose={() => {
-                setShowColorPicker(false);
+                closeColorPicker(pickerId);
                 setIsBorderColor(false);
                 setShowBorderMenu(false);
               }}

@@ -1,173 +1,164 @@
 import { useEffect, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useConnectionStore, useObjectsStore } from '../stores';
+import { calculateFacePosition } from '../utils/facePositionUtils';
 
 /**
  * Component that updates connection positions in real-time as objects move
+ * Uses reactive store subscriptions instead of continuous monitoring
+ * IMPORTANT: This only updates visual positions, does NOT save to database
  */
-const RealTimeConnectionUpdater = ({
-  connections,
-  setConnections,
-  objects,
-  user,
-  currentSpaceId,
-}) => {
-  const lastObjectPositionsRef = useRef(new Map());
-  const databaseSaveTimeoutRef = useRef(new Map());
+const RealTimeConnectionUpdater = () => {
+  // Get store state and actions
+  const setConnections = useConnectionStore((state) => state.setConnections);
+  const objects = useObjectsStore((state) => state.objects);
 
-  // Track object position changes and update connections immediately
-  useFrame(() => {
+  // Track previous object positions to detect changes
+  const previousPositionsRef = useRef(new Map()); // React to object position changes
+  useEffect(() => {
+    // Get current connections inside the effect to avoid dependency issues
+    const connections = useConnectionStore.getState().connections;
+
     if (!connections.length || !objects.length) return;
 
-    const objectPositionMap = new Map();
-    let hasPositionChanges = false;
+    // Skip updates if any objects are currently being transformed
+    if (
+      window._currentTransformingObjects &&
+      window._currentTransformingObjects.size > 0
+    ) {
+      return; // Let the manual drag updates handle real-time visuals
+    }
 
-    // Check for object position changes
+    let hasUpdates = false;
+    const updatedConnections = [...connections];
+
+    // Check each object for position changes
     objects.forEach((obj) => {
       const objId = obj.id.toString();
       const currentPos = obj.position;
-      const lastPos = lastObjectPositionsRef.current.get(objId);
+      const previousPos = previousPositionsRef.current.get(objId); // Check if position has changed (use smaller threshold for smoother updates)
+      const positionChanged =
+        !previousPos ||
+        Math.abs(currentPos[0] - previousPos[0]) > 0.0001 ||
+        Math.abs(currentPos[1] - previousPos[1]) > 0.0001 ||
+        Math.abs(currentPos[2] - previousPos[2]) > 0.0001;
+      if (positionChanged) {
+        // Update the tracked position
+        previousPositionsRef.current.set(objId, [...currentPos]);
 
-      if (
-        !lastPos ||
-        Math.abs(currentPos[0] - lastPos[0]) > 0.001 ||
-        Math.abs(currentPos[1] - lastPos[1]) > 0.001 ||
-        Math.abs(currentPos[2] - lastPos[2]) > 0.001
-      ) {
-        objectPositionMap.set(objId, currentPos);
-        lastObjectPositionsRef.current.set(objId, [...currentPos]);
-        hasPositionChanges = true;
+        // Find and update all connections related to this object
+        for (let i = 0; i < updatedConnections.length; i++) {
+          const conn = updatedConnections[i];
+          let needsUpdate = false;
+          let updatedConn = { ...conn };
+
+          // Check if this connection's start is connected to the moved object
+          if (conn.start?.objectId?.toString() === objId) {
+            if (conn.start?.face) {
+              try {
+                const indicatorData = {
+                  type: obj.type || 'cube',
+                  face: conn.start.face,
+                  cube: {
+                    position: currentPos,
+                    scale: obj.scale || [1, 1, 1],
+                  },
+                  plane:
+                    obj.type === 'plane'
+                      ? {
+                          position: currentPos,
+                          scale: obj.scale || [1, 1, 1],
+                        }
+                      : undefined,
+                };
+                const facePosition = calculateFacePosition(
+                  indicatorData,
+                  objects
+                );
+                // Create completely new start object to ensure reactivity
+                updatedConn.start = {
+                  ...conn.start,
+                  position: [...facePosition],
+                  worldPosition: [...facePosition],
+                  facePosition: [...facePosition],
+                };
+                needsUpdate = true;
+              } catch (error) {
+                console.warn('Failed to calculate start face position:', error);
+                // Create completely new start object even for fallback
+                updatedConn.start = {
+                  ...conn.start,
+                  position: [...currentPos],
+                  worldPosition: [...currentPos],
+                  facePosition: [...currentPos],
+                };
+                needsUpdate = true;
+              }
+            }
+          }
+
+          // Check if this connection's end is connected to the moved object
+          if (conn.end?.objectId?.toString() === objId) {
+            if (conn.end?.face) {
+              try {
+                const indicatorData = {
+                  type: obj.type || 'cube',
+                  face: conn.end.face,
+                  cube: {
+                    position: currentPos,
+                    scale: obj.scale || [1, 1, 1],
+                  },
+                  plane:
+                    obj.type === 'plane'
+                      ? {
+                          position: currentPos,
+                          scale: obj.scale || [1, 1, 1],
+                        }
+                      : undefined,
+                };
+                const facePosition = calculateFacePosition(
+                  indicatorData,
+                  objects
+                );
+                // Create completely new end object to ensure reactivity
+                updatedConn.end = {
+                  ...conn.end,
+                  position: [...facePosition],
+                  worldPosition: [...facePosition],
+                  facePosition: [...facePosition],
+                };
+                needsUpdate = true;
+              } catch (error) {
+                console.warn('Failed to calculate end face position:', error);
+                // Create completely new end object even for fallback
+                updatedConn.end = {
+                  ...conn.end,
+                  position: [...currentPos],
+                  worldPosition: [...currentPos],
+                  facePosition: [...currentPos],
+                };
+                needsUpdate = true;
+              }
+            }
+          }
+          if (needsUpdate) {
+            // Mark as visual-only update to prevent database saves
+            updatedConn._visualUpdate = Date.now();
+            updatedConn._localUpdate = Date.now();
+            updatedConn._lastStyleUpdate = Date.now(); // Also update this to trigger renders
+            // Remove any save triggers
+            delete updatedConn._needsSave;
+            updatedConnections[i] = updatedConn;
+            hasUpdates = true;
+          }
+        }
       }
-    });
+    }); // Update connections if any positions changed
+    if (hasUpdates) {
+      setConnections(updatedConnections);
+    }
+  }, [objects, setConnections]); // Remove connections dependency to avoid loops
 
-    // If no position changes, skip update
-    if (!hasPositionChanges) return;
-
-    // Update connections that are affected by object movement
-    setConnections((prevConnections) => {
-      return prevConnections.map((conn) => {
-        let needsUpdate = false;
-        let updatedConn = { ...conn };
-
-        // Check if start object moved
-        const startObjectId = conn.start?.objectId?.toString();
-        if (startObjectId && objectPositionMap.has(startObjectId)) {
-          const newObjectPos = objectPositionMap.get(startObjectId);
-
-          // Update start position to follow the object
-          updatedConn.start = {
-            ...updatedConn.start,
-            position: [...newObjectPos],
-            worldPosition: [...newObjectPos],
-            facePosition: [...newObjectPos],
-          };
-          needsUpdate = true;
-
-          // Clear existing database save timeout for this connection
-          if (databaseSaveTimeoutRef.current.has(conn.id)) {
-            clearTimeout(databaseSaveTimeoutRef.current.get(conn.id));
-          }
-
-          // Set new timeout to save to database after movement stops
-          const saveTimeout = setTimeout(async () => {
-            if (user && currentSpaceId) {
-              try {
-                const spaceOwnerId = window.currentSpaceOwner || user.uid;
-                const { saveConnection } = await import(
-                  '../services/connectionsService'
-                );
-
-                // Get the latest connection state
-                const connectionToSave = { ...updatedConn };
-                delete connectionToSave._localUpdate;
-
-                await saveConnection(
-                  spaceOwnerId,
-                  currentSpaceId,
-                  connectionToSave
-                );
-                console.log(
-                  `💾 Saved connection ${conn.id} position after object ${startObjectId} movement`
-                );
-              } catch (error) {
-                console.error(`❌ Failed to save connection position:`, error);
-              }
-            }
-            databaseSaveTimeoutRef.current.delete(conn.id);
-          }, 1000); // Save 1 second after movement stops
-
-          databaseSaveTimeoutRef.current.set(conn.id, saveTimeout);
-        }
-
-        // Check if end object moved
-        const endObjectId = conn.end?.objectId?.toString();
-        if (endObjectId && objectPositionMap.has(endObjectId)) {
-          const newObjectPos = objectPositionMap.get(endObjectId);
-
-          // Update end position to follow the object
-          updatedConn.end = {
-            ...updatedConn.end,
-            position: [...newObjectPos],
-            worldPosition: [...newObjectPos],
-            facePosition: [...newObjectPos],
-          };
-          needsUpdate = true;
-
-          // Clear existing database save timeout for this connection
-          if (databaseSaveTimeoutRef.current.has(conn.id)) {
-            clearTimeout(databaseSaveTimeoutRef.current.get(conn.id));
-          }
-
-          // Set new timeout to save to database after movement stops
-          const saveTimeout = setTimeout(async () => {
-            if (user && currentSpaceId) {
-              try {
-                const spaceOwnerId = window.currentSpaceOwner || user.uid;
-                const { saveConnection } = await import(
-                  '../services/connectionsService'
-                );
-
-                // Get the latest connection state
-                const connectionToSave = { ...updatedConn };
-                delete connectionToSave._localUpdate;
-
-                await saveConnection(
-                  spaceOwnerId,
-                  currentSpaceId,
-                  connectionToSave
-                );
-                console.log(
-                  `💾 Saved connection ${conn.id} position after object ${endObjectId} movement`
-                );
-              } catch (error) {
-                console.error(`❌ Failed to save connection position:`, error);
-              }
-            }
-            databaseSaveTimeoutRef.current.delete(conn.id);
-          }, 1000); // Save 1 second after movement stops
-
-          databaseSaveTimeoutRef.current.set(conn.id, saveTimeout);
-        }
-
-        if (needsUpdate) {
-          updatedConn._localUpdate = Date.now(); // Mark as local update
-          return updatedConn;
-        }
-
-        return conn;
-      });
-    });
-  });
-
-  // Cleanup timeouts on unmount
-  useEffect(() => {
-    return () => {
-      databaseSaveTimeoutRef.current.forEach((timeout) => {
-        clearTimeout(timeout);
-      });
-      databaseSaveTimeoutRef.current.clear();
-    };
-  }, []);
-
+  // This component doesn't render anything
   return null;
 };
 

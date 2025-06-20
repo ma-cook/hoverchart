@@ -1,12 +1,62 @@
 import { Html } from '@react-three/drei';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ColorPicker from './ColorPicker';
+import { useColorPickerStore } from '../stores';
 
-const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
-  const [showColorPicker, setShowColorPicker] = useState(false);
+const LineUI = ({
+  position,
+  onColorChange,
+  onToggleDashed,
+  onTextClick,
+  lineId,
+  currentConnection,
+}) => {
   const [showLineStyles, setShowLineStyles] = useState(false);
   const [showArrowDropdown, setShowArrowDropdown] = useState(false); // <-- New state
-  const [currentLineStyle, setCurrentLineStyle] = useState('straight'); // Add this state
+  // Extract the full style from the current connection, including direction
+  const getFullStyle = (connection) => {
+    if (!connection) return 'straight';
+    const baseStyle =
+      connection.styleType || connection.lineStyle || 'straight';
+    const direction = connection.dashDirection;
+
+    // If there's a direction, combine it with the base style
+    if (direction && (baseStyle === 'dashed' || baseStyle === 'dotted')) {
+      return `${baseStyle}-${direction}`;
+    }
+    return baseStyle;
+  };
+
+  // Extract just the base style (without direction) for UI display purposes
+  const getBaseStyle = (connection) => {
+    if (!connection) return 'straight';
+    return connection.styleType || connection.lineStyle || 'straight';
+  };
+  const [currentLineStyle, setCurrentLineStyle] = useState(() =>
+    getFullStyle(currentConnection)
+  );
+  // Update currentLineStyle when the connection changes or its style changes
+  useEffect(() => {
+    const newFullStyle = getFullStyle(currentConnection);
+    setCurrentLineStyle(newFullStyle);
+  }, [
+    currentConnection,
+    currentConnection?.styleType,
+    currentConnection?.lineStyle,
+    currentConnection?.dashDirection,
+  ]);
+
+  // Use color picker store
+  const openColorPicker = useColorPickerStore((state) => state.openColorPicker);
+  const closeColorPicker = useColorPickerStore(
+    (state) => state.closeColorPicker
+  );
+
+  const pickerId = `line-ui-${lineId || 'default'}`;
+  // Make color picker visibility reactive to store changes
+  const showColorPicker = useColorPickerStore((state) =>
+    state.isColorPickerOpen(pickerId)
+  );
 
   const tools = [
     { name: 'text', icon: 'T' },
@@ -19,7 +69,6 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
     { name: 'dashed', icon: '---' },
     { name: 'dotted', icon: '⋯' },
   ];
-
   const handleToolClick = (tool, e) => {
     e.stopPropagation();
     switch (tool.name) {
@@ -30,17 +79,17 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
           // Reset other UI states
           setShowLineStyles(false);
           setShowArrowDropdown(false);
-          setShowColorPicker(false);
+          closeColorPicker(pickerId);
         }
         break;
       case 'paint':
-        setShowColorPicker(true);
+        openColorPicker(pickerId, 'line-ui');
         setShowLineStyles(false);
         setShowArrowDropdown(false);
         break;
       case 'dotted':
         setShowLineStyles(!showLineStyles);
-        setShowColorPicker(false);
+        closeColorPicker(pickerId);
         setShowArrowDropdown(false);
         break;
     }
@@ -58,10 +107,17 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
       setShowArrowDropdown(false);
     }
   };
-
   const handleArrowClick = (direction, e) => {
-    e.stopPropagation();
-    onToggleDashed?.(`${currentLineStyle}-${direction}`);
+    e.stopPropagation(); // Get the current base style from the connection
+    const actualBaseStyle = getBaseStyle(currentConnection);
+    const fullStyleWithDirection = `${actualBaseStyle}-${direction}`;
+
+    // Use the actual base style from the connection, not the local state
+    onToggleDashed?.(fullStyleWithDirection);
+
+    // Update local state to the full style with direction (not just base style)
+    setCurrentLineStyle(fullStyleWithDirection);
+
     setShowArrowDropdown(false);
     setShowLineStyles(false);
   };
@@ -73,6 +129,8 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
       className="line-ui-container"
       style={{
         pointerEvents: 'auto',
+        transform: 'translate3d(-50%, -150%, 0)',
+        background: 'transparent',
         zIndex: 100,
       }}
     >
@@ -91,21 +149,15 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
         {tools.map((tool) => (
           <button
             key={tool.name}
-            className="line-tool-button"
-            style={{
-              padding: '4px 8px',
-              border: 'none',
-              background: 'transparent',
-              cursor: 'pointer',
-            }}
+            className="face-tool-button"
             onClick={(e) => handleToolClick(tool, e)}
           >
             {tool.icon}
           </button>
-        ))}
-
+        ))}{' '}
         {showLineStyles && (
           <div
+            className="border-menu"
             style={{
               position: 'absolute',
               top: '100%',
@@ -122,12 +174,9 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
             {lineStyles.map((style) => (
               <button
                 key={style.name}
+                className="face-tool-button"
                 onClick={(e) => handleLineStyleClick(style, e)}
                 style={{
-                  padding: '4px 8px',
-                  border: 'none',
-                  background: 'transparent',
-                  cursor: 'pointer',
                   width: '100%',
                   textAlign: 'left',
                 }}
@@ -137,9 +186,9 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
             ))}
           </div>
         )}
-
         {showArrowDropdown && (
           <div
+            className="border-menu"
             style={{
               position: 'absolute',
               top: '100%',
@@ -155,24 +204,14 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
             }}
           >
             <button
+              className="face-tool-button"
               onClick={(e) => handleArrowClick('left', e)}
-              style={{
-                padding: '4px 8px',
-                border: 'none',
-                background: 'transparent',
-                cursor: 'pointer',
-              }}
             >
               ←
             </button>
             <button
+              className="face-tool-button"
               onClick={(e) => handleArrowClick('right', e)}
-              style={{
-                padding: '4px 8px',
-                border: 'none',
-                background: 'transparent',
-                cursor: 'pointer',
-              }}
             >
               →
             </button>
@@ -188,12 +227,13 @@ const LineUI = ({ position, onColorChange, onToggleDashed, onTextClick }) => {
             transform: 'translateX(-50%)',
           }}
         >
+          {' '}
           <ColorPicker
             onColorSelect={(color) => {
               onColorChange?.(color);
-              setShowColorPicker(false);
+              closeColorPicker(pickerId);
             }}
-            onClose={() => setShowColorPicker(false)}
+            onClose={() => closeColorPicker(pickerId)}
           />
         </div>
       )}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useUIOverlayStore } from '../stores';
 
 const UIOverlay = ({
   onCreateObject,
@@ -11,33 +11,26 @@ const UIOverlay = ({
   isConnectMode,
   currentCell, // Add currentCell prop
 }) => {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const [templateConfig, setTemplateConfig] = useState({
-    objectType: 'cube',
-    numberOfObjects: 5,
-    distance: 10,
-    templateShape: 'plane',
-    orientation: 'horizontal', // 'horizontal' or 'vertical'
-  });
+  // Use UI overlay store
+  const getUIOverlay = useUIOverlayStore((state) => state.getUIOverlay);
+  const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
+  const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
+  const updateTemplateConfig = useUIOverlayStore(
+    (state) => state.updateTemplateConfig
+  );
+
+  // Get store state for main overlay
+  const overlay = getUIOverlay('main');
+  const { menuOpen, templateOpen, templateConfig } = overlay;
+
   const handleArrowClick = () => {
     onToggleIndicators('connection');
   };
 
-  const toggleMenu = () => {
-    setMenuOpen(!menuOpen);
-  };
-
-  const toggleTemplate = () => {
-    setTemplateOpen(!templateOpen);
-  };
-
   const handleTemplateConfigChange = (field, value) => {
-    setTemplateConfig((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    updateTemplateConfig('main', field, value);
   };
+
   const createTemplate = () => {
     const {
       objectType,
@@ -201,10 +194,8 @@ const UIOverlay = ({
           }
         }
       }
-    }
-
-    // Close template menu after creation
-    setTemplateOpen(false);
+    } // Close template menu after creation
+    toggleTemplate('main');
   };
 
   if (!isAuthReady) {

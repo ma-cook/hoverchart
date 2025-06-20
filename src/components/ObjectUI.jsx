@@ -1,8 +1,9 @@
 import { Html } from '@react-three/drei';
 import ColorPicker from './ColorPicker';
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber'; // <-- New import
 import * as THREE from 'three';
+import { useColorPickerStore } from '../stores';
 
 const ObjectUI = ({
   onTransformToggle,
@@ -16,7 +17,22 @@ const ObjectUI = ({
 }) => {
   const groupRef = useRef();
   const lastPosition = useRef(null);
-  const [showColorPicker, setShowColorPicker] = useState(false);
+
+  // Use color picker store
+  const isColorPickerOpen = useColorPickerStore(
+    (state) => state.isColorPickerOpen
+  );
+  const openColorPicker = useColorPickerStore((state) => state.openColorPicker);
+  const closeColorPicker = useColorPickerStore(
+    (state) => state.closeColorPicker
+  );
+  const pickerId = 'object-ui-color-picker';
+
+  // Use color picker store - make it reactive
+  const showColorPicker = useColorPickerStore((state) =>
+    state.isColorPickerOpen(pickerId)
+  );
+
   const { camera } = useThree(); // <-- Get camera from Three.js context
   useFrame(({ camera }) => {
     if (groupRef.current && followTarget?.current) {
@@ -64,11 +80,10 @@ const ObjectUI = ({
       }
     }
   };
-
   const handleColorPick = (color) => {
     console.log('Color picked:', color); // Add debug log
     onLineColorChange?.(color); // Ensure we call the prop function
-    setShowColorPicker(false);
+    closeColorPicker(pickerId);
   };
 
   const tools = [
@@ -81,7 +96,6 @@ const ObjectUI = ({
         onHeaderToggle?.();
       },
     },
-    { name: 'text', icon: 'T' },
 
     {
       name: 'transform',
@@ -115,7 +129,6 @@ const ObjectUI = ({
       },
     },
   ];
-
   const handleToolClick = (tool) => {
     switch (tool.name) {
       case 'transform':
@@ -128,7 +141,12 @@ const ObjectUI = ({
         onResizeToggle();
         break;
       case 'color':
-        setShowColorPicker(true);
+        console.log('Opening color picker with pickerId:', pickerId);
+        openColorPicker(pickerId, 'object-ui');
+        console.log(
+          'Color picker opened, showColorPicker:',
+          isColorPickerOpen(pickerId)
+        );
         break;
     }
   };
@@ -141,15 +159,25 @@ const ObjectUI = ({
         style={{
           pointerEvents: 'auto',
           transform: 'translate3d(-50%, -150%, 0)', // Move UI up by 150% like FaceUI
-          background: 'black',
+          background: 'transparent',
           zIndex: 999999,
         }}
       >
-        <div className="object-ui-content">
+        <div
+          className="object-ui-content"
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            gap: '4px',
+            padding: '4px',
+            borderRadius: '4px',
+            background: 'white',
+          }}
+        >
           {tools.map((tool) => (
             <button
               key={tool.name}
-              className={`object-tool-button ${tool.active ? 'active' : ''}`}
+              className={`face-tool-button ${tool.active ? 'active-tool' : ''}`}
               onClick={(e) => {
                 e.stopPropagation();
                 if (tool.onClick) {
@@ -159,16 +187,34 @@ const ObjectUI = ({
                   handleToolClick(tool);
                 }
               }}
+              style={
+                tool.active
+                  ? {
+                      backgroundColor: '#4CAF50',
+                      color: 'white',
+                    }
+                  : {}
+              }
             >
               {tool.icon}
             </button>
-          ))}
+          ))}{' '}
         </div>
         {showColorPicker && (
-          <ColorPicker
-            onColorSelect={handleColorPick}
-            onClose={() => setShowColorPicker(false)}
-          />
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <ColorPicker
+              pickerId={pickerId}
+              onColorSelect={handleColorPick}
+              onClose={() => closeColorPicker(pickerId)}
+            />
+          </div>
         )}
       </Html>
     </group>

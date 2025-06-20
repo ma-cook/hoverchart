@@ -1,514 +1,441 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
+import { useConnectionStore } from '../stores';
 import {
   subscribeToConnections,
   saveConnection,
 } from '../services/connectionsService';
-import { resolveConnectionPositions } from '../services/connectionPositionResolver';
 
 /**
- * Custom hook to manage connections
+ * Custom hook to manage connections using the simplified Zustand store
+ * Consolidated to use useConnectionStore for all connection state
  */
-export function useConnections({
-  user,
-  currentSpaceId,
-  loadedCells = [],
-  objects = [],
-}) {
-  // Connection state
-  const [connections, setConnections] = useState([]);
-  const [lineTexts, setLineTexts] = useState({});
-  const [selectedConnection, setSelectedConnection] = useState(null);
-  const [showLineTextInput, setShowLineTextInput] = useState(null);
-  const [lineTextStyles, setLineTextStyles] = useState({});
-  const [showLineTextStyleUI, setShowLineTextStyleUI] = useState(null);
-  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
-  // Connection management refs
-  const lastKnownConnectionsRef = useRef([]);
-  const lastConnectionUpdateTimeRef = useRef(Date.now());
-  const activeConnectionSubscriptionRef = useRef(null);
-  const initialLoadCompletedRef = useRef(false);
-  const connectionBatchRef = useRef([]); // Add new refs to track subscription state and prevent duplicates
-  const isSubscribingRef = useRef(false);
-  const lastSubscriptionKeyRef = useRef(null);
-  const subscriptionDebounceTimerRef = useRef(null);
-  const objectsRef = useRef(objects); // Add ref to track current objects
+export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
+  // Create a unique space identifier for multi-space support
+  const spaceId = useMemo(() => {
+    const publicSpaceId = window.publicAccessSpace;
+    const effectiveSpaceId = publicSpaceId || currentSpaceId;
+    return effectiveSpaceId || 'default';
+  }, [currentSpaceId]);
 
-  // Update objects ref whenever objects change
-  useEffect(() => {
-    objectsRef.current = objects;
-  }, [objects]);
+  // Get connection store state and actions
+  const connections = useConnectionStore((state) => state.connections);
+  const setConnections = useConnectionStore((state) => state.setConnections);
+  const lineTexts = useConnectionStore((state) => state.lineTexts);
+  const setLineText = useConnectionStore((state) => state.setLineText);
+  const selectedConnection = useConnectionStore(
+    (state) => state.selectedConnection
+  );
+  const selectConnection = useConnectionStore(
+    (state) => state.selectConnection
+  );
+  const deselectConnection = useConnectionStore(
+    (state) => state.deselectConnection
+  );
+  const showLineTextInput = useConnectionStore(
+    (state) => state.showLineTextInput
+  );
+  const setShowLineTextInput = useConnectionStore(
+    (state) => state.setShowLineTextInput
+  );
+  const lineTextStyles = useConnectionStore((state) => state.lineTextStyles);
+  const updateLineTextStyle = useConnectionStore(
+    (state) => state.updateLineTextStyle
+  );
+  const showLineTextStyleUI = useConnectionStore(
+    (state) => state.showLineTextStyleUI
+  );
+  const setShowLineTextStyleUI = useConnectionStore(
+    (state) => state.setShowLineTextStyleUI
+  );
+  const connectionsLoaded = useConnectionStore(
+    (state) => state.connectionsLoaded
+  );
+  const setConnectionsLoaded = useConnectionStore(
+    (state) => state.setConnectionsLoaded
+  ); // Track subscription cleanup and debouncing
+  const subscriptionCleanupRef = useRef(null);
+  const subscriptionTimeoutRef = useRef(null);
 
-  // Memoize the subscription key to make it stable
-  const subscriptionKey = useMemo(() => {
-    if (!user || !currentSpaceId) return null;
-    return `${user.uid}-${currentSpaceId}`;
-  }, [user, currentSpaceId]);
-
-  // Check for public access parameters
-  const publicSpaceId = window.publicAccessSpace;
-  const effectiveSpaceId = publicSpaceId || currentSpaceId;
-  const canViewSpace = !!(user || publicSpaceId);
-
-  // Memoize the cell coordinates conversion to prevent constant re-subscriptions
-  const cellCoords = useMemo(() => {
-    if (!Array.isArray(loadedCells) || loadedCells.length === 0) {
+  // Memoize loadedCells to prevent constant changes
+  const stableLoadedCells = useMemo(() => {
+    if (
+      !loadedCells ||
+      !Array.isArray(loadedCells) ||
+      loadedCells.length === 0
+    ) {
       return [];
     }
-
-    // Create a stable array by sorting cell IDs to prevent unnecessary re-renders
-    const sortedCells = [...loadedCells].sort();
-
-    return sortedCells
-      .map((cellId) => {
-        if (typeof cellId === 'string') {
-          const [x, y, z] = cellId.split(',').map(Number);
-          return { x, y, z: z || 0 }; // Default z to 0 for backward compatibility
-        }
-        return cellId; // Already an object
-      })
-      .filter(
-        (coords) =>
-          coords &&
-          typeof coords.x === 'number' &&
-          typeof coords.y === 'number' &&
-          typeof coords.z === 'number'
-      );
+    return [...loadedCells].sort();
   }, [loadedCells]);
+  // Ref to track spatial operations to prevent interference
+  const spatialOperationRef = useRef(false);
 
-  // Create a stable cellCoords key for comparison
-  const cellCoordsKey = useMemo(() => {
-    return cellCoords
-      .map((c) => `${c.x},${c.y},${c.z}`)
-      .sort()
-      .join('|');
-  }, [cellCoords]);
-
-  // Subscribe to connection changes - improved to handle initial load better
+  // Memoize user ID to prevent object reference changes
+  const userId = useMemo(() => user?.uid || null, [user?.uid]);
+  // Subscribe to connection changes when dependencies change
   useEffect(() => {
-    // Create a stable subscription key that includes cell info
-    const fullSubscriptionKey = subscriptionKey
-      ? `${subscriptionKey}-${cellCoordsKey}`
-      : null;
-
-    // Skip if no key or if already subscribing to the same data
-    if (
-      !fullSubscriptionKey ||
-      isSubscribingRef.current ||
-      lastSubscriptionKeyRef.current === fullSubscriptionKey
-    ) {
-      return () => {};
+    if (!userId && !window.publicAccessSpace) {
+      return;
+    } // Skip subscription if spatial operation is in progress
+    if (spatialOperationRef.current) {
+      return;
     }
 
-    // Check if we have viewing permissions
-    if (!canViewSpace || (!user && !window.currentSpaceOwner)) {
-      return () => {};
+    // Clear any existing timeout
+    if (subscriptionTimeoutRef.current) {
+      clearTimeout(subscriptionTimeoutRef.current);
+      subscriptionTimeoutRef.current = null;
     }
 
-    // Set flag to prevent parallel subscription attempts
-    isSubscribingRef.current = true;
+    // Debounce subscription setup to prevent rapid churn
+    subscriptionTimeoutRef.current = setTimeout(() => {
+      // console.log('🔗 Setting up connection subscription for space:', spaceId);
 
-    // If we have a subscription for this key, reuse it
-    if (
-      activeConnectionSubscriptionRef.current?.key === fullSubscriptionKey &&
-      typeof activeConnectionSubscriptionRef.current?.unsubscribe === 'function'
-    ) {
-      isSubscribingRef.current = false;
-      return () => {};
-    }
-
-    // Debounce multiple rapid subscription attempts
-    if (subscriptionDebounceTimerRef.current) {
-      clearTimeout(subscriptionDebounceTimerRef.current);
-    }
-
-    subscriptionDebounceTimerRef.current = setTimeout(() => {
-      setConnectionsLoaded(false);
-      initialLoadCompletedRef.current = false;
-
-      // Clean up any existing subscription
-      if (
-        typeof activeConnectionSubscriptionRef.current?.unsubscribe ===
-          'function' &&
-        activeConnectionSubscriptionRef.current?.key !== fullSubscriptionKey
-      ) {
-        activeConnectionSubscriptionRef.current.unsubscribe();
-        activeConnectionSubscriptionRef.current = null;
+      // Cleanup previous subscription
+      if (subscriptionCleanupRef.current) {
+        subscriptionCleanupRef.current();
+        subscriptionCleanupRef.current = null;
       }
-      lastSubscriptionKeyRef.current = fullSubscriptionKey;
 
-      const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-      connectionBatchRef.current = [];
-      let initialBatchTimeout = null;
+      // Set up new subscription
+      const cleanup = subscribeToConnections(
+        userId,
+        currentSpaceId,
+        (connectionEvent) => {
+          // Check if this is during a spatial operation or active transformation
+          if (spatialOperationRef.current) {
+            return;
+          } // Check if any objects are currently being transformed/dragged
+          if (
+            window._currentTransformingObjects &&
+            window._currentTransformingObjects.size > 0
+          ) {
+            return;
+          }
 
-      const unsubscribe = subscribeToConnections(
-        spaceOwnerId,
-        effectiveSpaceId,
-        (change) => {
-          lastConnectionUpdateTimeRef.current = Date.now();
+          // console.log('🔗 Received connection event:', connectionEvent);
 
-          // For the initial load, batch changes to process them all at once
-          if (!initialLoadCompletedRef.current) {
-            connectionBatchRef.current.push(change);
-
-            // Clear any existing timeout
-            if (initialBatchTimeout) {
-              clearTimeout(initialBatchTimeout);
-              initialBatchTimeout = null;
-            }
-
-            // Set a timeout to process the initial batch
-            initialBatchTimeout = setTimeout(() => {
-              setConnections((prevConnections) => {
-                const updatedConnections = [...prevConnections];
-                const newConnections = [];
-
-                connectionBatchRef.current.forEach((change) => {
-                  const index = updatedConnections.findIndex(
-                    (conn) => conn.id === change.id
+          // Handle individual connection events (matching object pattern)
+          if (connectionEvent && connectionEvent.type) {
+            setConnections((prevConnections) => {
+              const currentConnections = Array.isArray(prevConnections)
+                ? prevConnections
+                : [];
+              switch (connectionEvent.type) {
+                case 'added':
+                case 'modified': {
+                  // Remove existing connection if it exists, then add the new/updated one
+                  const filteredConnections = currentConnections.filter(
+                    (conn) => conn.id !== connectionEvent.id
                   );
 
-                  if (change.type === 'added' && index === -1) {
-                    // New connection, add to collection for position resolution
-                    newConnections.push(change.connection);
-                  } else if (change.type === 'modified' && index !== -1) {
-                    // Existing connection updated, merge changes
-                    updatedConnections[index] = {
-                      ...updatedConnections[index],
-                      ...change.connection,
+                  // Preserve local visual updates when merging Firebase data
+                  const existingConn = currentConnections.find(
+                    (conn) => conn.id === connectionEvent.id
+                  );
+                  let mergedConnection = connectionEvent.connection;
+                  // Normalize style properties for compatibility
+                  const normalizedConnection = {
+                    ...connectionEvent.connection,
+                    // Ensure both styleType and lineStyle exist for compatibility
+                    styleType:
+                      connectionEvent.connection.styleType ||
+                      connectionEvent.connection.lineStyle ||
+                      'straight',
+                    lineStyle:
+                      connectionEvent.connection.lineStyle ||
+                      connectionEvent.connection.styleType ||
+                      'straight',
+                    // Preserve dashDirection and dashOffset for animated lines
+                    dashDirection:
+                      connectionEvent.connection.dashDirection || null,
+                    dashOffset: connectionEvent.connection.dashOffset || 0,
+                  }; // If we have local visual updates, preserve the positions but keep other data from Firebase
+                  if (
+                    existingConn?._visualUpdate &&
+                    (!connectionEvent.connection._lastSaved ||
+                      existingConn._visualUpdate >
+                        connectionEvent.connection._lastSaved)
+                  ) {
+                    // Preserve local visual updates over Firebase data
+                    mergedConnection = {
+                      ...normalizedConnection, // Firebase data (style, text, etc.) with normalized properties
+                      start: existingConn.start || normalizedConnection.start, // Keep local positions
+                      end: existingConn.end || normalizedConnection.end, // Keep local positions
+                      _visualUpdate: existingConn._visualUpdate,
+                      _localUpdate: existingConn._localUpdate,
                     };
-                  } else if (change.type === 'removed' && index !== -1) {
-                    // Connection removed, filter out
-                    updatedConnections.splice(index, 1);
+                  } else {
+                    // Use normalized connection even if no local updates
+                    mergedConnection = normalizedConnection;
                   }
-                }); // Resolve positions for new connections against current objects
-                if (
-                  newConnections.length > 0 &&
-                  objectsRef.current.length > 0
-                ) {
-                  console.log(
-                    `🔧 Resolving positions for ${newConnections.length} new connections during initial load`
-                  );
-                  const resolvedConnections = resolveConnectionPositions(
-                    newConnections,
-                    objectsRef.current
-                  );
-                  updatedConnections.push(...resolvedConnections);
-                } else {
-                  // No objects available yet, add connections as-is
-                  updatedConnections.push(...newConnections);
+
+                  return [...filteredConnections, mergedConnection];
                 }
 
-                return updatedConnections;
-              });
-
-              setConnections((updatedConnections) => {
-                lastKnownConnectionsRef.current = updatedConnections;
-                return updatedConnections;
-              });
-
-              // Mark initial load as completed
-              initialLoadCompletedRef.current = true;
-              setConnectionsLoaded(true);
-            }, 50); // 50ms timeout for batch processing
-          } else {
-            // For subsequent updates, handle each change immediately
-            setConnections((prevConnections) => {
-              const updatedConnections = [...prevConnections];
-              const index = updatedConnections.findIndex(
-                (conn) => conn.id === change.id
-              );
-              if (change.type === 'added' && index === -1) {
-                // New connection, resolve position and add to state
-                const resolvedConnections =
-                  objectsRef.current.length > 0
-                    ? resolveConnectionPositions(
-                        [change.connection],
-                        objectsRef.current
-                      )
-                    : [change.connection];
-                updatedConnections.push(resolvedConnections[0]);
-              } else if (change.type === 'modified' && index !== -1) {
-                // Existing connection updated, merge changes
-                updatedConnections[index] = {
-                  ...updatedConnections[index],
-                  ...change.connection,
-                };
-              } else if (change.type === 'removed' && index !== -1) {
-                // Connection removed, filter out
-                updatedConnections.splice(index, 1);
+                case 'removed': {
+                  // Remove the connection
+                  return currentConnections.filter(
+                    (conn) => conn.id !== connectionEvent.id
+                  );
+                }
+                default:
+                  return currentConnections;
               }
-
-              return updatedConnections;
             });
-
-            // Update lastKnownConnectionsRef to track the changes
-            const updated = [...(lastKnownConnectionsRef.current || [])];
-            const index = updated.findIndex((conn) => conn.id === change.id);
-
-            if (change.type === 'added' && index === -1) {
-              updated.push(change.connection);
-            } else if (change.type === 'modified' && index !== -1) {
-              updated[index] = {
-                ...updated[index],
-                ...change.connection,
-              };
-            } else if (change.type === 'removed' && index !== -1) {
-              updated.splice(index, 1);
-            }
-
-            lastKnownConnectionsRef.current = updated;
+          } else {
+            // Invalid connection event
           }
+          setConnectionsLoaded(true);
         },
-        cellCoords // Pass converted coordinates as the fourth parameter
+        stableLoadedCells
       );
 
-      // Store the subscription with its key for future reference
-      activeConnectionSubscriptionRef.current = {
-        key: fullSubscriptionKey,
-        unsubscribe,
-      };
-      isSubscribingRef.current = false;
-      return () => {
-        if (typeof unsubscribe === 'function') {
-          unsubscribe();
-        }
-      };
-    }, 200); // Increased debounce to 200ms for more stability
+      subscriptionCleanupRef.current = cleanup;
+    }, 100); // 100ms debounce
 
     return () => {
-      if (subscriptionDebounceTimerRef.current) {
-        clearTimeout(subscriptionDebounceTimerRef.current);
+      // Clear timeout if effect is cleaned up before timeout fires
+      if (subscriptionTimeoutRef.current) {
+        clearTimeout(subscriptionTimeoutRef.current);
+        subscriptionTimeoutRef.current = null;
+      }
+      // Clean up existing subscription
+      if (subscriptionCleanupRef.current) {
+        subscriptionCleanupRef.current();
+        subscriptionCleanupRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    subscriptionKey,
-    canViewSpace,
-    effectiveSpaceId,
-    cellCoordsKey, // Use stable cellCoordsKey for subscription key comparison
-    cellCoords, // Still needed for the actual subscription call
-    user,
+    spaceId,
+    userId,
+    currentSpaceId,
+    stableLoadedCells,
+    // Note: Removed setConnections and setConnectionsLoaded from dependencies
+    // as Zustand store actions have stable references and don't need to trigger re-subscriptions
   ]);
-  // Connection handler functions
-  const handleConnectionClick = useCallback(
-    (e, connectionId) => {
-      e.stopPropagation();
-      setSelectedConnection(
-        selectedConnection === connectionId ? null : connectionId
-      );
-    },
-    [selectedConnection]
-  );
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (subscriptionTimeoutRef.current) {
+        clearTimeout(subscriptionTimeoutRef.current);
+        subscriptionTimeoutRef.current = null;
+      }
+      if (subscriptionCleanupRef.current) {
+        subscriptionCleanupRef.current();
+        subscriptionCleanupRef.current = null;
+      }
+    };
+  }, []);
+  // Monitor for rapid object removal/addition which indicates spatial moves
+  useEffect(() => {
+    const recentObjectChanges = new Map();
 
-  const handleLineTextClick = useCallback((e, connectionId) => {
-    e.stopPropagation();
-    setShowLineTextInput(connectionId);
+    // Function to track object changes
+    const trackObjectChange = (objectId, changeType) => {
+      const now = Date.now();
+      const key = objectId;
+
+      if (!recentObjectChanges.has(key)) {
+        recentObjectChanges.set(key, []);
+      }
+
+      const changes = recentObjectChanges.get(key);
+      changes.push({ type: changeType, timestamp: now });
+
+      // Keep only recent changes (last 5 seconds)
+      const filtered = changes.filter(
+        (change) => now - change.timestamp < 5000
+      );
+      recentObjectChanges.set(key, filtered);
+
+      // Check if we have remove + add within short time = spatial move
+      const hasRemove = filtered.some((c) => c.type === 'remove');
+      const hasAdd = filtered.some((c) => c.type === 'add');
+
+      if (hasRemove && hasAdd) {
+        // Spatial move detected
+        spatialOperationRef.current = true;
+        setTimeout(() => {
+          spatialOperationRef.current = false;
+        }, 1000);
+      }
+    };
+
+    // Store the function globally so App.jsx can call it
+    window.trackObjectChange = trackObjectChange;
+
+    return () => {
+      delete window.trackObjectChange;
+    };
   }, []);
 
-  const handleLineTextSubmit = useCallback(
-    async (connectionId, text) => {
-      // Update local state first for immediate feedback
-      setLineTexts((prev) => ({
-        ...prev,
-        [connectionId]: text,
-      }));
+  // Handler functions
+  const handleConnectionClick = (e, connectionId) => {
+    e.stopPropagation();
+    if (selectedConnection === connectionId) {
+      deselectConnection();
+    } else {
+      selectConnection(connectionId);
+    }
+  };
+
+  const handleLineTextClick = (e, connectionId) => {
+    e.stopPropagation();
+    setShowLineTextInput(connectionId);
+  };
+  const handleLineTextSubmit = async (connectionId, text) => {
+    try {
+      setLineText(connectionId, text);
       setShowLineTextInput(null);
 
-      // Find the connection and update it in the database
-      const connection = connections.find((conn) => conn.id === connectionId);
-      if (connection && user && currentSpaceId) {
-        try {
-          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      // Save to backend if we have a user and space
+      if (user && currentSpaceId) {
+        const connectionToSave = connections.find(
+          (conn) => conn.id === connectionId
+        );
+        if (connectionToSave) {
           const updatedConnection = {
-            ...connection,
+            ...connectionToSave,
             text,
-            lastUpdated: new Date().toISOString(),
+            _lastModified: Date.now(),
+            _needsSave: true,
           };
-
-          // Update local connections state
-          setConnections((prev) =>
-            prev.map((conn) =>
-              conn.id === connectionId ? updatedConnection : conn
-            )
-          );
-
-          // Save to database
-          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
-          console.log(`💾 Saved connection text for ${connectionId}`);
-        } catch (error) {
-          console.error(`❌ Failed to save connection text:`, error);
-          // Revert local state on error
-          setLineTexts((prev) => {
-            const newState = { ...prev };
-            delete newState[connectionId];
-            return newState;
-          });
+          await saveConnection(user.uid, currentSpaceId, updatedConnection);
         }
       }
-    },
-    [connections, user, currentSpaceId, setConnections]
-  );
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
-  const handleLineTextStyleChange = useCallback(
-    async (connectionId, style) => {
-      // Update local state first for immediate feedback
-      setLineTextStyles((prev) => ({
-        ...prev,
-        [connectionId]: { ...prev[connectionId], ...style },
-      }));
+  const handleLineTextStyleChange = async (connectionId, style) => {
+    try {
+      updateLineTextStyle(connectionId, style);
 
-      // Find the connection and update it in the database
-      const connection = connections.find((conn) => conn.id === connectionId);
-      if (connection && user && currentSpaceId) {
-        try {
-          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      // Save to backend if we have a user and space
+      if (user && currentSpaceId) {
+        const connectionToSave = connections.find(
+          (conn) => conn.id === connectionId
+        );
+        if (connectionToSave) {
           const updatedConnection = {
-            ...connection,
-            textStyle: {
-              ...connection.textStyle,
-              ...style,
-            },
-            lastUpdated: new Date().toISOString(),
+            ...connectionToSave,
+            textStyle: style,
+            _lastModified: Date.now(),
+            _needsSave: true,
           };
-
-          // Update local connections state
-          setConnections((prev) =>
-            prev.map((conn) =>
-              conn.id === connectionId ? updatedConnection : conn
-            )
-          );
-
-          // Save to database
-          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
-          console.log(`💾 Saved connection text style for ${connectionId}`);
-        } catch (error) {
-          console.error(`❌ Failed to save connection text style:`, error);
-          // Revert local state on error
-          setLineTextStyles((prev) => {
-            const newState = { ...prev };
-            if (newState[connectionId]) {
-              // Remove the failed style changes
-              Object.keys(style).forEach((key) => {
-                delete newState[connectionId][key];
-              });
-            }
-            return newState;
-          });
+          await saveConnection(user.uid, currentSpaceId, updatedConnection);
         }
       }
-    },
-    [connections, user, currentSpaceId, setConnections]
-  );
-
-  const handleLineColorChange = useCallback(
-    async (connectionId, color) => {
-      // Update local state first for immediate feedback
-      setConnections((prev) =>
-        prev.map((conn) =>
-          conn.id === connectionId ? { ...conn, color } : conn
-        )
-      );
-
-      // Find the connection and save it to the database
-      const connection = connections.find((conn) => conn.id === connectionId);
-      if (connection && user && currentSpaceId) {
-        try {
-          const spaceOwnerId = window.currentSpaceOwner || user.uid;
-          const updatedConnection = {
-            ...connection,
-            color,
-            lastUpdated: new Date().toISOString(),
-          };
-
-          // Save to database
-          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
-          console.log(`💾 Saved connection color for ${connectionId}`);
-        } catch (error) {
-          console.error(`❌ Failed to save connection color:`, error);
-          // Revert local state on error
-          setConnections((prev) =>
-            prev.map((conn) =>
-              conn.id === connectionId
-                ? { ...conn, color: connection.color }
-                : conn
-            )
-          );
-        }
-      }
-    },
-    [connections, user, currentSpaceId]
-  );
-
-  const handleLineStyleChange = useCallback(
-    async (connectionId, styleType) => {
-      // Determine style properties
-      const [lineStyle, direction] = styleType.includes('-')
-        ? styleType.split('-')
-        : [styleType, null];
-
-      // Update local state first for immediate feedback
-      setConnections((prev) =>
-        prev.map((conn) => {
-          if (conn.id === connectionId) {
-            return {
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const handleLineColorChange = async (connectionId, color) => {
+    try {
+      // Update connection color in store first
+      const updatedConnections = connections.map((conn) =>
+        conn.id === connectionId
+          ? {
               ...conn,
-              lineStyle,
-              dashDirection: direction || null,
-            };
-          }
-          return conn;
-        })
+              color,
+              _lastModified: Date.now(),
+              _lastStyleUpdate: Date.now(),
+              _needsSave: true,
+            }
+          : conn
       );
+      setConnections(updatedConnections);
 
-      // Find the connection and save it to the database
-      const connection = connections.find((conn) => conn.id === connectionId);
-      if (connection && user && currentSpaceId) {
-        try {
-          const spaceOwnerId = window.currentSpaceOwner || user.uid;
-          const updatedConnection = {
-            ...connection,
-            lineStyle,
-            dashDirection: direction || null,
-            lastUpdated: new Date().toISOString(),
-          };
-
-          // Save to database
-          await saveConnection(spaceOwnerId, currentSpaceId, updatedConnection);
-          console.log(`💾 Saved connection line style for ${connectionId}`);
-        } catch (error) {
-          console.error(`❌ Failed to save connection line style:`, error);
-          // Revert local state on error
-          setConnections((prev) =>
-            prev.map((conn) =>
-              conn.id === connectionId
-                ? {
-                    ...conn,
-                    lineStyle: connection.lineStyle,
-                    dashDirection: connection.dashDirection,
-                  }
-                : conn
-            )
-          );
+      // Save to backend if we have a user and space
+      if (user && currentSpaceId) {
+        const connectionToSave = updatedConnections.find(
+          (conn) => conn.id === connectionId
+        );
+        if (connectionToSave) {
+          await saveConnection(user.uid, currentSpaceId, connectionToSave);
         }
       }
-    },
-    [connections, user, currentSpaceId]
-  );
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
-  // Public API for the hook
+  const handleLineStyleChange = async (connectionId, styleType) => {
+    try {
+      // Parse compound style strings like "dashed-left" or "dotted-right"
+      let parsedStyleType = styleType;
+      let dashDirection = null;
+
+      if (typeof styleType === 'string' && styleType.includes('-')) {
+        const parts = styleType.split('-');
+        if (parts.length === 2) {
+          parsedStyleType = parts[0]; // e.g., "dashed" or "dotted"
+          dashDirection = parts[1]; // e.g., "left" or "right"
+        }
+      }
+
+      // Update connection style in store first
+      const updatedConnections = connections.map((conn) =>
+        conn.id === connectionId
+          ? {
+              ...conn,
+              styleType: parsedStyleType,
+              lineStyle: parsedStyleType, // Ensure both properties are set for compatibility
+              dashDirection: dashDirection,
+              _lastModified: Date.now(),
+              _lastStyleUpdate: Date.now(),
+              _needsSave: true,
+            }
+          : conn
+      );
+      setConnections(updatedConnections);
+
+      // Save to backend if we have a user and space
+      if (user && currentSpaceId) {
+        const connectionToSave = updatedConnections.find(
+          (conn) => conn.id === connectionId
+        );
+        if (connectionToSave) {
+          await saveConnection(user.uid, currentSpaceId, connectionToSave);
+        }
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Return the same API as before for backward compatibility
   return {
     connections,
-    setConnections,
     lineTexts,
-    setLineTexts,
     selectedConnection,
-    setSelectedConnection,
     showLineTextInput,
-    setShowLineTextInput,
     lineTextStyles,
-    setLineTextStyles,
     showLineTextStyleUI,
-    setShowLineTextStyleUI,
     connectionsLoaded,
+    setConnections,
+    setLineTexts: (texts) => {
+      // Handle bulk line text updates
+      Object.entries(texts).forEach(([id, text]) => {
+        setLineText(id, text);
+      });
+    },
+    setSelectedConnection: selectConnection,
+    setShowLineTextInput,
+    setLineTextStyles: (styles) => {
+      // Handle bulk line style updates
+      Object.entries(styles).forEach(([id, style]) => {
+        updateLineTextStyle(id, style);
+      });
+    },
+    setShowLineTextStyleUI,
     handleConnectionClick,
     handleLineTextClick,
     handleLineTextSubmit,

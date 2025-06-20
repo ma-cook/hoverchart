@@ -1,7 +1,8 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { startBroadcasting, joinBroadcast } from '../services/webRservice';
+import { useWebcamStreamStore } from '../stores';
 
 const WebcamStream = ({
   active = false,
@@ -16,10 +17,24 @@ const WebcamStream = ({
   onBroadcastStopped,
   onViewerCountChange,
 }) => {
-  const [hasError, setHasError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [retryTrigger, setRetryTrigger] = useState(0);
+  // Create unique stream ID
+  const streamId = `${userId}-${spaceId}-${planeId}`;
+
+  // Use webcam stream store
+  const getWebcamStream = useWebcamStreamStore(
+    (state) => state.getWebcamStream
+  );
+  const setWebcamLoading = useWebcamStreamStore(
+    (state) => state.setWebcamLoading
+  );
+  const setWebcamError = useWebcamStreamStore((state) => state.setWebcamError);
+  const retryWebcamStream = useWebcamStreamStore(
+    (state) => state.retryWebcamStream
+  );
+
+  // Get store state
+  const webcamStream = getWebcamStream(streamId);
+  const { hasError, errorMessage, isLoading, retryTrigger } = webcamStream;
 
   // Refs
   const videoRef = useRef(null);
@@ -66,9 +81,8 @@ const WebcamStream = ({
     const currentMeshRef = meshRef.current;
     const currentOnBroadcastStarted = onBroadcastStartedRef.current;
     const currentOnViewerCountChange = onViewerCountChangeRef.current;
-
-    setIsLoading(true);
-    setHasError(false); // Create video element
+    setWebcamLoading(streamId, true);
+    setWebcamError(streamId, false); // Create video element
     console.log('Creating video element...');
     const video = document.createElement('video');
     video.autoplay = true;
@@ -95,9 +109,12 @@ const WebcamStream = ({
           video.srcObject = stream;
         } catch (error) {
           console.error('Error in stream setup:', error);
-          setHasError(true);
-          setErrorMessage('Error setting up video stream: ' + error.message);
-          setIsLoading(false);
+          setWebcamError(
+            streamId,
+            true,
+            'Error setting up video stream: ' + error.message
+          );
+          setWebcamLoading(streamId, false);
           return;
         }
 
@@ -146,7 +163,7 @@ const WebcamStream = ({
               console.log('No mesh found to apply texture to');
             }
 
-            setIsLoading(false);
+            setWebcamLoading(streamId, false);
 
             // Start broadcasting in the background
 
@@ -183,16 +200,22 @@ const WebcamStream = ({
               .catch((error) => {
                 console.log('Broadcast service failed:', error);
                 if (effectCancelled) return;
-                setErrorMessage('Failed to start broadcast: ' + error.message);
-                setHasError(true);
-                setIsLoading(false);
+                setWebcamError(
+                  streamId,
+                  true,
+                  'Failed to start broadcast: ' + error.message
+                );
+                setWebcamLoading(streamId, false);
               });
           } catch (error) {
             console.log('Video play failed with error:', error);
             if (effectCancelled) return;
-            setIsLoading(false);
-            setHasError(true);
-            setErrorMessage('Failed to start video: ' + error.message);
+            setWebcamLoading(streamId, false);
+            setWebcamError(
+              streamId,
+              true,
+              'Failed to start video: ' + error.message
+            );
           }
         };
 
@@ -228,9 +251,8 @@ const WebcamStream = ({
       .catch((error) => {
         console.log('getUserMedia failed:', error);
         if (effectCancelled) return;
-        setIsLoading(false);
-        setHasError(true);
-        setErrorMessage('Camera access error: ' + error.message);
+        setWebcamLoading(streamId, false);
+        setWebcamError(streamId, true, 'Camera access error: ' + error.message);
       });
     return () => {
       console.log(
@@ -254,9 +276,8 @@ const WebcamStream = ({
     let currentStream = null;
     const currentBroadcastId = broadcastData.broadcastId;
     const currentMesh = meshRef.current;
-
-    setIsLoading(true);
-    setHasError(false);
+    setWebcamLoading(streamId, true);
+    setWebcamError(streamId, false);
 
     // Create or reuse video element for remote stream
     if (!remoteVideoRef.current) {
@@ -330,42 +351,41 @@ const WebcamStream = ({
                   });
                   currentMesh.material = material;
                 }
-
                 remoteVideoRef.current
                   .play()
                   .then(() => {
-                    setIsLoading(false);
+                    setWebcamLoading(streamId, false);
                   })
                   .catch((e) => {
                     if (e.name !== 'AbortError') {
-                      setErrorMessage('Remote video playback error');
-                      setHasError(true);
-                      setIsLoading(false);
+                      setWebcamError(
+                        streamId,
+                        true,
+                        'Remote video playback error'
+                      );
+                      setWebcamLoading(streamId, false);
                     }
                   });
 
                 remoteVideoRef.current.onloadedmetadata = null;
               };
-
               remoteVideoRef.current.onplaying = () => {
                 if (remoteVideoRef.current?.srcObject !== currentStream) return;
-                setIsLoading(false);
+                setWebcamLoading(streamId, false);
               };
 
               remoteVideoRef.current.onerror = () => {
                 if (remoteVideoRef.current?.srcObject !== currentStream) return;
-                setErrorMessage('Remote video playback error');
-                setHasError(true);
-                setIsLoading(false);
+                setWebcamError(streamId, true, 'Remote video playback error');
+                setWebcamLoading(streamId, false);
               };
             }
           }
         };
       } catch (error) {
         if (!isMounted.current) return;
-        setErrorMessage(`Failed to connect: ${error.message}`);
-        setHasError(true);
-        setIsLoading(false);
+        setWebcamError(streamId, true, `Failed to connect: ${error.message}`);
+        setWebcamLoading(streamId, false);
       }
     };
 
@@ -387,12 +407,12 @@ const WebcamStream = ({
         textureRef.current.dispose();
         textureRef.current = null;
       }
-
       if (currentMesh?.material?.map) {
         currentMesh.material.map = null;
         currentMesh.material.needsUpdate = true;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     active,
     isReceiving,
@@ -533,12 +553,12 @@ const WebcamStream = ({
                 gap: '10px',
               }}
             >
-              <div>⚠️ {errorMessage}</div>
+              <div>⚠️ {errorMessage}</div>{' '}
               <button
                 onClick={() => {
-                  setHasError(false);
-                  setIsLoading(true);
-                  setRetryTrigger((prev) => prev + 1);
+                  setWebcamError(streamId, false);
+                  setWebcamLoading(streamId, true);
+                  retryWebcamStream(streamId);
                 }}
                 style={{
                   padding: '5px 10px',

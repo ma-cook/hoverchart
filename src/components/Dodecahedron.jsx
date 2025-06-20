@@ -1,10 +1,11 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import ObjectUI from './ObjectUI';
 import TextSprite from './TextSprite';
 import HeaderInput from './HeaderInput';
+import { useDodecahedronStore, useObjectsStore } from '../stores';
 
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
@@ -13,7 +14,7 @@ import FaceIndicator from './FaceIndicator'; // Add this import
 import isEqual from 'lodash/isEqual';
 
 const Sphere = ({
-  position,
+  id,
   selected,
   onClick,
   onMove,
@@ -27,43 +28,282 @@ const Sphere = ({
   indicatorMode,
   onUpdate, // Add this prop
   onDelete, // Add new prop
-  id, // Add this prop
-  // Add default values for props
-  headerText: initialHeaderText = '',
-  scale: initialScale = [1, 1, 1],
-  lineColor: initialLineColor = 'black',
-  faceColors: initialFaceColors = {},
-  faceTexts: initialFaceTexts = {},
-  faceTextStyles: initialFaceTextStyles = {},
-  headerStyle: initialHeaderStyle = {
-    fontSize: 'medium',
-    color: 'black',
-    underline: false,
-  },
+  registerTransformingObject, // Add this prop
 }) => {
+  // Get object data from objects store
+  const objects = useObjectsStore((state) => state.objects);
+  const setObjects = useObjectsStore((state) => state.setObjects);
+  const objectData = objects.find((obj) => obj.id === id);
+  // Debug: Watch for position changes
+  useEffect(() => {
+    if (objectData?.position) {
+      // Position tracking for debugging - removed for production
+    }
+  }, [objectData?.position, id]);
+
+  // Memoize derived values to prevent unnecessary re-renders
+  const position = useMemo(() => {
+    const pos = objectData?.position;
+    // Ensure position has valid numbers, not undefined/null values
+    if (
+      Array.isArray(pos) &&
+      pos.length === 3 &&
+      pos.every((val) => typeof val === 'number' && !isNaN(val))
+    ) {
+      return pos;
+    }
+    return [0, 0, 0];
+  }, [objectData?.position]);
+  const scale = useMemo(
+    () => objectData?.scale || [1, 1, 1],
+    [objectData?.scale]
+  );
+  const headerText = useMemo(
+    () => objectData?.headerText || '',
+    [objectData?.headerText]
+  );
+  const lineColor = useMemo(
+    () => objectData?.lineColor || 'black',
+    [objectData?.lineColor]
+  );
+  const faceColors = useMemo(
+    () => objectData?.faceColors || {},
+    [objectData?.faceColors]
+  );
+  const faceTexts = useMemo(
+    () => objectData?.faceTexts || {},
+    [objectData?.faceTexts]
+  );
+  const faceTextStyles = useMemo(
+    () => objectData?.faceTextStyles || {},
+    [objectData?.faceTextStyles]
+  );
+  const headerStyle = useMemo(
+    () =>
+      objectData?.headerStyle || {
+        fontSize: 'medium',
+        color: 'black',
+        underline: false,
+      },
+    [objectData?.headerStyle]
+  );
+  // Store state and actions
+  const dodecahedron = useDodecahedronStore((state) =>
+    state.getDodecahedron(id)
+  );
+  const createDodecahedron = useDodecahedronStore(
+    (state) => state.createDodecahedron
+  );
+  const updateDodecahedron = useDodecahedronStore(
+    (state) => state.updateDodecahedron
+  );
+  const selectDodecahedron = useDodecahedronStore(
+    (state) => state.selectDodecahedron
+  );
+  const deselectDodecahedron = useDodecahedronStore(
+    (state) => state.deselectDodecahedron
+  );
+  const isDodecahedronSelected = useDodecahedronStore((state) =>
+    state.isDodecahedronSelected(id)
+  );
+  const setDodecahedronShowTransform = useDodecahedronStore(
+    (state) => state.setDodecahedronShowTransform
+  );
+  const setDodecahedronShowHeader = useDodecahedronStore(
+    (state) => state.setDodecahedronShowHeader
+  );
+  const setDodecahedronIsResizing = useDodecahedronStore(
+    (state) => state.setDodecahedronIsResizing
+  );
+  const setDodecahedronHighlightedFaces = useDodecahedronStore(
+    (state) => state.setDodecahedronHighlightedFaces
+  );
+  const setDodecahedronShowStyleMenu = useDodecahedronStore(
+    (state) => state.setDodecahedronShowStyleMenu
+  );
+  const setDodecahedronActiveFace = useDodecahedronStore(
+    (state) => state.setDodecahedronActiveFace
+  );
+  const setDodecahedronShowFaceUI = useDodecahedronStore(
+    (state) => state.setDodecahedronShowFaceUI
+  );
+  const setDodecahedronShowObjectUI = useDodecahedronStore(
+    (state) => state.setDodecahedronShowObjectUI
+  );
+  const setDodecahedronShowFaceTextInput = useDodecahedronStore(
+    (state) => state.setDodecahedronShowFaceTextInput
+  );
+  const setDodecahedronActiveFaceText = useDodecahedronStore(
+    (state) => state.setDodecahedronActiveFaceText
+  );
+  const setDodecahedronShowFaceTextStyleMenu = useDodecahedronStore(
+    (state) => state.setDodecahedronShowFaceTextStyleMenu
+  );
+  const setDodecahedronSelectedIndicator = useDodecahedronStore(
+    (state) => state.setDodecahedronSelectedIndicator
+  );
+  const setDodecahedronIsConnected = useDodecahedronStore(
+    (state) => state.setDodecahedronIsConnected
+  );
+  const setDodecahedronConnectedFaces = useDodecahedronStore(
+    (state) => state.setDodecahedronConnectedFaces
+  );
+  const setDodecahedronIsScaleModified = useDodecahedronStore(
+    (state) => state.setDodecahedronIsScaleModified
+  );
+  const updateDodecahedronFaceColor = useDodecahedronStore(
+    (state) => state.updateDodecahedronFaceColor
+  );
+  const updateDodecahedronFaceText = useDodecahedronStore(
+    (state) => state.updateDodecahedronFaceText
+  );
+  const updateDodecahedronFaceTextStyle = useDodecahedronStore(
+    (state) => state.updateDodecahedronFaceTextStyle
+  );
+
+  // Helper function to update both stores and database
+  const updateObjectAndStores = useCallback(
+    (updates) => {
+      // Update UI store
+      updateDodecahedron(id, updates);
+
+      // Update objects store immediately for instant visual feedback
+      setObjects((prevObjects) =>
+        prevObjects.map((obj) => (obj.id === id ? { ...obj, ...updates } : obj))
+      );
+
+      // Save to database
+      if (onUpdate && objectData) {
+        onUpdate(id, {
+          ...objectData,
+          ...updates,
+        });
+      }
+    },
+    [id, updateDodecahedron, setObjects, onUpdate, objectData]
+  );
+
+  // Helper function to update face-specific properties
+  const updateFaceProperty = useCallback(
+    (propertyName, faceIndex, value) => {
+      // Update UI store
+      if (propertyName === 'faceColors') {
+        updateDodecahedronFaceColor(id, faceIndex, value);
+      } else if (propertyName === 'faceTexts') {
+        updateDodecahedronFaceText(id, faceIndex, value);
+      } else if (propertyName === 'faceTextStyles') {
+        updateDodecahedronFaceTextStyle(id, faceIndex, value);
+      }
+
+      // Update objects store
+      setObjects((prevObjects) =>
+        prevObjects.map((obj) =>
+          obj.id === id
+            ? {
+                ...obj,
+                [propertyName]: {
+                  ...obj[propertyName],
+                  [faceIndex]: value,
+                },
+              }
+            : obj
+        )
+      );
+
+      // Save to database
+      if (onUpdate && objectData) {
+        onUpdate(id, {
+          ...objectData,
+          [propertyName]: {
+            ...objectData[propertyName],
+            [faceIndex]: value,
+          },
+        });
+      }
+    },
+    [
+      id,
+      updateDodecahedronFaceColor,
+      updateDodecahedronFaceText,
+      updateDodecahedronFaceTextStyle,
+      setObjects,
+      onUpdate,
+      objectData,
+    ]
+  );
+
+  // Initialize dodecahedron UI state in store if it doesn't exist
+  useEffect(() => {
+    if (!dodecahedron) {
+      createDodecahedron(id, {
+        // Initialize with object data from persistent storage
+        position,
+        scale,
+        lineColor,
+        headerText,
+        headerStyle,
+        faceColors,
+        faceTexts,
+        faceTextStyles,
+        // UI state
+        selectedFace: null,
+        selectedIndicator: null,
+        showTransform: false,
+        showHeader: false,
+        showFaceTextInput: false,
+        showObjectUI: true,
+        showHeaderTextStyleUI: false,
+        activeTextFace: null,
+      });
+    }
+  }, [
+    id,
+    dodecahedron,
+    createDodecahedron,
+    position,
+    scale,
+    lineColor,
+    headerText,
+    headerStyle,
+    faceColors,
+    faceTexts,
+    faceTextStyles,
+  ]);
+  // Handle selection changes
+  useEffect(() => {
+    if (selected && !isDodecahedronSelected) {
+      selectDodecahedron(id);
+    } else if (!selected && isDodecahedronSelected) {
+      deselectDodecahedron(id);
+    }
+  }, [
+    selected,
+    isDodecahedronSelected,
+    selectDodecahedron,
+    deselectDodecahedron,
+    id,
+  ]);
+
+  // Reset selection states when dodecahedron is deselected
+  useEffect(() => {
+    if (!selected) {
+      setDodecahedronActiveFace(id, null);
+      setDodecahedronSelectedIndicator(id, null);
+      setDodecahedronShowTransform(id, false);
+      setDodecahedronShowFaceTextStyleMenu(id, false);
+      setDodecahedronActiveFaceText(id, null);
+    }
+  }, [
+    selected,
+    id,
+    setDodecahedronActiveFace,
+    setDodecahedronSelectedIndicator,
+    setDodecahedronShowTransform,
+    setDodecahedronShowFaceTextStyleMenu,
+    setDodecahedronActiveFaceText,
+  ]);
+
   // Initialize state with props instead of defaults
-  const [headerText, setHeaderText] = useState(initialHeaderText);
-  const [scale, setScale] = useState(() => [...initialScale]);
-  const [headerStyle, setHeaderStyle] = useState(initialHeaderStyle);
-  const [lineColor, setLineColor] = useState(initialLineColor);
-  const [faceColors, setFaceColors] = useState(initialFaceColors);
-  const [faceTexts, setFaceTexts] = useState(initialFaceTexts);
-  const [faceTextStyles, setFaceTextStyles] = useState(initialFaceTextStyles);
-  const [showTransform, setShowTransform] = useState(false);
-  const [showHeader, setShowHeader] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [highlightedFaces, setHighlightedFaces] = useState(new Set());
-  const [showStyleMenu, setShowStyleMenu] = useState(false);
-  const [activeFace, setActiveFace] = useState(null);
-  const [showFaceUI, setShowFaceUI] = useState(false);
-  const [showObjectUI, setShowObjectUI] = useState(true);
-  const [showFaceTextInput, setShowFaceTextInput] = useState(false);
-  const [activeFaceText, setActiveFaceText] = useState(null); // Add state to track which face text is being edited
-  const [showFaceTextStyleMenu, setShowFaceTextStyleMenu] = useState(false); // Add state for style menu visibility
-  const [selectedIndicator, setSelectedIndicator] = useState(null); // Add new state for indicator selection
-  const [isConnected, setIsConnected] = useState(false); // Add new state to track if this dodecahedron is part of a connection
-  const [connectedFaces, setConnectedFaces] = useState(new Set()); // Add new state for connected faces
-  const [isScaleModified, setIsScaleModified] = useState(false);
   const contentRef = useRef();
   const faceUIGroupRef = useRef(); // Add this new ref for FaceUI container
   const points = React.useMemo(() => {
@@ -221,17 +461,23 @@ const Sphere = ({
     },
     [connections, id]
   );
-
   // Now the effects can use isIndicatorConnected
   useEffect(() => {
     if (!selected) {
-      setShowTransform(false);
-      setHighlightedFaces(new Set()); // Clear highlighted faces when deselected
-      setShowFaceTextStyleMenu(false); // Add this line
-      setActiveFaceText(null); // Add this line
+      setDodecahedronShowTransform(id, false);
+      setDodecahedronHighlightedFaces(id, new Set()); // Clear highlighted faces when deselected
+      setDodecahedronShowFaceTextStyleMenu(id, false); // Add this line
+      setDodecahedronActiveFaceText(id, null); // Add this line
       // Don't reset selectedIndicator here
     }
-  }, [selected]);
+  }, [
+    selected,
+    id,
+    setDodecahedronShowTransform,
+    setDodecahedronHighlightedFaces,
+    setDodecahedronShowFaceTextStyleMenu,
+    setDodecahedronActiveFaceText,
+  ]);
 
   // Store orbitControls when mounted
   useEffect(() => {
@@ -243,9 +489,9 @@ const Sphere = ({
   // Add effect for handling global clicks
   useEffect(() => {
     const handleGlobalClick = () => {
-      if (showFaceTextStyleMenu) {
-        setShowFaceTextStyleMenu(false);
-        setActiveFaceText(null);
+      if (dodecahedron?.showFaceTextStyleMenu) {
+        setDodecahedronShowFaceTextStyleMenu(id, false);
+        setDodecahedronActiveFaceText(id, null);
       }
     };
 
@@ -253,7 +499,12 @@ const Sphere = ({
     return () => {
       window.removeEventListener('click', handleGlobalClick);
     };
-  }, [showFaceTextStyleMenu]);
+  }, [
+    dodecahedron?.showFaceTextStyleMenu,
+    id,
+    setDodecahedronActiveFaceText,
+    setDodecahedronShowFaceTextStyleMenu,
+  ]);
 
   // Update effect for connection tracking to be more thorough
   useEffect(() => {
@@ -266,86 +517,121 @@ const Sphere = ({
         connected.add(parseInt(conn.end.face));
       }
     });
-    setConnectedFaces(connected);
-    setIsConnected(connected.size > 0);
-  }, [connections, id]);
+    setDodecahedronConnectedFaces(id, connected);
+    setDodecahedronIsConnected(id, connected.size > 0);
+  }, [
+    connections,
+    id,
+    setDodecahedronConnectedFaces,
+    setDodecahedronIsConnected,
+  ]);
 
   // Add an effect to reset selectedIndicator when connections change
   useEffect(() => {
     if (connections?.length > 0) {
       // If this dodecahedron's selected indicator is part of a connection, reset it
       if (
-        selectedIndicator !== null &&
-        isIndicatorConnected(selectedIndicator)
+        dodecahedron?.selectedIndicator !== null &&
+        isIndicatorConnected(dodecahedron?.selectedIndicator)
       ) {
-        setSelectedIndicator(null);
+        setDodecahedronSelectedIndicator(id, null);
       }
     }
-  }, [connections, selectedIndicator, isIndicatorConnected]);
+  }, [
+    connections,
+    dodecahedron?.selectedIndicator,
+    isIndicatorConnected,
+    id,
+    setDodecahedronSelectedIndicator,
+  ]);
 
   // Add useCallback for updating database
   const updateDatabase = useCallback(() => {
-    if (!onUpdate || !id) return;
+    if (!onUpdate || !id || !objectData) return;
+
+    // Skip if we're still in initial loading phase - no saves during app startup
+    const { isInitialLoading } = useObjectsStore.getState();
+    if (isInitialLoading) {
+      return;
+    } // Use current scale from dodecahedron store if available, fallback to objectData
+    const currentScale = dodecahedron?.scale || objectData.scale || [1, 1, 1];
+
+    // Ensure position has valid numbers, not undefined/null values
+    const currentPosition = objectData.position;
+    const validPosition =
+      Array.isArray(currentPosition) &&
+      currentPosition.length === 3 &&
+      currentPosition.every((val) => typeof val === 'number' && !isNaN(val))
+        ? currentPosition
+        : [0, 0, 0];
 
     const currentState = {
       type: 'sphere',
-      position,
-      scale,
-      lineColor,
-      headerText,
-      headerStyle,
+      position: validPosition,
+      scale: currentScale, // Use current scale from store
+      lineColor: objectData.lineColor || 'black',
+      headerText: objectData.headerText || '',
+      headerStyle: objectData.headerStyle || {
+        fontSize: 'medium',
+        color: 'black',
+        underline: false,
+      },
       // Map numeric indices for 12 faces
       faceColors: Object.fromEntries(
         Array(12)
           .fill(null)
-          .map((_, idx) => [idx, faceColors[idx] || null])
+          .map((_, idx) => [
+            idx,
+            (objectData.faceColors && objectData.faceColors[idx]) || null,
+          ])
       ),
       faceTexts: Object.fromEntries(
         Array(12)
           .fill('')
-          .map((_, idx) => [idx, faceTexts[idx] || ''])
+          .map((_, idx) => [
+            idx,
+            (objectData.faceTexts && objectData.faceTexts[idx]) || '',
+          ])
       ),
       faceTextStyles: Object.fromEntries(
         Array(12)
           .fill(null)
           .map((_, idx) => [
             idx,
-            faceTextStyles[idx] || {
+            (objectData.faceTextStyles && objectData.faceTextStyles[idx]) || {
               fontSize: 0.5,
               color: 'black',
               underline: false,
             },
           ])
       ),
-    };
-
-    // Only update if something has changed
+    }; // Only update if something has changed
     const lastUpdate = contentRef.current?.lastUpdate;
     if (!lastUpdate || !isEqual(lastUpdate, currentState)) {
       contentRef.current.lastUpdate = currentState;
       onUpdate(id, currentState);
     }
-  }, [
-    id,
-    position,
-    scale,
-    lineColor,
-    headerText,
-    headerStyle,
-    faceColors,
-    faceTexts,
-    faceTextStyles,
-    onUpdate,
-  ]);
+  }, [id, objectData, onUpdate, dodecahedron]);
+
   // Add debounced update to prevent excessive database calls
   const debouncedUpdateTimeoutRef = useRef(null);
   const isInitialRenderRef = useRef(true);
 
   useEffect(() => {
-    // Skip updates during initial render to prevent thousands of simultaneous calls
-    // when camera moves between cells and loads many objects at once
+    // Skip updates during initial render
     if (isInitialRenderRef.current) {
       isInitialRenderRef.current = false;
+      return;
+    }
+
+    // Skip if objectData is not yet loaded
+    if (!objectData) {
+      return;
+    }
+
+    // Skip if we're still in initial loading phase - no saves during app startup
+    const { isInitialLoading } = useObjectsStore.getState();
+    if (isInitialLoading) {
       return;
     }
 
@@ -365,76 +651,50 @@ const Sphere = ({
         clearTimeout(debouncedUpdateTimeoutRef.current);
       }
     };
-  }, [updateDatabase]);
-
+  }, [updateDatabase, objectData]);
   const handleTransformToggle = () => {
     // When enabling transform mode, we should disable resize mode
-    setShowTransform((prev) => {
-      if (!prev) {
-        setIsResizing(false);
-      }
-      return !prev;
-    });
+    const newShowTransform = !dodecahedron?.showTransform;
+    setDodecahedronShowTransform(id, newShowTransform);
+    if (newShowTransform) {
+      setDodecahedronIsResizing(id, false);
+    }
   };
 
   const handleHeaderToggle = () => {
-    setShowHeader(!showHeader);
+    setDodecahedronShowHeader(id, !dodecahedron?.showHeader);
   };
-
   const handleHeaderSubmit = (text) => {
-    setHeaderText(text);
-    setShowHeader(false);
+    updateObjectAndStores({ headerText: text });
+    setDodecahedronShowHeader(id, false);
   };
 
   const handleResizeToggle = () => {
     // When enabling resize mode, we should disable transform mode
-    setIsResizing((prev) => {
-      if (!prev) {
-        setShowTransform(false);
-      }
-      return !prev;
-    });
-  };
-
-  // Add effect to update database when resize operation changes the scale
-  useEffect(() => {
-    if (isScaleModified) {
-      updateDatabase();
-      setIsScaleModified(false);
+    const newIsResizing = !dodecahedron?.isResizing;
+    setDodecahedronIsResizing(id, newIsResizing);
+    if (newIsResizing) {
+      setDodecahedronShowTransform(id, false);
     }
-  }, [scale, isScaleModified, updateDatabase]);
-
+  };
   const handleDrag = (e) => {
     // Get new position from the transform controls event
     const newPos = e.target.object.position;
 
-    // Save to database
-    if (onUpdate) {
-      onUpdate(id, {
-        type: 'sphere',
-        position: [newPos.x, newPos.y, newPos.z],
-        scale,
-        lineColor,
-        headerText,
-        headerStyle,
-        faceColors,
-        faceTexts,
-        faceTextStyles,
-      });
-    }
-
-    // Update UI immediately
+    // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
+    const objectsStore = useObjectsStore.getState();
+    const currentObjects = objectsStore.objects;
+    const updatedObjects = currentObjects.map((obj) =>
+      obj.id === id ? { ...obj, position: [newPos.x, newPos.y, newPos.z] } : obj
+    );
+    objectsStore.setObjects(updatedObjects); // Use the spatial system via onMove instead of direct onUpdate
     if (onMove) {
-      onMove({
-        x: newPos.x,
-        y: newPos.y,
-        z: newPos.z,
-      });
+      onMove([newPos.x, newPos.y, newPos.z]);
     }
-  };
-
-  // Add handler for scale changes from TransformControls
+  }; // Add handler for scale changes from TransformControls
   const handleScale = (e) => {
+    if (!e.target || !e.target.object) return;
+
     // Get new scale from the transform controls event
     const newScale = [
       e.target.object.scale.x,
@@ -442,9 +702,27 @@ const Sphere = ({
       e.target.object.scale.z,
     ];
 
-    // Update scale state
-    setScale(newScale);
-    setIsScaleModified(true);
+    // Only update if the scale change is significant to avoid unnecessary updates
+    const epsilon = 0.0001;
+    const currentScale = dodecahedron?.scale || scale;
+    if (
+      Math.abs(newScale[0] - currentScale[0]) < epsilon &&
+      Math.abs(newScale[1] - currentScale[1]) < epsilon &&
+      Math.abs(newScale[2] - currentScale[2]) < epsilon
+    ) {
+      return;
+    } // Update the UI store first
+    updateDodecahedron(id, { scale: newScale });
+
+    // Update objects store immediately for instant visual feedback
+    setObjects((prevObjects) =>
+      prevObjects.map((obj) =>
+        obj.id === id ? { ...obj, scale: newScale } : obj
+      )
+    );
+
+    // Mark that scale has been modified (for onMouseUp to detect)
+    setDodecahedronIsScaleModified(id, true);
   };
 
   // Split face click into two separate handlers
@@ -454,12 +732,12 @@ const Sphere = ({
       handleBackgroundClick(e); // Select dodecahedron first
       return;
     }
-    setHighlightedFaces(new Set([faceIndex]));
-    setActiveFace(faceIndex);
-    setShowFaceUI(true);
-    setShowObjectUI(false); // Hide ObjectUI when face is clicked
-    setShowFaceTextStyleMenu(false); // Close text style menu when clicking a different face
-    setActiveFaceText(null); // Clear active face text
+    setDodecahedronHighlightedFaces(id, new Set([faceIndex]));
+    setDodecahedronActiveFace(id, faceIndex);
+    setDodecahedronShowFaceUI(id, true);
+    setDodecahedronShowObjectUI(id, false); // Hide ObjectUI when face is clicked
+    setDodecahedronShowFaceTextStyleMenu(id, false); // Close text style menu when clicking a different face
+    setDodecahedronActiveFaceText(id, null); // Clear active face text
 
     // Don't select the indicator when clicking on the face
     // Remove any code that would set selectedIndicator here
@@ -471,12 +749,12 @@ const Sphere = ({
     const { center } = getFaceInfo(faceIndex);
 
     // Toggle indicator selection
-    if (selectedIndicator === faceIndex) {
+    if (dodecahedron?.selectedIndicator === faceIndex) {
       // Deselect if already selected
-      setSelectedIndicator(null);
+      setDodecahedronSelectedIndicator(id, null);
     } else {
       // Select this indicator
-      setSelectedIndicator(faceIndex);
+      setDodecahedronSelectedIndicator(id, faceIndex);
     }
 
     // Create the indicator data with consistent ID format
@@ -502,76 +780,71 @@ const Sphere = ({
     onIndicatorSelected?.();
     onFaceIndicatorClick?.(indicator);
   };
-
   const handleHeaderClick = (e) => {
     e.stopPropagation();
-    setShowStyleMenu(!showStyleMenu);
+    setDodecahedronShowStyleMenu(id, !dodecahedron?.showStyleMenu);
   };
-
   const handleStyleChange = (newStyle) => {
-    setHeaderStyle((prev) => ({ ...prev, ...newStyle }));
+    const newHeaderStyle = { ...(headerStyle || {}), ...newStyle };
+    updateObjectAndStores({ headerStyle: newHeaderStyle });
   };
-
   const handleLineColorChange = (color) => {
-    setLineColor(color);
+    updateObjectAndStores({ lineColor: color });
   };
-
   const handleBackgroundClick = (e) => {
     e.stopPropagation();
     e.nativeEvent?.stopPropagation?.();
     onClick(); // Select the dodecahedron first
-    setHighlightedFaces(new Set());
-    setActiveFace(null);
-    setShowFaceUI(false);
-    setShowObjectUI(true);
-    setShowFaceTextStyleMenu(false); // Add this line
-    setActiveFaceText(null); // Add this line
+    setDodecahedronHighlightedFaces(id, new Set());
+    setDodecahedronActiveFace(id, null);
+    setDodecahedronShowFaceUI(id, false);
+    setDodecahedronShowObjectUI(id, true);
+    setDodecahedronShowFaceTextStyleMenu(id, false); // Add this line
+    setDodecahedronActiveFaceText(id, null); // Add this line
     // Clear indicator state if connected
-    if (isConnected) {
-      setSelectedIndicator(null);
+    if (dodecahedron?.isConnected) {
+      setDodecahedronSelectedIndicator(id, null);
       onIndicatorDeselected();
     }
   };
-
   const handleFaceTextSubmit = (text) => {
-    if (activeFace !== null) {
-      setFaceTexts((prev) => ({
-        ...prev,
-        [activeFace]: text,
-      }));
-      setShowFaceTextInput(false);
-      updateDatabase();
+    if (dodecahedron?.activeFace !== null) {
+      updateFaceProperty('faceTexts', dodecahedron.activeFace, text);
+      setDodecahedronShowFaceTextInput(id, false);
     }
   };
 
   const handleFaceTextButtonClick = () => {
-    setShowFaceTextInput(true);
-    setShowFaceTextStyleMenu(false); // Hide style menu when adding new text
+    setDodecahedronShowFaceTextInput(id, true);
+    setDodecahedronShowFaceTextStyleMenu(id, false); // Hide style menu when adding new text
   };
-
   // Update text click handler to distinguish between clicking text vs button
   const handleFaceTextClick = (faceIndex, e) => {
     e.stopPropagation();
     e.nativeEvent.stopImmediatePropagation(); // Add this line to prevent global click
-    setActiveFaceText(faceIndex);
-    setShowFaceTextStyleMenu(true);
-    setShowFaceTextInput(false);
+    setDodecahedronActiveFaceText(id, faceIndex);
+    setDodecahedronShowFaceTextStyleMenu(id, true);
+    setDodecahedronShowFaceTextInput(id, false);
   };
-
   const handleFaceTextStyleChange = (newStyle) => {
-    if (activeFaceText !== null) {
-      setFaceTextStyles((prev) => ({
-        ...prev,
-        [activeFaceText]: {
-          ...(prev[activeFaceText] || {}),
-          ...newStyle,
-        },
-      }));
-      updateDatabase();
-    }
-  };
+    if (dodecahedron?.activeFaceText !== null) {
+      // Get the current style for this face
+      const currentStyle = faceTextStyles[dodecahedron.activeFaceText] || {
+        fontSize: 0.5,
+        color: 'black',
+        underline: false,
+      };
 
-  // Calculate positions relative to sphere's scale
+      // Merge the new style with the existing style
+      const mergedStyle = { ...currentStyle, ...newStyle };
+
+      updateFaceProperty(
+        'faceTextStyles',
+        dodecahedron.activeFaceText,
+        mergedStyle
+      );
+    }
+  }; // Calculate positions relative to sphere's scale
   const getUIPosition = () => {
     const sphereHeight = 10 * scale[1];
     const topEdgeOffset = sphereHeight / 2;
@@ -703,7 +976,6 @@ const Sphere = ({
 
     return rotation;
   };
-
   // Update shouldShowFaceIndicator logic to keep indicators visible when connected
   const shouldShowFaceIndicator = (faceIndex) => {
     // Always show indicators that are part of connections
@@ -716,8 +988,8 @@ const Sphere = ({
     if (indicatorMode === 'indicators') return true;
 
     if (showAllIndicators || globalIndicatorSelected) return true;
-    if (connectedFaces.has(faceIndex)) return true;
-    if (selectedIndicator === faceIndex) return true;
+    if (dodecahedron?.connectedFaces?.has(faceIndex)) return true;
+    if (dodecahedron?.selectedIndicator === faceIndex) return true;
 
     return false;
   };
@@ -741,15 +1013,18 @@ const Sphere = ({
 
   return (
     <>
-      {/* Remove the outer position group and apply position directly to content group */}
-      <group ref={contentRef} position={position} scale={scale}>
+      {/* Remove the outer position group and apply position directly to content group */}{' '}
+      <group
+        ref={contentRef}
+        position={position}
+        scale={dodecahedron?.scale || scale}
+      >
         {/* Add invisible helper mesh for better click detection */}
         <mesh onClick={handleBackgroundClick} visible={false}>
           <sphereGeometry args={[6, 32, 32]} />{' '}
           {/* Slightly larger than dodecahedron */}
           <meshBasicMaterial transparent opacity={0} />
         </mesh>
-
         {/* Original background mesh */}
         <mesh
           onClick={handleBackgroundClick}
@@ -759,7 +1034,6 @@ const Sphere = ({
           {/* Slightly larger than face geometries */}
           <meshBasicMaterial visible={false} transparent={false} opacity={1} />
         </mesh>
-
         {/* Modified face rendering to handle colors correctly */}
         {geometry.map((faceGeometry, idx) => (
           <mesh
@@ -780,15 +1054,18 @@ const Sphere = ({
               document.body.style.cursor = 'auto';
             }}
           >
+            {' '}
             <meshBasicMaterial
               color={
                 faceColors[idx] || // Custom color if set
-                (selected && highlightedFaces.has(idx) ? '#0066ff' : 'black') // Only show highlight when selected
+                (selected && dodecahedron?.highlightedFaces?.has(idx)
+                  ? '#0066ff'
+                  : 'black') // Only show highlight when selected
               }
               transparent
               opacity={
                 selected
-                  ? highlightedFaces.has(idx)
+                  ? dodecahedron?.highlightedFaces?.has(idx)
                     ? 0.3
                     : 0.1
                   : faceColors[idx]
@@ -800,15 +1077,13 @@ const Sphere = ({
               polygonOffsetFactor={-1}
             />
           </mesh>
-        ))}
-
+        ))}{' '}
         {/* Wireframe lines */}
         {points.map((linePoints, idx) => (
           <Line key={idx} points={linePoints} color={lineColor} lineWidth={1} />
         ))}
-
         {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}
-        {Object.entries(faceTexts).map(([faceIndex, text]) => {
+        {Object.entries(faceTexts || {}).map(([faceIndex, text]) => {
           if (!text) return null;
           const faceIdx = Number(faceIndex);
           const { position, normal } = getFaceTextPosition(faceIdx);
@@ -817,8 +1092,9 @@ const Sphere = ({
             color: 'black',
             underline: false,
           };
-
-          const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
+          const inverseScale = (dodecahedron?.scale || scale).map(
+            (s) => 1 / Math.max(0.0001, s)
+          );
           const faceRotation = getFaceRotation(faceIdx);
 
           // Adjust position slightly outward along the normal to prevent z-fighting
@@ -852,19 +1128,19 @@ const Sphere = ({
               />
             </group>
           );
-        })}
-
+        })}{' '}
         {/* Main face indicator for active face */}
-        {selected && activeFace !== null && (
+        {selected && dodecahedron?.activeFace !== null && (
           <FaceIndicator
-            key={`main-indicator-${activeFace}`}
-            position={getFaceInfo(activeFace).center}
-            rotation={getFaceRotation(activeFace)}
-            onClick={(e) => handleIndicatorClick(activeFace, e)}
-            isActive={selectedIndicator === activeFace} // Now highlights only on indicator click
+            key={`main-indicator-${dodecahedron.activeFace}`}
+            position={getFaceInfo(dodecahedron.activeFace).center}
+            rotation={getFaceRotation(dodecahedron.activeFace)}
+            onClick={(e) => handleIndicatorClick(dodecahedron.activeFace, e)}
+            isActive={
+              dodecahedron?.selectedIndicator === dodecahedron.activeFace
+            } // Now highlights only on indicator click
           />
         )}
-
         {/* Update indicator cubes rendering */}
         {geometry.map((_, idx) => {
           const { center } = getFaceInfo(idx);
@@ -873,7 +1149,8 @@ const Sphere = ({
 
           // Only show indicator as selected (blue) if it was directly clicked
           // and is not connected
-          const isSelected = selectedIndicator === idx && !isConnected;
+          const isSelected =
+            dodecahedron?.selectedIndicator === idx && !isConnected;
 
           return shouldShowFaceIndicator(idx) ? (
             <FaceIndicator
@@ -887,53 +1164,62 @@ const Sphere = ({
           ) : null;
         })}
       </group>
-
       {/* Move UI elements outside main group but keep them following contentRef */}
-      {selected && showObjectUI && !showHeader && (
+      {selected && dodecahedron?.showObjectUI && !dodecahedron?.showHeader && (
         <ObjectUI
           position={[getUIPosition()]}
           onTransformToggle={handleTransformToggle}
           onHeaderToggle={handleHeaderToggle}
           onResizeToggle={handleResizeToggle}
           onLineColorChange={handleLineColorChange}
-          onDelete={() => onDelete?.(id)} // Pass the delete handler with this object's ID
-          showTransform={showTransform}
-          showHeader={showHeader}
+          onDelete={() => onDelete?.(id)} // Pass the delete handler with this object's ID          showTransform={dodecahedron?.showTransform}
+          showHeader={dodecahedron?.showHeader}
           followTarget={contentRef}
         />
-      )}
-
-      {selected && showFaceUI && activeFace !== null && (
-        <group ref={faceUIGroupRef} position={position} scale={scale}>
-          <FaceUI
-            position={getFaceUIPosition(activeFace)}
-            onColorChange={(color) => {
-              setFaceColors((prev) => ({
-                ...prev,
-                [activeFace]: color,
-              }));
-            }}
-            face={activeFace}
-            onTextClick={handleFaceTextButtonClick}
-            followTarget={contentRef}
-          />
-        </group>
-      )}
-
-      {selected && showHeader && (
+      )}{' '}
+      {selected &&
+        dodecahedron?.showFaceUI &&
+        dodecahedron?.activeFace !== null && (
+          <group
+            ref={faceUIGroupRef}
+            position={position}
+            scale={dodecahedron?.scale || scale}
+          >
+            <FaceUI
+              position={getFaceUIPosition(dodecahedron.activeFace)}
+              onColorChange={(color) => {
+                updateFaceProperty(
+                  'faceColors',
+                  dodecahedron.activeFace,
+                  color
+                );
+              }}
+              face={dodecahedron.activeFace}
+              onTextClick={handleFaceTextButtonClick}
+              followTarget={contentRef}
+            />
+          </group>
+        )}{' '}
+      {selected && dodecahedron?.showHeader && (
         <group position={position}>
-          <group scale={scale}>
-            <group scale={scale.map((s) => 1 / Math.max(s, 0.0001))}>
+          {' '}
+          <group scale={dodecahedron?.scale || scale}>
+            <group
+              scale={(dodecahedron?.scale || scale).map(
+                (s) => 1 / Math.max(s, 0.0001)
+              )}
+            >
+              {' '}
               <HeaderInput
                 position={getHeaderInputPosition()}
                 onTextSubmit={handleHeaderSubmit}
+                inputId={`dodecahedron-${id}-header`}
                 followTarget={null} // Remove followTarget as it's handled by the parent group positioning
               />
             </group>
           </group>
         </group>
-      )}
-
+      )}{' '}
       {headerText && (
         <TextSprite
           text={headerText}
@@ -948,28 +1234,54 @@ const Sphere = ({
             fixedDistance: true, // Add this to ensure consistent distance if supported
           }}
         />
-      )}
-
-      {showStyleMenu && headerText && (
+      )}{' '}
+      {dodecahedron?.showStyleMenu && headerText && (
         <TextStyleUI
           position={getHeaderPosition()}
           followTarget={contentRef}
           onStyleChange={handleStyleChange}
+          onClose={() => setDodecahedronShowStyleMenu(id, false)}
         />
-      )}
-
-      {selected && isResizing && contentRef.current && (
+      )}{' '}
+      {selected && dodecahedron?.isResizing && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
-          onObjectChange={handleScale}
-          onDragStart={() => {
+          onChange={handleScale}
+          onMouseDown={() => {
             if (contentRef.current?.orbitControls) {
               contentRef.current.orbitControls.enabled = false;
             }
+            registerTransformingObject?.(id, true, position);
           }}
-          onDragEnd={() => {
+          onMouseUp={() => {
             if (contentRef.current?.orbitControls) {
               contentRef.current.orbitControls.enabled = true;
+            }
+            registerTransformingObject?.(id, false);
+
+            // Save scale changes immediately on mouse up
+            if (dodecahedron?.isScaleModified && onUpdate && objectData) {
+              const currentScale = dodecahedron?.scale ||
+                objectData.scale || [1, 1, 1];
+
+              onUpdate(id, {
+                type: 'sphere',
+                position: objectData.position || [0, 0, 0],
+                scale: currentScale,
+                lineColor: objectData.lineColor || 'black',
+                headerText: objectData.headerText || '',
+                headerStyle: objectData.headerStyle || {
+                  fontSize: 'medium',
+                  color: 'black',
+                  underline: false,
+                },
+                faceColors: objectData.faceColors || {},
+                faceTexts: objectData.faceTexts || {},
+                faceTextStyles: objectData.faceTextStyles || {},
+              });
+
+              // Reset flag after saving
+              setDodecahedronIsScaleModified(id, false);
             }
           }}
           mode="scale"
@@ -977,45 +1289,55 @@ const Sphere = ({
           size={1}
           matrixAutoUpdate={false} // Add this to prevent matrix recursion
         />
-      )}
-
-      {selected && showFaceTextInput && activeFace !== null && (
-        <group position={position} scale={scale}>
-          <FaceTextInput
-            position={getFaceTextInputPosition(activeFace)}
-            onTextSubmit={handleFaceTextSubmit}
+      )}{' '}
+      {selected &&
+        dodecahedron?.showFaceTextInput &&
+        dodecahedron?.activeFace !== null && (
+          <group position={position} scale={dodecahedron?.scale || scale}>
+            <FaceTextInput
+              position={getFaceTextInputPosition(dodecahedron.activeFace)}
+              onTextSubmit={handleFaceTextSubmit}
+              inputId={`dodecahedron-${id}-face-${dodecahedron.activeFace}`}
+            />
+          </group>
+        )}
+      {/* Add TextStyleUI for face text */}{' '}
+      {dodecahedron?.showFaceTextStyleMenu &&
+        dodecahedron?.activeFaceText !== null && (
+          <TextStyleUI
+            position={(() => {
+              const { position } = getFaceTextPosition(
+                dodecahedron.activeFaceText
+              );
+              // Apply offset in world space, not in scaled space
+              return [
+                position[0],
+                position[1] + 2 * (1 / (dodecahedron?.scale?.[1] || 1)),
+                position[2],
+              ];
+            })()}
+            followTarget={contentRef}
+            onStyleChange={handleFaceTextStyleChange}
+            onClose={() => setDodecahedronShowFaceTextStyleMenu(id, false)}
+            uiType="faceText" // Add this prop to show limited options
           />
-        </group>
-      )}
-
-      {/* Add TextStyleUI for face text */}
-      {showFaceTextStyleMenu && activeFaceText !== null && (
-        <TextStyleUI
-          position={(() => {
-            const { position } = getFaceTextPosition(activeFaceText);
-            // Apply offset in world space, not in scaled space
-            return [position[0], position[1] + 2 * (1 / scale[1]), position[2]];
-          })()}
-          followTarget={contentRef}
-          onStyleChange={handleFaceTextStyleChange}
-          uiType="faceText" // Add this prop to show limited options
-        />
-      )}
-
-      {/* Update TransformControls to use contentRef */}
-      {selected && showTransform && contentRef.current && (
+        )}
+      {/* Update TransformControls to use contentRef */}{' '}
+      {selected && dodecahedron?.showTransform && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
           onObjectChange={handleDrag}
-          onDragStart={() => {
+          onMouseDown={() => {
             if (contentRef.current?.orbitControls) {
               contentRef.current.orbitControls.enabled = false;
             }
+            registerTransformingObject?.(id, true, position);
           }}
-          onDragEnd={() => {
+          onMouseUp={() => {
             if (contentRef.current?.orbitControls) {
               contentRef.current.orbitControls.enabled = true;
             }
+            registerTransformingObject?.(id, false);
           }}
           mode="translate"
           space="world"

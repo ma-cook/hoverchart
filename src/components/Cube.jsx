@@ -1,10 +1,4 @@
-import React, {
-  useRef,
-  useMemo,
-  useEffect,
-  useState,
-  useCallback,
-} from 'react';
+import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -18,6 +12,7 @@ import FaceTextInput from './FaceTextInput';
 import { Line } from '@react-three/drei';
 import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
+import { useCubeStore, useObjectsStore } from '../stores';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -28,17 +23,9 @@ const FACE_SIZE = 9.8; // Size of colored face
 const FACE_THICKNESS = 0.05; // Thickness of face overlay
 
 /**
- * Optimized Cube component
+ * Optimized Cube component - Gets object data from store
  */
 const Cube = ({
-  position,
-  scale = [1, 1, 1],
-  color = DEFAULT_COLOR,
-  faceColors = {},
-  faceTexts = {},
-  headerText = '',
-  textStyle = { fontSize: 1.5, color: 'black', underline: false },
-  faceTextStyles = {},
   id,
   selected,
   onClick,
@@ -49,109 +36,174 @@ const Cube = ({
   indicatorMode,
   connections = [],
   selectedIndicators = [],
-  activeTextStyleUI,
   setActiveTextStyleUI,
   onUpdate,
   onDelete,
   onTransformStart,
   onTransformEnd,
-  registerTransformingObject,
   // Add these new props for spatial routing
-  handleObjectMove,
-  draggingObjectsRef,
-  setObjects,
-  setConnections,
-  user,
-  currentSpaceId,
-  checkPositionJitter,
+  onMove, // Add onMove prop like Sphere
 }) => {
-  // Refs
-  const groupRef = useRef();
+  // Get object data from objects store
+  const objects = useObjectsStore((state) => state.objects);
+  const objectData = objects.find((obj) => obj.id === id); // Refs - declare early so they can be used in memoized values
   const meshRef = useRef();
-  const transformRef = useRef();
-  const lastPositionRef = useRef(position);
-  const dragStartPositionRef = useRef(null); // Track position at drag start
-  const lastUpdateTimeRef = useRef(0);
-
-  // State
-  const [selectedFace, setSelectedFace] = useState(null);
-  const [selectedIndicator, setSelectedIndicator] = useState(null);
-  const [showTransform, setShowTransform] = useState(false);
-  const [showHeader, setShowHeader] = useState(false);
-  const [localHeaderText, setLocalHeaderText] = useState(headerText);
-  const [showFaceTextInput, setShowFaceTextInput] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [showObjectUI, setShowObjectUI] = useState(true);
-
-  const [showHeaderTextStyleUI, setShowHeaderTextStyleUI] = useState(false);
-  const [activeTextFace, setActiveTextFace] = useState(null);
-  const [localColor, setLocalColor] = useState(color);
-  const [localScale, setLocalScale] = useState(scale);
-  const [localFaceColors, setLocalFaceColors] = useState(faceColors);
-  const [localFaceTexts, setLocalFaceTexts] = useState(faceTexts);
-  const [localFaceTextStyles, setLocalFaceTextStyles] = useState(() => {
-    // Initialize with default styles for each face if not provided
-    const defaultStyles = {
-      front: { fontSize: 0.5, color: 'black', underline: false },
-      back: { fontSize: 0.5, color: 'black', underline: false },
-      top: { fontSize: 0.5, color: 'black', underline: false },
-      bottom: { fontSize: 0.5, color: 'black', underline: false },
-      right: { fontSize: 0.5, color: 'black', underline: false },
-      left: { fontSize: 0.5, color: 'black', underline: false },
-    };
-    return { ...defaultStyles, ...faceTextStyles };
-  });
-  const [localTextStyle, setLocalTextStyle] = useState(textStyle);
-  const [isScaleModified, setIsScaleModified] = useState(false);
-
-  // Update local state when props change
-  useEffect(() => {
-    setLocalHeaderText(headerText);
-  }, [headerText]);
-
-  useEffect(() => {
-    setLocalColor(color);
-  }, [color]);
-
-  useEffect(() => {
-    setLocalScale(scale);
-  }, [scale]);
-
-  useEffect(() => {
-    setLocalFaceColors(faceColors);
-  }, [faceColors]);
-
-  useEffect(() => {
-    setLocalFaceTexts(faceTexts);
-  }, [faceTexts]);
-  useEffect(() => {
-    if (!isEqual(localFaceTextStyles, faceTextStyles)) {
-      setLocalFaceTextStyles(faceTextStyles);
+  const contentRef = useRef(); // Add contentRef like in Dodecahedron
+  const lastUpdateTimeRef = useRef(0); // Memoize derived values to prevent unnecessary re-renders
+  const position = useMemo(() => {
+    const pos = objectData?.position;
+    // Ensure position has valid numbers, not undefined/null values
+    if (
+      Array.isArray(pos) &&
+      pos.length === 3 &&
+      pos.every((val) => typeof val === 'number' && !isNaN(val))
+    ) {
+      return pos;
     }
-  }, [faceTextStyles, localFaceTextStyles]);
+    return [0, 0, 0];
+  }, [objectData?.position]);
+  // Debug: Watch for position changes
   useEffect(() => {
-    if (!isEqual(localTextStyle, textStyle)) {
-      setLocalTextStyle(textStyle);
+    if (objectData?.position) {
+      // Position tracking for debugging - removed for production
     }
-  }, [textStyle, localTextStyle]);
+  }, [objectData?.position, id]);
+  const scale = useMemo(
+    () => objectData?.scale || [1, 1, 1],
+    [objectData?.scale]
+  );
+  const color = useMemo(
+    () => objectData?.color || DEFAULT_COLOR,
+    [objectData?.color]
+  );
+  const faceColors = useMemo(
+    () => objectData?.faceColors || {},
+    [objectData?.faceColors]
+  );
+  const faceTexts = useMemo(
+    () => objectData?.faceTexts || {},
+    [objectData?.faceTexts]
+  );
+  const headerText = useMemo(
+    () => objectData?.headerText || '',
+    [objectData?.headerText]
+  );
+  const textStyle = useMemo(
+    () =>
+      objectData?.textStyle || {
+        fontSize: 1.5,
+        color: 'black',
+        underline: false,
+      },
+    [objectData?.textStyle]
+  );
+  const faceTextStyles = useMemo(
+    () => objectData?.faceTextStyles || {},
+    [objectData?.faceTextStyles]
+  );
 
-  // Update lastPositionRef when position changes
+  // Store state and actions
+  const cube = useCubeStore((state) => state.getCube(id));
+  const createCube = useCubeStore((state) => state.createCube);
+  const updateCube = useCubeStore((state) => state.updateCube);
+  const selectCube = useCubeStore((state) => state.selectCube);
+  const deselectCube = useCubeStore((state) => state.deselectCube);
+  const isCubeSelected = useCubeStore((state) => state.isCubeSelected(id));
+  const setCubeSelectedFace = useCubeStore(
+    (state) => state.setCubeSelectedFace
+  );
+  const setCubeSelectedIndicator = useCubeStore(
+    (state) => state.setCubeSelectedIndicator
+  );
+  const setCubeShowTransform = useCubeStore(
+    (state) => state.setCubeShowTransform
+  );
+  const setCubeShowHeader = useCubeStore((state) => state.setCubeShowHeader);
+  const setCubeShowFaceTextInput = useCubeStore(
+    (state) => state.setCubeShowFaceTextInput
+  );
+  const setCubeIsResizing = useCubeStore((state) => state.setCubeIsResizing);
+  const setCubeShowObjectUI = useCubeStore(
+    (state) => state.setCubeShowObjectUI
+  );
+  const setCubeShowHeaderTextStyleUI = useCubeStore(
+    (state) => state.setCubeShowHeaderTextStyleUI
+  );
+  const setCubeActiveTextFace = useCubeStore(
+    (state) => state.setCubeActiveTextFace
+  );
+  const updateCubeFaceColor = useCubeStore(
+    (state) => state.updateCubeFaceColor
+  );
+  const updateCubeFaceText = useCubeStore((state) => state.updateCubeFaceText);
+  const updateCubeFaceTextStyle = useCubeStore(
+    (state) => state.updateCubeFaceTextStyle
+  );
+
+  // Initialize cube in store if it doesn't exist
   useEffect(() => {
-    lastPositionRef.current = position;
-  }, [position]);
+    if (!cube) {
+      createCube(id, {
+        position,
+        scale,
+        color,
+        faceColors,
+        faceTexts,
+        headerText,
+        textStyle,
+        faceTextStyles: {
+          front: { fontSize: 0.5, color: 'black', underline: false },
+          back: { fontSize: 0.5, color: 'black', underline: false },
+          top: { fontSize: 0.5, color: 'black', underline: false },
+          bottom: { fontSize: 0.5, color: 'black', underline: false },
+          right: { fontSize: 0.5, color: 'black', underline: false },
+          left: { fontSize: 0.5, color: 'black', underline: false },
+          ...faceTextStyles,
+        },
+      });
+    }
+  }, [
+    id,
+    cube,
+    createCube,
+    position,
+    scale,
+    color,
+    faceColors,
+    faceTexts,
+    headerText,
+    textStyle,
+    faceTextStyles,
+  ]);
 
+  // Handle selection changes
+  useEffect(() => {
+    if (selected && !isCubeSelected) {
+      selectCube(id);
+    } else if (!selected && isCubeSelected) {
+      deselectCube(id);
+    }
+  }, [selected, isCubeSelected, selectCube, deselectCube, id]);
   // Reset selection states when cube is deselected
   useEffect(() => {
     if (!selected) {
-      setSelectedFace(null);
-      setSelectedIndicator(null);
-      setShowTransform(false);
+      setCubeSelectedFace(id, null);
+      setCubeSelectedIndicator(id, null);
+      setCubeShowTransform(id, false);
       setActiveTextStyleUI(null);
-      // Close text style UI menus
-      setShowHeaderTextStyleUI(false);
-      setActiveTextFace(null);
+      setCubeShowHeaderTextStyleUI(id, false);
+      setCubeActiveTextFace(id, null);
     }
-  }, [selected, setActiveTextStyleUI]);
+  }, [
+    selected,
+    id,
+    setCubeSelectedFace,
+    setCubeSelectedIndicator,
+    setCubeShowTransform,
+    setActiveTextStyleUI,
+    setCubeShowHeaderTextStyleUI,
+    setCubeActiveTextFace,
+  ]);
 
   // Check if a face is connected via a connection
   const isIndicatorConnected = useCallback(
@@ -169,23 +221,25 @@ const Cube = ({
   // Check if an indicator should be shown as active
   const isIndicatorActive = useCallback(
     (faceName) => {
-      return selectedIndicator === faceName && !isIndicatorConnected(faceName);
+      return (
+        cube?.selectedIndicator === faceName && !isIndicatorConnected(faceName)
+      );
     },
-    [selectedIndicator, isIndicatorConnected]
+    [cube?.selectedIndicator, isIndicatorConnected]
   );
 
   // Calculate UI positions based on cube scale
   const getUIPositions = useMemo(() => {
     const uiOffset = 0.01; // Small z-offset to avoid z-fighting
+    const currentScale = cube?.scale || scale;
 
     return {
-      objectUI: [0, CUBE_SIZE + 20 / localScale[1], uiOffset],
-      headerInput: [0, CUBE_SIZE + 5 / localScale[1], uiOffset],
-      headerText: [0, CUBE_SIZE + 5 / localScale[1], uiOffset],
-      textStyleUI: [0, CUBE_SIZE + 7 / localScale[1], uiOffset],
+      objectUI: [0, CUBE_SIZE + 20 / currentScale[1], uiOffset],
+      headerInput: [0, CUBE_SIZE + 5 / currentScale[1], uiOffset],
+      headerText: [0, CUBE_SIZE + 5 / currentScale[1], uiOffset],
+      textStyleUI: [0, CUBE_SIZE + 7 / currentScale[1], uiOffset],
     };
-  }, [localScale]);
-
+  }, [cube?.scale, scale]);
   // Determine if an indicator should be shown
   const shouldShowIndicator = useCallback(
     (faceName) => {
@@ -200,7 +254,7 @@ const Cube = ({
       }
 
       // Show indicators for selected faces
-      if (selectedFace === faceName && selected) {
+      if (cube?.selectedFace === faceName && selected) {
         return true;
       }
 
@@ -219,7 +273,7 @@ const Cube = ({
           return (
             (activeIndicator?.cube?.id === id &&
               activeIndicator?.face === faceName) ||
-            (selected && faceName === selectedFace)
+            (selected && faceName === cube?.selectedFace)
           );
         default:
           return false;
@@ -228,7 +282,7 @@ const Cube = ({
     [
       isIndicatorConnected,
       selectedIndicators.length,
-      selectedFace,
+      cube?.selectedFace,
       selected,
       showAllCubesIndicators,
       indicatorMode,
@@ -283,33 +337,123 @@ const Cube = ({
 
     return baseOffset + textHeight / 2 + zSafetyMargin;
   }, []);
-
   // Get material for a face
   const getFaceMaterial = useCallback(
     (faceName) => ({
       ...faceMaterialProps,
-      color: localFaceColors[faceName]
-        ? new THREE.Color(localFaceColors[faceName])
-        : selectedFace === faceName
+      color: cube?.faceColors?.[faceName]
+        ? new THREE.Color(cube.faceColors[faceName])
+        : cube?.selectedFace === faceName
         ? new THREE.Color('#99ccff')
         : new THREE.Color('#000000'),
-      opacity: localFaceColors[faceName]
+      opacity: cube?.faceColors?.[faceName]
         ? 1.0
-        : selectedFace === faceName
+        : cube?.selectedFace === faceName
         ? SELECTED_OPACITY
         : DEFAULT_OPACITY,
     }),
-    [localFaceColors, selectedFace]
+    [cube?.faceColors, cube?.selectedFace]
   );
 
   // Event handlers
   const handleSceneClick = useCallback(() => {
-    setShowObjectUI(true);
-    setShowHeaderTextStyleUI(false); // Close header text style UI
-    setActiveTextFace(null); // Reset active text face for face text UI
+    setCubeShowObjectUI(id, true);
+    setCubeShowHeaderTextStyleUI(id, false); // Close header text style UI
+    setCubeActiveTextFace(id, null); // Reset active text face for face text UI
     setActiveTextStyleUI(null); // Reset active text style UI reference
     onClick();
-  }, [onClick, setActiveTextStyleUI]);
+  }, [
+    onClick,
+    setActiveTextStyleUI,
+    id,
+    setCubeShowObjectUI,
+    setCubeShowHeaderTextStyleUI,
+    setCubeActiveTextFace,
+  ]); // Add useCallback for updating database (same pattern as Dodecahedron)
+  const updateDatabase = useCallback(() => {
+    if (!onUpdate || !id || !objectData) return;
+
+    // Skip if we're still in initial loading phase - no saves during app startup
+    const { isInitialLoading } = useObjectsStore.getState();
+    if (isInitialLoading) {
+      return;
+    }
+
+    // Use current scale from cube store if available, fallback to objectData
+    const currentScale = cube?.scale || objectData.scale || [1, 1, 1];
+
+    // Ensure position has valid numbers, not undefined/null values
+    const currentPosition = objectData.position;
+    const validPosition =
+      Array.isArray(currentPosition) &&
+      currentPosition.length === 3 &&
+      currentPosition.every((val) => typeof val === 'number' && !isNaN(val))
+        ? currentPosition
+        : [0, 0, 0];
+
+    const currentState = {
+      type: 'cube',
+      position: validPosition,
+      scale: currentScale,
+      color: objectData.color || '#000000',
+      headerText: objectData.headerText || '',
+      textStyle: objectData.textStyle || {
+        fontSize: 'medium',
+        color: 'black',
+        underline: false,
+      },
+      faceColors: objectData.faceColors || {},
+      faceTexts: objectData.faceTexts || {},
+      faceTextStyles: objectData.faceTextStyles || {},
+    };
+
+    // Only update if something has changed
+    const lastUpdate = contentRef.current?.lastUpdate;
+    if (!lastUpdate || !isEqual(lastUpdate, currentState)) {
+      contentRef.current.lastUpdate = currentState;
+      onUpdate(id, currentState);
+    }
+  }, [id, objectData, onUpdate, cube]);
+
+  // Add debounced update to prevent excessive database calls (same pattern as Dodecahedron)
+  const debouncedUpdateTimeoutRef = useRef(null);
+  const isInitialRenderRef = useRef(true);
+
+  useEffect(() => {
+    // Skip updates during initial render
+    if (isInitialRenderRef.current) {
+      isInitialRenderRef.current = false;
+      return;
+    }
+
+    // Skip if objectData is not yet loaded
+    if (!objectData) {
+      return;
+    }
+
+    // Skip if we're still in initial loading phase - no saves during app startup
+    const { isInitialLoading } = useObjectsStore.getState();
+    if (isInitialLoading) {
+      return;
+    }
+
+    // Clear any pending update
+    if (debouncedUpdateTimeoutRef.current) {
+      clearTimeout(debouncedUpdateTimeoutRef.current);
+    }
+
+    // Debounce property updates to prevent excessive calls
+    debouncedUpdateTimeoutRef.current = setTimeout(() => {
+      updateDatabase();
+    }, 100); // 100ms debounce delay
+
+    // Cleanup timeout on unmount
+    return () => {
+      if (debouncedUpdateTimeoutRef.current) {
+        clearTimeout(debouncedUpdateTimeoutRef.current);
+      }
+    };
+  }, [updateDatabase, objectData]);
 
   // Add a new effect to close text style UI when clicking elsewhere
   useEffect(() => {
@@ -323,9 +467,9 @@ const Cube = ({
       }
 
       // Close text styling UI when clicking elsewhere
-      if (showHeaderTextStyleUI || activeTextFace) {
-        setShowHeaderTextStyleUI(false);
-        setActiveTextFace(null);
+      if (cube?.showHeaderTextStyleUI || cube?.activeTextFace) {
+        setCubeShowHeaderTextStyleUI(id, false);
+        setCubeActiveTextFace(id, null);
         setActiveTextStyleUI(null);
       }
     };
@@ -336,21 +480,37 @@ const Cube = ({
     return () => {
       window.removeEventListener('mousedown', handleGlobalClick);
     };
-  }, [showHeaderTextStyleUI, activeTextFace, setActiveTextStyleUI]);
+  }, [
+    cube?.showHeaderTextStyleUI,
+    cube?.activeTextFace,
+    setActiveTextStyleUI,
+    id,
+    setCubeShowHeaderTextStyleUI,
+    setCubeActiveTextFace,
+  ]);
 
   const handleFaceClick = useCallback(
     (e, faceName) => {
       e.stopPropagation();
-      setSelectedFace(selectedFace === faceName ? null : faceName);
-      setShowObjectUI(false);
+      setCubeSelectedFace(
+        id,
+        cube?.selectedFace === faceName ? null : faceName
+      );
+      setCubeShowObjectUI(id, false);
 
       onFaceClick?.({
-        cube: groupRef.current,
+        cube: contentRef.current,
         face: faceName,
         id: id,
       });
     },
-    [id, onFaceClick, selectedFace]
+    [
+      id,
+      onFaceClick,
+      cube?.selectedFace,
+      setCubeSelectedFace,
+      setCubeShowObjectUI,
+    ]
   );
 
   const handleColoredFaceClick = useCallback(
@@ -364,97 +524,106 @@ const Cube = ({
     },
     [selected, handleFaceClick, handleSceneClick]
   );
-
   const handleIndicatorClick = useCallback(
     (e, faceName) => {
       e.stopPropagation();
 
-      setSelectedIndicator(selectedIndicator === faceName ? null : faceName);
+      setCubeSelectedIndicator(
+        id,
+        cube?.selectedIndicator === faceName ? null : faceName
+      );
 
-      const { position: facePos } = getFaceIndicatorProps(faceName);
-
-      // Create complete indicator data
+      const { position: facePos } = getFaceIndicatorProps(faceName); // Create complete indicator data
       const indicatorData = {
         type: 'cube',
         face: faceName,
         cube: {
           id,
-          position: lastPositionRef.current,
-          scale: localScale,
+          position: position,
+          scale: cube?.scale || scale,
           userData: { objectId: id.toString() },
         },
-        position: lastPositionRef.current,
+        position: position,
         faceCenter: facePos,
       };
 
       // Calculate world position
       const worldPos = new THREE.Vector3(facePos[0], facePos[1], facePos[2]);
-      if (groupRef.current?.matrixWorld) {
-        worldPos.applyMatrix4(groupRef.current.matrixWorld);
+      if (contentRef.current?.matrixWorld) {
+        worldPos.applyMatrix4(contentRef.current.matrixWorld);
         indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
       }
 
       onFaceIndicatorClick?.(indicatorData);
     },
-    [id, onFaceIndicatorClick, selectedIndicator, localScale]
+    [
+      id,
+      onFaceIndicatorClick,
+      cube?.selectedIndicator,
+      cube?.scale,
+      scale,
+      setCubeSelectedIndicator,
+      position,
+    ]
   );
-
   const handleTransformToggle = useCallback(() => {
-    setShowTransform((prev) => {
-      if (!prev) {
-        setIsResizing(false);
-      }
-      return !prev;
-    });
-  }, []);
+    const newShowTransform = !cube?.showTransform;
+    setCubeShowTransform(id, newShowTransform);
+    if (newShowTransform) {
+      setCubeIsResizing(id, false);
+    }
+  }, [cube?.showTransform, id, setCubeShowTransform, setCubeIsResizing]);
 
   const handleResizeToggle = useCallback(() => {
-    setIsResizing((prev) => {
-      if (!prev) {
-        setShowTransform(false);
-      }
-      return !prev;
-    });
-  }, []);
+    const newIsResizing = !cube?.isResizing;
+    setCubeIsResizing(id, newIsResizing);
+    if (newIsResizing) {
+      setCubeShowTransform(id, false);
+    }
+  }, [cube?.isResizing, id, setCubeIsResizing, setCubeShowTransform]);
 
   const handleHeaderToggle = useCallback(() => {
-    setShowHeader(!showHeader);
-  }, [showHeader]);
+    setCubeShowHeader(id, !cube?.showHeader);
+  }, [cube?.showHeader, id, setCubeShowHeader]);
 
   const handleHeaderSubmit = useCallback(
     (text) => {
-      setLocalHeaderText(text);
+      updateCube(id, { headerText: text });
       if (onUpdate) {
         onUpdate(id, {
-          color: localColor,
+          color: cube?.color || color,
           headerText: text,
-          scale: localScale,
-          position: lastPositionRef.current,
-          faceColors: localFaceColors,
-          faceTexts: localFaceTexts,
-          faceTextStyles: localFaceTextStyles,
-          textStyle: localTextStyle,
+          scale: cube?.scale || scale,
+          position: position,
+          faceColors: cube?.faceColors || faceColors,
+          faceTexts: cube?.faceTexts || faceTexts,
+          faceTextStyles: cube?.faceTextStyles || faceTextStyles,
+          textStyle: cube?.textStyle || textStyle,
           type: 'cube',
         });
       }
-      setShowHeader(false);
-      setShowObjectUI(false);
+      setCubeShowHeader(id, false);
+      setCubeShowObjectUI(id, false);
     },
     [
       id,
       onUpdate,
-      localColor,
-      localScale,
-      localFaceColors,
-      localFaceTexts,
-      localFaceTextStyles,
-      localTextStyle,
+      cube,
+      color,
+      scale,
+      faceColors,
+      faceTexts,
+      faceTextStyles,
+      textStyle,
+      updateCube,
+      setCubeShowHeader,
+      setCubeShowObjectUI,
+      position,
     ]
   );
-
   const handleLineColorChange = useCallback(
     (newColor) => {
-      setLocalColor(newColor);
+      updateCube(id, { color: newColor });
 
       if (onUpdate) {
         // Debounce updates to avoid excessive database writes
@@ -462,13 +631,13 @@ const Cube = ({
         lastUpdateTimeRef.current = setTimeout(() => {
           onUpdate(id, {
             color: newColor,
-            headerText: localHeaderText,
-            scale: localScale,
-            position: lastPositionRef.current,
-            faceColors: localFaceColors,
-            faceTexts: localFaceTexts,
-            faceTextStyles: localFaceTextStyles,
-            textStyle: localTextStyle,
+            headerText: cube?.headerText || headerText,
+            scale: cube?.scale || scale,
+            position: position,
+            faceColors: cube?.faceColors || faceColors,
+            faceTexts: cube?.faceTexts || faceTexts,
+            faceTextStyles: cube?.faceTextStyles || faceTextStyles,
+            textStyle: cube?.textStyle || textStyle,
             type: 'cube',
           });
         }, 300);
@@ -477,37 +646,39 @@ const Cube = ({
     [
       id,
       onUpdate,
-      localHeaderText,
-      localScale,
-      localFaceColors,
-      localFaceTexts,
-      localFaceTextStyles,
-      localTextStyle,
+      cube,
+      headerText,
+      scale,
+      faceColors,
+      faceTexts,
+      faceTextStyles,
+      textStyle,
+      updateCube,
+      position,
     ]
   );
-
   const handleFaceColorChange = useCallback(
     (color, face) => {
       const updatedFaceColors = {
-        ...localFaceColors,
+        ...(cube?.faceColors || faceColors),
         [face]: color,
       };
 
-      setLocalFaceColors(updatedFaceColors);
+      updateCubeFaceColor(id, face, color);
 
       if (onUpdate) {
         // Debounce updates
         clearTimeout(lastUpdateTimeRef.current);
         lastUpdateTimeRef.current = setTimeout(() => {
           onUpdate(id, {
-            color: localColor,
-            headerText: localHeaderText,
-            scale: localScale,
-            position: lastPositionRef.current,
+            color: cube?.color || color,
+            headerText: cube?.headerText || headerText,
+            scale: cube?.scale || scale,
+            position: position,
             faceColors: updatedFaceColors,
-            faceTexts: localFaceTexts,
-            faceTextStyles: localFaceTextStyles,
-            textStyle: localTextStyle,
+            faceTexts: cube?.faceTexts || faceTexts,
+            faceTextStyles: cube?.faceTextStyles || faceTextStyles,
+            textStyle: cube?.textStyle || textStyle,
             type: 'cube',
           });
         }, 300);
@@ -516,128 +687,152 @@ const Cube = ({
     [
       id,
       onUpdate,
-      localColor,
-      localHeaderText,
-      localScale,
-      localFaceColors,
-      localFaceTexts,
-      localFaceTextStyles,
-      localTextStyle,
+      cube,
+      color,
+      headerText,
+      scale,
+      faceColors,
+      faceTexts,
+      faceTextStyles,
+      textStyle,
+      updateCubeFaceColor,
+      position,
     ]
   );
-
   const handleTextClick = useCallback(
     (e) => {
       e.stopPropagation();
       e.nativeEvent?.stopPropagation?.();
-      setShowHeaderTextStyleUI(true);
-      setActiveTextFace(null);
-      setActiveTextStyleUI(groupRef.current);
-      setSelectedFace(null);
+      setCubeShowHeaderTextStyleUI(id, true);
+      setCubeActiveTextFace(id, null);
+      setActiveTextStyleUI(contentRef.current);
+      setCubeSelectedFace(id, null);
     },
-    [setActiveTextStyleUI]
+    [
+      id,
+      setActiveTextStyleUI,
+      setCubeShowHeaderTextStyleUI,
+      setCubeActiveTextFace,
+      setCubeSelectedFace,
+    ]
   );
-
   const handleFaceTextClick = useCallback(() => {
-    setShowFaceTextInput(true);
-  }, []);
-
+    setCubeShowFaceTextInput(id, true);
+  }, [id, setCubeShowFaceTextInput]);
   const handleFaceTextSubmit = useCallback(
     (text) => {
+      const selectedFace = cube?.selectedFace;
+      if (!selectedFace) return;
+
       const updatedTexts = {
-        ...localFaceTexts,
+        ...(cube?.faceTexts || faceTexts),
         [selectedFace]: text,
       };
 
-      setLocalFaceTexts(updatedTexts);
+      updateCubeFaceText(id, selectedFace, text);
 
       if (onUpdate) {
         onUpdate(id, {
-          color: localColor,
-          headerText: localHeaderText,
-          scale: localScale,
-          position: lastPositionRef.current,
-          faceColors: localFaceColors,
+          color: cube?.color || color,
+          headerText: cube?.headerText || headerText,
+          scale: cube?.scale || scale,
+          position: position,
+          faceColors: cube?.faceColors || faceColors,
           faceTexts: updatedTexts,
-          faceTextStyles: localFaceTextStyles,
-          textStyle: localTextStyle,
+          faceTextStyles: cube?.faceTextStyles || faceTextStyles,
+          textStyle: cube?.textStyle || textStyle,
           type: 'cube',
         });
       }
 
-      setShowFaceTextInput(false);
-      setSelectedFace(null);
+      setCubeShowFaceTextInput(id, false);
+      setCubeSelectedFace(id, null);
     },
     [
       id,
       onUpdate,
-      localColor,
-      localHeaderText,
-      localScale,
-      localFaceColors,
-      localFaceTexts,
-      localFaceTextStyles,
-      localTextStyle,
-      selectedFace,
+      cube,
+      color,
+      headerText,
+      scale,
+      faceColors,
+      faceTexts,
+      faceTextStyles,
+      textStyle,
+      updateCubeFaceText,
+      setCubeShowFaceTextInput,
+      setCubeSelectedFace,
+      position,
     ]
   );
-
   const handleFaceTextStyleClick = useCallback(
     (e, faceName) => {
       if (e) {
         e.stopPropagation();
         e.nativeEvent?.stopPropagation?.();
       }
-      setActiveTextStyleUI(groupRef.current);
-      setActiveTextFace(faceName);
-      setSelectedFace(null);
-      setShowFaceTextInput(false);
+      setActiveTextStyleUI(contentRef.current);
+      setCubeActiveTextFace(id, faceName);
+      setCubeSelectedFace(id, null);
+      setCubeShowFaceTextInput(id, false);
       // Add this line to trigger the UI
-      setShowHeaderTextStyleUI(false);
+      setCubeShowHeaderTextStyleUI(id, false);
     },
-    [setActiveTextStyleUI]
+    [
+      id,
+      setActiveTextStyleUI,
+      setCubeActiveTextFace,
+      setCubeSelectedFace,
+      setCubeShowFaceTextInput,
+      setCubeShowHeaderTextStyleUI,
+    ]
   );
-
   const handleStyleChange = useCallback(
     (newStyle) => {
+      const activeTextFace = cube?.activeTextFace;
       if (activeTextFace) {
+        const currentFaceTextStyles =
+          cube?.faceTextStyles || faceTextStyles || {};
         const updatedFaceTextStyles = {
-          ...localFaceTextStyles,
+          ...currentFaceTextStyles,
           [activeTextFace]: {
-            ...localFaceTextStyles[activeTextFace],
+            ...currentFaceTextStyles[activeTextFace],
             ...newStyle,
           },
         };
 
-        setLocalFaceTextStyles(updatedFaceTextStyles);
+        updateCubeFaceTextStyle(id, activeTextFace, newStyle);
 
         if (onUpdate) {
           onUpdate(id, {
-            color: localColor,
-            headerText: localHeaderText,
-            scale: localScale,
-            position: lastPositionRef.current,
-            faceColors: localFaceColors,
-            faceTexts: localFaceTexts,
+            color: cube?.color || color,
+            headerText: cube?.headerText || headerText,
+            scale: cube?.scale || scale,
+            position: position,
+            faceColors: cube?.faceColors || faceColors,
+            faceTexts: cube?.faceTexts || faceTexts,
             faceTextStyles: updatedFaceTextStyles,
-            textStyle: localTextStyle,
+            textStyle: cube?.textStyle || textStyle,
             type: 'cube',
           });
         }
       } else {
-        const updatedTextStyle = { ...localTextStyle, ...newStyle };
+        const updatedTextStyle = {
+          ...(cube?.textStyle || textStyle),
+          ...newStyle,
+        };
 
-        setLocalTextStyle(updatedTextStyle);
+        updateCube(id, { textStyle: updatedTextStyle });
 
         if (onUpdate) {
           onUpdate(id, {
-            color: localColor,
-            headerText: localHeaderText,
-            scale: localScale,
-            position: lastPositionRef.current,
-            faceColors: localFaceColors,
-            faceTexts: localFaceTexts,
-            faceTextStyles: localFaceTextStyles,
+            color: cube?.color || color,
+            headerText: cube?.headerText || headerText,
+            scale: cube?.scale || scale,
+            position: position,
+            faceColors: cube?.faceColors || faceColors,
+            faceTexts: cube?.faceTexts || faceTexts,
+            faceTextStyles: cube?.faceTextStyles || faceTextStyles,
             textStyle: updatedTextStyle,
             type: 'cube',
           });
@@ -647,23 +842,40 @@ const Cube = ({
     [
       id,
       onUpdate,
-      localColor,
-      localHeaderText,
-      localScale,
-      localFaceColors,
-      localFaceTexts,
-      localFaceTextStyles,
-      localTextStyle,
-      activeTextFace,
+      cube,
+      color,
+      headerText,
+      scale,
+      faceColors,
+      faceTexts,
+      faceTextStyles,
+      textStyle,
+      updateCube,
+      updateCubeFaceTextStyle,
+      position,
     ]
   );
-  const handleDrag = useCallback(() => {
-    console.log(
-      '🔄 TransformControls onChange fired - this should appear during drag'
+  const handleDrag = (e) => {
+    // Get new position from the transform controls event
+    const newPos = e.target.object.position;
+
+    // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
+    const objectsStore = useObjectsStore.getState();
+    const currentObjects = objectsStore.objects;
+    const updatedObjects = currentObjects.map((obj) =>
+      obj.id === id ? { ...obj, position: [newPos.x, newPos.y, newPos.z] } : obj
     );
-    // Note: Don't call handleObjectMove here as it interferes with drag start/end logic
-    // The onDragStart and onDragEnd events handle the proper movement tracking
-  }, []);
+    objectsStore.setObjects(updatedObjects);
+
+    // Use the spatial system via onMove instead of direct onUpdate
+    if (onMove) {
+      onMove([newPos.x, newPos.y, newPos.z]);
+    }
+  };
+  // Store actions for scale modification
+  const setCubeIsScaleModified = useCubeStore(
+    (state) => state.setCubeIsScaleModified
+  );
 
   const handleScale = useCallback(
     (e) => {
@@ -677,59 +889,19 @@ const Cube = ({
 
       // Only update if the scale change is significant
       const epsilon = 0.0001;
+      const currentScale = cube?.scale || scale;
       if (
-        Math.abs(newScale[0] - localScale[0]) < epsilon &&
-        Math.abs(newScale[1] - localScale[1]) < epsilon &&
-        Math.abs(newScale[2] - localScale[2]) < epsilon
+        Math.abs(newScale[0] - currentScale[0]) < epsilon &&
+        Math.abs(newScale[1] - currentScale[1]) < epsilon &&
+        Math.abs(newScale[2] - currentScale[2]) < epsilon
       ) {
         return;
       }
-
-      setLocalScale(newScale);
-      setIsScaleModified(true);
+      updateCube(id, { scale: newScale });
+      setCubeIsScaleModified(id, true);
     },
-    [localScale]
+    [id, cube?.scale, scale, updateCube, setCubeIsScaleModified]
   );
-
-  // Update database when scale changes
-  useEffect(() => {
-    if (isScaleModified) {
-      // Update database
-      if (onUpdate) {
-        onUpdate(id, {
-          type: 'cube',
-          position: lastPositionRef.current,
-          scale: localScale,
-          color: localColor,
-          headerText: localHeaderText,
-          faceColors: localFaceColors,
-          faceTexts: localFaceTexts,
-          faceTextStyles: localFaceTextStyles,
-          textStyle: localTextStyle,
-        });
-      }
-
-      // Reset flag
-      setIsScaleModified(false);
-
-      // Call callback
-      if (onTransformEnd) {
-        onTransformEnd(id);
-      }
-    }
-  }, [
-    isScaleModified,
-    onUpdate,
-    id,
-    localScale,
-    localColor,
-    localHeaderText,
-    localFaceColors,
-    localFaceTexts,
-    localFaceTextStyles,
-    localTextStyle,
-    onTransformEnd,
-  ]);
 
   // Render colored faces and indicators
   const renderFaces = useMemo(() => {
@@ -740,12 +912,10 @@ const Cube = ({
       const isActive = isIndicatorActive(name);
 
       // First, check if this indicator should be shown based on our logic
-      const displayIndicator = shouldShowIndicator(name);
-
-      // Then, determine if the face itself should be visible (separate from indicator visibility)
+      const displayIndicator = shouldShowIndicator(name); // Then, determine if the face itself should be visible (separate from indicator visibility)
       const displayFace =
-        localFaceColors[name] ||
-        (selected && (selectedFace === name || isActive));
+        (cube?.faceColors && cube.faceColors[name]) ||
+        (selected && (cube?.selectedFace === name || isActive));
 
       // FIXED: Always render faces (remove the conditional return null),
       // even if not displayed - this ensures they're always clickable
@@ -769,33 +939,34 @@ const Cube = ({
             // Only make the material visible when displayFace is true
             visible={displayFace}
             opacity={displayFace ? getFaceMaterial(name).opacity : 0.001}
-          />
-
+          />{' '}
           {/* UI elements for selected face */}
-          {selected && selectedFace === name && !showFaceTextInput && (
-            <FaceUI
-              position={[0, 1, 0]}
-              normal={normal}
-              onColorChange={handleFaceColorChange}
-              face={name}
-              onTextClick={handleFaceTextClick}
-            />
-          )}
-
-          {showFaceTextInput && selectedFace === name && (
+          {selected &&
+            cube?.selectedFace === name &&
+            !cube?.showFaceTextInput && (
+              <FaceUI
+                position={[0, 1, 0]}
+                normal={normal}
+                onColorChange={handleFaceColorChange}
+                face={name}
+                onTextClick={handleFaceTextClick}
+              />
+            )}{' '}
+          {cube?.showFaceTextInput && cube?.selectedFace === name && (
             <FaceTextInput
               position={[0, 6, 0]}
               onTextSubmit={handleFaceTextSubmit}
+              inputId={`cube-${id}-face-${name}`}
             />
           )}
-
           {/* Always render indicator if needed, independent of face visibility */}
           {displayIndicator && (
             <FaceIndicator
               position={[
                 0,
                 0,
-                FACE_THICKNESS * (localFaceColors[name] ? 1 : 0.5),
+                FACE_THICKNESS *
+                  (cube?.faceColors && cube.faceColors[name] ? 1 : 0.5),
               ]}
               rotation={[0, 0, 0]}
               onClick={(e) => handleIndicatorClick(e, name)}
@@ -810,15 +981,15 @@ const Cube = ({
       );
     });
   }, [
-    localFaceColors,
+    cube?.faceColors,
+    cube?.selectedFace,
+    cube?.showFaceTextInput,
     selected,
     showAllCubesIndicators,
     isIndicatorConnected,
     isIndicatorActive,
     handleColoredFaceClick,
     getFaceMaterial,
-    selectedFace,
-    showFaceTextInput,
     shouldShowIndicator,
     handleIndicatorClick,
     handleFaceColorChange,
@@ -831,15 +1002,25 @@ const Cube = ({
   // Render face texts
   const renderFaceTexts = useMemo(() => {
     return faces.map(({ name, normal }) => {
-      if (!localFaceTexts[name]) return null;
+      const faceText = cube?.faceTexts?.[name] || faceTexts?.[name];
+      if (!faceText) return null;
 
       const { position: facePos, rotation } = getFaceIndicatorProps(name);
-      const textStyle = localFaceTextStyles[name];
+      const textStyle = cube?.faceTextStyles?.[name] ||
+        faceTextStyles?.[name] || {
+          fontSize: 0.5,
+          color: 'black',
+          underline: false,
+        };
       const yOffset = getFaceTextOffset(textStyle.fontSize, name);
 
       // Adjust offset multiplier for colored faces
       const offsetMultiplier =
-        name === 'bottom' ? 0.8 : localFaceColors[name] ? 0.1 : 0.05;
+        name === 'bottom'
+          ? 0.8
+          : cube?.faceColors && cube.faceColors[name]
+          ? 0.1
+          : 0.05;
 
       // Calculate position with offset to prevent z-fighting
       const offsetPosition = [
@@ -849,7 +1030,8 @@ const Cube = ({
       ];
 
       // Calculate inverse scale
-      const inverseScale = localScale.map((s) => 1 / Math.max(0.0001, s));
+      const currentScale = cube?.scale || scale;
+      const inverseScale = currentScale.map((s) => 1 / Math.max(0.0001, s));
 
       // Special rotation adjustment
       let adjustedRotation;
@@ -889,7 +1071,7 @@ const Cube = ({
           scale={inverseScale}
         >
           <TextSprite
-            text={localFaceTexts[name]}
+            text={faceText}
             position={[0, yOffset, 0]}
             followTarget={null}
             onClick={(e) => {
@@ -912,40 +1094,44 @@ const Cube = ({
           />
 
           {/* Update condition to show TextStyleUI */}
-          {activeTextFace === name && (
+          {cube?.activeTextFace === name && (
             <TextStyleUI
               position={[0, 6, 0]}
               onStyleChange={handleStyleChange}
               onClose={() => {
-                setActiveTextFace(null);
+                setCubeActiveTextFace(id, null);
                 setActiveTextStyleUI(null);
-                setShowHeaderTextStyleUI(false);
+                setCubeShowHeaderTextStyleUI(id, false);
               }}
-              currentStyle={localFaceTextStyles[name] || {}}
+              currentStyle={
+                cube?.faceTextStyles?.[name] || faceTextStyles?.[name] || {}
+              }
             />
           )}
         </group>
       );
     });
   }, [
-    localFaceTexts,
-    localFaceTextStyles,
-    localFaceColors,
-    localScale,
+    cube,
+    faceTexts,
+    faceTextStyles,
+    scale,
     getFaceTextOffset,
     handleFaceTextStyleClick,
     handleStyleChange,
-    activeTextFace,
-    activeTextStyleUI,
+    id,
+    setCubeActiveTextFace,
+    setActiveTextStyleUI,
+    setCubeShowHeaderTextStyleUI,
   ]);
 
   return (
     <>
-      {/* Main cube group */}
+      {/* Main cube group */}{' '}
       <group
-        ref={groupRef}
+        ref={contentRef}
         position={position}
-        scale={localScale}
+        scale={cube?.scale || scale}
         userData={{
           isCube: true,
           objectId: id.toString(),
@@ -961,33 +1147,29 @@ const Cube = ({
         >
           <boxGeometry args={[10, 10, 10]} />
           <meshBasicMaterial visible={false} />
-        </mesh>
-
+        </mesh>{' '}
         {/* Cube edge lines */}
         <Line
           points={cubeLinePoints}
-          color={localColor}
+          color={cube?.color || color}
           lineWidth={1}
           segments={true}
           renderOrder={1} // Higher render order for cube edges
           transparent={false}
           depthWrite={false}
         />
-
         {/* Colored faces and indicators */}
         {renderFaces}
-
         {/* Face text elements */}
         {renderFaceTexts}
-
         {/* Header text */}
-        {localHeaderText && (
+        {(cube?.headerText || headerText) && (
           <group
-            scale={localScale.map((s) => 1 / Math.max(0.0001, s))}
+            scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
             position={getUIPositions.headerText}
           >
             <TextSprite
-              text={localHeaderText}
+              text={cube?.headerText || headerText}
               position={[0, 0, 0]}
               followTarget={null}
               onClick={(e) => {
@@ -997,245 +1179,113 @@ const Cube = ({
                 return false; // Prevent event bubbling
               }}
               style={{
-                ...localTextStyle,
+                ...(cube?.textStyle || textStyle),
                 isHeaderText: true,
                 fixedSize: false,
               }}
-            />
-
+            />{' '}
             {/* Remove the activeTextStyleUI condition */}
-            {showHeaderTextStyleUI && (
+            {cube?.showHeaderTextStyleUI && (
               <TextStyleUI
-                position={[0, 2 / localScale[1], 0]}
+                position={[0, 2 / (cube?.scale || scale)[1], 0]}
                 followTarget={null}
                 onStyleChange={handleStyleChange}
                 onClose={() => {
-                  setShowHeaderTextStyleUI(false);
+                  setCubeShowHeaderTextStyleUI(id, false);
                   setActiveTextStyleUI(null);
                 }}
-                currentStyle={localTextStyle}
+                currentStyle={cube?.textStyle || textStyle}
               />
             )}
           </group>
-        )}
-
+        )}{' '}
         {/* Header input */}
-        {selected && showHeader && (
+        {selected && cube?.showHeader && (
           <HeaderInput
             position={getUIPositions.headerInput}
             onTextSubmit={handleHeaderSubmit}
+            inputId={`cube-${id}-header`}
             followTarget={null}
-            initialText={localHeaderText}
+            initialText={cube?.headerText || headerText}
           />
         )}
-      </group>
-
+      </group>{' '}
       {/* Object UI - moved outside the cube group to avoid scale transformation */}
-      {selected && !showHeader && showObjectUI && (
+      {selected && !cube?.showHeader && cube?.showObjectUI && (
         <ObjectUI
           onTransformToggle={handleTransformToggle}
           onHeaderToggle={handleHeaderToggle}
           onResizeToggle={handleResizeToggle}
           onLineColorChange={handleLineColorChange}
           onDelete={() => onDelete?.(id)}
-          showTransform={showTransform}
-          showHeader={showHeader}
-          followTarget={groupRef}
+          showTransform={cube?.showTransform}
+          showHeader={cube?.showHeader}
+          followTarget={contentRef}
           objectId={id}
         />
-      )}
-
-      {/* Transform controls - Use proper onMouseDown and onMouseUp events */}
-      {selected && showTransform && groupRef.current && (
+      )}{' '}
+      {/* Transform controls */}{' '}
+      {selected && cube?.showTransform && contentRef.current && (
         <DreiTransformControls
-          ref={transformRef}
-          object={groupRef.current}
-          onChange={handleDrag}
-          onMouseDown={(e) => {
-            console.log(`🚀 MOUSE DOWN EVENT FIRED for Cube ${id}`, e);
-            console.log(
-              `🔧 Cube ${id} drag started - registerTransformingObject available:`,
-              !!registerTransformingObject
-            );
-
-            // Capture the current position at drag start for later use in drag end
-            const currentPos = groupRef.current?.position || position;
-            if (
-              currentPos &&
-              (currentPos.x !== undefined || Array.isArray(currentPos))
-            ) {
-              dragStartPositionRef.current = Array.isArray(currentPos)
-                ? [...currentPos]
-                : [currentPos.x, currentPos.y, currentPos.z];
-            } else {
-              dragStartPositionRef.current = Array.isArray(position)
-                ? [...position]
-                : [0, 0, 0];
-            }
-            console.log(
-              `📍 Captured drag start position for ${id}:`,
-              dragStartPositionRef.current
-            );
-
+          object={contentRef.current}
+          onObjectChange={handleDrag}
+          onMouseDown={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = false;
             }
-            registerTransformingObject?.(id, true, position);
-            onTransformStart?.(id);
-
-            // Mark drag start in spatial system
-            if (handleObjectMove && dragStartPositionRef.current) {
-              try {
-                console.log(`🔧 Calling handleObjectMove for DRAG START...`);
-                handleObjectMove({
-                  id,
-                  newPosition: {
-                    x: dragStartPositionRef.current[0],
-                    y: dragStartPositionRef.current[1],
-                    z: dragStartPositionRef.current[2],
-                  },
-                  isDragStart: true,
-                  isDragEnd: false,
-                  draggingObjectsRef,
-                  objects: [],
-                  setObjects,
-                  setConnections,
-                  connections,
-                  user,
-                  currentSpaceId,
-                  checkPositionJitter,
-                });
-                console.log(`✅ handleObjectMove DRAG START call completed`);
-              } catch (error) {
-                console.error(
-                  `❌ Error calling handleObjectMove for drag start:`,
-                  error
-                );
-              }
-            } else {
-              console.warn(
-                `⚠️ Cannot call handleObjectMove for drag start - invalid position or function not available:`,
-                dragStartPositionRef.current
-              );
-            }
+            // Don't use registerTransformingObject - let it work like dodecahedron
           }}
-          onMouseUp={(e) => {
-            console.log(`🏁 MOUSE UP EVENT FIRED for Cube ${id}`, e);
-            console.log(
-              `🔧 Cube ${id} drag ended - calling spatial save system`
-            );
+          onMouseUp={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
-
-            // Get final position with proper fallback
-            const finalPos =
-              e?.target?.object?.position || groupRef.current?.position;
-            let finalPosition;
-
-            if (finalPos && typeof finalPos.x === 'number') {
-              finalPosition = [finalPos.x, finalPos.y, finalPos.z];
-            } else {
-              // Fallback to current position prop or lastPositionRef with guaranteed array
-              const fallbackPos = position || lastPositionRef.current;
-              if (Array.isArray(fallbackPos) && fallbackPos.length >= 3) {
-                finalPosition = fallbackPos;
-              } else {
-                finalPosition = [0, 0, 0]; // Safe default
-              }
-            }
-
-            // Get the old position from drag start
-            const oldPosition = dragStartPositionRef.current;
-            console.log(
-              `📍 Using drag start position as oldPosition for ${id}:`,
-              oldPosition
-            );
-
-            console.log(
-              `🔧 About to call handleObjectMove with isDragEnd: true for object ${id}`,
-              {
-                finalPos,
-                finalPosition,
-                oldPosition,
-                position,
-                lastPosition: lastPositionRef.current,
-              }
-            );
-
-            // Route through spatial partitioning system for drag end
-            if (
-              handleObjectMove &&
-              Array.isArray(finalPosition) &&
-              finalPosition.length >= 3
-            ) {
-              try {
-                console.log(`🔧 Calling handleObjectMove function...`);
-                handleObjectMove({
-                  id,
-                  newPosition: {
-                    x: finalPosition[0],
-                    y: finalPosition[1],
-                    z: finalPosition[2],
-                  },
-                  oldPosition: oldPosition
-                    ? {
-                        x: oldPosition[0],
-                        y: oldPosition[1],
-                        z: oldPosition[2],
-                      }
-                    : undefined,
-                  isDragStart: false,
-                  isDragEnd: true,
-                  draggingObjectsRef,
-                  objects: [],
-                  setObjects,
-                  setConnections,
-                  connections,
-                  user,
-                  currentSpaceId,
-                  checkPositionJitter,
-                });
-                console.log(`✅ handleObjectMove call completed successfully`);
-              } catch (error) {
-                console.error(`❌ Error calling handleObjectMove:`, error);
-              }
-            } else {
-              console.warn(
-                `⚠️ Cannot call handleObjectMove - invalid finalPosition or function not available:`,
-                finalPosition
-              );
-            }
-
-            // Mark transform as complete
-            registerTransformingObject?.(id, false);
-            onTransformEnd?.(id);
-
-            // Clear the drag start position after use
-            dragStartPositionRef.current = null;
+            // No immediate save - let the debounced effect handle it like Dodecahedron
           }}
           mode="translate"
+          space="world"
           size={0.5}
         />
       )}
-      {/* Scale transform controls */}
-      {selected && isResizing && groupRef.current && (
+      {/* Scale transform controls */}{' '}
+      {selected && cube?.isResizing && contentRef.current && (
         <DreiTransformControls
-          object={groupRef.current}
+          object={contentRef.current}
           onChange={handleScale}
           onMouseDown={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = false;
             }
-            registerTransformingObject?.(id, true, position);
+            // Don't use registerTransformingObject - let it work like dodecahedron
             onTransformStart?.(id);
           }}
           onMouseUp={() => {
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
-            registerTransformingObject?.(id, false);
-            // Scale updates are handled by the isScaleModified effect
+            // Don't use registerTransformingObject - let it work like dodecahedron
+
+            // Save scale changes immediately on mouse up as backup
+            if (cube?.isScaleModified && onUpdate) {
+              onUpdate(id, {
+                type: 'cube',
+                position: position,
+                scale: cube.scale,
+                color: cube.color,
+                headerText: cube.headerText,
+                faceColors: cube.faceColors,
+                faceTexts: cube.faceTexts,
+                faceTextStyles: cube.faceTextStyles,
+                textStyle: cube.textStyle,
+              });
+
+              // Reset flag after saving
+              setCubeIsScaleModified(id, false);
+
+              // Call callback
+              if (onTransformEnd) {
+                onTransformEnd(id);
+              }
+            }
           }}
           mode="scale"
           size={0.5}
@@ -1269,28 +1319,12 @@ export default React.memo(Cube, (prevProps, nextProps) => {
   if (!isEqual(prevProps.faceTexts, nextProps.faceTexts)) return false;
   if (!isEqual(prevProps.faceTextStyles, nextProps.faceTextStyles))
     return false;
-
   // Re-render when selected indicators change
   if (
     prevProps.selectedIndicators?.length !==
     nextProps.selectedIndicators?.length
   )
     return false;
-
-  // Only check connections that affect this cube
-  const prevConnected = prevProps.connections.some(
-    (conn) =>
-      conn.start?.objectId === prevProps.id.toString() ||
-      conn.end?.objectId === prevProps.id.toString()
-  );
-
-  const nextConnected = nextProps.connections.some(
-    (conn) =>
-      conn.start?.objectId === nextProps.id.toString() ||
-      conn.end?.objectId === nextProps.id.toString()
-  );
-
-  if (prevConnected !== nextConnected) return false;
 
   // Default to not re-rendering if no significant changes
   return true;

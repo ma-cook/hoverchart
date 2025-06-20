@@ -1,15 +1,75 @@
 import { TransformControls as DreiTransform } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useCallback, useMemo } from 'react';
+import { useTransformControlsStore } from '../stores';
 
-const TransformControls = ({ object, onDrag, scale }) => {
+const TransformControls = ({ id, object, onDrag, scale }) => {
   const { camera, gl, scene, invalidate } = useThree();
-  const isDraggingRef = useRef(false);
-  const lastPositionRef = useRef(null);
-  const lastReportedTimeRef = useRef(0);
+
+  // Generate a unique ID if not provided
+  const controlId = useMemo(() => {
+    if (id) return id;
+    // Generate ID from object properties if available
+    if (object?.uuid) return `transform_${object.uuid}`;
+    return `transform_${Math.random().toString(36).substr(2, 9)}`;
+  }, [id, object?.uuid]);
+
+  // Use transform controls store
+  const getTransformControl = useTransformControlsStore(
+    (state) => state.getTransformControl
+  );
+  const updateTransformControlProperty = useTransformControlsStore(
+    (state) => state.updateTransformControlProperty
+  );
+
+  // Get store state
+  const transformControl = getTransformControl(controlId);
+  const {
+    isInitialized,
+    isDragging,
+    lastPosition,
+    lastReportedTime,
+    appliedScale,
+  } = transformControl;
+
+  // Store setters
+  const setIsInitialized = useCallback(
+    (value) => {
+      updateTransformControlProperty(controlId, 'isInitialized', value);
+    },
+    [controlId, updateTransformControlProperty]
+  );
+
+  const setIsDragging = useCallback(
+    (value) => {
+      updateTransformControlProperty(controlId, 'isDragging', value);
+    },
+    [controlId, updateTransformControlProperty]
+  );
+
+  const setLastPosition = useCallback(
+    (value) => {
+      updateTransformControlProperty(controlId, 'lastPosition', value);
+    },
+    [controlId, updateTransformControlProperty]
+  );
+
+  const setLastReportedTime = useCallback(
+    (value) => {
+      updateTransformControlProperty(controlId, 'lastReportedTime', value);
+    },
+    [controlId, updateTransformControlProperty]
+  );
+
+  const setAppliedScale = useCallback(
+    (value) => {
+      updateTransformControlProperty(controlId, 'appliedScale', value);
+    },
+    [controlId, updateTransformControlProperty]
+  );
+
+  // Refs for internal use
   const transformRef = useRef();
-  const [isInitialized, setIsInitialized] = useState(false);
-  const appliedScaleRef = useRef(null);
 
   // Super aggressive scale initialization
   useEffect(() => {
@@ -23,18 +83,16 @@ const TransformControls = ({ object, onDrag, scale }) => {
       const storedScale = object?.userData?.scaleBeforeTransform || scale;
 
       // Always prefer userData scale if available (from TextObject)
-      const targetScale = storedScale || scale;
-
-      // Only apply if scale has changed
+      const targetScale = storedScale || scale; // Only apply if scale has changed
       if (
-        !appliedScaleRef.current ||
-        appliedScaleRef.current[0] !== targetScale[0] ||
-        appliedScaleRef.current[1] !== targetScale[1] ||
-        appliedScaleRef.current[2] !== targetScale[2]
+        !appliedScale ||
+        appliedScale[0] !== targetScale[0] ||
+        appliedScale[1] !== targetScale[1] ||
+        appliedScale[2] !== targetScale[2]
       ) {
         // Apply the scale
         object.scale.set(targetScale[0], targetScale[1], targetScale[2]);
-        appliedScaleRef.current = [...targetScale];
+        setAppliedScale([...targetScale]);
         invalidate();
       }
     };
@@ -52,6 +110,7 @@ const TransformControls = ({ object, onDrag, scale }) => {
       clearTimeout(t2);
       clearTimeout(t3);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [object, scale, invalidate]);
 
   // Additional hook to initialize on first render
@@ -60,9 +119,10 @@ const TransformControls = ({ object, onDrag, scale }) => {
       // Initialize on first render
       object.scale.set(scale[0], scale[1], scale[2]);
       setIsInitialized(true);
-      appliedScaleRef.current = [...scale];
+      setAppliedScale([...scale]);
       invalidate();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isInitialized, object, scale, invalidate]);
 
   if (!object) return null;
@@ -77,7 +137,7 @@ const TransformControls = ({ object, onDrag, scale }) => {
       space="world"
       size={1}
       onObjectChange={(e) => {
-        if (onDrag && e.target.object && isDraggingRef.current) {
+        if (onDrag && e.target.object && isDragging) {
           const pos = e.target.object.position;
 
           // Throttle position updates during drag to reduce processing
@@ -85,16 +145,13 @@ const TransformControls = ({ object, onDrag, scale }) => {
           const minUpdateInterval = 50; // Only report position every 50ms during drag
 
           // Skip tiny movements and throttle updates by time
-          if (
-            lastPositionRef.current &&
-            now - lastReportedTimeRef.current < minUpdateInterval
-          ) {
+          if (lastPosition && now - lastReportedTime < minUpdateInterval) {
             return;
           }
 
           // Check if movement is significant enough to report
-          if (lastPositionRef.current) {
-            const lastPos = lastPositionRef.current;
+          if (lastPosition) {
+            const lastPos = lastPosition;
             const epsilon = 0.001;
             const hasMoved =
               Math.abs(pos.x - lastPos.x) > epsilon ||
@@ -105,8 +162,8 @@ const TransformControls = ({ object, onDrag, scale }) => {
           }
 
           // Update position tracking
-          lastPositionRef.current = { x: pos.x, y: pos.y, z: pos.z };
-          lastReportedTimeRef.current = now;
+          setLastPosition({ x: pos.x, y: pos.y, z: pos.z });
+          setLastReportedTime(now);
 
           // Pass the object position and drag state
           onDrag(
@@ -117,9 +174,9 @@ const TransformControls = ({ object, onDrag, scale }) => {
           invalidate();
         }
       }}
-      onChange={(e) => {
+      onChange={() => {
         // Always ensure correct scale at the beginning of transform
-        if (scale && !isDraggingRef.current) {
+        if (scale && !isDragging) {
           const targetScale = object?.userData?.scaleBeforeTransform || scale;
           object.scale.set(targetScale[0], targetScale[1], targetScale[2]);
         }
@@ -130,7 +187,7 @@ const TransformControls = ({ object, onDrag, scale }) => {
         if (controls) controls.enabled = false;
 
         // Set dragging flag
-        isDraggingRef.current = true;
+        setIsDragging(true);
 
         // Final chance to set scale correctly before drag starts
         if (object && scale) {
@@ -149,10 +206,10 @@ const TransformControls = ({ object, onDrag, scale }) => {
         if (controls) controls.enabled = true;
 
         // Reset dragging flag and notify end of drag
-        if (isDraggingRef.current && onDrag && object) {
-          isDraggingRef.current = false;
-          lastPositionRef.current = null;
-          lastReportedTimeRef.current = 0;
+        if (isDragging && onDrag && object) {
+          setIsDragging(false);
+          setLastPosition(null);
+          setLastReportedTime(0);
           onDrag(object.position, false, true); // isDragStart=false, isDragEnd=true
         }
       }}

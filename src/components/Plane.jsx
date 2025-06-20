@@ -4,7 +4,7 @@ import {
   Html,
 } from '@react-three/drei';
 import { Vector3 } from 'three';
-import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceUI from './FaceUI';
 import TextSprite from './TextSprite';
@@ -18,9 +18,10 @@ import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 import { uploadImageToStorage } from '../services/storageService';
 import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
+import { usePlaneStore, useObjectsStore } from '../stores';
 
 const Plane = ({
-  position = [0, 0, 0],
+  id,
   selected,
   onClick,
   onIndicatorSelected,
@@ -31,103 +32,287 @@ const Plane = ({
   connections,
   selectedIndicators,
   indicatorMode,
-  id,
   onUpdate,
+  onMove,
   onDelete,
-  scale: initialScale = [1, 1, 1],
-  color: initialColor = null,
-  headerText: initialHeaderText = '',
-  borderStyle: initialBorderStyle = 'solid',
-  borderColor: initialBorderColor = 'black',
-  lineThickness: initialLineThickness = 1,
-  headerStyle: initialHeaderStyle = {
-    fontSize: 1.5,
-    color: 'black',
-    underline: false,
-  },
-  faceText: initialFaceText = '',
-  faceTextStyle: initialFaceTextStyle = {
-    fontSize: 0.5,
-    color: 'black',
-    underline: false,
-  },
-  imageUrl: initialImageUrl = null,
   onTransformStart,
   onTransformEnd,
-  webcamActive: initialWebcamActive = false,
   user,
   currentSpaceId,
 }) => {
+  // Get object data from objects store
+  const objects = useObjectsStore((state) => state.objects);
+  const objectData = objects.find((obj) => obj.id === id);
+
+  // Store state and actions - moved before memoized values to avoid initialization order issues
+  const plane = usePlaneStore((state) => state.getPlane(id));
+  const createPlane = usePlaneStore((state) => state.createPlane);
+  const updatePlane = usePlaneStore((state) => state.updatePlane);
+  const selectPlane = usePlaneStore((state) => state.selectPlane);
+  const deselectPlane = usePlaneStore((state) => state.deselectPlane);
+  const isPlaneSelected = usePlaneStore((state) => state.isPlaneSelected(id));
+  const setPlaneShowUI = usePlaneStore((state) => state.setPlaneShowUI);
+  const setPlaneShowTextInput = usePlaneStore(
+    (state) => state.setPlaneShowTextInput
+  );
+  const setPlaneShowTextStyleUI = usePlaneStore(
+    (state) => state.setPlaneShowTextStyleUI
+  );
+  const setPlaneShowTransform = usePlaneStore(
+    (state) => state.setPlaneShowTransform
+  );
+  const setPlaneIsResizing = usePlaneStore((state) => state.setPlaneIsResizing);
+  const setPlaneShowHeader = usePlaneStore((state) => state.setPlaneShowHeader);
+  const setPlaneShowHeaderStyleUI = usePlaneStore(
+    (state) => state.setPlaneShowHeaderStyleUI
+  );
+  const setPlaneIndicatorSelected = usePlaneStore(
+    (state) => state.setPlaneIndicatorSelected
+  );
+  const setPlaneWebcamActive = usePlaneStore(
+    (state) => state.setPlaneWebcamActive
+  );
+  const setPlaneWebcamInitialized = usePlaneStore(
+    (state) => state.setPlaneWebcamInitialized
+  );
+  const setPlaneScreenShareActive = usePlaneStore(
+    (state) => state.setPlaneScreenShareActive
+  );
+  const setPlaneScreenShareInitialized = usePlaneStore(
+    (state) => state.setPlaneScreenShareInitialized
+  );
+  const setPlaneIsBroadcasting = usePlaneStore(
+    (state) => state.setPlaneIsBroadcasting
+  );
+  const setPlaneIsViewingBroadcast = usePlaneStore(
+    (state) => state.setPlaneIsViewingBroadcast
+  );
+  const setPlaneIsScreenSharing = usePlaneStore(
+    (state) => state.setPlaneIsScreenSharing
+  );
+  const setPlaneBroadcastInfo = usePlaneStore(
+    (state) => state.setPlaneBroadcastInfo
+  );
+  const setPlaneViewerCount = usePlaneStore(
+    (state) => state.setPlaneViewerCount
+  );
+  const setPlaneImageTexture = usePlaneStore(
+    (state) => state.setPlaneImageTexture
+  );
+  const setPlaneIsUploadingImage = usePlaneStore(
+    (state) => state.setPlaneIsUploadingImage
+  );
+
+  // Memoize derived values to prevent unnecessary re-renders
+  const position = useMemo(
+    () => objectData?.position || [0, 0, 0],
+    [objectData?.position]
+  );
+  const scale = useMemo(
+    () => objectData?.scale || [1, 1, 1],
+    [objectData?.scale]
+  );
+  const color = useMemo(() => {
+    const finalColor = plane?.color || objectData?.color || 'white';
+    return finalColor;
+  }, [plane?.color, objectData?.color]);
+  const headerText = useMemo(
+    () => plane?.headerText || objectData?.headerText || '',
+    [plane?.headerText, objectData?.headerText]
+  );
+  const borderStyle = useMemo(
+    () => plane?.borderStyle || objectData?.borderStyle || 'solid',
+    [plane?.borderStyle, objectData?.borderStyle]
+  );
+  const borderColor = useMemo(
+    () => plane?.borderColor || objectData?.borderColor || 'black',
+    [plane?.borderColor, objectData?.borderColor]
+  );
+  const lineThickness = useMemo(
+    () => plane?.lineThickness || objectData?.lineThickness || 1,
+    [plane?.lineThickness, objectData?.lineThickness]
+  );
+  const headerStyle = useMemo(
+    () =>
+      plane?.headerStyle ||
+      objectData?.headerStyle || {
+        fontSize: 1.5,
+        color: 'black',
+        underline: false,
+      },
+    [plane?.headerStyle, objectData?.headerStyle]
+  );
+  const faceText = useMemo(
+    () => plane?.faceText || objectData?.faceText || '',
+    [plane?.faceText, objectData?.faceText]
+  );
+  const faceTextStyle = useMemo(
+    () =>
+      plane?.faceTextStyle ||
+      objectData?.faceTextStyle || {
+        fontSize: 0.5,
+        color: 'black',
+        underline: false,
+      },
+    [plane?.faceTextStyle, objectData?.faceTextStyle]
+  );
+  const imageUrl = useMemo(
+    () => objectData?.imageUrl || null,
+    [objectData?.imageUrl]
+  );
+  const webcamActive = useMemo(
+    () => plane?.webcamActive ?? objectData?.webcamActive ?? false,
+    [plane?.webcamActive, objectData?.webcamActive]
+  );
   const groupRef = useRef();
   const meshRef = useRef();
   const contentRef = useRef();
   const { camera } = useThree();
   const size = 5;
-  const [webcamActive, setWebcamActive] = useState(initialWebcamActive);
-  const [webcamInitialized, setWebcamInitialized] = useState(false);
-  const [screenShareActive, setScreenShareActive] = useState(false);
-  const [screenShareInitialized, setScreenShareInitialized] = useState(false);
-  const [showUI, setShowUI] = useState(false);
-  const [showTextInput, setShowTextInput] = useState(false);
-  const [showTextStyleUI, setShowTextStyleUI] = useState(false);
-  const [showTransform, setShowTransform] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [showHeader, setShowHeader] = useState(false);
-  const [showHeaderStyleUI, setShowHeaderStyleUI] = useState(false);
-  const [indicatorSelected, setIndicatorSelected] = useState(false);
 
-  const [currentScale, setCurrentScale] = useState(initialScale);
-  const [currentColor, setCurrentColor] = useState(initialColor);
-  const [currentHeaderText, setCurrentHeaderText] = useState(initialHeaderText);
-  const [currentHeaderStyle, setCurrentHeaderStyle] =
-    useState(initialHeaderStyle);
-  const [currentBorderStyle, setCurrentBorderStyle] =
-    useState(initialBorderStyle);
-  const [currentBorderColor, setCurrentBorderColor] =
-    useState(initialBorderColor);
-  const [currentLineThickness, setCurrentLineThickness] =
-    useState(initialLineThickness);
-  const [currentFaceText, setCurrentFaceText] = useState(initialFaceText);
-  const [currentFaceTextStyle, setCurrentFaceTextStyle] =
-    useState(initialFaceTextStyle);
-  const [isBroadcasting, setIsBroadcasting] = useState(false);
-  const [isViewingBroadcast, setIsViewingBroadcast] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [broadcastInfo, setBroadcastInfo] = useState(null);
-  const [viewerCount, setViewerCount] = useState(0);
-  const [imageTexture, setImageTexture] = useState(null);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  // Get derived UI state from plane store (transient state only)
+  const webcamInitialized = useMemo(
+    () => plane?.webcamInitialized || false,
+    [plane?.webcamInitialized]
+  );
+  const screenShareActive = useMemo(
+    () => plane?.screenShareActive || false,
+    [plane?.screenShareActive]
+  );
+  const screenShareInitialized = useMemo(
+    () => plane?.screenShareInitialized || false,
+    [plane?.screenShareInitialized]
+  );
+  const isBroadcasting = useMemo(
+    () => plane?.isBroadcasting || false,
+    [plane?.isBroadcasting]
+  );
+  const isScreenSharing = useMemo(
+    () => plane?.isScreenSharing || false,
+    [plane?.isScreenSharing]
+  );
+  const isViewingBroadcast = useMemo(
+    () => plane?.isViewingBroadcast || false,
+    [plane?.isViewingBroadcast]
+  );
+  const broadcastInfo = useMemo(
+    () => plane?.broadcastInfo,
+    [plane?.broadcastInfo]
+  );
+  const showUI = useMemo(() => plane?.showUI || false, [plane?.showUI]);
+  const showTextInput = useMemo(
+    () => plane?.showTextInput || false,
+    [plane?.showTextInput]
+  );
+  const showTextStyleUI = useMemo(
+    () => plane?.showTextStyleUI || false,
+    [plane?.showTextStyleUI]
+  );
+  const showTransform = useMemo(
+    () => plane?.showTransform || false,
+    [plane?.showTransform]
+  );
+  const isResizing = useMemo(
+    () => plane?.isResizing || false,
+    [plane?.isResizing]
+  );
+  const showHeader = useMemo(
+    () => plane?.showHeader || false,
+    [plane?.showHeader]
+  );
+  const showHeaderStyleUI = useMemo(
+    () => plane?.showHeaderStyleUI || false,
+    [plane?.showHeaderStyleUI]
+  );
+  const isUploadingImage = useMemo(
+    () => plane?.isUploadingImage || false,
+    [plane?.isUploadingImage]
+  );
+  const indicatorSelected = useMemo(
+    () => plane?.indicatorSelected || false,
+    [plane?.indicatorSelected]
+  );
+  const viewerCount = useMemo(
+    () => plane?.viewerCount || 0,
+    [plane?.viewerCount]
+  ); // Initialize plane UI state in store if it doesn't exist
+  useEffect(() => {
+    if (!plane) {
+      createPlane(id, {
+        // Initialize core properties
+        scale: scale,
+        // Initialize UI state
+        showUI: true,
+        showTextInput: false,
+        showTextStyleUI: false,
+        showTransform: false,
+        isResizing: false,
+        showHeader: false,
+        showHeaderStyleUI: false,
+        indicatorSelected: false,
+        webcamInitialized: false,
+        screenShareActive: false,
+        screenShareInitialized: false,
+        isBroadcasting: false,
+        isScreenSharing: false,
+        isViewingBroadcast: false,
+        // Include border properties from objectData to prevent defaults from overriding
+        borderStyle: objectData?.borderStyle,
+        borderColor: objectData?.borderColor,
+        lineThickness: objectData?.lineThickness,
+        color: objectData?.color || 'white', // Ensure we always have a color
+        headerText: objectData?.headerText,
+        faceText: objectData?.faceText,
+        headerStyle: objectData?.headerStyle,
+        faceTextStyle: objectData?.faceTextStyle,
+      });
+    }
+  }, [id, plane, createPlane, objectData, scale]);
+  // Handle selection changes
+  useEffect(() => {
+    if (selected && !isPlaneSelected) {
+      selectPlane(id);
+    } else if (!selected && isPlaneSelected) {
+      deselectPlane(id);
+    }
+  }, [selected, isPlaneSelected, selectPlane, deselectPlane, id]);
 
   // Add logging for critical state changes
-  const lastWebcamStateRef = useRef(initialWebcamActive);
+  const lastWebcamStateRef = useRef(webcamActive);
   const lastWorldPosRef = useRef(null);
   const lastBroadcastSeenRef = useRef(Date.now());
   const broadcastInfoRef = useRef(null); // Track current broadcast info to avoid reactive loops
-  const scaleTimeoutRef = useRef(null);
-  const pendingScaleRef = useRef(null);
   const isTransformingRef = useRef(false);
+  const isBroadcastingRef = useRef(false);
   const isMountedRef = useRef(true);
   const userJustToggledWebcamRef = useRef(false); // Track user actions
-
   // Define closeAllUIs before it's used in useEffect
   const closeAllUIs = useCallback(() => {
-    setShowTextStyleUI(false);
-    setShowUI(false);
-    setShowTextInput(false);
-    setShowTransform(false);
-    setIsResizing(false);
-    setShowHeader(false);
-    setShowHeaderStyleUI(false);
-  }, []);
+    setPlaneShowTextStyleUI(id, false);
+    setPlaneShowUI(id, false);
+    setPlaneShowTextInput(id, false);
+    setPlaneShowTransform(id, false);
+    setPlaneIsResizing(id, false);
+    setPlaneShowHeader(id, false);
+    setPlaneShowHeaderStyleUI(id, false);
+  }, [
+    id,
+    setPlaneShowTextStyleUI,
+    setPlaneShowUI,
+    setPlaneShowTextInput,
+    setPlaneShowTransform,
+    setPlaneIsResizing,
+    setPlaneShowHeader,
+    setPlaneShowHeaderStyleUI,
+  ]);
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
-  // Effect to load existing image texture
+  }, []); // Effect to load existing image texture
   useEffect(() => {
-    if (initialImageUrl && !imageTexture) {
+    if (imageUrl && !plane?.imageTexture) {
       const img = new Image();
       img.crossOrigin = 'anonymous'; // Enable CORS
 
@@ -139,7 +324,7 @@ const Plane = ({
           texture.magFilter = THREE.LinearFilter;
           texture.format = THREE.RGBAFormat;
           texture.colorSpace = THREE.SRGBColorSpace;
-          texture.flipY = false;
+          texture.flipY = true;
 
           if (meshRef.current && isMountedRef.current) {
             // Dispose of the previous material if it exists
@@ -156,9 +341,8 @@ const Plane = ({
               opacity: 1,
               side: THREE.DoubleSide,
             });
-
             meshRef.current.material = material;
-            setImageTexture(texture);
+            setPlaneImageTexture(id, texture);
             console.log('Existing image texture loaded successfully');
           }
         } catch (error) {
@@ -170,77 +354,75 @@ const Plane = ({
         console.error('Error loading existing image texture:', error);
       };
 
-      img.src = initialImageUrl;
+      img.src = imageUrl;
     }
-  }, [initialImageUrl, imageTexture]);
-
+  }, [id, imageUrl, plane?.imageTexture, setPlaneImageTexture]);
   useEffect(() => {
-    setCurrentScale(initialScale);
-    setCurrentColor(initialColor);
-    setCurrentHeaderText(initialHeaderText);
-    setCurrentBorderStyle(initialBorderStyle);
-    setCurrentBorderColor(initialBorderColor);
-    setCurrentLineThickness(initialLineThickness);
-    setCurrentHeaderStyle(initialHeaderStyle);
-    setCurrentFaceText(initialFaceText);
-    setCurrentFaceTextStyle(initialFaceTextStyle);
-
-    if (initialWebcamActive !== lastWebcamStateRef.current) {
+    // Handle webcam initialization from store state
+    if (webcamActive !== lastWebcamStateRef.current) {
       // Don't force sync if user just toggled webcam - wait for prop to catch up
       if (!userJustToggledWebcamRef.current) {
-        setWebcamActive(initialWebcamActive);
-        lastWebcamStateRef.current = initialWebcamActive;
-        if (initialWebcamActive && !webcamInitialized) {
-          setWebcamInitialized(true);
+        setPlaneWebcamActive(id, webcamActive);
+        lastWebcamStateRef.current = webcamActive;
+        if (webcamActive && !plane?.webcamInitialized) {
+          setPlaneWebcamInitialized(id, true);
         }
       }
-    } else if (initialWebcamActive && !webcamInitialized) {
-      setWebcamInitialized(true);
-      setWebcamActive(true);
+    } else if (webcamActive && !plane?.webcamInitialized) {
+      setPlaneWebcamInitialized(id, true);
+      setPlaneWebcamActive(id, true);
       lastWebcamStateRef.current = true;
     }
 
     // Reset the flag after effect runs
     if (userJustToggledWebcamRef.current) {
       // Check if props have caught up
-      if (initialWebcamActive === lastWebcamStateRef.current) {
+      if (webcamActive === lastWebcamStateRef.current) {
         userJustToggledWebcamRef.current = false;
       }
     }
   }, [
     id,
-    initialScale,
-    initialColor,
-    initialHeaderText,
-    initialBorderStyle,
-    initialBorderColor,
-    initialLineThickness,
-    initialHeaderStyle,
-    initialFaceText,
-    initialFaceTextStyle,
-    initialWebcamActive,
-    // Removed webcamInitialized to prevent infinite loop when effect calls setWebcamInitialized
+    webcamActive,
+    plane?.webcamInitialized,
+    setPlaneWebcamActive,
+    setPlaneWebcamInitialized,
   ]);
-
   useFrame(() => {
     if (groupRef.current) {
-      groupRef.current.lookAt(camera.position);
+      // Only update lookAt if the camera has moved significantly or plane is selected
+      if (
+        selected ||
+        !groupRef.current._lastCameraUpdate ||
+        Date.now() - groupRef.current._lastCameraUpdate > 16
+      ) {
+        // ~60fps throttle
+        groupRef.current.lookAt(camera.position);
+        groupRef.current._lastCameraUpdate = Date.now();
+      }
     }
   });
-
   useEffect(() => {
     if (!selected) {
       closeAllUIs();
-      setIndicatorSelected(false);
+      setPlaneIndicatorSelected(id, false);
       onIndicatorDeselected?.();
-    } else if (!indicatorSelected) {
-      setShowUI(true);
+    } else if (!plane?.indicatorSelected) {
+      setPlaneShowUI(id, true);
     }
-  }, [selected, indicatorSelected, onIndicatorDeselected, closeAllUIs]);
-
+  }, [
+    selected,
+    plane?.indicatorSelected,
+    onIndicatorDeselected,
+    closeAllUIs,
+    id,
+    setPlaneIndicatorSelected,
+    setPlaneShowUI,
+  ]);
   useEffect(() => {
     if (groupRef.current && contentRef.current) {
       const worldPos = new THREE.Vector3();
+      const currentScale = plane?.scale || [1, 1, 1];
       const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
 
       groupRef.current.updateWorldMatrix(true, false);
@@ -251,20 +433,11 @@ const Plane = ({
 
       lastWorldPosRef.current = [worldPos.x, worldPos.y, worldPos.z];
     }
-  }, [position, currentScale]);
-  const directUpdate = useMemo(
-    () => (updates) => {
-      if (onUpdate && id && isMountedRef.current) {
-        onUpdate(id, { type: 'plane', ...updates });
-      }
-    },
-    [onUpdate, id]
-  );
+  }, [position, plane?.scale]);
 
-  // Add debounced update to prevent excessive database calls
+  // Add debounced update to prevent excessive database calls (like Cube/Dodecahedron)
   const debouncedUpdateTimeoutRef = useRef(null);
   const isInitialRenderRef = useRef(true);
-
   useEffect(() => {
     if (!isMountedRef.current) return;
 
@@ -275,6 +448,17 @@ const Plane = ({
       return;
     }
 
+    // Skip if objectData is not yet loaded
+    if (!objectData) {
+      return;
+    }
+
+    // Skip if we're still in initial loading phase - no saves during app startup
+    const { isInitialLoading } = useObjectsStore.getState();
+    if (isInitialLoading) {
+      return;
+    }
+
     // Clear any pending update
     if (debouncedUpdateTimeoutRef.current) {
       clearTimeout(debouncedUpdateTimeoutRef.current);
@@ -282,22 +466,44 @@ const Plane = ({
 
     // Debounce property updates to prevent excessive calls
     debouncedUpdateTimeoutRef.current = setTimeout(() => {
+      // Ensure position has valid numbers, not undefined/null values
+      const currentPosition = objectData.position;
+      const validPosition =
+        Array.isArray(currentPosition) &&
+        currentPosition.length === 3 &&
+        currentPosition.every((val) => typeof val === 'number' && !isNaN(val))
+          ? currentPosition
+          : [0, 0, 0];
       const updates = {
-        scale: currentScale,
-        color: currentColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
-        webcamActive,
-        screenShareActive,
-        broadcasting: webcamActive && isBroadcasting,
-        screenSharing: screenShareActive && isScreenSharing,
+        type: 'plane',
+        position: validPosition,
+        scale: objectData?.scale || plane?.scale || [1, 1, 1], // Use objectData as primary source
+        color: plane?.color || objectData?.color || '#000000',
+        headerText: plane?.headerText || objectData?.headerText || '',
+        headerStyle: plane?.headerStyle || objectData?.headerStyle || {},
+        borderStyle: plane?.borderStyle || objectData?.borderStyle || 'solid',
+        borderColor: plane?.borderColor || objectData?.borderColor || '#000000',
+        lineThickness: plane?.lineThickness || objectData?.lineThickness || 1,
+        faceText: plane?.faceText || objectData?.faceText || '',
+        faceTextStyle: plane?.faceTextStyle || objectData?.faceTextStyle || {},
+        webcamActive: plane?.webcamActive || objectData?.webcamActive || false,
+        screenShareActive:
+          plane?.screenShareActive || objectData?.screenShareActive || false,
+        broadcasting:
+          (plane?.webcamActive || objectData?.webcamActive || false) &&
+          (plane?.isBroadcasting || false),
+        screenSharing:
+          (plane?.screenShareActive ||
+            objectData?.screenShareActive ||
+            false) &&
+          (plane?.isScreenSharing || false),
+        imageUrl: plane?.imageUrl || objectData?.imageUrl || '',
       };
-      directUpdate(updates);
+
+      // Call onUpdate directly instead of directUpdate to include position
+      if (onUpdate && id) {
+        onUpdate(id, updates);
+      }
     }, 100); // 100ms debounce delay
 
     // Cleanup timeout on unmount
@@ -307,229 +513,179 @@ const Plane = ({
       }
     };
   }, [
-    currentScale,
-    currentColor,
-    currentHeaderText,
-    currentHeaderStyle,
-    currentBorderStyle,
-    currentBorderColor,
-    currentLineThickness,
-    currentFaceText,
-    currentFaceTextStyle,
-    webcamActive,
-    screenShareActive,
-    isBroadcasting,
-    isScreenSharing,
-    directUpdate,
+    objectData, // Watch objectData for position changes like Cube/Dodecahedron
+    plane?.scale,
+    plane?.color,
+    plane?.headerText,
+    plane?.headerStyle,
+    plane?.borderStyle,
+    plane?.borderColor,
+    plane?.lineThickness,
+    plane?.faceText,
+    plane?.faceTextStyle,
+    plane?.webcamActive,
+    plane?.screenShareActive,
+    plane?.isBroadcasting,
+    plane?.isScreenSharing,
+    plane?.imageUrl,
+    onUpdate,
+    id,
   ]);
-
   const handleScale = useCallback(
     (e) => {
       if (!e.target || !e.target.object) return;
-      pendingScaleRef.current = [
+      const currentScale = plane?.scale || [1, 1, 1];
+      const newScale = [
         e.target.object.scale.x,
         e.target.object.scale.y,
         currentScale[2],
       ];
+
+      // Only update if the scale change is significant to avoid unnecessary updates
+      const epsilon = 0.0001;
+      if (
+        Math.abs(newScale[0] - currentScale[0]) < epsilon &&
+        Math.abs(newScale[1] - currentScale[1]) < epsilon
+      ) {
+        return;
+      }
+
+      // Update the plane store first for UI feedback
+      updatePlane(id, { scale: newScale });
+
+      // Update objects store immediately for instant visual feedback (like Dodecahedron)
+      const objectsStore = useObjectsStore.getState();
+      const currentObjects = objectsStore.objects;
+      const updatedObjects = currentObjects.map((obj) =>
+        obj.id === id ? { ...obj, scale: newScale } : obj
+      );
+      objectsStore.setObjects(updatedObjects);
+
+      // Mark that scale has been modified (for onMouseUp to detect)
       isTransformingRef.current = true;
-      if (scaleTimeoutRef.current) clearTimeout(scaleTimeoutRef.current);
-      scaleTimeoutRef.current = setTimeout(() => {
-        if (pendingScaleRef.current && isMountedRef.current) {
-          setCurrentScale(pendingScaleRef.current);
-          pendingScaleRef.current = null;
-        }
-      }, 50);
     },
-    [currentScale]
+    [id, plane?.scale, updatePlane]
   );
 
-  useEffect(() => {
-    if (isTransformingRef.current && !pendingScaleRef.current) {
-      isTransformingRef.current = false;
-      if (onTransformEnd) {
-        onTransformEnd(id);
-      }
-    }
-    return () => {
-      if (scaleTimeoutRef.current) clearTimeout(scaleTimeoutRef.current);
-    };
-  }, [currentScale, onTransformEnd, id]);
+  // Separate handler for resize end to save scale changes immediately
+  const handleResizeEnd = useCallback(() => {
+    if (window.orbitControls) window.orbitControls.enabled = true;
 
+    // No immediate save - let the debounced effect handle it like Cube/Dodecahedron
+    // Reset transform flag
+    isTransformingRef.current = false;
+
+    if (onTransformEnd) onTransformEnd(id);
+  }, [onTransformEnd, id]);
   const handleDrag = useCallback(
     (e) => {
-      if (!groupRef.current || !onUpdate) return;
-
+      // Get new position from the transform controls event
       const newPos = e.target.object.position;
-      groupRef.current.position.copy(newPos);
 
-      const worldPos = new THREE.Vector3();
-      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
-      groupRef.current.updateWorldMatrix(true, false);
-      groupRef.current.getWorldPosition(worldPos);
-      offset.applyQuaternion(groupRef.current.quaternion);
-      worldPos.add(offset);
-      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
-      lastWorldPosRef.current = worldPosArray;
-      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
+      // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
+      const objectsStore = useObjectsStore.getState();
+      const currentObjects = objectsStore.objects;
+      const updatedObjects = currentObjects.map((obj) =>
+        obj.id === id
+          ? { ...obj, position: [newPos.x, newPos.y, newPos.z] }
+          : obj
+      );
+      objectsStore.setObjects(updatedObjects);
 
-      groupRef.current.userData = {
-        ...groupRef.current.userData,
-        isPlane: true,
-        objectId: String(id),
-        id: String(id),
-        indicatorOffset: [0, -5 * currentScale[1], 0],
-        indicatorWorldPosition: worldPosArray,
-        worldPosition: worldPosArray,
-        facePosition: worldPosArray,
-        isMoving: true,
-        _lastUpdateTime: Date.now(),
-        _isDragging: true,
-      };
-
-      onUpdate(id, {
-        type: 'plane',
-        position: [newPos.x, newPos.y, newPos.z],
-        worldPosition: worldPosArray,
-        planeData: {
-          worldMatrix,
-          position: [newPos.x, newPos.y, newPos.z],
-          scale: currentScale,
-          offset: [0, -5 * currentScale[1], 0],
-        },
-        _isDragging: true,
-        _indicatorWorldPosition: worldPosArray,
-      });
+      // Use the spatial system via onMove instead of direct onUpdate
+      if (onMove) {
+        onMove([newPos.x, newPos.y, newPos.z]);
+      }
     },
-    [onUpdate, id, currentScale]
+    [id, onMove]
   );
 
   const handleTransformStart = useCallback(() => {
     if (window.orbitControls) window.orbitControls.enabled = false;
     if (onTransformStart) onTransformStart(id);
   }, [onTransformStart, id]);
-
   const handleTransformEnd = useCallback(() => {
     if (window.orbitControls) window.orbitControls.enabled = true;
 
-    if (groupRef.current && onUpdate) {
-      const newPos = groupRef.current.position;
-      const worldPos = new THREE.Vector3();
-      const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
-      groupRef.current.updateWorldMatrix(true, false);
-      groupRef.current.getWorldPosition(worldPos);
-      offset.applyQuaternion(groupRef.current.quaternion);
-      worldPos.add(offset);
-      const worldPosArray = [worldPos.x, worldPos.y, worldPos.z];
-      const worldMatrix = Array.from(groupRef.current.matrixWorld.elements);
-
-      // Direct update - no need to flush
-      onUpdate(id, {
-        type: 'plane',
-        position: [newPos.x, newPos.y, newPos.z],
-        worldPosition: worldPosArray,
-        planeData: {
-          worldMatrix,
-          position: [newPos.x, newPos.y, newPos.z],
-          scale: currentScale,
-          offset: [0, -5 * currentScale[1], 0],
-        },
-        scale: currentScale,
-        color: currentColor,
-        headerText: currentHeaderText,
-        headerStyle: currentHeaderStyle,
-        borderStyle: currentBorderStyle,
-        borderColor: currentBorderColor,
-        lineThickness: currentLineThickness,
-        faceText: currentFaceText,
-        faceTextStyle: currentFaceTextStyle,
-        webcamActive,
-        screenShareActive,
-        broadcasting: webcamActive && isBroadcasting,
-        screenSharing: screenShareActive && isScreenSharing,
-        _finalPosition: true,
-        _indicatorWorldPosition: worldPosArray,
-      });
-    }
+    // No immediate save - let the debounced effect handle it like Cube/Dodecahedron
+    // Reset transform flag
+    isTransformingRef.current = false;
 
     if (onTransformEnd) onTransformEnd(id);
-  }, [
-    onUpdate,
-    id,
-    currentScale,
-    currentColor,
-    currentHeaderText,
-    currentHeaderStyle,
-    currentBorderStyle,
-    currentBorderColor,
-    currentLineThickness,
-    currentFaceText,
-    currentFaceTextStyle,
-    webcamActive,
-    screenShareActive,
-    isBroadcasting,
-    isScreenSharing,
-    onTransformEnd,
-    directUpdate,
-  ]);
-
+  }, [onTransformEnd, id]);
   const handleClick = useCallback(
     (e) => {
       e.stopPropagation();
       onClick();
+
+      // Always close TextStyleUI when clicking on the plane mesh
+      setPlaneShowTextStyleUI(id, false);
+
       if (!selected) {
         closeAllUIs();
+      } else {
+        // If already selected, just show the main UI
+        setPlaneShowUI(id, true);
       }
-      setShowUI(true);
     },
-    [onClick, selected, closeAllUIs]
+    [
+      onClick,
+      selected,
+      closeAllUIs,
+      id,
+      setPlaneShowUI,
+      setPlaneShowTextStyleUI,
+    ]
   );
-
   const handleTextClick = useCallback(() => {
     closeAllUIs();
-    setShowTextInput(true);
-  }, [closeAllUIs]);
-
+    setPlaneShowTextInput(id, true);
+  }, [closeAllUIs, id, setPlaneShowTextInput]);
   const handleTextSubmit = useCallback(
     (newText) => {
-      setCurrentFaceText(newText);
+      updatePlane(id, { faceText: newText });
       closeAllUIs();
     },
-    [closeAllUIs]
+    [id, updatePlane, closeAllUIs]
   );
 
-  const handleTextStyleChange = useCallback((newStyle) => {
-    setCurrentFaceTextStyle((prev) => ({ ...prev, ...newStyle }));
-  }, []);
+  const handleTextStyleChange = useCallback(
+    (newStyle) => {
+      updatePlane(id, {
+        faceTextStyle: { ...(plane?.faceTextStyle || {}), ...newStyle },
+      });
+    },
+    [id, updatePlane, plane?.faceTextStyle]
+  );
 
   const handleTextSpriteClick = useCallback(
     (e) => {
       e.stopPropagation();
       closeAllUIs();
-      setShowTextStyleUI(true);
+      setPlaneShowTextStyleUI(id, true);
     },
-    [closeAllUIs]
+    [closeAllUIs, id, setPlaneShowTextStyleUI]
   );
 
   const handleTransformToggle = useCallback(() => {
-    setShowTransform((prev) => !prev);
-    setShowUI(false);
-  }, []);
-
+    setPlaneShowTransform(id, !plane?.showTransform);
+    setPlaneShowUI(id, false);
+  }, [id, plane?.showTransform, setPlaneShowTransform, setPlaneShowUI]);
   const handleResizeToggle = useCallback(() => {
-    setIsResizing((prev) => {
-      if (!prev) setShowTransform(false);
+    setPlaneIsResizing(id, (prev) => {
+      if (!prev) setPlaneShowTransform(id, false);
       return !prev;
     });
-    setShowUI(false);
-  }, []);
+    setPlaneShowUI(id, false);
+  }, [id, setPlaneIsResizing, setPlaneShowTransform, setPlaneShowUI]);
   const handleColorChange = useCallback(
     (newColor) => {
-      setCurrentColor(newColor);
+      updatePlane(id, { color: newColor });
 
       // Clear image texture when color is applied
-      if (imageTexture) {
-        imageTexture.dispose();
-        setImageTexture(null);
+      if (plane?.imageTexture) {
+        plane.imageTexture.dispose();
+        setPlaneImageTexture(id, null);
 
         // Reset mesh material to color-based material
         if (meshRef.current) {
@@ -546,51 +702,135 @@ const Plane = ({
 
           meshRef.current.material = material;
         }
+      }
 
-        // Update database to clear image URL
-        onUpdate?.(id, {
+      // Save color changes to database immediately (aligned with Cube pattern)
+      if (onUpdate) {
+        onUpdate(id, {
           type: 'plane',
+          position: position,
+          scale: plane?.scale || scale,
           color: newColor,
-          imageUrl: null,
+          borderStyle: borderStyle,
+          borderColor: borderColor,
+          lineThickness: lineThickness,
+          headerText: headerText,
+          headerStyle: headerStyle,
+          faceText: faceText,
+          faceTextStyle: faceTextStyle,
+          imageUrl: imageUrl,
+          webcamActive: webcamActive,
         });
       }
     },
-    [imageTexture, onUpdate, id]
+    [
+      id,
+      plane?.imageTexture,
+      setPlaneImageTexture,
+      updatePlane,
+      onUpdate,
+      position,
+      plane?.scale,
+      scale,
+      borderStyle,
+      borderColor,
+      lineThickness,
+      headerText,
+      headerStyle,
+      faceText,
+      faceTextStyle,
+      imageUrl,
+      webcamActive,
+    ]
   );
-
   const handleHeaderToggle = useCallback(() => {
     closeAllUIs();
-    setShowHeader(true);
-  }, [closeAllUIs]);
+    setPlaneShowHeader(id, true);
+  }, [closeAllUIs, id, setPlaneShowHeader]);
 
-  const handleHeaderSubmit = useCallback((text) => {
-    setCurrentHeaderText(text);
-    setShowHeader(false);
-  }, []);
-
+  const handleHeaderSubmit = useCallback(
+    (text) => {
+      updatePlane(id, { headerText: text });
+      setPlaneShowHeader(id, false);
+    },
+    [id, updatePlane, setPlaneShowHeader]
+  );
   const handleHeaderTextClick = useCallback(
     (e) => {
       e.stopPropagation();
       closeAllUIs();
-      setShowHeaderStyleUI(true);
-      setShowUI(false);
+      setPlaneShowHeaderStyleUI(id, true);
+      setPlaneShowUI(id, false);
     },
-    [closeAllUIs]
+    [closeAllUIs, id, setPlaneShowHeaderStyleUI, setPlaneShowUI]
   );
 
-  const handleHeaderStyleChange = useCallback((newStyle) => {
-    setCurrentHeaderStyle((prev) => ({ ...prev, ...newStyle }));
-  }, []);
+  const handleHeaderStyleChange = useCallback(
+    (newStyle) => {
+      updatePlane(id, {
+        headerStyle: { ...(plane?.headerStyle || {}), ...newStyle },
+      });
+    },
+    [id, updatePlane, plane?.headerStyle]
+  );
+  const handleBorderToggle = useCallback(
+    (option) => {
+      let updates = {};
 
-  const handleBorderToggle = useCallback((option) => {
-    if (option.type === 'style') {
-      setCurrentBorderStyle(option.value);
-    } else if (option.type === 'color') {
-      setCurrentBorderColor(option.value);
-    } else if (option.type === 'thickness') {
-      setCurrentLineThickness((prev) => (prev >= 6 ? 1 : prev + 2));
-    }
-  }, []);
+      if (option.type === 'style') {
+        updates.borderStyle = option.value;
+        updatePlane(id, { borderStyle: option.value });
+      } else if (option.type === 'color') {
+        updates.borderColor = option.value;
+        updatePlane(id, { borderColor: option.value });
+      } else if (option.type === 'thickness') {
+        const newThickness =
+          (plane?.lineThickness || 1) >= 6
+            ? 1
+            : (plane?.lineThickness || 1) + 2;
+        updates.lineThickness = newThickness;
+        updatePlane(id, { lineThickness: newThickness });
+      }
+
+      // Save border changes to database immediately (aligned with Cube pattern)
+      if (onUpdate && Object.keys(updates).length > 0) {
+        onUpdate(id, {
+          type: 'plane',
+          position: position,
+          scale: plane?.scale || scale,
+          color: color,
+          borderStyle: updates.borderStyle || borderStyle,
+          borderColor: updates.borderColor || borderColor,
+          lineThickness: updates.lineThickness || lineThickness,
+          headerText: headerText,
+          headerStyle: headerStyle,
+          faceText: faceText,
+          faceTextStyle: faceTextStyle,
+          imageUrl: imageUrl,
+          webcamActive: webcamActive,
+        });
+      }
+    },
+    [
+      id,
+      updatePlane,
+      plane?.lineThickness,
+      onUpdate,
+      position,
+      plane?.scale,
+      scale,
+      color,
+      borderStyle,
+      borderColor,
+      lineThickness,
+      headerText,
+      headerStyle,
+      faceText,
+      faceTextStyle,
+      imageUrl,
+      webcamActive,
+    ]
+  );
 
   const handleIndicatorClick = useCallback(
     (e) => {
@@ -600,7 +840,7 @@ const Plane = ({
         if (!planeRef) return;
         planeRef.updateWorldMatrix(true, false);
         const worldMatrix = planeRef.matrixWorld.clone();
-        const offset = new THREE.Vector3(0, -5 * currentScale[1], 0);
+        const offset = new THREE.Vector3(0, -5 * (plane?.scale?.[1] || 1), 0);
         const worldPos = new THREE.Vector3();
         planeRef.getWorldPosition(worldPos);
         offset.applyQuaternion(planeRef.quaternion);
@@ -615,17 +855,17 @@ const Plane = ({
           faceCenter: positionArray,
           face: 'bottom',
           plane: planeRef,
-          scale: [...currentScale],
+          scale: [...(plane?.scale || [1, 1, 1])],
           planeData: {
             position: [...position],
-            scale: [...currentScale],
+            scale: [...(plane?.scale || [1, 1, 1])],
             worldMatrix: Array.from(worldMatrix.elements),
-            offset: [0, -5 * currentScale[1], 0],
+            offset: [0, -5 * (plane?.scale?.[1] || 1), 0],
           },
           cube: {
             id: stringId,
             position,
-            scale: currentScale,
+            scale: plane?.scale || [1, 1, 1],
             userData: {
               objectId: stringId,
               planeRef: planeRef,
@@ -635,14 +875,21 @@ const Plane = ({
           id: stringId,
           objectId: stringId,
         };
-        setIndicatorSelected(true);
+        setPlaneIndicatorSelected(id, true);
         onIndicatorSelected?.();
         onFaceIndicatorClick?.(indicator);
       } catch (error) {
         console.error('Error in handleIndicatorClick:', error);
       }
     },
-    [id, currentScale, position, onIndicatorSelected, onFaceIndicatorClick]
+    [
+      id,
+      plane?.scale,
+      position,
+      onIndicatorSelected,
+      onFaceIndicatorClick,
+      setPlaneIndicatorSelected,
+    ]
   );
 
   const isIndicatorConnected = useMemo(() => {
@@ -652,13 +899,12 @@ const Plane = ({
         conn.end.plane === groupRef.current
     );
   }, [connections]);
-
   const shouldShowIndicator = useMemo(() => {
     if (selectedIndicators?.length > 0) return true;
     if (indicatorMode === 'indicators') return true;
     if (showAllIndicators || globalIndicatorSelected) return true;
     if (isIndicatorConnected) return true;
-    if (indicatorSelected) return true;
+    if (plane?.indicatorSelected) return true;
     if (selected) return true;
     return false;
   }, [
@@ -667,16 +913,15 @@ const Plane = ({
     showAllIndicators,
     globalIndicatorSelected,
     isIndicatorConnected,
-    indicatorSelected,
+    plane?.indicatorSelected,
     selected,
   ]);
   useEffect(() => {
     if (!currentSpaceId || !id || !user || !window.currentSpaceOwner) return;
-
-    if (webcamActive || isViewingBroadcast) {
-      if (isViewingBroadcast && webcamActive) {
-        setIsViewingBroadcast(false);
-        setBroadcastInfo(null);
+    if (plane?.webcamActive || plane?.isViewingBroadcast) {
+      if (plane?.isViewingBroadcast && plane?.webcamActive) {
+        setPlaneIsViewingBroadcast(id, false);
+        setPlaneBroadcastInfo(id, null);
       }
       return;
     }
@@ -689,7 +934,7 @@ const Plane = ({
       currentSpaceId,
       id,
       (objectData) => {
-        if (!isMountedRef.current || webcamActive) return;
+        if (!isMountedRef.current || plane?.webcamActive) return;
 
         const isRemoteBroadcastingNow =
           objectData?.broadcasting === true &&
@@ -706,22 +951,22 @@ const Plane = ({
             planeId: id,
           };
           if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
-            setBroadcastInfo(newBroadcastInfo);
+            setPlaneBroadcastInfo(id, newBroadcastInfo);
             broadcastInfoRef.current = newBroadcastInfo;
-            if (!isViewingBroadcast) {
-              setIsViewingBroadcast(true);
+            if (!plane?.isViewingBroadcast) {
+              setPlaneIsViewingBroadcast(id, true);
             }
           }
         } else {
-          if (isViewingBroadcast) {
+          if (plane?.isViewingBroadcast) {
             const now = Date.now();
             if (now - lastBroadcastSeenRef.current > 5000) {
-              setBroadcastInfo(null);
+              setPlaneBroadcastInfo(id, null);
               broadcastInfoRef.current = null;
-              setIsViewingBroadcast(false);
+              setPlaneIsViewingBroadcast(id, false);
             }
           } else if (broadcastInfoRef.current !== null) {
-            setBroadcastInfo(null);
+            setPlaneBroadcastInfo(id, null);
             broadcastInfoRef.current = null;
           }
         }
@@ -731,13 +976,20 @@ const Plane = ({
       console.log(`[Plane ${id}] Cleaning up broadcast listener`);
       unsubscribe();
     };
-  }, [currentSpaceId, id, user, webcamActive, isViewingBroadcast]); // Removed broadcastInfo to prevent reactive loop
-
+  }, [
+    currentSpaceId,
+    id,
+    user,
+    plane?.webcamActive,
+    plane?.isViewingBroadcast,
+    setPlaneBroadcastInfo,
+    setPlaneIsViewingBroadcast,
+  ]); // Removed broadcastInfo to prevent reactive loop
   const handleBroadcastStopped = useCallback(async () => {
     if (!isMountedRef.current) return;
-    if (isBroadcasting) {
-      setIsBroadcasting(false);
-      setViewerCount(0);
+    if (plane?.isBroadcasting) {
+      setPlaneIsBroadcasting(id, false);
+      setPlaneViewerCount(id, 0);
 
       onUpdate?.(id, {
         type: 'plane',
@@ -746,23 +998,29 @@ const Plane = ({
         webcamActive: false,
       });
     }
-  }, [onUpdate, id, isBroadcasting]);
+  }, [
+    onUpdate,
+    id,
+    plane?.isBroadcasting,
+    setPlaneIsBroadcasting,
+    setPlaneViewerCount,
+  ]);
   const handleWebcamToggle = useCallback(async () => {
     // Set flag to prevent immediate sync interference
     userJustToggledWebcamRef.current = true;
 
-    const currentWebcamState = webcamActive;
+    const currentWebcamState = plane?.webcamActive;
     const newWebcamState = !currentWebcamState;
 
     if (newWebcamState) {
-      setWebcamInitialized(true);
+      setPlaneWebcamInitialized(id, true);
       if (
         confirm(
           'Do you want to broadcast this webcam to other users in this space?'
         )
       ) {
-        setWebcamActive(true);
-        setIsBroadcasting(true);
+        setPlaneWebcamActive(id, true);
+        setPlaneIsBroadcasting(id, true);
         lastWebcamStateRef.current = true;
         // Update object data to reflect webcam being enabled
 
@@ -771,8 +1029,8 @@ const Plane = ({
           webcamActive: true,
         });
       } else {
-        setWebcamActive(true);
-        setIsBroadcasting(false);
+        setPlaneWebcamActive(id, true);
+        setPlaneIsBroadcasting(id, false);
         lastWebcamStateRef.current = true;
         // Update object data to reflect webcam being enabled (local only)
 
@@ -782,8 +1040,8 @@ const Plane = ({
         });
       }
     } else {
-      if (isBroadcasting) {
-        setViewerCount(0);
+      if (plane?.isBroadcasting) {
+        setPlaneViewerCount(id, 0);
         onUpdate?.(id, {
           type: 'plane',
           broadcasting: false,
@@ -791,30 +1049,41 @@ const Plane = ({
           webcamActive: false,
         });
       }
-      setWebcamActive(false);
-      setIsBroadcasting(false);
-      setIsViewingBroadcast(false);
-      setBroadcastInfo(null);
+      setPlaneWebcamActive(id, false);
+      setPlaneIsBroadcasting(id, false);
+      setPlaneIsViewingBroadcast(id, false);
+      setPlaneBroadcastInfo(id, null);
       lastWebcamStateRef.current = false;
     }
-    setShowUI(false);
-  }, [webcamActive, isBroadcasting, onUpdate, id]);
+    setPlaneShowUI(id, false);
+  }, [
+    id,
+    plane?.webcamActive,
+    plane?.isBroadcasting,
+    onUpdate,
+    setPlaneWebcamInitialized,
+    setPlaneWebcamActive,
+    setPlaneIsBroadcasting,
+    setPlaneViewerCount,
+    setPlaneIsViewingBroadcast,
+    setPlaneBroadcastInfo,
+    setPlaneShowUI,
+  ]);
   const handleScreenShareToggle = useCallback(() => {
     // Set flag to prevent immediate sync interference
     userJustToggledWebcamRef.current = true;
-
-    const currentScreenShareState = screenShareActive;
+    const currentScreenShareState = plane?.screenShareActive;
     const newScreenShareState = !currentScreenShareState;
 
     if (newScreenShareState) {
-      setScreenShareInitialized(true);
+      setPlaneScreenShareInitialized(id, true);
       if (
         confirm(
           'Do you want to share your screen to other users in this space?'
         )
       ) {
-        setScreenShareActive(true);
-        setIsScreenSharing(true);
+        setPlaneScreenShareActive(id, true);
+        setPlaneIsScreenSharing(id, true);
         // Update object data to reflect screen share being enabled
 
         onUpdate?.(id, {
@@ -822,8 +1091,8 @@ const Plane = ({
           screenShareActive: true,
         });
       } else {
-        setScreenShareActive(true);
-        setIsScreenSharing(false);
+        setPlaneScreenShareActive(id, true);
+        setPlaneIsScreenSharing(id, false);
         // Update object data to reflect screen share being enabled (local only)
 
         onUpdate?.(id, {
@@ -832,7 +1101,7 @@ const Plane = ({
         });
       }
     } else {
-      if (isScreenSharing) {
+      if (plane?.isScreenSharing) {
         // Stop screen sharing
         onUpdate?.(id, {
           type: 'plane',
@@ -840,11 +1109,20 @@ const Plane = ({
           screenShareActive: false,
         });
       }
-      setScreenShareActive(false);
-      setIsScreenSharing(false);
+      setPlaneScreenShareActive(id, false);
+      setPlaneIsScreenSharing(id, false);
     }
-    setShowUI(false);
-  }, [screenShareActive, isScreenSharing, onUpdate, id]);
+    setPlaneShowUI(id, false);
+  }, [
+    id,
+    plane?.screenShareActive,
+    plane?.isScreenSharing,
+    onUpdate,
+    setPlaneScreenShareInitialized,
+    setPlaneScreenShareActive,
+    setPlaneIsScreenSharing,
+    setPlaneShowUI,
+  ]);
   const handleImageUpload = useCallback(
     async (file) => {
       if (!user?.uid || !currentSpaceId) {
@@ -852,7 +1130,7 @@ const Plane = ({
         return;
       }
 
-      setIsUploadingImage(true);
+      setPlaneIsUploadingImage(id, true);
 
       try {
         console.log('Uploading image:', file.name);
@@ -876,7 +1154,7 @@ const Plane = ({
             texture.magFilter = THREE.LinearFilter;
             texture.format = THREE.RGBAFormat;
             texture.colorSpace = THREE.SRGBColorSpace;
-            texture.flipY = false; // Important for proper orientation
+            texture.flipY = true; // Important for proper orientation
 
             // Apply the texture to the mesh
             if (meshRef.current) {
@@ -897,7 +1175,7 @@ const Plane = ({
               });
 
               meshRef.current.material = material;
-              setImageTexture(texture);
+              setPlaneImageTexture(id, texture);
 
               // Update the object in the database with the image URL
               onUpdate?.(id, {
@@ -912,14 +1190,14 @@ const Plane = ({
             console.error('Error creating texture:', error);
             alert('Failed to create texture from uploaded image');
           } finally {
-            setIsUploadingImage(false);
+            setPlaneIsUploadingImage(id, false);
           }
         };
 
         img.onerror = (error) => {
           console.error('Error loading image:', error);
           alert('Failed to load the uploaded image');
-          setIsUploadingImage(false);
+          setPlaneIsUploadingImage(id, false);
         };
 
         // Load the image
@@ -927,17 +1205,22 @@ const Plane = ({
       } catch (error) {
         console.error('Image upload failed:', error);
         alert(`Image upload failed: ${error.message}`);
-        setIsUploadingImage(false);
+        setPlaneIsUploadingImage(id, false);
       }
     },
-    [user, currentSpaceId, onUpdate, id]
+    [
+      user,
+      currentSpaceId,
+      onUpdate,
+      id,
+      setPlaneImageTexture,
+      setPlaneIsUploadingImage,
+    ]
   );
-
-  const isBroadcastingRef = useRef(false);
   const handleBroadcastStarted = useCallback(
     async (info) => {
       if (!info || !info.broadcastId || !isMountedRef.current) return;
-      if (!isBroadcastingRef.current) setIsBroadcasting(true);
+      if (!isBroadcastingRef.current) setPlaneIsBroadcasting(id, true);
 
       onUpdate?.(id, {
         type: 'plane',
@@ -948,25 +1231,27 @@ const Plane = ({
         webcamActive: true,
       });
     },
-    [onUpdate, id, user?.uid]
+    [onUpdate, id, user?.uid, setPlaneIsBroadcasting]
   );
-  const handleViewerCountChange = useCallback((count) => {
-    if (isMountedRef.current) {
-      setViewerCount(count);
-    }
-  }, []);
+  const handleViewerCountChange = useCallback(
+    (count) => {
+      if (isMountedRef.current) {
+        setPlaneViewerCount(id, count);
+      }
+    },
+    [id, setPlaneViewerCount]
+  );
 
   // Update the ref whenever isBroadcasting changes
   useEffect(() => {
-    isBroadcastingRef.current = isBroadcasting;
-  }, [isBroadcasting]);
+    isBroadcastingRef.current = plane?.isBroadcasting;
+  }, [plane?.isBroadcasting]);
   useEffect(() => {
     return () => {
       // Use ref to get current broadcasting state without dependencies
       if (isBroadcastingRef.current) {
-        setIsBroadcasting(false);
-        setViewerCount(0);
-
+        setPlaneIsBroadcasting(id, false);
+        setPlaneViewerCount(id, 0);
         onUpdate?.(id, {
           type: 'plane',
           broadcasting: false,
@@ -975,63 +1260,60 @@ const Plane = ({
         });
       }
     };
-  }, [onUpdate, id]); // Removed unused dependencies
+  }, [onUpdate, id, setPlaneIsBroadcasting, setPlaneViewerCount]); // Removed unused dependencies
 
   const uiPositions = useMemo(() => {
-    const planeHeight = 10 * currentScale[1];
-    const verticalOffset = planeHeight / 2;
+    const currentScale = plane?.scale || scale || [1, 1, 1];
+    const baseHeight = 5; // Base height like CUBE_SIZE in cube
     const zOffset = 0.1;
+
     return {
-      faceUI: [0, verticalOffset + 2, zOffset + 0.1],
-      headerInput: [0, verticalOffset + 4, zOffset],
-      headerText: [0, verticalOffset + 4, zOffset],
+      faceUI: [0, baseHeight + 2 / currentScale[1], zOffset + 0.1],
       textSprite: [0, 0, zOffset],
-      textStyleUI: [0, 6, zOffset + 2],
-      headerStyleUI: [0, verticalOffset + 6, zOffset + 2],
-      textInput: [0, 3, zOffset + 2],
+      textInput: [0, 3 / currentScale[1], zOffset + 2],
+      headerText: [0, baseHeight + 4 / currentScale[1], zOffset], // Use division like cube - inside scaled group
     };
-  }, [currentScale]);
+  }, [plane?.scale, scale]);
 
   const indicatorPosition = useMemo(() => [0, -size - 1, 0], []);
   const meshMaterial = useMemo(() => {
     // If we have an image texture, use it
-    if (imageTexture) {
+    if (plane?.imageTexture) {
       return (
         <meshBasicMaterial
-          map={imageTexture}
+          map={plane.imageTexture}
           transparent
           opacity={1}
           side={THREE.DoubleSide}
           needsUpdate={true}
         />
       );
-    }
+    } // Otherwise use the color-based material
+    // Ensure we always have a valid color (never null/undefined which defaults to black)
+    const materialColor = color || 'white';
 
-    // Otherwise use the color-based material
     return (
       <meshBasicMaterial
-        color={currentColor || (selected ? '#99ccff' : 'black')}
+        color={materialColor}
         transparent
-        opacity={currentColor ? 1 : selected ? 0.1 : 0}
-        depthWrite={!!currentColor}
+        opacity={1}
         side={THREE.DoubleSide}
         needsUpdate={true}
       />
     );
-  }, [currentColor, selected, imageTexture]);
+  }, [color, plane?.imageTexture]);
 
   const lineMaterialProps = useMemo(
     () => ({
-      color: selected ? 'blue' : currentBorderColor,
-      lineWidth: currentLineThickness,
-      dashed: currentBorderStyle !== 'solid',
-      dashScale: currentBorderStyle === 'dotted' ? 1 : 2,
-      dashSize: currentBorderStyle === 'dotted' ? 0.1 : 1,
-      gapSize: currentBorderStyle === 'dotted' ? 0.1 : 0.5,
+      color: selected ? 'blue' : borderColor,
+      lineWidth: lineThickness,
+      dashed: borderStyle !== 'solid',
+      dashScale: borderStyle === 'dotted' ? 1 : 2,
+      dashSize: borderStyle === 'dotted' ? 0.1 : 1,
+      gapSize: borderStyle === 'dotted' ? 0.1 : 0.5,
     }),
-    [selected, currentBorderColor, currentLineThickness, currentBorderStyle]
+    [selected, borderColor, lineThickness, borderStyle]
   );
-
   const points = useMemo(
     () => [
       new Vector3(-size, -size, 0),
@@ -1042,13 +1324,13 @@ const Plane = ({
     ],
     []
   );
-
   return (
     <>
       <group ref={groupRef} position={position}>
-        <group ref={contentRef} scale={currentScale}>
+        {' '}
+        <group ref={contentRef} scale={scale}>
           <mesh ref={meshRef} onClick={handleClick}>
-            <planeGeometry args={[size * 2, size * 2]} />
+            <planeGeometry args={[size * 2 - 0.2, size * 2 - 0.2]} />
             {meshMaterial}
           </mesh>{' '}
           {(webcamActive || isViewingBroadcast) &&
@@ -1125,15 +1407,54 @@ const Plane = ({
               onClick={handleIndicatorClick}
               isActive={indicatorSelected || isIndicatorConnected}
             />
-          )}
-          {currentFaceText && (
-            <TextSprite
-              text={currentFaceText}
+          )}{' '}
+          {faceText && (
+            <group
+              scale={scale.map((s) => 1 / Math.max(0.0001, s))}
               position={uiPositions.textSprite}
-              style={currentFaceTextStyle}
-              onClick={handleTextSpriteClick}
-              billboard={false}
-            />
+            >
+              <TextSprite
+                text={faceText}
+                position={[0, 0, 0]}
+                style={faceTextStyle}
+                onClick={handleTextSpriteClick}
+                billboard={false}
+              />
+            </group>
+          )}
+          {/* Header text inside the scaled group like cube */}
+          {headerText && (
+            <group
+              scale={scale.map((s) => 1 / Math.max(0.0001, s))}
+              position={uiPositions.headerText}
+            >
+              {' '}
+              <TextSprite
+                text={headerText}
+                position={[0, 0, 0]}
+                followTarget={null}
+                onClick={handleHeaderTextClick}
+                style={{
+                  ...headerStyle,
+                  isHeaderText: true,
+                  fixedSize: false,
+                }}
+                billboard={false}
+              />
+              {/* Header TextStyleUI inside the group like cube */}
+              {showHeaderStyleUI && (
+                <TextStyleUI
+                  position={[0, 2, 0]} // 2 units above header text
+                  onStyleChange={handleHeaderStyleChange}
+                  onClose={() => {
+                    setPlaneShowHeaderStyleUI(id, false);
+                    setPlaneShowUI(id, true);
+                  }}
+                  followTarget={null}
+                  uiType="header"
+                />
+              )}
+            </group>
           )}
         </group>{' '}
         {selected && showUI && (
@@ -1157,67 +1478,49 @@ const Plane = ({
             isScreenSharing={isScreenSharing}
             viewerCount={viewerCount}
           />
-        )}
+        )}{' '}
         {showTextInput && (
           <FaceTextInput
             position={uiPositions.textInput}
             onTextSubmit={handleTextSubmit}
+            inputId={`plane-${id}-face`}
             followTarget={groupRef}
           />
-        )}
+        )}{' '}
         {showTextStyleUI && (
           <TextStyleUI
-            position={uiPositions.textStyleUI}
+            position={[0, 2, 1]} // Static position like cube, just above face text
+            followTarget={null} // Disable follow target for planes
             onStyleChange={handleTextStyleChange}
             onClose={closeAllUIs}
-            followTarget={groupRef}
-          />
-        )}
-        {showHeader && (
-          <HeaderInput
-            position={uiPositions.headerInput}
-            onTextSubmit={handleHeaderSubmit}
-            followTarget={groupRef}
-          />
-        )}
-        {showHeaderStyleUI && (
-          <TextStyleUI
-            position={uiPositions.headerStyleUI}
-            onStyleChange={handleHeaderStyleChange}
-            onClose={() => {
-              setShowHeaderStyleUI(false);
-              setShowUI(true);
-            }}
-            followTarget={groupRef}
-            uiType="header"
           />
         )}
       </group>
-
-      {currentHeaderText && (
-        <TextSprite
-          text={currentHeaderText}
-          position={position}
-          offset={uiPositions.headerText}
-          followTarget={groupRef}
-          onClick={handleHeaderTextClick}
-          style={currentHeaderStyle}
-          billboard={true}
+      {/* Header input positioned outside the main group */}
+      {showHeader && (
+        <HeaderInput
+          position={[
+            position[0],
+            position[1] + (10 * (plane?.scale?.[1] || 1)) / 2 + 4,
+            position[2],
+          ]}
+          onTextSubmit={handleHeaderSubmit}
+          inputId={`plane-${id}-header`}
+          followTarget={contentRef}
         />
       )}
-
       {selected && isResizing && contentRef.current && (
         <DreiTransformControls
           key={`scale-${id}`}
           object={contentRef.current}
-          onObjectChange={handleScale}
+          onChange={handleScale}
           onMouseDown={handleTransformStart}
-          onMouseUp={handleTransformEnd}
+          onMouseUp={handleResizeEnd}
           mode="scale"
           space="local"
           showZ={false}
         />
-      )}
+      )}{' '}
       {selected && showTransform && groupRef.current && (
         <DreiTransformControls
           key={`translate-${id}`}

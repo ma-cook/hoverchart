@@ -1,10 +1,11 @@
-import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { Html, TransformControls } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
+import { useTextObjectStore, useObjectsStore } from '../stores';
 
 const TextObject = ({
   id,
@@ -22,36 +23,164 @@ const TextObject = ({
   onUpdate,
   onDelete,
   registerTransformingObject,
-  initialText = '',
-  initialTextStyle = { fontSize: 32, color: 'black' },
-  initialScale = [15, 10, 1],
   onTransformStart,
   onTransformEnd,
   onResizeStart,
   onResizeEnd,
 }) => {
+  // Get object data from objects store
+  const objects = useObjectsStore((state) => state.objects);
+  const objectData = objects.find((obj) => obj.id === id);
+  // Memoize derived values to prevent unnecessary re-renders
+  const text = useMemo(() => objectData?.text || '', [objectData?.text]);
+  const textStyle = useMemo(
+    () => objectData?.textStyle || { fontSize: 32, color: 'black' },
+    [objectData?.textStyle]
+  );
+  const scale = useMemo(
+    () => objectData?.scale || [15, 10, 1],
+    [objectData?.scale]
+  );
+
+  // Local editing state to prevent database updates during typing
+  const [localText, setLocalText] = useState(text);
+  const [isLocallyEditing, setIsLocallyEditing] = useState(false);
+
+  // Use text object store for UI state only
+  const getTextObject = useTextObjectStore((state) => state.getTextObject);
+  const setTextObject = useTextObjectStore((state) => state.setTextObject);
+  const updateTextObjectProperty = useTextObjectStore(
+    (state) => state.updateTextObjectProperty
+  );
+
+  // Get store state for this object
+  const textObject = getTextObject(id);
+  const {
+    isEditing,
+    isActivelyEditing,
+    indicatorSelected,
+    contentHeight,
+    isMoving,
+    showTransform,
+    showResizeArrow,
+    showResizeControls,
+    bulletPointMode,
+  } = textObject;
+  // Initialize text object UI state in store if it doesn't exist
+  useEffect(() => {
+    if (!textObject) {
+      setTextObject(id, {
+        // Only initialize UI state, not object data
+        isEditing: false,
+        isActivelyEditing: false,
+        indicatorSelected: false,
+        contentHeight: 100,
+        isMoving: false,
+        showTransform: false,
+        showResizeArrow: false,
+        showResizeControls: false,
+        bulletPointMode: false,
+      });
+    }
+  }, [id, textObject, setTextObject]);
+  // Store setters for persistent data (use onUpdate)
+  const setText = useCallback(
+    (value) => {
+      if (onUpdate) {
+        onUpdate(id, { text: value });
+      }
+    },
+    [id, onUpdate]
+  );
+
+  const setTextStyle = useCallback(
+    (value) => {
+      if (onUpdate) {
+        onUpdate(id, { textStyle: value });
+      }
+    },
+    [id, onUpdate]
+  );
+
+  const setScale = useCallback(
+    (value) => {
+      if (onUpdate) {
+        onUpdate(id, { scale: value });
+      }
+    },
+    [id, onUpdate]
+  );
+
+  // Store setters for UI state (use textObject store)
+  const setIsEditing = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'isEditing', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setIsActivelyEditing = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'isActivelyEditing', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setIndicatorSelected = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'indicatorSelected', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setContentHeight = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'contentHeight', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setIsMoving = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'isMoving', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setShowTransform = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'showTransform', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setShowResizeArrow = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'showResizeArrow', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setShowResizeControls = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'showResizeControls', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
+  const setBulletPointMode = useCallback(
+    (value) => {
+      updateTextObjectProperty(id, 'bulletPointMode', value);
+    },
+    [id, updateTextObjectProperty]
+  );
+
   // DOM Refs
   const groupRef = useRef();
   const transformRef = useRef();
   const uiMenuRef = useRef(null);
   const textAreaRef = useRef();
   const displayRef = useRef();
-
-  // Essential state
-  const [text, setText] = useState(initialText);
-  const [isEditing, setIsEditing] = useState(false);
-  const [isActivelyEditing, setIsActivelyEditing] = useState(false);
-  const [textStyle, setTextStyle] = useState(initialTextStyle);
-  const [scale, setScale] = useState(initialScale);
-  const [indicatorSelected, setIndicatorSelected] = useState(false);
-  const [contentHeight, setContentHeight] = useState('auto');
-  const [isMoving, setIsMoving] = useState(false);
-
-  // UI mode states
-  const [showTransform, setShowTransform] = useState(false);
-  const [showResizeArrow, setShowResizeArrow] = useState(false);
-  const [showResizeControls, setShowResizeControls] = useState(false);
-  const [bulletPointMode, setBulletPointMode] = useState(false);
 
   // Technical refs
   const textUpdateTimeoutRef = useRef(null);
@@ -66,9 +195,22 @@ const TextObject = ({
   const contentHeightRef = useRef(0);
   const needsFocusRef = useRef(false);
   const initialFocusDoneRef = useRef(false);
-
-  const textContentRef = useRef(initialText);
+  const textContentRef = useRef(text);
   const connectedLineIdsRef = useRef(new Set());
+  const justFinishedEditingRef = useRef(false);
+  // Sync textContentRef with text prop when it changes
+  useEffect(() => {
+    textContentRef.current = text;
+  }, [text]); // Sync local text with store text when not editing
+  useEffect(() => {
+    if (!isLocallyEditing && !isEditing && !justFinishedEditingRef.current) {
+      // Only sync if the store text is different and we're not in an editing session
+      if (text !== localText && text !== textContentRef.current) {
+        setLocalText(text);
+        textContentRef.current = text;
+      }
+    }
+  }, [text, isLocallyEditing, isEditing, localText]);
 
   // Constants
   const conversionFactor = 30;
@@ -115,10 +257,19 @@ const TextObject = ({
     const offset = getIndicatorOffset();
     return { top: offset };
   }, [getIndicatorOffset]);
-
   // Enhanced: Get connected connection IDs
   useEffect(() => {
     if (!connections || !id) return;
+
+    // Validate connections is an array
+    if (!Array.isArray(connections)) {
+      console.error(
+        '❌ connections is not an array in TextObject useEffect:',
+        typeof connections,
+        connections
+      );
+      return;
+    }
 
     const connectedIds = new Set();
     connections.forEach((conn) => {
@@ -203,13 +354,17 @@ const TextObject = ({
       groupRef.current.userData.objectType = 'text';
     }
   }, [position, scale, updateWorldMatrix, getIndicatorOffset]);
-
   const closeAllUIs = useCallback(() => {
     setShowTransform(false);
     setShowResizeArrow(false);
     setShowResizeControls(false);
     setIsEditing(false);
-  }, []);
+  }, [
+    setIsEditing,
+    setShowResizeArrow,
+    setShowResizeControls,
+    setShowTransform,
+  ]);
   // Handle selection/deselection
   useEffect(() => {
     if (!selected) {
@@ -227,7 +382,6 @@ const TextObject = ({
           scale,
           text: textContentRef.current,
           textStyle,
-          bulletPointMode,
           ...pendingChangesRef.current, // Apply pending changes on top
         };
         onUpdate(id, completeUpdate);
@@ -243,12 +397,10 @@ const TextObject = ({
     position,
     scale,
     textStyle,
-    bulletPointMode,
+    setIndicatorSelected,
   ]); // Optimized database update to reduce unnecessary saves
   const updateDatabase = useCallback(() => {
-    if (!onUpdate || !id) return;
-
-    // CRITICAL: Always ensure type is included in every update
+    if (!onUpdate || !id) return; // CRITICAL: Always ensure type is included in every update
     const currentState = {
       type: 'text', // ALWAYS include type field first
       id, // Include ID for safety
@@ -256,20 +408,8 @@ const TextObject = ({
       scale,
       text: textContentRef.current, // Use ref value for real-time text
       textStyle,
-      bulletPointMode,
       ...(isActivelyEditing && { lastEditTime: Date.now() }),
-    };
-
-    console.log('🔍 TextObject updateDatabase called:', {
-      id,
-      type: currentState.type,
-      text: currentState.text,
-      textStyle: currentState.textStyle,
-      hasTypeInTextStyle: 'type' in (currentState.textStyle || {}),
-      fullState: currentState,
-    });
-
-    // Only update if state has changed
+    }; // Only update if state has changed
     if (
       !lastUpdateRef.current ||
       !isEqual(lastUpdateRef.current, currentState)
@@ -296,14 +436,11 @@ const TextObject = ({
     position,
     scale,
     textStyle,
-    bulletPointMode,
     isActivelyEditing,
     updateWorldMatrix,
     getIndicatorOffset,
-  ]);
-
-  // Modified auto-resize function for the textarea
-  const autoResizeTextArea = useCallback(() => {
+  ]); // Auto-resize function that only updates the textarea height, no database updates
+  const autoResizeTextAreaOnly = useCallback(() => {
     if (!textAreaRef.current) return;
 
     // Reset height to calculate the actual height required
@@ -316,7 +453,7 @@ const TextObject = ({
     contentHeightRef.current = scrollHeight;
     setContentHeight(`${scrollHeight}px`);
 
-    // Set the height based on content
+    // Set the textarea height based on content
     textAreaRef.current.style.height = `${scrollHeight}px`;
 
     // Update container dimensions for connections
@@ -324,30 +461,66 @@ const TextObject = ({
       width: textAreaRef.current.offsetWidth,
       height: scrollHeight,
     };
-  }, []);
-  // Event handlers
-  // Modified text change handler to preserve cursor position
+  }, [setContentHeight]);
+
+  // Enhanced auto-resize function that also resizes the text object container
+  const autoResizeTextArea = useCallback(() => {
+    if (!textAreaRef.current) return;
+
+    // First do the basic resize
+    autoResizeTextAreaOnly();
+
+    const scrollHeight = contentHeightRef.current;
+
+    // Calculate the new scale for the text object container to fit content
+    const currentWidth = scale[0];
+    const conversionFactor = 30;
+    const baseHeight = 10; // Base height unit
+    const paddingAdjustment = 16; // Account for padding
+
+    // Calculate new height based on text content
+    const newHeight = Math.max(
+      baseHeight,
+      (scrollHeight + paddingAdjustment) / (1.3 * conversionFactor)
+    );
+
+    // Update scale if height has changed significantly (avoid micro-adjustments)
+    if (Math.abs(newHeight - scale[1]) > 0.5) {
+      const newScale = [currentWidth, newHeight, scale[2]];
+      setScale(newScale);
+
+      // Update the database with new scale (debounced)
+      if (onUpdate) {
+        onUpdate(id, {
+          type: 'text',
+          scale: newScale,
+          text: textContentRef.current, // Use ref to get latest text
+          textStyle: textStyle,
+          autoResized: true,
+        });
+      }
+    }
+  }, [autoResizeTextAreaOnly, scale, setScale, onUpdate, id, textStyle]);
+  // Event handlers  // Optimized text change handler - no database calls during typing
   const handleTextChange = (e) => {
-    // Store text in ref instead of state to avoid re-renders
-    textContentRef.current = e.target.value;
+    const newText = e.target.value;
+
+    // Update local state for immediate UI feedback
+    setLocalText(newText);
+    textContentRef.current = newText;
     setIsActivelyEditing(true);
 
-    // FIXED: Store complete object in pending changes instead of partial
-    pendingChangesRef.current = {
-      type: 'text', // ALWAYS include type
-      id,
-      position,
-      scale,
-      text: e.target.value,
-      textStyle,
-      bulletPointMode,
-      lastEditTime: Date.now(),
-    };
+    // Mark as locally editing to prevent sync from store
+    if (!isLocallyEditing) {
+      setIsLocallyEditing(true);
+    }
 
+    // Clear any pending timeout
     if (textUpdateTimeoutRef.current) {
       clearTimeout(textUpdateTimeoutRef.current);
     }
 
+    // Mark as editing in userData for connections
     if (groupRef.current) {
       groupRef.current.userData.isTextEditing = true;
       textUpdateTimeoutRef.current = setTimeout(() => {
@@ -357,13 +530,11 @@ const TextObject = ({
       }, 1000);
     }
 
-    // Auto-resize without affecting cursor
-    autoResizeTextArea();
+    // Auto-resize without database calls
+    autoResizeTextAreaOnly();
 
-    // Note: Removed setText timeout that was causing duplicate database calls
-    // The text state should only be updated on blur to avoid cursor jumps
+    // Note: No setText() or database calls here - only on blur!
   };
-
   const handleBlur = (e) => {
     if (
       uiMenuRef.current &&
@@ -373,19 +544,52 @@ const TextObject = ({
       return;
     }
 
-    // Sync text state with ref value
-    setText(textContentRef.current);
+    // Clear any pending text update timeout
+    if (textUpdateTimeoutRef.current) {
+      clearTimeout(textUpdateTimeoutRef.current);
+    }
+
+    // Get final text from current textarea value as backup
+    const textareaValue = textAreaRef.current?.value || '';
+    const finalText = textContentRef.current || textareaValue; // Set flag to prevent sync effect from overriding our changes
+    justFinishedEditingRef.current = true;
+
+    // Update local state immediately for instant display
+    setLocalText(finalText);
+    textContentRef.current = finalText;
+
+    // Reset editing states
     setIsEditing(false);
     setIsActivelyEditing(false);
+
+    // Update store text state (this will sync to database)
+    setText(finalText);
 
     if (groupRef.current) {
       groupRef.current.userData.isTextEditing = false;
     }
 
-    updateDatabase();
-  };
+    // Save final state to database immediately
+    if (onUpdate) {
+      onUpdate(id, {
+        type: 'text',
+        id,
+        position,
+        scale,
+        text: finalText,
+        textStyle,
+        bulletPointMode,
+        lastEditTime: Date.now(),
+      });
+    }
 
-  // Improved click handler to set focus flags only during initial activation
+    // Clear pending changes
+    pendingChangesRef.current = null; // Delay allowing sync from store to prevent race condition and ensure local text persists
+    setTimeout(() => {
+      setIsLocallyEditing(false);
+      justFinishedEditingRef.current = false; // Clear the flag after delay
+    }, 500); // Longer delay to ensure store propagation
+  }; // Improved click handler to set focus flags only during initial activation
   const handleDivClick = (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -393,6 +597,10 @@ const TextObject = ({
 
     // Only set focus flags when transitioning from non-editing to editing
     if (!isEditing) {
+      // Initialize local text and ref with current store text before starting edit
+      setLocalText(text);
+      textContentRef.current = text;
+      setIsLocallyEditing(true); // Start local editing immediately
       needsFocusRef.current = true;
       initialFocusDoneRef.current = false;
     }
@@ -404,9 +612,7 @@ const TextObject = ({
   // Simplify handleTextClick to use the same logic
   const handleTextClick = (e) => {
     handleDivClick(e);
-  };
-
-  // Modified focus effect to respect cursor position after initial focus
+  }; // Modified focus effect to use localText
   useEffect(() => {
     if (isEditing && needsFocusRef.current && !initialFocusDoneRef.current) {
       // Use a slightly longer timeout to ensure DOM is fully updated
@@ -415,10 +621,11 @@ const TextObject = ({
           textAreaRef.current.focus();
 
           // Only set cursor to end during initial focus
-          textAreaRef.current.selectionStart = text.length;
-          textAreaRef.current.selectionEnd = text.length;
+          const textLength = localText.length;
+          textAreaRef.current.selectionStart = textLength;
+          textAreaRef.current.selectionEnd = textLength;
 
-          autoResizeTextArea();
+          autoResizeTextAreaOnly();
           needsFocusRef.current = false;
           initialFocusDoneRef.current = true;
         }
@@ -426,14 +633,13 @@ const TextObject = ({
 
       return () => clearTimeout(focusTimeout);
     }
-  }, [isEditing, text, autoResizeTextArea]);
-
+  }, [isEditing, localText, autoResizeTextAreaOnly]);
   // Keep the existing effect for auto-resizing
   useEffect(() => {
     if (isEditing) {
-      autoResizeTextArea();
+      autoResizeTextAreaOnly(); // Use the version that doesn't trigger database updates
     }
-  }, [isEditing, autoResizeTextArea]);
+  }, [isEditing, autoResizeTextAreaOnly]);
 
   // Connection indicator click - critical for connection handling
   // Update your existing handleIndicatorClick function
@@ -615,10 +821,8 @@ const TextObject = ({
         indicatorWorldPos.x,
         indicatorWorldPos.y,
         indicatorWorldPos.z,
-      ];
-
-      // Update all connections in real-time if needed
-      if (connections) {
+      ]; // Update all connections in real-time if needed
+      if (connections && Array.isArray(connections)) {
         connections.forEach((conn) => {
           if (conn.start?.objectId === stringId) {
             conn.start.position = [...indicatorPosArray];
@@ -711,21 +915,69 @@ const TextObject = ({
         });
       }
     }
-  };
-
+  }; // Enhanced keyboard handling with shortcuts
   const handleKeyDown = (e) => {
+    // Handle bullet points
     if (e.key === 'Enter' && bulletPointMode) {
       e.preventDefault();
       const cursorPosition = e.target.selectionStart;
-      const textBeforeCursor = text.slice(0, cursorPosition);
-      const textAfterCursor = text.slice(cursorPosition);
+      const currentText = localText; // Use local text
+      const textBeforeCursor = currentText.slice(0, cursorPosition);
+      const textAfterCursor = currentText.slice(cursorPosition);
       const newText = textBeforeCursor + '\n• ' + textAfterCursor;
 
-      setText(newText);
+      // Update local state and ref immediately
+      setLocalText(newText);
+      textContentRef.current = newText;
+
       setTimeout(() => {
         e.target.selectionStart = cursorPosition + 3;
         e.target.selectionEnd = cursorPosition + 3;
       }, 0);
+      return;
+    } // Handle keyboard shortcuts with Ctrl/Cmd
+    if (e.ctrlKey || e.metaKey) {
+      switch (e.key.toLowerCase()) {
+        case 'b':
+          e.preventDefault();
+          handleStyleChange({
+            fontWeight: textStyle.fontWeight === 'bold' ? 'normal' : 'bold',
+          });
+          break;
+        case 'i':
+          e.preventDefault();
+          handleStyleChange({
+            fontStyle: textStyle.fontStyle === 'italic' ? 'normal' : 'italic',
+          });
+          break;
+        case 'u':
+          e.preventDefault();
+          handleStyleChange({
+            textDecoration:
+              textStyle.textDecoration === 'underline' ? 'none' : 'underline',
+          });
+          break;
+        case '=':
+        case '+': {
+          e.preventDefault();
+          const currentSize = textStyle.fontSize || 32;
+          handleStyleChange({ fontSize: Math.min(200, currentSize + 2) });
+          break;
+        }
+        case '-': {
+          e.preventDefault();
+          const currentSizeDown = textStyle.fontSize || 32;
+          handleStyleChange({ fontSize: Math.max(8, currentSizeDown - 2) });
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    // ESC to exit editing
+    if (e.key === 'Escape') {
+      textAreaRef.current?.blur();
     }
   };
   const handleStyleChange = (newStyle) => {
@@ -738,31 +990,46 @@ const TextObject = ({
 
     // Filter out any 'type' field that shouldn't be in textStyle
     // eslint-disable-next-line no-unused-vars
-    const { type, ...actualStyleChanges } = newStyle;
+    const { type, bulletPointMode: _, ...actualStyleChanges } = newStyle;
 
+    // Apply style changes immediately for responsive feedback
     setTextStyle((prev) => ({ ...prev, ...actualStyleChanges }));
+
+    // Trigger auto-resize if font size changed
+    if ('fontSize' in actualStyleChanges) {
+      setTimeout(() => {
+        autoResizeTextArea();
+      }, 10);
+    }
+
+    // Update database
     updateDatabase();
   };
-
-  // StyleSheet-like objects
+  // Enhanced stylesheet to apply text styles
   const getTextAreaStyle = () => ({
     autoWrap: 'wrap',
     width: '100%',
     height: contentHeight,
-    minHeight: '2em', // Start with small height, will expand    background: 'rgba(0,0,0,0.5)',
+    minHeight: '2em', // Start with small height, will expand
+    background: 'rgba(0,0,0,0.5)',
     color: textStyle.color || 'black',
     border: 'none',
     padding: '8px',
     margin: '0',
     resize: 'none',
     fontSize: textStyle.fontSize ? `${textStyle.fontSize}px` : '32px',
-    fontFamily: 'Arial',
+    fontFamily: 'Arial, sans-serif',
+    fontWeight: textStyle.fontWeight || 'normal',
+    fontStyle: textStyle.fontStyle || 'normal',
+    textDecoration: textStyle.textDecoration || 'none',
     whiteSpace: 'pre-wrap',
     wordWrap: 'break-word',
     overflowWrap: 'break-word',
     boxSizing: 'border-box',
     outline: selected ? '1px solid #99ccff' : 'none',
     overflow: 'hidden',
+    lineHeight: '1.4', // Better line spacing
+    transition: 'all 0.2s ease', // Smooth transitions for style changes
   });
 
   const getContainerStyle = () => ({
@@ -793,22 +1060,30 @@ const TextObject = ({
       }
     };
   }, []);
-
-  // Update rotation to always face camera
+  // Update rotation to always face camera - optimized to only run when needed
   useFrame(({ camera }) => {
     if (groupRef.current) {
       groupRef.current.quaternion.copy(camera.quaternion);
 
-      // Update world matrix when camera angle changes to ensure
-      // connection points remain accurate
+      // Only update world matrix if this object has connections AND is not being transformed
+      // This is expensive so we minimize it
       if (
-        groupRef.current &&
+        !isMoving &&
+        !isActivelyEditing &&
         connections?.some(
           (conn) =>
             conn.start.objectId === stringId || conn.end.objectId === stringId
         )
       ) {
-        updateWorldMatrix();
+        // Throttle matrix updates - only update every few frames
+        if (
+          !groupRef.current._lastMatrixUpdate ||
+          Date.now() - groupRef.current._lastMatrixUpdate > 16
+        ) {
+          // ~60fps throttle
+          updateWorldMatrix();
+          groupRef.current._lastMatrixUpdate = Date.now();
+        }
       }
     }
   });
@@ -841,7 +1116,7 @@ const TextObject = ({
         }
       }, 100);
     }
-  }, [text]);
+  }, [text, setContentHeight]);
 
   // Enhanced render with _transformActive flag in userData
   return (
@@ -867,11 +1142,12 @@ const TextObject = ({
             className="text-object-container"
             onClick={handleDivClick}
           >
+            {' '}
             {isEditing ? (
               <textarea
                 ref={textAreaRef}
-                // Remove value prop to make uncontrolled
-                defaultValue={textContentRef.current}
+                // Use local text state for immediate UI feedback without re-renders
+                value={localText}
                 onChange={handleTextChange}
                 onBlur={handleBlur}
                 style={getTextAreaStyle()}
@@ -897,9 +1173,13 @@ const TextObject = ({
                   userSelect: 'none',
                   cursor: 'text',
                   width: '100%',
+                  background: 'rgba(0,0,0,0.3)', // Slightly different for display mode
+                  border: selected
+                    ? '1px dashed #99ccff'
+                    : '1px dashed transparent',
                 }}
               >
-                {text || 'Click to edit text...'}
+                {localText || 'Click to edit text...'}
               </div>
             )}
             {showResizeArrow && (
@@ -925,7 +1205,6 @@ const TextObject = ({
           />
         )}
       </group>
-
       {/* Transform controls */}
       {showTransform && selected && (
         <TransformControls
@@ -940,7 +1219,6 @@ const TextObject = ({
           onDragEnd={handleTransformEnd}
         />
       )}
-
       {/* Scale transform controls */}
       {showResizeArrow && selected && (
         <TransformControls
@@ -967,7 +1245,6 @@ const TextObject = ({
           }}
         />
       )}
-
       {/* Resize transform controls */}
       {showResizeControls && selected && (
         <TransformControls
@@ -999,13 +1276,12 @@ const TextObject = ({
           showZ={false}
           space="local"
         />
-      )}
-
+      )}{' '}
       {/* Text style UI */}
       {selected && (
         <TextObjectUI
           ref={uiMenuRef}
-          text={text}
+          id={id}
           textStyle={textStyle}
           onStyleChange={handleStyleChange}
           onDelete={onDelete ? () => onDelete(id) : undefined}

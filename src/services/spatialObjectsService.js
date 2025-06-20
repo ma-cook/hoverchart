@@ -11,6 +11,7 @@ import {
   getCellId,
   moveObjectBetweenCells as moveObjectBetweenCellsSpatial,
 } from './spatialPartitioning';
+import { getIsInitialLoading } from '../utils/loadingState';
 
 const objectsCache = new Map();
 const saveTimeouts = new Map();
@@ -35,6 +36,14 @@ const positionsEqual = (posA, posB) => {
  * Save object to the appropriate cell based on its position
  */
 export const saveObjectToCell = async (userId, spaceId, object) => {
+  // Check if we're still in initial loading phase - no saves during app startup
+  if (getIsInitialLoading()) {
+    console.log(
+      `⏸️ [saveObjectToCell] Skipping save for object ${object.id} - still in initial loading phase`
+    );
+    return;
+  }
+
   if (!userId || !spaceId || !object.id) {
     // console.warn('[SaveDebug] saveObjectToCell: Missing required parameters. Aborting.', { userId, spaceId, objectId: object?.id });
     return;
@@ -102,10 +111,19 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
     // Clear any pending save timeout for this object
     if (saveTimeouts.has(cacheKey)) {
       clearTimeout(saveTimeouts.get(cacheKey));
+    } // Deep clone the object to prevent reference issues
+    let newData;
+    try {
+      newData = JSON.parse(JSON.stringify(object));
+    } catch (error) {
+      console.warn(
+        '⚠️ Failed to clone object in spatialObjectsService:',
+        error,
+        'object:',
+        object
+      );
+      newData = { ...object }; // Fallback to shallow copy
     }
-
-    // Deep clone the object to prevent reference issues
-    const newData = JSON.parse(JSON.stringify(object));
 
     let oldCellId = null;
     let newCellId = null;
@@ -220,16 +238,33 @@ export const deleteObjectFromSpatialCell = async (
   objectId,
   position
 ) => {
-  if (!userId || !spaceId || !objectId) return;
+  if (!userId || !spaceId || !objectId) {
+    throw new Error(
+      'Missing required parameters for deleteObjectFromSpatialCell'
+    );
+  }
+
+  console.log(
+    `🗑️ [Delete Debug] Starting deletion for object ${objectId} at position:`,
+    position
+  );
 
   try {
-    // Clear from cache immediately
-    const cacheKey = `${spaceId}_${objectId}`;
+    const objectIdString = objectId.toString();
+    const cacheKey = `${spaceId}_${objectIdString}`;
+
+    // Clear from cache immediately to prevent re-additions
+    console.log(
+      `🗑️ [Delete Debug] Clearing cache for object ${objectIdString}`
+    );
     objectsCache.delete(cacheKey);
     lastReceivedObjects.delete(cacheKey);
 
-    // Clear any pending save timeouts
+    // Clear any pending save timeouts that might re-add the object
     if (saveTimeouts.has(cacheKey)) {
+      console.log(
+        `🗑️ [Delete Debug] Clearing pending save timeout for object ${objectIdString}`
+      );
       clearTimeout(saveTimeouts.get(cacheKey));
       saveTimeouts.delete(cacheKey);
     }
@@ -240,20 +275,80 @@ export const deleteObjectFromSpatialCell = async (
     const sharedStatus = await isSharedSpace(userId, spaceId);
 
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      return;
+      throw new Error(
+        `User ${userId} does not have write permissions for shared space ${spaceId}`
+      );
     }
 
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
 
-    // Delete from the appropriate cell
-    await deleteObjectFromCellSpatial(
+    // If no position provided, try to find the object in all cells
+    if (!position) {
+      console.log(
+        `🗑️ [Delete Debug] No position provided, searching all cells for object ${objectIdString}`
+      );
+      const { findObjectInCells } = await import('./spatialPartitioning');
+      const found = await findObjectInCells(
+        ownerUserId,
+        spaceId,
+        objectIdString
+      );
+
+      if (found && found.object && found.object.position) {
+        position = found.object.position;
+        console.log(
+          `🗑️ [Delete Debug] Found object ${objectIdString} at position:`,
+          position
+        );
+      } else {
+        console.warn(
+          `⚠️ [Delete Debug] Could not find object ${objectIdString} in any cell`
+        );
+        return; // Object doesn't exist in database anyway
+      }
+    }
+    console.log(
+      `🗑️ [Delete Debug] Calling deleteObjectFromCellSpatial for object ${objectIdString} with:`,
+      {
+        ownerUserId,
+        spaceId,
+        objectIdString,
+        position,
+      }
+    );
+    const deleteResult = await deleteObjectFromCellSpatial(
       ownerUserId,
       spaceId,
-      objectId.toString(),
+      objectIdString,
       position
     );
+
+    console.log(
+      `🗑️ [Delete Debug] deleteObjectFromCellSpatial returned:`,
+      deleteResult
+    );
+
+    if (!deleteResult) {
+      throw new Error(
+        `Failed to delete object ${objectIdString} from spatial cell`
+      );
+    }
+
+    console.log(
+      `✅ [Delete Debug] Successfully completed deletion for object ${objectIdString}`
+    );
+
+    // Additional safety: Clear any cached references that might cause re-addition
+    setTimeout(() => {
+      objectsCache.delete(cacheKey);
+      lastReceivedObjects.delete(cacheKey);
+    }, 100);
   } catch (error) {
-    console.error('Error deleting object from cell:', error);
+    console.error(
+      `❌ [Delete Debug] Error deleting object ${objectId} from cell:`,
+      error
+    );
+    throw error; // Re-throw to allow caller to handle
   }
 };
 
@@ -265,6 +360,14 @@ export const updateObjectInSpatialCell = async (
   spaceId,
   objectData
 ) => {
+  // Check if we're still in initial loading phase - no saves during app startup
+  if (getIsInitialLoading()) {
+    console.log(
+      `⏸️ [updateObjectInSpatialCell] Skipping save for object ${objectData.id} - still in initial loading phase`
+    );
+    return;
+  }
+
   if (!userId || !spaceId || !objectData.id) {
     console.error(
       '[updateObjectInSpatialCell] Missing userId, spaceId, or object ID.'
@@ -485,19 +588,17 @@ export const subscribeToSpatialObjects = (
                 if (!snapshot.exists()) {
                   return;
                 }
-
                 const cellData = snapshot.data();
-                const cellObjects = cellData.objects || {};
-
-                // Process each object in the cell
+                const cellObjects = cellData.objects || {}; // Process each object in the cell
                 Object.entries(cellObjects).forEach(
                   ([objectId, objectData]) => {
+                    // Loading object from cell - debug logging removed
+
                     const cacheKey = `${spaceId}_${objectId}`;
 
                     // Check if object data has changed
                     const cachedData = objectsCache.get(cacheKey);
                     let hasChanged = false;
-
                     if (cachedData) {
                       const positionChanged = !positionsEqual(
                         cachedData.position,
@@ -509,15 +610,62 @@ export const subscribeToSpatialObjects = (
                       );
 
                       hasChanged = positionChanged || otherDataChanged;
+
+                      // Object comparison debug logging removed
+
+                      if (hasChanged) {
+                        // DUPLICATE PROTECTION: Compare timestamps to ensure we only accept newer versions
+                        if (cachedData.lastUpdated && objectData.lastUpdated) {
+                          // Handle both Firestore Timestamps and regular Date objects
+                          const cachedTime = cachedData.lastUpdated.toMillis
+                            ? cachedData.lastUpdated.toMillis()
+                            : new Date(cachedData.lastUpdated).getTime();
+                          const newTime = objectData.lastUpdated.toMillis
+                            ? objectData.lastUpdated.toMillis()
+                            : new Date(objectData.lastUpdated).getTime();
+
+                          if (newTime <= cachedTime) {
+                            // Rejecting older version - debug logging removed
+                            return; // Skip this older version
+                          }
+
+                          // Accepting newer version - debug logging removed
+                        }
+
+                        // Change details debug logging removed
+                      }
                     } else {
                       hasChanged = true;
+                      // New object debug logging removed
                     }
-
                     if (hasChanged) {
-                      objectsCache.set(
-                        cacheKey,
-                        JSON.parse(JSON.stringify(objectData))
-                      );
+                      // Skip Firebase updates for objects currently being transformed
+                      if (
+                        window._currentTransformingObjects &&
+                        window._currentTransformingObjects.has(objectId)
+                      ) {
+                        console.log(
+                          `🔒 Skipping Firebase update for transforming object ${objectId}`
+                        );
+                        return;
+                      }
+
+                      // Accepting object debug logging removed
+
+                      try {
+                        objectsCache.set(
+                          cacheKey,
+                          JSON.parse(JSON.stringify(objectData))
+                        );
+                      } catch (error) {
+                        console.warn(
+                          '⚠️ Failed to cache object in spatialObjectsService:',
+                          error,
+                          'objectData:',
+                          objectData
+                        );
+                        objectsCache.set(cacheKey, { ...objectData }); // Fallback to shallow copy
+                      }
                       lastReceivedObjects.set(cacheKey, objectData);
                       callback({
                         type: 'added',
@@ -525,6 +673,10 @@ export const subscribeToSpatialObjects = (
                         object: objectData,
                         cellCoords: { x, y, z: z || 0 },
                       });
+                    } else {
+                      console.log(
+                        `⏭️ [subscribeToSpatialObjects] Skipping object ${objectId} from cell ${cellKey} (no changes detected)`
+                      );
                     }
                   }
                 );
@@ -626,6 +778,14 @@ export const moveObjectBetweenCells = async (
   oldPosition,
   newPosition
 ) => {
+  // Check if we're still in initial loading phase - no saves during app startup
+  if (getIsInitialLoading()) {
+    console.log(
+      `⏸️ [moveObjectBetweenCells] Skipping save for object ${objectData.id} - still in initial loading phase`
+    );
+    return false;
+  }
+
   if (!userId || !spaceId || !objectData || !oldPosition || !newPosition) {
     return false;
   }

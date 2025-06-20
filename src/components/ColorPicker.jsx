@@ -1,10 +1,34 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { HexColorPicker } from 'react-colorful';
+import { useColorPickerStore } from '../stores';
 
-const ColorPicker = ({ onColorSelect, onClose }) => {
-  const [currentColor, setCurrentColor] = useState('#ffffff');
+const ColorPicker = ({
+  onColorSelect,
+  onClose,
+  pickerId = 'default',
+  initialColor = null,
+}) => {
   const pickerRef = useRef();
 
+  // Use store for color picker state
+  const getColorPicker = useColorPickerStore((state) => state.getColorPicker);
+  const setCurrentColor = useColorPickerStore((state) => state.setCurrentColor);
+  const applyColor = useColorPickerStore((state) => state.applyColor);
+  const cancelColorPicker = useColorPickerStore(
+    (state) => state.cancelColorPicker
+  );
+  const openColorPicker = useColorPickerStore((state) => state.openColorPicker);
+
+  // Get current picker state
+  const pickerState = getColorPicker(pickerId);
+  const currentColor = pickerState.currentColor;
+
+  // Initialize picker when component mounts
+  useEffect(() => {
+    if (!pickerState.isOpen) {
+      openColorPicker(pickerId, 'default', initialColor);
+    }
+  }, [pickerId, initialColor, pickerState.isOpen, openColorPicker]);
   useEffect(() => {
     if (window.orbitControls) {
       window.orbitControls.enabled = false;
@@ -17,7 +41,7 @@ const ColorPicker = ({ onColorSelect, onClose }) => {
   }, []);
 
   const handleColorChange = (color) => {
-    setCurrentColor(color);
+    setCurrentColor(pickerId, color);
   };
 
   const handleContainerClick = (e) => {
@@ -26,7 +50,13 @@ const ColorPicker = ({ onColorSelect, onClose }) => {
 
   const handleApplyColor = (e) => {
     e.stopPropagation();
-    onColorSelect?.(currentColor);
+    applyColor(pickerId, onColorSelect);
+    onClose();
+  };
+
+  const handleCancel = (e) => {
+    e.stopPropagation();
+    cancelColorPicker(pickerId);
     onClose();
   };
 
@@ -67,12 +97,9 @@ const ColorPicker = ({ onColorSelect, onClose }) => {
           }}
         >
           Apply
-        </button>
+        </button>{' '}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
+          onClick={handleCancel}
           style={{
             padding: '4px 8px',
             borderRadius: '4px',

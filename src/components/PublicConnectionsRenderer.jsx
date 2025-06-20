@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Line } from '@react-three/drei';
@@ -8,6 +8,7 @@ import {
   checkLineIntersection,
   generateCurvedPath,
 } from '../utils/pathfindingUtils';
+import { usePublicSpaceStore } from '../stores';
 
 // Import global subscription manager
 import {
@@ -21,13 +22,22 @@ import {
  * when the user is not authenticated
  */
 const PublicConnectionsRenderer = ({ spaceId, ownerId, objects }) => {
-  const [connections, setConnections] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Use public space store
+  const getPublicConnections = usePublicSpaceStore(
+    (state) => state.getPublicConnections
+  );
+  const setPublicConnectionsLoading = usePublicSpaceStore(
+    (state) => state.setPublicConnectionsLoading
+  );
+  const setPublicConnections = usePublicSpaceStore(
+    (state) => state.setPublicConnections
+  );
 
+  const { connections, loading } = getPublicConnections(spaceId);
   useEffect(() => {
     if (!spaceId || !ownerId) return;
 
-    setLoading(true);
+    setPublicConnectionsLoading(spaceId, true);
 
     try {
       const subscriptionKey = generateSubscriptionKey.legacyObjects(
@@ -64,12 +74,11 @@ const PublicConnectionsRenderer = ({ spaceId, ownerId, objects }) => {
               console.log(
                 `Loaded ${connectionsData.length} connections for public space`
               );
-              setConnections(connectionsData);
-              setLoading(false);
+              setPublicConnections(spaceId, connectionsData);
             },
             (error) => {
               console.error('Error loading public connections:', error);
-              setLoading(false);
+              setPublicConnectionsLoading(spaceId, false);
             }
           );
         }
@@ -78,15 +87,25 @@ const PublicConnectionsRenderer = ({ spaceId, ownerId, objects }) => {
       return () => unsubscribe();
     } catch (error) {
       console.error('Failed to set up public connections subscription:', error);
-      setLoading(false);
+      setPublicConnectionsLoading(spaceId, false);
     }
-  }, [spaceId, ownerId]);
+  }, [spaceId, ownerId, setPublicConnectionsLoading, setPublicConnections]);
 
   if (loading) return null;
+  // Validate connections is an array
+  const safeConnections = Array.isArray(connections) ? connections : [];
+
+  if (!Array.isArray(connections)) {
+    console.error(
+      '❌ connections is not an array in PublicConnectionsRenderer:',
+      typeof connections,
+      connections
+    );
+  }
 
   return (
     <>
-      {connections.map((connection) => (
+      {safeConnections.map((connection) => (
         <PublicConnection
           key={connection.id}
           connection={connection}

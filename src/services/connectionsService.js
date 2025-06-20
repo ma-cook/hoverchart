@@ -1,7 +1,11 @@
 import { db } from '../firebase';
-import { enableNetwork, disableNetwork } from 'firebase/firestore';
+import {
+  enableNetwork,
+  disableNetwork,
+  doc,
+  onSnapshot,
+} from 'firebase/firestore';
 import { enableIndexedDbPersistence } from 'firebase/firestore';
-import { registerObjectConnection } from './connectionManager';
 import { isSharedSpace } from './sharedSpacesService';
 import {
   addConnectionToCells,
@@ -18,11 +22,9 @@ import {
 // Enable offline persistence
 enableIndexedDbPersistence(db).catch((err) => {
   if (err.code === 'failed-precondition') {
-    console.warn(
-      'Multiple tabs open, persistence can only be enabled in one tab at a time.'
-    );
+    // Multiple tabs open, persistence can only be enabled in one tab at a time.
   } else if (err.code === 'unimplemented') {
-    console.warn("Browser doesn't support persistence");
+    // Browser doesn't support persistence
   }
 });
 
@@ -35,8 +37,8 @@ const notifyConnectionListeners = (state) => {
   connectionListeners.forEach((listener) => {
     try {
       listener(state);
-    } catch (e) {
-      console.error('Error in connection listener:', e);
+    } catch {
+      // Error in connection listener
     }
   });
 };
@@ -59,8 +61,8 @@ export const toggleNetwork = async (enable) => {
       isNetworkEnabled = false;
       notifyConnectionListeners('disconnected');
     }
-  } catch (error) {
-    console.error('Error toggling network:', error);
+  } catch {
+    // Error toggling network
   }
 };
 
@@ -87,7 +89,8 @@ const serializeConnection = (connection) => {
       position: connection.end?.position || [0, 0, 0],
       faceCenter: connection.end?.faceCenter || [0, 0, 0],
     },
-    lineStyle: connection.lineStyle || 'straight',
+    lineStyle: connection.lineStyle || connection.styleType || 'straight',
+    styleType: connection.styleType || connection.lineStyle || 'straight', // Support both for compatibility
     dashDirection: connection.dashDirection || null,
     dashOffset: connection.dashOffset || 0,
     color: connection.color || 'black',
@@ -112,37 +115,30 @@ const clearConnectionCache = (spaceId, connectionId) => {
 
 // Modified to use cell-based storage instead of space-level storage
 export const saveConnection = async (userId, spaceId, connection) => {
-  if (!userId || !spaceId || !connection?.id) return;
+  if (!userId || !spaceId || !connection?.id) {
+    return;
+  }
 
   try {
     // Check if this is a shared space
-    const sharedStatus = await isSharedSpace(userId, spaceId);
-
-    // If it's shared but without write permission, return early
+    const sharedStatus = await isSharedSpace(userId, spaceId); // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      console.warn(
-        'Cannot save connection: no write permission for shared space'
-      );
       return;
     }
 
     // Use the owner's ID to save to the correct collection
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-
-    // Ensure IDs are strings for consistency
+    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId; // Ensure IDs are strings for consistency
     if (connection.start?.objectId) {
       const startObjectId = connection.start.objectId.toString();
       connection.start.objectId = startObjectId;
-      registerObjectConnection(startObjectId, connection.id);
     }
 
     if (connection.end?.objectId) {
       const endObjectId = connection.end.objectId.toString();
       connection.end.objectId = endObjectId;
-      registerObjectConnection(endObjectId, connection.id);
     }
-
     const serializedConnection = serializeConnection(connection);
+
     // Add creator ID for shared spaces
     serializedConnection.creatorId = userId;
     serializedConnection.lastUpdated = new Date().toISOString();
@@ -159,16 +155,16 @@ export const saveConnection = async (userId, spaceId, connection) => {
     } else {
       throw new Error('Failed to save connection to cells');
     }
-  } catch (error) {
-    console.error('Error saving connection:', error);
+  } catch {
+    // Error saving connection
     // Simple fallback
     try {
       const fallbackKey = `connection_${userId}_${spaceId}_${connection.id}`;
       localStorage.setItem(fallbackKey, JSON.stringify(connection));
-    } catch (storageErr) {
-      console.warn('Failed to save connection to localStorage:', storageErr);
+    } catch {
+      // Failed to save connection to localStorage
     }
-    throw error;
+    throw new Error('Failed to save connection');
   }
 };
 
@@ -187,10 +183,8 @@ export const subscribeToConnections = (
   // Support anonymous access for public spaces
   const isAnonymous = !userId;
   const ownerIdFromUrl = window.currentSpaceOwner;
-
   // For anonymous users, we must have the owner ID
   if (isAnonymous && !ownerIdFromUrl) {
-    console.error('Anonymous connection access requires owner ID in URL');
     return () => {};
   }
 
@@ -206,7 +200,7 @@ export const subscribeToConnections = (
   );
 };
 
-// New cell-based connection subscription
+// New cell-based connection subscription using real-time Firebase subscriptions
 const subscribeToCellConnections = (
   userId,
   spaceId,
@@ -217,81 +211,156 @@ const subscribeToCellConnections = (
     return () => {};
   }
 
+  // Ensure loadedCells is always an array
+  const safeCells = Array.isArray(loadedCells) ? loadedCells : [];
+
   let isSubscribed = true;
-  let currentConnections = new Map();
+  const unsubscribeFunctions = new Map();
 
-  const updateConnections = async () => {
-    if (!isSubscribed) return;
-
+  const startCellSubscriptions = async () => {
     try {
       // Check if this is a shared space
       const sharedStatus = await isSharedSpace(userId, spaceId);
       if (!isSubscribed) return;
 
       // Use the owner's ID to get connections from the correct cells
-      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-      // Get connections from all loaded cells
-      const { getConnectionsFromCells } = await import('./spatialPartitioning');
-      const cellConnections = await getConnectionsFromCells(
-        ownerUserId,
-        spaceId,
-        loadedCells
-      );
+      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId; // Guard against empty cells
+      if (safeCells.length === 0) {
+        return;
+      }
 
-      // Process new connections
-      const newConnectionMap = new Map();
-      const seenConnections = new Set();
+      // Subscribe to each loaded cell
+      for (const cellKey of safeCells) {
+        if (!cellKey || typeof cellKey !== 'string') {
+          continue;
+        }
 
-      cellConnections.forEach((connection) => {
-        // Avoid duplicate connections that appear in multiple cells
-        if (seenConnections.has(connection.id)) return;
-        seenConnections.add(connection.id);
+        const [x, y, z] = cellKey.split(',').map(Number);
+        const subscriptionKey = generateSubscriptionKey.connections(
+          spaceId,
+          cellKey
+        );
 
-        newConnectionMap.set(connection.id, connection);
+        // Create cell reference
+        const cellRef = doc(
+          db,
+          'users',
+          ownerUserId,
+          'spaces',
+          spaceId,
+          'cells',
+          cellKey
+        );
 
-        // If this is a new connection, notify callback
-        if (!currentConnections.has(connection.id)) {
-          callback({
-            type: 'added',
-            id: connection.id,
-            connection: connection,
-          });
-        } else {
-          // Check if connection was modified
-          const existing = currentConnections.get(connection.id);
-          if (JSON.stringify(existing) !== JSON.stringify(connection)) {
-            callback({
-              type: 'modified',
-              id: connection.id,
-              connection: connection,
-            });
+        // Use global subscription manager
+        const { unsubscribe: globalUnsubscribe } = getOrCreateSubscription(
+          subscriptionKey,
+          SUBSCRIPTION_TYPES.CONNECTIONS,
+          () => {
+            // Create the actual Firebase subscription
+            return onSnapshot(
+              cellRef,
+              { includeMetadataChanges: false },
+              (snapshot) => {
+                if (!snapshot.exists()) {
+                  return;
+                }
+
+                const cellData = snapshot.data();
+                const cellConnections = cellData.connections || {};
+
+                // Process each connection in the cell
+                Object.entries(cellConnections).forEach(
+                  ([connectionId, connectionData]) => {
+                    const cacheKey = `${spaceId}_${connectionId}`;
+
+                    // Check if connection data has changed
+                    const cachedData = connectionCache.get(cacheKey);
+                    let hasChanged = false;
+
+                    if (cachedData) {
+                      hasChanged =
+                        JSON.stringify(cachedData) !==
+                        JSON.stringify(connectionData);
+                    } else {
+                      hasChanged = true;
+                    }
+
+                    if (hasChanged) {
+                      connectionCache.set(
+                        cacheKey,
+                        JSON.parse(JSON.stringify(connectionData))
+                      );
+                      callback({
+                        type: 'added',
+                        id: connectionId,
+                        connection: connectionData,
+                        cellCoords: { x, y, z: z || 0 },
+                      });
+                    }
+                  }
+                );
+
+                // Handle removed connections (compare with cache)
+                const currentConnectionIds = new Set(
+                  Object.keys(cellConnections)
+                );
+                const cachedConnectionIds = new Set();
+
+                for (const cacheKey of connectionCache.keys()) {
+                  if (cacheKey.startsWith(`${spaceId}_`)) {
+                    const connectionId = cacheKey.substring(
+                      `${spaceId}_`.length
+                    );
+                    const connectionData = connectionCache.get(cacheKey);
+
+                    // Check if this connection belongs to this cell
+                    if (connectionData && connectionData.cellId === cellKey) {
+                      cachedConnectionIds.add(connectionId);
+                    }
+                  }
+                }
+
+                // Find removed connections
+                for (const connectionId of cachedConnectionIds) {
+                  if (!currentConnectionIds.has(connectionId)) {
+                    const cacheKey = `${spaceId}_${connectionId}`;
+                    connectionCache.delete(cacheKey);
+                    callback({
+                      type: 'removed',
+                      id: connectionId,
+                      cellCoords: { x, y, z: z || 0 },
+                    });
+                  }
+                }
+              },
+              (error) => {
+                if (error.code === 'permission-denied') {
+                  return;
+                }
+              }
+            );
           }
-        }
-      });
+        );
 
-      // Check for removed connections
-      currentConnections.forEach((connection, id) => {
-        if (!newConnectionMap.has(id)) {
-          callback({
-            type: 'removed',
-            id: id,
-            connection: connection,
-          });
-        }
-      });
-
-      currentConnections = newConnectionMap;
-    } catch (error) {
-      console.error('Error updating cell connections:', error);
+        // Store the cleanup function
+        unsubscribeFunctions.set(cellKey, globalUnsubscribe);
+      }
+    } catch {
+      // Error starting connection subscriptions
     }
   };
-  // Initial load only
-  updateConnections();
+
+  startCellSubscriptions();
 
   // Return cleanup function
   return () => {
     isSubscribed = false;
-    currentConnections.clear();
+    // Clean up all subscriptions created by this instance
+    for (const unsubscribe of unsubscribeFunctions.values()) {
+      unsubscribe();
+    }
+    unsubscribeFunctions.clear();
   };
 };
 
@@ -320,12 +389,11 @@ export const deleteConnection = async (userId, spaceId, connectionId) => {
       spaceId,
       connectionId
     );
-
     if (!success) {
-      console.warn('Failed to remove connection from cells');
+      // Failed to remove connection from cells
     }
-  } catch (error) {
-    console.error('Error deleting connection:', error);
+  } catch {
+    // Error deleting connection
   }
 };
 
@@ -335,10 +403,8 @@ window.DEBUG_CONNECTIONS = false;
 // Add utilities for debugging
 export const enableConnectionDebugMode = () => {
   window.DEBUG_CONNECTIONS = true;
-  console.log('Connection debug mode enabled');
 };
 
 export const disableConnectionDebugMode = () => {
   window.DEBUG_CONNECTIONS = false;
-  console.log('Connection debug mode disabled');
 };

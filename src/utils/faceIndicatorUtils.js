@@ -1,8 +1,3 @@
-import {
-  registerObjectConnection,
-  registerConnectedPair,
-  handleTextObjectConnection,
-} from '../services/connectionManager';
 import { saveConnection } from '../services/connectionsService';
 import { calculateFacePosition } from './facePositionUtils';
 
@@ -25,7 +20,7 @@ import { calculateFacePosition } from './facePositionUtils';
  * @param {Boolean} params.isConnectMode Current connect mode state
  * @returns {Object} Result object with success status and message
  */
-export const handleFaceIndicatorClick = ({
+export const handleFaceIndicatorClick = async ({
   indicator,
   objects,
   selectedIndicatorsRef,
@@ -146,20 +141,42 @@ export const handleFaceIndicatorClick = ({
           faceCenter: indicator.faceCenter || endPosition,
           facePosition: endPosition,
         };
-
         console.log('Creating text connection with text as start:', {
           textIndicator,
           endObj: enhancedEndObj,
         });
 
-        // Pass the indicator object that has position data
-        result = handleTextObjectConnection(
-          textIndicator, // Pass the indicator instead of just the object
-          enhancedEndObj, // Use the enhanced object with face position
-          indicator.face,
-          user?.uid,
-          currentSpaceId
-        );
+        // Create text connection directly using the new store system
+        const connectionId = `${Date.now()}-${Math.random()
+          .toString(36)
+          .substr(2, 9)}`;
+        const textPosition = textIndicator.worldPosition ||
+          textIndicator.position || [0, 0, 0];
+        const endFacePosition = calculateFacePosition(indicator);
+
+        const newConnection = {
+          id: connectionId,
+          start: {
+            type: 'text',
+            face: 'top', // Default face for text objects
+            objectId: textIndicator.id || textIndicator.objectId,
+            position: textPosition,
+            faceCenter: textPosition,
+          },
+          end: {
+            type: enhancedEndObj.type || 'cube',
+            face: indicator.face,
+            objectId: enhancedEndObj.id,
+            position: endFacePosition,
+            faceCenter: indicator.faceCenter || endFacePosition,
+          },
+          lineStyle: 'straight',
+          color: 'black',
+          text: '',
+          textStyle: { fontSize: 1, color: 'black' },
+        };
+
+        result = { success: true, connection: newConnection };
       } else {
         // Text object is the end - similar approach with current indicator
         // Calculate face position for the start object
@@ -174,19 +191,41 @@ export const handleFaceIndicatorClick = ({
           faceCenter: startIndicator.faceCenter || startPosition,
           facePosition: startPosition,
         };
-
         console.log('Creating text connection with text as end:', {
           startObj: enhancedStartObj,
           indicator,
         });
 
-        result = handleTextObjectConnection(
-          indicator, // Pass the current indicator with position data
-          enhancedStartObj, // Use the enhanced object with face position
-          startIndicator.face,
-          user?.uid,
-          currentSpaceId
-        );
+        // Create text connection directly using the new store system
+        const connectionId = `${Date.now()}-${Math.random()
+          .toString(36)
+          .substr(2, 9)}`;
+        const textPosition = indicator.worldPosition ||
+          indicator.position || [0, 0, 0];
+
+        const newConnection = {
+          id: connectionId,
+          start: {
+            type: enhancedStartObj.type || 'cube',
+            face: startIndicator.face,
+            objectId: enhancedStartObj.id,
+            position: startPosition,
+            faceCenter: startIndicator.faceCenter || startPosition,
+          },
+          end: {
+            type: 'text',
+            face: 'top', // Default face for text objects
+            objectId: indicator.id || indicator.objectId,
+            position: textPosition,
+            faceCenter: textPosition,
+          },
+          lineStyle: 'straight',
+          color: 'black',
+          text: '',
+          textStyle: { fontSize: 1, color: 'black' },
+        };
+
+        result = { success: true, connection: newConnection };
       }
 
       if (result.success && result.connection) {
@@ -289,19 +328,7 @@ export const handleFaceIndicatorClick = ({
       text: '',
       textStyle: { fontSize: 1, color: 'black' },
     };
-
     console.log('Connection created:', newConnection);
-
-    // Register this connection in the connection manager with face information
-    registerObjectConnection(startObjectId, connectionId);
-    registerObjectConnection(endObjectId, connectionId);
-    registerConnectedPair(
-      startObjectId,
-      endObjectId,
-      connectionId,
-      startIndicator.face,
-      indicator.face
-    );
 
     // Update local state immediately for clickability
     setConnections((prev) => [...prev, newConnection]);
@@ -310,20 +337,28 @@ export const handleFaceIndicatorClick = ({
     if (user) {
       try {
         const spaceOwnerId = window.currentSpaceOwner || user.uid;
-        saveConnection(spaceOwnerId, currentSpaceId, newConnection).catch(
-          (err) => {
-            console.error('Failed to save connection:', err);
-            setConnections((prev) =>
-              prev.filter((conn) => conn.id !== connectionId)
-            );
-          }
-        );
+        console.log('🔄 Saving connection to database...', {
+          connectionId,
+          spaceOwnerId,
+          currentSpaceId,
+        });
+
+        await saveConnection(spaceOwnerId, currentSpaceId, newConnection);
+        console.log('✅ Connection saved successfully to database');
       } catch (err) {
-        console.error('Error in connection save:', err);
+        console.error('❌ Failed to save connection to database:', err);
+        // Rollback local state on save failure
         setConnections((prev) =>
           prev.filter((conn) => conn.id !== connectionId)
         );
+        return {
+          success: false,
+          complete: true,
+          message: 'Failed to save connection to database',
+        };
       }
+    } else {
+      console.warn('⚠️ No user available, connection not saved to database');
     }
 
     // Reset indicator selection states

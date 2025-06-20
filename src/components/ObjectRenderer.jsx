@@ -34,78 +34,22 @@ const ObjectRenderer = ({
       <Cube
         key={obj.id}
         id={obj.id}
-        position={obj.position}
-        color={obj.color}
-        headerText={obj.headerText || ''}
-        scale={obj.scale}
-        faceColors={obj.faceColors}
-        faceTexts={
-          obj.faceTexts || {
-            front: '',
-            back: '',
-            top: '',
-            bottom: '',
-            right: '',
-            left: '',
-          }
-        }
-        textStyle={
-          obj.textStyle || {
-            fontSize: 1.5,
-            color: 'black',
-            underline: false,
-          }
-        }
-        faceTextStyles={
-          obj.faceTextStyles || {
-            front: {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            },
-            back: {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            },
-            top: {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            },
-            bottom: {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            },
-            right: {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            },
-            left: {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            },
-          }
-        }
         selected={selectedId === obj.id}
         onClick={() => handleObjectClick(obj.id)}
-        onMove={(newPosition) => handleObjectMove(obj.id, newPosition)}
         onUpdate={handleObjectUpdate}
         disableOrbitControls={disableOrbitControls}
         enableOrbitControls={enableOrbitControls}
         onFaceIndicatorClick={handleFaceIndicatorClick}
         onFaceClick={handleFaceClick}
-        showAllIndicators={showAllCubesIndicators}
+        showAllCubesIndicators={showAllCubesIndicators}
         activeIndicator={activeIndicator}
         indicatorMode={indicatorMode}
         connections={connections}
         selectedIndicators={selectedIndicators}
         activeTextStyleUI={activeTextStyleUI}
         setActiveTextStyleUI={setActiveTextStyleUI}
-        onIndicatorDeselected={handleIndicatorDeselected}
+        handleIndicatorDeselected={handleIndicatorDeselected}
+        registerTransformingObject={registerTransformingObject}
         onTransformStart={() => registerTransformingObject(obj.id, true)}
         onTransformEnd={() => registerTransformingObject(obj.id, false)}
         onMatrixChanged={(matrixWorld) =>
@@ -117,36 +61,27 @@ const ObjectRenderer = ({
           stackBehavior: 'detach_on_modify',
         }}
         onDelete={() => handleObjectDelete(obj.id)}
+        handleObjectMove={handleObjectMove}
+        onMove={(newPosition) =>
+          handleObjectMove(obj.id, newPosition, false, false)
+        }
       />
     );
   }
-
   if (obj.type === 'sphere') {
     return (
       <Sphere
         key={obj.id}
         id={obj.id}
-        position={obj.position}
-        scale={obj.scale || [1, 1, 1]}
-        headerText={obj.headerText || ''}
-        headerStyle={
-          obj.headerStyle || {
-            fontSize: 'medium',
-            color: 'black',
-            underline: false,
-          }
-        }
-        lineColor={obj.lineColor || 'black'}
-        faceColors={obj.faceColors || {}}
-        faceTexts={obj.faceTexts || {}}
-        faceTextStyles={obj.faceTextStyles || {}}
         selected={selectedId === obj.id}
         onClick={() => handleObjectClick(obj.id)}
         showAllIndicators={showAllCubesIndicators}
         onIndicatorSelected={handleIndicatorSelected}
         globalIndicatorSelected={globalIndicatorSelected}
         onFaceIndicatorClick={handleFaceIndicatorClick}
-        onMove={(newPosition) => handleObjectMove(obj.id, newPosition)}
+        onMove={(newPosition) =>
+          handleObjectMove(obj.id, newPosition, false, false)
+        }
         connections={connections}
         onUpdate={handleObjectUpdate}
         onIndicatorDeselected={handleIndicatorDeselected}
@@ -168,7 +103,9 @@ const ObjectRenderer = ({
         onIndicatorSelected={handleIndicatorSelected}
         globalIndicatorSelected={globalIndicatorSelected}
         onFaceIndicatorClick={handleFaceIndicatorClick}
-        onMove={(newPosition) => handleObjectMove(obj.id, newPosition)}
+        onMove={(newPosition) =>
+          handleObjectMove(obj.id, newPosition, false, false)
+        }
         connections={connections}
         selectedIndicators={selectedIndicators}
         indicatorMode={indicatorMode}
@@ -207,15 +144,6 @@ const ObjectRenderer = ({
         selectedIndicators={selectedIndicators}
         indicatorMode={indicatorMode}
         onUpdate={handleObjectUpdate}
-        initialText={obj.text || ''}
-        initialTextStyle={(() => {
-          const textStyle = obj.textStyle || { fontSize: 32, color: 'black' };
-          // Filter out 'type' field that shouldn't be in textStyle
-          // eslint-disable-next-line no-unused-vars
-          const { type, ...cleanTextStyle } = textStyle;
-          return cleanTextStyle;
-        })()}
-        initialScale={obj.scale || [15, 10, 1]}
         onDelete={() => handleObjectDelete(obj.id)}
         registerTransformingObject={registerTransformingObject}
         onResizeStart={() => registerTransformingObject(obj.id, true)}

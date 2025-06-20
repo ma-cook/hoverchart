@@ -18,10 +18,6 @@ export const resolveConnectionPositions = (connections, objects) => {
     return connections || [];
   }
 
-  console.log(
-    `🔧 Resolving positions for ${connections.length} connections against ${objects.length} objects`
-  );
-
   return connections.map((connection) => {
     if (!connection.start?.objectId || !connection.end?.objectId) {
       return connection;
@@ -33,34 +29,22 @@ export const resolveConnectionPositions = (connections, objects) => {
     );
     const endObject = objects.find(
       (obj) => obj.id.toString() === connection.end.objectId.toString()
-    );
-
-    // If either object isn't found, return the connection as-is
+    ); // If either object isn't found, return the connection as-is
     if (!startObject || !endObject) {
-      console.warn(`⚠️ Objects not found for connection ${connection.id}:`, {
-        startObjectId: connection.start.objectId,
-        endObjectId: connection.end.objectId,
-        startFound: !!startObject,
-        endFound: !!endObject,
-      });
       return connection;
     }
 
     // Create resolved connection with updated positions
-    const resolvedConnection = { ...connection };
-
-    // Resolve start position
+    const resolvedConnection = { ...connection }; // Resolve start position
     resolvedConnection.start = resolveConnectionEndpoint(
       connection.start,
-      startObject,
-      'start'
+      startObject
     );
 
     // Resolve end position
     resolvedConnection.end = resolveConnectionEndpoint(
       connection.end,
-      endObject,
-      'end'
+      endObject
     );
 
     return resolvedConnection;
@@ -74,33 +58,41 @@ export const resolveConnectionPositions = (connections, objects) => {
  * @param {String} type - 'start' or 'end' for logging
  * @returns {Object} - Resolved endpoint data
  */
-const resolveConnectionEndpoint = (endpoint, currentObject, type) => {
+const resolveConnectionEndpoint = (endpoint, currentObject) => {
   const resolvedEndpoint = { ...endpoint };
 
   try {
     // For face-based connections (cubes, dodecahedrons), recalculate face position
     if (endpoint.face && endpoint.type !== 'text') {
-      // Use face calculation for cubes and other face-based objects
-      const faceWorldPosition = calculateFaceWorldPosition(
-        currentObject.position,
-        currentObject.scale || [1, 1, 1],
-        endpoint.face
-      );
+      let faceWorldPosition;
+      // Detect object type by face identifier
+      if (typeof endpoint.face === 'number') {
+        // Dodecahedron: face is a number (0-11)
+        // Create an indicator object for calculateFacePosition
+        const dodecahedronIndicator = {
+          type: 'sphere',
+          face: endpoint.face,
+          faceCenter: endpoint.faceCenter,
+          cube: {
+            position: currentObject.position,
+            scale: currentObject.scale || [1, 1, 1],
+          },
+          position: currentObject.position,
+          objectId: currentObject.id,
+        };
 
-      // Update all position fields to maintain consistency
+        faceWorldPosition = calculateFacePosition(dodecahedronIndicator);
+      } else {
+        // Cube: face is a string ('top', 'bottom', etc.)
+        faceWorldPosition = calculateFaceWorldPosition(
+          currentObject.position,
+          currentObject.scale || [1, 1, 1],
+          endpoint.face
+        );
+      } // Update all position fields to maintain consistency
       resolvedEndpoint.position = faceWorldPosition;
       resolvedEndpoint.worldPosition = faceWorldPosition;
       resolvedEndpoint.facePosition = faceWorldPosition;
-
-      console.log(
-        `✅ Resolved ${type} face position for object ${currentObject.id}:`,
-        {
-          face: endpoint.face,
-          oldPosition: endpoint.position,
-          newPosition: faceWorldPosition,
-          objectPosition: currentObject.position,
-        }
-      );
     }
     // For text objects, calculate indicator position
     else if (endpoint.type === 'text') {
@@ -121,32 +113,14 @@ const resolveConnectionEndpoint = (endpoint, currentObject, type) => {
       resolvedEndpoint.position = calculatedPosition;
       resolvedEndpoint.worldPosition = calculatedPosition;
       resolvedEndpoint.facePosition = calculatedPosition;
-
-      console.log(
-        `✅ Resolved ${type} text position for object ${currentObject.id}:`,
-        {
-          oldPosition: endpoint.position,
-          newPosition: calculatedPosition,
-          objectPosition: currentObject.position,
-        }
-      );
-    }
-    // For other object types, use object center position
+    } // For other object types, use object center position
     else {
       resolvedEndpoint.position = currentObject.position;
       resolvedEndpoint.worldPosition = currentObject.position;
       resolvedEndpoint.facePosition = currentObject.position;
-
-      console.log(
-        `✅ Resolved ${type} center position for object ${currentObject.id}:`,
-        {
-          oldPosition: endpoint.position,
-          newPosition: currentObject.position,
-        }
-      );
     }
 
-    // Update cube data to reflect current object state
+    // Update cube data to reflect current object
     if (resolvedEndpoint.cube) {
       resolvedEndpoint.cube = {
         ...resolvedEndpoint.cube,
@@ -154,8 +128,8 @@ const resolveConnectionEndpoint = (endpoint, currentObject, type) => {
         scale: currentObject.scale || resolvedEndpoint.cube.scale || [1, 1, 1],
       };
     }
-  } catch (error) {
-    console.error(`❌ Error resolving ${type} position for connection:`, error);
+  } catch {
+    // Error resolving position for connection
     // Fallback to object position
     resolvedEndpoint.position = currentObject.position;
     resolvedEndpoint.worldPosition = currentObject.position;

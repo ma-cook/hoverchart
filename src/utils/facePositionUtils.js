@@ -73,8 +73,8 @@ export const calculateFacePosition = (indicator, objects) => {
 
             // Apply offset based on scale
             return [worldPos.x, worldPos.y - 5 * scale[1], worldPos.z];
-          } catch (e) {
-            console.error('Error getting position from text plane:', e);
+          } catch {
+            // Error getting position from text plane
           }
         }
 
@@ -170,8 +170,8 @@ export const calculateFacePosition = (indicator, objects) => {
             worldPos.add(new THREE.Vector3(...offset));
 
             return [worldPos.x, worldPos.y, worldPos.z];
-          } catch (e) {
-            console.error('Error getting position from plane reference:', e);
+          } catch {
+            // Error getting position from plane reference
           }
         }
 
@@ -246,18 +246,21 @@ export const calculateFacePosition = (indicator, objects) => {
         // Calculate the offset based on face name and cube size
         const cubeSize = 5; // Half-size of cube
         let faceOffset;
-
         if (
           indicator.type === 'sphere' &&
           Array.isArray(indicator.faceCenter)
         ) {
           const localFacePos = new THREE.Vector3(...indicator.faceCenter);
+
           localFacePos.multiply(worldScale);
-          return [
+
+          const finalPos = [
             worldPos.x + localFacePos.x,
             worldPos.y + localFacePos.y,
             worldPos.z + localFacePos.z,
           ];
+
+          return finalPos;
         } else {
           // Standard cube face offset calculation
           switch (indicator.face) {

@@ -1,7 +1,8 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { startBroadcasting, joinBroadcast } from '../services/webRservice';
+import { useScreenShareStore } from '../stores';
 
 const ScreenShareStream = ({
   active = false,
@@ -16,10 +17,21 @@ const ScreenShareStream = ({
   onBroadcastStopped,
   onViewerCountChange,
 }) => {
-  const [hasError, setHasError] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [retryTrigger, setRetryTrigger] = useState(0);
+  // Use screen share store
+  const streamId = `${userId}-${spaceId}-${planeId}`;
+  const getScreenShare = useScreenShareStore((state) => state.getScreenShare);
+  const setScreenShareLoading = useScreenShareStore(
+    (state) => state.setScreenShareLoading
+  );
+  const setScreenShareError = useScreenShareStore(
+    (state) => state.setScreenShareError
+  );
+  const retryScreenShare = useScreenShareStore(
+    (state) => state.retryScreenShare
+  );
+
+  const screenShare = getScreenShare(streamId);
+  const { hasError, errorMessage, isLoading, retryTrigger } = screenShare;
 
   // Refs
   const videoRef = useRef(null);
@@ -63,15 +75,13 @@ const ScreenShareStream = ({
       return;
     }
 
-    let effectCancelled = false;
-
-    // Capture current values to avoid re-runs when these change
+    let effectCancelled = false; // Capture current values to avoid re-runs when these change
     const currentMeshRef = meshRef.current;
     const currentOnBroadcastStarted = onBroadcastStartedRef.current;
     const currentOnViewerCountChange = onViewerCountChangeRef.current;
 
-    setIsLoading(true);
-    setHasError(false);
+    setScreenShareLoading(streamId, true);
+    setScreenShareError(streamId, false);
 
     // Create video element
     console.log('Creating video element for screen share...');
@@ -109,9 +119,12 @@ const ScreenShareStream = ({
           });
         } catch (error) {
           console.error('Error in screen share setup:', error);
-          setHasError(true);
-          setErrorMessage('Error setting up screen share: ' + error.message);
-          setIsLoading(false);
+          setScreenShareError(
+            streamId,
+            true,
+            'Error setting up screen share: ' + error.message
+          );
+          setScreenShareLoading(streamId, false);
           return;
         }
 
@@ -159,7 +172,7 @@ const ScreenShareStream = ({
               console.log('No mesh found to apply screen share texture to');
             }
 
-            setIsLoading(false);
+            setScreenShareLoading(streamId, false);
 
             // Start broadcasting the screen share
             startBroadcasting(userId, spaceId, planeId, stream)
@@ -195,18 +208,20 @@ const ScreenShareStream = ({
               .catch((error) => {
                 console.log('Screen share broadcast service failed:', error);
                 if (effectCancelled) return;
-                setErrorMessage(
+                setScreenShareError(
+                  streamId,
+                  true,
                   'Failed to start screen share broadcast: ' + error.message
                 );
-                setHasError(true);
-                setIsLoading(false);
+                setScreenShareLoading(streamId, false);
               });
           } catch (error) {
             console.log('Screen share video play failed with error:', error);
             if (effectCancelled) return;
-            setIsLoading(false);
-            setHasError(true);
-            setErrorMessage(
+            setScreenShareLoading(streamId, false);
+            setScreenShareError(
+              streamId,
+              true,
               'Failed to start screen share video: ' + error.message
             );
           }
@@ -234,9 +249,12 @@ const ScreenShareStream = ({
       .catch((error) => {
         console.log('getDisplayMedia failed:', error);
         if (effectCancelled) return;
-        setIsLoading(false);
-        setHasError(true);
-        setErrorMessage('Screen share access error: ' + error.message);
+        setScreenShareLoading(streamId, false);
+        setScreenShareError(
+          streamId,
+          true,
+          'Screen share access error: ' + error.message
+        );
       });
 
     return () => {
@@ -245,7 +263,18 @@ const ScreenShareStream = ({
       );
       effectCancelled = true;
     };
-  }, [active, isScreenSharing, userId, spaceId, planeId, retryTrigger]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    active,
+    isScreenSharing,
+    userId,
+    spaceId,
+    planeId,
+    retryTrigger,
+    meshRef,
+    screenShareConstraints,
+    streamId,
+  ]);
 
   // Receiving effect (same as WebcamStream)
   useEffect(() => {
@@ -261,9 +290,8 @@ const ScreenShareStream = ({
     let currentStream = null;
     const currentBroadcastId = broadcastData.broadcastId;
     const currentMesh = meshRef.current;
-
-    setIsLoading(true);
-    setHasError(false);
+    setScreenShareLoading(streamId, true);
+    setScreenShareError(streamId, false);
 
     // Create or reuse video element for remote stream
     if (!remoteVideoRef.current) {
@@ -337,42 +365,49 @@ const ScreenShareStream = ({
                   });
                   currentMesh.material = material;
                 }
-
                 remoteVideoRef.current
                   .play()
                   .then(() => {
-                    setIsLoading(false);
+                    setScreenShareLoading(streamId, false);
                   })
                   .catch((e) => {
                     if (e.name !== 'AbortError') {
-                      setErrorMessage('Remote screen share playback error');
-                      setHasError(true);
-                      setIsLoading(false);
+                      setScreenShareError(
+                        streamId,
+                        true,
+                        'Remote screen share playback error'
+                      );
+                      setScreenShareLoading(streamId, false);
                     }
                   });
 
                 remoteVideoRef.current.onloadedmetadata = null;
               };
-
               remoteVideoRef.current.onplaying = () => {
                 if (remoteVideoRef.current?.srcObject !== currentStream) return;
-                setIsLoading(false);
+                setScreenShareLoading(streamId, false);
               };
 
               remoteVideoRef.current.onerror = () => {
                 if (remoteVideoRef.current?.srcObject !== currentStream) return;
-                setErrorMessage('Remote screen share playback error');
-                setHasError(true);
-                setIsLoading(false);
+                setScreenShareError(
+                  streamId,
+                  true,
+                  'Remote screen share playback error'
+                );
+                setScreenShareLoading(streamId, false);
               };
             }
           }
         };
       } catch (error) {
         if (!isMounted.current) return;
-        setErrorMessage(`Failed to connect to screen share: ${error.message}`);
-        setHasError(true);
-        setIsLoading(false);
+        setScreenShareError(
+          streamId,
+          true,
+          `Failed to connect to screen share: ${error.message}`
+        );
+        setScreenShareLoading(streamId, false);
       }
     };
 
@@ -391,14 +426,13 @@ const ScreenShareStream = ({
       if (textureRef.current) {
         textureRef.current.dispose();
         textureRef.current = null;
-      }
-
-      // Clear mesh material map
+      } // Clear mesh material map
       if (currentMesh?.material?.map) {
         currentMesh.material.map = null;
         currentMesh.material.needsUpdate = true;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     active,
     isReceiving,
@@ -408,6 +442,7 @@ const ScreenShareStream = ({
     meshRef,
     planeId,
     retryTrigger,
+    streamId,
   ]);
 
   // Texture update effect
@@ -541,12 +576,12 @@ const ScreenShareStream = ({
                 gap: '10px',
               }}
             >
-              <div>⚠️ {errorMessage}</div>
+              <div>⚠️ {errorMessage}</div>{' '}
               <button
                 onClick={() => {
-                  setHasError(false);
-                  setIsLoading(true);
-                  setRetryTrigger((prev) => prev + 1);
+                  setScreenShareError(streamId, false);
+                  setScreenShareLoading(streamId, true);
+                  retryScreenShare(streamId);
                 }}
                 style={{
                   padding: '5px 10px',

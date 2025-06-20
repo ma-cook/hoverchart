@@ -1,5 +1,5 @@
-import { objectsAreConnected } from '../services/connectionManager';
 import * as THREE from 'three';
+import { useConnectionStore } from '../stores';
 
 /**
  * Checks if a connection can be created between two objects
@@ -26,9 +26,15 @@ export const validateConnection = (startObj, endObj) => {
       message: 'Cannot connect an object to itself',
     };
   }
+  // Check for existing connection using store
+  const connectionStore = useConnectionStore.getState();
+  const existingConnection = connectionStore.connections.find(
+    (conn) =>
+      (conn.start?.objectId === startId && conn.end?.objectId === endId) ||
+      (conn.start?.objectId === endId && conn.end?.objectId === startId)
+  );
 
-  // Check for existing connection
-  if (objectsAreConnected(startId, endId)) {
+  if (existingConnection) {
     return {
       valid: false,
       message: 'Objects are already connected',
@@ -134,4 +140,110 @@ export const prepareTextObjectIndicator = (plane, id, position, scale) => {
     console.error('Error preparing text object indicator:', error);
     return null;
   }
+};
+
+/**
+ * Store-based utility functions for connection management
+ */
+
+/**
+ * Check if two objects are connected using the connection store
+ * @param {string} objectId1 - First object ID
+ * @param {string} objectId2 - Second object ID
+ * @returns {boolean} - True if objects are connected
+ */
+export const objectsAreConnectedInStore = (objectId1, objectId2) => {
+  const connectionStore = useConnectionStore.getState();
+  const connections = connectionStore.connections;
+
+  return connections.some(
+    (conn) =>
+      (conn.start?.objectId === String(objectId1) &&
+        conn.end?.objectId === String(objectId2)) ||
+      (conn.start?.objectId === String(objectId2) &&
+        conn.end?.objectId === String(objectId1))
+  );
+};
+
+/**
+ * Get all connections for a specific object using the connection store
+ * @param {string} objectId - Object ID
+ * @returns {Array} - Array of connections involving the object
+ */
+export const getConnectionsForObject = (objectId) => {
+  const connectionStore = useConnectionStore.getState();
+  return connectionStore.getConnectionsByObject(String(objectId));
+};
+
+/**
+ * Create a new connection in the store
+ * @param {Object} startPoint - Start point data
+ * @param {Object} endPoint - End point data
+ * @returns {string} - Connection ID
+ */
+export const createConnectionInStore = (startPoint, endPoint) => {
+  const connectionStore = useConnectionStore.getState();
+  const connectionId = connectionStore.generateConnectionId();
+
+  connectionStore.createConnection(connectionId, {
+    start: startPoint,
+    end: endPoint,
+  });
+
+  return connectionId;
+};
+
+/**
+ * Update connection positions when objects move
+ * @param {string} objectId - Object that moved
+ * @param {Array} newPosition - New position [x, y, z]
+ */
+export const updateConnectionPositionsInStore = (objectId, newPosition) => {
+  const connectionStore = useConnectionStore.getState();
+  connectionStore.updateConnectionPositions(String(objectId), newPosition);
+};
+
+/**
+ * Remove all connections for an object when it's deleted
+ * @param {string} objectId - Object being deleted
+ */
+export const removeConnectionsForObject = (objectId) => {
+  const connectionStore = useConnectionStore.getState();
+  connectionStore.deleteConnectionsByObject(String(objectId));
+};
+
+/**
+ * Get connection creation mode state
+ * @returns {boolean} - True if in connection creation mode
+ */
+export const isInConnectionCreationMode = () => {
+  const connectionStore = useConnectionStore.getState();
+  return connectionStore.connectionCreationMode;
+};
+
+/**
+ * Start connection creation mode
+ * @param {Object} startPoint - Starting point for connection
+ */
+export const startConnectionCreation = (startPoint) => {
+  const connectionStore = useConnectionStore.getState();
+  connectionStore.startConnectionCreation(startPoint);
+};
+
+/**
+ * Complete connection creation
+ * @param {Object} endPoint - End point for connection
+ * @returns {string|null} - Connection ID if successful, null if failed
+ */
+export const completeConnectionCreation = (endPoint) => {
+  const connectionStore = useConnectionStore.getState();
+  return connectionStore.completeConnectionCreation(endPoint);
+};
+
+/**
+ * Cancel connection creation mode
+ */
+export const cancelConnectionCreation = () => {
+  const connectionStore = useConnectionStore.getState();
+  connectionStore.cancelConnectionCreation();
 };

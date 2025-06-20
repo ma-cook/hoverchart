@@ -6,7 +6,6 @@ import './App.css';
 // Component imports
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
-import ConnectionUpdater from './components/ConnectionUpdater';
 import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
 import ObjectRenderer from './components/ObjectRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
@@ -15,15 +14,20 @@ import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 // Hook imports
 import { useAuthState } from './hooks/useAuthState';
 import { useSpaceManager } from './hooks/useSpaceManager';
-import { useConnections } from './hooks/useConnections';
 import { useObjects } from './hooks/useObjects';
 import { useIndicators } from './hooks/useIndicators';
 import { useSpatialManager } from './hooks/useSpatialManager';
 import { useCentralizedBroadcastManager } from './hooks/useCentralizedBroadcastManager';
+import { useConnections } from './hooks/useConnections';
+import {
+  useObjectsStore,
+  useConnectionStore,
+  usePlaneStore,
+  useCubeStore,
+  useDodecahedronStore,
+} from './stores';
 
 // Utility imports
-import { memoize } from './utils/perfUtils';
-import { calculateFacePosition } from './utils/facePositionUtils';
 import {
   handleObjectMove,
   handleObjectUpdate,
@@ -33,6 +37,7 @@ import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { signInUser } from './services/authService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
 import { CELL_SIZE } from './services/spatialPartitioning'; // Import CELL_SIZE constant
+import { setIsInitialLoading as setGlobalInitialLoading } from './utils/loadingState';
 import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
@@ -44,33 +49,69 @@ import { initAnimationSystem } from './utils/animationUtils';
 const App = () => {
   // Base state
   const [backgroundColor] = useState('white');
+  const [publicSpaceReady, setPublicSpaceReady] = useState(false);
+  const [isLookingUpPublicSpace, setIsLookingUpPublicSpace] = useState(false);
+  const [currentSpaceOwner, setCurrentSpaceOwner] = useState(null);
   const cameraRef = useRef();
-  const intentionalSpaceChangeRef = useRef(false);
+  const intentionalSpaceChangeRef = useRef(false); // Get objects from store with safety check
+  const objectsFromStore = useObjectsStore((state) => state.objects);
+  const objects = useMemo(() => {
+    return Array.isArray(objectsFromStore) ? objectsFromStore : [];
+  }, [objectsFromStore]);
+  const setObjects = useObjectsStore((state) => state.setObjects);
+  const isRecentlyDeleted = useObjectsStore((state) => state.isRecentlyDeleted);
+  const setIsInitialLoading = useObjectsStore(
+    (state) => state.setIsInitialLoading
+  ); // Plane store
+  const setPlaneShowTextStyleUI = usePlaneStore(
+    (state) => state.setPlaneShowTextStyleUI
+  );
+  const setPlaneShowHeaderStyleUI = usePlaneStore(
+    (state) => state.setPlaneShowHeaderStyleUI
+  );
+  // Cube store
+  const setCubeShowHeaderTextStyleUI = useCubeStore(
+    (state) => state.setCubeShowHeaderTextStyleUI
+  );
 
-  // Object state that needs to be initialized first
-  const [objects, setObjects] = useState([]);
-
+  // Dodecahedron store
+  const setDodecahedronShowStyleMenu = useDodecahedronStore(
+    (state) => state.setDodecahedronShowStyleMenu
+  );
+  const setDodecahedronShowFaceTextStyleMenu = useDodecahedronStore(
+    (state) => state.setDodecahedronShowFaceTextStyleMenu
+  );
   // Auth and space hooks
   const { user, isAuthReady, isCheckingUrlAuth } = useAuthState();
   const { currentSpaceId } = useSpaceManager({
     user,
     intentionalSpaceChangeRef,
-  }); // Spatial partitioning hook with object change handler
-  const handleSpatialObjectChange = useCallback((change) => {
-    console.log(`🔍 handleSpatialObjectChange called with:`, change);
-    if (change.source === 'cell-unload') {
-      // Remove objects when their cells are unloaded
-      setObjects((prev) => {
-        const filtered = prev.filter(
-          (obj) => obj.id.toString() !== change.id.toString()
-        );
-        console.log(
-          `🧹 Removed object ${change.id} due to cell unload. Objects before: ${prev.length}, after: ${filtered.length}`
-        );
-        return filtered;
-      });
-    }
-  }, []);
+  });
+  // Calculate effective space ID early to avoid circular dependency
+  const publicSpaceId = window.publicAccessSpace;
+  const effectiveSpaceId = publicSpaceId || currentSpaceId;
+
+  // Calculate access early for spatial manager
+  const canViewSpace = !!(
+    user ||
+    (publicSpaceId && (currentSpaceOwner || publicSpaceReady))
+  );
+
+  // Spatial partitioning hook with object change handler
+  const handleSpatialObjectChange = useCallback(
+    (change) => {
+      if (change.source === 'cell-unload') {
+        // Remove objects when their cells are unloaded
+        setObjects((prev) => {
+          const filtered = prev.filter(
+            (obj) => obj.id.toString() !== change.id.toString()
+          );
+          return filtered;
+        });
+      }
+    },
+    [setObjects]
+  );
   const {
     loadedCells,
     isInitialized: isSpatialInitialized,
@@ -79,64 +120,60 @@ const App = () => {
     untrackObjectInCell,
   } = useSpatialManager({
     user,
-    currentSpaceId,
+    currentSpaceId: canViewSpace ? effectiveSpaceId : null, // Only pass spaceId if user can view space
+    currentSpaceOwner, // Pass owner state to enable re-initialization when resolved
     cameraRef,
     onObjectsChange: handleSpatialObjectChange,
-  });
-  // Initialize animation system for connection line animations
+  }); // Initialize animation system for connection line animations
   useEffect(() => {
-    console.log('🎬 Initializing animation system...');
     initAnimationSystem();
-    console.log('✅ Animation system initialized');
   }, []);
 
   // Initialize centralized broadcast manager
   useCentralizedBroadcastManager();
-
-  // Setup debug context for spatial partitioning
-  useEffect(() => {
-    window._spatialManagerDebug = {
+  // Setup debug context for spatial partitioning - memoized to reduce re-renders
+  const spatialManagerDebug = useMemo(
+    () => ({
       loadedCells,
       currentCellCoords,
       isInitialized: isSpatialInitialized,
       objects: objects.length,
       trackObjectInCell,
       untrackObjectInCell,
-    };
-  }, [
-    loadedCells,
-    currentCellCoords,
-    isSpatialInitialized,
-    objects.length,
-    trackObjectInCell,
-    untrackObjectInCell,
-  ]);
+    }),
+    [
+      loadedCells,
+      currentCellCoords,
+      isSpatialInitialized,
+      objects.length,
+      trackObjectInCell,
+      untrackObjectInCell,
+    ]
+  );
 
-  // Connections hooks (now with objects already initialized)
+  // Only update window debug object when values actually change
+  useEffect(() => {
+    window._spatialManagerDebug = spatialManagerDebug;
+  }, [spatialManagerDebug]);
+  const setSelectedConnection = useConnectionStore(
+    (state) => state.selectConnection
+  );
+  const setShowLineTextStyleUI = useConnectionStore(
+    (state) => state.setShowLineTextStyleUI
+  ); // Use the useConnections hook instead of implementing handlers directly
   const {
     connections,
     setConnections,
-    lineTexts,
-    selectedConnection,
-    setSelectedConnection,
-    showLineTextInput,
-    setShowLineTextInput,
-    showLineTextStyleUI,
-    setShowLineTextStyleUI,
-
-    handleLineTextSubmit,
-    handleLineTextStyleChange,
-    handleLineColorChange,
     handleLineStyleChange,
+    handleLineColorChange,
     handleConnectionClick,
     handleLineTextClick,
-  } = useConnections({
-    user,
-    currentSpaceId,
-    loadedCells,
-    objects, // Add objects to resolve connection positions
-  });
-  // Objects hook gets the connections from above
+  } = useConnections({ user, currentSpaceId, loadedCells });
+
+  const handleLineTextSubmit = useCallback((connectionId, text) => {
+    const setLineText = useConnectionStore.getState().setLineText;
+    setLineText(connectionId, text);
+  }, []); // Objects hook gets the connections from above
   const {
     selectedId,
     setSelectedId,
@@ -154,8 +191,6 @@ const App = () => {
     cameraRef,
     connections,
     setConnections,
-    objects,
-    setObjects,
   });
 
   // Indicators hook
@@ -181,20 +216,87 @@ const App = () => {
   // UI state
   const [activeTextStyleUI, setActiveTextStyleUI] = useState(null);
 
-  // Enhanced check for public access URL parameters
+  // Track objects in transition between cells to prevent flicker
+  const transitioningObjectsRef = useRef(new Set()); // Set of object IDs currently transitioning
+
+  // Make transitioningObjectsRef available globally for cleanup
+  useEffect(() => {
+    window.transitioningObjectsRef = transitioningObjectsRef;
+    return () => {
+      delete window.transitioningObjectsRef;
+    };
+  }, []); // Enhanced check for public access URL parameters
   useEffect(() => {
     // Extract space ID and owner ID from URL if present
     const params = new URLSearchParams(window.location.search);
-    const spaceParam = params.get('space');
-    const ownerParam = params.get('owner'); // Store for access by other components
-    if (spaceParam && ownerParam) {
-      window.publicAccessSpace = spaceParam;
-      window.currentSpaceOwner = ownerParam;
+    const spaceParam = params.get('space') || params.get('spaceId'); // Support both 'space' and 'spaceId'
+    const ownerParam = params.get('owner');
 
-      // Store in session storage as backup
-      sessionStorage.setItem(`isSharedSpace_${spaceParam}`, 'true');
-      sessionStorage.setItem(`sharedSpaceOwner_${spaceParam}`, ownerParam);
-      sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
+    if (spaceParam) {
+      // If we have both space and owner, set them immediately
+      if (ownerParam) {
+        window.publicAccessSpace = spaceParam;
+        window.currentSpaceOwner = ownerParam;
+        setCurrentSpaceOwner(ownerParam);
+        setPublicSpaceReady(true);
+
+        // Store in session storage as backup
+        sessionStorage.setItem(`isSharedSpace_${spaceParam}`, 'true');
+        sessionStorage.setItem(`sharedSpaceOwner_${spaceParam}`, ownerParam);
+        sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
+      } else {
+        // If we only have spaceId, we need to look up the owner information
+        // For now, set the space and mark it as a potential public space
+        window.publicAccessSpace = spaceParam;
+        setIsLookingUpPublicSpace(true);
+        console.log('🔍 Looking up space metadata for:', spaceParam);
+
+        // We'll need to fetch the space metadata to get the owner
+        import('./services/spacesService')
+          .then(({ getPublicSpaceMetadata }) => {
+            getPublicSpaceMetadata(spaceParam)
+              .then((spaceData) => {
+                console.log('📋 Space metadata result:', spaceData);
+                if (spaceData && spaceData.isPublic && spaceData.ownerId) {
+                  console.log(
+                    '✅ Public space verified, owner:',
+                    spaceData.ownerId
+                  );
+                  window.currentSpaceOwner = spaceData.ownerId;
+                  setCurrentSpaceOwner(spaceData.ownerId);
+                  sessionStorage.setItem(`isSharedSpace_${spaceParam}`, 'true');
+                  sessionStorage.setItem(
+                    `sharedSpaceOwner_${spaceParam}`,
+                    spaceData.ownerId
+                  );
+                  sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
+                  // Trigger a re-render
+                  setPublicSpaceReady(true);
+                } else {
+                  console.log('❌ Space not found or not public:', spaceData);
+                  // Redirect to volscape.com for unauthorized access to secure spaces
+                  console.log(
+                    '🚫 Redirecting to volscape.com - unauthorized access to secure space'
+                  );
+                  window.location.href = 'https://volscape.com/';
+                  return;
+                }
+                setIsLookingUpPublicSpace(false);
+              })
+              .catch((error) => {
+                console.error('Failed to fetch space metadata:', error);
+                // Redirect to volscape.com for failed space access
+                console.log(
+                  '🚫 Redirecting to volscape.com - failed to access space'
+                );
+                window.location.href = 'https://volscape.com/';
+              });
+          })
+          .catch((importError) => {
+            console.error('Failed to import spacesService:', importError);
+            setIsLookingUpPublicSpace(false);
+          });
+      }
     }
 
     // Setup debug context for spatial partitioning
@@ -202,101 +304,387 @@ const App = () => {
     window._currentUserId = user?.uid;
     window._firebaseDb = db;
   }, [user, currentSpaceId]);
-
-  // Modified to handle anonymous access for public spaces
-  const publicSpaceId = window.publicAccessSpace;
-  const effectiveSpaceId = publicSpaceId || currentSpaceId;
-  const canViewSpace = !!(user || publicSpaceId);
   const isReadOnly =
-    !!publicSpaceId && (!user || window.currentSpaceOwner !== user?.uid);
+    !!publicSpaceId && (!user || currentSpaceOwner !== user?.uid);
+
+  // Check for unauthorized access and redirect to volscape.com
+  useEffect(() => {
+    // If we have a currentSpaceId but no authentication and no public space access
+    if (currentSpaceId && !user && !publicSpaceId && isAuthReady) {
+      console.log(
+        '🚫 Redirecting to volscape.com - unauthorized access to secure space'
+      );
+      window.location.href = 'https://volscape.com/';
+      return;
+    }
+  }, [currentSpaceId, user, publicSpaceId, isAuthReady]);
+
+  // Debug logging
+  console.log('🔍 Access Debug:', {
+    user: !!user,
+    publicSpaceId,
+    currentSpaceOwner,
+    publicSpaceReady,
+    isLookingUpPublicSpace,
+    canViewSpace,
+    effectiveSpaceId,
+  });
+
+  // Create stable key for loaded cells to prevent infinite subscription loop
+  const loadedCellsKey = useMemo(() => {
+    if (
+      !loadedCells ||
+      !Array.isArray(loadedCells) ||
+      loadedCells.length === 0
+    ) {
+      return '';
+    }
+    return Array.from(loadedCells).sort().join(',');
+  }, [loadedCells]);
   // Display read-only indicator for public spaces
   useEffect(() => {
     if (isReadOnly) {
       // Optionally show a UI indicator
     }
   }, [isReadOnly]);
-
-  // Subscribe to spatial objects changes - supports anonymous access to public spaces
+  // Load connections when space changes (replacing useConnections hook)
   useEffect(() => {
-    if (!canViewSpace || (!user && !window.currentSpaceOwner)) return () => {};
-    if (!isSpatialInitialized) return () => {}; // Wait for spatial system to initialize
+    if (!user?.uid || !currentSpaceId) return;
+
+    // Simple connection loading - let RealTimeConnectionUpdater handle visual updates
+    const loadConnections = async () => {
+      try {
+        const { subscribeToConnections } = await import(
+          './services/connectionsService'
+        );
+
+        const unsubscribe = subscribeToConnections(
+          user.uid,
+          currentSpaceId,
+          (connectionUpdate) => {
+            // Only update if we're not currently transforming objects
+            if (
+              !window._currentTransformingObjects ||
+              window._currentTransformingObjects.size === 0
+            ) {
+              // Handle different types of connection updates
+              if (Array.isArray(connectionUpdate)) {
+                // Filter out connections that reference deleted objects
+                const validConnections = connectionUpdate.filter((conn) => {
+                  const startObjectExists = objectsFromStore.some(
+                    (obj) => obj.id.toString() === conn.start?.objectId
+                  );
+                  const endObjectExists = objectsFromStore.some(
+                    (obj) => obj.id.toString() === conn.end?.objectId
+                  );
+                  const isValid = startObjectExists && endObjectExists;
+                  if (!isValid) {
+                    // Connection references non-existent objects, filter it out
+                  }
+
+                  return isValid;
+                });
+
+                // Full array update
+                setConnections(validConnections);
+              } else if (
+                connectionUpdate &&
+                typeof connectionUpdate === 'object'
+              ) {
+                // Incremental update (added, modified, removed)
+                const { type, connection, id } = connectionUpdate;
+
+                if (type === 'added' && connection) {
+                  // Add new connection
+                  setConnections((current) => {
+                    const exists = current.some(
+                      (conn) => conn.id === connection.id
+                    );
+                    return exists ? current : [...current, connection];
+                  });
+                } else if (type === 'modified' && connection) {
+                  // Update existing connection
+                  setConnections((current) =>
+                    current.map((conn) =>
+                      conn.id === connection.id ? connection : conn
+                    )
+                  );
+                } else if (type === 'removed' && id) {
+                  // Remove connection
+                  setConnections((current) =>
+                    current.filter((conn) => conn.id !== id)
+                  );
+                }
+              }
+            }
+          },
+          loadedCells
+        );
+
+        return unsubscribe;
+      } catch {
+        // Failed to load connections
+      }
+    };
+
+    const cleanupRef = { current: null };
+
+    loadConnections().then((unsubscribe) => {
+      cleanupRef.current = unsubscribe;
+    });
+
+    return () => {
+      if (cleanupRef.current) {
+        cleanupRef.current();
+      }
+    };
+  }, [user?.uid, currentSpaceId, loadedCells, setConnections]); // Subscribe to spatial objects changes - supports anonymous access to public spaces
+  useEffect(() => {
+    console.log('🔧 Spatial subscription effect triggered:', {
+      canViewSpace,
+      isSpatialInitialized,
+      user: !!user,
+      publicSpaceId,
+      currentSpaceOwner,
+      loadedCells: loadedCells?.length || 0,
+    });
+
+    if (!canViewSpace) {
+      console.log('❌ Cannot view space, exiting');
+      return;
+    }
+    if (!isSpatialInitialized) {
+      console.log('❌ Spatial not initialized, exiting');
+      return; // Wait for spatial system to initialize
+    }
+
+    // For public spaces, wait until we have the owner information
+    if (!user && publicSpaceId && !currentSpaceOwner) {
+      console.log('⏳ Waiting for public space owner information...');
+      return;
+    }
 
     if (
       !loadedCells ||
       !Array.isArray(loadedCells) ||
       loadedCells.length === 0
     ) {
-      return () => {};
+      return;
     }
 
+    // Deterministic approach: Set loading complete based on number of cells
+    // Each cell subscription should be established quickly, so we can set a reasonable timeout
+    const totalCells = loadedCells.length;
+    const cellSubscriptionTimeout = Math.max(1000, totalCells * 200); // 200ms per cell, minimum 1 second
+
+    const deterministic_LoadingCompleteTimeoutId = setTimeout(() => {
+      currentSetIsInitialLoading(false);
+      setGlobalInitialLoading(false);
+    }, cellSubscriptionTimeout); // Track when object loading appears to be complete (keep as backup for edge cases)
+    let loadingTimeoutId = null;
+    const scheduleLoadingComplete = () => {
+      // Clear any existing timeout
+      if (loadingTimeoutId) {
+        clearTimeout(loadingTimeoutId);
+      }
+
+      // Set a new timeout - if no more objects are added for 1.5 seconds, consider loading complete
+      loadingTimeoutId = setTimeout(() => {
+        currentSetIsInitialLoading(false);
+        setGlobalInitialLoading(false);
+      }, 1500);
+    };
     const spaceToLoad = effectiveSpaceId;
-    const ownerUserId = window.currentSpaceOwner || user?.uid;
+    const ownerUserId = currentSpaceOwner || user?.uid;
+
+    console.log('🚀 Starting spatial objects subscription:', {
+      spaceToLoad,
+      ownerUserId,
+      loadedCells: loadedCells?.length || 0,
+    }); // Capture current refs and functions to avoid dependency issues
+    const currentLastUpdateRef = lastUpdateRef;
+    const currentDraggingObjectsRef = draggingObjectsRef;
+    const currentTransformingObjectsRef = transformingObjectsRef;
+    const currentSetObjects = setObjects;
+    const currentSetIsInitialLoading = setIsInitialLoading;
+    const currentTrackObjectInCell = trackObjectInCell;
+    const currentUntrackObjectInCell = untrackObjectInCell;
     const unsubscribe = subscribeToSpatialObjects(
       ownerUserId, // May be null for anonymous access
       spaceToLoad,
-      loadedCells, // Array of loaded cell IDs
+      loadedCells,
       (change) => {
-        setObjects((prev) => {
+        currentSetObjects((prev) => {
           switch (change.type) {
-            case 'added':
+            case 'added': {
+              // Track object change for spatial operation detection
+              if (window.trackObjectChange) {
+                window.trackObjectChange(change.id, 'add');
+              }
+
+              // Check if this object was recently deleted
+              if (isRecentlyDeleted(change.id)) {
+                console.log(
+                  `🚫 Prevented re-addition of recently deleted object: ${change.id}`
+                );
+                return prev;
+              }
+
+              // Clear transitioning flag if object is being re-added
+              if (transitioningObjectsRef.current.has(change.id.toString())) {
+                transitioningObjectsRef.current.delete(change.id.toString());
+                console.log(
+                  `🔄 Object ${change.id} returned from transition - clearing transitioning flag`
+                );
+              }
               if (!prev.find((obj) => obj.id === change.id)) {
-                if (change.cellCoords && trackObjectInCell) {
+                // Validate position before adding the object
+                const hasValidPosition =
+                  change.object?.position &&
+                  Array.isArray(change.object.position) &&
+                  change.object.position.length === 3 &&
+                  change.object.position.every(
+                    (val) => typeof val === 'number' && !isNaN(val)
+                  );
+
+                if (!hasValidPosition) {
+                  console.warn(
+                    `🚫 Rejecting new object with invalid position:`,
+                    {
+                      id: change.id,
+                      position: change.object?.position,
+                      object: change.object,
+                    }
+                  );
+                  return prev;
+                }
+                if (change.cellCoords && currentTrackObjectInCell) {
                   const cellId = `${change.cellCoords.x},${
                     change.cellCoords.y
                   },${change.cellCoords.z || 0}`;
-                  trackObjectInCell(change.id.toString(), cellId);
+                  currentTrackObjectInCell(change.id.toString(), cellId);
                 }
+
+                // Track object loading for completion detection
+                scheduleLoadingComplete();
+
                 return [...prev, change.object];
               }
               return prev;
+            }
             case 'modified':
               // Prevent position updates for actively transformed/dragged objects
               if (
-                transformingObjectsRef.current.has(change.id.toString()) ||
-                draggingObjectsRef.current.has(change.id.toString())
+                currentTransformingObjectsRef.current.has(
+                  change.id.toString()
+                ) ||
+                currentDraggingObjectsRef.current.has(change.id.toString())
               ) {
                 // Find existing object
                 const existingObj = prev.find(
                   (obj) => obj.id.toString() === change.id
                 );
                 if (existingObj) {
-                  // Preserve current position but accept other changes
-                  const updatedObj = {
-                    ...change.object,
-                    position: existingObj.position,
-                    _transformActive: true,
-                  };
-                  lastUpdateRef.current[change.id] = updatedObj;
+                  // Validate that existing object has a valid position
+                  const hasValidPosition =
+                    existingObj.position &&
+                    Array.isArray(existingObj.position) &&
+                    existingObj.position.length === 3 &&
+                    existingObj.position.every(
+                      (val) => typeof val === 'number' && !isNaN(val)
+                    );
 
-                  return prev.map((obj) =>
-                    obj.id.toString() === change.id ? updatedObj : obj
-                  );
+                  if (!hasValidPosition) {
+                    console.warn(
+                      `🚫 Existing object has invalid position, accepting new position:`,
+                      {
+                        id: change.id,
+                        existingPosition: existingObj.position,
+                        newPosition: change.object?.position,
+                      }
+                    );
+                    // Fall through to normal update logic
+                  } else {
+                    // Preserve current position but accept other changes
+                    const updatedObj = {
+                      ...change.object,
+                      position: existingObj.position,
+                      _transformActive: true,
+                    };
+                    currentLastUpdateRef.current[change.id] = updatedObj;
+
+                    return prev.map((obj) =>
+                      obj.id.toString() === change.id ? updatedObj : obj
+                    );
+                  }
                 }
-              }
+              } // Update other objects normally
+              if (
+                !isEqual(currentLastUpdateRef.current[change.id], change.object)
+              ) {
+                // Validate position before accepting the change
+                const hasValidPosition =
+                  change.object?.position &&
+                  Array.isArray(change.object.position) &&
+                  change.object.position.length === 3 &&
+                  change.object.position.every(
+                    (val) => typeof val === 'number' && !isNaN(val)
+                  );
 
-              // Update other objects normally
-              if (!isEqual(lastUpdateRef.current[change.id], change.object)) {
-                lastUpdateRef.current[change.id] = change.object;
+                if (!hasValidPosition) {
+                  console.warn(
+                    `🚫 Rejecting object update with invalid position:`,
+                    {
+                      id: change.id,
+                      position: change.object?.position,
+                      object: change.object,
+                    }
+                  );
+                  return prev;
+                }
+
+                currentLastUpdateRef.current[change.id] = change.object;
                 return prev.map((obj) =>
                   obj.id.toString() === change.id ? change.object : obj
                 );
               }
               return prev;
-            case 'removed':
+            case 'removed': {
+              // Track object change for spatial operation detection
+              if (window.trackObjectChange) {
+                window.trackObjectChange(change.id, 'remove');
+              }
+
+              // Mark object as transitioning to prevent flicker during cell moves
+              transitioningObjectsRef.current.add(change.id.toString());
+
+              // Set a timeout to actually remove the object if it doesn't get re-added
+              setTimeout(() => {
+                if (transitioningObjectsRef.current.has(change.id.toString())) {
+                  // Object was not re-added, safe to remove now
+                  transitioningObjectsRef.current.delete(change.id.toString());
+                  currentSetObjects((current) =>
+                    current.filter((obj) => obj.id.toString() !== change.id)
+                  );
+                }
+              }, 2000); // 2 second grace period
+
               // Untrack object when removed
-              console.log(`🔍 Object ${change.id} removed with data:`, change);
-              if (change.cellCoords && untrackObjectInCell) {
+              if (change.cellCoords && currentUntrackObjectInCell) {
                 const cellId = `${change.cellCoords.x},${change.cellCoords.y},${
                   change.cellCoords.z || 0
                 }`;
-                console.log(
-                  `📍 Removing object ${change.id} from cell ${cellId}`,
-                  change.cellCoords
-                );
-                untrackObjectInCell(change.id.toString(), cellId);
+                currentUntrackObjectInCell(change.id.toString(), cellId);
               }
-              delete lastUpdateRef.current[change.id];
+              delete currentLastUpdateRef.current[change.id];
+
+              // Don't remove from UI if object is transitioning between cells
+              if (transitioningObjectsRef.current.has(change.id.toString())) {
+                return prev; // Keep the object in the UI
+              }
+
               return prev.filter((obj) => obj.id.toString() !== change.id);
+            }
             default:
               return prev;
           }
@@ -304,19 +692,27 @@ const App = () => {
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (loadingTimeoutId) {
+        clearTimeout(loadingTimeoutId);
+      }
+      if (deterministic_LoadingCompleteTimeoutId) {
+        clearTimeout(deterministic_LoadingCompleteTimeoutId);
+      }
+    };
   }, [
-    user,
     effectiveSpaceId,
     canViewSpace,
     isSpatialInitialized,
-    loadedCells, // Re-subscribe when loaded cells change
-    lastUpdateRef,
-    draggingObjectsRef,
-    transformingObjectsRef,
-    trackObjectInCell,
-    untrackObjectInCell,
+    loadedCellsKey, // Use stable key to prevent infinite loop but still update on cell changes
+    setObjects,
+    publicSpaceId, // Include to re-run when public space changes
+    currentSpaceOwner, // Include to re-run when owner is resolved
+    // Note: Excluding other dependencies to prevent infinite loops
+    // draggingObjectsRef, lastUpdateRef, trackObjectInCell, transformingObjectsRef, untrackObjectInCell, user
   ]);
+
   // Retroactively track existing objects when spatial manager becomes initialized
   const hasRetroTrackedRef = useRef(false);
   useEffect(() => {
@@ -326,10 +722,6 @@ const App = () => {
       objects.length > 0 &&
       !hasRetroTrackedRef.current
     ) {
-      console.log(
-        `🔄 Spatial manager initialized - retroactively tracking ${objects.length} existing objects`
-      );
-
       objects.forEach((obj) => {
         if (
           obj.position &&
@@ -345,16 +737,15 @@ const App = () => {
 
           const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
 
-          console.log(
-            `📍 Retroactively tracking object ${obj.id} in cell ${cellId}`
-          );
           trackObjectInCell(obj.id.toString(), cellId);
         }
       });
 
       hasRetroTrackedRef.current = true; // Mark that we've done the initial tracking
     }
-  }, [isSpatialInitialized, trackObjectInCell, objects]); // Include objects but use ref to prevent re-runs
+  }, [isSpatialInitialized, trackObjectInCell, objects]); // Include objects but use ref to prevent re-runs  // Note: Initial loading state is now handled by the object loading timeout mechanism
+  // in the objects subscription effect to ensure all objects are loaded before
+  // spatial operations are allowed
 
   // Matrix updates tracking to prevent recursion
   const handleObjectMatrixChanged = useCallback((id, matrixWorld) => {
@@ -368,8 +759,7 @@ const App = () => {
     }
 
     window._matrixUpdateMap.set(id.toString(), matrixWorld.clone());
-  }, []);
-  // Store camera reference in window for debugging
+  }, []); // Store camera reference in window for debugging
   useEffect(() => {
     if (cameraRef.current?.orbitControls) {
       window.orbitControls = cameraRef.current.orbitControls;
@@ -379,7 +769,7 @@ const App = () => {
     if (cameraRef.current?.camera) {
       window.camera = cameraRef.current.camera;
     }
-  }); // Removed dependency array as we want this to run on every render
+  }, [cameraRef.current?.orbitControls, cameraRef.current?.camera]); // Only run when camera references change
 
   // Camera controls
   const disableOrbitControls = useCallback(() => {
@@ -407,45 +797,44 @@ const App = () => {
       setSelectedConnection(null);
     },
     [setSelectedId, setShowLineTextStyleUI, setSelectedConnection]
-  );
-
-  // Face position calculation
-  const calculateFacePositionWithObjects = useCallback(
-    (indicator) => calculateFacePosition(indicator, objects),
-    [objects]
-  );
-
-  const memoizedCalculateFacePosition = useMemo(
-    () => memoize(calculateFacePositionWithObjects),
-    [calculateFacePositionWithObjects]
-  );
-
-  // Object move handler
+  ); // Object move handler
   const handleObjectMoveCallback = useCallback(
     (id, newPosition, isDragStart = false, isDragEnd = false) => {
+      // Get current objects from store to avoid dependency issues
+      const currentObjects = useObjectsStore.getState().objects;
+
+      // Convert array position to object if needed
+      let positionObj;
+      if (Array.isArray(newPosition)) {
+        positionObj = {
+          x: newPosition[0],
+          y: newPosition[1],
+          z: newPosition[2],
+        };
+      } else if (
+        newPosition &&
+        typeof newPosition === 'object' &&
+        'x' in newPosition
+      ) {
+        positionObj = newPosition;
+      } else {
+        console.warn('Invalid newPosition format:', newPosition);
+        return;
+      }
+
       handleObjectMove({
         id,
-        newPosition,
+        newPosition: positionObj,
         isDragStart,
         isDragEnd,
         draggingObjectsRef,
-        objects,
+        objects: currentObjects,
         setObjects,
-        connections,
-        setConnections,
         user,
         currentSpaceId,
       });
     },
-    [
-      user,
-      objects,
-      connections,
-      currentSpaceId,
-      setObjects,
-      setConnections,
-      draggingObjectsRef,
-    ]
+    [user, currentSpaceId, setObjects, draggingObjectsRef]
   );
   const handleObjectUpdateCallback = useCallback(
     (id, updates) => {
@@ -507,25 +896,33 @@ const App = () => {
       checkPositionJitter,
     ]
   );
-
   // Face indicator click handler
   const handleFaceIndicatorClickCallback = useCallback(
-    (indicator) => {
-      handleFaceIndicatorClick({
-        indicator,
-        objects,
-        connections,
-        selectedIndicatorsRef,
-        setSelectedIndicators,
-        setConnections,
-        setIsConnectMode,
-        setIndicatorMode,
-        setShowAllCubesIndicators,
-        setGlobalIndicatorSelected,
-        user,
-        currentSpaceId,
-        isConnectMode,
-      });
+    async (indicator) => {
+      try {
+        const result = await handleFaceIndicatorClick({
+          indicator,
+          objects,
+          connections,
+          selectedIndicatorsRef,
+          setSelectedIndicators,
+          setConnections,
+          setIsConnectMode,
+          setIndicatorMode,
+          setShowAllCubesIndicators,
+          setGlobalIndicatorSelected,
+          user,
+          currentSpaceId,
+          isConnectMode,
+        });
+
+        // Log the result for debugging
+        if (!result.success) {
+          console.error('Face indicator click failed:', result.message);
+        }
+      } catch (error) {
+        console.error('Error in face indicator click handler:', error);
+      }
     },
     [
       objects,
@@ -558,14 +955,24 @@ const App = () => {
       }
     },
     [setActiveIndicator, setIndicatorMode]
-  );
-  // Canvas click handler
+  ); // Canvas click handler
   const handleCanvasClick = useCallback(() => {
     // Close any active text styling menus
     setActiveTextStyleUI(null);
     setSelectedConnection(null);
     setShowLineTextStyleUI(null);
-    setSelectedId(null);
+    setSelectedId(null); // Close TextStyleUI for all objects
+    objects.forEach((obj) => {
+      if (obj.type === 'plane') {
+        setPlaneShowTextStyleUI(obj.id, false);
+        setPlaneShowHeaderStyleUI(obj.id, false);
+      } else if (obj.type === 'cube') {
+        setCubeShowHeaderTextStyleUI(obj.id, false);
+      } else if (obj.type === 'dodecahedron' || obj.type === 'sphere') {
+        setDodecahedronShowStyleMenu(obj.id, false);
+        setDodecahedronShowFaceTextStyleMenu(obj.id, false);
+      }
+    });
 
     // If they were trying to create a connection but clicked empty space,
     // cancel the connection creation process
@@ -578,19 +985,23 @@ const App = () => {
     setSelectedConnection,
     setShowLineTextStyleUI,
     setSelectedId,
+    objects,
+    setPlaneShowTextStyleUI,
+    setPlaneShowHeaderStyleUI,
+    setCubeShowHeaderTextStyleUI,
+    setDodecahedronShowStyleMenu,
+    setDodecahedronShowFaceTextStyleMenu,
     isConnectMode,
     selectedIndicators,
     setSelectedIndicators,
     selectedIndicatorsRef,
   ]);
-
   // Initialize WebRTC service with user ID when available
   useEffect(() => {
     if (user?.uid) {
       initWebRTC(user.uid);
     }
   }, [user?.uid]);
-
   // Show loading screens when authenticating
   if (isCheckingUrlAuth && !publicSpaceId) {
     return <div className="auth-loading">Authenticating...</div>;
@@ -600,14 +1011,15 @@ const App = () => {
     return <div className="loading">Loading...</div>;
   }
 
+  // Show loading when looking up public space metadata
+  if (isLookingUpPublicSpace) {
+    return <div className="loading">Loading public space...</div>;
+  }
   if (!canViewSpace) {
-    return (
-      <div className="auth-required">
-        <h2>Authentication Required</h2>
-        <p>Please sign in to view or create spaces</p>
-        <button onClick={handleLogin}>Login with Google</button>
-      </div>
-    );
+    // Redirect to volscape.com instead of showing auth page
+    console.log('🚫 Redirecting to volscape.com - cannot view space');
+    window.location.href = 'https://volscape.com/';
+    return <div className="loading">Redirecting...</div>;
   }
 
   return (
@@ -632,41 +1044,18 @@ const App = () => {
         }}
         dpr={[1, 2]}
       >
+        {' '}
         <CustomCamera ref={cameraRef} />{' '}
         <group>
-          {/* Connection updater component */}
-          <ConnectionUpdater
-            connections={connections}
-            setConnections={setConnections}
-            calculateFacePosition={memoizedCalculateFacePosition}
-            transformingObjects={transformingObjectsRef} // Use transforming ref here too
-            userId={user?.uid} // Add this prop
-            spaceId={effectiveSpaceId} // Add this prop
-          />
-          {/* Real-time connection position updater */}
-          <RealTimeConnectionUpdater
-            connections={connections}
-            setConnections={setConnections}
-            objects={objects}
-            user={user}
-            currentSpaceId={effectiveSpaceId}
-          />
-          {/* Render all connections */}
+          {/* Real-time connection position updater - reactive to store changes */}
+          <RealTimeConnectionUpdater /> {/* Render all connections */}
           <ConnectionsRenderer
-            connections={connections}
             objects={objects}
-            selectedConnection={selectedConnection}
-            lineTexts={lineTexts}
-            showLineTextInput={showLineTextInput}
-            showLineTextStyleUI={showLineTextStyleUI}
-            handleConnectionClick={handleConnectionClick}
-            handleLineTextClick={handleLineTextClick}
-            handleLineTextSubmit={handleLineTextSubmit}
-            handleLineTextStyleChange={handleLineTextStyleChange}
-            handleLineColorChange={handleLineColorChange}
-            handleLineStyleChange={handleLineStyleChange}
-            setShowLineTextStyleUI={setShowLineTextStyleUI}
-            setShowLineTextInput={setShowLineTextInput}
+            onLineStyleChange={handleLineStyleChange}
+            onLineColorChange={handleLineColorChange}
+            onConnectionClick={handleConnectionClick}
+            onLineTextClick={handleLineTextClick}
+            onLineTextSubmit={handleLineTextSubmit}
           />{' '}
           {/* Render all objects */}
           {objects.map((obj) => (

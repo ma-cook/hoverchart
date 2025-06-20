@@ -52,10 +52,6 @@ export const getOrCreateSubscription = (
     existing.timestamp = Date.now();
     subscriptionMetrics.reused++;
 
-    console.log(
-      `♻️ Reusing ${type} subscription: ${subscriptionKey} (refCount: ${existing.refCount})`
-    );
-
     // Return a cleanup function that decrements ref count
     return {
       unsubscribe: () => decrementSubscription(subscriptionKey),
@@ -63,8 +59,7 @@ export const getOrCreateSubscription = (
     };
   }
 
-  // Create new subscription
-  console.log(`🔥 Creating NEW ${type} subscription: ${subscriptionKey}`);
+  // Create new subscription    // console.log(`🔥 Creating NEW ${type} subscription: ${subscriptionKey}`);
 
   try {
     const firebaseUnsubscribe = createSubscriptionFn();
@@ -114,10 +109,9 @@ const decrementSubscription = (subscriptionKey) => {
     subscription.unsubscribe();
     globalSubscriptions.delete(subscriptionKey);
     subscriptionMetrics.cleaned++;
-    subscriptionMetrics.active = globalSubscriptions.size;
-    console.log(
-      `🧹 Cleaned up subscription: ${subscriptionKey} (type: ${subscription.type})`
-    );
+    subscriptionMetrics.active = globalSubscriptions.size; // console.log(
+    //   `🧹 Cleaned up subscription: ${subscriptionKey} (type: ${subscription.type})`
+    // );
   }
 };
 

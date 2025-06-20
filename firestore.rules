@@ -90,8 +90,8 @@ service cloud.firestore {
           allow read: if isAuthenticated();
           allow write: if isAuthenticated(); // Any authenticated user can update their presence
         }
-        
-        // NEW: Allow access to signaling subcollection for WebRTC        match /signaling/{signalingId} {
+          // NEW: Allow access to signaling subcollection for WebRTC
+        match /signaling/{signalingId} {
           allow read: if isAuthenticated();
           allow write: if isAuthenticated(); // Any authenticated user can write signaling data
         }
@@ -136,9 +136,7 @@ service cloud.firestore {
               (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
                isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
             );
-          }
-          
-          // Connections within cells (for spatial partitioning)
+          }          // Connections within cells (for spatial partitioning)
           match /connections/{connectionId} {
             // Allow anonymous access to connections in cells within public spaces
             allow read: if isAuthenticated() || 
@@ -149,11 +147,13 @@ service cloud.firestore {
             allow write: if isAuthenticated() && (
               request.auth.uid == userId || 
               (get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)) != null &&
-               isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))            );
-          }        }
-        
+               isSpaceSharedWithUser(request.auth.uid, get(/databases/$(database)/documents/users/$(userId)/spaces/$(spaceId)).data))
+            );
+          }
+        }
       }
     }
+    
     // Updates collection
     match /updates/{document} {
       allow read: if true;
@@ -177,6 +177,11 @@ service cloud.firestore {
                      
       // Only admins can delete leave requests
       allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Collection group queries for public spaces (for unauthenticated access)
+    match /{path=**}/spaces/{spaceId} {
+      allow read: if isPublicSpace(resource.data);
     }
 
     // Deny all other access by default

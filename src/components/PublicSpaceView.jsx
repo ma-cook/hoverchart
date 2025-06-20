@@ -1,22 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { usePublicSpaceStore } from '../stores';
 
 const PublicSpaceView = ({ spaceId, ownerId, onViewSpace }) => {
-  const [spaceData, setSpaceData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  // Use public space store
+  const getPublicSpace = usePublicSpaceStore((state) => state.getPublicSpace);
+  const setPublicSpaceLoading = usePublicSpaceStore(
+    (state) => state.setPublicSpaceLoading
+  );
+  const setPublicSpaceData = usePublicSpaceStore(
+    (state) => state.setPublicSpaceData
+  );
+  const setPublicSpaceError = usePublicSpaceStore(
+    (state) => state.setPublicSpaceError
+  );
 
+  const { spaceData, loading, error } = getPublicSpace(spaceId);
   useEffect(() => {
     const loadSpaceData = async () => {
       try {
-        setLoading(true);
+        setPublicSpaceLoading(spaceId, true);
         const spaceRef = doc(db, 'users', ownerId, 'spaces', spaceId);
         const spaceDoc = await getDoc(spaceRef);
 
         if (!spaceDoc.exists()) {
-          setError('Space not found');
-          setLoading(false);
+          setPublicSpaceError(spaceId, 'Space not found');
           return;
         }
 
@@ -26,28 +35,31 @@ const PublicSpaceView = ({ spaceId, ownerId, onViewSpace }) => {
         const isPublic = data.sharedWith?.includes('everyone');
 
         if (!isPublic) {
-          setError('This space is not publicly accessible');
-          setLoading(false);
+          setPublicSpaceError(spaceId, 'This space is not publicly accessible');
           return;
         }
 
-        setSpaceData(data);
-        setLoading(false);
+        setPublicSpaceData(spaceId, data);
 
         // Store necessary data for access
         window.publicAccessSpace = spaceId;
         window.currentSpaceOwner = ownerId;
       } catch (err) {
         console.error('Error loading space data:', err);
-        setError('Failed to load space data');
-        setLoading(false);
+        setPublicSpaceError(spaceId, 'Failed to load space data');
       }
     };
 
     if (spaceId && ownerId) {
       loadSpaceData();
     }
-  }, [spaceId, ownerId]);
+  }, [
+    spaceId,
+    ownerId,
+    setPublicSpaceLoading,
+    setPublicSpaceData,
+    setPublicSpaceError,
+  ]);
 
   if (loading) return <div>Loading space information...</div>;
   if (error) return <div>Error: {error}</div>;

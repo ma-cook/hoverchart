@@ -17,6 +17,8 @@ import {
   SUBSCRIPTION_TYPES,
 } from './globalSubscriptionManager';
 
+import { getIsInitialLoading } from '../utils/loadingState';
+
 // Cell size constants
 export const CELL_SIZE = 10000;
 export const CELL_NEIGHBOR_RADIUS = 1; // Load 3x3 horizontal grid around camera (9 cells)
@@ -58,7 +60,7 @@ if (typeof window !== 'undefined') {
   setInterval(cleanupCache, 5 * 60 * 1000);
 }
 
-console.log('--- SPATIAL_PARTITIONING_JS LOADED - V3 ---'); // Version marker
+// Spatial partitioning service loaded
 
 // Race condition protection for concurrent object moves
 const movingObjects = new Map(); // objectId -> { timestamp, promise }
@@ -453,6 +455,7 @@ export const removeObjectFromCell = async (
       cellId
     );
 
+    // First, check if the cell exists and the object is actually there
     const cellDoc = await getDoc(cellRef);
     if (!cellDoc.exists()) {
       console.log(
@@ -462,89 +465,98 @@ export const removeObjectFromCell = async (
     }
 
     const cellData = cellDoc.data();
-    let objectRemoved = false;
 
-    // Handle both old array format and new object format
+    // Check if object exists in the cell before attempting deletion
+    let objectExists = false;
     if (Array.isArray(cellData.objects)) {
-      const objectIndex = cellData.objects.indexOf(objectId);
-      if (objectIndex > -1) {
-        cellData.objects.splice(objectIndex, 1);
-        objectRemoved = true;
-      }
-    } else if (cellData.objects && typeof cellData.objects === 'object') {
-      if (cellData.objects[objectId]) {
-        delete cellData.objects[objectId];
-        objectRemoved = true;
-      }
-    }
-    if (objectRemoved) {
-      console.log(
-        `🗑️ BEFORE SAVE: Attempting to remove object ${objectId} from cell ${cellId}`
-      );
-      console.log(
-        `🗑️ Cell data objects after removal:`,
-        Object.keys(cellData.objects || {})
-      );
-
-      // Use updateDoc with FieldValue.delete for atomic removal
-      await updateDoc(cellRef, {
-        [`objects.${objectId}`]: deleteField(),
+      // Legacy array format - convert to object format first
+      const objectsAsMap = {};
+      cellData.objects.forEach((obj) => {
+        if (typeof obj === 'string') {
+          objectsAsMap[obj] = { id: obj };
+        } else if (obj && obj.id) {
+          objectsAsMap[obj.id] = obj;
+        }
       });
 
-      console.log(
-        `🗑️ AFTER SAVE: Successfully removed object ${objectId} from cell ${cellId}`
-      );
+      // Update the cell to use object format
+      await updateDoc(cellRef, {
+        objects: objectsAsMap,
+      });
 
-      // Add a small delay before verification to allow Firestore to propagate changes
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      objectExists = objectsAsMap[objectId] !== undefined;
+    } else if (cellData.objects && typeof cellData.objects === 'object') {
+      objectExists = cellData.objects[objectId] !== undefined;
+    }
 
-      // Verify the removal by reading the cell again
-      const verifyDoc = await getDoc(cellRef);
-      if (verifyDoc.exists()) {
-        const verifyData = verifyDoc.data();
-        if (verifyData.objects && verifyData.objects[objectId]) {
-          console.error(
-            `❌ VERIFICATION FAILED: Object ${objectId} still exists in cell ${cellId} after removal!`
-          );
-
-          // Retry removal once more
-          console.log(
-            `🔄 RETRY: Attempting removal again for object ${objectId} from cell ${cellId}`
-          );
-          await updateDoc(cellRef, {
-            [`objects.${objectId}`]: deleteField(),
-          });
-
-          // Final verification
-          await new Promise((resolve) => setTimeout(resolve, 100));
-          const finalVerifyDoc = await getDoc(cellRef);
-          if (finalVerifyDoc.exists()) {
-            const finalVerifyData = finalVerifyDoc.data();
-            if (finalVerifyData.objects && finalVerifyData.objects[objectId]) {
-              console.error(
-                `❌ FINAL VERIFICATION FAILED: Object ${objectId} still exists after retry!`
-              );
-            } else {
-              console.log(
-                `✅ RETRY SUCCESS: Object ${objectId} confirmed removed after retry`
-              );
-            }
-          }
-        } else {
-          console.log(
-            `✅ VERIFICATION SUCCESS: Object ${objectId} confirmed removed from cell ${cellId}`
-          );
-        }
-      }
-    } else {
+    if (!objectExists) {
       console.log(`ℹ️ Object ${objectId} was not found in cell ${cellId}`);
       console.log(
         `ℹ️ Available objects in cell ${cellId}:`,
         Object.keys(cellData.objects || {})
       );
+      return true; // Object doesn't exist, consider it "removed"
     }
 
-    return true;
+    console.log(
+      `🗑️ REMOVING: Object ${objectId} from cell ${cellId} using atomic deleteField`
+    );
+
+    // Use atomic updateDoc with deleteField for safe removal
+    await updateDoc(cellRef, {
+      [`objects.${objectId}`]: deleteField(),
+    });
+
+    console.log(
+      `🗑️ ATOMIC DELETE: Completed deleteField operation for object ${objectId} in cell ${cellId}`
+    );
+
+    // Verify the removal with retries for eventual consistency
+    let verificationAttempts = 0;
+    const maxAttempts = 3;
+
+    while (verificationAttempts < maxAttempts) {
+      // Wait for Firestore to propagate changes
+      await new Promise((resolve) =>
+        setTimeout(resolve, 200 * (verificationAttempts + 1))
+      );
+
+      const verifyDoc = await getDoc(cellRef);
+      if (verifyDoc.exists()) {
+        const verifyData = verifyDoc.data();
+        if (verifyData.objects && verifyData.objects[objectId]) {
+          verificationAttempts++;
+          console.warn(
+            `⚠️ VERIFICATION ATTEMPT ${verificationAttempts}: Object ${objectId} still exists in cell ${cellId}`
+          );
+
+          if (verificationAttempts < maxAttempts) {
+            // Retry the deletion
+            console.log(
+              `🔄 RETRY ${verificationAttempts}: Re-attempting atomic deletion for object ${objectId}`
+            );
+            await updateDoc(cellRef, {
+              [`objects.${objectId}`]: deleteField(),
+            });
+          } else {
+            console.error(
+              `❌ FINAL VERIFICATION FAILED: Object ${objectId} still exists after ${maxAttempts} attempts!`
+            );
+            return false;
+          }
+        } else {
+          console.log(
+            `✅ VERIFICATION SUCCESS: Object ${objectId} confirmed removed from cell ${cellId}`
+          );
+          return true;
+        }
+      } else {
+        console.log(`✅ VERIFICATION SUCCESS: Cell ${cellId} no longer exists`);
+        return true;
+      }
+    }
+
+    return false;
   } catch (error) {
     console.error(`❌ Error removing object ${objectId} from cell:`, error);
     return false;
@@ -851,6 +863,14 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
  * @returns {Promise<boolean>} - Success status
  */
 export const updateObjectInCell = async (userId, spaceId, objectData) => {
+  // Check if we're still in initial loading phase - no saves during app startup
+  if (getIsInitialLoading()) {
+    console.log(
+      `⏸️ [updateObjectInCell] Skipping save for object ${objectData?.id} - still in initial loading phase`
+    );
+    return false;
+  }
+
   if (
     !userId ||
     !spaceId ||
@@ -939,6 +959,7 @@ export const deleteObjectFromCell = async (
   position
 ) => {
   if (!userId || !spaceId || !objectId || !position) return false;
+
   try {
     const cellCoords = getCellCoordinates(position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
@@ -952,27 +973,87 @@ export const deleteObjectFromCell = async (
       cellId
     );
 
+    // Check if cell exists first
     const cellDoc = await getDoc(cellRef);
-    if (!cellDoc.exists()) return true; // Cell doesn't exist, object already not present
+    if (!cellDoc.exists()) {
+      console.log(
+        `📍 Cell ${cellId} doesn't exist, object ${objectId} already deleted`
+      );
+      return true; // Cell doesn't exist, object already not present
+    }
 
     const cellData = cellDoc.data();
 
-    // Handle both old array format and new object format
+    // Check if object exists before attempting deletion
+    let objectExists = false;
     if (Array.isArray(cellData.objects)) {
-      const objectIndex = cellData.objects.indexOf(objectId);
-      if (objectIndex > -1) {
-        cellData.objects.splice(objectIndex, 1);
-        await setDoc(cellRef, cellData, { merge: true });
-      }
+      // Legacy array format - check if object exists
+      objectExists =
+        cellData.objects.includes(objectId) ||
+        cellData.objects.some((obj) => obj && obj.id === objectId);
     } else if (cellData.objects && typeof cellData.objects === 'object') {
-      if (cellData.objects[objectId]) {
-        delete cellData.objects[objectId];
-        await setDoc(cellRef, cellData, { merge: true });
+      objectExists = cellData.objects[objectId] !== undefined;
+    }
+
+    if (!objectExists) {
+      console.log(
+        `ℹ️ Object ${objectId} not found in cell ${cellId} for deletion`
+      );
+      return true; // Object doesn't exist, consider it deleted
+    }
+
+    console.log(
+      `🗑️ DELETING: Object ${objectId} from cell ${cellId} using atomic operation`
+    );
+
+    // Use atomic updateDoc with deleteField for safe deletion
+    await updateDoc(cellRef, {
+      [`objects.${objectId}`]: deleteField(),
+    });
+
+    // Verify deletion with retries
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempts + 1)));
+
+      const verifyDoc = await getDoc(cellRef);
+      if (!verifyDoc.exists()) {
+        console.log(`✅ DELETION SUCCESS: Cell ${cellId} no longer exists`);
+        return true;
+      }
+
+      const verifyData = verifyDoc.data();
+      if (!verifyData.objects || !verifyData.objects[objectId]) {
+        console.log(
+          `✅ DELETION SUCCESS: Object ${objectId} confirmed deleted from cell ${cellId}`
+        );
+        return true;
+      }
+
+      attempts++;
+      if (attempts < maxAttempts) {
+        console.warn(
+          `⚠️ DELETION RETRY ${attempts}: Object ${objectId} still exists, retrying...`
+        );
+        await updateDoc(cellRef, {
+          [`objects.${objectId}`]: deleteField(),
+        });
+      } else {
+        console.error(
+          `❌ DELETION FAILED: Object ${objectId} still exists after ${maxAttempts} attempts`
+        );
+        return false;
       }
     }
 
-    return true;
-  } catch {
+    return false;
+  } catch (error) {
+    console.error(
+      `❌ Error in deleteObjectFromCell for object ${objectId}:`,
+      error
+    );
     return false;
   }
 };
@@ -1154,15 +1235,31 @@ export const getCellsToUnload = (
  */
 export const addConnectionToCells = async (userId, spaceId, connectionData) => {
   if (!userId || !spaceId || !connectionData || !connectionData.id) {
+    console.error('❌ addConnectionToCells: Missing required parameters', {
+      userId: !!userId,
+      spaceId: !!spaceId,
+      connectionData: !!connectionData,
+      connectionId: connectionData?.id,
+    });
     return false;
   }
 
   try {
+    console.log('🔄 Adding connection to cells:', {
+      connectionId: connectionData.id,
+      userId,
+      spaceId,
+    });
+
     // Get start and end positions
     const startPosition = connectionData.start?.position;
     const endPosition = connectionData.end?.position;
 
     if (!startPosition || !endPosition) {
+      console.error('❌ addConnectionToCells: Missing connection positions', {
+        startPosition,
+        endPosition,
+      });
       return false;
     }
 
@@ -1176,6 +1273,8 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
       startCellCoords.y,
       startCellCoords.z
     );
+
+    console.log('🔄 Adding connection to start cell:', startCellId);
     await addConnectionToCell(userId, spaceId, startCellId, connectionData);
 
     // Add connection to end cell if different from start cell
@@ -1185,11 +1284,14 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
       endCellCoords.z
     );
     if (startCellId !== endCellId) {
+      console.log('🔄 Adding connection to end cell:', endCellId);
       await addConnectionToCell(userId, spaceId, endCellId, connectionData);
     }
 
+    console.log('✅ Successfully added connection to cells');
     return true;
-  } catch {
+  } catch (error) {
+    console.error('❌ Error in addConnectionToCells:', error);
     return false;
   }
 };
@@ -1209,10 +1311,21 @@ export const addConnectionToCell = async (
   connectionData
 ) => {
   if (!userId || !spaceId || !cellId || !connectionData) {
+    console.error('❌ addConnectionToCell: Missing required parameters', {
+      userId: !!userId,
+      spaceId: !!spaceId,
+      cellId,
+      connectionData: !!connectionData,
+    });
     return false;
   }
 
   try {
+    console.log('🔄 Adding connection to specific cell:', {
+      cellId,
+      connectionId: connectionData.id,
+    });
+
     const cellRef = doc(
       db,
       'users',
@@ -1229,7 +1342,9 @@ export const addConnectionToCell = async (
 
     if (cellDoc.exists()) {
       cellData = cellDoc.data();
+      console.log('📁 Cell exists, updating existing cell');
     } else {
+      console.log('📁 Cell does not exist, creating new cell');
       // Cell doesn't exist, create it
       const [x, y, z] = cellId.split(',').map(Number);
       await createCell(userId, spaceId, x, y, z);
@@ -1247,6 +1362,7 @@ export const addConnectionToCell = async (
 
     // Ensure connections is an object
     if (!cellData.connections || Array.isArray(cellData.connections)) {
+      console.log('🔧 Fixing connections structure in cell');
       cellData.connections = {};
     }
 
@@ -1257,9 +1373,12 @@ export const addConnectionToCell = async (
       cellId: cellId,
     };
 
+    console.log('💾 Saving connection to cell document');
     await setDoc(cellRef, cellData, { merge: true });
+    console.log('✅ Successfully saved connection to cell:', cellId);
     return true;
-  } catch {
+  } catch (error) {
+    console.error('❌ Error in addConnectionToCell:', error);
     return false;
   }
 };
@@ -1377,8 +1496,23 @@ export const removeConnectionFromCell = async (
  */
 export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
   if (!userId || !spaceId || !cellCoords || cellCoords.length === 0) {
+    console.log(
+      '🔍 getConnectionsFromCells: Early return due to missing parameters:',
+      {
+        userId: !!userId,
+        spaceId: !!spaceId,
+        cellCoords: cellCoords?.length || 0,
+      }
+    );
     return [];
   }
+
+  console.log('🔍 getConnectionsFromCells: Starting with params:', {
+    userId,
+    spaceId,
+    cellCoordsLength: cellCoords.length,
+    cellCoords: cellCoords.slice(0, 5), // Show first 5 for debugging
+  });
 
   // Filter out invalid cell coordinates
   const validCellCoords = cellCoords.filter(
@@ -1392,14 +1526,13 @@ export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
       !isNaN(coords.z)
   );
 
-  if (validCellCoords.length === 0) {
-    return [];
-  }
+  console.log(
+    `🔍 getConnectionsFromCells: Filtered to ${validCellCoords.length} valid cells`
+  );
 
   try {
     const allConnections = [];
     const seenConnectionIds = new Set(); // To avoid duplicates across cells
-
     for (const coords of validCellCoords) {
       const cellId = getCellId(coords.x, coords.y, coords.z);
 
@@ -1413,21 +1546,43 @@ export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
         cellId
       );
       const cellDoc = await getDoc(cellRef);
+      console.log(`🔍 Checking cell ${cellId} for connections:`, {
+        exists: cellDoc.exists(),
+        cellId,
+      });
 
       if (cellDoc.exists()) {
         const cellData = cellDoc.data();
 
         if (cellData.connections && typeof cellData.connections === 'object') {
           const cellConnections = Object.values(cellData.connections);
+          // Only log when connections are found to reduce noise
+          if (cellConnections.length > 0) {
+            console.log(
+              `🔗 Found ${cellConnections.length} connections in cell ${cellId}:`,
+              {
+                connectionIds: cellConnections.map((c) => c.id),
+              }
+            );
+          }
 
           // Only add connections we haven't seen before
           cellConnections.forEach((connection) => {
             if (!seenConnectionIds.has(connection.id)) {
               seenConnectionIds.add(connection.id);
               allConnections.push(connection);
+              console.log(
+                `✅ Added connection ${connection.id} from cell ${cellId}`
+              );
             }
           });
+        } else {
+          console.log(
+            `📭 Cell ${cellId} has no connections or invalid connections data`
+          );
         }
+      } else {
+        console.log(`❌ Cell ${cellId} does not exist`);
       }
     }
 
@@ -1487,19 +1642,30 @@ export const getCellsInRadius = (position, radius = CELL_NEIGHBOR_RADIUS) => {
 
   const centerCell = getCellCoordinates(position);
   const cellsInRadius = [];
-
   // Generate all cells within radius using Manhattan distance
-  for (let x = centerCell.x - radius; x <= centerCell.x + radius; x++) {
-    for (let y = centerCell.y - radius; y <= centerCell.y + radius; y++) {
-      for (let z = centerCell.z - radius; z <= centerCell.z + radius; z++) {
+  for (
+    let cellX = centerCell.x - radius;
+    cellX <= centerCell.x + radius;
+    cellX++
+  ) {
+    for (
+      let cellY = centerCell.y - radius;
+      cellY <= centerCell.y + radius;
+      cellY++
+    ) {
+      for (
+        let cellZ = centerCell.z - radius;
+        cellZ <= centerCell.z + radius;
+        cellZ++
+      ) {
         const distance = Math.max(
-          Math.abs(x - centerCell.x),
-          Math.abs(y - centerCell.y),
-          Math.abs(z - centerCell.z)
+          Math.abs(cellX - centerCell.x),
+          Math.abs(cellY - centerCell.y),
+          Math.abs(cellZ - centerCell.z)
         );
 
         if (distance <= radius) {
-          cellsInRadius.push({ x, y, z });
+          cellsInRadius.push({ x: cellX, y: cellY, z: cellZ });
         }
       }
     }
@@ -1524,20 +1690,19 @@ export const getNeighborCells = (
 
   const centerCell = getCellCoordinates(position);
   const neighborCells = [];
-
   // Generate cells in a 3x3 horizontal grid (X and Z only, Y stays constant)
   for (
-    let x = centerCell.x - neighborRadius;
-    x <= centerCell.x + neighborRadius;
-    x++
+    let cellX = centerCell.x - neighborRadius;
+    cellX <= centerCell.x + neighborRadius;
+    cellX++
   ) {
     for (
-      let z = centerCell.z - neighborRadius;
-      z <= centerCell.z + neighborRadius;
-      z++
+      let cellZ = centerCell.z - neighborRadius;
+      cellZ <= centerCell.z + neighborRadius;
+      cellZ++
     ) {
       // Y coordinate stays the same as the camera's current Y cell
-      neighborCells.push({ x, y: centerCell.y, z });
+      neighborCells.push({ x: cellX, y: centerCell.y, z: cellZ });
     }
   }
 
@@ -1622,10 +1787,6 @@ export const debugNeighborCells = (position = [20, 20, 50]) => {
  * Debug function to test current cell loading state
  */
 export const debugCurrentCellLoading = () => {
-  console.log('=== DEBUG: Current Cell Loading State ===');
-  console.log('CELL_NEIGHBOR_RADIUS:', CELL_NEIGHBOR_RADIUS);
-  console.log('CELL_SIZE:', CELL_SIZE);
-
   // Test getNeighborCells function
   const testPosition = [0, 0, 0]; // Origin position
   const neighborCells = getNeighborCells(testPosition, CELL_NEIGHBOR_RADIUS);

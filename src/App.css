@@ -169,10 +169,8 @@ canvas {
 }
 
 .object-ui-content {
-  background: rgb(0, 0, 0);
-  padding: 6px;
-  border-radius: 4px;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+  /* Remove background to prevent double border with TextStyleUIContent */
+  padding: 0px; /* Remove padding since TextStyleUIContent has its own */
   display: flex;
   gap: 4px;
 }

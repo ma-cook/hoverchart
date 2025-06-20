@@ -1,7 +1,8 @@
-import { useEffect, useRef, useMemo, useState } from 'react'; // Added useMemo
+import { useEffect, useRef, useMemo } from 'react'; // Added useMemo
 import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useTextObjectStore } from '../stores';
 
 // Add this helper function for position smoothing
 const lerpVector = (current, target, factor = 0.1) => {
@@ -33,6 +34,34 @@ const TextSprite = ({
   lineStyle, // Line style prop
   pathPoints, // Path points for position calculation
 }) => {
+  // Create unique sprite ID based on position and text
+  const spriteId = useMemo(() => {
+    const posStr = position
+      ? `${position[0]}_${position[1]}_${position[2]}`
+      : 'nopos';
+    const textStr = text
+      ? text.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20)
+      : 'notext';
+    return `sprite_${posStr}_${textStr}`;
+  }, [position, text]);
+  // Use text object store for sprite state
+  const getTextSprite = useTextObjectStore((state) => state.getTextSprite);
+  const setTextSpriteDragging = useTextObjectStore(
+    (state) => state.setTextSpriteDragging
+  );
+
+  // Get sprite state
+  const sprite = getTextSprite(spriteId);
+  const { isDragging } = sprite;
+
+  // Setter for isDragging
+  const setIsDragging = useMemo(
+    () => (value) => {
+      setTextSpriteDragging(spriteId, value);
+    },
+    [spriteId, setTextSpriteDragging]
+  );
+
   const textRef = useRef();
   const textContentRef = useRef(text);
   const lastLineStyleRef = useRef(lineStyle);
@@ -45,9 +74,7 @@ const TextSprite = ({
   const smoothedPositionRef = useRef(
     position ? new THREE.Vector3(...position) : null
   );
-
   // Add state to track if we're in a dragging operation
-  const [isDragging, setIsDragging] = useState(false);
   const dragTimeoutRef = useRef(null);
   const lastUpdateTimeRef = useRef(Date.now());
 
@@ -188,6 +215,7 @@ const TextSprite = ({
         clearTimeout(dragTimeoutRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [position, calculatedPosition]);
 
   // Track changes that would require position recalculation
@@ -398,23 +426,21 @@ const TextSprite = ({
       }
     }
   });
-
   // Modify the line style change effect to use smoothing as well
   useEffect(() => {
-    // Skip excessive logging
-    if (Math.random() < 0.01) {
-      // Reduced to 1% of changes
-      console.log(
-        'Line style changed:',
-        lineStyle,
-        'Path points:',
-        pathPoints?.length
-      );
-    }
-
-    // When style changes from straight to curved or vice versa, don't apply immediate position change
-    // The smoothing in useFrame will handle the transition
+    // Only log when the actual style changes, not when pathPoints change
     if (lineStyle !== lastLineStyleRef.current) {
+      // Skip excessive logging
+      if (Math.random() < 0.1) {
+        // Reduced to 10% of changes
+        console.log(
+          'Line style changed:',
+          lineStyle,
+          'Path points:',
+          pathPoints?.length
+        );
+      }
+
       lastLineStyleRef.current = lineStyle;
 
       // Initialize the smoothed position with the current position first
@@ -422,7 +448,8 @@ const TextSprite = ({
         smoothedPositionRef.current = textRef.current.position.clone();
       }
     }
-  }, [lineStyle, pathPoints]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineStyle]); // Only depend on lineStyle, not pathPoints
 
   // Add a separate effect for path points changes to avoid recalculating on every render
   useEffect(() => {
@@ -474,13 +501,13 @@ const TextSprite = ({
           color={style.color}
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.01}
-          outlineColor={style.color}
+          outlineWidth={0}
+          strokeWidth={0}
           billboard={!style.fixedSize}
         >
           _________________
         </Text>
-      )}
+      )}{' '}
       <Text
         ref={textRef}
         position={calculatedPosition || position}
@@ -488,8 +515,8 @@ const TextSprite = ({
         color={style.color}
         anchorX="center"
         anchorY="middle"
-        outlineWidth={0.01}
-        outlineColor={style.color}
+        outlineWidth={0}
+        strokeWidth={0}
         billboard={billboard}
         depthTest={true}
         depthWrite={false} // Change to false to prevent z-fighting
