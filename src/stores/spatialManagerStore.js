@@ -192,18 +192,10 @@ const useSpatialManagerStore = create((set, get) => ({
   },
   // Initialize the spatial system by discovering existing cells and loading the origin cell
   initializeSpatialSystem: async (user, currentSpaceId, cameraRef) => {
-    const state = get();
-
-    console.log('🏗️ initializeSpatialSystem called:', {
-      currentSpaceId,
-      isInitialized: state.isInitialized,
-      hasInitPromise: !!state.initializationPromise,
-      userId: user?.uid,
-      currentSpaceOwner: window.currentSpaceOwner,
-    });
+    const state = get();    console.log('🏗️ initializeSpatialSystem called for space:', currentSpaceId);
 
     if (!currentSpaceId || state.isInitialized || state.initializationPromise) {
-      console.log('🚫 Skipping spatial initialization:', {
+      console.debug('🚫 Skipping spatial initialization:', {
         noSpaceId: !currentSpaceId,
         alreadyInitialized: state.isInitialized,
         hasPromise: !!state.initializationPromise,
@@ -226,13 +218,16 @@ const useSpatialManagerStore = create((set, get) => ({
           console.log('❌ No owner ID found for spatial initialization');
           set({ initializationPromise: null }); // Clear the promise so we can retry
           return;
-        }
-
-        // Discover existing cells that contain objects
+        }        // Discover existing cells that contain objects
         const existingCells = await getOccupiedCells(
           ownerUserId,
           currentSpaceId
         );
+
+        console.log('🔍 Discovered existing cells with objects:', {
+          existingCells,
+          count: existingCells.length,
+        });
 
         // Get initial camera position and load neighbor cells
         // Use actual camera position if available, otherwise use default
@@ -248,9 +243,7 @@ const useSpatialManagerStore = create((set, get) => ({
         const initialCells = getNeighborCells(
           initialCameraPosition,
           CELL_NEIGHBOR_RADIUS
-        );
-
-        // Combine existing occupied cells and initial camera radius cells
+        );        // Combine existing occupied cells and initial camera radius cells
         const cellsToLoad = new Set();
         existingCells.forEach((cellId) => cellsToLoad.add(cellId));
 
@@ -260,27 +253,61 @@ const useSpatialManagerStore = create((set, get) => ({
           cellsToLoad.add(cellId);
         }
 
-        // Convert Set to array of coordinates and load all cells in parallel
-        const cellCoordsToLoad = initialCells.filter((cellCoords) => {
-          const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-          return !existingCells.includes(cellId); // Only load cells that don't already exist
-        });
-        if (cellCoordsToLoad.length > 0) {
-          console.log('🔄 Loading initial cells:', cellCoordsToLoad.length);
-          await get().loadCellsBatch(cellCoordsToLoad, user, currentSpaceId);
+        // Convert all cells to load into coordinate format for batch loading
+        const allCellCoordsToLoad = [];
+        
+        // Add existing cells coordinates
+        for (const cellId of existingCells) {
+          const coords = cellId.split(',').map(num => parseInt(num));
+          if (coords.length >= 2) {
+            allCellCoordsToLoad.push({
+              x: coords[0],
+              y: coords[1], 
+              z: coords[2] || 0
+            });
+          }
         }
-
-        if (existingCells.length > 0 || initialCells.length > 0) {
+          // Add initial camera cells coordinates  
+        for (const cellCoords of initialCells) {
+          allCellCoordsToLoad.push(cellCoords);
+        }        if (allCellCoordsToLoad.length > 0) {
+          console.log('🔄 Loading initial cells:', {
+            totalCells: allCellCoordsToLoad.length,
+            existingCellsCount: existingCells.length,
+            cameraCellsCount: initialCells.length,
+            existingCells: existingCells,
+            cameraCells: initialCells.map(c => getCellId(c.x, c.y, c.z)),
+            allCoords: allCellCoordsToLoad,
+          });
+          await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
+          
+          // Wait a bit more for all cell subscriptions to be established
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }else {
+          console.log('⚠️ No cells to load - this might be the issue!', {
+            existingCells: existingCells.length,
+            initialCells: initialCells.length,
+          });
+        }        if (existingCells.length > 0 || initialCells.length > 0) {
           console.log('✅ Spatial system initialized successfully:', {
             existingCells: existingCells.length,
             initialCells: initialCells.length,
             totalLoaded: cellsToLoad.size,
+            cellsLoaded: allCellCoordsToLoad.length,
           });
+          
+          // Set state first
           set({
             loadedCells: cellsToLoad,
             currentCellCoords: { x: 0, y: 0, z: 0 },
             isInitialized: true,
           });
+          
+          // Add a small delay to ensure all cell subscriptions are fully established
+          // before other systems start using the spatial manager
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          console.log('✅ Spatial system fully ready for object subscriptions');
         } else {
           console.log('⚠️ No cells to load during spatial initialization');
         }

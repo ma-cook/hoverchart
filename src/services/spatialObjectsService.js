@@ -544,12 +544,22 @@ export const subscribeToSpatialObjects = (
           ownerUserId = window.currentSpaceOwner || userId;
         }
       }
-      window.currentSpaceOwner = ownerUserId;
-
-      // Guard against empty cells
+      window.currentSpaceOwner = ownerUserId; // Guard against empty cells
       if (safeCells.length === 0) {
+        console.log('⚠️ [subscribeToSpatialObjects] No cells to subscribe to');
         return;
       }
+
+      console.log(
+        '🔄 [subscribeToSpatialObjects] Setting up subscriptions for cells:',
+        {
+          cellCount: safeCells.length,
+          cells: safeCells,
+          spaceId,
+          ownerUserId,
+          isAnonymous,
+        }
+      );
 
       // Subscribe to each loaded cell with deduplication
       for (const cellKey of safeCells) {
@@ -585,6 +595,15 @@ export const subscribeToSpatialObjects = (
               cellRef,
               { includeMetadataChanges: true },
               (snapshot) => {
+                console.log('📡 [spatialObjects] Snapshot received for cell:', {
+                  cellKey,
+                  exists: snapshot.exists(),
+                  metadata: snapshot.metadata,
+                  objectCount: snapshot.exists()
+                    ? Object.keys(snapshot.data()?.objects || {}).length
+                    : 0,
+                });
+
                 if (!snapshot.exists()) {
                   return;
                 }
@@ -636,7 +655,6 @@ export const subscribeToSpatialObjects = (
                       }
                     } else {
                       hasChanged = true;
-                      // New object debug logging removed
                     }
                     if (hasChanged) {
                       // Skip Firebase updates for objects currently being transformed
@@ -644,9 +662,6 @@ export const subscribeToSpatialObjects = (
                         window._currentTransformingObjects &&
                         window._currentTransformingObjects.has(objectId)
                       ) {
-                        console.log(
-                          `🔒 Skipping Firebase update for transforming object ${objectId}`
-                        );
                         return;
                       }
 
@@ -833,7 +848,6 @@ export const moveObjectBetweenCells = async (
     return false;
   }
 };
-
 /**
  * Load all objects from currently loaded cells
  */

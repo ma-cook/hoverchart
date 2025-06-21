@@ -815,12 +815,20 @@ export const getLoadedCells = async (userId, spaceId) => {
  * @returns {Promise<Array>} - Array of objects from all specified cells
  */
 export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
-  if (!userId || !spaceId || !cellCoords) return [];
+  console.log('🔍 getObjectsFromCells called:', { userId, spaceId, cellCoords });
+  
+  if (!userId || !spaceId || !cellCoords) {
+    console.log('❌ getObjectsFromCells: Missing required params');
+    return [];
+  }
 
   try {
-    const allObjects = [];
+    const allObjects = [];    console.log(`🔍 Processing ${cellCoords.length} cells`);
+    
     for (const coords of cellCoords) {
       const cellId = getCellId(coords.x, coords.y, coords.z);
+      console.debug('🔍 Fetching cell:', cellId);
+      
       const cellRef = doc(
         db,
         'users',
@@ -832,25 +840,34 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
       );
 
       const cellDoc = await getDoc(cellRef);
-      if (cellDoc.exists()) {
+      console.debug('🔍 Cell doc exists:', cellDoc.exists(), 'for cellId:', cellId);
+        if (cellDoc.exists()) {
         const cellData = cellDoc.data();
+        console.debug('🔍 Cell data:', { cellId, hasObjects: !!cellData.objects, objectsType: typeof cellData.objects });
 
         // Handle both old array format and new object format
         if (cellData.objects) {
           if (Array.isArray(cellData.objects)) {
+            console.log('📝 Found old array format objects in cell', cellId, '- count:', cellData.objects.length);
             // Old format - we'll need to load objects from global collection
             // This is for backward compatibility
           } else if (typeof cellData.objects === 'object') {
             // New format - objects stored directly in cell
             const cellObjects = Object.values(cellData.objects);
+            console.log('📦 Found new format objects in cell', cellId, '- count:', cellObjects.length);
             allObjects.push(...cellObjects);
-          }
-        }
+          }        } else {
+          console.debug('🔍 No objects found in cell', cellId);
+        }} else {
+        // Cell doesn't exist - this is expected for empty areas
+        console.debug('📍 Cell is empty (no objects):', cellId);
       }
     }
 
+    console.log('📦 getObjectsFromCells returning:', allObjects.length, 'objects');
     return allObjects;
-  } catch {
+  } catch (error) {
+    console.error('❌ Error in getObjectsFromCells:', error);
     return [];
   }
 };

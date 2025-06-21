@@ -1,3 +1,4 @@
+import React from 'react';
 import { Html } from '@react-three/drei';
 import { useRef, forwardRef } from 'react';
 import { useFrame } from '@react-three/fiber';
@@ -126,4 +127,14 @@ const TextObjectUI = forwardRef(
 
 TextObjectUI.displayName = 'TextObjectUI'; // Add display name for dev tools
 
-export default TextObjectUI;
+export default React.memo(TextObjectUI, (prevProps, nextProps) => {
+  // Custom comparison function for React.memo
+  // Only re-render if critical props change
+  return (
+    prevProps.id === nextProps.id &&
+    prevProps.textStyle === nextProps.textStyle &&
+    prevProps.followTarget === nextProps.followTarget &&
+    prevProps.showTransform === nextProps.showTransform &&
+    prevProps.showResizeArrow === nextProps.showResizeArrow
+  );
+});

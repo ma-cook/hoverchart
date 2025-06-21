@@ -141,7 +141,7 @@ export function generateCurvedPath(
     new THREE.Vector3(...controlPoint),
     new THREE.Vector3(...endPos)
   );
-
-  // Generate points along the curve
-  return curve.getPoints(10);
+  // Generate points along the curve and convert Vector3 objects to arrays
+  const curvePoints = curve.getPoints(10);
+  return curvePoints.map(point => [point.x, point.y, point.z]);
 }

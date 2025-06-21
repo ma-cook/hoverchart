@@ -5,6 +5,7 @@ import {
 } from '@react-three/drei';
 import { Vector3 } from 'three';
 import { useRef, useEffect, useCallback, useMemo } from 'react';
+import React from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceUI from './FaceUI';
 import TextSprite from './TextSprite';
@@ -1535,4 +1536,22 @@ const Plane = ({
   );
 };
 
-export default Plane;
+export default React.memo(Plane, (prevProps, nextProps) => {
+  // Custom comparison for Plane component
+  return (
+    prevProps.id === nextProps.id &&
+    prevProps.selected === nextProps.selected &&
+    prevProps.position === nextProps.position &&
+    prevProps.scale === nextProps.scale &&
+    prevProps.color === nextProps.color &&
+    prevProps.headerText === nextProps.headerText &&
+    prevProps.faceText === nextProps.faceText &&
+    prevProps.imageUrl === nextProps.imageUrl &&
+    prevProps.webcamActive === nextProps.webcamActive &&
+    prevProps.showAllIndicators === nextProps.showAllIndicators &&
+    prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
+    prevProps.activeTextStyleUI === nextProps.activeTextStyleUI &&
+    prevProps.connections.length === nextProps.connections.length &&
+    prevProps.selectedIndicators.length === nextProps.selectedIndicators.length
+  );
+});

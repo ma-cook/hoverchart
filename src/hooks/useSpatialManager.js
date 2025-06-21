@@ -83,8 +83,8 @@ export const useSpatialManager = ({
     let animationId;
     let lastCheckTime = 0;
     let lastPosition = { x: 0, y: 0, z: 0 };
-    const CAMERA_CHECK_INTERVAL = 500; // Increased from 200ms to 500ms to reduce Firebase requests
-    const MOVEMENT_THRESHOLD = 200; // Increased from 100 to 200 units to reduce cell transitions
+    const CAMERA_CHECK_INTERVAL = 1000; // Increased from 500ms to 1s to reduce Firebase requests
+    const MOVEMENT_THRESHOLD = 300; // Increased from 200 to 300 units to reduce cell transitions
 
     const trackCameraPosition = () => {
       const now = Date.now();

@@ -191,15 +191,19 @@ const Connection = ({
       endPosition = endObject.position;
     } else {
       endPosition = [0, 0, 0];
-    }
-
-    return {
+    }    return {
       isValid: Boolean(
         connection &&
           connection.start &&
           connection.end &&
           startPosition &&
-          endPosition
+          endPosition &&
+          Array.isArray(startPosition) &&
+          Array.isArray(endPosition) &&
+          startPosition.length >= 3 &&
+          endPosition.length >= 3 &&
+          startPosition.every((val) => typeof val === 'number' && !isNaN(val)) &&
+          endPosition.every((val) => typeof val === 'number' && !isNaN(val))
       ),
       midpoint: calculateMidpoint(startPosition, endPosition),
       startPosition,
@@ -275,10 +279,9 @@ const Connection = ({
       intersections &&
       intersections.length > 0; // Determine effective line style
     const effectiveLineStyle =
-      isCurvedPath || lineStyle === 'curved' ? 'curved' : lineStyle;
-    const finalPathPoints = calculatedPathPoints || [
-      startPosition,
-      endPosition,
+      isCurvedPath || lineStyle === 'curved' ? 'curved' : lineStyle;    const finalPathPoints = calculatedPathPoints || [
+      startPosition || [0, 0, 0],
+      endPosition || [0, 0, 0],
     ];
 
     return {
@@ -311,16 +314,34 @@ const Connection = ({
     const { calculatedPathPoints, effectiveLineStyle } = pathData;
 
     // Calculate text position based on line style
-    let textPosition;
-
-    if (calculatedPathPoints && calculatedPathPoints.length > 0) {
+    let textPosition;    if (calculatedPathPoints && calculatedPathPoints.length > 0) {
       if (effectiveLineStyle === 'curved') {
         const midIdx = Math.floor(calculatedPathPoints.length / 2);
-        textPosition = [
-          calculatedPathPoints[midIdx].x,
-          calculatedPathPoints[midIdx].y + defaultCurvedLineOffset,
-          calculatedPathPoints[midIdx].z,
-        ];
+        const midPoint = calculatedPathPoints[midIdx];
+        
+        // Handle both Vector3 objects and arrays
+        if (midPoint && typeof midPoint === 'object' && 'x' in midPoint) {
+          // Vector3 object
+          textPosition = [
+            midPoint.x,
+            midPoint.y + defaultCurvedLineOffset,
+            midPoint.z,
+          ];
+        } else if (Array.isArray(midPoint) && midPoint.length >= 3) {
+          // Array format
+          textPosition = [
+            midPoint[0],
+            midPoint[1] + defaultCurvedLineOffset,
+            midPoint[2],
+          ];
+        } else {
+          // Fallback to midpoint
+          textPosition = [
+            midpoint[0],
+            midpoint[1] + defaultCurvedLineOffset,
+            midpoint[2],
+          ];
+        }
       } else {
         textPosition = [
           midpoint[0],

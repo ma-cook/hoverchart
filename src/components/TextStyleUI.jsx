@@ -1,3 +1,4 @@
+import React from 'react';
 import { Html } from '@react-three/drei';
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
@@ -350,85 +351,97 @@ export const TextStyleUIContent = ({
 };
 
 // R3F wrapper component
-const TextStyleUI = ({ onStyleChange, position, followTarget, onClose }) => {
-  const groupRef = useRef();
-  const [distance, setDistance] = useState(50);
-  const [isPositioned, setIsPositioned] = useState(false);
-  useFrame(({ camera }) => {
-    if (groupRef.current) {
-      // Throttle updates for performance
-      if (
-        !groupRef.current._lastUpdate ||
-        Date.now() - groupRef.current._lastUpdate > 16
-      ) {
-        if (followTarget?.current) {
-          // Following target logic (for objects that need dynamic positioning)
-          const targetScale = followTarget.current.scale;
-          const cubeHeight = 10 * targetScale.y;
-          const topEdgeOffset = cubeHeight / 2;
-          const targetPos = followTarget.current.position;
+const TextStyleUI = React.memo(
+  ({ onStyleChange, position, followTarget, onClose }) => {
+    const groupRef = useRef();
+    const [distance, setDistance] = useState(50);
+    const [isPositioned, setIsPositioned] = useState(false);
+    useFrame(({ camera }) => {
+      if (groupRef.current) {
+        // Throttle updates for performance
+        if (
+          !groupRef.current._lastUpdate ||
+          Date.now() - groupRef.current._lastUpdate > 16
+        ) {
+          if (followTarget?.current) {
+            // Following target logic (for objects that need dynamic positioning)
+            const targetScale = followTarget.current.scale;
+            const cubeHeight = 10 * targetScale.y;
+            const topEdgeOffset = cubeHeight / 2;
+            const targetPos = followTarget.current.position;
 
-          // Get the header text's world position and size
-          const headerText = followTarget.current.children?.find(
-            (child) => child.type === 'Text'
+            // Get the header text's world position and size
+            const headerText = followTarget.current.children?.find(
+              (child) => child.type === 'Text'
+            );
+
+            let yOffset = 3; // Default offset
+            if (headerText) {
+              const box = new THREE.Box3().setFromObject(headerText);
+              const height = box.max.y - box.min.y;
+              yOffset = height + 3; // Add 3 units above the text's height
+            }
+
+            groupRef.current.position.set(
+              targetPos.x,
+              targetPos.y + topEdgeOffset + yOffset,
+              targetPos.z
+            );
+          }
+          // If no followTarget, keep static position (already set by position prop)
+
+          // Keep UI facing camera
+          groupRef.current.quaternion.copy(camera.quaternion);
+
+          // Calculate distance for UI scaling
+          const newDistance = camera.position.distanceTo(
+            groupRef.current.position
           );
+          setDistance(newDistance);
 
-          let yOffset = 3; // Default offset
-          if (headerText) {
-            const box = new THREE.Box3().setFromObject(headerText);
-            const height = box.max.y - box.min.y;
-            yOffset = height + 3; // Add 3 units above the text's height
+          // Mark as positioned after first frame
+          if (!isPositioned) {
+            setIsPositioned(true);
           }
 
-          groupRef.current.position.set(
-            targetPos.x,
-            targetPos.y + topEdgeOffset + yOffset,
-            targetPos.z
-          );
+          groupRef.current._lastUpdate = Date.now();
         }
-        // If no followTarget, keep static position (already set by position prop)
-
-        // Keep UI facing camera
-        groupRef.current.quaternion.copy(camera.quaternion);
-
-        // Calculate distance for UI scaling
-        const newDistance = camera.position.distanceTo(
-          groupRef.current.position
-        );
-        setDistance(newDistance);
-
-        // Mark as positioned after first frame
-        if (!isPositioned) {
-          setIsPositioned(true);
-        }
-
-        groupRef.current._lastUpdate = Date.now();
       }
-    }
-  });
+    });
 
-  return (
-    <group ref={groupRef} position={position}>
-      {' '}
-      <Html
-        style={{
-          pointerEvents: 'auto',
-          transform: 'translate3d(-50%, -150%, 0)',
-          background: 'transparent',
-          zIndex: 999999,
-          visibility: isPositioned ? 'visible' : 'hidden',
-        }}
-        center
-        className="face-ui-container"
-      >
-        <TextStyleUIContent
-          onStyleChange={onStyleChange}
-          distance={distance}
-          onClose={onClose}
-        />
-      </Html>
-    </group>
-  );
-};
+    return (
+      <group ref={groupRef} position={position}>
+        {' '}
+        <Html
+          style={{
+            pointerEvents: 'auto',
+            transform: 'translate3d(-50%, -150%, 0)',
+            background: 'transparent',
+            zIndex: 999999,
+            visibility: isPositioned ? 'visible' : 'hidden',
+          }}
+          center
+          className="face-ui-container"
+        >
+          <TextStyleUIContent
+            onStyleChange={onStyleChange}
+            distance={distance}
+            onClose={onClose}
+          />
+        </Html>{' '}
+      </group>
+    );
+  },
+  (prevProps, nextProps) => {
+    // Custom comparison function for React.memo
+    // Only re-render if critical props change
+    return (
+      prevProps.position === nextProps.position &&
+      prevProps.followTarget === nextProps.followTarget
+    );
+  }
+);
+
+TextStyleUI.displayName = 'TextStyleUI';
 
 export default TextStyleUI;

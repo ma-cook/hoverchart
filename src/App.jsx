@@ -42,6 +42,8 @@ import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
 import { initAnimationSystem } from './utils/animationUtils';
+import { throttle, initPerformanceTracking } from './utils/performance';
+import { objectVirtualizer } from './utils/objectVirtualization';
 
 /**
  * Main application component
@@ -124,7 +126,12 @@ const App = () => {
     currentSpaceOwner, // Pass owner state to enable re-initialization when resolved
     cameraRef,
     onObjectsChange: handleSpatialObjectChange,
-  }); // Initialize animation system for connection line animations
+  }); // Initialize performance tracking
+  useEffect(() => {
+    initPerformanceTracking();
+  }, []);
+
+  // Initialize animation system for connection line animations
   useEffect(() => {
     initAnimationSystem();
   }, []);
@@ -225,16 +232,43 @@ const App = () => {
     return () => {
       delete window.transitioningObjectsRef;
     };
-  }, []); // Enhanced check for public access URL parameters
+  }, []);  // Enhanced check for URL parameters - handle both authenticated and public access
   useEffect(() => {
-    // Extract space ID and owner ID from URL if present
+    // Extract parameters from URL
     const params = new URLSearchParams(window.location.search);
     const spaceParam = params.get('space') || params.get('spaceId'); // Support both 'space' and 'spaceId'
     const ownerParam = params.get('owner');
+    const uidParam = params.get('uid'); // Check for authenticated access
+    const tokenParam = params.get('token'); // Check for authentication token
 
     if (spaceParam) {
-      // If we have both space and owner, set them immediately
+      // If we have uid and token, this is authenticated access - let the auth system handle it
+      if (uidParam && tokenParam) {
+        console.log(
+          '🔐 Authenticated access detected, letting auth system handle space access'
+        );
+        // Don't set up public space access - let the normal auth flow handle this
+        // The space manager will pick up the spaceId from URL parameters
+        return;
+      }
+
+      // If we have an authenticated user, let the space manager handle it
+      if (user?.uid) {
+        console.log(
+          '🔐 User already authenticated, letting space manager handle space access'
+        );
+        return;
+      }
+
+      // Wait for auth to be ready before making public space decisions
+      if (!isAuthReady) {
+        console.log('⏳ Waiting for auth to be ready before handling space access');
+        return;
+      }
+
+      // If we have both space and owner (but no auth params), treat as public access
       if (ownerParam) {
+        console.log('👥 Public space access with owner specified');
         window.publicAccessSpace = spaceParam;
         window.currentSpaceOwner = ownerParam;
         setCurrentSpaceOwner(ownerParam);
@@ -245,57 +279,67 @@ const App = () => {
         sessionStorage.setItem(`sharedSpaceOwner_${spaceParam}`, ownerParam);
         sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
       } else {
-        // If we only have spaceId, we need to look up the owner information
-        // For now, set the space and mark it as a potential public space
-        window.publicAccessSpace = spaceParam;
-        setIsLookingUpPublicSpace(true);
-        console.log('🔍 Looking up space metadata for:', spaceParam);
+        // Only try public space lookup if we're not authenticated and no auth params
+        if (!user && !uidParam && !tokenParam) {
+          console.log(
+            '🔍 Looking up space metadata for potential public access:',
+            spaceParam
+          );
+          window.publicAccessSpace = spaceParam;
+          setIsLookingUpPublicSpace(true);
 
-        // We'll need to fetch the space metadata to get the owner
-        import('./services/spacesService')
-          .then(({ getPublicSpaceMetadata }) => {
-            getPublicSpaceMetadata(spaceParam)
-              .then((spaceData) => {
-                console.log('📋 Space metadata result:', spaceData);
-                if (spaceData && spaceData.isPublic && spaceData.ownerId) {
+          // We'll need to fetch the space metadata to get the owner
+          import('./services/spacesService')
+            .then(({ getPublicSpaceMetadata }) => {
+              getPublicSpaceMetadata(spaceParam)
+                .then((spaceData) => {
+                  console.log('📋 Space metadata result:', spaceData);
+                  if (spaceData && spaceData.isPublic && spaceData.ownerId) {
+                    console.log(
+                      '✅ Public space verified, owner:',
+                      spaceData.ownerId
+                    );
+                    window.currentSpaceOwner = spaceData.ownerId;
+                    setCurrentSpaceOwner(spaceData.ownerId);
+                    sessionStorage.setItem(
+                      `isSharedSpace_${spaceParam}`,
+                      'true'
+                    );
+                    sessionStorage.setItem(
+                      `sharedSpaceOwner_${spaceParam}`,
+                      spaceData.ownerId
+                    );
+                    sessionStorage.setItem(
+                      `isPublicSpace_${spaceParam}`,
+                      'true'
+                    );
+                    // Trigger a re-render
+                    setPublicSpaceReady(true);
+                  } else {
+                    console.log('❌ Space not found or not public:', spaceData);
+                    // For non-public spaces accessed without auth, redirect to volscape.com
+                    console.log(
+                      '🚫 Redirecting to volscape.com - unauthorized access to secure space'
+                    );
+                    window.location.href = 'https://volscape.com/';
+                    return;
+                  }
+                  setIsLookingUpPublicSpace(false);
+                })
+                .catch((error) => {
+                  console.error('Failed to fetch space metadata:', error);
+                  // Redirect to volscape.com for failed space access
                   console.log(
-                    '✅ Public space verified, owner:',
-                    spaceData.ownerId
-                  );
-                  window.currentSpaceOwner = spaceData.ownerId;
-                  setCurrentSpaceOwner(spaceData.ownerId);
-                  sessionStorage.setItem(`isSharedSpace_${spaceParam}`, 'true');
-                  sessionStorage.setItem(
-                    `sharedSpaceOwner_${spaceParam}`,
-                    spaceData.ownerId
-                  );
-                  sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
-                  // Trigger a re-render
-                  setPublicSpaceReady(true);
-                } else {
-                  console.log('❌ Space not found or not public:', spaceData);
-                  // Redirect to volscape.com for unauthorized access to secure spaces
-                  console.log(
-                    '🚫 Redirecting to volscape.com - unauthorized access to secure space'
+                    '🚫 Redirecting to volscape.com - failed to access space'
                   );
                   window.location.href = 'https://volscape.com/';
-                  return;
-                }
-                setIsLookingUpPublicSpace(false);
-              })
-              .catch((error) => {
-                console.error('Failed to fetch space metadata:', error);
-                // Redirect to volscape.com for failed space access
-                console.log(
-                  '🚫 Redirecting to volscape.com - failed to access space'
-                );
-                window.location.href = 'https://volscape.com/';
-              });
-          })
-          .catch((importError) => {
-            console.error('Failed to import spacesService:', importError);
-            setIsLookingUpPublicSpace(false);
-          });
+                });
+            })
+            .catch((importError) => {
+              console.error('Failed to import spacesService:', importError);
+              setIsLookingUpPublicSpace(false);
+            });
+        }
       }
     }
 
@@ -303,7 +347,7 @@ const App = () => {
     window._currentSpaceId = currentSpaceId;
     window._currentUserId = user?.uid;
     window._firebaseDb = db;
-  }, [user, currentSpaceId]);
+  }, [user, currentSpaceId, isAuthReady]);
   const isReadOnly =
     !!publicSpaceId && (!user || currentSpaceOwner !== user?.uid);
 
@@ -311,24 +355,10 @@ const App = () => {
   useEffect(() => {
     // If we have a currentSpaceId but no authentication and no public space access
     if (currentSpaceId && !user && !publicSpaceId && isAuthReady) {
-      console.log(
-        '🚫 Redirecting to volscape.com - unauthorized access to secure space'
-      );
       window.location.href = 'https://volscape.com/';
       return;
     }
   }, [currentSpaceId, user, publicSpaceId, isAuthReady]);
-
-  // Debug logging
-  console.log('🔍 Access Debug:', {
-    user: !!user,
-    publicSpaceId,
-    currentSpaceOwner,
-    publicSpaceReady,
-    isLookingUpPublicSpace,
-    canViewSpace,
-    effectiveSpaceId,
-  });
 
   // Create stable key for loaded cells to prevent infinite subscription loop
   const loadedCellsKey = useMemo(() => {
@@ -438,29 +468,20 @@ const App = () => {
         cleanupRef.current();
       }
     };
-  }, [user?.uid, currentSpaceId, loadedCells, setConnections]); // Subscribe to spatial objects changes - supports anonymous access to public spaces
+  }, [user?.uid, currentSpaceId, loadedCells, setConnections]);  // Subscribe to spatial objects changes - supports anonymous access to public spaces
   useEffect(() => {
-    console.log('🔧 Spatial subscription effect triggered:', {
-      canViewSpace,
-      isSpatialInitialized,
-      user: !!user,
-      publicSpaceId,
-      currentSpaceOwner,
-      loadedCells: loadedCells?.length || 0,
-    });
-
     if (!canViewSpace) {
-      console.log('❌ Cannot view space, exiting');
+      console.log('🚫 Cannot view space, skipping object subscription');
       return;
     }
     if (!isSpatialInitialized) {
-      console.log('❌ Spatial not initialized, exiting');
+      console.log('⏳ Spatial system not initialized, waiting...');
       return; // Wait for spatial system to initialize
     }
 
     // For public spaces, wait until we have the owner information
     if (!user && publicSpaceId && !currentSpaceOwner) {
-      console.log('⏳ Waiting for public space owner information...');
+      console.log('⏳ Waiting for public space owner resolution...');
       return;
     }
 
@@ -469,8 +490,60 @@ const App = () => {
       !Array.isArray(loadedCells) ||
       loadedCells.length === 0
     ) {
+      console.log('⏳ No loaded cells yet, waiting...', { loadedCells });
       return;
-    }
+    }    console.log('🔄 Starting object subscription with loaded cells:', {
+      cellCount: loadedCells.length,
+      cells: loadedCells,
+      spaceId: effectiveSpaceId,
+      owner: currentSpaceOwner || user?.uid,
+    });    // Add an initial fetch phase to ensure we get all existing objects
+    const performInitialObjectFetch = async () => {
+      try {
+        const { getObjectsFromCells } = await import('./services/spatialPartitioning');
+        const ownerUserId = currentSpaceOwner || user?.uid;
+        
+        // Convert cell IDs to coordinate objects
+        const cellCoords = loadedCells.map((cellId) => {
+          const [x, y, z] = cellId.split(',').map(Number);
+          return { x, y, z: z || 0 }; // Default z to 0 for backward compatibility
+        });
+        
+        console.log('🔍 Performing initial object fetch from cells:', {
+          cells: loadedCells,
+          cellCoords,
+          owner: ownerUserId,
+        });
+        
+        const initialObjects = await getObjectsFromCells(ownerUserId, effectiveSpaceId, cellCoords);
+        
+        console.log('📦 Initial objects fetched:', {
+          count: initialObjects.length,
+          objects: initialObjects.map(obj => ({ id: obj.id, position: obj.position })),
+        });
+        
+        // Add all initial objects to the store
+        if (initialObjects.length > 0) {
+          currentSetObjects(prev => {
+            const existingIds = new Set(prev.map(obj => obj.id));
+            const newObjects = initialObjects.filter(obj => !existingIds.has(obj.id));
+            
+            console.log('📥 Adding initial objects to store:', {
+              existing: prev.length,
+              new: newObjects.length,
+              total: prev.length + newObjects.length,
+            });
+            
+            return [...prev, ...newObjects];
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch initial objects:', error);
+      }
+    };
+
+    // Perform initial fetch before setting up subscriptions
+    performInitialObjectFetch();
 
     // Deterministic approach: Set loading complete based on number of cells
     // Each cell subscription should be established quickly, so we can set a reasonable timeout
@@ -497,23 +570,27 @@ const App = () => {
     const spaceToLoad = effectiveSpaceId;
     const ownerUserId = currentSpaceOwner || user?.uid;
 
-    console.log('🚀 Starting spatial objects subscription:', {
-      spaceToLoad,
-      ownerUserId,
-      loadedCells: loadedCells?.length || 0,
-    }); // Capture current refs and functions to avoid dependency issues
+    // Capture current refs and functions to avoid dependency issues
     const currentLastUpdateRef = lastUpdateRef;
     const currentDraggingObjectsRef = draggingObjectsRef;
     const currentTransformingObjectsRef = transformingObjectsRef;
     const currentSetObjects = setObjects;
     const currentSetIsInitialLoading = setIsInitialLoading;
     const currentTrackObjectInCell = trackObjectInCell;
-    const currentUntrackObjectInCell = untrackObjectInCell;
-    const unsubscribe = subscribeToSpatialObjects(
+    const currentUntrackObjectInCell = untrackObjectInCell;    const unsubscribe = subscribeToSpatialObjects(
       ownerUserId, // May be null for anonymous access
       spaceToLoad,
       loadedCells,
       (change) => {
+        console.log('📦 Object change received:', {
+          type: change.type,
+          id: change.id,
+          position: change.object?.position,
+          cellCoords: change.cellCoords,
+          loadedCells: Array.from(loadedCells || []),
+          timestamp: new Date().toISOString(),
+        });
+        
         currentSetObjects((prev) => {
           switch (change.type) {
             case 'added': {
@@ -537,15 +614,24 @@ const App = () => {
                   `🔄 Object ${change.id} returned from transition - clearing transitioning flag`
                 );
               }
-              if (!prev.find((obj) => obj.id === change.id)) {
-                // Validate position before adding the object
+              if (!prev.find((obj) => obj.id === change.id)) {                // Validate position before adding the object (accept both array and Vector3 formats)
                 const hasValidPosition =
                   change.object?.position &&
-                  Array.isArray(change.object.position) &&
-                  change.object.position.length === 3 &&
-                  change.object.position.every(
-                    (val) => typeof val === 'number' && !isNaN(val)
-                  );
+                  ((Array.isArray(change.object.position) &&
+                    change.object.position.length === 3 &&
+                    change.object.position.every(
+                      (val) => typeof val === 'number' && !isNaN(val)
+                    )) ||
+                    (typeof change.object.position === 'object' &&
+                      'x' in change.object.position &&
+                      'y' in change.object.position &&
+                      'z' in change.object.position &&
+                      typeof change.object.position.x === 'number' &&
+                      typeof change.object.position.y === 'number' &&
+                      typeof change.object.position.z === 'number' &&
+                      !isNaN(change.object.position.x) &&
+                      !isNaN(change.object.position.y) &&
+                      !isNaN(change.object.position.z)));
 
                 if (!hasValidPosition) {
                   console.warn(
@@ -557,6 +643,15 @@ const App = () => {
                     }
                   );
                   return prev;
+                }
+
+                // Normalize position to array format if it's a Vector3 object
+                if (change.object.position && !Array.isArray(change.object.position)) {
+                  change.object.position = [
+                    change.object.position.x,
+                    change.object.position.y,
+                    change.object.position.z
+                  ];
                 }
                 if (change.cellCoords && currentTrackObjectInCell) {
                   const cellId = `${change.cellCoords.x},${
@@ -584,15 +679,24 @@ const App = () => {
                 const existingObj = prev.find(
                   (obj) => obj.id.toString() === change.id
                 );
-                if (existingObj) {
-                  // Validate that existing object has a valid position
+                if (existingObj) {                  // Validate that existing object has a valid position
                   const hasValidPosition =
                     existingObj.position &&
-                    Array.isArray(existingObj.position) &&
-                    existingObj.position.length === 3 &&
-                    existingObj.position.every(
-                      (val) => typeof val === 'number' && !isNaN(val)
-                    );
+                    ((Array.isArray(existingObj.position) &&
+                      existingObj.position.length === 3 &&
+                      existingObj.position.every(
+                        (val) => typeof val === 'number' && !isNaN(val)
+                      )) ||
+                      (typeof existingObj.position === 'object' &&
+                        'x' in existingObj.position &&
+                        'y' in existingObj.position &&
+                        'z' in existingObj.position &&
+                        typeof existingObj.position.x === 'number' &&
+                        typeof existingObj.position.y === 'number' &&
+                        typeof existingObj.position.z === 'number' &&
+                        !isNaN(existingObj.position.x) &&
+                        !isNaN(existingObj.position.y) &&
+                        !isNaN(existingObj.position.z)));
 
                   if (!hasValidPosition) {
                     console.warn(
@@ -621,15 +725,24 @@ const App = () => {
               } // Update other objects normally
               if (
                 !isEqual(currentLastUpdateRef.current[change.id], change.object)
-              ) {
-                // Validate position before accepting the change
+              ) {                // Validate position before accepting the change (accept both array and Vector3 formats)
                 const hasValidPosition =
                   change.object?.position &&
-                  Array.isArray(change.object.position) &&
-                  change.object.position.length === 3 &&
-                  change.object.position.every(
-                    (val) => typeof val === 'number' && !isNaN(val)
-                  );
+                  ((Array.isArray(change.object.position) &&
+                    change.object.position.length === 3 &&
+                    change.object.position.every(
+                      (val) => typeof val === 'number' && !isNaN(val)
+                    )) ||
+                    (typeof change.object.position === 'object' &&
+                      'x' in change.object.position &&
+                      'y' in change.object.position &&
+                      'z' in change.object.position &&
+                      typeof change.object.position.x === 'number' &&
+                      typeof change.object.position.y === 'number' &&
+                      typeof change.object.position.z === 'number' &&
+                      !isNaN(change.object.position.x) &&
+                      !isNaN(change.object.position.y) &&
+                      !isNaN(change.object.position.z)));
 
                 if (!hasValidPosition) {
                   console.warn(
@@ -641,6 +754,15 @@ const App = () => {
                     }
                   );
                   return prev;
+                }
+
+                // Normalize position to array format if it's a Vector3 object
+                if (change.object.position && !Array.isArray(change.object.position)) {
+                  change.object.position = [
+                    change.object.position.x,
+                    change.object.position.y,
+                    change.object.position.z
+                  ];
                 }
 
                 currentLastUpdateRef.current[change.id] = change.object;
@@ -955,31 +1077,36 @@ const App = () => {
       }
     },
     [setActiveIndicator, setIndicatorMode]
-  ); // Canvas click handler
+  ); // Canvas click handler - memoized to prevent re-creation
   const handleCanvasClick = useCallback(() => {
     // Close any active text styling menus
     setActiveTextStyleUI(null);
     setSelectedConnection(null);
     setShowLineTextStyleUI(null);
-    setSelectedId(null); // Close TextStyleUI for all objects
-    objects.forEach((obj) => {
-      if (obj.type === 'plane') {
-        setPlaneShowTextStyleUI(obj.id, false);
-        setPlaneShowHeaderStyleUI(obj.id, false);
-      } else if (obj.type === 'cube') {
-        setCubeShowHeaderTextStyleUI(obj.id, false);
-      } else if (obj.type === 'dodecahedron' || obj.type === 'sphere') {
-        setDodecahedronShowStyleMenu(obj.id, false);
-        setDodecahedronShowFaceTextStyleMenu(obj.id, false);
+    setSelectedId(null);
+
+    // Batch DOM updates for better performance
+    requestAnimationFrame(() => {
+      // Close TextStyleUI for all objects
+      objects.forEach((obj) => {
+        if (obj.type === 'plane') {
+          setPlaneShowTextStyleUI(obj.id, false);
+          setPlaneShowHeaderStyleUI(obj.id, false);
+        } else if (obj.type === 'cube') {
+          setCubeShowHeaderTextStyleUI(obj.id, false);
+        } else if (obj.type === 'dodecahedron' || obj.type === 'sphere') {
+          setDodecahedronShowStyleMenu(obj.id, false);
+          setDodecahedronShowFaceTextStyleMenu(obj.id, false);
+        }
+      });
+
+      // If they were trying to create a connection but clicked empty space,
+      // cancel the connection creation process
+      if (isConnectMode && selectedIndicators.length > 0) {
+        setSelectedIndicators([]);
+        selectedIndicatorsRef.current = [];
       }
     });
-
-    // If they were trying to create a connection but clicked empty space,
-    // cancel the connection creation process
-    if (isConnectMode && selectedIndicators.length > 0) {
-      setSelectedIndicators([]);
-      selectedIndicatorsRef.current = [];
-    }
   }, [
     setActiveTextStyleUI,
     setSelectedConnection,
@@ -995,7 +1122,206 @@ const App = () => {
     selectedIndicators,
     setSelectedIndicators,
     selectedIndicatorsRef,
+  ]); // Virtualized object rendering with LOD
+  const [visibleObjectIds, setVisibleObjectIds] = useState(new Set());
+  const [cameraDistance, setCameraDistance] = useState(50);
+
+  // Update visible objects based on camera frustum
+  const updateVisibleObjects = useCallback(
+    (camera) => {
+      if (!camera || objects.length === 0) return;
+
+      // Calculate camera distance for LOD
+      const distance = camera.position.length();
+      setCameraDistance(distance);
+
+      // Use virtualization to get visible objects
+      const visible = objectVirtualizer.updateVisibility(camera, objects);
+      setVisibleObjectIds(new Set(visible));
+    },
+    [objects]
+  );
+  // Throttled visibility update - fix throttle dependency
+  const throttledUpdateVisibility = useMemo(
+    () => throttle((camera) => updateVisibleObjects(camera), 100),
+    [updateVisibleObjects]
+  );
+
+  // Update visible objects when camera moves
+  useEffect(() => {
+    if (cameraRef.current?.camera) {
+      // Initial visibility update
+      updateVisibleObjects(cameraRef.current.camera);
+
+      // Set up camera update listener
+      const camera = cameraRef.current.camera;
+      const controls = cameraRef.current.orbitControls;
+
+      if (controls) {
+        const handleCameraUpdate = () => {
+          throttledUpdateVisibility(camera);
+        };
+
+        controls.addEventListener('change', handleCameraUpdate);
+
+        return () => {
+          controls.removeEventListener('change', handleCameraUpdate);
+        };
+      }
+    }
+  }, [
+    cameraRef.current?.camera,
+    cameraRef.current?.orbitControls,
+    throttledUpdateVisibility,
+    updateVisibleObjects,
   ]);
+  // Initial setup for all objects to be visible if no camera yet or if objects changed
+  useEffect(() => {
+    if (objects.length > 0) {
+      // Always ensure all objects are in the visible set initially
+      // This prevents objects from disappearing due to virtualization timing issues
+      const allObjectIds = new Set(objects.map((obj) => obj.id));
+      setVisibleObjectIds(allObjectIds);
+    }
+  }, [objects]);
+
+  // Memoize expensive object rendering operations with virtualization
+  const renderedObjects = useMemo(() => {
+    // Filter objects to only render visible ones
+    const visibleObjects = objects.filter((obj) =>
+      visibleObjectIds.has(obj.id)
+    );
+
+    // Determine LOD based on camera distance
+    const useLOD = cameraDistance > 100;
+
+    return visibleObjects.map((obj) => (
+      <ObjectRenderer
+        key={obj.id}
+        obj={obj}
+        selectedId={selectedId}
+        handleObjectClick={handleObjectClick}
+        handleObjectMove={handleObjectMoveCallback}
+        handleObjectUpdate={handleObjectUpdateCallback}
+        disableOrbitControls={disableOrbitControls}
+        enableOrbitControls={enableOrbitControls}
+        handleFaceIndicatorClick={handleFaceIndicatorClickCallback}
+        handleFaceClick={handleFaceClick}
+        showAllCubesIndicators={showAllCubesIndicators}
+        activeIndicator={activeIndicator}
+        indicatorMode={indicatorMode}
+        connections={connections}
+        selectedIndicators={selectedIndicators}
+        activeTextStyleUI={activeTextStyleUI}
+        setActiveTextStyleUI={setActiveTextStyleUI}
+        handleIndicatorDeselected={handleIndicatorDeselected}
+        registerTransformingObject={registerTransformingObject}
+        getTransformStartPosition={getTransformStartPosition}
+        handleObjectMatrixChanged={handleObjectMatrixChanged}
+        handleIndicatorSelected={handleIndicatorSelected}
+        globalIndicatorSelected={globalIndicatorSelected}
+        handleObjectDelete={handleObjectDelete}
+        checkPositionJitter={checkPositionJitter}
+        user={user}
+        currentSpaceId={effectiveSpaceId}
+        useLOD={useLOD}
+      />
+    ));
+  }, [
+    objects,
+    visibleObjectIds,
+    cameraDistance,
+    selectedId,
+    handleObjectClick,
+    handleObjectMoveCallback,
+    handleObjectUpdateCallback,
+    disableOrbitControls,
+    enableOrbitControls,
+    handleFaceIndicatorClickCallback,
+    handleFaceClick,
+    showAllCubesIndicators,
+    activeIndicator,
+    indicatorMode,
+    connections,
+    selectedIndicators,
+    activeTextStyleUI,
+    setActiveTextStyleUI,
+    handleIndicatorDeselected,
+    registerTransformingObject,
+    getTransformStartPosition,
+    handleObjectMatrixChanged,
+    handleIndicatorSelected,
+    globalIndicatorSelected,
+    handleObjectDelete,
+    checkPositionJitter,
+    user,
+    effectiveSpaceId,
+  ]);
+  // Lazy load state for Canvas
+  const [shouldRenderCanvas, setShouldRenderCanvas] = useState(false);
+
+  // Progressive canvas quality enhancement
+  const [canvasQuality, setCanvasQuality] = useState('low');
+
+  useEffect(() => {
+    if (shouldRenderCanvas) {
+      // Upgrade canvas quality after initial render
+      const upgradeQuality = () => {
+        setCanvasQuality('high');
+      };
+
+      // Wait for initial render to complete, then upgrade
+      const timeoutId = setTimeout(upgradeQuality, 1000);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [shouldRenderCanvas]);
+  // Get canvas settings based on quality level
+  const getCanvasSettings = () => {
+    if (canvasQuality === 'low') {
+      return {
+        gl: {
+          antialias: false,
+          samples: 0,
+          alpha: true, // Keep alpha true to maintain white background
+          stencil: false,
+          depth: true,
+          logarithmicDepthBuffer: false,
+          powerPreference: 'high-performance',
+          precision: 'lowp',
+        },
+        dpr: 1,
+        frameloop: 'demand',
+      };
+    } else {
+      return {
+        gl: {
+          antialias: false,
+          samples: 4,
+          alpha: true,
+          stencil: false,
+          depth: true,
+          logarithmicDepthBuffer: false,
+          powerPreference: 'high-performance',
+        },
+        dpr: Math.min(window.devicePixelRatio, 2),
+        frameloop: 'always',
+      };
+    }
+  };
+
+  const canvasSettings = getCanvasSettings();
+
+  // Initialize Canvas rendering after initial auth/space setup
+  useEffect(() => {
+    if (canViewSpace && (isAuthReady || publicSpaceId)) {
+      // Defer canvas rendering to next frame for better LCP
+      requestAnimationFrame(() => {
+        setShouldRenderCanvas(true);
+      });
+    }
+  }, [canViewSpace, isAuthReady, publicSpaceId]);
+
   // Initialize WebRTC service with user ID when available
   useEffect(() => {
     if (user?.uid) {
@@ -1016,86 +1342,73 @@ const App = () => {
     return <div className="loading">Loading public space...</div>;
   }
   if (!canViewSpace) {
-    // Redirect to volscape.com instead of showing auth page
-    console.log('🚫 Redirecting to volscape.com - cannot view space');
-    window.location.href = 'https://volscape.com/';
+    // Defer redirect to not block rendering
+    setTimeout(() => {
+      window.location.href = 'https://volscape.com/';
+    }, 0);
     return <div className="loading">Redirecting...</div>;
   }
-
   return (
     <>
-      <Canvas
-        style={{
-          background: backgroundColor,
-          width: '100vw',
-          height: '100vh',
-          position: 'fixed',
-          top: 0,
-          left: 0,
-        }}
-        onPointerMissed={handleCanvasClick}
-        gl={{
-          antialias: true,
-          samples: 16,
-          alpha: true,
-          stencil: true,
-          depth: true,
-          logarithmicDepthBuffer: true,
-        }}
-        dpr={[1, 2]}
-      >
-        {' '}
-        <CustomCamera ref={cameraRef} />{' '}
-        <group>
-          {/* Real-time connection position updater - reactive to store changes */}
-          <RealTimeConnectionUpdater /> {/* Render all connections */}
-          <ConnectionsRenderer
-            objects={objects}
-            onLineStyleChange={handleLineStyleChange}
-            onLineColorChange={handleLineColorChange}
-            onConnectionClick={handleConnectionClick}
-            onLineTextClick={handleLineTextClick}
-            onLineTextSubmit={handleLineTextSubmit}
-          />{' '}
-          {/* Render all objects */}
-          {objects.map((obj) => (
-            <ObjectRenderer
-              key={obj.id}
-              obj={obj}
-              selectedId={selectedId}
-              handleObjectClick={handleObjectClick}
-              handleObjectMove={handleObjectMoveCallback}
-              handleObjectUpdate={handleObjectUpdateCallback}
-              disableOrbitControls={disableOrbitControls}
-              enableOrbitControls={enableOrbitControls}
-              handleFaceIndicatorClick={handleFaceIndicatorClickCallback}
-              handleFaceClick={handleFaceClick}
-              showAllCubesIndicators={showAllCubesIndicators}
-              activeIndicator={activeIndicator}
-              indicatorMode={indicatorMode}
-              connections={connections}
-              selectedIndicators={selectedIndicators}
-              activeTextStyleUI={activeTextStyleUI}
-              setActiveTextStyleUI={setActiveTextStyleUI}
-              handleIndicatorDeselected={handleIndicatorDeselected}
-              registerTransformingObject={registerTransformingObject} // Pass the register function
-              getTransformStartPosition={getTransformStartPosition} // Add this prop
-              handleObjectMatrixChanged={handleObjectMatrixChanged}
-              handleIndicatorSelected={handleIndicatorSelected}
-              globalIndicatorSelected={globalIndicatorSelected}
-              handleObjectDelete={handleObjectDelete}
-              checkPositionJitter={checkPositionJitter} // Pass this prop
-              user={user}
-              currentSpaceId={effectiveSpaceId} // Use effectiveSpaceId instead of currentSpaceId
-            />
-          ))}{' '}
-          {/* Render cell boundaries */}
-          <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
-        </group>
-        <EffectComposer>
-          <SMAA />
-        </EffectComposer>
-      </Canvas>{' '}
+      {/* Show a minimal loading UI while Canvas is being prepared */}
+      {!shouldRenderCanvas && canViewSpace && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: backgroundColor,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '18px',
+            color: '#666',
+          }}
+        >
+          Initializing 3D space...
+        </div>
+      )}
+
+      {shouldRenderCanvas && (
+        <Canvas
+          style={{
+            background: backgroundColor,
+            width: '100vw',
+            height: '100vh',
+            position: 'fixed',
+            top: 0,
+            left: 0,
+          }}
+          onPointerMissed={handleCanvasClick}
+          {...canvasSettings}
+        >
+          {' '}
+          <CustomCamera ref={cameraRef} />{' '}
+          <group>
+            {/* Real-time connection position updater - reactive to store changes */}
+            <RealTimeConnectionUpdater />{' '}
+            {/* Render connections with virtualization */}
+            <ConnectionsRenderer
+              objects={objects.filter((obj) => visibleObjectIds.has(obj.id))}
+              onLineStyleChange={handleLineStyleChange}
+              onLineColorChange={handleLineColorChange}
+              onConnectionClick={handleConnectionClick}
+              onLineTextClick={handleLineTextClick}
+              onLineTextSubmit={handleLineTextSubmit}
+            />{' '}
+            {/* Render all objects */}
+            {renderedObjects}
+            {/* Render cell boundaries */}
+            <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
+          </group>{' '}
+          <EffectComposer>
+            <SMAA />
+          </EffectComposer>
+        </Canvas>
+      )}
+
       <UIOverlay
         onCreateObject={handleCreateObject}
         onToggleIndicators={handleToggleIndicators}
