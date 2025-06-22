@@ -35,36 +35,62 @@ const useUIOverlayStore = create((set, get) => ({
       },
     }));
   },
-
   // Update specific property of a UI overlay
   updateUIOverlayProperty: (overlayId = 'main', property, value) => {
-    set((state) => ({
-      overlays: {
-        ...state.overlays,
-        [overlayId]: {
-          ...state.overlays[overlayId],
-          [property]: value,
-        },
-      },
-    }));
-  },
+    set((state) => {
+      // Ensure overlay exists, if not create it with default values
+      if (!state.overlays[overlayId]) {
+        state.overlays[overlayId] = { ...state.defaultOverlay };
+      }
 
+      return {
+        overlays: {
+          ...state.overlays,
+          [overlayId]: {
+            ...state.overlays[overlayId],
+            [property]: value,
+          },
+        },
+      };
+    });
+  },
   // Toggle menu open state
   toggleMenu: (overlayId = 'main') => {
-    const state = get();
-    const overlay = state.getUIOverlay(overlayId);
-    state.updateUIOverlayProperty(overlayId, 'menuOpen', !overlay.menuOpen);
-  },
+    set((state) => {
+      // Ensure overlay exists, if not create it with default values
+      if (!state.overlays[overlayId]) {
+        state.overlays[overlayId] = { ...state.defaultOverlay };
+      }
 
+      return {
+        overlays: {
+          ...state.overlays,
+          [overlayId]: {
+            ...state.overlays[overlayId],
+            menuOpen: !state.overlays[overlayId].menuOpen,
+          },
+        },
+      };
+    });
+  },
   // Toggle template open state
   toggleTemplate: (overlayId = 'main') => {
-    const state = get();
-    const overlay = state.getUIOverlay(overlayId);
-    state.updateUIOverlayProperty(
-      overlayId,
-      'templateOpen',
-      !overlay.templateOpen
-    );
+    set((state) => {
+      // Ensure overlay exists, if not create it with default values
+      if (!state.overlays[overlayId]) {
+        state.overlays[overlayId] = { ...state.defaultOverlay };
+      }
+
+      return {
+        overlays: {
+          ...state.overlays,
+          [overlayId]: {
+            ...state.overlays[overlayId],
+            templateOpen: !state.overlays[overlayId].templateOpen,
+          },
+        },
+      };
+    });
   },
 
   // Update template configuration

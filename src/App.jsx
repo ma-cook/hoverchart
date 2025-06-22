@@ -232,7 +232,7 @@ const App = () => {
     return () => {
       delete window.transitioningObjectsRef;
     };
-  }, []);  // Enhanced check for URL parameters - handle both authenticated and public access
+  }, []); // Enhanced check for URL parameters - handle both authenticated and public access
   useEffect(() => {
     // Extract parameters from URL
     const params = new URLSearchParams(window.location.search);
@@ -262,7 +262,9 @@ const App = () => {
 
       // Wait for auth to be ready before making public space decisions
       if (!isAuthReady) {
-        console.log('⏳ Waiting for auth to be ready before handling space access');
+        console.log(
+          '⏳ Waiting for auth to be ready before handling space access'
+        );
         return;
       }
 
@@ -468,14 +470,11 @@ const App = () => {
         cleanupRef.current();
       }
     };
-  }, [user?.uid, currentSpaceId, loadedCells, setConnections]);  // Subscribe to spatial objects changes - supports anonymous access to public spaces
-  useEffect(() => {
-    if (!canViewSpace) {
-      console.log('🚫 Cannot view space, skipping object subscription');
+  }, [user?.uid, currentSpaceId, loadedCells, setConnections]); // Subscribe to spatial objects changes - supports anonymous access to public spaces
+  useEffect(() => {    if (!canViewSpace) {
       return;
     }
     if (!isSpatialInitialized) {
-      console.log('⏳ Spatial system not initialized, waiting...');
       return; // Wait for spatial system to initialize
     }
 
@@ -492,49 +491,37 @@ const App = () => {
     ) {
       console.log('⏳ No loaded cells yet, waiting...', { loadedCells });
       return;
-    }    console.log('🔄 Starting object subscription with loaded cells:', {
-      cellCount: loadedCells.length,
-      cells: loadedCells,
-      spaceId: effectiveSpaceId,
-      owner: currentSpaceOwner || user?.uid,
-    });    // Add an initial fetch phase to ensure we get all existing objects
+    }    // Add an initial fetch phase to ensure we get all existing objects
     const performInitialObjectFetch = async () => {
       try {
-        const { getObjectsFromCells } = await import('./services/spatialPartitioning');
+        const { getObjectsFromCells } = await import(
+          './services/spatialPartitioning'
+        );
         const ownerUserId = currentSpaceOwner || user?.uid;
-        
+
         // Convert cell IDs to coordinate objects
         const cellCoords = loadedCells.map((cellId) => {
           const [x, y, z] = cellId.split(',').map(Number);
           return { x, y, z: z || 0 }; // Default z to 0 for backward compatibility
         });
-        
+
         console.log('🔍 Performing initial object fetch from cells:', {
           cells: loadedCells,
           cellCoords,
           owner: ownerUserId,
         });
-        
-        const initialObjects = await getObjectsFromCells(ownerUserId, effectiveSpaceId, cellCoords);
-        
-        console.log('📦 Initial objects fetched:', {
-          count: initialObjects.length,
-          objects: initialObjects.map(obj => ({ id: obj.id, position: obj.position })),
-        });
-        
-        // Add all initial objects to the store
+
+        const initialObjects = await getObjectsFromCells(
+          ownerUserId,
+          effectiveSpaceId,
+          cellCoords
+        );        // Add all initial objects to the store
         if (initialObjects.length > 0) {
-          currentSetObjects(prev => {
-            const existingIds = new Set(prev.map(obj => obj.id));
-            const newObjects = initialObjects.filter(obj => !existingIds.has(obj.id));
-            
-            console.log('📥 Adding initial objects to store:', {
-              existing: prev.length,
-              new: newObjects.length,
-              total: prev.length + newObjects.length,
-            });
-            
-            return [...prev, ...newObjects];
+          currentSetObjects((prev) => {
+            const existingIds = new Set(prev.map((obj) => obj.id));
+            const newObjects = initialObjects.filter(
+              (obj) => !existingIds.has(obj.id)
+            );            return [...prev, ...newObjects];
           });
         }
       } catch (error) {
@@ -577,20 +564,11 @@ const App = () => {
     const currentSetObjects = setObjects;
     const currentSetIsInitialLoading = setIsInitialLoading;
     const currentTrackObjectInCell = trackObjectInCell;
-    const currentUntrackObjectInCell = untrackObjectInCell;    const unsubscribe = subscribeToSpatialObjects(
+    const currentUntrackObjectInCell = untrackObjectInCell;
+    const unsubscribe = subscribeToSpatialObjects(
       ownerUserId, // May be null for anonymous access
-      spaceToLoad,
-      loadedCells,
+      spaceToLoad,      loadedCells,
       (change) => {
-        console.log('📦 Object change received:', {
-          type: change.type,
-          id: change.id,
-          position: change.object?.position,
-          cellCoords: change.cellCoords,
-          loadedCells: Array.from(loadedCells || []),
-          timestamp: new Date().toISOString(),
-        });
-        
         currentSetObjects((prev) => {
           switch (change.type) {
             case 'added': {
@@ -614,7 +592,8 @@ const App = () => {
                   `🔄 Object ${change.id} returned from transition - clearing transitioning flag`
                 );
               }
-              if (!prev.find((obj) => obj.id === change.id)) {                // Validate position before adding the object (accept both array and Vector3 formats)
+              if (!prev.find((obj) => obj.id === change.id)) {
+                // Validate position before adding the object (accept both array and Vector3 formats)
                 const hasValidPosition =
                   change.object?.position &&
                   ((Array.isArray(change.object.position) &&
@@ -646,11 +625,14 @@ const App = () => {
                 }
 
                 // Normalize position to array format if it's a Vector3 object
-                if (change.object.position && !Array.isArray(change.object.position)) {
+                if (
+                  change.object.position &&
+                  !Array.isArray(change.object.position)
+                ) {
                   change.object.position = [
                     change.object.position.x,
                     change.object.position.y,
-                    change.object.position.z
+                    change.object.position.z,
                   ];
                 }
                 if (change.cellCoords && currentTrackObjectInCell) {
@@ -679,7 +661,8 @@ const App = () => {
                 const existingObj = prev.find(
                   (obj) => obj.id.toString() === change.id
                 );
-                if (existingObj) {                  // Validate that existing object has a valid position
+                if (existingObj) {
+                  // Validate that existing object has a valid position
                   const hasValidPosition =
                     existingObj.position &&
                     ((Array.isArray(existingObj.position) &&
@@ -725,7 +708,8 @@ const App = () => {
               } // Update other objects normally
               if (
                 !isEqual(currentLastUpdateRef.current[change.id], change.object)
-              ) {                // Validate position before accepting the change (accept both array and Vector3 formats)
+              ) {
+                // Validate position before accepting the change (accept both array and Vector3 formats)
                 const hasValidPosition =
                   change.object?.position &&
                   ((Array.isArray(change.object.position) &&
@@ -757,11 +741,14 @@ const App = () => {
                 }
 
                 // Normalize position to array format if it's a Vector3 object
-                if (change.object.position && !Array.isArray(change.object.position)) {
+                if (
+                  change.object.position &&
+                  !Array.isArray(change.object.position)
+                ) {
                   change.object.position = [
                     change.object.position.x,
                     change.object.position.y,
-                    change.object.position.z
+                    change.object.position.z,
                   ];
                 }
 
@@ -1370,7 +1357,6 @@ const App = () => {
           Initializing 3D space...
         </div>
       )}
-
       {shouldRenderCanvas && (
         <Canvas
           style={{
@@ -1407,8 +1393,7 @@ const App = () => {
             <SMAA />
           </EffectComposer>
         </Canvas>
-      )}
-
+      )}{' '}
       <UIOverlay
         onCreateObject={handleCreateObject}
         onToggleIndicators={handleToggleIndicators}
@@ -1419,6 +1404,7 @@ const App = () => {
         showLoginButton={!isCheckingUrlAuth && !user}
         isConnectMode={isConnectMode}
         currentCell={currentCellCoords}
+        currentSpaceId={effectiveSpaceId}
       />
     </>
   );

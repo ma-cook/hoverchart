@@ -19,7 +19,7 @@ export class ObjectVirtualizer {
   updateVisibility(camera, objects) {
     // For now, disable aggressive frustum culling to fix the object disappearing bug
     // Return all objects as visible to prevent the culling issue
-    const allObjectIds = objects.map(obj => obj.id);
+    const allObjectIds = objects.map((obj) => obj.id);
     this.visibleObjects = new Set(allObjectIds);
     return allObjectIds;
 
@@ -88,7 +88,6 @@ export class ObjectVirtualizer {
 
     return this.frustum.intersectsSphere(sphere);
   }
-
   getObjectRadius(obj) {
     // Estimate object radius based on type and scale
     const baseRadius = {
@@ -96,6 +95,7 @@ export class ObjectVirtualizer {
       sphere: 8,
       plane: 10,
       text: 3,
+      model: 10, // 3D models can vary greatly, use a reasonable default
     };
 
     const radius = baseRadius[obj.type] || 5;

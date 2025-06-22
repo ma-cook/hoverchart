@@ -40,30 +40,13 @@ export const useSpatialManager = ({
     return Array.from(loadedCellsSet).sort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedCellsKey]);
-
   // Initialize spatial system when dependencies are ready
   useEffect(() => {
     // For public spaces, we need the owner to be resolved before initializing
     const isPublicSpace = !user && currentSpaceId;
     const needsOwner = isPublicSpace && !currentSpaceOwner;
 
-    console.log('🔧 useSpatialManager init effect:', {
-      currentSpaceId,
-      isInitialized,
-      user: !!user,
-      hasCamera: !!cameraRef,
-      currentSpaceOwner,
-      isPublicSpace,
-      needsOwner,
-      canInit: currentSpaceId && !isInitialized && !needsOwner,
-    });
-
     if (currentSpaceId && !isInitialized && !needsOwner) {
-      console.log('🚀 Initializing spatial system with:', {
-        userId: user?.uid,
-        spaceOwner: currentSpaceOwner,
-        spaceId: currentSpaceId,
-      });
       initializeSpatialSystem(user, currentSpaceId, cameraRef);
     }
   }, [

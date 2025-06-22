@@ -354,9 +354,14 @@ const useObjectsStore = create((set, get) => ({
     });
     */
   },
-
   // Helper function to create object at a given position
-  createObjectWithPosition: async (type, position, user, currentSpaceId) => {
+  createObjectWithPosition: async (
+    type,
+    position,
+    user,
+    currentSpaceId,
+    extraData = {}
+  ) => {
     // Create a truly unique ID with a UUID suffix
     const uniqueId =
       Date.now() + '-' + Math.random().toString(36).substring(2, 10);
@@ -442,7 +447,14 @@ const useObjectsStore = create((set, get) => ({
             },
             bulletPointMode: false,
           }
+        : type === 'model'
+        ? {
+            modelUrl: extraData.modelUrl || '',
+            rotation: extraData.rotation || [0, 0, 0],
+          }
         : {}),
+      // Merge any additional extraData
+      ...extraData,
     };
 
     // Add to tracking set to prevent duplicate addition
@@ -463,14 +475,14 @@ const useObjectsStore = create((set, get) => ({
     const spaceOwnerId = window.currentSpaceOwner || user.uid;
     saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
   },
-
   // Create a new object with a guaranteed unique ID
   handleCreateObject: (
     type,
     position = null,
     user,
     currentSpaceId,
-    cameraRef
+    cameraRef,
+    extraData = {}
   ) => {
     if (!user || !currentSpaceId) return;
 
@@ -482,7 +494,13 @@ const useObjectsStore = create((set, get) => ({
           position[1],
           position[2]
         );
-        get().createObjectWithPosition(type, newPosition, user, currentSpaceId);
+        get().createObjectWithPosition(
+          type,
+          newPosition,
+          user,
+          currentSpaceId,
+          extraData
+        );
         return;
       }
 
@@ -502,7 +520,13 @@ const useObjectsStore = create((set, get) => ({
         console.warn('Falling back to default camera position');
         // Create a position in front of where the camera would typically be
         const newPosition = new THREE.Vector3(0, 0, -75);
-        get().createObjectWithPosition(type, newPosition, user, currentSpaceId);
+        get().createObjectWithPosition(
+          type,
+          newPosition,
+          user,
+          currentSpaceId,
+          extraData
+        );
         return;
       }
 
@@ -520,16 +544,28 @@ const useObjectsStore = create((set, get) => ({
       direction.applyQuaternion(camera.quaternion);
 
       // Calculate position in front of camera
-      const distance = type === 'text' ? 50 : 75;
+      const distance = type === 'text' ? 50 : type === 'model' ? 50 : 75;
       const newPosition = new THREE.Vector3();
       newPosition.copy(cameraPos).add(direction.multiplyScalar(distance));
 
-      get().createObjectWithPosition(type, newPosition, user, currentSpaceId);
+      get().createObjectWithPosition(
+        type,
+        newPosition,
+        user,
+        currentSpaceId,
+        extraData
+      );
     } catch (err) {
       console.error('Error creating object:', err);
       // Fallback - create object at origin if all else fails
       const newPosition = new THREE.Vector3(0, 0, 0);
-      get().createObjectWithPosition(type, newPosition, user, currentSpaceId);
+      get().createObjectWithPosition(
+        type,
+        newPosition,
+        user,
+        currentSpaceId,
+        extraData
+      );
     }
   },
   // Delete an object and its connections

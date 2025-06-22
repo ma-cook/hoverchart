@@ -41,10 +41,16 @@ export function useObjects({
 
   // NOTE: Removed periodic saving - objects are now saved immediately when modified
   // This is more efficient and prevents unnecessary database writes
-
   // Wrapper functions to maintain backward compatibility
-  const handleCreateObject = (type, position = null) => {
-    storeHandleCreateObject(type, position, user, currentSpaceId, cameraRef);
+  const handleCreateObject = (type, position = null, extraData = {}) => {
+    storeHandleCreateObject(
+      type,
+      position,
+      user,
+      currentSpaceId,
+      cameraRef,
+      extraData
+    );
   };
 
   const handleObjectDelete = (id) => {

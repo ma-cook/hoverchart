@@ -546,20 +546,8 @@ export const subscribeToSpatialObjects = (
       }
       window.currentSpaceOwner = ownerUserId; // Guard against empty cells
       if (safeCells.length === 0) {
-        console.log('⚠️ [subscribeToSpatialObjects] No cells to subscribe to');
-        return;
+        console.log('⚠️ [subscribeToSpatialObjects] No cells to subscribe to');        return;
       }
-
-      console.log(
-        '🔄 [subscribeToSpatialObjects] Setting up subscriptions for cells:',
-        {
-          cellCount: safeCells.length,
-          cells: safeCells,
-          spaceId,
-          ownerUserId,
-          isAnonymous,
-        }
-      );
 
       // Subscribe to each loaded cell with deduplication
       for (const cellKey of safeCells) {
@@ -593,17 +581,7 @@ export const subscribeToSpatialObjects = (
             // Create the actual Firebase subscription
             return onSnapshot(
               cellRef,
-              { includeMetadataChanges: true },
-              (snapshot) => {
-                console.log('📡 [spatialObjects] Snapshot received for cell:', {
-                  cellKey,
-                  exists: snapshot.exists(),
-                  metadata: snapshot.metadata,
-                  objectCount: snapshot.exists()
-                    ? Object.keys(snapshot.data()?.objects || {}).length
-                    : 0,
-                });
-
+              { includeMetadataChanges: true },              (snapshot) => {
                 if (!snapshot.exists()) {
                   return;
                 }

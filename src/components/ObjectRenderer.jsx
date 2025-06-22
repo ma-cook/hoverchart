@@ -3,6 +3,7 @@ import Cube from './Cube';
 import Sphere from './Dodecahedron';
 import Plane from './Plane';
 import TextObject from './TextObject';
+import ModelObject from './ModelObject';
 
 const ObjectRenderer = React.memo(
   ({
@@ -152,6 +153,20 @@ const ObjectRenderer = React.memo(
           onResizeEnd={() => registerTransformingObject(obj.id, false)}
           onTransformStart={() => registerTransformingObject(obj.id, true)}
           onTransformEnd={() => registerTransformingObject(obj.id, false)}
+        />
+      );
+    }
+    if (obj.type === 'model') {
+      return (
+        <ModelObject
+          key={obj.id}
+          obj={obj}
+          isSelected={selectedId === obj.id}
+          onClick={() => handleObjectClick(obj.id)}
+          onUpdate={handleObjectUpdate}
+          onTranformStart={() => registerTransformingObject(obj.id, true)}
+          onTransformEnd={() => registerTransformingObject(obj.id, false)}
+          onMatrixChanged={handleObjectMatrixChanged}
         />
       );
     }

@@ -1,4 +1,6 @@
 import { useUIOverlayStore } from '../stores';
+import { useRef, useState, useCallback } from 'react';
+import { uploadModelToStorage } from '../services/storageService';
 
 const UIOverlay = ({
   onCreateObject,
@@ -10,18 +12,157 @@ const UIOverlay = ({
   showLoginButton,
   isConnectMode,
   currentCell, // Add currentCell prop
+  currentSpaceId, // Add currentSpaceId prop for model uploads
 }) => {
   // Use UI overlay store
-  const getUIOverlay = useUIOverlayStore((state) => state.getUIOverlay);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
   const updateTemplateConfig = useUIOverlayStore(
     (state) => state.updateTemplateConfig
   );
 
-  // Get store state for main overlay
-  const overlay = getUIOverlay('main');
-  const { menuOpen, templateOpen, templateConfig } = overlay;
+  // Model upload functionality
+  const modelFileInputRef = useRef(null);
+  const [isUploadingModel, setIsUploadingModel] = useState(false);
+
+  const handleModelUpload = useCallback(() => {
+    if (modelFileInputRef.current) {
+      modelFileInputRef.current.click();
+    }
+  }, []);
+
+  const handleModelFileSelect = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      if (!file || !user?.uid || !currentSpaceId) {
+        if (!user?.uid) {
+          alert('You must be logged in to upload 3D models');
+        }
+        return;
+      }
+
+      // Validate file type
+      const validExtensions = ['.glb', '.gltf'];
+      const fileExtension = file.name
+        .toLowerCase()
+        .substring(file.name.lastIndexOf('.'));
+      if (!validExtensions.includes(fileExtension)) {
+        alert('Please select a GLB or GLTF file');
+        return;
+      }
+      setIsUploadingModel(true);
+
+      try {
+        const modelUrl = await uploadModelToStorage(
+          file,
+          user.uid,
+          currentSpaceId
+        );
+
+        // Get camera position and direction to position model 50 units in front
+        let modelPosition = [0, 0, -50]; // Default fallback position
+
+        try {
+          // Try to get camera from various sources
+          const camera =
+            window.cameraRef?.current?.camera ||
+            window.camera ||
+            window.orbitControls?.object;
+
+          if (camera) {
+            // Get camera position
+            const cameraPos = camera.position;
+
+            // Get camera's forward direction
+            const direction = { x: 0, y: 0, z: -1 };
+            const quaternion = camera.quaternion;
+
+            // Apply camera rotation to direction vector
+            const rotatedDirection = {
+              x:
+                direction.x *
+                  (1 -
+                    2 *
+                      (quaternion.y * quaternion.y +
+                        quaternion.z * quaternion.z)) +
+                direction.y *
+                  2 *
+                  (quaternion.x * quaternion.y - quaternion.w * quaternion.z) +
+                direction.z *
+                  2 *
+                  (quaternion.x * quaternion.z + quaternion.w * quaternion.y),
+              y:
+                direction.x *
+                  2 *
+                  (quaternion.x * quaternion.y + quaternion.w * quaternion.z) +
+                direction.y *
+                  (1 -
+                    2 *
+                      (quaternion.x * quaternion.x +
+                        quaternion.z * quaternion.z)) +
+                direction.z *
+                  2 *
+                  (quaternion.y * quaternion.z - quaternion.w * quaternion.x),
+              z:
+                direction.x *
+                  2 *
+                  (quaternion.x * quaternion.z - quaternion.w * quaternion.y) +
+                direction.y *
+                  2 *
+                  (quaternion.y * quaternion.z + quaternion.w * quaternion.x) +
+                direction.z *
+                  (1 -
+                    2 *
+                      (quaternion.x * quaternion.x +
+                        quaternion.y * quaternion.y)),
+            };
+
+            // Calculate model position 50 units in front of camera
+            modelPosition = [
+              cameraPos.x + rotatedDirection.x * 50,
+              cameraPos.y + rotatedDirection.y * 50,
+              cameraPos.z + rotatedDirection.z * 50,
+            ];
+          }
+        } catch (error) {
+          console.warn(
+            'Could not get camera position for model, using default:',
+            error
+          );
+        } // Create the 3D model object with the uploaded URL
+        onCreateObject('model', modelPosition, { modelUrl });
+      } catch (error) {
+        console.error('Model upload failed:', error);
+        alert(`Model upload failed: ${error.message}`);
+      } finally {
+        setIsUploadingModel(false);
+        // Reset the file input
+        if (modelFileInputRef.current) {
+          modelFileInputRef.current.value = '';
+        }
+      }
+    },
+    [user, currentSpaceId, onCreateObject]
+  );
+
+  // Get store state for main overlay - use direct selectors for better reactivity
+  const menuOpen = useUIOverlayStore((state) => {
+    const overlay = state.overlays['main'];
+    return overlay ? overlay.menuOpen : state.defaultOverlay.menuOpen;
+  });
+  const templateOpen = useUIOverlayStore((state) => {
+    const overlay = state.overlays['main'];
+    return overlay ? overlay.templateOpen : state.defaultOverlay.templateOpen;
+  });
+  const templateConfig = useUIOverlayStore((state) => {
+    const overlay = state.overlays['main'];
+    return overlay
+      ? overlay.templateConfig
+      : state.defaultOverlay.templateConfig;
+  });
+  const handleMenuToggle = () => {
+    toggleMenu('main');
+  };
 
   const handleArrowClick = () => {
     onToggleIndicators('connection');
@@ -204,10 +345,11 @@ const UIOverlay = ({
 
   return (
     <>
+      {' '}
       <div className="menu-button-container">
         <button
           className="menu-button"
-          onClick={toggleMenu}
+          onClick={handleMenuToggle}
           aria-label="Toggle menu"
         >
           ☰
@@ -223,10 +365,12 @@ const UIOverlay = ({
                 : '0,0,0'}
             </span>
           </div>
-
-          {/* Template Section */}
+          {/* Template Section */}{' '}
           <div className="template-section">
-            <button className="template-toggle-button" onClick={toggleTemplate}>
+            <button
+              className="template-toggle-button"
+              onClick={() => toggleTemplate('main')}
+            >
               Templates {templateOpen ? '▼' : '▶'}
             </button>
 
@@ -234,7 +378,7 @@ const UIOverlay = ({
               <div className="template-dropdown">
                 <div className="template-config">
                   <div className="config-group">
-                    <label>Object Type:</label>
+                    <label>Object Type:</label>{' '}
                     <select
                       value={templateConfig.objectType}
                       onChange={(e) =>
@@ -244,6 +388,7 @@ const UIOverlay = ({
                       <option value="cube">Cube</option>
                       <option value="dodecahedron">Dodecahedron</option>
                       <option value="plane">Plane</option>
+                      <option value="text">Text</option>
                     </select>
                   </div>
                   <div className="config-group">
@@ -317,7 +462,6 @@ const UIOverlay = ({
               </div>
             )}
           </div>
-
           {/* Menu content will go here */}
         </div>
       </div>
@@ -366,7 +510,23 @@ const UIOverlay = ({
               title="Add Text"
             >
               T
+            </button>{' '}
+            <button
+              className="shape-button"
+              onClick={handleModelUpload}
+              title="Add 3D Model"
+              disabled={isUploadingModel}
+            >
+              {isUploadingModel ? '...' : '3D'}
             </button>
+            {/* Hidden file input for model upload */}
+            <input
+              ref={modelFileInputRef}
+              type="file"
+              accept=".glb,.gltf"
+              style={{ display: 'none' }}
+              onChange={handleModelFileSelect}
+            />
           </div>
         ) : null}
       </div>

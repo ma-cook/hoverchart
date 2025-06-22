@@ -14,7 +14,7 @@ import {
 
 import { getIsInitialLoading } from '../utils/loadingState';
 
-console.log('--- USE_SPATIAL_MANAGER_STORE LOADED - V1 ---'); // Version marker
+// Version marker
 
 const useSpatialManagerStore = create((set, get) => ({
   // State
@@ -192,7 +192,7 @@ const useSpatialManagerStore = create((set, get) => ({
   },
   // Initialize the spatial system by discovering existing cells and loading the origin cell
   initializeSpatialSystem: async (user, currentSpaceId, cameraRef) => {
-    const state = get();    console.log('🏗️ initializeSpatialSystem called for space:', currentSpaceId);
+    const state = get();
 
     if (!currentSpaceId || state.isInitialized || state.initializationPromise) {
       console.debug('🚫 Skipping spatial initialization:', {
@@ -204,30 +204,19 @@ const useSpatialManagerStore = create((set, get) => ({
     }
 
     // Prevent multiple initialization attempts
-    const initPromise = (async () => {
-      try {
+    const initPromise = (async () => {      try {
         // Get the correct owner ID (could be from URL for public spaces)
         const ownerUserId = window.currentSpaceOwner || user?.uid;
 
-        console.log('🔍 Spatial system owner resolution:', {
-          windowOwner: window.currentSpaceOwner,
-          userUid: user?.uid,
-          finalOwner: ownerUserId,
-        });
         if (!ownerUserId) {
-          console.log('❌ No owner ID found for spatial initialization');
           set({ initializationPromise: null }); // Clear the promise so we can retry
           return;
-        }        // Discover existing cells that contain objects
+        }
+
+        // Discover existing cells that contain objects
         const existingCells = await getOccupiedCells(
           ownerUserId,
-          currentSpaceId
-        );
-
-        console.log('🔍 Discovered existing cells with objects:', {
-          existingCells,
-          count: existingCells.length,
-        });
+          currentSpaceId        );
 
         // Get initial camera position and load neighbor cells
         // Use actual camera position if available, otherwise use default
@@ -270,46 +259,20 @@ const useSpatialManagerStore = create((set, get) => ({
           // Add initial camera cells coordinates  
         for (const cellCoords of initialCells) {
           allCellCoordsToLoad.push(cellCoords);
-        }        if (allCellCoordsToLoad.length > 0) {
-          console.log('🔄 Loading initial cells:', {
-            totalCells: allCellCoordsToLoad.length,
-            existingCellsCount: existingCells.length,
-            cameraCellsCount: initialCells.length,
-            existingCells: existingCells,
-            cameraCells: initialCells.map(c => getCellId(c.x, c.y, c.z)),
-            allCoords: allCellCoordsToLoad,
-          });
-          await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
+        }        if (allCellCoordsToLoad.length > 0) {          await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
           
           // Wait a bit more for all cell subscriptions to be established
           await new Promise(resolve => setTimeout(resolve, 1000));
-        }else {
-          console.log('⚠️ No cells to load - this might be the issue!', {
-            existingCells: existingCells.length,
-            initialCells: initialCells.length,
-          });
         }        if (existingCells.length > 0 || initialCells.length > 0) {
-          console.log('✅ Spatial system initialized successfully:', {
-            existingCells: existingCells.length,
-            initialCells: initialCells.length,
-            totalLoaded: cellsToLoad.size,
-            cellsLoaded: allCellCoordsToLoad.length,
-          });
           
           // Set state first
           set({
             loadedCells: cellsToLoad,
             currentCellCoords: { x: 0, y: 0, z: 0 },
             isInitialized: true,
-          });
-          
-          // Add a small delay to ensure all cell subscriptions are fully established
+          });          // Add a small delay to ensure all cell subscriptions are fully established
           // before other systems start using the spatial manager
           await new Promise(resolve => setTimeout(resolve, 500));
-          
-          console.log('✅ Spatial system fully ready for object subscriptions');
-        } else {
-          console.log('⚠️ No cells to load during spatial initialization');
         }
       } catch (error) {
         console.error('❌ Error during spatial initialization:', error);

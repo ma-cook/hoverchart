@@ -64,25 +64,18 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
         };
         sharedSpacesCache.set(cacheKey, result);
         return result;
-      }
-    } catch (err) {
+      }    } catch {
       // Ignore error and continue to other checks
     }
 
     // Rest of the checks for shared spaces
-    console.log(
-      `Looking for shared space: ${spaceId} for user: ${currentUserId}`
-    );
 
     // First, prioritize checking the top-level spaces collection (landing page format)
     const spacesRef = collection(db, 'spaces');
     const spaceDocRef = doc(spacesRef, spaceId);
-    const spaceDocSnapshot = await getDoc(spaceDocRef);
-
-    // Check if the space exists in the top-level spaces collection
+    const spaceDocSnapshot = await getDoc(spaceDocRef);    // Check if the space exists in the top-level spaces collection
     if (spaceDocSnapshot.exists()) {
       const spaceData = spaceDocSnapshot.data();
-      console.log("Found space in 'spaces' collection directly:", spaceData);
 
       // If the space is owned by the current user, it's not a shared space
       if (spaceData.ownerId === currentUserId) {
@@ -218,12 +211,10 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
         isShared: true,
         ownerId: ownerIdFromSession,
         permissions: 'write', // Default to write permission
-      };
-      sharedSpacesCache.set(cacheKey, result);
+      };      sharedSpacesCache.set(cacheKey, result);
       return result;
     }
 
-    console.log(`Space ${spaceId} is not shared with user ${currentUserId}`);
     // If we get here, the space doesn't exist or isn't shared with this user
     sharedSpacesCache.set(cacheKey, { isShared: false, ownerId: null });
     return { isShared: false, ownerId: null };
@@ -451,10 +442,7 @@ export const getSpaceOwner = async (spaceId) => {
 // Add this new function to find a space's owner regardless of the current user's access
 export const findSpaceOwner = async (spaceId) => {
   if (!spaceId) return null;
-
   try {
-    console.log(`Looking for owner of space: ${spaceId}`);
-
     // First try to get the space directly from the spaces collection
     const spaceDocRef = doc(collection(db, 'spaces'), spaceId);
     const spaceDocSnapshot = await getDoc(spaceDocRef);
