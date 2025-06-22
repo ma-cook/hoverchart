@@ -204,7 +204,8 @@ const useSpatialManagerStore = create((set, get) => ({
     }
 
     // Prevent multiple initialization attempts
-    const initPromise = (async () => {      try {
+    const initPromise = (async () => {
+      try {
         // Get the correct owner ID (could be from URL for public spaces)
         const ownerUserId = window.currentSpaceOwner || user?.uid;
 
@@ -216,7 +217,8 @@ const useSpatialManagerStore = create((set, get) => ({
         // Discover existing cells that contain objects
         const existingCells = await getOccupiedCells(
           ownerUserId,
-          currentSpaceId        );
+          currentSpaceId
+        );
 
         // Get initial camera position and load neighbor cells
         // Use actual camera position if available, otherwise use default
@@ -232,7 +234,7 @@ const useSpatialManagerStore = create((set, get) => ({
         const initialCells = getNeighborCells(
           initialCameraPosition,
           CELL_NEIGHBOR_RADIUS
-        );        // Combine existing occupied cells and initial camera radius cells
+        ); // Combine existing occupied cells and initial camera radius cells
         const cellsToLoad = new Set();
         existingCells.forEach((cellId) => cellsToLoad.add(cellId));
 
@@ -244,35 +246,37 @@ const useSpatialManagerStore = create((set, get) => ({
 
         // Convert all cells to load into coordinate format for batch loading
         const allCellCoordsToLoad = [];
-        
+
         // Add existing cells coordinates
         for (const cellId of existingCells) {
-          const coords = cellId.split(',').map(num => parseInt(num));
+          const coords = cellId.split(',').map((num) => parseInt(num));
           if (coords.length >= 2) {
             allCellCoordsToLoad.push({
               x: coords[0],
-              y: coords[1], 
-              z: coords[2] || 0
+              y: coords[1],
+              z: coords[2] || 0,
             });
           }
         }
-          // Add initial camera cells coordinates  
+        // Add initial camera cells coordinates
         for (const cellCoords of initialCells) {
           allCellCoordsToLoad.push(cellCoords);
-        }        if (allCellCoordsToLoad.length > 0) {          await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
-          
+        }
+        if (allCellCoordsToLoad.length > 0) {
+          await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
+
           // Wait a bit more for all cell subscriptions to be established
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }        if (existingCells.length > 0 || initialCells.length > 0) {
-          
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+        if (existingCells.length > 0 || initialCells.length > 0) {
           // Set state first
           set({
             loadedCells: cellsToLoad,
             currentCellCoords: { x: 0, y: 0, z: 0 },
             isInitialized: true,
-          });          // Add a small delay to ensure all cell subscriptions are fully established
+          }); // Add a small delay to ensure all cell subscriptions are fully established
           // before other systems start using the spatial manager
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
       } catch (error) {
         console.error('❌ Error during spatial initialization:', error);

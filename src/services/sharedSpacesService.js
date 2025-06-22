@@ -64,7 +64,8 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
         };
         sharedSpacesCache.set(cacheKey, result);
         return result;
-      }    } catch {
+      }
+    } catch {
       // Ignore error and continue to other checks
     }
 
@@ -73,7 +74,7 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
     // First, prioritize checking the top-level spaces collection (landing page format)
     const spacesRef = collection(db, 'spaces');
     const spaceDocRef = doc(spacesRef, spaceId);
-    const spaceDocSnapshot = await getDoc(spaceDocRef);    // Check if the space exists in the top-level spaces collection
+    const spaceDocSnapshot = await getDoc(spaceDocRef); // Check if the space exists in the top-level spaces collection
     if (spaceDocSnapshot.exists()) {
       const spaceData = spaceDocSnapshot.data();
 
@@ -211,7 +212,8 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
         isShared: true,
         ownerId: ownerIdFromSession,
         permissions: 'write', // Default to write permission
-      };      sharedSpacesCache.set(cacheKey, result);
+      };
+      sharedSpacesCache.set(cacheKey, result);
       return result;
     }
 

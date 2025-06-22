@@ -471,7 +471,8 @@ const App = () => {
       }
     };
   }, [user?.uid, currentSpaceId, loadedCells, setConnections]); // Subscribe to spatial objects changes - supports anonymous access to public spaces
-  useEffect(() => {    if (!canViewSpace) {
+  useEffect(() => {
+    if (!canViewSpace) {
       return;
     }
     if (!isSpatialInitialized) {
@@ -491,7 +492,7 @@ const App = () => {
     ) {
       console.log('⏳ No loaded cells yet, waiting...', { loadedCells });
       return;
-    }    // Add an initial fetch phase to ensure we get all existing objects
+    } // Add an initial fetch phase to ensure we get all existing objects
     const performInitialObjectFetch = async () => {
       try {
         const { getObjectsFromCells } = await import(
@@ -515,13 +516,14 @@ const App = () => {
           ownerUserId,
           effectiveSpaceId,
           cellCoords
-        );        // Add all initial objects to the store
+        ); // Add all initial objects to the store
         if (initialObjects.length > 0) {
           currentSetObjects((prev) => {
             const existingIds = new Set(prev.map((obj) => obj.id));
             const newObjects = initialObjects.filter(
               (obj) => !existingIds.has(obj.id)
-            );            return [...prev, ...newObjects];
+            );
+            return [...prev, ...newObjects];
           });
         }
       } catch (error) {
@@ -567,7 +569,8 @@ const App = () => {
     const currentUntrackObjectInCell = untrackObjectInCell;
     const unsubscribe = subscribeToSpatialObjects(
       ownerUserId, // May be null for anonymous access
-      spaceToLoad,      loadedCells,
+      spaceToLoad,
+      loadedCells,
       (change) => {
         currentSetObjects((prev) => {
           switch (change.type) {

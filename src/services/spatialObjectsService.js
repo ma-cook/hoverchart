@@ -546,7 +546,8 @@ export const subscribeToSpatialObjects = (
       }
       window.currentSpaceOwner = ownerUserId; // Guard against empty cells
       if (safeCells.length === 0) {
-        console.log('⚠️ [subscribeToSpatialObjects] No cells to subscribe to');        return;
+        console.log('⚠️ [subscribeToSpatialObjects] No cells to subscribe to');
+        return;
       }
 
       // Subscribe to each loaded cell with deduplication
@@ -581,7 +582,8 @@ export const subscribeToSpatialObjects = (
             // Create the actual Firebase subscription
             return onSnapshot(
               cellRef,
-              { includeMetadataChanges: true },              (snapshot) => {
+              { includeMetadataChanges: true },
+              (snapshot) => {
                 if (!snapshot.exists()) {
                   return;
                 }
