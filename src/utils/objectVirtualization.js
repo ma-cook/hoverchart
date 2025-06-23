@@ -14,68 +14,43 @@ export class ObjectVirtualizer {
     this.lastCameraTarget = new THREE.Vector3();
     this.updateThreshold = 5; // Update when camera moves 5 units
     this.retentionTime = 10000; // Keep objects visible for 10 seconds after they leave frustum
-  }
-
-  updateVisibility(camera, objects) {
-    // For now, disable aggressive frustum culling to fix the object disappearing bug
-    // Return all objects as visible to prevent the culling issue
-    const allObjectIds = objects.map((obj) => obj.id);
-    this.visibleObjects = new Set(allObjectIds);
-    return allObjectIds;
-
-    // TODO: Re-enable smart culling later with proper retention logic
-    /*
-    // Check if camera moved significantly
-    const currentPos = camera.position.clone();
-    const currentTarget = new THREE.Vector3();
-    camera.getWorldDirection(currentTarget);
-
-    const positionDelta = currentPos.distanceTo(this.lastCameraPosition);
-    const targetDelta = currentTarget.distanceTo(this.lastCameraTarget);
-
-    if (positionDelta < this.updateThreshold && targetDelta < 0.1) {
-      return Array.from(this.visibleObjects); // Return cached results
-    }
-
-    // Update frustum
-    this.cameraMatrix.multiplyMatrices(
-      camera.projectionMatrix,
-      camera.matrixWorldInverse
-    );
-    this.frustum.setFromProjectionMatrix(this.cameraMatrix);
-
-    const currentTime = Date.now();
-    const currentlyInFrustum = new Set();
-
-    // Test each object against frustum
-    objects.forEach((obj) => {
-      if (this.isObjectVisible(obj)) {
-        currentlyInFrustum.add(obj.id);
-        this.recentlyVisibleObjects.set(obj.id, currentTime);
-      }
-    });
-
-    // Keep objects visible for retention time after leaving frustum
-    this.visibleObjects.clear();
+  }  updateVisibility(camera, objects) {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     
-    // Add currently visible objects
-    currentlyInFrustum.forEach(id => this.visibleObjects.add(id));
+    // Get current quality from local storage or default to medium
+    const canvasQuality = localStorage.getItem('canvasQuality') || 'medium';
     
-    // Add recently visible objects that are still within retention time
-    this.recentlyVisibleObjects.forEach((timestamp, objectId) => {
-      if (currentTime - timestamp < this.retentionTime) {
-        this.visibleObjects.add(objectId);
-      } else {
-        this.recentlyVisibleObjects.delete(objectId);
+    // Mobile-aware object limits and distance culling
+    const maxObjectDistance = isMobile ? 500 : 1000;
+    const getMaxObjects = () => {
+      if (isMobile) {
+        return canvasQuality === 'low' ? 25 : canvasQuality === 'medium' ? 40 : 60;
       }
-    });
-
-    // Update last camera state
-    this.lastCameraPosition.copy(currentPos);
-    this.lastCameraTarget.copy(currentTarget);
-
-    return Array.from(this.visibleObjects);
-    */
+      return canvasQuality === 'low' ? 50 : canvasQuality === 'medium' ? 100 : 200;
+    };
+    
+    const maxObjects = getMaxObjects();
+    const cameraPosition = camera.position.clone();
+    
+    // Filter objects by distance and sort by distance
+    const objectsWithDistance = objects
+      .map(obj => ({
+        id: obj.id,
+        distance: cameraPosition.distanceTo(
+          new THREE.Vector3(
+            obj.position?.x || obj.position?.[0] || 0,
+            obj.position?.y || obj.position?.[1] || 0,
+            obj.position?.z || obj.position?.[2] || 0
+          )
+        )
+      }))
+      .filter(obj => obj.distance <= maxObjectDistance)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, maxObjects);
+    
+    const visibleIds = objectsWithDistance.map(obj => obj.id);
+    this.visibleObjects = new Set(visibleIds);
+    return visibleIds;
   }
 
   isObjectVisible(obj) {

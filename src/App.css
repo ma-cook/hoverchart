@@ -441,3 +441,100 @@ canvas {
 .create-template-button:hover {
   background-color: #1976d2;
 }
+
+/* Mobile-specific optimizations */
+@media (max-width: 768px) or (pointer: coarse) {
+  /* Ensure canvas fills the viewport properly on mobile */
+  canvas {
+    width: 100vw !important;
+    height: 100vh !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+  }
+
+  /* Larger touch targets for mobile */
+  .ui-overlay {
+    right: 10px;
+    padding: 15px;
+    gap: 15px;
+  }
+
+  .ui-overlay button {
+    min-height: 44px; /* Apple's recommended minimum touch target */
+    min-width: 44px;
+    padding: 12px 16px;
+    font-size: 16px;
+  }
+
+  .menu-button {
+    width: 50px;
+    height: 50px;
+    font-size: 20px;
+  }
+
+  .menu-button-container {
+    top: 15px;
+    left: 15px;
+  }
+
+  /* Better typography for mobile */
+  .ui-overlay label {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  /* Input fields for mobile */
+  .ui-overlay input,
+  .ui-overlay select {
+    min-height: 40px;
+    font-size: 16px; /* Prevents zoom on iOS */
+    padding: 8px 12px;
+  }
+
+  /* Color picker adjustments */
+  .color-picker-container {
+    transform: scale(1.2);
+    transform-origin: center;
+  }
+
+  /* Ensure text is readable */
+  .ui-overlay,
+  .menu-container {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  /* Hide non-essential UI elements on very small screens */
+  @media (max-width: 480px) {
+    .ui-overlay {
+      right: 5px;
+      padding: 10px;
+    }
+    
+    .menu-button-container {
+      top: 10px;
+      left: 10px;
+    }
+  }
+}
+
+/* Specific mobile device optimizations */
+@media (max-device-width: 812px) and (-webkit-min-device-pixel-ratio: 2) {
+  /* iPhone and similar high-DPI mobile devices */
+  canvas {
+    image-rendering: optimizeSpeed;
+    image-rendering: -webkit-optimize-contrast;
+  }
+}
+
+/* Prevent zoom on double-tap */
+* {
+  touch-action: manipulation;
+}
+
+/* Improve scrolling on mobile */
+body {
+  -webkit-overflow-scrolling: touch;
+  overflow: hidden; /* Prevent document scrolling in 3D app */
+}
