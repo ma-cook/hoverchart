@@ -80,15 +80,27 @@ const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
     return geo;
   }, [cellsToRender]); // Create shader material
   const material = useMemo(() => {
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+
     return new THREE.ShaderMaterial({
       vertexShader,
       fragmentShader,
       uniforms: {
-        uColor: { value: new THREE.Color(0.5, 0.5, 0.5) }, // Grey color as requested
+        uColor: {
+          value: new THREE.Color(
+            isMobile ? 0.8 : 0.5,
+            isMobile ? 0.8 : 0.5,
+            isMobile ? 0.8 : 0.5
+          ),
+        }, // Brighter on mobile
       },
       transparent: false,
       depthTest: true,
       depthWrite: false,
+      linewidth: isMobile ? 3 : 1, // Thicker lines on mobile
     });
   }, []);
   // Update material reference

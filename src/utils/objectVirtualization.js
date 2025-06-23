@@ -14,27 +14,38 @@ export class ObjectVirtualizer {
     this.lastCameraTarget = new THREE.Vector3();
     this.updateThreshold = 5; // Update when camera moves 5 units
     this.retentionTime = 10000; // Keep objects visible for 10 seconds after they leave frustum
-  }  updateVisibility(camera, objects) {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    
+  }
+  updateVisibility(camera, objects) {
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+
     // Get current quality from local storage or default to medium
     const canvasQuality = localStorage.getItem('canvasQuality') || 'medium';
-    
     // Mobile-aware object limits and distance culling
-    const maxObjectDistance = isMobile ? 500 : 1000;
+    const maxObjectDistance = isMobile ? 800 : 1000; // Less aggressive distance culling on mobile
     const getMaxObjects = () => {
       if (isMobile) {
-        return canvasQuality === 'low' ? 25 : canvasQuality === 'medium' ? 40 : 60;
+        return canvasQuality === 'low'
+          ? 40
+          : canvasQuality === 'medium'
+          ? 60
+          : 80; // More objects visible on mobile
       }
-      return canvasQuality === 'low' ? 50 : canvasQuality === 'medium' ? 100 : 200;
+      return canvasQuality === 'low'
+        ? 50
+        : canvasQuality === 'medium'
+        ? 100
+        : 200;
     };
-    
+
     const maxObjects = getMaxObjects();
     const cameraPosition = camera.position.clone();
-    
+
     // Filter objects by distance and sort by distance
     const objectsWithDistance = objects
-      .map(obj => ({
+      .map((obj) => ({
         id: obj.id,
         distance: cameraPosition.distanceTo(
           new THREE.Vector3(
@@ -42,13 +53,13 @@ export class ObjectVirtualizer {
             obj.position?.y || obj.position?.[1] || 0,
             obj.position?.z || obj.position?.[2] || 0
           )
-        )
+        ),
       }))
-      .filter(obj => obj.distance <= maxObjectDistance)
+      .filter((obj) => obj.distance <= maxObjectDistance)
       .sort((a, b) => a.distance - b.distance)
       .slice(0, maxObjects);
-    
-    const visibleIds = objectsWithDistance.map(obj => obj.id);
+
+    const visibleIds = objectsWithDistance.map((obj) => obj.id);
     this.visibleObjects = new Set(visibleIds);
     return visibleIds;
   }

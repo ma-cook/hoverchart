@@ -40,10 +40,25 @@ const TextObject = React.memo(
     const objectData = objects.find((obj) => obj.id === id);
     // Memoize derived values to prevent unnecessary re-renders
     const text = useMemo(() => objectData?.text || '', [objectData?.text]);
-    const textStyle = useMemo(
-      () => objectData?.textStyle || { fontSize: 32, color: 'black' },
-      [objectData?.textStyle]
-    );
+    // Mobile-aware text style with larger default font size
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+    const textStyle = useMemo(() => {
+      const baseStyle = objectData?.textStyle || {
+        fontSize: 32,
+        color: 'black',
+      };
+      if (isMobile && baseStyle.fontSize <= 32) {
+        // Increase font size on mobile for better readability
+        return {
+          ...baseStyle,
+          fontSize: Math.max(baseStyle.fontSize * 1.5, 48),
+        };
+      }
+      return baseStyle;
+    }, [objectData?.textStyle, isMobile]);
     const scale = useMemo(
       () => objectData?.scale || [15, 10, 1],
       [objectData?.scale]

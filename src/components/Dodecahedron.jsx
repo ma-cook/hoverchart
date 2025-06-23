@@ -31,6 +31,12 @@ const Sphere = React.memo(
     onDelete, // Add new prop
     registerTransformingObject, // Add this prop
   }) => {
+    // Mobile detection for scaling
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+
     // Get object data from objects store
     const objects = useObjectsStore((state) => state.objects);
     const setObjects = useObjectsStore((state) => state.setObjects);
@@ -1026,7 +1032,7 @@ const Sphere = React.memo(
         >
           {/* Add invisible helper mesh for better click detection */}
           <mesh onClick={handleBackgroundClick} visible={false}>
-            <sphereGeometry args={[6, 32, 32]} />{' '}
+            <sphereGeometry args={[isMobile ? 10 : 6, 32, 32]} />{' '}
             {/* Slightly larger than dodecahedron */}
             <meshBasicMaterial transparent opacity={0} />
           </mesh>
@@ -1093,7 +1099,7 @@ const Sphere = React.memo(
               key={idx}
               points={linePoints}
               color={lineColor}
-              lineWidth={1}
+              lineWidth={isMobile ? 3 : 1}
             />
           ))}
           {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}

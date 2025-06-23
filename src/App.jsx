@@ -1265,11 +1265,14 @@ const App = () => {
 
       return () => clearTimeout(timeoutId);
     }
-  }, [shouldRenderCanvas]);// Get canvas settings based on quality level
+  }, [shouldRenderCanvas]); // Get canvas settings based on quality level
   const getCanvasSettings = () => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    const isLowEnd = navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
-    
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+    const isLowEnd =
+      navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
     if (canvasQuality === 'low' || isMobile) {
       return {
         gl: {
@@ -1282,12 +1285,15 @@ const App = () => {
           powerPreference: isMobile ? 'default' : 'high-performance',
           precision: isMobile || isLowEnd ? 'mediump' : 'lowp',
         },
-        dpr: isMobile ? Math.min(window.devicePixelRatio, 2) : Math.min(window.devicePixelRatio, 2),
+        dpr: isMobile
+          ? Math.min(window.devicePixelRatio, 3)
+          : Math.min(window.devicePixelRatio, 3),
         frameloop: 'always', // Always use 'always' for mobile
         camera: {
-          fov: isMobile ? 60 : 50, // Wider FOV on mobile
-          near: 0.1,
+          fov: isMobile ? 70 : 50, // Even wider FOV on mobile for better object visibility
+          near: isMobile ? 0.01 : 0.1, // Closer near plane on mobile
           far: 2000,
+          position: isMobile ? [0, 0, 30] : [0, 0, 50], // Closer starting position on mobile
         },
       };
     } else {
@@ -1314,21 +1320,25 @@ const App = () => {
 
   // Mobile performance optimization
   useEffect(() => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    const isLowEnd = navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
-    
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+    const isLowEnd =
+      navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
+
     if (isMobile || isLowEnd) {
       // Start with low quality on mobile/low-end devices
       setCanvasQuality('low');
       localStorage.setItem('canvasQuality', 'low');
-      
+
       // Optionally upgrade quality after a delay if performance is good
       const upgradeTimer = setTimeout(() => {
         // Only upgrade if frame rate is good (this is a simplified check)
         setCanvasQuality('medium');
         localStorage.setItem('canvasQuality', 'medium');
       }, 5000); // Wait 5 seconds before upgrading
-      
+
       return () => clearTimeout(upgradeTimer);
     }
   }, []);
@@ -1393,7 +1403,8 @@ const App = () => {
           Initializing 3D space...
         </div>
       )}
-      {shouldRenderCanvas && (        <Canvas
+      {shouldRenderCanvas && (
+        <Canvas
           style={{
             background: backgroundColor,
             width: '100vw',

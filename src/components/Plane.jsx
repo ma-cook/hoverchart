@@ -129,10 +129,11 @@ const Plane = ({
     () => plane?.borderColor || objectData?.borderColor || 'black',
     [plane?.borderColor, objectData?.borderColor]
   );
-  const lineThickness = useMemo(
-    () => plane?.lineThickness || objectData?.lineThickness || 1,
-    [plane?.lineThickness, objectData?.lineThickness]
-  );
+  const lineThickness = useMemo(() => {
+    const baseThickness =
+      plane?.lineThickness || objectData?.lineThickness || 1;
+    return isMobile ? Math.max(baseThickness * 2, 3) : baseThickness;
+  }, [plane?.lineThickness, objectData?.lineThickness, isMobile]);
   const headerStyle = useMemo(
     () =>
       plane?.headerStyle ||
@@ -169,7 +170,12 @@ const Plane = ({
   const meshRef = useRef();
   const contentRef = useRef();
   const { camera } = useThree();
-  const size = 5;
+  // Mobile-aware sizing
+  const isMobile =
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+  const size = isMobile ? 8 : 5;
 
   // Get derived UI state from plane store (transient state only)
   const webcamInitialized = useMemo(
@@ -1276,7 +1282,7 @@ const Plane = ({
     };
   }, [plane?.scale, scale]);
 
-  const indicatorPosition = useMemo(() => [0, -size - 1, 0], []);
+  const indicatorPosition = useMemo(() => [0, -size - 1, 0], [size]);
   const meshMaterial = useMemo(() => {
     // If we have an image texture, use it
     if (plane?.imageTexture) {
@@ -1323,7 +1329,7 @@ const Plane = ({
       new Vector3(-size, size, 0),
       new Vector3(-size, -size, 0),
     ],
-    []
+    [size]
   );
   return (
     <>

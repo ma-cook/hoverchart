@@ -191,7 +191,8 @@ const Connection = ({
       endPosition = endObject.position;
     } else {
       endPosition = [0, 0, 0];
-    }    return {
+    }
+    return {
       isValid: Boolean(
         connection &&
           connection.start &&
@@ -202,7 +203,9 @@ const Connection = ({
           Array.isArray(endPosition) &&
           startPosition.length >= 3 &&
           endPosition.length >= 3 &&
-          startPosition.every((val) => typeof val === 'number' && !isNaN(val)) &&
+          startPosition.every(
+            (val) => typeof val === 'number' && !isNaN(val)
+          ) &&
           endPosition.every((val) => typeof val === 'number' && !isNaN(val))
       ),
       midpoint: calculateMidpoint(startPosition, endPosition),
@@ -279,7 +282,8 @@ const Connection = ({
       intersections &&
       intersections.length > 0; // Determine effective line style
     const effectiveLineStyle =
-      isCurvedPath || lineStyle === 'curved' ? 'curved' : lineStyle;    const finalPathPoints = calculatedPathPoints || [
+      isCurvedPath || lineStyle === 'curved' ? 'curved' : lineStyle;
+    const finalPathPoints = calculatedPathPoints || [
       startPosition || [0, 0, 0],
       endPosition || [0, 0, 0],
     ];
@@ -314,11 +318,12 @@ const Connection = ({
     const { calculatedPathPoints, effectiveLineStyle } = pathData;
 
     // Calculate text position based on line style
-    let textPosition;    if (calculatedPathPoints && calculatedPathPoints.length > 0) {
+    let textPosition;
+    if (calculatedPathPoints && calculatedPathPoints.length > 0) {
       if (effectiveLineStyle === 'curved') {
         const midIdx = Math.floor(calculatedPathPoints.length / 2);
         const midPoint = calculatedPathPoints[midIdx];
-        
+
         // Handle both Vector3 objects and arrays
         if (midPoint && typeof midPoint === 'object' && 'x' in midPoint) {
           // Vector3 object
@@ -394,7 +399,16 @@ const Connection = ({
           connection.color ||
           (selectedConnection === connection.id ? '#ffff00' : 'black')
         }
-        lineWidth={selectedConnection === connection.id ? 1 : 1}
+        lineWidth={(() => {
+          const isMobile =
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+              navigator.userAgent
+            );
+          const baseWidth = isMobile ? 3 : 1;
+          return selectedConnection === connection.id
+            ? baseWidth * 1.5
+            : baseWidth;
+        })()}
         lineStyle={effectiveLineStyle}
         dashDirection={connection.dashDirection || null}
         dashOffset={connection.dashOffset || 0}

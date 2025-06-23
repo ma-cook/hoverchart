@@ -18,8 +18,14 @@ import { useCubeStore, useObjectsStore } from '../stores';
 const DEFAULT_COLOR = '#000000';
 const DEFAULT_OPACITY = 0.1;
 const SELECTED_OPACITY = 0.3;
-const CUBE_SIZE = 5; // Half-size of cube
-const FACE_SIZE = 9.8; // Size of colored face
+
+// Mobile-aware sizing
+const isMobile =
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  );
+const CUBE_SIZE = isMobile ? 8 : 5; // Larger cubes on mobile
+const FACE_SIZE = isMobile ? 15.6 : 9.8; // Larger faces on mobile
 const FACE_THICKNESS = 0.05; // Thickness of face overlay
 
 /**
@@ -1145,14 +1151,16 @@ const Cube = ({
             handleSceneClick();
           }}
         >
-          <boxGeometry args={[10, 10, 10]} />
+          <boxGeometry
+            args={[isMobile ? 16 : 10, isMobile ? 16 : 10, isMobile ? 16 : 10]}
+          />
           <meshBasicMaterial visible={false} />
         </mesh>{' '}
         {/* Cube edge lines */}
         <Line
           points={cubeLinePoints}
           color={cube?.color || color}
-          lineWidth={1}
+          lineWidth={isMobile ? 3 : 1}
           segments={true}
           renderOrder={1} // Higher render order for cube edges
           transparent={false}
