@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export const faceMaterialProps = {
   transparent: true,
-  opacity: 0.1,
+  opacity: 0.1, // Reverted back to original value
   side: THREE.FrontSide,
   depthTest: true,
   polygonOffset: true,

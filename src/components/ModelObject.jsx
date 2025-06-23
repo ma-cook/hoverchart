@@ -57,9 +57,7 @@ const ModelObject = ({
           clonedScene.traverse((child) => {
             if (child.isMesh) {
               child.castShadow = true;
-              child.receiveShadow = true;
-
-              // Ensure materials are properly configured
+              child.receiveShadow = true; // Ensure materials are properly configured
               if (child.material) {
                 // Force materials to be properly lit
                 if (child.material.isMeshStandardMaterial) {

@@ -1262,10 +1262,11 @@ const App = () => {
 
       // Wait for initial render to complete, then upgrade
       const timeoutId = setTimeout(upgradeQuality, 1000);
-
       return () => clearTimeout(timeoutId);
     }
-  }, [shouldRenderCanvas]); // Get canvas settings based on quality level
+  }, [shouldRenderCanvas]);
+
+  // Get canvas settings based on quality level
   const getCanvasSettings = () => {
     const isMobile =
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -1273,7 +1274,9 @@ const App = () => {
       );
     const isLowEnd =
       navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
-    if (canvasQuality === 'low' || isMobile) {
+
+    // Force mobile devices to use mobile-optimized settings regardless of canvasQuality
+    if (isMobile) {
       return {
         gl: {
           antialias: false,
@@ -1282,18 +1285,37 @@ const App = () => {
           stencil: false,
           depth: true,
           logarithmicDepthBuffer: false,
-          powerPreference: isMobile ? 'default' : 'high-performance',
-          precision: isMobile || isLowEnd ? 'mediump' : 'lowp',
+          powerPreference: 'default',
+          precision: 'mediump', // Use mediump for mobile
         },
-        dpr: isMobile
-          ? Math.min(window.devicePixelRatio, 3)
-          : Math.min(window.devicePixelRatio, 3),
-        frameloop: 'always', // Always use 'always' for mobile
+        dpr: Math.min(window.devicePixelRatio, 2),
+        frameloop: 'always',
         camera: {
-          fov: isMobile ? 70 : 50, // Even wider FOV on mobile for better object visibility
-          near: isMobile ? 0.01 : 0.1, // Closer near plane on mobile
+          fov: 70, // Wider FOV on mobile for better object visibility
+          near: 0.01, // Closer near plane on mobile
           far: 2000,
-          position: isMobile ? [0, 0, 30] : [0, 0, 50], // Closer starting position on mobile
+          position: [0, 0, 30], // Closer starting position on mobile
+        },
+      };
+    } else if (canvasQuality === 'low' || isLowEnd) {
+      return {
+        gl: {
+          antialias: false,
+          samples: 0,
+          alpha: true,
+          stencil: false,
+          depth: true,
+          logarithmicDepthBuffer: false,
+          powerPreference: 'high-performance',
+          precision: 'highp', // Use highp for desktop low-end
+        },
+        dpr: Math.min(window.devicePixelRatio, 2),
+        frameloop: 'always',
+        camera: {
+          fov: 50,
+          near: 0.1,
+          far: 2000,
+          position: [0, 0, 50],
         },
       };
     } else {
@@ -1306,6 +1328,7 @@ const App = () => {
           depth: true,
           logarithmicDepthBuffer: false,
           powerPreference: 'high-performance',
+          precision: 'highp', // Use highp for high-quality rendering
         },
         dpr: Math.min(window.devicePixelRatio, 2),
         frameloop: 'always',
@@ -1317,7 +1340,6 @@ const App = () => {
       };
     }
   };
-
   // Mobile performance optimization
   useEffect(() => {
     const isMobile =
@@ -1328,16 +1350,15 @@ const App = () => {
       navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
 
     if (isMobile || isLowEnd) {
-      // Start with low quality on mobile/low-end devices
+      // Keep mobile devices on low quality to ensure proper rendering
       setCanvasQuality('low');
       localStorage.setItem('canvasQuality', 'low');
-
-      // Optionally upgrade quality after a delay if performance is good
+    } else {
+      // Only allow quality upgrades on desktop/high-end devices
       const upgradeTimer = setTimeout(() => {
-        // Only upgrade if frame rate is good (this is a simplified check)
-        setCanvasQuality('medium');
-        localStorage.setItem('canvasQuality', 'medium');
-      }, 5000); // Wait 5 seconds before upgrading
+        setCanvasQuality('high');
+        localStorage.setItem('canvasQuality', 'high');
+      }, 1000);
 
       return () => clearTimeout(upgradeTimer);
     }
@@ -1402,7 +1423,7 @@ const App = () => {
         >
           Initializing 3D space...
         </div>
-      )}
+      )}{' '}
       {shouldRenderCanvas && (
         <Canvas
           style={{
@@ -1435,12 +1456,12 @@ const App = () => {
             {renderedObjects}
             {/* Render cell boundaries */}
             <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
-          </group>{' '}
+          </group>
           <EffectComposer>
             <SMAA />
           </EffectComposer>
         </Canvas>
-      )}{' '}
+      )}
       <UIOverlay
         onCreateObject={handleCreateObject}
         onToggleIndicators={handleToggleIndicators}
