@@ -1280,8 +1280,8 @@ const App = () => {
           powerPreference: 'high-performance',
           precision: 'lowp',
         },
-        dpr: 1,
-        frameloop: 'demand',
+        dpr: Math.min(window.devicePixelRatio, 2),
+        frameloop: 'always',
       };
     } else {
       return {
