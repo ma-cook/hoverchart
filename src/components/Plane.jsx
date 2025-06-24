@@ -21,6 +21,12 @@ import { uploadImageToStorage } from '../services/storageService';
 import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
 import { usePlaneStore, useObjectsStore } from '../stores';
 
+// Mobile detection constant
+const isMobile =
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  );
+
 const Plane = ({
   id,
   selected,
@@ -133,7 +139,7 @@ const Plane = ({
     const baseThickness =
       plane?.lineThickness || objectData?.lineThickness || 1;
     return isMobile ? Math.max(baseThickness * 2, 3) : baseThickness;
-  }, [plane?.lineThickness, objectData?.lineThickness, isMobile]);
+  }, [plane?.lineThickness, objectData?.lineThickness]);
   const headerStyle = useMemo(
     () =>
       plane?.headerStyle ||
@@ -171,10 +177,6 @@ const Plane = ({
   const contentRef = useRef();
   const { camera } = useThree();
   // Mobile-aware sizing
-  const isMobile =
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-      navigator.userAgent
-    );
   const size = isMobile ? 8 : 5;
 
   // Get derived UI state from plane store (transient state only)

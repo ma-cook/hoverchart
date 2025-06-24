@@ -1,6 +1,7 @@
 import { useUIOverlayStore } from '../stores';
 import { useRef, useState, useCallback } from 'react';
 import { uploadModelToStorage } from '../services/storageService';
+import { screenRecorder } from '../services/screenRecordingService';
 
 const UIOverlay = ({
   onCreateObject,
@@ -20,10 +21,39 @@ const UIOverlay = ({
   const updateTemplateConfig = useUIOverlayStore(
     (state) => state.updateTemplateConfig
   );
-
   // Model upload functionality
   const modelFileInputRef = useRef(null);
   const [isUploadingModel, setIsUploadingModel] = useState(false);
+  // Screen recording functionality
+  const [isRecording, setIsRecording] = useState(false);
+
+  const handleRecordClick = useCallback(async () => {
+    if (isRecording) {
+      // Stop recording
+      try {
+        const blob = await screenRecorder.stopRecording();
+        if (blob) {
+          screenRecorder.downloadRecording(blob);
+        }
+        setIsRecording(false);
+      } catch (error) {
+        console.error('Error stopping recording:', error);
+        alert('Failed to stop recording');
+      }
+    } else {
+      // Ask for confirmation before starting
+      const confirmed = window.confirm(
+        'Do you want to start recording your screen? You will be asked to select which screen or window to share.'
+      );
+
+      if (confirmed) {
+        const success = await screenRecorder.startRecording();
+        if (success) {
+          setIsRecording(true);
+        }
+      }
+    }
+  }, [isRecording]);
 
   const handleModelUpload = useCallback(() => {
     if (modelFileInputRef.current) {
@@ -529,6 +559,26 @@ const UIOverlay = ({
             />
           </div>
         ) : null}
+      </div>
+      {/* Record button positioned at bottom center */}
+      <div className="record-button-container">
+        <button
+          className={`record-button ${isRecording ? 'recording' : ''}`}
+          onClick={handleRecordClick}
+          title={isRecording ? 'Stop Recording' : 'Start Recording'}
+        >
+          {isRecording ? (
+            <>
+              <span className="record-icon recording">⏹️</span>
+              <span className="record-text">Stop Recording</span>
+            </>
+          ) : (
+            <>
+              <span className="record-icon">🎥</span>
+              <span className="record-text">Record</span>
+            </>
+          )}
+        </button>
       </div>
     </>
   );
