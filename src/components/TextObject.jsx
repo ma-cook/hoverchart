@@ -232,16 +232,114 @@ const TextObject = React.memo(
     // Sync textContentRef with text prop when it changes
     useEffect(() => {
       textContentRef.current = text;
-    }, [text]); // Sync local text with store text when not editing
+    }, [text]);
+
+    // Initialize local text on mount to ensure consistency
     useEffect(() => {
-      if (!isLocallyEditing && !isEditing && !justFinishedEditingRef.current) {
-        // Only sync if the store text is different and we're not in an editing session
-        if (text !== localText && text !== textContentRef.current) {
+      // CRITICAL: Don't initialize during editing states to prevent interference
+      if (
+        isEditing ||
+        isActivelyEditing ||
+        isLocallyEditing ||
+        justFinishedEditingRef.current
+      ) {
+        return;
+      }
+
+      // Only initialize if we don't have local text but we have store text
+      if (!localText && text && text !== 'Click to edit text...') {
+        console.log('🟦 TextObject initializing with store text:', {
+          id,
+          text,
+        });
+        setLocalText(text);
+        textContentRef.current = text;
+      }
+      // Handle case where we have empty store text - show placeholder for display
+      else if (!text || text === '') {
+        const placeholder = 'Click to edit text...';
+        if (localText !== placeholder) {
+          console.log('🟦 TextObject initializing with placeholder:', { id });
+          setLocalText(placeholder);
+          textContentRef.current = ''; // Keep ref empty for new objects
+        }
+      }
+      // Handle case where store has placeholder text - this should not happen in new system
+      else if (text === 'Click to edit text...' && !textContentRef.current) {
+        console.log('🟦 TextObject initializing placeholder from store:', {
+          id,
+        });
+        setLocalText(text);
+        textContentRef.current = ''; // Ref stays empty
+      }
+    }, [text, localText, id, isEditing, isActivelyEditing, isLocallyEditing]); // Sync local text with store text when not editing - improved logic with better guards
+    useEffect(() => {
+      // CRITICAL: Don't sync if we're in any editing state or just finished editing
+      if (
+        isLocallyEditing ||
+        isEditing ||
+        justFinishedEditingRef.current ||
+        isActivelyEditing
+      ) {
+        console.log('🔴 TextObject sync blocked - editing state:', {
+          id,
+          isLocallyEditing,
+          isEditing,
+          justFinishedEditing: justFinishedEditingRef.current,
+          isActivelyEditing,
+        });
+        return;
+      }
+
+      // IMPORTANT: Only sync if store text is actually different AND we're not in a post-save state
+      // This prevents overriding user changes that were just saved but haven't propagated yet
+      if (text && text !== localText && text !== textContentRef.current) {
+        // Extra safeguard: don't sync if we recently saved (textContentRef has more recent data)
+        if (textContentRef.current && textContentRef.current !== text) {
+          // If our ref has different content than store, it means we're ahead of the store
+          // Don't sync from store to avoid overriding our more recent changes
+          console.log('🟡 TextObject sync blocked - ref ahead of store:', {
+            id,
+            storeText: text,
+            refText: textContentRef.current,
+            localText,
+          });
+          return;
+        }
+
+        // Additional safeguard: if localText has actual content and store has placeholder/empty, don't sync
+        if (
+          localText &&
+          localText !== 'Click to edit text...' &&
+          (!text || text === 'Click to edit text...')
+        ) {
+          console.log(
+            '🟡 TextObject sync blocked - localText has content, store has placeholder:',
+            {
+              id,
+              localText,
+              storeText: text,
+            }
+          );
+          return;
+        }
+
+        // Extra check: don't overwrite user content with placeholder text
+        if (
+          text !== 'Click to edit text...' ||
+          localText === 'Click to edit text...'
+        ) {
+          console.log('🟢 TextObject syncing from store:', {
+            id,
+            fromStore: text,
+            previousLocal: localText,
+            previousRef: textContentRef.current,
+          });
           setLocalText(text);
           textContentRef.current = text;
         }
       }
-    }, [text, isLocallyEditing, isEditing, localText]);
+    }, [text, isLocallyEditing, isEditing, isActivelyEditing, localText, id]);
 
     // Constants
     const conversionFactor = 30;
@@ -490,7 +588,7 @@ const TextObject = React.memo(
       };
     }, [setContentHeight]);
 
-    // Enhanced auto-resize function that also resizes the text object container
+    // Enhanced auto-resize function that also updates the text object's scale for 3D positioning
     const autoResizeTextArea = useCallback(() => {
       if (!textAreaRef.current) return;
 
@@ -499,20 +597,19 @@ const TextObject = React.memo(
 
       const scrollHeight = contentHeightRef.current;
 
-      // Calculate the new scale for the text object container to fit content
+      // Update the scale only if the content has grown significantly beyond the original container
       const currentWidth = scale[0];
       const conversionFactor = 30;
-      const baseHeight = 10; // Base height unit
       const paddingAdjustment = 16; // Account for padding
 
       // Calculate new height based on text content
-      const newHeight = Math.max(
-        baseHeight,
-        (scrollHeight + paddingAdjustment) / (1.3 * conversionFactor)
-      );
+      const contentBasedHeight =
+        (scrollHeight + paddingAdjustment) / (1.3 * conversionFactor);
+      const newHeight = Math.max(scale[1], contentBasedHeight); // Only grow, don't shrink
 
-      // Update scale if height has changed significantly (use smaller threshold for better responsiveness)
-      if (Math.abs(newHeight - scale[1]) > 0.1) {
+      // Update scale only if height has grown significantly (to update 3D bounds for connections)
+      if (newHeight > scale[1] + 0.5) {
+        // Only update when there's significant growth
         const newScale = [currentWidth, newHeight, scale[2]];
         setScale(newScale);
 
@@ -529,42 +626,38 @@ const TextObject = React.memo(
       }
     }, [autoResizeTextAreaOnly, scale, setScale, onUpdate, id, textStyle]);
 
-    // Auto-resize for typing - updates visual scale immediately but debounces database calls
+    // Auto-resize for typing - throttled to prevent interference with typing
     const autoResizeForTyping = useCallback(() => {
       if (!textAreaRef.current) return;
 
-      // First do the basic textarea resize
-      autoResizeTextAreaOnly();
-
-      const scrollHeight = contentHeightRef.current;
-
-      // Calculate the new scale for the text object container to fit content
-      const currentWidth = scale[0];
-      const conversionFactor = 30;
-      const baseHeight = 10; // Base height unit
-      const paddingAdjustment = 16; // Account for padding
-
-      // Calculate new height based on text content
-      const newHeight = Math.max(
-        baseHeight,
-        (scrollHeight + paddingAdjustment) / (1.3 * conversionFactor)
-      );
-
-      // Update scale immediately for visual feedback (use smaller threshold for better responsiveness)
-      if (Math.abs(newHeight - scale[1]) > 0.1) {
-        const newScale = [currentWidth, newHeight, scale[2]];
-        setScale(newScale);
-
-        // No database update here - will be saved on blur
+      // Throttle resize calls to avoid interfering with rapid typing
+      if (textAreaRef.current._resizeThrottle) {
+        clearTimeout(textAreaRef.current._resizeThrottle);
       }
-    }, [autoResizeTextAreaOnly, scale, setScale]);
-    // Event handlers    // Optimized text change handler - auto-resize container immediately, save to database on blur
+
+      textAreaRef.current._resizeThrottle = setTimeout(() => {
+        // Just do the basic textarea resize - container will expand naturally
+        autoResizeTextAreaOnly();
+      }, 100); // Throttle to avoid constant resizing during typing
+    }, [autoResizeTextAreaOnly]);
+    // Event handlers
+    // Optimized text change handler - auto-resize container immediately, save to database on blur
     const handleTextChange = (e) => {
       const newText = e.target.value;
 
-      // Update local state for immediate UI feedback
+      // IMPORTANT: Always update both local state and ref immediately
+      // Don't rely on conditions that might allow other effects to interfere
       setLocalText(newText);
       textContentRef.current = newText;
+
+      // Debug logging for text changes
+      console.log('🟠 TextObject handleTextChange:', {
+        id,
+        newText,
+        previousLocal: localText,
+        ref: textContentRef.current,
+      });
+
       setIsActivelyEditing(true);
 
       // Mark as locally editing to prevent sync from store
@@ -587,7 +680,7 @@ const TextObject = React.memo(
         }, 1000);
       }
 
-      // Auto-resize with immediate visual feedback (no database calls during typing)
+      // Auto-resize with throttling to prevent interference with typing
       autoResizeForTyping();
 
       // Note: Database calls for final state will happen on blur
@@ -606,46 +699,88 @@ const TextObject = React.memo(
         clearTimeout(textUpdateTimeoutRef.current);
       }
 
-      // Get final text from current textarea value as backup
+      // Get final text from current textarea value as the primary source
       const textareaValue = textAreaRef.current?.value || '';
-      const finalText = textContentRef.current || textareaValue; // Set flag to prevent sync effect from overriding our changes
+
+      // Priority order: textarea value > textContentRef > localText
+      let finalText = textareaValue || textContentRef.current || localText;
+
+      // Handle empty text case - if user leaves it empty, keep it empty (don't revert to placeholder)
+      if (
+        !finalText ||
+        finalText.trim() === '' ||
+        finalText === 'Click to edit text...'
+      ) {
+        finalText = ''; // Keep empty instead of placeholder
+      }
+
+      // Debug logging to track text saving
+      console.log('🔵 TextObject handleBlur:', {
+        id,
+        textareaValue,
+        textContentRef: textContentRef.current,
+        localText,
+        finalText,
+        storeText: text,
+      });
+
+      // Set flag to prevent sync effect from overriding our changes - set early and keep longer
       justFinishedEditingRef.current = true;
 
-      // Update local state immediately for instant display
-      setLocalText(finalText);
-      textContentRef.current = finalText;
+      // Update refs and local state immediately
+      textContentRef.current = finalText; // This is critical - update ref FIRST
+
+      // Update local state for display
+      if (finalText === '') {
+        setLocalText('Click to edit text...');
+      } else {
+        setLocalText(finalText);
+      }
 
       // Reset editing states
       setIsEditing(false);
       setIsActivelyEditing(false);
 
-      // Update store text state (this will sync to database)
-      setText(finalText);
-
       if (groupRef.current) {
         groupRef.current.userData.isTextEditing = false;
       }
 
-      // Save final state to database immediately
+      // Save final state to database immediately with complete object
+      // IMPORTANT: Always save the actual text (empty if user cleared it), not placeholder
       if (onUpdate) {
-        onUpdate(id, {
+        const updatePayload = {
           type: 'text',
           id,
           position,
           scale,
-          text: finalText,
+          text: finalText, // This will be empty string if user cleared text
           textStyle,
           bulletPointMode,
           lastEditTime: Date.now(),
-        });
+        };
+
+        console.log('🟢 TextObject saving to database:', updatePayload);
+        onUpdate(id, updatePayload);
       }
 
+      // Update scale based on final content size
+      setTimeout(() => {
+        autoResizeTextArea();
+      }, 50);
+
       // Clear pending changes
-      pendingChangesRef.current = null; // Delay allowing sync from store to prevent race condition and ensure local text persists
+      pendingChangesRef.current = null;
+
+      // Delay allowing sync from store to prevent race condition - much longer delay
       setTimeout(() => {
         setIsLocallyEditing(false);
-        justFinishedEditingRef.current = false; // Clear the flag after delay
-      }, 500); // Longer delay to ensure store propagation
+      }, 2000); // Increased delay significantly to ensure database update completes
+
+      // Clear the flag after an even longer delay to ensure complete store propagation
+      setTimeout(() => {
+        justFinishedEditingRef.current = false;
+        console.log('🟡 TextObject: Cleared justFinishedEditingRef for', id);
+      }, 3000); // Much longer delay to ensure complete propagation
     }; // Improved click handler to set focus flags only during initial activation
     const handleDivClick = (e) => {
       e.stopPropagation();
@@ -654,9 +789,24 @@ const TextObject = React.memo(
 
       // Only set focus flags when transitioning from non-editing to editing
       if (!isEditing) {
+        // Clear any lingering flags that might interfere
+        justFinishedEditingRef.current = false;
+
         // Initialize local text and ref with current store text before starting edit
-        setLocalText(text);
-        textContentRef.current = text;
+        // For new text objects or placeholder text, start with empty string for editing
+        let currentStoreText = text || '';
+        let editingText = currentStoreText;
+
+        // If it's placeholder text or empty, start editing with empty text
+        if (
+          currentStoreText === 'Click to edit text...' ||
+          currentStoreText === ''
+        ) {
+          editingText = '';
+        }
+
+        setLocalText(editingText);
+        textContentRef.current = editingText;
         setIsLocallyEditing(true); // Start local editing immediately
         needsFocusRef.current = true;
         initialFocusDoneRef.current = false;
@@ -669,19 +819,25 @@ const TextObject = React.memo(
     // Simplify handleTextClick to use the same logic
     const handleTextClick = (e) => {
       handleDivClick(e);
-    }; // Modified focus effect to use localText
+    }; // Modified focus effect to properly handle placeholder clearing
     useEffect(() => {
       if (isEditing && needsFocusRef.current && !initialFocusDoneRef.current) {
         // Use a slightly longer timeout to ensure DOM is fully updated
         const focusTimeout = setTimeout(() => {
           if (textAreaRef.current) {
+            // For uncontrolled component, set the value explicitly
+            // This is crucial for clearing placeholder text
+            const valueToSet =
+              localText === 'Click to edit text...' ? '' : localText || '';
+            textAreaRef.current.value = valueToSet;
             textAreaRef.current.focus();
 
-            // Only set cursor to end during initial focus
-            const textLength = localText.length;
+            // Set cursor to end during initial focus
+            const textLength = textAreaRef.current.value.length;
             textAreaRef.current.selectionStart = textLength;
             textAreaRef.current.selectionEnd = textLength;
 
+            // Only auto-resize once during initial focus, not on every keystroke
             autoResizeTextAreaOnly();
             needsFocusRef.current = false;
             initialFocusDoneRef.current = true;
@@ -690,13 +846,13 @@ const TextObject = React.memo(
 
         return () => clearTimeout(focusTimeout);
       }
-    }, [isEditing, localText, autoResizeTextAreaOnly]);
-    // Keep the existing effect for auto-resizing
+    }, [isEditing, autoResizeTextAreaOnly, localText]); // Add localText back for initial setup
+    // Keep the existing effect for auto-resizing - but only on initial edit
     useEffect(() => {
-      if (isEditing) {
+      if (isEditing && !isActivelyEditing) {
         autoResizeTextAreaOnly(); // Use the version that doesn't trigger database updates
       }
-    }, [isEditing, autoResizeTextAreaOnly]);
+    }, [isEditing, isActivelyEditing, autoResizeTextAreaOnly]);
 
     // Connection indicator click - critical for connection handling
     // Update your existing handleIndicatorClick function
@@ -1064,7 +1220,6 @@ const TextObject = React.memo(
     };
     // Enhanced stylesheet to apply text styles
     const getTextAreaStyle = () => ({
-      autoWrap: 'wrap',
       width: '100%',
       height: contentHeight,
       minHeight: '2em', // Start with small height, will expand
@@ -1086,12 +1241,13 @@ const TextObject = React.memo(
       outline: selected ? '1px solid #99ccff' : 'none',
       overflow: 'hidden',
       lineHeight: '1.4', // Better line spacing
-      transition: 'all 0.2s ease', // Smooth transitions for style changes
+      transition: 'height 0.2s ease', // Smooth height transitions
     });
 
     const getContainerStyle = () => ({
       width: `${scale[0] * 5.3 * conversionFactor}px`,
-      height: `${scale[1] * 1.3 * conversionFactor}px`,
+      minHeight: `${scale[1] * 1.3 * conversionFactor}px`,
+      height: 'auto', // Allow container to expand with content
       position: 'relative',
       transform: 'scale(1)',
     });
@@ -1203,8 +1359,11 @@ const TextObject = React.memo(
               {isEditing ? (
                 <textarea
                   ref={textAreaRef}
-                  // Use local text state for immediate UI feedback without re-renders
-                  value={localText}
+                  // Use defaultValue for uncontrolled component during editing to prevent resets
+                  // But make sure we don't use placeholder text as defaultValue
+                  defaultValue={
+                    localText === 'Click to edit text...' ? '' : localText
+                  }
                   onChange={handleTextChange}
                   onBlur={handleBlur}
                   style={getTextAreaStyle()}

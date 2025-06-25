@@ -15,7 +15,6 @@ export const TextStyleUIContent = ({
   onResizeToggle, // added new prop
   onDelete, // Add onDelete prop
   textStyle = {}, // Add textStyle prop to show current state
-  onClose, // Add onClose prop
 }) => {
   // Use color picker store
   const openColorPicker = useColorPickerStore((state) => state.openColorPicker);
