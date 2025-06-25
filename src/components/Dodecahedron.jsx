@@ -1064,10 +1064,11 @@ const Sphere = React.memo(
             />
           </mesh>
           {/* Modified face rendering to handle colors correctly */}
-          {geometry.map((faceGeometry, idx) => (            <mesh
+          {geometry.map((faceGeometry, idx) => (
+            <mesh
               key={`face-${idx}`}
               geometry={faceGeometry}
-              renderOrder={-1}
+              renderOrder={-3}
               onClick={(e) => {
                 e.stopPropagation();
                 if (!selected) {
@@ -1083,7 +1084,8 @@ const Sphere = React.memo(
                 document.body.style.cursor = 'auto';
               }}
             >
-              {' '}              <meshBasicMaterial
+              {' '}
+              <meshBasicMaterial
                 color={
                   faceColors[idx] || // Custom color if set
                   (selected && dodecahedron?.highlightedFaces?.has(idx)
@@ -1104,8 +1106,8 @@ const Sphere = React.memo(
                 polygonOffset
                 polygonOffsetFactor={-1}
                 depthTest={true}
-                depthWrite={false}
-                renderOrder={-1}
+                depthWrite={true}
+                renderOrder={-3}
               />
             </mesh>
           ))}{' '}
