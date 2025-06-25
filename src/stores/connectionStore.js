@@ -129,13 +129,25 @@ const useConnectionStore = create((set, get) => ({
   },
 
   updateLineTextStyle: (connectionId, styleUpdates) => {
+    const state = get();
+    const existingStyle = state.lineTextStyles[connectionId];
+    const newStyle = {
+      ...(existingStyle || {}),
+      ...styleUpdates,
+    };
+
+    console.log('🎨 updateLineTextStyle store update:', {
+      connectionId,
+      existingStyle,
+      styleUpdates,
+      newStyle,
+      timestamp: Date.now(),
+    });
+
     set((state) => ({
       lineTextStyles: {
         ...state.lineTextStyles,
-        [connectionId]: {
-          ...(state.lineTextStyles[connectionId] || {}),
-          ...styleUpdates,
-        },
+        [connectionId]: newStyle,
       },
     }));
   },

@@ -511,8 +511,8 @@ const TextObject = React.memo(
         (scrollHeight + paddingAdjustment) / (1.3 * conversionFactor)
       );
 
-      // Update scale if height has changed significantly (avoid micro-adjustments)
-      if (Math.abs(newHeight - scale[1]) > 0.5) {
+      // Update scale if height has changed significantly (use smaller threshold for better responsiveness)
+      if (Math.abs(newHeight - scale[1]) > 0.1) {
         const newScale = [currentWidth, newHeight, scale[2]];
         setScale(newScale);
 
@@ -528,7 +528,37 @@ const TextObject = React.memo(
         }
       }
     }, [autoResizeTextAreaOnly, scale, setScale, onUpdate, id, textStyle]);
-    // Event handlers  // Optimized text change handler - no database calls during typing
+
+    // Auto-resize for typing - updates visual scale immediately but debounces database calls
+    const autoResizeForTyping = useCallback(() => {
+      if (!textAreaRef.current) return;
+
+      // First do the basic textarea resize
+      autoResizeTextAreaOnly();
+
+      const scrollHeight = contentHeightRef.current;
+
+      // Calculate the new scale for the text object container to fit content
+      const currentWidth = scale[0];
+      const conversionFactor = 30;
+      const baseHeight = 10; // Base height unit
+      const paddingAdjustment = 16; // Account for padding
+
+      // Calculate new height based on text content
+      const newHeight = Math.max(
+        baseHeight,
+        (scrollHeight + paddingAdjustment) / (1.3 * conversionFactor)
+      );
+
+      // Update scale immediately for visual feedback (use smaller threshold for better responsiveness)
+      if (Math.abs(newHeight - scale[1]) > 0.1) {
+        const newScale = [currentWidth, newHeight, scale[2]];
+        setScale(newScale);
+
+        // No database update here - will be saved on blur
+      }
+    }, [autoResizeTextAreaOnly, scale, setScale]);
+    // Event handlers    // Optimized text change handler - auto-resize container immediately, save to database on blur
     const handleTextChange = (e) => {
       const newText = e.target.value;
 
@@ -557,10 +587,10 @@ const TextObject = React.memo(
         }, 1000);
       }
 
-      // Auto-resize without database calls
-      autoResizeTextAreaOnly();
+      // Auto-resize with immediate visual feedback (no database calls during typing)
+      autoResizeForTyping();
 
-      // Note: No setText() or database calls here - only on blur!
+      // Note: Database calls for final state will happen on blur
     };
     const handleBlur = (e) => {
       if (

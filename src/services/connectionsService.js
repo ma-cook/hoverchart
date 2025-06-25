@@ -91,11 +91,30 @@ const serializeConnection = (connection) => {
     color: connection.color || 'black',
     // More explicit text handling - ensure text is always a string
     text: typeof connection.text === 'string' ? connection.text : '',
-    textStyle: {
-      fontSize: connection.textStyle?.fontSize || 1,
-      color: connection.textStyle?.color || 'black',
-      underline: connection.textStyle?.underline || false,
-    },
+    textStyle: connection.textStyle
+      ? {
+          // Only apply defaults for missing properties, preserve existing ones
+          fontSize:
+            connection.textStyle.fontSize !== undefined
+              ? connection.textStyle.fontSize
+              : 1,
+          color:
+            connection.textStyle.color !== undefined
+              ? connection.textStyle.color
+              : 'black',
+          underline:
+            connection.textStyle.underline !== undefined
+              ? connection.textStyle.underline
+              : false,
+          // Preserve any other textStyle properties that might exist
+          ...connection.textStyle,
+        }
+      : {
+          // If no textStyle exists at all, apply defaults
+          fontSize: 1,
+          color: 'black',
+          underline: false,
+        },
     // Preserve style update timestamps for conflict resolution
     _lastStyleUpdate: connection._lastStyleUpdate || null,
     _lastSaved: connection._lastSaved || null,

@@ -225,6 +225,25 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
                       existingConn._lastStyleUpdate >
                         connectionEvent.connection._lastStyleUpdate))
                 ) {
+                  console.log('🔄 Preserving local changes:', {
+                    connectionId: connectionEvent.id,
+                    existingConn: {
+                      color: existingConn.color,
+                      styleType: existingConn.styleType,
+                      lineStyle: existingConn.lineStyle,
+                      dashDirection: existingConn.dashDirection,
+                      _lastStyleUpdate: existingConn._lastStyleUpdate,
+                    },
+                    dbConnection: {
+                      color: connectionEvent.connection.color,
+                      styleType: connectionEvent.connection.styleType,
+                      lineStyle: connectionEvent.connection.lineStyle,
+                      dashDirection: connectionEvent.connection.dashDirection,
+                      _lastStyleUpdate:
+                        connectionEvent.connection._lastStyleUpdate,
+                    },
+                  });
+
                   // Preserve local visual updates and style updates over Firebase data
                   mergedConnection = {
                     ...normalizedConnection, // Firebase data with normalized properties
@@ -239,6 +258,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
                           styleType: existingConn.styleType,
                           lineStyle: existingConn.lineStyle,
                           dashDirection: existingConn.dashDirection,
+                          color: existingConn.color, // Preserve local color changes
                           _lastStyleUpdate: existingConn._lastStyleUpdate,
                         }
                       : {}),
@@ -255,6 +275,9 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
                       connectionEvent.id
                     );
                     updateConnection(connectionEvent.id, mergedConnection);
+
+                    // No separate text style sync needed - textStyle is part of connection data
+                    // Real-time updates will sync textStyle automatically as part of the connection
                   } else {
                     // Only add if it doesn't already exist in the store to prevent duplicates
                     const allConnectionsInStore = connections;
@@ -273,6 +296,8 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
                         connectionWithId
                       );
                       addConnection(connectionWithId);
+
+                      // No separate text style sync needed - textStyle is part of connection data
                     } else {
                       console.warn(
                         '⚠️ Connection already exists in store, skipping real-time add:',
@@ -461,25 +486,54 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
   const handleLineTextStyleChange = async (connectionId, style) => {
     try {
-      updateLineTextStyle(connectionId, style);
+      console.log('🎨 handleLineTextStyleChange called:', {
+        connectionId,
+        style,
+        timestamp: Date.now(),
+      });
+
+      // Get the current connection
+      const currentConnection = connections.find(
+        (conn) => conn.id === connectionId
+      );
+      if (!currentConnection) {
+        console.error('Connection not found:', connectionId);
+        return false;
+      }
+
+      // Simple merge like cube header text - merge new style with existing textStyle
+      const updatedTextStyle = {
+        ...(currentConnection.textStyle || {}),
+        ...style,
+      };
+
+      console.log('🎨 Merged style for connection:', {
+        connectionId,
+        existingStyle: currentConnection.textStyle,
+        newStyle: style,
+        mergedStyle: updatedTextStyle,
+      });
+
+      // Update the connection in store with the merged style (like cube does)
+      const connectionUpdate = {
+        textStyle: updatedTextStyle,
+        _lastStyleUpdate: Date.now(),
+        _lastModified: Date.now(),
+        _needsSave: true,
+      };
+
+      updateConnection(connectionId, connectionUpdate);
 
       // Save to backend if we have a user and space
       if (user && currentSpaceId) {
-        const connectionToSave = connections.find(
-          (conn) => conn.id === connectionId
-        );
-        if (connectionToSave) {
-          const updatedConnection = {
-            ...connectionToSave,
-            textStyle: style,
-            _lastModified: Date.now(),
-            _needsSave: true,
-          };
+        const updatedConnection = getConnection(connectionId);
+        if (updatedConnection) {
           await saveConnection(user.uid, currentSpaceId, updatedConnection);
         }
       }
       return true;
-    } catch {
+    } catch (error) {
+      console.error('❌ Error in handleLineTextStyleChange:', error);
       return false;
     }
   };
@@ -503,12 +557,19 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
         }
       }
       return true;
-    } catch {
+    } catch (error) {
+      console.error('❌ Error in handleLineColorChange:', error);
       return false;
     }
   };
   const handleLineStyleChange = async (connectionId, styleType) => {
     try {
+      console.log('🎨 handleLineStyleChange called:', {
+        connectionId,
+        styleType,
+        timestamp: Date.now(),
+      });
+
       // Parse compound style strings like "dashed-left" or "dotted-right"
       let parsedStyleType = styleType;
       let dashDirection = null;
@@ -537,14 +598,22 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       if (user && currentSpaceId) {
         const updatedConnection = getConnection(connectionId);
         if (updatedConnection) {
+          console.log('💾 Saving style change to backend:', {
+            connectionId,
+            styleType: parsedStyleType,
+            dashDirection,
+            updatedConnection: updatedConnection,
+          });
           await saveConnection(user.uid, currentSpaceId, updatedConnection);
         }
       }
       return true;
-    } catch {
+    } catch (error) {
+      console.error('❌ Error in handleLineStyleChange:', error);
       return false;
     }
   };
+
   // Return the same API as before for backward compatibility
   return {
     connections,

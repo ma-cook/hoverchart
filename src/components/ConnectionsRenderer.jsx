@@ -22,8 +22,10 @@ const Connection = ({
   onConnectionClick,
   onLineTextClick,
   onLineTextSubmit,
+  onLineTextStyleChange,
 }) => {
   // Use connection store for state
+  const connections = useConnectionStore((state) => state.connections);
   const selectedConnection = useConnectionStore(
     (state) => state.selectedConnection
   );
@@ -44,9 +46,6 @@ const Connection = ({
     (state) => state.selectConnection
   );
   const setLineText = useConnectionStore((state) => state.setLineText);
-  const updateLineTextStyle = useConnectionStore(
-    (state) => state.updateLineTextStyle
-  );
   const updateConnection = useConnectionStore(
     (state) => state.updateConnection
   );
@@ -83,9 +82,21 @@ const Connection = ({
   };
 
   const handleLineTextStyleChange = (connectionId, style) => {
-    updateLineTextStyle(connectionId, style);
-    // Update the connection object with the new text style
-    updateConnection(connectionId, { textStyle: style });
+    if (onLineTextStyleChange) {
+      onLineTextStyleChange(connectionId, style);
+    } else {
+      // Get current connection to merge with existing textStyle (like cube header text)
+      const currentConnection = connections.find(
+        (conn) => conn.id === connectionId
+      );
+      const mergedTextStyle = {
+        ...(currentConnection?.textStyle || {}),
+        ...style,
+      };
+
+      // Update the connection object with the merged text style
+      updateConnection(connectionId, { textStyle: mergedTextStyle });
+    }
   };
   const handleLineStyleChange = (connectionId, styleType) => {
     if (onLineStyleChange) {
@@ -513,6 +524,8 @@ const MemoizedConnection = React.memo(Connection, (prevProps, nextProps) => {
   if (prevProps.onConnectionClick !== nextProps.onConnectionClick) return false;
   if (prevProps.onLineTextClick !== nextProps.onLineTextClick) return false;
   if (prevProps.onLineTextSubmit !== nextProps.onLineTextSubmit) return false;
+  if (prevProps.onLineTextStyleChange !== nextProps.onLineTextStyleChange)
+    return false;
 
   // If none changed, prevent re-render
   return true;
@@ -528,6 +541,7 @@ const ConnectionsRenderer = ({
   onConnectionClick,
   onLineTextClick,
   onLineTextSubmit,
+  onLineTextStyleChange,
 }) => {
   // Use connection store for state
   const connectionsFromStore = useConnectionStore((state) => state.connections);
@@ -582,6 +596,7 @@ const ConnectionsRenderer = ({
             onConnectionClick={onConnectionClick}
             onLineTextClick={onLineTextClick}
             onLineTextSubmit={onLineTextSubmit}
+            onLineTextStyleChange={onLineTextStyleChange}
           />
         );
       })}

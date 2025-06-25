@@ -183,6 +183,7 @@ const App = () => {
     handleConnectionClick,
     handleLineTextClick,
     handleLineTextSubmit,
+    handleLineTextStyleChange,
   } = useConnections({ user, currentSpaceId: effectiveSpaceId, loadedCells }); // Objects hook gets the connections from above
   const {
     selectedId,
@@ -1420,6 +1421,7 @@ const App = () => {
               onConnectionClick={handleConnectionClick}
               onLineTextClick={handleLineTextClick}
               onLineTextSubmit={handleLineTextSubmit}
+              onLineTextStyleChange={handleLineTextStyleChange}
             />{' '}
             {/* Render all objects */}
             {renderedObjects}
