@@ -52,9 +52,10 @@ const FaceTextInput = React.memo(
     const handleFocus = (e) => {
       e.stopPropagation();
     };
-
     const handleBlur = (e) => {
       e.stopPropagation();
+      // Submit the current text when losing focus
+      submitText(inputId, onTextSubmit);
     };
 
     return (

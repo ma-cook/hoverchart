@@ -15,10 +15,21 @@ const RealTimeConnectionUpdater = () => {
   // Track previous object positions to detect changes
   const previousPositionsRef = useRef(new Map()); // React to object position changes
   useEffect(() => {
-    // Get current connections inside the effect to avoid dependency issues
+    // Skip updates if connection deletion is in progress
+    if (window._connectionUpdateSkip) {
+      return;
+    } // Get current connections inside the effect to avoid dependency issues
     const connections = useConnectionStore.getState().connections;
 
-    if (!connections.length || !objects.length) return;
+    if (!Array.isArray(connections) || !connections.length || !objects.length)
+      return;
+
+    // Filter out connections that are currently being deleted
+    const activeConnections = connections.filter((conn) => {
+      return !window._deletingConnections?.has(conn.id);
+    });
+
+    if (!activeConnections.length) return;
 
     // Skip updates if any objects are currently being transformed
     if (
@@ -27,9 +38,8 @@ const RealTimeConnectionUpdater = () => {
     ) {
       return; // Let the manual drag updates handle real-time visuals
     }
-
     let hasUpdates = false;
-    const updatedConnections = [...connections];
+    const updatedConnections = [...activeConnections];
 
     // Check each object for position changes
     objects.forEach((obj) => {

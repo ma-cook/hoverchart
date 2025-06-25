@@ -49,15 +49,20 @@ const useTextInputStore = create((set, get) => ({
         },
       },
     }));
-  },
-
-  // Submit text and clear it
+  }, // Submit text and clear it
   submitText: (inputId, onSubmit) => {
     const state = get();
     const textInput = state.textInputs[inputId];
-    if (textInput && textInput.text.trim()) {
-      onSubmit(textInput.text);
-      get().clearText(inputId);
+    if (textInput) {
+      // Always call onSubmit to close the input, even with empty text
+      onSubmit(textInput.text || '');
+      // Delay clearing the text to ensure submission completes
+      setTimeout(() => {
+        get().clearText(inputId);
+      }, 100); // Small delay to ensure submission completes
+    } else {
+      // If no textInput exists, still call onSubmit with empty text to close the input
+      onSubmit('');
     }
   },
 

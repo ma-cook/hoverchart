@@ -1426,6 +1426,11 @@ export const removeConnectionFromCells = async (
   connectionData
 ) => {
   if (!userId || !spaceId || !connectionId) {
+    console.error('❌ removeConnectionFromCells: Missing required parameters', {
+      userId: !!userId,
+      spaceId: !!spaceId,
+      connectionId: !!connectionId,
+    });
     return false;
   }
 
@@ -1434,8 +1439,25 @@ export const removeConnectionFromCells = async (
     const endPosition = connectionData?.end?.position;
 
     if (!startPosition || !endPosition) {
+      console.error(
+        '❌ removeConnectionFromCells: Missing connection positions',
+        {
+          connectionId,
+          hasStartPosition: !!startPosition,
+          hasEndPosition: !!endPosition,
+          connectionData,
+        }
+      );
       return false;
     }
+
+    console.log(
+      `🔍 removeConnectionFromCells: Removing connection ${connectionId}`,
+      {
+        startPosition,
+        endPosition,
+      }
+    );
 
     // Get cell coordinates for both endpoints
     const startCellCoords = getCellCoordinates(startPosition);
@@ -1447,7 +1469,15 @@ export const removeConnectionFromCells = async (
       startCellCoords.y,
       startCellCoords.z
     );
-    await removeConnectionFromCell(userId, spaceId, startCellId, connectionId);
+    console.log(
+      `🗑️ removeConnectionFromCells: Removing from start cell ${startCellId}`
+    );
+    const startResult = await removeConnectionFromCell(
+      userId,
+      spaceId,
+      startCellId,
+      connectionId
+    );
 
     // Remove connection from end cell if different from start cell
     const endCellId = getCellId(
@@ -1455,12 +1485,32 @@ export const removeConnectionFromCells = async (
       endCellCoords.y,
       endCellCoords.z
     );
+    let endResult = true;
     if (startCellId !== endCellId) {
-      await removeConnectionFromCell(userId, spaceId, endCellId, connectionId);
+      console.log(
+        `🗑️ removeConnectionFromCells: Removing from end cell ${endCellId}`
+      );
+      endResult = await removeConnectionFromCell(
+        userId,
+        spaceId,
+        endCellId,
+        connectionId
+      );
+    } else {
+      console.log(
+        `ℹ️ removeConnectionFromCells: Start and end cells are the same (${startCellId})`
+      );
     }
 
-    return true;
-  } catch {
+    const success = startResult && endResult;
+    console.log(
+      `${success ? '✅' : '❌'} removeConnectionFromCells: ${
+        success ? 'Success' : 'Failed'
+      } for connection ${connectionId}`
+    );
+    return success;
+  } catch (error) {
+    console.error('❌ removeConnectionFromCells: Error:', error);
     return false;
   }
 };
@@ -1480,6 +1530,12 @@ export const removeConnectionFromCell = async (
   connectionId
 ) => {
   if (!userId || !spaceId || !cellId || !connectionId) {
+    console.error('❌ removeConnectionFromCell: Missing required parameters', {
+      userId: !!userId,
+      spaceId: !!spaceId,
+      cellId: !!cellId,
+      connectionId: !!connectionId,
+    });
     return false;
   }
 
@@ -1496,21 +1552,50 @@ export const removeConnectionFromCell = async (
     const cellDoc = await getDoc(cellRef);
 
     if (!cellDoc.exists()) {
+      console.log(
+        `✅ removeConnectionFromCell: Cell ${cellId} doesn't exist, connection ${connectionId} already not present`
+      );
       return true; // Cell doesn't exist, connection already not present
     }
 
     const cellData = cellDoc.data();
+    console.log(`🔍 removeConnectionFromCell: Cell ${cellId} data:`, {
+      hasConnections: !!cellData.connections,
+      connectionsType: typeof cellData.connections,
+      hasTargetConnection: !!cellData.connections?.[connectionId],
+      totalConnections: cellData.connections
+        ? Object.keys(cellData.connections).length
+        : 0,
+    });
 
     // Ensure connections is an object
     if (cellData.connections && typeof cellData.connections === 'object') {
       if (cellData.connections[connectionId]) {
+        console.log(
+          `🗑️ removeConnectionFromCell: Deleting connection ${connectionId} from cell ${cellId}`
+        );
         delete cellData.connections[connectionId];
         await setDoc(cellRef, cellData, { merge: true });
+        console.log(
+          `✅ removeConnectionFromCell: Successfully deleted connection ${connectionId} from cell ${cellId}`
+        );
+      } else {
+        console.log(
+          `ℹ️ removeConnectionFromCell: Connection ${connectionId} not found in cell ${cellId}`
+        );
       }
+    } else {
+      console.log(
+        `ℹ️ removeConnectionFromCell: No connections object in cell ${cellId}`
+      );
     }
 
     return true;
-  } catch {
+  } catch (error) {
+    console.error(
+      `❌ removeConnectionFromCell: Error removing connection ${connectionId} from cell ${cellId}:`,
+      error
+    );
     return false;
   }
 };
@@ -1900,13 +1985,14 @@ export const findObjectInCells = async (userId, spaceId, objectId) => {
 };
 
 /**
- * Get all objects in a space across all cells
- * @param {string} userId - User ID (or space owner ID)
+ * Find a connection in all cells (for debugging/verification purposes)
+ * @param {string} userId - User ID
  * @param {string} spaceId - Space ID
- * @returns {Promise<Object>} - Object with objectId as key and object data as value
+ * @param {string} connectionId - Connection ID to find
+ * @returns {Promise<Object|null>} - Connection data with cell info if found
  */
-export const getAllObjectsInSpace = async (userId, spaceId) => {
-  if (!userId || !spaceId) return {};
+export const findConnectionInCells = async (userId, spaceId, connectionId) => {
+  if (!userId || !spaceId || !connectionId) return null;
 
   try {
     // Get all cells in the space
@@ -1920,27 +2006,115 @@ export const getAllObjectsInSpace = async (userId, spaceId) => {
     );
     const snapshot = await getDocs(cellsRef);
 
-    const allObjects = {};
-
-    // Search through all cells for objects
+    // Search through all cells for the connection
     for (const cellDoc of snapshot.docs) {
       const cellData = cellDoc.data();
 
-      if (cellData.objects && typeof cellData.objects === 'object') {
-        // Merge objects from this cell into the result
-        Object.assign(allObjects, cellData.objects);
+      if (cellData.connections && typeof cellData.connections === 'object') {
+        if (cellData.connections[connectionId]) {
+          return {
+            connection: cellData.connections[connectionId],
+            cellId: cellDoc.id,
+            cellRef: doc(
+              db,
+              'users',
+              userId,
+              'spaces',
+              spaceId,
+              'cells',
+              cellDoc.id
+            ),
+          };
+        }
       }
     }
 
-    return allObjects;
+    return null;
   } catch (error) {
-    console.error('Error getting all objects in space:', error);
-    return {};
+    console.error('Error finding connection in cells:', error);
+    return null;
   }
 };
 
-// Make it available globally for testing
-if (typeof window !== 'undefined') {
-  window.findObjectInCells = findObjectInCells;
-  window.getAllObjectsInSpace = getAllObjectsInSpace;
-}
+/**
+ * Aggressively purge a connection from ALL cells (for when normal deletion fails)
+ * @param {string} userId - User ID
+ * @param {string} spaceId - Space ID
+ * @param {string} connectionId - Connection ID to purge
+ * @returns {Promise<number>} - Number of cells the connection was removed from
+ */
+export const purgeConnectionFromAllCells = async (
+  userId,
+  spaceId,
+  connectionId
+) => {
+  if (!userId || !spaceId || !connectionId) return 0;
+
+  try {
+    console.log(
+      `🧹 [Purge Debug] Starting aggressive purge of connection ${connectionId} from all cells`
+    );
+
+    // Get all cells in the space
+    const cellsRef = collection(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells'
+    );
+    const snapshot = await getDocs(cellsRef);
+
+    let purgedCount = 0;
+    const purgePromises = [];
+
+    // Search through all cells for the connection and remove it
+    for (const cellDoc of snapshot.docs) {
+      const cellData = cellDoc.data();
+
+      if (cellData.connections && typeof cellData.connections === 'object') {
+        if (cellData.connections[connectionId]) {
+          console.log(
+            `🧹 [Purge Debug] Found connection ${connectionId} in cell ${cellDoc.id}, removing...`
+          );
+
+          // Remove the connection from this cell
+          const purgePromise = (async () => {
+            try {
+              delete cellData.connections[connectionId];
+              await setDoc(cellDoc.ref, cellData, { merge: true });
+              console.log(
+                `✅ [Purge Debug] Successfully purged connection ${connectionId} from cell ${cellDoc.id}`
+              );
+              return 1;
+            } catch (error) {
+              console.error(
+                `❌ [Purge Debug] Failed to purge connection ${connectionId} from cell ${cellDoc.id}:`,
+                error
+              );
+              return 0;
+            }
+          })();
+
+          purgePromises.push(purgePromise);
+        }
+      }
+    }
+
+    // Wait for all purge operations to complete
+    const results = await Promise.all(purgePromises);
+    purgedCount = results.reduce((sum, result) => sum + result, 0);
+
+    console.log(
+      `🧹 [Purge Debug] Aggressive purge complete: removed connection ${connectionId} from ${purgedCount} cells`
+    );
+    return purgedCount;
+  } catch (error) {
+    console.error(
+      `❌ [Purge Debug] Error during aggressive purge of connection ${connectionId}:`,
+      error
+    );
+    return 0;
+  }
+};

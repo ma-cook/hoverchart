@@ -19,7 +19,7 @@ import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 import { uploadImageToStorage } from '../services/storageService';
 import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
-import { usePlaneStore, useObjectsStore } from '../stores';
+import { usePlaneStore, useObjectsStore, useConnectionStore } from '../stores';
 
 // Mobile detection constant
 const isMobile =
@@ -36,7 +36,6 @@ const Plane = ({
   onFaceIndicatorClick,
   showAllIndicators,
   globalIndicatorSelected,
-  connections,
   selectedIndicators,
   indicatorMode,
   onUpdate,
@@ -50,6 +49,9 @@ const Plane = ({
   // Get object data from objects store
   const objects = useObjectsStore((state) => state.objects);
   const objectData = objects.find((obj) => obj.id === id);
+
+  // Get connections from connection store instead of props
+  const connectionsFromStore = useConnectionStore((state) => state.connections);
 
   // Store state and actions - moved before memoized values to avoid initialization order issues
   const plane = usePlaneStore((state) => state.getPlane(id));
@@ -339,8 +341,7 @@ const Plane = ({
             // Dispose of the previous material if it exists
             if (meshRef.current.material && meshRef.current.material.map) {
               meshRef.current.material.map.dispose();
-            }
-            if (meshRef.current.material) {
+            }            if (meshRef.current.material) {
               meshRef.current.material.dispose();
             }
 
@@ -349,6 +350,9 @@ const Plane = ({
               transparent: true,
               opacity: 1,
               side: THREE.DoubleSide,
+              depthTest: true,
+              depthWrite: true,
+              renderOrder: -2,
             });
             meshRef.current.material = material;
             setPlaneImageTexture(id, texture);
@@ -700,13 +704,14 @@ const Plane = ({
         if (meshRef.current) {
           if (meshRef.current.material) {
             meshRef.current.material.dispose();
-          }
-
-          const material = new THREE.MeshBasicMaterial({
+          }          const material = new THREE.MeshBasicMaterial({
             color: newColor,
             transparent: true,
             opacity: 1,
             side: THREE.DoubleSide,
+            depthTest: true,
+            depthWrite: true,
+            renderOrder: -2,
           });
 
           meshRef.current.material = material;
@@ -900,14 +905,13 @@ const Plane = ({
       setPlaneIndicatorSelected,
     ]
   );
-
   const isIndicatorConnected = useMemo(() => {
-    return connections?.some(
+    return connectionsFromStore?.some(
       (conn) =>
         conn.start.plane === groupRef.current ||
         conn.end.plane === groupRef.current
     );
-  }, [connections]);
+  }, [connectionsFromStore]);
   const shouldShowIndicator = useMemo(() => {
     if (selectedIndicators?.length > 0) return true;
     if (indicatorMode === 'indicators') return true;
@@ -1173,14 +1177,15 @@ const Plane = ({
               }
               if (meshRef.current.material) {
                 meshRef.current.material.dispose();
-              }
-
-              // Create new material with the texture
+              }              // Create new material with the texture
               const material = new THREE.MeshBasicMaterial({
                 map: texture,
                 transparent: true,
                 opacity: 1,
                 side: THREE.DoubleSide,
+                depthTest: true,
+                depthWrite: true,
+                renderOrder: -2,
               });
 
               meshRef.current.material = material;
@@ -1285,8 +1290,7 @@ const Plane = ({
   }, [plane?.scale, scale]);
 
   const indicatorPosition = useMemo(() => [0, -size - 1, 0], [size]);
-  const meshMaterial = useMemo(() => {
-    // If we have an image texture, use it
+  const meshMaterial = useMemo(() => {    // If we have an image texture, use it
     if (plane?.imageTexture) {
       return (
         <meshBasicMaterial
@@ -1295,6 +1299,9 @@ const Plane = ({
           opacity={1}
           side={THREE.DoubleSide}
           needsUpdate={true}
+          depthTest={true}
+          depthWrite={true}
+          renderOrder={-2}
         />
       );
     } // Otherwise use the color-based material
@@ -1308,6 +1315,9 @@ const Plane = ({
         opacity={1}
         side={THREE.DoubleSide}
         needsUpdate={true}
+        depthTest={true}
+        depthWrite={true}
+        renderOrder={-2}
       />
     );
   }, [color, plane?.imageTexture]);
@@ -1337,8 +1347,7 @@ const Plane = ({
     <>
       <group ref={groupRef} position={position}>
         {' '}
-        <group ref={contentRef} scale={scale}>
-          <mesh ref={meshRef} onClick={handleClick}>
+        <group ref={contentRef} scale={scale}>          <mesh ref={meshRef} onClick={handleClick} renderOrder={-2}>
             <planeGeometry args={[size * 2 - 0.2, size * 2 - 0.2]} />
             {meshMaterial}
           </mesh>{' '}
@@ -1559,7 +1568,6 @@ export default React.memo(Plane, (prevProps, nextProps) => {
     prevProps.showAllIndicators === nextProps.showAllIndicators &&
     prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
     prevProps.activeTextStyleUI === nextProps.activeTextStyleUI &&
-    prevProps.connections.length === nextProps.connections.length &&
     prevProps.selectedIndicators.length === nextProps.selectedIndicators.length
   );
 });

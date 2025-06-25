@@ -12,7 +12,7 @@ import FaceTextInput from './FaceTextInput';
 import { Line } from '@react-three/drei';
 import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
-import { useCubeStore, useObjectsStore } from '../stores';
+import { useCubeStore, useObjectsStore, useConnectionStore } from '../stores';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -40,7 +40,6 @@ const Cube = ({
   showAllCubesIndicators,
   activeIndicator,
   indicatorMode,
-  connections = [],
   selectedIndicators = [],
   setActiveTextStyleUI,
   onUpdate,
@@ -52,7 +51,12 @@ const Cube = ({
 }) => {
   // Get object data from objects store
   const objects = useObjectsStore((state) => state.objects);
-  const objectData = objects.find((obj) => obj.id === id); // Refs - declare early so they can be used in memoized values
+  const objectData = objects.find((obj) => obj.id === id);
+
+  // Get connections from connection store instead of props
+  const connectionsFromStore = useConnectionStore((state) => state.connections);
+
+  // Refs - declare early so they can be used in memoized values
   const meshRef = useRef();
   const contentRef = useRef(); // Add contentRef like in Dodecahedron
   const lastUpdateTimeRef = useRef(0); // Memoize derived values to prevent unnecessary re-renders
@@ -210,18 +214,17 @@ const Cube = ({
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
   ]);
-
   // Check if a face is connected via a connection
   const isIndicatorConnected = useCallback(
     (faceName) => {
-      return connections.some(
+      return connectionsFromStore.some(
         (conn) =>
           (conn.start?.objectId === id.toString() &&
             conn.start?.face === faceName) ||
           (conn.end?.objectId === id.toString() && conn.end?.face === faceName)
       );
     },
-    [connections, id]
+    [connectionsFromStore, id]
   );
 
   // Check if an indicator should be shown as active
@@ -460,14 +463,15 @@ const Cube = ({
       }
     };
   }, [updateDatabase, objectData]);
-
   // Add a new effect to close text style UI when clicking elsewhere
   useEffect(() => {
     const handleGlobalClick = (event) => {
       // Don't close if clicking within the TextStyleUI components
       if (
         event.target &&
-        event.target.closest('.object-ui-content, .color-picker-container')
+        event.target.closest(
+          '.object-ui-content, .color-picker-container, .face-ui-content, .face-ui-container'
+        )
       ) {
         return;
       }
@@ -587,10 +591,13 @@ const Cube = ({
       setCubeShowTransform(id, false);
     }
   }, [cube?.isResizing, id, setCubeIsResizing, setCubeShowTransform]);
-
   const handleHeaderToggle = useCallback(() => {
     setCubeShowHeader(id, !cube?.showHeader);
-  }, [cube?.showHeader, id, setCubeShowHeader]);
+    // Close ObjectUI when showing header input
+    if (!cube?.showHeader) {
+      setCubeShowObjectUI(id, false);
+    }
+  }, [cube?.showHeader, id, setCubeShowHeader, setCubeShowObjectUI]);
 
   const handleHeaderSubmit = useCallback(
     (text) => {
@@ -713,6 +720,8 @@ const Cube = ({
       setCubeActiveTextFace(id, null);
       setActiveTextStyleUI(contentRef.current);
       setCubeSelectedFace(id, null);
+      // Close ObjectUI when header text is clicked
+      setCubeShowObjectUI(id, false);
     },
     [
       id,
@@ -720,6 +729,7 @@ const Cube = ({
       setCubeShowHeaderTextStyleUI,
       setCubeActiveTextFace,
       setCubeSelectedFace,
+      setCubeShowObjectUI,
     ]
   );
   const handleFaceTextClick = useCallback(() => {
@@ -783,6 +793,8 @@ const Cube = ({
       setCubeShowFaceTextInput(id, false);
       // Add this line to trigger the UI
       setCubeShowHeaderTextStyleUI(id, false);
+      // Close ObjectUI when face text is clicked
+      setCubeShowObjectUI(id, false);
     },
     [
       id,
@@ -791,6 +803,7 @@ const Cube = ({
       setCubeSelectedFace,
       setCubeShowFaceTextInput,
       setCubeShowHeaderTextStyleUI,
+      setCubeShowObjectUI,
     ]
   );
   const handleStyleChange = useCallback(
@@ -1155,16 +1168,16 @@ const Cube = ({
             args={[isMobile ? 16 : 10, isMobile ? 16 : 10, isMobile ? 16 : 10]}
           />
           <meshBasicMaterial visible={false} />
-        </mesh>{' '}
-        {/* Cube edge lines */}
+        </mesh>{' '}        {/* Cube edge lines */}
         <Line
           points={cubeLinePoints}
           color={cube?.color || color}
           lineWidth={isMobile ? 3 : 1}
           segments={true}
-          renderOrder={1} // Higher render order for cube edges
+          renderOrder={10} // Much higher render order to ensure cube edges always render in front
           transparent={false}
-          depthWrite={false}
+          depthTest={true}
+          depthWrite={true}
         />
         {/* Colored faces and indicators */}
         {renderFaces}

@@ -493,11 +493,19 @@ const Sphere = React.memo(
       if (contentRef.current && window.orbitControls) {
         contentRef.current.orbitControls = window.orbitControls;
       }
-    }, []);
-
-    // Add effect for handling global clicks
+    }, []); // Add effect for handling global clicks
     useEffect(() => {
-      const handleGlobalClick = () => {
+      const handleGlobalClick = (event) => {
+        // Don't close if clicking within the TextStyleUI components
+        if (
+          event.target &&
+          event.target.closest(
+            '.object-ui-content, .color-picker-container, .face-ui-content, .face-ui-container'
+          )
+        ) {
+          return;
+        }
+
         if (dodecahedron?.showFaceTextStyleMenu) {
           setDodecahedronShowFaceTextStyleMenu(id, false);
           setDodecahedronActiveFaceText(id, null);
@@ -669,9 +677,12 @@ const Sphere = React.memo(
         setDodecahedronIsResizing(id, false);
       }
     };
-
     const handleHeaderToggle = () => {
       setDodecahedronShowHeader(id, !dodecahedron?.showHeader);
+      // Close ObjectUI when showing header input
+      if (!dodecahedron?.showHeader) {
+        setDodecahedronShowObjectUI(id, false);
+      }
     };
     const handleHeaderSubmit = (text) => {
       updateObjectAndStores({ headerText: text });
@@ -794,6 +805,8 @@ const Sphere = React.memo(
     const handleHeaderClick = (e) => {
       e.stopPropagation();
       setDodecahedronShowStyleMenu(id, !dodecahedron?.showStyleMenu);
+      // Close ObjectUI when header text is clicked
+      setDodecahedronShowObjectUI(id, false);
     };
     const handleStyleChange = (newStyle) => {
       const newHeaderStyle = { ...(headerStyle || {}), ...newStyle };
@@ -828,14 +841,15 @@ const Sphere = React.memo(
     const handleFaceTextButtonClick = () => {
       setDodecahedronShowFaceTextInput(id, true);
       setDodecahedronShowFaceTextStyleMenu(id, false); // Hide style menu when adding new text
-    };
-    // Update text click handler to distinguish between clicking text vs button
+    }; // Update text click handler to distinguish between clicking text vs button
     const handleFaceTextClick = (faceIndex, e) => {
       e.stopPropagation();
       e.nativeEvent.stopImmediatePropagation(); // Add this line to prevent global click
       setDodecahedronActiveFaceText(id, faceIndex);
       setDodecahedronShowFaceTextStyleMenu(id, true);
       setDodecahedronShowFaceTextInput(id, false);
+      // Close ObjectUI when face text is clicked
+      setDodecahedronShowObjectUI(id, false);
     };
     const handleFaceTextStyleChange = (newStyle) => {
       if (dodecahedron?.activeFaceText !== null) {
@@ -1050,10 +1064,10 @@ const Sphere = React.memo(
             />
           </mesh>
           {/* Modified face rendering to handle colors correctly */}
-          {geometry.map((faceGeometry, idx) => (
-            <mesh
+          {geometry.map((faceGeometry, idx) => (            <mesh
               key={`face-${idx}`}
               geometry={faceGeometry}
+              renderOrder={-1}
               onClick={(e) => {
                 e.stopPropagation();
                 if (!selected) {
@@ -1069,8 +1083,7 @@ const Sphere = React.memo(
                 document.body.style.cursor = 'auto';
               }}
             >
-              {' '}
-              <meshBasicMaterial
+              {' '}              <meshBasicMaterial
                 color={
                   faceColors[idx] || // Custom color if set
                   (selected && dodecahedron?.highlightedFaces?.has(idx)
@@ -1090,6 +1103,9 @@ const Sphere = React.memo(
                 side={THREE.FrontSide} // Changed from DoubleSide to FrontSide
                 polygonOffset
                 polygonOffsetFactor={-1}
+                depthTest={true}
+                depthWrite={false}
+                renderOrder={-1}
               />
             </mesh>
           ))}{' '}

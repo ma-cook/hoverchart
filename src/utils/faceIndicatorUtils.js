@@ -1,16 +1,15 @@
 import { saveConnection } from '../services/connectionsService';
+import useConnectionStore from '../stores/connectionStore';
 import { calculateFacePosition } from './facePositionUtils';
 
 /**
  * Handle face indicator click events with connection creation
  *
  * @param {Object} params Configuration parameters
- * @param {Object} params.indicator The indicator that was clicked
- * @param {Array} params.objects Array of all objects in the scene
+ * @param {Object} params.indicator The indicator that was clicked * @param {Array} params.objects Array of all objects in the scene
  * @param {Array} params.connections Array of all connections in the scene
  * @param {Object} params.selectedIndicatorsRef Reference to track selected indicators
  * @param {Function} params.setSelectedIndicators Function to update selected indicators state
- * @param {Function} params.setConnections Function to update connections state
  * @param {Function} params.setIsConnectMode Function to update connect mode state
  * @param {Function} params.setIndicatorMode Function to update indicator mode state
  * @param {Function} params.setShowAllCubesIndicators Function to update indicator visibility
@@ -25,7 +24,6 @@ export const handleFaceIndicatorClick = async ({
   objects,
   selectedIndicatorsRef,
   setSelectedIndicators,
-  setConnections,
   setIsConnectMode,
   setIndicatorMode,
   setShowAllCubesIndicators,
@@ -227,11 +225,10 @@ export const handleFaceIndicatorClick = async ({
 
         result = { success: true, connection: newConnection };
       }
-
       if (result.success && result.connection) {
         console.log('Text connection created:', result.connection);
-        // Add to local state for immediate visualization
-        setConnections((prev) => [...prev, result.connection]);
+        // Add to connection store for immediate visualization
+        useConnectionStore.getState().addConnection(result.connection);
       } else {
         console.error('Failed to create text connection:', result);
       }
@@ -330,8 +327,21 @@ export const handleFaceIndicatorClick = async ({
     };
     console.log('Connection created:', newConnection);
 
-    // Update local state immediately for clickability
-    setConnections((prev) => [...prev, newConnection]);
+    // Add to connection store for immediate visualization
+    const existingConnections = useConnectionStore.getState().connections;
+    const existingConnection = existingConnections.find(
+      (conn) => conn.id === connectionId
+    );
+
+    if (existingConnection) {
+      console.warn(
+        '⚠️ Connection already exists in store, not adding duplicate:',
+        connectionId
+      );
+    } else {
+      console.log('➕ Adding new connection to store:', connectionId);
+      useConnectionStore.getState().addConnection(newConnection);
+    }
 
     // Save to database; if error, rollback state
     if (user) {
@@ -347,10 +357,9 @@ export const handleFaceIndicatorClick = async ({
         console.log('✅ Connection saved successfully to database');
       } catch (err) {
         console.error('❌ Failed to save connection to database:', err);
-        // Rollback local state on save failure
-        setConnections((prev) =>
-          prev.filter((conn) => conn.id !== connectionId)
-        );
+
+        // Rollback - remove from connection store only
+        useConnectionStore.getState().removeConnection(connectionId);
         return {
           success: false,
           complete: true,

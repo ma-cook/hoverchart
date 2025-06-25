@@ -189,6 +189,46 @@ const useConnectionStore = create((set, get) => ({
     const state = get();
     return state.lineTextStyles[connectionId] || {};
   },
+
+  // Delete all connections for a specific object
+  deleteConnectionsByObject: (objectId) => {
+    set((state) => {
+      const connectionsToDelete = state.connections.filter(
+        (conn) =>
+          conn.start?.objectId === objectId || conn.end?.objectId === objectId
+      );
+
+      const connectionIdsToDelete = connectionsToDelete.map((conn) => conn.id);
+
+      return {
+        connections: state.connections.filter(
+          (conn) =>
+            conn.start?.objectId !== objectId && conn.end?.objectId !== objectId
+        ),
+        // Clean up related state for deleted connections
+        lineTexts: Object.fromEntries(
+          Object.entries(state.lineTexts).filter(
+            ([id]) => !connectionIdsToDelete.includes(id)
+          )
+        ),
+        lineTextStyles: Object.fromEntries(
+          Object.entries(state.lineTextStyles).filter(
+            ([id]) => !connectionIdsToDelete.includes(id)
+          )
+        ),
+        showLineTextInput: connectionIdsToDelete.includes(
+          state.showLineTextInput
+        )
+          ? null
+          : state.showLineTextInput,
+        showLineTextStyleUI: connectionIdsToDelete.includes(
+          state.showLineTextStyleUI
+        )
+          ? null
+          : state.showLineTextStyleUI,
+      };
+    });
+  },
 }));
 
 export default useConnectionStore;

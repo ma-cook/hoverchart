@@ -19,7 +19,6 @@ const ObjectRenderer = React.memo(
     showAllCubesIndicators,
     activeIndicator,
     indicatorMode,
-    connections,
     selectedIndicators,
     activeTextStyleUI,
     setActiveTextStyleUI,
@@ -47,7 +46,6 @@ const ObjectRenderer = React.memo(
           showAllCubesIndicators={showAllCubesIndicators}
           activeIndicator={activeIndicator}
           indicatorMode={indicatorMode}
-          connections={connections}
           selectedIndicators={selectedIndicators}
           activeTextStyleUI={activeTextStyleUI}
           setActiveTextStyleUI={setActiveTextStyleUI}
@@ -85,7 +83,6 @@ const ObjectRenderer = React.memo(
           onMove={(newPosition) =>
             handleObjectMove(obj.id, newPosition, false, false)
           }
-          connections={connections}
           onUpdate={handleObjectUpdate}
           onIndicatorDeselected={handleIndicatorDeselected}
           onDelete={() => handleObjectDelete(obj.id)}
@@ -109,7 +106,6 @@ const ObjectRenderer = React.memo(
           onMove={(newPosition) =>
             handleObjectMove(obj.id, newPosition, false, false)
           }
-          connections={connections}
           selectedIndicators={selectedIndicators}
           indicatorMode={indicatorMode}
           onUpdate={handleObjectUpdate}
@@ -143,7 +139,6 @@ const ObjectRenderer = React.memo(
           onIndicatorSelected={handleIndicatorSelected}
           globalIndicatorSelected={globalIndicatorSelected}
           onFaceIndicatorClick={handleFaceIndicatorClick}
-          connections={connections}
           selectedIndicators={selectedIndicators}
           indicatorMode={indicatorMode}
           onUpdate={handleObjectUpdate}
@@ -188,9 +183,8 @@ const ObjectRenderer = React.memo(
       prevProps.indicatorMode === nextProps.indicatorMode &&
       prevProps.activeTextStyleUI === nextProps.activeTextStyleUI &&
       prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
-      prevProps.connections.length === nextProps.connections.length &&
-      prevProps.selectedIndicators.length ===
-        nextProps.selectedIndicators.length
+      (prevProps.selectedIndicators?.length || 0) ===
+        (nextProps.selectedIndicators?.length || 0)
     );
   }
 );

@@ -131,6 +131,13 @@ const App = () => {
     initPerformanceTracking();
   }, []);
 
+  // Initialize tombstone system for tracking deleted objects
+  useEffect(() => {
+    const initializeTombstones =
+      useObjectsStore.getState().initializeTombstones;
+    initializeTombstones();
+  }, []);
+
   // Initialize animation system for connection line animations
   useEffect(() => {
     initAnimationSystem();
@@ -168,19 +175,15 @@ const App = () => {
   const setShowLineTextStyleUI = useConnectionStore(
     (state) => state.setShowLineTextStyleUI
   ); // Use the useConnections hook instead of implementing handlers directly
+  // Debug: Log useConnections parameters
   const {
     connections,
-    setConnections,
     handleLineStyleChange,
     handleLineColorChange,
     handleConnectionClick,
     handleLineTextClick,
-  } = useConnections({ user, currentSpaceId, loadedCells });
-
-  const handleLineTextSubmit = useCallback((connectionId, text) => {
-    const setLineText = useConnectionStore.getState().setLineText;
-    setLineText(connectionId, text);
-  }, []); // Objects hook gets the connections from above
+    handleLineTextSubmit,
+  } = useConnections({ user, currentSpaceId: effectiveSpaceId, loadedCells }); // Objects hook gets the connections from above
   const {
     selectedId,
     setSelectedId,
@@ -197,7 +200,6 @@ const App = () => {
     currentSpaceId,
     cameraRef,
     connections,
-    setConnections,
   });
 
   // Indicators hook
@@ -244,9 +246,6 @@ const App = () => {
     if (spaceParam) {
       // If we have uid and token, this is authenticated access - let the auth system handle it
       if (uidParam && tokenParam) {
-        console.log(
-          '🔐 Authenticated access detected, letting auth system handle space access'
-        );
         // Don't set up public space access - let the normal auth flow handle this
         // The space manager will pick up the spaceId from URL parameters
         return;
@@ -254,23 +253,16 @@ const App = () => {
 
       // If we have an authenticated user, let the space manager handle it
       if (user?.uid) {
-        console.log(
-          '🔐 User already authenticated, letting space manager handle space access'
-        );
         return;
       }
 
       // Wait for auth to be ready before making public space decisions
       if (!isAuthReady) {
-        console.log(
-          '⏳ Waiting for auth to be ready before handling space access'
-        );
         return;
       }
 
       // If we have both space and owner (but no auth params), treat as public access
       if (ownerParam) {
-        console.log('👥 Public space access with owner specified');
         window.publicAccessSpace = spaceParam;
         window.currentSpaceOwner = ownerParam;
         setCurrentSpaceOwner(ownerParam);
@@ -283,10 +275,6 @@ const App = () => {
       } else {
         // Only try public space lookup if we're not authenticated and no auth params
         if (!user && !uidParam && !tokenParam) {
-          console.log(
-            '🔍 Looking up space metadata for potential public access:',
-            spaceParam
-          );
           window.publicAccessSpace = spaceParam;
           setIsLookingUpPublicSpace(true);
 
@@ -295,12 +283,7 @@ const App = () => {
             .then(({ getPublicSpaceMetadata }) => {
               getPublicSpaceMetadata(spaceParam)
                 .then((spaceData) => {
-                  console.log('📋 Space metadata result:', spaceData);
                   if (spaceData && spaceData.isPublic && spaceData.ownerId) {
-                    console.log(
-                      '✅ Public space verified, owner:',
-                      spaceData.ownerId
-                    );
                     window.currentSpaceOwner = spaceData.ownerId;
                     setCurrentSpaceOwner(spaceData.ownerId);
                     sessionStorage.setItem(
@@ -318,11 +301,6 @@ const App = () => {
                     // Trigger a re-render
                     setPublicSpaceReady(true);
                   } else {
-                    console.log('❌ Space not found or not public:', spaceData);
-                    // For non-public spaces accessed without auth, redirect to volscape.com
-                    console.log(
-                      '🚫 Redirecting to volscape.com - unauthorized access to secure space'
-                    );
                     window.location.href = 'https://volscape.com/';
                     return;
                   }
@@ -331,9 +309,7 @@ const App = () => {
                 .catch((error) => {
                   console.error('Failed to fetch space metadata:', error);
                   // Redirect to volscape.com for failed space access
-                  console.log(
-                    '🚫 Redirecting to volscape.com - failed to access space'
-                  );
+
                   window.location.href = 'https://volscape.com/';
                 });
             })
@@ -381,9 +357,9 @@ const App = () => {
   }, [isReadOnly]);
   // Load connections when space changes (replacing useConnections hook)
   useEffect(() => {
-    if (!user?.uid || !currentSpaceId) return;
-
-    // Simple connection loading - let RealTimeConnectionUpdater handle visual updates
+    if (!user?.uid || !currentSpaceId) return; // Simple connection loading - now fully handled by useConnections hook
+    // DISABLED: Old connection subscription replaced by useConnections hook
+    /*
     const loadConnections = async () => {
       try {
         const { subscribeToConnections } = await import(
@@ -392,8 +368,12 @@ const App = () => {
 
         const unsubscribe = subscribeToConnections(
           user.uid,
-          currentSpaceId,
-          (connectionUpdate) => {
+          currentSpaceId,          (connectionUpdate) => {
+            // Skip connection updates if object deletion is in progress
+            if (window._connectionUpdateSkip) {
+              return;
+            }
+
             // Only update if we're not currently transforming objects
             if (
               !window._currentTransformingObjects ||
@@ -415,37 +395,33 @@ const App = () => {
                   }
 
                   return isValid;
-                });
-
-                // Full array update
-                setConnections(validConnections);
+                });                // Full array update - now handled by useConnections hook
+                // setConnections(validConnections);
               } else if (
                 connectionUpdate &&
                 typeof connectionUpdate === 'object'
               ) {
                 // Incremental update (added, modified, removed)
-                const { type, connection, id } = connectionUpdate;
-
-                if (type === 'added' && connection) {
-                  // Add new connection
-                  setConnections((current) => {
-                    const exists = current.some(
-                      (conn) => conn.id === connection.id
-                    );
-                    return exists ? current : [...current, connection];
-                  });
+                const { type, connection, id } = connectionUpdate;                if (type === 'added' && connection) {
+                  // Add new connection - now handled by useConnections hook
+                  // setConnections((current) => {
+                  //   const exists = current.some(
+                  //     (conn) => conn.id === connection.id
+                  //   );
+                  //   return exists ? current : [...current, connection];
+                  // });
                 } else if (type === 'modified' && connection) {
-                  // Update existing connection
-                  setConnections((current) =>
-                    current.map((conn) =>
-                      conn.id === connection.id ? connection : conn
-                    )
-                  );
+                  // Update existing connection - now handled by useConnections hook
+                  // setConnections((current) =>
+                  //   current.map((conn) =>
+                  //     conn.id === connection.id ? connection : conn
+                  //   )
+                  // );
                 } else if (type === 'removed' && id) {
-                  // Remove connection
-                  setConnections((current) =>
-                    current.filter((conn) => conn.id !== id)
-                  );
+                  // Remove connection - now handled by useConnections hook
+                  // setConnections((current) =>
+                  //   current.filter((conn) => conn.id !== id)
+                  // );
                 }
               }
             }
@@ -470,7 +446,11 @@ const App = () => {
         cleanupRef.current();
       }
     };
-  }, [user?.uid, currentSpaceId, loadedCells, setConnections]); // Subscribe to spatial objects changes - supports anonymous access to public spaces
+    */
+
+    // Connections are now fully handled by useConnections hook - no cleanup needed here
+    return () => {};
+  }, [user?.uid, currentSpaceId, loadedCells]); // Subscribe to spatial objects changes - supports anonymous access to public spaces
   useEffect(() => {
     if (!canViewSpace) {
       return;
@@ -481,7 +461,6 @@ const App = () => {
 
     // For public spaces, wait until we have the owner information
     if (!user && publicSpaceId && !currentSpaceOwner) {
-      console.log('⏳ Waiting for public space owner resolution...');
       return;
     }
 
@@ -490,7 +469,6 @@ const App = () => {
       !Array.isArray(loadedCells) ||
       loadedCells.length === 0
     ) {
-      console.log('⏳ No loaded cells yet, waiting...', { loadedCells });
       return;
     } // Add an initial fetch phase to ensure we get all existing objects
     const performInitialObjectFetch = async () => {
@@ -504,12 +482,6 @@ const App = () => {
         const cellCoords = loadedCells.map((cellId) => {
           const [x, y, z] = cellId.split(',').map(Number);
           return { x, y, z: z || 0 }; // Default z to 0 for backward compatibility
-        });
-
-        console.log('🔍 Performing initial object fetch from cells:', {
-          cells: loadedCells,
-          cellCoords,
-          owner: ownerUserId,
         });
 
         const initialObjects = await getObjectsFromCells(
@@ -582,18 +554,12 @@ const App = () => {
 
               // Check if this object was recently deleted
               if (isRecentlyDeleted(change.id)) {
-                console.log(
-                  `🚫 Prevented re-addition of recently deleted object: ${change.id}`
-                );
                 return prev;
               }
 
               // Clear transitioning flag if object is being re-added
               if (transitioningObjectsRef.current.has(change.id.toString())) {
                 transitioningObjectsRef.current.delete(change.id.toString());
-                console.log(
-                  `🔄 Object ${change.id} returned from transition - clearing transitioning flag`
-                );
               }
               if (!prev.find((obj) => obj.id === change.id)) {
                 // Validate position before adding the object (accept both array and Vector3 formats)
@@ -1018,7 +984,6 @@ const App = () => {
           connections,
           selectedIndicatorsRef,
           setSelectedIndicators,
-          setConnections,
           setIsConnectMode,
           setIndicatorMode,
           setShowAllCubesIndicators,
@@ -1044,7 +1009,6 @@ const App = () => {
       isConnectMode,
       selectedIndicatorsRef,
       setSelectedIndicators,
-      setConnections,
       setIsConnectMode,
       setIndicatorMode,
       setShowAllCubesIndicators,
@@ -1067,13 +1031,20 @@ const App = () => {
       }
     },
     [setActiveIndicator, setIndicatorMode]
-  ); // Canvas click handler - memoized to prevent re-creation
+  );
+
+  // Canvas click handler - memoized to prevent re-creation
   const handleCanvasClick = useCallback(() => {
     // Close any active text styling menus
     setActiveTextStyleUI(null);
     setSelectedConnection(null);
     setShowLineTextStyleUI(null);
     setSelectedId(null);
+
+    // Close line text input using connection store
+    const setShowLineTextInput =
+      useConnectionStore.getState().setShowLineTextInput;
+    setShowLineTextInput(null);
 
     // Batch DOM updates for better performance
     requestAnimationFrame(() => {
@@ -1200,7 +1171,6 @@ const App = () => {
         showAllCubesIndicators={showAllCubesIndicators}
         activeIndicator={activeIndicator}
         indicatorMode={indicatorMode}
-        connections={connections}
         selectedIndicators={selectedIndicators}
         activeTextStyleUI={activeTextStyleUI}
         setActiveTextStyleUI={setActiveTextStyleUI}
@@ -1232,7 +1202,6 @@ const App = () => {
     showAllCubesIndicators,
     activeIndicator,
     indicatorMode,
-    connections,
     selectedIndicators,
     activeTextStyleUI,
     setActiveTextStyleUI,

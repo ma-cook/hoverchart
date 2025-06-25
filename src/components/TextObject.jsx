@@ -11,7 +11,11 @@ import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
-import { useTextObjectStore, useObjectsStore } from '../stores';
+import {
+  useTextObjectStore,
+  useObjectsStore,
+  useConnectionStore,
+} from '../stores';
 
 const TextObject = React.memo(
   ({
@@ -24,7 +28,6 @@ const TextObject = React.memo(
     onIndicatorDeselected,
     globalIndicatorSelected,
     onFaceIndicatorClick,
-    connections,
     selectedIndicators,
     indicatorMode,
     onUpdate,
@@ -38,6 +41,12 @@ const TextObject = React.memo(
     // Get object data from objects store
     const objects = useObjectsStore((state) => state.objects);
     const objectData = objects.find((obj) => obj.id === id);
+
+    // Get connections from connection store instead of props
+    const connectionsFromStore = useConnectionStore(
+      (state) => state.connections
+    );
+
     // Memoize derived values to prevent unnecessary re-renders
     const text = useMemo(() => objectData?.text || '', [objectData?.text]);
     // Mobile-aware text style with larger default font size
@@ -243,18 +252,16 @@ const TextObject = React.memo(
     // Calculate offset for indicator consistently
     const getIndicatorOffset = useCallback(() => {
       return [0, scale[1] * 0.65, 0];
-    }, [scale]);
-
-    // Memoized derived values
+    }, [scale]); // Memoized derived values
     const isIndicatorConnected = useCallback(() => {
-      if (!connections || !id) return false;
+      if (!connectionsFromStore || !id) return false;
 
-      return connections.some((conn) => {
+      return connectionsFromStore.some((conn) => {
         const startId = String(conn.start?.objectId || conn.start?.id);
         const endId = String(conn.end?.objectId || conn.end?.id);
         return stringId === startId || stringId === endId;
       });
-    }, [connections, stringId, id]);
+    }, [connectionsFromStore, stringId, id]);
 
     const shouldShowIndicator = useMemo(() => {
       if (selectedIndicators?.length > 0) return true;
@@ -278,23 +285,21 @@ const TextObject = React.memo(
     const getIndicatorPositions = useCallback(() => {
       const offset = getIndicatorOffset();
       return { top: offset };
-    }, [getIndicatorOffset]);
-    // Enhanced: Get connected connection IDs
+    }, [getIndicatorOffset]); // Enhanced: Get connected connection IDs
     useEffect(() => {
-      if (!connections || !id) return;
+      if (!connectionsFromStore || !id) return;
 
       // Validate connections is an array
-      if (!Array.isArray(connections)) {
+      if (!Array.isArray(connectionsFromStore)) {
         console.error(
-          '❌ connections is not an array in TextObject useEffect:',
-          typeof connections,
-          connections
+          '❌ connectionsFromStore is not an array in TextObject useEffect:',
+          typeof connectionsFromStore,
+          connectionsFromStore
         );
         return;
       }
-
       const connectedIds = new Set();
-      connections.forEach((conn) => {
+      connectionsFromStore.forEach((conn) => {
         const startId = String(conn.start?.objectId || conn.start?.id);
         const endId = String(conn.end?.objectId || conn.end?.id);
         if (stringId === startId || stringId === endId) {
@@ -302,7 +307,7 @@ const TextObject = React.memo(
         }
       });
       connectedLineIdsRef.current = connectedIds;
-    }, [connections, stringId, id]);
+    }, [connectionsFromStore, stringId, id]);
 
     // Enhanced updateWorldMatrix function to better handle connections
     const updateWorldMatrix = useCallback(() => {
@@ -844,8 +849,8 @@ const TextObject = React.memo(
           indicatorWorldPos.y,
           indicatorWorldPos.z,
         ]; // Update all connections in real-time if needed
-        if (connections && Array.isArray(connections)) {
-          connections.forEach((conn) => {
+        if (connectionsFromStore && Array.isArray(connectionsFromStore)) {
+          connectionsFromStore.forEach((conn) => {
             if (conn.start?.objectId === stringId) {
               conn.start.position = [...indicatorPosArray];
               conn.start.worldPosition = [...indicatorPosArray];
@@ -890,7 +895,7 @@ const TextObject = React.memo(
       },
       [
         id,
-        connections,
+        connectionsFromStore,
         stringId,
         onUpdate,
         scale,
@@ -1092,7 +1097,7 @@ const TextObject = React.memo(
         if (
           !isMoving &&
           !isActivelyEditing &&
-          connections?.some(
+          connectionsFromStore?.some(
             (conn) =>
               conn.start.objectId === stringId || conn.end.objectId === stringId
           )
@@ -1328,7 +1333,6 @@ const TextObject = React.memo(
       prevProps.showAllIndicators === nextProps.showAllIndicators &&
       prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
       prevProps.indicatorMode === nextProps.indicatorMode &&
-      prevProps.connections?.length === nextProps.connections?.length &&
       prevProps.selectedIndicators?.length ===
         nextProps.selectedIndicators?.length
     );

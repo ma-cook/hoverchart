@@ -167,8 +167,10 @@ const ObjectUI = React.memo(
             zIndex: 999999,
           }}
         >
+          {' '}
           <div
             className="object-ui-content"
+            onClick={(e) => e.stopPropagation()}
             style={{
               display: 'flex',
               flexDirection: 'row',

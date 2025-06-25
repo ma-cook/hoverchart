@@ -378,10 +378,9 @@ const Connection = ({
   const { midpoint } = connectionData;
   const { calculatedPathPoints, effectiveLineStyle } = pathData;
   const { textPosition } = textPositionData;
-
-  // Determine connection text
+  // Determine connection text - prioritize lineTexts store over connection.text
   const connectionText =
-    connection.text || (lineTexts && lineTexts[connection.id]) || '';
+    (lineTexts && lineTexts[connection.id]) || connection.text || '';
   return (
     <group
       key={`${connection.id}-${connection._visualUpdate || 0}-${
@@ -473,7 +472,10 @@ const Connection = ({
           onToggleDashed={(styleType) =>
             handleLineStyleChange(connection.id, styleType)
           }
-          onTextClick={() => setShowLineTextInput(connection.id)}
+          onTextClick={() => {
+            setShowLineTextInput(connection.id);
+            selectConnection(null); // Close the LineUI menu by deselecting the connection
+          }}
           currentText={connectionText}
           hasText={!!connectionText && connectionText.trim() !== ''}
           currentConnection={connection}
@@ -528,7 +530,20 @@ const ConnectionsRenderer = ({
   onLineTextSubmit,
 }) => {
   // Use connection store for state
-  const connectionsFromStore = useConnectionStore((state) => state.connections); // Ensure connections is always an array
+  const connectionsFromStore = useConnectionStore((state) => state.connections);
+  const connectionsLoaded = useConnectionStore(
+    (state) => state.connectionsLoaded
+  );
+
+  // DEBUG: Log connections state
+  console.log(
+    '🔗 ConnectionsRenderer - connections count:',
+    connectionsFromStore?.length,
+    'loaded:',
+    connectionsLoaded
+  );
+
+  // Ensure connections is always an array
   const connections = useMemo(() => {
     if (Array.isArray(connectionsFromStore)) {
       return connectionsFromStore;

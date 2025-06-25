@@ -15,6 +15,7 @@ const useObjectsStore = create((set, get) => ({
   isInitialLoading: true,
   hasLoadedInitialObjects: false,
   recentlyDeletedObjects: new Map(), // Track recently deleted objects with timestamps
+  deletedObjectTombstones: new Set(), // Permanent tombstone tracking for deleted objects
 
   // Internal tracking refs (stored as state for persistence)
   lastUpdate: {},
@@ -160,9 +161,17 @@ const useObjectsStore = create((set, get) => ({
     const state = get();
     const newMap = new Map(state.recentlyDeletedObjects);
     newMap.set(id.toString(), Date.now());
-    set({ recentlyDeletedObjects: newMap });
 
-    // Store in localStorage to persist across page reloads
+    // Add to permanent tombstone tracking
+    const newTombstones = new Set(state.deletedObjectTombstones);
+    newTombstones.add(id.toString());
+
+    set({
+      recentlyDeletedObjects: newMap,
+      deletedObjectTombstones: newTombstones,
+    });
+
+    // Store both recent and tombstone data in localStorage to persist across page reloads
     try {
       const persistentDeleted = JSON.parse(
         localStorage.getItem('recentlyDeletedObjects') || '{}'
@@ -172,21 +181,31 @@ const useObjectsStore = create((set, get) => ({
         'recentlyDeletedObjects',
         JSON.stringify(persistentDeleted)
       );
-    } catch (error) {
-      console.warn(
-        'Failed to persist recently deleted objects to localStorage:',
-        error
+
+      // Store tombstones permanently
+      const tombstones = JSON.parse(
+        localStorage.getItem('deletedObjectTombstones') || '[]'
       );
+      if (!tombstones.includes(id.toString())) {
+        tombstones.push(id.toString());
+        localStorage.setItem(
+          'deletedObjectTombstones',
+          JSON.stringify(tombstones)
+        );
+      }
+    } catch (error) {
+      console.warn('Failed to persist deleted objects to localStorage:', error);
     }
 
-    // Clean up old entries (older than 5 minutes to handle page reloads)
+    // Clean up old entries after a much longer time to prevent memory leaks
+    // but still allow permanent tracking for connection filtering
     setTimeout(() => {
       const currentState = get();
       const updatedMap = new Map(currentState.recentlyDeletedObjects);
       updatedMap.delete(id.toString());
       set({ recentlyDeletedObjects: updatedMap });
 
-      // Also clean up from localStorage
+      // Also clean up from localStorage (but keep tombstones)
       try {
         const persistentDeleted = JSON.parse(
           localStorage.getItem('recentlyDeletedObjects') || '{}'
@@ -199,11 +218,40 @@ const useObjectsStore = create((set, get) => ({
       } catch (error) {
         console.warn('Failed to clean up localStorage deleted objects:', error);
       }
-    }, 300000); // 5 minutes instead of 30 seconds
+    }, 3600000); // 1 hour instead of 5 minutes - much longer window
   },
-
   isRecentlyDeleted: (id) => {
     const state = get();
+
+    // First check permanent tombstones - if an object is tombstoned, it's permanently deleted
+    if (state.deletedObjectTombstones.has(id.toString())) {
+      console.log(
+        `🪦 [Tombstone] Object ${id} is permanently deleted (in tombstone)`
+      );
+      return true;
+    }
+
+    // Also check localStorage for persistent tombstones across page reloads
+    try {
+      const tombstones = JSON.parse(
+        localStorage.getItem('deletedObjectTombstones') || '[]'
+      );
+      if (tombstones.includes(id.toString())) {
+        // Add back to memory set for faster future checks
+        const newTombstones = new Set(state.deletedObjectTombstones);
+        newTombstones.add(id.toString());
+        set({ deletedObjectTombstones: newTombstones });
+
+        console.log(
+          `🪦 [Tombstone] Object ${id} is permanently deleted (from localStorage)`
+        );
+        return true;
+      }
+    } catch (error) {
+      console.warn('Failed to check localStorage tombstones:', error);
+    }
+
+    // Fallback to time-based recent deletion check
     let deleteTime = state.recentlyDeletedObjects.get(id.toString());
 
     // Also check localStorage for persistent tracking across page reloads
@@ -227,11 +275,21 @@ const useObjectsStore = create((set, get) => ({
         );
       }
     }
-
     if (!deleteTime) return false;
 
-    // Consider recently deleted if within the last 5 minutes
-    return Date.now() - deleteTime < 300000;
+    // Consider recently deleted for 1 hour - much longer than before
+    // This prevents connections to deleted objects from reappearing
+    const isDeleted = Date.now() - deleteTime < 3600000; // 1 hour
+
+    if (isDeleted) {
+      console.log(
+        `🚫 [Objects Debug] Object ${id} is still recently deleted (${Math.round(
+          (Date.now() - deleteTime) / 1000
+        )}s ago)`
+      );
+    }
+
+    return isDeleted;
   },
   // Initialize objects loading state
   initializeObjectsLoading: () => {
@@ -246,11 +304,16 @@ const useObjectsStore = create((set, get) => ({
       //   );
       // }, 2000); // 2 second grace period for initial loading
     }
-  }, // Save objects periodically with transform prevention  // DISABLED: Periodic saving replaced with immediate saves when objects are modified
-  saveObjectsPeriodically: (user, currentSpaceId) => {
-    // Objects are now saved immediately when created/modified, no need for periodic saves    console.log('📝 Periodic save disabled - using immediate saves instead');
+  },
+
+  // DISABLED: Periodic saving replaced with immediate saves when objects are modified
+  saveObjectsPeriodically: () => {
+    // Objects are now saved immediately when created/modified, no need for periodic saves
+    console.log('📝 Periodic save disabled - using immediate saves instead');
     return;
-  }, // DISABLED: Old periodic save logic that was incorrectly named
+  },
+
+  // DISABLED: Old periodic save logic that was incorrectly named
   _disabledPeriodicSaveLogic: async () => {
     // NOTE: This function was incorrectly saving all existing objects to the database
     // during app startup. The logic below has been commented out to prevent unnecessary
@@ -783,15 +846,7 @@ const useObjectsStore = create((set, get) => ({
   },
 
   // Enhanced transform tracking with robust locking and position history
-  registerTransformingObject: (
-    id,
-    isTransforming,
-    position,
-    connections,
-    setConnections,
-    user,
-    currentSpaceId
-  ) => {
+  registerTransformingObject: (id, isTransforming, position) => {
     const objId = id?.toString();
     if (!objId) return;
 
@@ -823,32 +878,8 @@ const useObjectsStore = create((set, get) => ({
       }
 
       // Store transform start time
-      get().setTransformLockTime(objId, now);
-
-      // Block any db updates for this object AND its connected objects/lines
-      get().addDraggingObject(objId);
-
-      // Update connections to mark them as locked but allow visual updates
-      if (connections && connections.length > 0) {
-        setConnections((prevConnections) => {
-          const updated = prevConnections.map((conn) => {
-            if (
-              conn.start?.objectId === objId ||
-              conn.end?.objectId === objId
-            ) {
-              return {
-                ...conn,
-                _transformLocked: true,
-                _allowTransformUpdates: true, // Allow visual updates during transform
-                _lockTime: now,
-                _controlledBy: objId,
-              };
-            }
-            return conn;
-          });
-          return updated;
-        });
-      }
+      get().setTransformLockTime(objId, now); // Block any db updates for this object
+      get().addDraggingObject(objId); // Connection updates are now handled by the connection store/real-time updater
 
       // Freeze object to prevent any subscription updates during transform
       const updatedObjects = state.objects.map((obj) => {
@@ -877,9 +908,7 @@ const useObjectsStore = create((set, get) => ({
 
           // Get final position before unlocking
           const finalPosition = currentState.transformPositions.get(objId);
-          get().removeTransformPosition(objId);
-
-          // Save final position to position history to prevent jitter
+          get().removeTransformPosition(objId); // Save final position to position history to prevent jitter
           if (finalPosition) {
             get().setPositionHistory(objId, {
               position: [...finalPosition],
@@ -888,87 +917,7 @@ const useObjectsStore = create((set, get) => ({
             });
           }
 
-          // Unlock connections and save final positions to database
-          if (connections && connections.length > 0) {
-            setConnections((prevConnections) => {
-              const updatedConnections = prevConnections.map((conn) => {
-                if (conn._controlledBy === objId) {
-                  const newConn = { ...conn };
-                  delete newConn._transformLocked;
-                  delete newConn._allowTransformUpdates;
-                  delete newConn._lockTime;
-                  delete newConn._controlledBy;
-
-                  // Force connections to stay with the moved object
-                  if (conn.start?.objectId === objId && finalPosition) {
-                    // Recalculate start position based on new object position
-                    const startPos = get().calculateNewConnectionPosition(
-                      conn.start,
-                      finalPosition
-                    );
-                    if (startPos) {
-                      newConn.start.position = startPos;
-                      newConn.start.facePosition = startPos;
-                      newConn.start.worldPosition = startPos;
-                      // Mark this as a confirmed position after transform
-                      newConn._positionConfirmed = now;
-                      newConn._needsDatabaseSave = true;
-                    }
-                  }
-
-                  if (conn.end?.objectId === objId && finalPosition) {
-                    // Recalculate end position based on new object position
-                    const endPos = get().calculateNewConnectionPosition(
-                      conn.end,
-                      finalPosition
-                    );
-                    if (endPos) {
-                      newConn.end.position = endPos;
-                      newConn.end.facePosition = endPos;
-                      newConn.end.worldPosition = endPos;
-                      // Mark this as a confirmed position after transform
-                      newConn._positionConfirmed = now;
-                      newConn._needsDatabaseSave = true;
-                    }
-                  }
-
-                  return newConn;
-                }
-                return conn;
-              });
-
-              // Save connections that need database updates
-              updatedConnections.forEach(async (conn) => {
-                if (conn._needsDatabaseSave && user && currentSpaceId) {
-                  try {
-                    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-                    const connectionToSave = { ...conn };
-                    delete connectionToSave._needsDatabaseSave;
-                    delete connectionToSave._positionConfirmed;
-
-                    const { saveConnection } = await import(
-                      '../services/connectionsService'
-                    );
-                    await saveConnection(
-                      spaceOwnerId,
-                      currentSpaceId,
-                      connectionToSave
-                    );
-                    console.log(
-                      `💾 Saved connection position for ${conn.id} after object ${objId} moved`
-                    );
-                  } catch (error) {
-                    console.error(
-                      `❌ Failed to save connection position:`,
-                      error
-                    );
-                  }
-                }
-              });
-
-              return updatedConnections;
-            });
-          }
+          // Connection unlocking is now handled by the connection store/real-time updater
 
           // Remove transform lock flag from object
           const newState = get();
@@ -1050,14 +999,17 @@ const useObjectsStore = create((set, get) => ({
     const state = get();
     return state.transformPositions.get(id.toString());
   },
+
   // Reset all object state
   resetObjects: () => {
+    console.log('🔄 [Reset Debug] Resetting objects store to initial state');
     set({
       selectedId: null,
       objects: [],
       isInitialLoading: true,
       hasLoadedInitialObjects: false,
       recentlyDeletedObjects: new Map(),
+      deletedObjectTombstones: new Set(),
       lastUpdate: {},
       draggingObjects: new Set(),
       lastSaved: null,
@@ -1067,6 +1019,55 @@ const useObjectsStore = create((set, get) => ({
       transformLockTime: new Map(),
       positionHistory: new Map(),
     });
+  },
+
+  // Tombstone system utilities
+  initializeTombstones: () => {
+    try {
+      const tombstones = JSON.parse(
+        localStorage.getItem('deletedObjectTombstones') || '[]'
+      );
+      if (tombstones.length > 0) {
+        console.log(
+          `🪦 [Tombstone] Loaded ${tombstones.length} tombstones from localStorage`
+        );
+        set({ deletedObjectTombstones: new Set(tombstones) });
+      }
+    } catch (error) {
+      console.warn('Failed to initialize tombstones from localStorage:', error);
+    }
+  },
+
+  clearTombstone: (id) => {
+    const state = get();
+    const newTombstones = new Set(state.deletedObjectTombstones);
+    newTombstones.delete(id.toString());
+    set({ deletedObjectTombstones: newTombstones });
+
+    // Also remove from localStorage
+    try {
+      const tombstones = JSON.parse(
+        localStorage.getItem('deletedObjectTombstones') || '[]'
+      );
+      const filteredTombstones = tombstones.filter((t) => t !== id.toString());
+      localStorage.setItem(
+        'deletedObjectTombstones',
+        JSON.stringify(filteredTombstones)
+      );
+      console.log(`🪦 [Tombstone] Cleared tombstone for object ${id}`);
+    } catch (error) {
+      console.warn('Failed to clear tombstone from localStorage:', error);
+    }
+  },
+
+  clearAllTombstones: () => {
+    set({ deletedObjectTombstones: new Set() });
+    try {
+      localStorage.removeItem('deletedObjectTombstones');
+      console.log('🪦 [Tombstone] Cleared all tombstones');
+    } catch (error) {
+      console.warn('Failed to clear all tombstones from localStorage:', error);
+    }
   },
 }));
 

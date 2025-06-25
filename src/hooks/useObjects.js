@@ -5,13 +5,7 @@ import { useObjectsStore } from '../stores';
  * Custom hook to manage objects state and operations
  * Migrated to use Zustand store for state management
  */
-export function useObjects({
-  user,
-  currentSpaceId,
-  cameraRef,
-  connections,
-  setConnections,
-}) {
+export function useObjects({ user, currentSpaceId, cameraRef }) {
   const {
     selectedId,
     setSelectedId,
@@ -52,15 +46,8 @@ export function useObjects({
       extraData
     );
   };
-
   const handleObjectDelete = (id) => {
-    storeHandleObjectDelete(
-      id,
-      user,
-      currentSpaceId,
-      connections,
-      setConnections
-    );
+    storeHandleObjectDelete(id, user, currentSpaceId);
   };
 
   const registerTransformingObject = (id, isTransforming, position) => {
@@ -68,8 +55,6 @@ export function useObjects({
       id,
       isTransforming,
       position,
-      connections,
-      setConnections,
       user,
       currentSpaceId
     );

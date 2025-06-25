@@ -47,17 +47,18 @@ const HeaderInput = React.memo(
         groupRef.current.quaternion.copy(camera.quaternion);
       }
     });
-
     const handleKeyDown = (e) => {
       // Prevent the 3D canvas from capturing these events
       e.stopPropagation();
 
       if (e.key === 'Enter') {
+        e.preventDefault(); // Prevent form submission
         submitText(inputId, onTextSubmit);
       } else if (e.key === 'Escape') {
-        // Allow escaping without submitting
+        e.preventDefault(); // Prevent default escape behavior
         onTextSubmit?.(''); // Submit empty text to close
       }
+      // Don't preventDefault for other keys - allow normal typing
     };
 
     const handleChange = (e) => {
@@ -67,9 +68,10 @@ const HeaderInput = React.memo(
     const handleFocus = (e) => {
       e.stopPropagation();
     };
-
     const handleBlur = (e) => {
       e.stopPropagation();
+      // Submit the current text when losing focus
+      submitText(inputId, onTextSubmit);
     };
 
     return (
