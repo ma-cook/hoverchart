@@ -122,6 +122,31 @@ const FaceUI = React.memo(
         ]
       : baseTools;
 
+    // Add eye tool for planes
+    if (isPlane) {
+      tools.push({
+        name: 'eye',
+        icon: '👁',
+        onClick: (e) => {
+          e.stopPropagation();
+          if (followTarget?.current && window.cameraRef) {
+            // Get the world position of the plane
+            const worldPosition = new THREE.Vector3();
+            followTarget.current.getWorldPosition(worldPosition);
+            // Move camera to offset position
+            const offset = new THREE.Vector3(20, 20, 20);
+            const cameraPosition = worldPosition.clone().add(offset);
+            window.cameraRef.camera.position.copy(cameraPosition);
+            window.cameraRef.camera.lookAt(worldPosition);
+            // Set OrbitControls target using setTarget method
+            if (window.cameraRef.setTarget) {
+              window.cameraRef.setTarget(worldPosition);
+            }
+          }
+        },
+      });
+    }
+
     const handleToolClick = (tool, e) => {
       e.stopPropagation();
       switch (tool.name) {
@@ -199,7 +224,9 @@ const FaceUI = React.memo(
                 className={`face-tool-button ${
                   tool.active ? 'active-tool' : ''
                 }`}
-                onClick={(e) => handleToolClick(tool, e)}
+                onClick={(e) =>
+                  tool.onClick ? tool.onClick(e) : handleToolClick(tool, e)
+                }
                 style={
                   tool.active
                     ? {
@@ -228,6 +255,8 @@ const FaceUI = React.memo(
                       : 'Share Screen'
                     : tool.name === 'image'
                     ? 'Upload Image'
+                    : tool.name === 'eye'
+                    ? 'Look at this object'
                     : tool.name
                 }
               >

@@ -1497,7 +1497,7 @@ const TextObject = React.memo(
       width: '100%',
       height: contentHeight,
       minHeight: '2em', // Start with small height, will expand
-      background: 'rgba(0,0,0,0.5)',
+      background: 'rgb(255, 255, 255)',
       color: textStyle.color || 'black',
       border: 'none',
       padding: '8px',
@@ -1799,7 +1799,7 @@ const TextObject = React.memo(
                     userSelect: 'none',
                     cursor: 'text',
                     width: '100%',
-                    background: 'rgba(0,0,0,0.3)', // Slightly different for display mode
+                    background: 'white', // Slightly different for display mode
                   }}
                 >
                   {localText || 'Click to edit text...'}

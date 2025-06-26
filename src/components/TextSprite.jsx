@@ -505,7 +505,6 @@ const TextSprite = React.memo(
             color={style.color}
             anchorX="center"
             anchorY="middle"
-            outlineWidth={0}
             strokeWidth={0}
             billboard={!style.fixedSize}
           >
@@ -519,7 +518,6 @@ const TextSprite = React.memo(
           color={style.color}
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0}
           strokeWidth={0}
           billboard={billboard}
           depthTest={true}

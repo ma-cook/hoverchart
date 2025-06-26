@@ -46,6 +46,25 @@ const TextObjectUI = forwardRef(
       onResizeToggle?.();
     };
 
+    // Add eye button to the UI menu
+    const handleEyeClick = (e) => {
+      e.stopPropagation();
+      if (followTarget?.current && window.cameraRef) {
+        // Get the world position of the text object
+        const worldPosition = new THREE.Vector3();
+        followTarget.current.getWorldPosition(worldPosition);
+        // Move camera to offset position
+        const offset = new THREE.Vector3(20, 20, 20);
+        const cameraPosition = worldPosition.clone().add(offset);
+        window.cameraRef.camera.position.copy(cameraPosition);
+        window.cameraRef.camera.lookAt(worldPosition);
+        // Set OrbitControls target using setTarget method
+        if (window.cameraRef.setTarget) {
+          window.cameraRef.setTarget(worldPosition);
+        }
+      }
+    };
+
     useFrame(({ camera }) => {
       if (groupRef.current && followTarget?.current) {
         const targetPos = followTarget.current.position;
@@ -68,9 +87,8 @@ const TextObjectUI = forwardRef(
 
     return (
       <group ref={groupRef}>
-        {' '}
         <Html
-          ref={ref} // Changed from menuRef to ref
+          ref={ref}
           onClick={handleUIClick}
           onPointerDown={(e) => {
             e.stopPropagation();
@@ -133,7 +151,15 @@ const TextObjectUI = forwardRef(
               onResizeToggle={handleResizeToggle} // Use our local handler
               onDelete={onDelete} // Pass the delete handler
             />
-
+            {/* Eye button for camera look-at */}
+            <button
+              className="face-tool-button"
+              title="Look at this object"
+              onClick={handleEyeClick}
+              style={{ marginLeft: 4 }}
+            >
+              👁
+            </button>
             {showColorPicker && (
               <ColorPicker
                 onColorSelect={(color) => {
