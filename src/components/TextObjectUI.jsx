@@ -13,7 +13,6 @@ const TextObjectUI = forwardRef(
       id, // Add id prop
       textStyle = {}, // Add textStyle prop
       onStyleChange,
-      onBorderChange,
       followTarget,
       onTransformToggle,
       onResizeToggle,
@@ -76,6 +75,18 @@ const TextObjectUI = forwardRef(
           onPointerDown={(e) => {
             e.stopPropagation();
             e.preventDefault();
+            // Pause orbit controls when interacting with UI
+            if (window.orbitControls) {
+              window.orbitControls.enabled = false;
+            }
+          }}
+          onPointerUp={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            // Re-enable orbit controls after UI interaction
+            if (window.orbitControls) {
+              window.orbitControls.enabled = true;
+            }
           }}
           style={{
             pointerEvents: 'auto',
@@ -91,6 +102,20 @@ const TextObjectUI = forwardRef(
         >
           <div
             className="face-ui-content"
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              // Pause orbit controls when clicking on UI buttons
+              if (window.orbitControls) {
+                window.orbitControls.enabled = false;
+              }
+            }}
+            onMouseUp={(e) => {
+              e.stopPropagation();
+              // Re-enable orbit controls after clicking UI buttons
+              if (window.orbitControls) {
+                window.orbitControls.enabled = true;
+              }
+            }}
             style={{
               display: 'flex',
               gap: '4px',
@@ -112,7 +137,7 @@ const TextObjectUI = forwardRef(
             {showColorPicker && (
               <ColorPicker
                 onColorSelect={(color) => {
-                  onBorderChange({ type: 'color', value: color });
+                  onStyleChange({ color }); // Fix: use onStyleChange instead of onBorderChange
                   closeColorPicker(pickerId);
                 }}
                 onClose={() => closeColorPicker(pickerId)}
@@ -128,13 +153,14 @@ const TextObjectUI = forwardRef(
 TextObjectUI.displayName = 'TextObjectUI'; // Add display name for dev tools
 
 export default React.memo(TextObjectUI, (prevProps, nextProps) => {
-  // Custom comparison function for React.memo
-  // Only re-render if critical props change
+  // Custom comparison to prevent unnecessary re-renders
   return (
     prevProps.id === nextProps.id &&
     prevProps.textStyle === nextProps.textStyle &&
     prevProps.followTarget === nextProps.followTarget &&
-    prevProps.showTransform === nextProps.showTransform &&
-    prevProps.showResizeArrow === nextProps.showResizeArrow
+    prevProps.onTransformToggle === nextProps.onTransformToggle &&
+    prevProps.onResizeToggle === nextProps.onResizeToggle &&
+    prevProps.onStyleChange === nextProps.onStyleChange &&
+    prevProps.onDelete === nextProps.onDelete
   );
 });

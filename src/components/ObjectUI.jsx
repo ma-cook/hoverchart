@@ -76,6 +76,10 @@ const ObjectUI = React.memo(
         // Update camera
         camera.position.copy(cameraPosition);
 
+        // Set camera target to the object's position
+        if (camera.target) {
+          camera.target.copy(worldPosition);
+        }
         // Make camera and orbit controls look at the object
         camera.lookAt(worldPosition);
         if (window.orbitControls) {

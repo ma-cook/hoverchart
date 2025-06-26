@@ -8,60 +8,82 @@ import {
 import { PerspectiveCamera, OrbitControls } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 
-const CustomCamera = forwardRef(
-  ({ target = [5000, 5000, 5000], ...props }, ref) => {
-    const { gl, scene } = useThree();
-    const cameraRef = useRef();
-    const controlsRef = useRef();
+const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
+  const { gl, scene } = useThree();
+  const cameraRef = useRef();
+  const controlsRef = useRef();
 
-    useImperativeHandle(
-      ref,
-      () => ({
-        camera: cameraRef.current,
-        orbitControls: controlsRef.current,
-      }),
-      []
-    );
+  useImperativeHandle(ref, () => {
+    const handle = {
+      camera: cameraRef.current,
+      orbitControls: controlsRef.current,
+      setTarget: (pos) => {
+        if (controlsRef.current) {
+          controlsRef.current.target.set(pos.x, pos.y, pos.z);
+          controlsRef.current.update();
+        }
+      },
+    };
+    // Ensure global access is always up-to-date
+    window.cameraRef = handle;
+    return handle;
+  });
 
-    useEffect(() => {
-      if (controlsRef.current) {
-        scene.orbitControls = controlsRef.current;
-      }
-    }, [scene]);
+  useEffect(() => {
+    if (controlsRef.current) {
+      scene.orbitControls = controlsRef.current;
+      // Also make orbit controls globally available for text objects to pause/resume
+      window.orbitControls = controlsRef.current;
+      console.log(
+        '🎮 CustomCamera: Orbit controls set up and globally available',
+        {
+          controls: controlsRef.current,
+          enabled: controlsRef.current.enabled,
+          windowHasControls: !!window.orbitControls,
+          sceneHasControls: !!scene.orbitControls,
+        }
+      );
+    }
+  }, [scene]);
 
-    return (
-      <>
-        {' '}
-        <PerspectiveCamera
-          ref={cameraRef}
-          makeDefault
-          fov={70}
-          near={0.1}
-          far={50000}
-          position={[5100, 5000, 5000]} // 100 units away from target [5000,5000,5000]
-          aspect={window.innerWidth / window.innerHeight}
-        />{' '}
-        <OrbitControls
-          ref={(controls) => {
-            controlsRef.current = controls;
-            if (controls) {
-              scene.orbitControls = controls;
-            }
-          }}
-          args={[cameraRef.current, gl.domElement]}
-          target={target} // Use the prop value for look-at target
-          makeDefault
-          enableDamping={false}
-          screenSpacePanning={true}
-          minPolarAngle={Math.PI / 4}
-          maxPolarAngle={Math.PI / 1.5}
-          minDistance={5}
-          maxDistance={50000}
-        />
-      </>
-    );
-  }
-);
+  return (
+    <>
+      {' '}
+      <PerspectiveCamera
+        ref={cameraRef}
+        makeDefault
+        fov={70}
+        near={0.1}
+        far={50000}
+        position={[5100, 5000, 5000]} // 100 units away from target [5000,5000,5000]
+        aspect={window.innerWidth / window.innerHeight}
+      />{' '}
+      <OrbitControls
+        ref={(controls) => {
+          controlsRef.current = controls;
+          if (controls) {
+            scene.orbitControls = controls;
+            // Make orbit controls globally available for text objects to pause/resume
+            window.orbitControls = controls;
+            console.log('🎮 CustomCamera: Orbit controls ref callback', {
+              controls: controls,
+              enabled: controls.enabled,
+            });
+          }
+        }}
+        args={[cameraRef.current, gl.domElement]}
+        target={target} // Use the prop value for look-at target
+        makeDefault
+        enableDamping={false}
+        screenSpacePanning={true}
+        minPolarAngle={Math.PI / 4}
+        maxPolarAngle={Math.PI / 1.5}
+        minDistance={5}
+        maxDistance={50000}
+      />
+    </>
+  );
+});
 
 CustomCamera.displayName = 'CustomCamera';
 

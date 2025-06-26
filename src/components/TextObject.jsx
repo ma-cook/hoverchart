@@ -6,7 +6,7 @@ import React, {
   useState,
 } from 'react';
 import { Html, TransformControls } from '@react-three/drei';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
@@ -16,7 +16,6 @@ import {
   useObjectsStore,
   useConnectionStore,
 } from '../stores';
-
 const TextObject = React.memo(
   ({
     id,
@@ -32,12 +31,14 @@ const TextObject = React.memo(
     indicatorMode,
     onUpdate,
     onDelete,
-    registerTransformingObject,
     onTransformStart,
     onTransformEnd,
     onResizeStart,
     onResizeEnd,
   }) => {
+    // Access Three.js scene for orbit controls
+    const { scene } = useThree();
+
     // Get object data from objects store
     const objects = useObjectsStore((state) => state.objects);
     const objectData = objects.find((obj) => obj.id === id);
@@ -73,30 +74,192 @@ const TextObject = React.memo(
       [objectData?.scale]
     );
 
+    // --- Real-time visual scale state ---
+    const [visualScale, setVisualScale] = useState(scale);
+    // Sync visualScale with store scale when store changes (but not during drag)
+    useEffect(() => {
+      setVisualScale(scale);
+    }, [scale]);
+
     // Local editing state to prevent database updates during typing
     const [localText, setLocalText] = useState(text);
     const [isLocallyEditing, setIsLocallyEditing] = useState(false);
 
-    // Use text object store for UI state only
+    // Text highlighting state
+    const [selectedText, setSelectedText] = useState({ start: 0, end: 0 });
+    const [hasTextSelection, setHasTextSelection] = useState(false);
+    const isSelectingTextRef = useRef(false);
+
+    // Store scene reference to avoid dependency issues
+    const sceneRef = useRef(scene);
+    useEffect(() => {
+      sceneRef.current = scene;
+    }, [scene]);
+
+    // Helper function to safely pause/resume orbit controls
+    const setOrbitControlsEnabled = useCallback(
+      (enabled) => {
+        let controlsFound = false;
+
+        // Try window.orbitControls first
+        if (window.orbitControls) {
+          window.orbitControls.enabled = enabled;
+          controlsFound = true;
+        }
+
+        // Try scene.orbitControls if scene is available
+        if (sceneRef.current?.orbitControls) {
+          sceneRef.current.orbitControls.enabled = enabled;
+          controlsFound = true;
+        }
+
+        // Try to find orbit controls in the scene
+        if (!controlsFound && sceneRef.current?.children) {
+          sceneRef.current.traverse((child) => {
+            if (child.type === 'OrbitControls' || child.isOrbitControls) {
+              child.enabled = enabled;
+              controlsFound = true;
+            }
+          });
+        }
+
+        return controlsFound;
+      },
+      [] // No dependencies needed since we use ref
+    );
+
+    // Use text object store for UI state only - MOVED EARLIER to avoid dependency issues
     const getTextObject = useTextObjectStore((state) => state.getTextObject);
     const setTextObject = useTextObjectStore((state) => state.setTextObject);
     const updateTextObjectProperty = useTextObjectStore(
       (state) => state.updateTextObjectProperty
     );
 
-    // Get store state for this object
+    // Get store state for this object - MOVED EARLIER
     const textObject = getTextObject(id);
+
+    // Debug: Log the actual textObject from store
+    console.log('🔧 Raw textObject from store:', { id, textObject });
+
+    // Use local state as backup and sync with store - like Cube component does
+    const [localShowTransform, setLocalShowTransform] = useState(false);
+    const [localShowResizeControls, setLocalShowResizeControls] =
+      useState(false);
+
     const {
-      isEditing,
-      isActivelyEditing,
-      indicatorSelected,
-      contentHeight,
-      isMoving,
+      isEditing = false,
+      isActivelyEditing = false,
+      indicatorSelected = false,
+      contentHeight = 100,
+      isMoving = false,
+      showTransform: storeShowTransform = false,
+      showResizeControls: storeShowResizeControls = false,
+      bulletPointMode = false,
+    } = textObject || {}; // Provide default empty object with proper boolean defaults
+
+    // Use local state for immediate updates, but sync with store
+    const showTransform = localShowTransform || storeShowTransform;
+    const showResizeControls =
+      localShowResizeControls || storeShowResizeControls;
+
+    // Sync local state with store state
+    useEffect(() => {
+      if (storeShowTransform !== localShowTransform) {
+        setLocalShowTransform(storeShowTransform);
+      }
+      if (storeShowResizeControls !== localShowResizeControls) {
+        setLocalShowResizeControls(storeShowResizeControls);
+      }
+    }, [
+      storeShowTransform,
+      storeShowResizeControls,
+      localShowTransform,
+      localShowResizeControls,
+    ]);
+
+    // Debug: Log the final values being used
+    console.log('🔧 Final state values:', {
+      id,
+      localShowTransform,
+      storeShowTransform,
+      finalShowTransform: showTransform,
+      localShowResizeControls,
+      storeShowResizeControls,
+      finalShowResizeControls: showResizeControls,
+      selected,
+      textObject: textObject ? 'exists' : 'null',
+    });
+
+    // Effect to manage orbit controls based on text selection state
+    useEffect(() => {
+      if (isSelectingTextRef.current) {
+        // Disable orbit controls when actively selecting text
+        setOrbitControlsEnabled(false);
+      } else if (hasTextSelection) {
+        // Keep orbit controls disabled when there's an active text selection
+        console.log(
+          '📝 Keeping orbit controls disabled due to active text selection'
+        );
+        setOrbitControlsEnabled(false);
+      } else if (isEditing) {
+        // Keep orbit controls disabled when editing
+        setOrbitControlsEnabled(false);
+      } else {
+        // Re-enable orbit controls when not selecting text and not editing
+        setOrbitControlsEnabled(true);
+      }
+    }, [setOrbitControlsEnabled, hasTextSelection, isEditing]); // Now safe to include since useCallback is stable
+
+    // Effect to handle clicks outside textarea to clear selection and re-enable orbit controls
+    useEffect(() => {
+      const handleGlobalClick = (event) => {
+        if (
+          textAreaRef.current &&
+          !textAreaRef.current.contains(event.target)
+        ) {
+          // Clicked outside textarea
+          if (hasTextSelection) {
+            console.log(
+              '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
+            );
+            setHasTextSelection(false);
+            setSelectedText({ start: 0, end: 0 });
+            setTimeout(() => {
+              setOrbitControlsEnabled(true);
+            }, 50);
+          }
+        }
+      };
+
+      if (hasTextSelection) {
+        document.addEventListener('click', handleGlobalClick);
+        return () => {
+          document.removeEventListener('click', handleGlobalClick);
+        };
+      }
+    }, [hasTextSelection, setOrbitControlsEnabled]);
+
+    // Debug logging for transform control states
+    console.log('🔧 TextObject transform states:', {
+      id,
+      selected,
+      textObject,
       showTransform,
-      showResizeArrow,
       showResizeControls,
-      bulletPointMode,
-    } = textObject;
+      showTransformAndSelected: showTransform && selected,
+      showResizeControlsAndSelected: showResizeControls && selected,
+    });
+
+    // Additional debug for state changes
+    useEffect(() => {
+      console.log('🔧 State change detected:', {
+        id,
+        showTransform,
+        showResizeControls,
+        selected,
+        textObjectFromStore: textObject,
+      });
+    }, [showTransform, showResizeControls, selected, textObject, id]);
     // Initialize text object UI state in store if it doesn't exist
     useEffect(() => {
       if (!textObject) {
@@ -108,7 +271,6 @@ const TextObject = React.memo(
           contentHeight: 100,
           isMoving: false,
           showTransform: false,
-          showResizeArrow: false,
           showResizeControls: false,
           bulletPointMode: false,
         });
@@ -171,23 +333,9 @@ const TextObject = React.memo(
       [id, updateTextObjectProperty]
     );
 
-    const setIsMoving = useCallback(
-      (value) => {
-        updateTextObjectProperty(id, 'isMoving', value);
-      },
-      [id, updateTextObjectProperty]
-    );
-
     const setShowTransform = useCallback(
       (value) => {
         updateTextObjectProperty(id, 'showTransform', value);
-      },
-      [id, updateTextObjectProperty]
-    );
-
-    const setShowResizeArrow = useCallback(
-      (value) => {
-        updateTextObjectProperty(id, 'showResizeArrow', value);
       },
       [id, updateTextObjectProperty]
     );
@@ -206,6 +354,71 @@ const TextObject = React.memo(
       [id, updateTextObjectProperty]
     );
 
+    // Transform and resize handlers - matching Cube pattern with immediate local state updates
+    const handleTransformToggle = useCallback(() => {
+      console.log('🔧 Transform toggle - before:', {
+        showTransform,
+        showResizeControls,
+        localShowTransform,
+        localShowResizeControls,
+      });
+      const newShowTransform = !showTransform;
+
+      // Update local state immediately for instant UI response
+      setLocalShowTransform(newShowTransform);
+      setLocalShowResizeControls(false); // Disable resize when enabling transform
+
+      // Also update store
+      setShowTransform(newShowTransform);
+      if (newShowTransform) {
+        setShowResizeControls(false);
+      }
+
+      console.log('🔧 Transform toggle - after:', {
+        newShowTransform,
+        willDisableResize: newShowTransform,
+      });
+    }, [
+      showTransform,
+      showResizeControls,
+      localShowTransform,
+      localShowResizeControls,
+      setShowTransform,
+      setShowResizeControls,
+    ]);
+
+    const handleResizeToggle = useCallback(() => {
+      console.log('🔧 Resize toggle - before:', {
+        showTransform,
+        showResizeControls,
+        localShowTransform,
+        localShowResizeControls,
+      });
+      const newShowResizeControls = !showResizeControls;
+
+      // Update local state immediately for instant UI response
+      setLocalShowResizeControls(newShowResizeControls);
+      setLocalShowTransform(false); // Disable transform when enabling resize
+
+      // Also update store
+      setShowResizeControls(newShowResizeControls);
+      if (newShowResizeControls) {
+        setShowTransform(false);
+      }
+
+      console.log('🔧 Resize toggle - after:', {
+        newShowResizeControls,
+        willDisableTransform: newShowResizeControls,
+      });
+    }, [
+      showResizeControls,
+      showTransform,
+      localShowTransform,
+      localShowResizeControls,
+      setShowResizeControls,
+      setShowTransform,
+    ]);
+
     // DOM Refs
     const groupRef = useRef();
     const transformRef = useRef();
@@ -218,8 +431,38 @@ const TextObject = React.memo(
     const pendingChangesRef = useRef(null);
     const originalScaleRef = useRef(scale);
     const containerDimensionsRef = useRef({ width: 0, height: 0 });
-    const startXRef = useRef(0);
-    const startWidthRef = useRef(scale[0]);
+
+    // Effect to handle clicks outside textarea to clear selection and re-enable orbit controls
+    useEffect(() => {
+      const handleGlobalClick = (event) => {
+        if (
+          textAreaRef.current &&
+          !textAreaRef.current.contains(event.target)
+        ) {
+          // Clicked outside textarea
+          if (hasTextSelection) {
+            console.log(
+              '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
+            );
+            setHasTextSelection(false);
+            setSelectedText({ start: 0, end: 0 });
+            setTimeout(() => {
+              if (!isEditing) {
+                setOrbitControlsEnabled(true);
+              }
+            }, 50);
+          }
+        }
+      };
+
+      if (hasTextSelection) {
+        document.addEventListener('click', handleGlobalClick);
+        return () => {
+          document.removeEventListener('click', handleGlobalClick);
+        };
+      }
+    }, [hasTextSelection, isEditing, setOrbitControlsEnabled]);
+
     const lastUpdateRef = useRef(null);
     const worldMatrixRef = useRef(null);
     const worldPosRef = useRef(null);
@@ -255,8 +498,11 @@ const TextObject = React.memo(
         setLocalText(text);
         textContentRef.current = text;
       }
-      // Handle case where we have empty store text - show placeholder for display
-      else if (!text || text === '') {
+      // Handle case where we have empty store text - show placeholder for display ONLY if we don't have content
+      else if (
+        (!text || text === '') &&
+        (!textContentRef.current || textContentRef.current === '')
+      ) {
         const placeholder = 'Click to edit text...';
         if (localText !== placeholder) {
           console.log('🟦 TextObject initializing with placeholder:', { id });
@@ -325,9 +571,13 @@ const TextObject = React.memo(
         }
 
         // Extra check: don't overwrite user content with placeholder text
+        // Also don't overwrite if we have content in ref that's more recent
         if (
-          text !== 'Click to edit text...' ||
-          localText === 'Click to edit text...'
+          (text !== 'Click to edit text...' ||
+            localText === 'Click to edit text...') &&
+          (!textContentRef.current ||
+            textContentRef.current === text ||
+            textContentRef.current === 'Click to edit text...')
         ) {
           console.log('🟢 TextObject syncing from store:', {
             id,
@@ -337,6 +587,16 @@ const TextObject = React.memo(
           });
           setLocalText(text);
           textContentRef.current = text;
+        } else {
+          console.log(
+            '🟡 TextObject sync skipped - preserving local content:',
+            {
+              id,
+              storeText: text,
+              localText,
+              refText: textContentRef.current,
+            }
+          );
         }
       }
     }, [text, isLocallyEditing, isEditing, isActivelyEditing, localText, id]);
@@ -349,8 +609,8 @@ const TextObject = React.memo(
 
     // Calculate offset for indicator consistently
     const getIndicatorOffset = useCallback(() => {
-      return [0, scale[1] * 0.65, 0];
-    }, [scale]); // Memoized derived values
+      return [0, visualScale[1] * 0.65, 0];
+    }, [visualScale]); // Memoized derived values
     const isIndicatorConnected = useCallback(() => {
       if (!connectionsFromStore || !id) return false;
 
@@ -449,7 +709,7 @@ const TextObject = React.memo(
           planeData: {
             worldMatrix: Array.from(worldMatrix.elements),
             position: [...worldPosArray],
-            scale: [...scale],
+            scale: [...visualScale],
             offset: getIndicatorOffset(),
           },
         };
@@ -466,7 +726,7 @@ const TextObject = React.memo(
         indicatorPos: indicatorPosArray,
         matrix: Array.from(worldMatrix.elements),
       };
-    }, [getIndicatorOffset, scale, stringId, isMoving]);
+    }, [getIndicatorOffset, visualScale, stringId, isMoving]);
 
     // Update world position when transform changes
     useEffect(() => {
@@ -481,15 +741,9 @@ const TextObject = React.memo(
     }, [position, scale, updateWorldMatrix, getIndicatorOffset]);
     const closeAllUIs = useCallback(() => {
       setShowTransform(false);
-      setShowResizeArrow(false);
       setShowResizeControls(false);
       setIsEditing(false);
-    }, [
-      setIsEditing,
-      setShowResizeArrow,
-      setShowResizeControls,
-      setShowTransform,
-    ]);
+    }, [setIsEditing, setShowResizeControls, setShowTransform]);
     // Handle selection/deselection
     useEffect(() => {
       if (!selected) {
@@ -781,10 +1035,24 @@ const TextObject = React.memo(
         justFinishedEditingRef.current = false;
         console.log('🟡 TextObject: Cleared justFinishedEditingRef for', id);
       }, 3000); // Much longer delay to ensure complete propagation
+
+      // Re-enable orbit controls when textarea loses focus
+      console.log('📝 Textarea lost focus - enabling orbit controls');
+      setOrbitControlsEnabled(true);
+      isSelectingTextRef.current = false;
     }; // Improved click handler to set focus flags only during initial activation
     const handleDivClick = (e) => {
       e.stopPropagation();
       e.preventDefault();
+
+      console.log('🔵 TextObject handleDivClick - starting edit:', {
+        id,
+        currentLocalText: localText,
+        storeText: text,
+        refText: textContentRef.current,
+        isCurrentlyEditing: isEditing,
+      });
+
       onClick();
 
       // Only set focus flags when transitioning from non-editing to editing
@@ -792,18 +1060,27 @@ const TextObject = React.memo(
         // Clear any lingering flags that might interfere
         justFinishedEditingRef.current = false;
 
-        // Initialize local text and ref with current store text before starting edit
-        // For new text objects or placeholder text, start with empty string for editing
-        let currentStoreText = text || '';
-        let editingText = currentStoreText;
+        // Initialize local text and ref with current available text
+        // Priority: textContentRef > localText > store text
+        let editingText = textContentRef.current || localText || text || '';
 
-        // If it's placeholder text or empty, start editing with empty text
+        // Only treat as empty if ALL sources are empty or placeholder
         if (
-          currentStoreText === 'Click to edit text...' ||
-          currentStoreText === ''
+          editingText === 'Click to edit text...' ||
+          (!editingText && !textContentRef.current && !localText && !text)
         ) {
           editingText = '';
         }
+
+        console.log('🟢 TextObject initializing edit with text:', {
+          id,
+          editingText,
+          sources: {
+            ref: textContentRef.current,
+            local: localText,
+            store: text,
+          },
+        });
 
         setLocalText(editingText);
         textContentRef.current = editingText;
@@ -912,107 +1189,6 @@ const TextObject = React.memo(
       }
     };
 
-    // Resizing handlers
-    const handlePointerDown = (e) => {
-      e.stopPropagation();
-      startXRef.current = e.clientX;
-      startWidthRef.current = scale[0];
-      window.addEventListener('pointermove', handlePointerMove);
-      window.addEventListener('pointerup', handlePointerUp);
-      onResizeStart?.(id);
-    };
-
-    const handlePointerMove = (e) => {
-      const dx = e.clientX - startXRef.current;
-      const scalingFactor = 0.1;
-      const newWidth = startWidthRef.current + dx * scalingFactor;
-
-      // Apply constraints
-      const minWidth = 5,
-        maxWidth = 200;
-      if (newWidth >= minWidth && newWidth <= maxWidth) {
-        setScale([newWidth, scale[1], scale[2]]);
-
-        // Update connections right away on resize
-        if (onUpdate && groupRef.current) {
-          const worldInfo = updateWorldMatrix();
-          if (worldInfo) {
-            onUpdate(id, {
-              type: 'text',
-              scale: [newWidth, scale[1], scale[2]],
-              worldPosition: worldInfo.worldPos,
-              indicatorPosition: worldInfo.indicatorPos,
-              planeData: {
-                worldMatrix: worldInfo.matrix,
-                position: [...position],
-                scale: [newWidth, scale[1], scale[2]],
-                offset: getIndicatorOffset(),
-              },
-              isResizing: true,
-            });
-          }
-        }
-      }
-    };
-
-    const handlePointerUp = () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-      onResizeEnd?.(id);
-      updateDatabase();
-    };
-
-    // Enhanced transform handlers for better connection management
-    const handleTransformStart = () => {
-      registerTransformingObject?.(id, true, position);
-      if (window.orbitControls) {
-        window.orbitControls.enabled = false;
-      }
-      setIsMoving(true);
-      onTransformStart?.(id);
-
-      // Mark connections as being transformed to prevent jitter
-      if (groupRef.current) {
-        groupRef.current.userData._transformActive = true;
-        groupRef.current.userData._isDragging = true;
-      }
-    };
-
-    const handleTransformEnd = () => {
-      // Step 1: Unregister from transform system FIRST
-      registerTransformingObject?.(id, false);
-
-      if (window.orbitControls) {
-        window.orbitControls.enabled = true;
-      }
-
-      // Step 2: Get the final position
-      if (groupRef.current && onUpdate) {
-        const newPos = groupRef.current.position;
-
-        // Send a MINIMAL update like Cube does
-        onUpdate(id, {
-          type: 'text',
-          position: [newPos.x, newPos.y, newPos.z], // Array format is critical
-          _finalPosition: true, // This flag tells objectUpdateHandlers to save it
-          _moveComplete: true, // Additional flag used by database handler
-        });
-
-        // Clear any transform-related flags
-        if (groupRef.current.userData) {
-          groupRef.current.userData._transformActive = false;
-          groupRef.current.userData._isDragging = false;
-          groupRef.current.userData.isMoving = false;
-        }
-
-        setIsMoving(false);
-      }
-
-      // Cleanup
-      pendingChangesRef.current = null;
-      onTransformEnd?.(id);
-    };
-
     // Enhanced handleDrag to update connection points in real-time
     // Enhanced handleDrag to use the simpler Cube approach
     const handleDrag = useCallback(
@@ -1092,43 +1268,48 @@ const TextObject = React.memo(
       ]
     );
 
+    // --- Update handleScale to update visualScale immediately ---
     const handleScale = (e) => {
       if (!e.target || !e.target.object) return;
 
       const newScale = [
         e.target.object.scale.x,
         e.target.object.scale.y,
-        scale[2], // Keep Z scale unchanged
+        visualScale[2], // Keep Z scale unchanged
       ];
 
-      setScale(newScale);
-
+      // Update local visual scale immediately for real-time feedback
+      setVisualScale(newScale);
+      setScale(newScale); // Also update store (triggers DB update)
       if (groupRef.current) {
-        // Reset actual scale to prevent font scaling
+        // Set the group scale visually for immediate feedback
         groupRef.current.scale.set(1, 1, 1);
-
-        const worldInfo = updateWorldMatrix();
-        if (worldInfo && onUpdate) {
-          onUpdate(id, {
-            type: 'text',
-            position,
-            scale: newScale,
-            text,
-            textStyle,
-            bulletPointMode,
-            worldPosition: worldInfo.worldPos,
-            indicatorPosition: worldInfo.indicatorPos,
-            planeData: {
-              worldMatrix: worldInfo.matrix,
-              position: [...position],
-              scale: [...newScale],
-              offset: [0, newScale[1] * 0.65, 0],
-            },
-            isResizing: true,
-          });
-        }
       }
-    }; // Enhanced keyboard handling with shortcuts
+
+      // Optionally update world matrix for connections, etc.
+      const worldInfo = updateWorldMatrix();
+      if (worldInfo && onUpdate) {
+        onUpdate(id, {
+          type: 'text',
+          position,
+          scale: newScale,
+          text,
+          textStyle,
+          bulletPointMode,
+          worldPosition: worldInfo.worldPos,
+          indicatorPosition: worldInfo.indicatorPos,
+          planeData: {
+            worldMatrix: worldInfo.matrix,
+            position: [...position],
+            scale: [...newScale],
+            offset: [0, newScale[1] * 0.65, 0],
+          },
+          isResizing: true,
+        });
+      }
+    };
+
+    // Keyboard handling with shortcuts
     const handleKeyDown = (e) => {
       // Handle bullet points
       if (e.key === 'Enter' && bulletPointMode) {
@@ -1194,6 +1375,13 @@ const TextObject = React.memo(
       }
     };
     const handleStyleChange = (newStyle) => {
+      console.log('🎨 TextObject handleStyleChange called:', {
+        id,
+        newStyle,
+        hasTextSelection,
+        selectedText,
+      });
+
       if ('bulletPointMode' in newStyle) {
         setBulletPointMode(newStyle.bulletPointMode);
         if (newStyle.bulletPointMode && !text.startsWith('• ')) {
@@ -1205,11 +1393,97 @@ const TextObject = React.memo(
       // eslint-disable-next-line no-unused-vars
       const { type, bulletPointMode: _, ...actualStyleChanges } = newStyle;
 
-      // Apply style changes immediately for responsive feedback
+      // If there's selected text, apply styles to just that selection
+      if (hasTextSelection && textAreaRef.current) {
+        const start = selectedText.start;
+        const end = selectedText.end;
+
+        if (start !== end) {
+          console.log('🎨 Applying style to selected text:', {
+            start,
+            end,
+            style: actualStyleChanges,
+          });
+          // Apply style to selected portion only
+          applyStyleToSelection(actualStyleChanges, start, end);
+          return;
+        }
+      }
+
+      console.log(
+        '🎨 Applying style to entire text object:',
+        actualStyleChanges
+      );
+      // Apply style changes to the entire text object (existing behavior)
       setTextStyle((prev) => ({ ...prev, ...actualStyleChanges }));
 
       // Trigger auto-resize if font size changed
       if ('fontSize' in actualStyleChanges) {
+        setTimeout(() => {
+          autoResizeTextArea();
+        }, 10);
+      }
+
+      // Update database
+      updateDatabase();
+    };
+
+    // Text selection handlers
+    const handleTextSelection = () => {
+      if (!textAreaRef.current) {
+        console.log('📝 No textarea ref available for text selection');
+        return;
+      }
+
+      // Only process if textarea is focused
+      if (document.activeElement !== textAreaRef.current) {
+        console.log('📝 Textarea not focused, skipping selection handling');
+        return;
+      }
+
+      const start = textAreaRef.current.selectionStart;
+      const end = textAreaRef.current.selectionEnd;
+      const hasSelection = start !== end;
+
+      setSelectedText({ start, end });
+      setHasTextSelection(hasSelection);
+
+      console.log('📝 Text selection changed:', {
+        id,
+        start,
+        end,
+        hasSelection,
+        selectedText: hasSelection
+          ? textAreaRef.current.value.substring(start, end)
+          : '',
+        fullText: textAreaRef.current.value,
+        textAreaFocused: document.activeElement === textAreaRef.current,
+      });
+
+      // If there's a selection, keep orbit controls disabled a bit longer
+      if (hasSelection) {
+        console.log('📝 Text selected - keeping orbit controls disabled');
+        setOrbitControlsEnabled(false);
+      } else if (!isSelectingTextRef.current && !isEditing) {
+        // If no selection and not actively selecting, can re-enable orbit controls
+        console.log('📝 No text selection - can re-enable orbit controls');
+        setTimeout(() => {
+          setOrbitControlsEnabled(true);
+        }, 50);
+      }
+    };
+
+    // Apply styles to selected text (simplified version for now)
+    const applyStyleToSelection = (style, start, end) => {
+      // For now, we'll apply the style to the entire text object
+      // TODO: Implement rich text support with styled text segments
+      console.log('🎨 Applying style to selection:', { style, start, end });
+
+      // Temporarily apply to entire text until we implement rich text
+      setTextStyle((prev) => ({ ...prev, ...style }));
+
+      // Trigger auto-resize if font size changed
+      if ('fontSize' in style) {
         setTimeout(() => {
           autoResizeTextArea();
         }, 10);
@@ -1238,15 +1512,19 @@ const TextObject = React.memo(
       wordWrap: 'break-word',
       overflowWrap: 'break-word',
       boxSizing: 'border-box',
-      outline: selected ? '1px solid #99ccff' : 'none',
+      outline: 'none',
       overflow: 'hidden',
       lineHeight: '1.4', // Better line spacing
       transition: 'height 0.2s ease', // Smooth height transitions
+      userSelect: 'text', // Ensure text is selectable
+      WebkitUserSelect: 'text', // Safari support
+      MozUserSelect: 'text', // Firefox support
     });
 
+    // --- Use visualScale for rendering and calculations ---
     const getContainerStyle = () => ({
-      width: `${scale[0] * 5.3 * conversionFactor}px`,
-      minHeight: `${scale[1] * 1.3 * conversionFactor}px`,
+      width: `${visualScale[0] * 5.3 * conversionFactor}px`,
+      minHeight: `${visualScale[1] * 1.3 * conversionFactor}px`,
       height: 'auto', // Allow container to expand with content
       position: 'relative',
       transform: 'scale(1)',
@@ -1254,12 +1532,12 @@ const TextObject = React.memo(
 
     // Combined scale-related effects
     useEffect(() => {
-      originalScaleRef.current = [...scale];
+      originalScaleRef.current = [...visualScale];
 
-      if ((showResizeControls || showResizeArrow) && groupRef.current) {
+      if (showResizeControls && groupRef.current) {
         groupRef.current.scale.set(1, 1, 1);
       }
-    }, [scale, showResizeControls, showResizeArrow]);
+    }, [visualScale, showResizeControls]);
 
     // Combined orbit controls and transform mode effects
     useEffect(() => {
@@ -1354,16 +1632,48 @@ const TextObject = React.memo(
               style={getContainerStyle()}
               className="text-object-container"
               onClick={handleDivClick}
+              onMouseDown={(e) => {
+                // Only pause orbit controls if clicking on the text object itself
+                if (e.target.closest('.text-object-container')) {
+                  e.stopPropagation();
+                  if (window.orbitControls) {
+                    window.orbitControls.enabled = false;
+                  }
+                }
+              }}
+              onMouseUp={() => {
+                // Re-enable orbit controls after any mouse interaction
+                if (window.orbitControls) {
+                  window.orbitControls.enabled = true;
+                }
+              }}
             >
               {' '}
               {isEditing ? (
                 <textarea
                   ref={textAreaRef}
                   // Use defaultValue for uncontrolled component during editing to prevent resets
-                  // But make sure we don't use placeholder text as defaultValue
-                  defaultValue={
-                    localText === 'Click to edit text...' ? '' : localText
-                  }
+                  // Priority: textContentRef > localText > store text (same as handleDivClick)
+                  defaultValue={(() => {
+                    let value =
+                      textContentRef.current || localText || text || '';
+
+                    // Only treat as empty if it's placeholder text
+                    if (value === 'Click to edit text...') {
+                      value = '';
+                    }
+
+                    console.log('📝 Setting textarea defaultValue:', {
+                      id,
+                      value,
+                      sources: {
+                        ref: textContentRef.current,
+                        local: localText,
+                        store: text,
+                      },
+                    });
+                    return value;
+                  })()}
                   onChange={handleTextChange}
                   onBlur={handleBlur}
                   style={getTextAreaStyle()}
@@ -1372,39 +1682,127 @@ const TextObject = React.memo(
                   onClick={(e) => {
                     // Just prevent the click from bubbling
                     e.stopPropagation();
+
+                    // Ensure textarea is focused for text selection
+                    if (textAreaRef.current) {
+                      textAreaRef.current.focus();
+                      console.log('📝 Textarea clicked and focused');
+
+                      // Check selection after a brief delay to see if it changed
+                      setTimeout(() => {
+                        handleTextSelection();
+                      }, 10);
+                    }
                   }}
-                  // Added onMouseDown to clear auto-focus flags
+                  onDoubleClick={() => {
+                    // Test if double-click selection works
+                    if (textAreaRef.current) {
+                      console.log(
+                        '📝 Double-click detected, attempting word selection'
+                      );
+                      // Let browser handle double-click word selection naturally
+                      setTimeout(() => {
+                        handleTextSelection();
+                      }, 10);
+                    }
+                  }}
+                  // Text selection handlers - pause orbit controls but allow text selection
                   onMouseDown={(e) => {
                     e.stopPropagation();
+
+                    // Clear auto-focus flags
                     needsFocusRef.current = false;
                     initialFocusDoneRef.current = true;
+
+                    // Set selection flag and disable orbit controls
+                    isSelectingTextRef.current = true;
+                    console.log(
+                      '🔴 Starting text selection - disabling orbit controls'
+                    );
+
+                    // Use helper function to safely disable orbit controls
+                    setOrbitControlsEnabled(false);
+                  }}
+                  onMouseUp={(e) => {
+                    e.stopPropagation();
+
+                    // Clear selection flag but delay re-enabling orbit controls
+                    // to allow text selection to complete
+                    isSelectingTextRef.current = false;
+                    console.log(
+                      '🟢 Ending text selection - delaying orbit controls re-enable'
+                    );
+
+                    // Check for text selection immediately
+                    handleTextSelection();
+
+                    // Delay re-enabling orbit controls to allow text selection to finalize
+                    setTimeout(() => {
+                      setOrbitControlsEnabled(true);
+                      console.log(
+                        '✅ Orbit controls re-enabled after text selection'
+                      );
+                    }, 100); // 100ms delay to allow selection to complete
+                  }}
+                  onMouseMove={() => {
+                    // Log mouse movement during text selection
+                    if (
+                      textAreaRef.current &&
+                      document.activeElement === textAreaRef.current
+                    ) {
+                      const start = textAreaRef.current.selectionStart;
+                      const end = textAreaRef.current.selectionEnd;
+                      if (start !== end) {
+                        console.log('📝 Text selection during mouse move:', {
+                          start,
+                          end,
+                          selectedText: textAreaRef.current.value.substring(
+                            start,
+                            end
+                          ),
+                        });
+                      }
+                    }
+                  }}
+                  onSelect={() => {
+                    console.log('📝 onSelect event fired');
+                    // Give a small delay to ensure selection is stable
+                    setTimeout(() => {
+                      handleTextSelection();
+                    }, 10);
+                  }}
+                  onFocus={() => {
+                    console.log('📝 Textarea focused - pausing orbit controls');
+                    setOrbitControlsEnabled(false);
+                  }}
+                  onKeyUp={() => {
+                    // Handle text selection via keyboard (Shift+Arrow keys, Ctrl+A, etc.)
+                    handleTextSelection();
                   }}
                 />
               ) : (
                 <div
                   ref={displayRef}
                   onClick={handleTextClick}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    // Briefly pause orbit controls when clicking to start editing
+                    setOrbitControlsEnabled(false);
+                  }}
+                  onMouseUp={(e) => {
+                    e.stopPropagation();
+                    // Re-enable orbit controls after click
+                    setOrbitControlsEnabled(true);
+                  }}
                   style={{
                     ...getTextAreaStyle(),
                     userSelect: 'none',
                     cursor: 'text',
                     width: '100%',
                     background: 'rgba(0,0,0,0.3)', // Slightly different for display mode
-                    border: selected
-                      ? '1px dashed #99ccff'
-                      : '1px dashed transparent',
                   }}
                 >
                   {localText || 'Click to edit text...'}
-                </div>
-              )}
-              {showResizeArrow && (
-                <div
-                  className="resize-arrow"
-                  onPointerDown={handlePointerDown}
-                  style={{ cursor: 'ew-resize' }}
-                >
-                  →
                 </div>
               )}
             </div>
@@ -1421,74 +1819,62 @@ const TextObject = React.memo(
             />
           )}
         </group>
-        {/* Transform controls */}
-        {showTransform && selected && (
+        {/* Transform controls - Fixed to match Cube pattern */}
+        {console.log('🔧 Transform Controls Render Check:', {
+          selected,
+          showTransform,
+          hasGroupRef: !!groupRef.current,
+          shouldRender: selected && showTransform && groupRef.current,
+        })}
+        {selected && showTransform && groupRef.current && (
           <TransformControls
             ref={transformRef}
-            object={groupRef}
-            onMouseDown={handleTransformStart}
-            onMouseUp={handleTransformEnd}
-            size={0.5}
-            mode="translate"
+            object={groupRef.current}
             onObjectChange={handleDrag}
-            onDragStart={handleTransformStart}
-            onDragEnd={handleTransformEnd}
+            onMouseDown={() => {
+              if (window.orbitControls) {
+                window.orbitControls.enabled = false;
+              }
+              onTransformStart?.(id);
+            }}
+            onMouseUp={() => {
+              if (window.orbitControls) {
+                window.orbitControls.enabled = true;
+              }
+              onTransformEnd?.(id);
+            }}
+            mode="translate"
+            space="world"
+            size={0.5}
           />
         )}
-        {/* Scale transform controls */}
-        {showResizeArrow && selected && (
+        {/* Resize transform controls - Fixed to use showResizeControls like Cube */}
+        {console.log('🔧 Resize Controls Render Check:', {
+          selected,
+          showResizeControls,
+          hasGroupRef: !!groupRef.current,
+          shouldRender: selected && showResizeControls && groupRef.current,
+        })}
+        {selected && showResizeControls && groupRef.current && (
           <TransformControls
             object={groupRef.current}
             mode="scale"
             size={0.5}
             onObjectChange={handleScale}
-            onDragStart={() => {
-              if (window.orbitControls) window.orbitControls.enabled = false;
+            onMouseDown={() => {
+              if (window.orbitControls) {
+                window.orbitControls.enabled = false;
+              }
               onResizeStart?.(id);
             }}
-            onDragEnd={() => {
-              if (window.orbitControls) window.orbitControls.enabled = true;
+            onMouseUp={() => {
+              if (window.orbitControls) {
+                window.orbitControls.enabled = true;
+              }
               onResizeEnd?.(id);
             }}
             showX={true}
             showY={true}
-            showZ={false}
-            space="local"
-            onUpdate={() => {
-              if (groupRef.current) {
-                groupRef.current.scale.set(1, 1, 1);
-              }
-            }}
-          />
-        )}
-        {/* Resize transform controls */}
-        {showResizeControls && selected && (
-          <TransformControls
-            object={groupRef.current}
-            mode="scale"
-            size={0.5}
-            scale={scale}
-            onObjectChange={handleScale}
-            onDragStart={() => {
-              if (window.orbitControls) {
-                window.orbitControls.enabled = false;
-              }
-              registerTransformingObject?.(id, true);
-              onResizeStart?.(id);
-            }}
-            onDragEnd={() => {
-              if (window.orbitControls) {
-                window.orbitControls.enabled = true;
-              }
-              registerTransformingObject?.(id, false);
-              onResizeEnd?.(id);
-
-              if (groupRef.current) {
-                groupRef.current.scale.set(1, 1, 1);
-              }
-            }}
-            showX={true}
-            showY={false}
             showZ={false}
             space="local"
           />
@@ -1501,11 +1887,9 @@ const TextObject = React.memo(
             textStyle={textStyle}
             onStyleChange={handleStyleChange}
             onDelete={onDelete ? () => onDelete(id) : undefined}
-            onTransformToggle={() => setShowTransform((prev) => !prev)}
-            onResizeToggle={() => setShowResizeControls((prev) => !prev)}
+            onTransformToggle={handleTransformToggle}
+            onResizeToggle={handleResizeToggle}
             showTransform={showTransform}
-            showResizeArrow={showResizeArrow}
-            setShowResizeArrow={setShowResizeArrow}
             followTarget={groupRef}
           />
         )}{' '}

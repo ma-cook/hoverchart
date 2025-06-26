@@ -94,7 +94,6 @@ export const TextStyleUIContent = ({
     faceText: ['size', 'color', 'bold', 'italic', 'underline'],
     textObject: [
       'size',
-      'fontSizeInput',
       'color',
       'bold',
       'italic',

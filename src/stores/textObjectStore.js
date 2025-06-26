@@ -21,7 +21,6 @@ const useTextObjectStore = create((set, get) => ({
         contentHeight: 'auto',
         isMoving: false,
         showTransform: false,
-        showResizeArrow: false,
         showResizeControls: false,
         bulletPointMode: false,
       }
