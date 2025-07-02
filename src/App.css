@@ -639,3 +639,15 @@ body {
     font-size: 12px;
   }
 }
+
+/* ContentEditable placeholder styling for text objects */
+.content-editable-placeholder:empty:before {
+  content: attr(data-placeholder);
+  color: #999;
+  font-style: italic;
+  pointer-events: none;
+}
+
+.content-editable-placeholder:focus:empty:before {
+  color: #ccc;
+}

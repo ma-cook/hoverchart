@@ -88,6 +88,8 @@ const TextObject = React.memo(
     // Text highlighting state
     const [selectedText, setSelectedText] = useState({ start: 0, end: 0 });
     const [hasTextSelection, setHasTextSelection] = useState(false);
+    const [contentEditableInitialized, setContentEditableInitialized] =
+      useState(false);
     const isSelectingTextRef = useRef(false);
 
     // Store scene reference to avoid dependency issues
@@ -806,8 +808,23 @@ const TextObject = React.memo(
           };
         }
 
+        console.log('💾 Updating database with state:', {
+          id,
+          text: currentState.text,
+          textStyle: currentState.textStyle,
+          hasChanged:
+            !lastUpdateRef.current ||
+            !isEqual(lastUpdateRef.current, currentState),
+        });
+
         lastUpdateRef.current = currentState;
         onUpdate(id, currentState);
+      } else {
+        console.log('⏭️ Skipping database update - no changes detected:', {
+          id,
+          currentText: currentState.text,
+          lastText: lastUpdateRef.current?.text,
+        });
       }
     }, [
       id,
@@ -880,65 +897,7 @@ const TextObject = React.memo(
       }
     }, [autoResizeTextAreaOnly, scale, setScale, onUpdate, id, textStyle]);
 
-    // Auto-resize for typing - throttled to prevent interference with typing
-    const autoResizeForTyping = useCallback(() => {
-      if (!textAreaRef.current) return;
-
-      // Throttle resize calls to avoid interfering with rapid typing
-      if (textAreaRef.current._resizeThrottle) {
-        clearTimeout(textAreaRef.current._resizeThrottle);
-      }
-
-      textAreaRef.current._resizeThrottle = setTimeout(() => {
-        // Just do the basic textarea resize - container will expand naturally
-        autoResizeTextAreaOnly();
-      }, 100); // Throttle to avoid constant resizing during typing
-    }, [autoResizeTextAreaOnly]);
     // Event handlers
-    // Optimized text change handler - auto-resize container immediately, save to database on blur
-    const handleTextChange = (e) => {
-      const newText = e.target.value;
-
-      // IMPORTANT: Always update both local state and ref immediately
-      // Don't rely on conditions that might allow other effects to interfere
-      setLocalText(newText);
-      textContentRef.current = newText;
-
-      // Debug logging for text changes
-      console.log('🟠 TextObject handleTextChange:', {
-        id,
-        newText,
-        previousLocal: localText,
-        ref: textContentRef.current,
-      });
-
-      setIsActivelyEditing(true);
-
-      // Mark as locally editing to prevent sync from store
-      if (!isLocallyEditing) {
-        setIsLocallyEditing(true);
-      }
-
-      // Clear any pending timeout
-      if (textUpdateTimeoutRef.current) {
-        clearTimeout(textUpdateTimeoutRef.current);
-      }
-
-      // Mark as editing in userData for connections
-      if (groupRef.current) {
-        groupRef.current.userData.isTextEditing = true;
-        textUpdateTimeoutRef.current = setTimeout(() => {
-          if (groupRef.current) {
-            groupRef.current.userData.isTextEditing = false;
-          }
-        }, 1000);
-      }
-
-      // Auto-resize with throttling to prevent interference with typing
-      autoResizeForTyping();
-
-      // Note: Database calls for final state will happen on blur
-    };
     const handleBlur = (e) => {
       if (
         uiMenuRef.current &&
@@ -953,11 +912,12 @@ const TextObject = React.memo(
         clearTimeout(textUpdateTimeoutRef.current);
       }
 
-      // Get final text from current textarea value as the primary source
-      const textareaValue = textAreaRef.current?.value || '';
+      // Get final text from current contentEditable innerHTML as the primary source
+      const contentEditableValue = textAreaRef.current?.innerHTML || '';
 
-      // Priority order: textarea value > textContentRef > localText
-      let finalText = textareaValue || textContentRef.current || localText;
+      // Priority order: contentEditable innerHTML > textContentRef > localText
+      let finalText =
+        contentEditableValue || textContentRef.current || localText;
 
       // Handle empty text case - if user leaves it empty, keep it empty (don't revert to placeholder)
       if (
@@ -971,7 +931,7 @@ const TextObject = React.memo(
       // Debug logging to track text saving
       console.log('🔵 TextObject handleBlur:', {
         id,
-        textareaValue,
+        contentEditableValue,
         textContentRef: textContentRef.current,
         localText,
         finalText,
@@ -994,6 +954,7 @@ const TextObject = React.memo(
       // Reset editing states
       setIsEditing(false);
       setIsActivelyEditing(false);
+      setContentEditableInitialized(false); // Reset for next edit session
 
       if (groupRef.current) {
         groupRef.current.userData.isTextEditing = false;
@@ -1431,33 +1392,46 @@ const TextObject = React.memo(
     // Text selection handlers
     const handleTextSelection = () => {
       if (!textAreaRef.current) {
-        console.log('📝 No textarea ref available for text selection');
+        console.log('📝 No contentEditable ref available for text selection');
         return;
       }
 
-      // Only process if textarea is focused
+      // Only process if contentEditable is focused
       if (document.activeElement !== textAreaRef.current) {
-        console.log('📝 Textarea not focused, skipping selection handling');
+        console.log(
+          '📝 ContentEditable not focused, skipping selection handling'
+        );
         return;
       }
 
-      const start = textAreaRef.current.selectionStart;
-      const end = textAreaRef.current.selectionEnd;
-      const hasSelection = start !== end;
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) {
+        console.log('📝 No text selection available');
+        setSelectedText({ start: 0, end: 0 });
+        setHasTextSelection(false);
+        return;
+      }
 
-      setSelectedText({ start, end });
+      const range = selection.getRangeAt(0);
+      const selectedText = selection.toString();
+      const hasSelection = selectedText.length > 0;
+
+      // For contentEditable, we need to store the actual range and selection objects
+      setSelectedText({
+        start: range.startOffset,
+        end: range.endOffset,
+        range: range,
+        selection: selection,
+      });
       setHasTextSelection(hasSelection);
 
       console.log('📝 Text selection changed:', {
         id,
-        start,
-        end,
+        selectedText,
         hasSelection,
-        selectedText: hasSelection
-          ? textAreaRef.current.value.substring(start, end)
-          : '',
-        fullText: textAreaRef.current.value,
-        textAreaFocused: document.activeElement === textAreaRef.current,
+        rangeStartOffset: range.startOffset,
+        rangeEndOffset: range.endOffset,
+        contentEditableFocused: document.activeElement === textAreaRef.current,
       });
 
       // If there's a selection, keep orbit controls disabled a bit longer
@@ -1473,25 +1447,122 @@ const TextObject = React.memo(
       }
     };
 
-    // Apply styles to selected text (simplified version for now)
+    // Apply styles to selected text using document.execCommand
     const applyStyleToSelection = (style, start, end) => {
-      // For now, we'll apply the style to the entire text object
-      // TODO: Implement rich text support with styled text segments
       console.log('🎨 Applying style to selection:', { style, start, end });
 
-      // Temporarily apply to entire text until we implement rich text
-      setTextStyle((prev) => ({ ...prev, ...style }));
-
-      // Trigger auto-resize if font size changed
-      if ('fontSize' in style) {
-        setTimeout(() => {
-          autoResizeTextArea();
-        }, 10);
+      if (!textAreaRef.current) {
+        console.log('❌ No contentEditable ref available');
+        return;
       }
 
-      // Update database
-      updateDatabase();
+      // Store the current selection state from our state
+      const currentSelection = selectedText;
+      if (
+        !currentSelection ||
+        !currentSelection.range ||
+        !currentSelection.selection
+      ) {
+        console.log('❌ No stored selection available');
+        return;
+      }
+
+      // Restore focus and selection to the contentEditable
+      textAreaRef.current.focus();
+
+      // Restore the selection
+      try {
+        currentSelection.selection.removeAllRanges();
+        currentSelection.selection.addRange(currentSelection.range);
+        console.log('✅ Restored selection focus');
+      } catch (error) {
+        console.log('❌ Could not restore selection:', error);
+        return;
+      }
+
+      // Now apply the style using document.execCommand
+      try {
+        let commandApplied = false;
+
+        if (style.fontWeight === 'bold' || style.fontWeight === 700) {
+          commandApplied = document.execCommand('bold', false, null);
+          console.log('✅ Applied bold formatting:', commandApplied);
+        } else if (style.fontStyle === 'italic') {
+          commandApplied = document.execCommand('italic', false, null);
+          console.log('✅ Applied italic formatting:', commandApplied);
+        } else if (style.textDecoration === 'underline') {
+          commandApplied = document.execCommand('underline', false, null);
+          console.log('✅ Applied underline formatting:', commandApplied);
+        } else if (style.color) {
+          commandApplied = document.execCommand(
+            'foreColor',
+            false,
+            style.color
+          );
+          console.log(
+            '✅ Applied color formatting:',
+            commandApplied,
+            style.color
+          );
+        } else if (style.fontSize) {
+          // For font size, we need to set it as a style
+          commandApplied = document.execCommand('fontSize', false, '7'); // Max size, then we'll override
+          if (commandApplied) {
+            // Find the font elements and update their size
+            const fontElements =
+              textAreaRef.current.querySelectorAll('font[size="7"]');
+            fontElements.forEach((el) => {
+              el.style.fontSize =
+                typeof style.fontSize === 'number'
+                  ? `${style.fontSize}px`
+                  : style.fontSize;
+              el.removeAttribute('size'); // Remove the size attribute
+            });
+          }
+          console.log(
+            '✅ Applied font size formatting:',
+            commandApplied,
+            style.fontSize
+          );
+        }
+
+        if (commandApplied) {
+          // Get the updated HTML content
+          const newContent = textAreaRef.current.innerHTML;
+          console.log('📝 Updated content after formatting:', newContent);
+
+          // Update our local state and ref
+          setLocalText(newContent);
+          textContentRef.current = newContent;
+
+          // Save the changes to database immediately
+          console.log('💾 Saving rich text formatting to database');
+          updateDatabase();
+
+          // Restore focus to the contentEditable to continue editing
+          setTimeout(() => {
+            textAreaRef.current.focus();
+            autoResizeTextArea();
+          }, 10);
+
+          // Clear the selection state since formatting is complete
+          setSelectedText({ start: 0, end: 0 });
+          setHasTextSelection(false);
+        } else {
+          console.log(
+            '❌ Failed to apply formatting command or command not supported'
+          );
+          // Fallback: Apply style to entire text object if execCommand fails
+          console.log('🔄 Falling back to entire text object styling');
+          setTextStyle((prev) => ({ ...prev, ...style }));
+        }
+      } catch (error) {
+        console.error('❌ Error applying formatting:', error);
+        // Fallback to entire text object styling
+        setTextStyle((prev) => ({ ...prev, ...style }));
+      }
     };
+
     // Enhanced stylesheet to apply text styles
     const getTextAreaStyle = () => ({
       width: '100%',
@@ -1609,6 +1680,35 @@ const TextObject = React.memo(
       }
     }, [text, setContentHeight]);
 
+    // Cleanup effect to save any pending changes on unmount
+    useEffect(() => {
+      return () => {
+        // Clear any pending timeouts
+        if (textUpdateTimeoutRef.current) {
+          clearTimeout(textUpdateTimeoutRef.current);
+        }
+
+        // Save final state if there are unsaved changes
+        if (textContentRef.current && onUpdate) {
+          console.log('🔄 Component unmounting - saving final state:', {
+            id,
+            text: textContentRef.current,
+          });
+
+          onUpdate(id, {
+            type: 'text',
+            id,
+            position,
+            scale,
+            text: textContentRef.current,
+            textStyle,
+            bulletPointMode,
+            lastEditTime: Date.now(),
+          });
+        }
+      };
+    }, [id, onUpdate, position, scale, textStyle, bulletPointMode]);
+
     // Enhanced render with _transformActive flag in userData
     return (
       <>
@@ -1650,43 +1750,83 @@ const TextObject = React.memo(
             >
               {' '}
               {isEditing ? (
-                <textarea
-                  ref={textAreaRef}
-                  // Use defaultValue for uncontrolled component during editing to prevent resets
-                  // Priority: textContentRef > localText > store text (same as handleDivClick)
-                  defaultValue={(() => {
-                    let value =
-                      textContentRef.current || localText || text || '';
+                <div
+                  ref={(el) => {
+                    textAreaRef.current = el;
+                    // Only set innerHTML on first mount or when switching to edit mode
+                    if (el && !contentEditableInitialized) {
+                      let value =
+                        textContentRef.current || localText || text || '';
 
-                    // Only treat as empty if it's placeholder text
-                    if (value === 'Click to edit text...') {
-                      value = '';
+                      // Only treat as empty if it's placeholder text
+                      if (value === 'Click to edit text...') {
+                        value = '';
+                      }
+
+                      console.log(
+                        '📝 Setting initial contentEditable innerHTML:',
+                        {
+                          id,
+                          value,
+                          sources: {
+                            ref: textContentRef.current,
+                            local: localText,
+                            store: text,
+                          },
+                        }
+                      );
+
+                      el.innerHTML = value;
+                      setContentEditableInitialized(true);
+                    }
+                  }}
+                  contentEditable={true}
+                  suppressContentEditableWarning={true}
+                  className="content-editable-placeholder"
+                  onInput={(e) => {
+                    // Handle input changes for contentEditable
+                    const newText = e.target.innerHTML;
+                    console.log('📝 ContentEditable input changed:', {
+                      id,
+                      newText,
+                      previousLocal: localText,
+                      ref: textContentRef.current,
+                    });
+
+                    // Update local state and ref
+                    setLocalText(newText);
+                    textContentRef.current = newText;
+
+                    // Clear any pending save timeout
+                    if (textUpdateTimeoutRef.current) {
+                      clearTimeout(textUpdateTimeoutRef.current);
                     }
 
-                    console.log('📝 Setting textarea defaultValue:', {
-                      id,
-                      value,
-                      sources: {
-                        ref: textContentRef.current,
-                        local: localText,
-                        store: text,
-                      },
-                    });
-                    return value;
-                  })()}
-                  onChange={handleTextChange}
+                    // Debounced save to database (save after 1 second of no typing)
+                    textUpdateTimeoutRef.current = setTimeout(() => {
+                      console.log(
+                        '💾 Auto-saving contentEditable changes to database'
+                      );
+                      updateDatabase();
+                    }, 1000);
+
+                    // Auto-resize
+                    autoResizeTextArea();
+                  }}
                   onBlur={handleBlur}
                   style={getTextAreaStyle()}
                   onKeyDown={handleKeyDown}
-                  placeholder={bulletPointMode ? '• ' : 'Click to edit text...'}
+                  data-placeholder={
+                    bulletPointMode ? '• ' : 'Click to edit text...'
+                  }
                   onClick={(e) => {
                     // Just prevent the click from bubbling
                     e.stopPropagation();
 
-                    // Ensure textarea is focused for text selection
+                    // Ensure contentEditable is focused for text selection
                     if (textAreaRef.current) {
                       textAreaRef.current.focus();
-                      console.log('📝 Textarea clicked and focused');
+                      console.log('📝 ContentEditable clicked and focused');
 
                       // Check selection after a brief delay to see if it changed
                       setTimeout(() => {
@@ -1750,17 +1890,14 @@ const TextObject = React.memo(
                       textAreaRef.current &&
                       document.activeElement === textAreaRef.current
                     ) {
-                      const start = textAreaRef.current.selectionStart;
-                      const end = textAreaRef.current.selectionEnd;
-                      if (start !== end) {
-                        console.log('📝 Text selection during mouse move:', {
-                          start,
-                          end,
-                          selectedText: textAreaRef.current.value.substring(
-                            start,
-                            end
-                          ),
-                        });
+                      const selection = window.getSelection();
+                      if (selection && selection.rangeCount > 0) {
+                        const range = selection.getRangeAt(0);
+                        if (!range.collapsed) {
+                          console.log('📝 Text selection during mouse move:', {
+                            selectedText: selection.toString(),
+                          });
+                        }
                       }
                     }
                   }}
@@ -1772,7 +1909,9 @@ const TextObject = React.memo(
                     }, 10);
                   }}
                   onFocus={() => {
-                    console.log('📝 Textarea focused - pausing orbit controls');
+                    console.log(
+                      '📝 ContentEditable focused - pausing orbit controls'
+                    );
                     setOrbitControlsEnabled(false);
                   }}
                   onKeyUp={() => {
@@ -1801,9 +1940,10 @@ const TextObject = React.memo(
                     width: '100%',
                     background: 'white', // Slightly different for display mode
                   }}
-                >
-                  {localText || 'Click to edit text...'}
-                </div>
+                  dangerouslySetInnerHTML={{
+                    __html: localText || 'Click to edit text...',
+                  }}
+                />
               )}
             </div>
           </Html>
