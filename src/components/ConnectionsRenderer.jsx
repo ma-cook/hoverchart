@@ -223,7 +223,7 @@ const Connection = ({
       startPosition,
       endPosition,
     };
-    // Simplified dependencies to reduce re-calculations
+    // Depend on connection and objects, but memoization will still help with expensive calculations
   }, [connection, objects]);
 
   // Second hook: Filter relevant objects
@@ -545,17 +545,6 @@ const ConnectionsRenderer = ({
 }) => {
   // Use connection store for state
   const connectionsFromStore = useConnectionStore((state) => state.connections);
-  const connectionsLoaded = useConnectionStore(
-    (state) => state.connectionsLoaded
-  );
-
-  // DEBUG: Log connections state
-  console.log(
-    '🔗 ConnectionsRenderer - connections count:',
-    connectionsFromStore?.length,
-    'loaded:',
-    connectionsLoaded
-  );
 
   // Ensure connections is always an array
   const connections = useMemo(() => {
@@ -604,4 +593,42 @@ const ConnectionsRenderer = ({
   );
 };
 
-export default ConnectionsRenderer;
+// Memoize the entire ConnectionsRenderer to prevent re-renders when objects array reference changes
+const MemoizedConnectionsRenderer = React.memo(
+  ConnectionsRenderer,
+  (prevProps, nextProps) => {
+    // Quick reference equality check first
+    if (prevProps.objects === nextProps.objects) return true;
+
+    // Compare the objects array length
+    if (prevProps.objects?.length !== nextProps.objects?.length) return false;
+
+    // Simple reference check for first few objects to detect meaningful changes
+    // This is much faster than deep position comparison
+    if (prevProps.objects && nextProps.objects) {
+      const checkCount = Math.min(5, prevProps.objects.length); // Only check first 5 objects
+      for (let i = 0; i < checkCount; i++) {
+        if (prevProps.objects[i] !== nextProps.objects[i]) {
+          return false; // Objects reference changed, re-render
+        }
+      }
+    }
+
+    // Check if any handler props changed
+    if (prevProps.onLineStyleChange !== nextProps.onLineStyleChange)
+      return false;
+    if (prevProps.onLineColorChange !== nextProps.onLineColorChange)
+      return false;
+    if (prevProps.onConnectionClick !== nextProps.onConnectionClick)
+      return false;
+    if (prevProps.onLineTextClick !== nextProps.onLineTextClick) return false;
+    if (prevProps.onLineTextSubmit !== nextProps.onLineTextSubmit) return false;
+    if (prevProps.onLineTextStyleChange !== nextProps.onLineTextStyleChange)
+      return false;
+
+    // If nothing meaningful changed, prevent re-render
+    return true;
+  }
+);
+
+export default MemoizedConnectionsRenderer;

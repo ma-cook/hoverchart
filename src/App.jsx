@@ -1217,6 +1217,11 @@ const App = () => {
     user,
     effectiveSpaceId,
   ]);
+  // Memoize filtered objects for ConnectionsRenderer to prevent re-renders on camera movement
+  const visibleObjectsForConnections = useMemo(() => {
+    return objects.filter((obj) => visibleObjectIds.has(obj.id));
+  }, [objects, visibleObjectIds]);
+
   // Lazy load state for Canvas
   const [shouldRenderCanvas, setShouldRenderCanvas] = useState(false);
 
@@ -1415,7 +1420,7 @@ const App = () => {
             <RealTimeConnectionUpdater />{' '}
             {/* Render connections with virtualization */}
             <ConnectionsRenderer
-              objects={objects.filter((obj) => visibleObjectIds.has(obj.id))}
+              objects={visibleObjectsForConnections}
               onLineStyleChange={handleLineStyleChange}
               onLineColorChange={handleLineColorChange}
               onConnectionClick={handleConnectionClick}
