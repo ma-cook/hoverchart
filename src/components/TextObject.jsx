@@ -424,6 +424,7 @@ const TextObject = React.memo(
     // DOM Refs
     const groupRef = useRef();
     const transformRef = useRef();
+    const resizeMeshRef = useRef(); // Invisible mesh for resize controls
     const uiMenuRef = useRef(null);
     const textAreaRef = useRef();
     const displayRef = useRef();
@@ -433,6 +434,7 @@ const TextObject = React.memo(
     const pendingChangesRef = useRef(null);
     const originalScaleRef = useRef(scale);
     const containerDimensionsRef = useRef({ width: 0, height: 0 });
+    const resizeUpdateTimeoutRef = useRef(null);
 
     // Effect to handle clicks outside textarea to clear selection and re-enable orbit controls
     useEffect(() => {
@@ -912,12 +914,42 @@ const TextObject = React.memo(
         clearTimeout(textUpdateTimeoutRef.current);
       }
 
-      // Get final text from current contentEditable innerHTML as the primary source
+      // Get final text from current contentEditable innerHTML
       const contentEditableValue = textAreaRef.current?.innerHTML || '';
 
-      // Priority order: contentEditable innerHTML > textContentRef > localText
-      let finalText =
-        contentEditableValue || textContentRef.current || localText;
+      // CRITICAL FIX: Don't use empty contentEditable value if we weren't actually editing
+      // This prevents double-click events from clearing text when blur is triggered accidentally
+      let finalText;
+
+      // ENHANCED SAFEGUARD: If contentEditable is empty but we have content in ref/local,
+      // it's likely a race condition - prefer the existing content
+      const hasExistingContent = textContentRef.current || localText;
+      const contentEditableIsEmpty =
+        !contentEditableValue || contentEditableValue.trim() === '';
+
+      if (
+        contentEditableIsEmpty &&
+        hasExistingContent &&
+        hasExistingContent !== 'Click to edit text...'
+      ) {
+        // Race condition detected - contentEditable was cleared but we have existing content
+        console.log(
+          '🟡 TextObject: Detected race condition - preserving existing content over empty contentEditable:',
+          {
+            id,
+            contentEditableValue,
+            textContentRef: textContentRef.current,
+            localText,
+          }
+        );
+        finalText = textContentRef.current || localText;
+      } else if (isActivelyEditing || isEditing) {
+        // If we were actually editing, use the contentEditable value as primary source
+        finalText = contentEditableValue || textContentRef.current || localText;
+      } else {
+        // If we weren't actively editing (e.g., accidental blur from double-click), preserve existing content
+        finalText = textContentRef.current || contentEditableValue || localText;
+      }
 
       // Handle empty text case - if user leaves it empty, keep it empty (don't revert to placeholder)
       if (
@@ -925,7 +957,13 @@ const TextObject = React.memo(
         finalText.trim() === '' ||
         finalText === 'Click to edit text...'
       ) {
-        finalText = ''; // Keep empty instead of placeholder
+        // Only allow clearing if we were actually editing
+        if (isActivelyEditing || isEditing) {
+          finalText = ''; // Keep empty instead of placeholder
+        } else {
+          // Preserve existing content if we weren't editing
+          finalText = textContentRef.current || localText || '';
+        }
       }
 
       // Debug logging to track text saving
@@ -945,8 +983,21 @@ const TextObject = React.memo(
       textContentRef.current = finalText; // This is critical - update ref FIRST
 
       // Update local state for display
+      // CRITICAL FIX: Never show placeholder for objects that have been edited
+      // If finalText is empty but we had content before, keep it empty rather than showing placeholder
       if (finalText === '') {
-        setLocalText('Click to edit text...');
+        // Only show placeholder for truly new objects that have never had content
+        const hasHadContent = textContentRef.current || text || localText;
+        const hadActualContent =
+          hasHadContent && hasHadContent !== 'Click to edit text...';
+
+        if (hadActualContent) {
+          // This object has been edited before - keep empty rather than placeholder
+          setLocalText('');
+        } else {
+          // This is a new object that was never edited - can show placeholder
+          setLocalText('Click to edit text...');
+        }
       } else {
         setLocalText(finalText);
       }
@@ -1012,9 +1063,28 @@ const TextObject = React.memo(
         storeText: text,
         refText: textContentRef.current,
         isCurrentlyEditing: isEditing,
+        eventDetail: e.detail, // Track click count to detect double-clicks
       });
 
       onClick();
+
+      // CRITICAL FIX: Prevent double-click from accidentally clearing text
+      // If this is a double-click and we're not currently editing, be extra careful
+      if (e.detail >= 2 && !isEditing) {
+        console.log(
+          '🟡 TextObject: Double-click detected on non-editing text, preserving content'
+        );
+        // Ensure we preserve existing content on double-click
+        if (
+          textContentRef.current &&
+          textContentRef.current !== 'Click to edit text...'
+        ) {
+          setLocalText(textContentRef.current);
+        } else if (text && text !== 'Click to edit text...') {
+          setLocalText(text);
+          textContentRef.current = text;
+        }
+      }
 
       // Only set focus flags when transitioning from non-editing to editing
       if (!isEditing) {
@@ -1063,17 +1133,22 @@ const TextObject = React.memo(
         // Use a slightly longer timeout to ensure DOM is fully updated
         const focusTimeout = setTimeout(() => {
           if (textAreaRef.current) {
-            // For uncontrolled component, set the value explicitly
+            // For contentEditable, set the innerHTML explicitly
             // This is crucial for clearing placeholder text
             const valueToSet =
               localText === 'Click to edit text...' ? '' : localText || '';
-            textAreaRef.current.value = valueToSet;
+
+            // CRITICAL: Use innerHTML for contentEditable, not value
+            textAreaRef.current.innerHTML = valueToSet;
             textAreaRef.current.focus();
 
-            // Set cursor to end during initial focus
-            const textLength = textAreaRef.current.value.length;
-            textAreaRef.current.selectionStart = textLength;
-            textAreaRef.current.selectionEnd = textLength;
+            // Set cursor to end for contentEditable
+            const range = document.createRange();
+            const selection = window.getSelection();
+            range.selectNodeContents(textAreaRef.current);
+            range.collapse(false); // Collapse to end
+            selection.removeAllRanges();
+            selection.addRange(range);
 
             // Only auto-resize once during initial focus, not on every keystroke
             autoResizeTextAreaOnly();
@@ -1203,7 +1278,7 @@ const TextObject = React.memo(
 
           // Include ALL essential properties
           scale: scale,
-          text: text,
+          text: textContentRef.current || text, // Use most current text
           textStyle: textStyle,
           bulletPointMode: bulletPointMode,
 
@@ -1229,32 +1304,120 @@ const TextObject = React.memo(
       ]
     );
 
-    // --- Update handleScale to update visualScale immediately ---
+    // --- Update handleScale to update visualScale immediately and adjust height dynamically ---
     const handleScale = (e) => {
       if (!e.target || !e.target.object) return;
 
-      const newScale = [
-        e.target.object.scale.x,
-        e.target.object.scale.y,
+      console.log('📏 TextObject handleScale called:', {
+        id,
+        currentVisualScale: visualScale,
+        meshScale: e.target.object.scale.toArray(),
+      });
+
+      // Get scale values from the invisible mesh
+      const newWidth = e.target.object.scale.x;
+      const newHeight = e.target.object.scale.y;
+
+      // Check if width changed significantly to trigger height recalculation
+      const widthChanged = Math.abs(newWidth - visualScale[0]) > 0.1;
+
+      let finalScale = [
+        newWidth,
+        newHeight,
         visualScale[2], // Keep Z scale unchanged
       ];
 
-      // Update local visual scale immediately for real-time feedback
-      setVisualScale(newScale);
-      setScale(newScale); // Also update store (triggers DB update)
-      if (groupRef.current) {
-        // Set the group scale visually for immediate feedback
-        groupRef.current.scale.set(1, 1, 1);
+      console.log('📏 Scale calculation:', {
+        id,
+        newWidth,
+        newHeight,
+        oldWidth: visualScale[0],
+        oldHeight: visualScale[1],
+        widthChanged,
+        finalScale,
+      });
+
+      // If width changed, recalculate height based on text content
+      if (widthChanged && textAreaRef.current) {
+        console.log(
+          '📏 Width changed, recalculating height for text wrapping:',
+          {
+            id,
+            oldWidth: visualScale[0],
+            newWidth,
+            oldHeight: visualScale[1],
+          }
+        );
+
+        // Temporarily update the container width to measure text height
+        const tempContainer = document.createElement('div');
+        tempContainer.style.position = 'absolute';
+        tempContainer.style.visibility = 'hidden';
+        tempContainer.style.width = `${newWidth * 5.3 * 30}px`; // Match container calculation
+        tempContainer.style.fontSize = textStyle.fontSize
+          ? `${textStyle.fontSize}px`
+          : '32px';
+        tempContainer.style.fontFamily = 'Arial, sans-serif';
+        tempContainer.style.fontWeight = textStyle.fontWeight || 'normal';
+        tempContainer.style.fontStyle = textStyle.fontStyle || 'normal';
+        tempContainer.style.padding = '8px';
+        tempContainer.style.lineHeight = '1.4';
+        tempContainer.style.whiteSpace = 'pre-wrap';
+        tempContainer.style.wordWrap = 'break-word';
+        tempContainer.innerHTML =
+          textContentRef.current || localText || text || '';
+
+        document.body.appendChild(tempContainer);
+        const measuredHeight = tempContainer.scrollHeight;
+        document.body.removeChild(tempContainer);
+
+        // Convert pixel height back to 3D scale units
+        const conversionFactor = 30;
+        const paddingAdjustment = 16;
+        const calculatedHeight =
+          (measuredHeight + paddingAdjustment) / (1.3 * conversionFactor);
+        const minHeight = 2; // Minimum height
+        const dynamicHeight = Math.max(minHeight, calculatedHeight);
+
+        console.log('📏 Calculated new height:', {
+          id,
+          measuredPixelHeight: measuredHeight,
+          calculatedHeight,
+          dynamicHeight,
+          minHeight,
+        });
+
+        finalScale = [newWidth, dynamicHeight, visualScale[2]];
       }
 
-      // Optionally update world matrix for connections, etc.
+      // Update local visual scale immediately for real-time feedback
+      console.log('📏 Updating visualScale:', {
+        id,
+        oldVisualScale: visualScale,
+        newVisualScale: finalScale,
+      });
+
+      setVisualScale(finalScale);
+      setScale(finalScale); // Also update store (triggers DB update)
+
+      // Update world matrix for connections, etc.
       const worldInfo = updateWorldMatrix();
+
+      // CRITICAL FIX: Use textContentRef.current for the most up-to-date text
+      const currentText = textContentRef.current || localText || text || '';
+
       if (worldInfo && onUpdate) {
-        onUpdate(id, {
+        // Clear any pending resize update timeout
+        if (resizeUpdateTimeoutRef.current) {
+          clearTimeout(resizeUpdateTimeoutRef.current);
+        }
+
+        const updatePayload = {
           type: 'text',
+          id, // Include ID for safety
           position,
-          scale: newScale,
-          text,
+          scale: finalScale, // Use the final calculated scale
+          text: currentText, // Use the most current text
           textStyle,
           bulletPointMode,
           worldPosition: worldInfo.worldPos,
@@ -1262,11 +1425,24 @@ const TextObject = React.memo(
           planeData: {
             worldMatrix: worldInfo.matrix,
             position: [...position],
-            scale: [...newScale],
-            offset: [0, newScale[1] * 0.65, 0],
+            scale: [...finalScale],
+            offset: [0, finalScale[1] * 0.65, 0],
           },
           isResizing: true,
+          lastResizeTime: Date.now(),
+        };
+
+        console.log('📏 Saving resized text object to database:', {
+          id,
+          newScale: finalScale,
+          text: currentText.substring(0, 50) + '...',
+          widthChanged,
         });
+
+        // Throttle database updates during resize - update after 300ms of no changes
+        resizeUpdateTimeoutRef.current = setTimeout(() => {
+          onUpdate(id, updatePayload);
+        }, 300);
       }
     };
 
@@ -1601,11 +1777,47 @@ const TextObject = React.memo(
       transform: 'scale(1)',
     });
 
+    // Effect to synchronize invisible mesh scale with visualScale
+    useEffect(() => {
+      if (resizeMeshRef.current) {
+        console.log('🔧 Syncing resize mesh scale:', {
+          id,
+          visualScale,
+          oldMeshScale: resizeMeshRef.current.scale.toArray(),
+        });
+        resizeMeshRef.current.scale.set(
+          visualScale[0],
+          visualScale[1],
+          visualScale[2]
+        );
+
+        // Ensure the mesh is positioned at the center of the group
+        resizeMeshRef.current.position.set(0, 0, 0);
+      }
+    }, [visualScale, id]);
+
+    // Initialize resize mesh on mount
+    useEffect(() => {
+      if (resizeMeshRef.current) {
+        console.log('🔧 Initializing resize mesh:', {
+          id,
+          initialScale: visualScale,
+        });
+        resizeMeshRef.current.scale.set(
+          visualScale[0],
+          visualScale[1],
+          visualScale[2]
+        );
+        resizeMeshRef.current.position.set(0, 0, 0);
+      }
+    }, [id, visualScale]); // Include visualScale to fix lint
+
     // Combined scale-related effects
     useEffect(() => {
       originalScaleRef.current = [...visualScale];
 
-      if (showResizeControls && groupRef.current) {
+      // CRITICAL: Always keep group scale at (1,1,1) to prevent text scaling
+      if (groupRef.current) {
         groupRef.current.scale.set(1, 1, 1);
       }
     }, [visualScale, showResizeControls]);
@@ -1626,6 +1838,11 @@ const TextObject = React.memo(
     useFrame(({ camera }) => {
       if (groupRef.current) {
         groupRef.current.quaternion.copy(camera.quaternion);
+
+        // CRITICAL: Ensure group scale is always (1,1,1) to prevent text scaling
+        if (!groupRef.current.scale.equals(new THREE.Vector3(1, 1, 1))) {
+          groupRef.current.scale.set(1, 1, 1);
+        }
 
         // Only update world matrix if this object has connections AND is not being transformed
         // This is expensive so we minimize it
@@ -1687,6 +1904,9 @@ const TextObject = React.memo(
         if (textUpdateTimeoutRef.current) {
           clearTimeout(textUpdateTimeoutRef.current);
         }
+        if (resizeUpdateTimeoutRef.current) {
+          clearTimeout(resizeUpdateTimeoutRef.current);
+        }
 
         // Save final state if there are unsaved changes
         if (textContentRef.current && onUpdate) {
@@ -1727,6 +1947,12 @@ const TextObject = React.memo(
             _transformActive: isMoving,
           }}
         >
+          {/* Invisible mesh for resize controls - positioned same as text container */}
+          <mesh ref={resizeMeshRef} visible={false}>
+            <boxGeometry args={[1, 1, 0.1]} />
+            <meshBasicMaterial transparent opacity={0} />
+          </mesh>
+
           <Html transform position={[0, 0, 0.1]} center>
             <div
               style={getContainerStyle()}
@@ -1778,6 +2004,29 @@ const TextObject = React.memo(
 
                       el.innerHTML = value;
                       setContentEditableInitialized(true);
+                    }
+
+                    // ADDITIONAL SAFEGUARD: If contentEditable is accidentally cleared but we have content,
+                    // restore it immediately (this handles rapid clicking race conditions)
+                    if (
+                      el &&
+                      contentEditableInitialized &&
+                      (!el.innerHTML || el.innerHTML.trim() === '')
+                    ) {
+                      const savedContent = textContentRef.current || localText;
+                      if (
+                        savedContent &&
+                        savedContent !== 'Click to edit text...'
+                      ) {
+                        console.log(
+                          '🔧 Restoring accidentally cleared contentEditable:',
+                          {
+                            id,
+                            savedContent: savedContent.substring(0, 50) + '...',
+                          }
+                        );
+                        el.innerHTML = savedContent;
+                      }
                     }
                   }}
                   contentEditable={true}
@@ -1941,7 +2190,47 @@ const TextObject = React.memo(
                     background: 'white', // Slightly different for display mode
                   }}
                   dangerouslySetInnerHTML={{
-                    __html: localText || 'Click to edit text...',
+                    __html: (() => {
+                      // Priority: textContentRef > localText > store text
+                      // Only show placeholder if ALL sources are empty or contain placeholder
+                      const contentRef = textContentRef.current;
+                      const storeText = text;
+                      const currentLocal = localText;
+
+                      if (
+                        contentRef &&
+                        contentRef !== 'Click to edit text...'
+                      ) {
+                        return contentRef;
+                      }
+                      if (
+                        currentLocal &&
+                        currentLocal !== 'Click to edit text...'
+                      ) {
+                        return currentLocal;
+                      }
+                      if (storeText && storeText !== 'Click to edit text...') {
+                        return storeText;
+                      }
+
+                      // CRITICAL: Check if this object has ever been edited
+                      // If any source indicates it was edited, show empty content instead of placeholder
+                      const hasHadContent =
+                        contentRef ||
+                        storeText ||
+                        (currentLocal &&
+                          currentLocal !== 'Click to edit text...');
+                      const wasEdited =
+                        hasHadContent &&
+                        hasHadContent !== 'Click to edit text...';
+
+                      if (wasEdited) {
+                        // Object was edited before - show empty content instead of placeholder
+                        return '';
+                      }
+
+                      return 'Click to edit text...';
+                    })(),
                   }}
                 />
               )}
@@ -1988,19 +2277,58 @@ const TextObject = React.memo(
             size={0.5}
           />
         )}
-        {/* Resize transform controls - Fixed to use showResizeControls like Cube */}
+        {/* Resize transform controls - using invisible mesh for scale operations */}
         {console.log('🔧 Resize Controls Render Check:', {
+          id,
           selected,
           showResizeControls,
           hasGroupRef: !!groupRef.current,
-          shouldRender: selected && showResizeControls && groupRef.current,
+          hasResizeMeshRef: !!resizeMeshRef.current,
+          resizeMeshScale: resizeMeshRef.current
+            ? resizeMeshRef.current.scale.toArray()
+            : null,
+          visualScale,
+          shouldRender: selected && showResizeControls && resizeMeshRef.current,
         })}
-        {selected && showResizeControls && groupRef.current && (
+        {selected && showResizeControls && resizeMeshRef.current && (
           <TransformControls
-            object={groupRef.current}
+            object={resizeMeshRef.current}
             mode="scale"
             size={0.5}
-            onObjectChange={handleScale}
+            onObjectChange={(e) => {
+              // Real-time updates during resize drag
+              if (e && e.target && e.target.object) {
+                console.log('📏 onObjectChange - real-time resize:', {
+                  id,
+                  meshScale: e.target.object.scale.toArray(),
+                  currentVisualScale: visualScale,
+                });
+
+                const newScale = [
+                  e.target.object.scale.x,
+                  e.target.object.scale.y,
+                  visualScale[2], // Keep Z scale unchanged
+                ];
+
+                // Update visual scale immediately for real-time feedback
+                setVisualScale(newScale);
+
+                console.log('📏 Updated visualScale during drag:', {
+                  id,
+                  oldScale: visualScale,
+                  newScale,
+                });
+
+                // Store the updated scale in userData for immediate access
+                if (groupRef.current) {
+                  groupRef.current.userData.currentScale = newScale;
+                }
+              }
+            }}
+            onChange={(e) => {
+              // Called on every frame during resize - this handles the final update
+              handleScale(e);
+            }}
             onMouseDown={() => {
               if (window.orbitControls) {
                 window.orbitControls.enabled = false;
