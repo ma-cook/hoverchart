@@ -9,21 +9,10 @@ const TextStyleUIContainer = ({ position, onStyleChange, onClose }) => {
       center
       style={{ pointerEvents: 'auto' }}
     >
-      <div
-        style={{
-          background: 'black',
-          padding: '8px',
-          borderRadius: '4px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-        }}
-      >
-        <TextStyleUIContent onStyleChange={onStyleChange} />
-        <button onClick={onClose} style={{ cursor: 'pointer' }}>
-          Close
-        </button>
-      </div>
+      <TextStyleUIContent onStyleChange={onStyleChange} />
+      <button onClick={onClose} style={{ cursor: 'pointer' }}>
+        Close
+      </button>
     </Html>
   );
 };

@@ -36,8 +36,8 @@ const TextObject = React.memo(
     onResizeStart,
     onResizeEnd,
   }) => {
-    // Access Three.js scene for orbit controls
-    const { scene } = useThree();
+    // Access Three.js scene and camera for orbit controls and distance calculation
+    const { scene, camera } = useThree();
 
     // Get object data from objects store
     const objects = useObjectsStore((state) => state.objects);
@@ -50,6 +50,16 @@ const TextObject = React.memo(
 
     // Memoize derived values to prevent unnecessary re-renders
     const text = useMemo(() => objectData?.text || '', [objectData?.text]);
+    // Debug: Log position data sources
+    console.log('🔍 TextObject position debugging:', {
+      id,
+      positionProp: position,
+      objectDataPosition: objectData?.position,
+      positionsMatch:
+        position && objectData?.position
+          ? JSON.stringify(position) === JSON.stringify(objectData.position)
+          : 'N/A',
+    });
     // Mobile-aware text style with larger default font size
     const isMobile =
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -734,6 +744,35 @@ const TextObject = React.memo(
 
     // Update world position when transform changes
     useEffect(() => {
+      // CRITICAL: Don't update if we're actively transforming to prevent position conflicts
+      if (groupRef.current && groupRef.current.userData._transformActive) {
+        console.log('⚠️ Skipping position update during active transform:', id);
+        return;
+      }
+
+      // Check if we have a finalPosition in userData that's more recent than the prop
+      // This prevents reverting to old position after a transform operation completes
+      if (
+        groupRef.current &&
+        groupRef.current.userData.finalPosition &&
+        groupRef.current.userData.positionUpdated &&
+        Date.now() - groupRef.current.userData.positionUpdated < 2000
+      ) {
+        const finalPos = groupRef.current.userData.finalPosition;
+        console.log('🛡️ Using recent final position instead of prop:', {
+          id,
+          propPosition: position,
+          finalPosition: finalPos,
+          timeSinceUpdate:
+            Date.now() - groupRef.current.userData.positionUpdated,
+        });
+
+        // Use the final position instead of prop position
+        groupRef.current.position.set(finalPos[0], finalPos[1], finalPos[2]);
+        updateWorldMatrix();
+        return;
+      }
+
       updateWorldMatrix();
 
       // Store connection-relevant data in userData for easy access
@@ -741,8 +780,75 @@ const TextObject = React.memo(
         groupRef.current.userData.indicatorOffset = getIndicatorOffset();
         groupRef.current.userData.worldPos = worldPosRef.current;
         groupRef.current.userData.objectType = 'text';
+        groupRef.current.userData.lastPropPosition = position
+          ? [...position]
+          : null;
+
+        // Only set position from prop if we don't have a recent final position
+        if (!groupRef.current.userData.finalPosition && position) {
+          groupRef.current.position.set(position[0], position[1], position[2]);
+        }
       }
-    }, [position, scale, updateWorldMatrix, getIndicatorOffset]);
+    }, [position, scale, updateWorldMatrix, getIndicatorOffset, id]);
+
+    // CRITICAL: Additional position safety check effect
+    // This runs on every render to ensure position consistency and prevent snapping
+    useEffect(() => {
+      // Skip if no group or we're actively transforming
+      if (!groupRef.current || groupRef.current.userData._transformActive)
+        return;
+
+      // Check for position inconsistencies
+      const currentPos = groupRef.current.position;
+      const currentPosArray = [currentPos.x, currentPos.y, currentPos.z];
+
+      // First check if we have a final position that should be preserved
+      if (groupRef.current.userData.finalPosition) {
+        const finalPos = groupRef.current.userData.finalPosition;
+        const timeSinceUpdate =
+          Date.now() - (groupRef.current.userData.positionUpdated || 0);
+
+        // If we have a recent final position but current position doesn't match it
+        if (timeSinceUpdate < 5000 && !isEqual(finalPos, currentPosArray)) {
+          console.log(
+            '🔄 Position inconsistency detected - restoring final position:',
+            {
+              id,
+              currentPos: currentPosArray,
+              finalPos,
+              timeSinceUpdate,
+            }
+          );
+
+          // Restore final position
+          groupRef.current.position.set(finalPos[0], finalPos[1], finalPos[2]);
+
+          // Update the effective position state
+          setEffectivePosition([...finalPos]); // Force new array reference
+
+          // Immediately update store as well to ensure consistency
+          const objectsStore = useObjectsStore.getState();
+          const updatedObjects = objectsStore.objects.map((obj) =>
+            obj.id === id ? { ...obj, position: finalPos } : obj
+          );
+          objectsStore.setObjects(updatedObjects);
+
+          // Force another update to parent
+          if (onUpdate) {
+            onUpdate(id, {
+              type: 'text',
+              position: finalPos,
+              _finalPosition: true,
+              _forceUpdate: true,
+              scale: scale,
+              text: textContentRef.current || text,
+              textStyle: textStyle,
+              bulletPointMode: bulletPointMode,
+            });
+          }
+        }
+      }
+    }, [id, onUpdate, scale, text, textStyle, bulletPointMode]);
     const closeAllUIs = useCallback(() => {
       setShowTransform(false);
       setShowResizeControls(false);
@@ -1229,10 +1335,34 @@ const TextObject = React.memo(
     // Enhanced handleDrag to use the simpler Cube approach
     const handleDrag = useCallback(
       (e) => {
+        console.log('🚀 handleDrag called in TextObject:', {
+          id,
+          event: e,
+          hasGroupRef: !!groupRef.current,
+          hasOnUpdate: !!onUpdate,
+          newPosition: e?.target?.object?.position?.toArray(),
+        });
+
         if (!groupRef.current || !onUpdate) return;
 
         // Get the new position directly like in Cube component
         const newPos = e.target.object.position;
+        const newPosition = [newPos.x, newPos.y, newPos.z];
+
+        console.log('🚀 TextObject drag - updating position:', {
+          id,
+          oldPosition: position,
+          newPosition: newPosition,
+          positionEqual: isEqual(position, newPosition),
+        });
+
+        // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
+        const objectsStore = useObjectsStore.getState();
+        const currentObjects = objectsStore.objects;
+        const updatedObjects = currentObjects.map((obj) =>
+          obj.id === id ? { ...obj, position: newPosition } : obj
+        );
+        objectsStore.setObjects(updatedObjects);
 
         // Calculate indicator position for connections
         const offset = new THREE.Vector3(...getIndicatorOffset());
@@ -1269,40 +1399,185 @@ const TextObject = React.memo(
         }
 
         // Use the same simple update approach as handleTransformEnd and Cube
-        onUpdate(id, {
+        const updatePayload = {
           // Include type FIRST like in Cube.jsx
           type: 'text',
 
-          // Simple position format
+          // Simple position format with _finalPosition flag to ensure persistence
           position: [newPos.x, newPos.y, newPos.z],
+          _finalPosition: false, // No filtering during active movement
 
           // Include ALL essential properties
           scale: scale,
           text: textContentRef.current || text, // Use most current text
           textStyle: textStyle,
           bulletPointMode: bulletPointMode,
+        };
 
-          // CRITICAL: Don't add _transformActive flag which causes filtering!
+        console.log('🚀 TextObject calling onUpdate with payload:', {
+          id,
+          updatePayload,
+          oldPositionProp: position,
+          newPositionArray: [newPos.x, newPos.y, newPos.z],
+          positionChanged:
+            JSON.stringify(position) !==
+            JSON.stringify([newPos.x, newPos.y, newPos.z]),
         });
+
+        onUpdate(id, updatePayload);
 
         // Store the updated positions in userData for any component that needs it
         if (groupRef.current) {
-          groupRef.current.userData.position = [newPos.x, newPos.y, newPos.z];
+          // Store current position in multiple places for redundancy and debugging
+          const currentPosition = [newPos.x, newPos.y, newPos.z];
+          groupRef.current.userData.position = currentPosition;
+          groupRef.current.userData.lastPosition = currentPosition;
           groupRef.current.userData.indicatorPosition = indicatorPosArray;
+          groupRef.current.userData._transformActive = true; // Mark as being transformed
+          groupRef.current.userData.lastDragTime = Date.now(); // Track last update time
+
+          // CRITICAL: Force position directly to handle any potential racing conditions
+          groupRef.current.position.set(newPos.x, newPos.y, newPos.z);
         }
       },
       [
         id,
-        connectionsFromStore,
-        stringId,
-        onUpdate,
-        scale,
         text,
+        scale,
         textStyle,
         bulletPointMode,
+        position,
+        onUpdate,
         getIndicatorOffset,
+        connectionsFromStore,
+        stringId,
       ]
     );
+
+    // Add a separate handler for transform end to ensure position persistence
+    const handleTransformEnd = useCallback(() => {
+      console.log('🏁 TextObject handleTransformEnd called:', { id });
+
+      if (!groupRef.current || !onUpdate) return;
+
+      // Get the current position from the ref
+      const currentPos = groupRef.current.position;
+      const finalPosition = [currentPos.x, currentPos.y, currentPos.z];
+
+      console.log('🏁 TextObject finalizing position:', {
+        id,
+        finalPosition,
+        positionProp: position,
+        positionEqual: isEqual(position, finalPosition),
+      });
+
+      // CRITICAL: Always update position at transform end, even if it seems unchanged
+      // This ensures the position is properly saved and won't revert
+
+      // Send final position update with flag to ensure persistence
+      const finalUpdatePayload = {
+        type: 'text',
+        position: finalPosition,
+        _finalPosition: true, // Flag to bypass filtering in App.jsx
+        scale: scale,
+        text: textContentRef.current || text,
+        textStyle: textStyle,
+        bulletPointMode: bulletPointMode,
+      };
+
+      // Update the store immediately with timestamp to track most recent position
+      const objectsStore = useObjectsStore.getState();
+      const currentObjects = objectsStore.objects;
+      const updatedObjects = currentObjects.map((obj) =>
+        obj.id === id
+          ? {
+              ...obj,
+              position: finalPosition,
+              _lastPositionUpdate: Date.now(),
+              _finalPosition: true,
+            }
+          : obj
+      );
+      objectsStore.setObjects(updatedObjects);
+
+      // Send the update to parent
+      console.log(
+        '🏁 TextObject sending final position update:',
+        finalUpdatePayload
+      );
+      onUpdate(id, finalUpdatePayload);
+
+      // CRITICAL: Store final position in userData and refs for immediate access
+      // Also clear the transform active flag to allow normal updates to resume
+      if (groupRef.current) {
+        groupRef.current.userData.finalPosition = finalPosition;
+        groupRef.current.userData.lastPosition = finalPosition;
+        groupRef.current.userData.position = finalPosition;
+        groupRef.current.userData.positionUpdated = Date.now();
+
+        // Immediately update the effective position state to force a re-render
+        console.log('🎯 Updating effective position from handleTransformEnd:', {
+          id,
+          finalPosition,
+        });
+        setEffectivePosition([...finalPosition]); // Force new array reference
+
+        // Create a delay before clearing transform active to ensure position update completes
+        setTimeout(() => {
+          if (groupRef.current) {
+            groupRef.current.userData._transformActive = false;
+            console.log('🏁 TextObject transform active flag cleared:', {
+              id,
+              finalPosition,
+            });
+          }
+        }, 100);
+
+        // CRITICAL: Force position again to ensure it's set correctly
+        groupRef.current.position.set(
+          finalPosition[0],
+          finalPosition[1],
+          finalPosition[2]
+        );
+      }
+
+      // Add a safety timeout to double-check position after a delay
+      // This ensures the position is correct even if there are racing conditions
+      setTimeout(() => {
+        if (groupRef.current && onUpdate) {
+          const currentPos = groupRef.current.position;
+          const currentPosArray = [currentPos.x, currentPos.y, currentPos.z];
+
+          console.log('🏁 TextObject delayed position check:', {
+            id,
+            finalPosition,
+            currentPosArray,
+            equal: isEqual(finalPosition, currentPosArray),
+          });
+
+          // If position somehow changed, force another update
+          if (!isEqual(finalPosition, currentPosArray)) {
+            console.log('⚠️ Position mismatch detected, forcing final update', {
+              id,
+            });
+
+            // Update position again with force flag
+            const forceUpdatePayload = {
+              type: 'text',
+              position: currentPosArray,
+              _finalPosition: true,
+              _forceUpdate: true,
+              scale: scale,
+              text: textContentRef.current || text,
+              textStyle: textStyle,
+              bulletPointMode: bulletPointMode,
+            };
+
+            onUpdate(id, forceUpdatePayload);
+          }
+        }
+      }, 200);
+    }, [id, text, scale, textStyle, bulletPointMode, position, onUpdate]);
 
     // --- Update handleScale to update visualScale immediately and adjust height dynamically ---
     const handleScale = (e) => {
@@ -1399,6 +1674,13 @@ const TextObject = React.memo(
 
       setVisualScale(finalScale);
       setScale(finalScale); // Also update store (triggers DB update)
+      
+      // Store scale in userData for persistent tracking
+      if (groupRef.current) {
+        groupRef.current.userData.currentScale = finalScale;
+        groupRef.current.userData.finalScale = finalScale;
+        groupRef.current.userData.scaleUpdated = Date.now();
+      }
 
       // Update world matrix for connections, etc.
       const worldInfo = updateWorldMatrix();
@@ -1441,7 +1723,30 @@ const TextObject = React.memo(
 
         // Throttle database updates during resize - update after 300ms of no changes
         resizeUpdateTimeoutRef.current = setTimeout(() => {
-          onUpdate(id, updatePayload);
+          console.log('📏 Executing deferred scale update to database:', {
+            id,
+            scale: finalScale
+          });
+          
+          // Force scale update to local store
+          const objectsStore = useObjectsStore.getState();
+          const updatedObjects = objectsStore.objects.map((obj) =>
+            obj.id === id
+              ? { 
+                  ...obj, 
+                  scale: finalScale,
+                  _lastScaleUpdate: Date.now()
+                }
+              : obj
+          );
+          objectsStore.setObjects(updatedObjects);
+          
+          // Send to parent/database with force flags to ensure it persists
+          onUpdate(id, {
+            ...updatePayload,
+            _forceUpdate: true,
+            _finalScale: true
+          });
         }, 300);
       }
     };
@@ -1451,20 +1756,77 @@ const TextObject = React.memo(
       // Handle bullet points
       if (e.key === 'Enter' && bulletPointMode) {
         e.preventDefault();
-        const cursorPosition = e.target.selectionStart;
-        const currentText = localText; // Use local text
-        const textBeforeCursor = currentText.slice(0, cursorPosition);
-        const textAfterCursor = currentText.slice(cursorPosition);
-        const newText = textBeforeCursor + '\n• ' + textAfterCursor;
-
-        // Update local state and ref immediately
-        setLocalText(newText);
-        textContentRef.current = newText;
-
+        const el = e.target;
+        
+        // Get the current HTML content
+        const currentHTML = el.innerHTML;
+        
+        // Find cursor position and surrounding content
+        const selection = window.getSelection();
+        const range = selection.getRangeAt(0);
+        const preCaretRange = range.cloneRange();
+        preCaretRange.selectNodeContents(el);
+        preCaretRange.setEnd(range.endContainer, range.endOffset);
+        const cursorPosition = preCaretRange.toString().length;
+        
+        // Split HTML content at cursor position
+        // This is more complex with HTML, we'll use a simple approach
+        let textBeforeCursor = currentHTML.substring(0, cursorPosition);
+        let textAfterCursor = currentHTML.substring(cursorPosition);
+        
+        // Create new bullet point
+        const newHTML = textBeforeCursor + '<br>• ' + textAfterCursor;
+        
+        // Update the HTML content
+        el.innerHTML = newHTML;
+        
+        // Move cursor after the new bullet point
+        // Need to find the new position in DOM
         setTimeout(() => {
-          e.target.selectionStart = cursorPosition + 3;
-          e.target.selectionEnd = cursorPosition + 3;
+          // Find the text node containing the bullet point
+          const textNodes = [];
+          const walker = document.createTreeWalker(
+            el,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+          );
+          
+          let node;
+          while ((node = walker.nextNode())) {
+            textNodes.push(node);
+          }
+          
+          // Find node containing our new bullet point
+          let bulletNode = null;
+          let bulletOffset = 0;
+          
+          for (let i = 0; i < textNodes.length; i++) {
+            if (textNodes[i].textContent.includes('• ')) {
+              const bulletIndex = textNodes[i].textContent.indexOf('• ');
+              if (bulletIndex !== -1) {
+                bulletNode = textNodes[i];
+                bulletOffset = bulletIndex + 2; // Position after the bullet and space
+                break;
+              }
+            }
+          }
+          
+          // Set cursor position after the last inserted bullet
+          if (bulletNode) {
+            const newRange = document.createRange();
+            newRange.setStart(bulletNode, bulletOffset);
+            newRange.setEnd(bulletNode, bulletOffset);
+            
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+          }
         }, 0);
+        
+        // Update local state and ref
+        setLocalText(el.innerHTML);
+        textContentRef.current = el.innerHTML;
+        
         return;
       } // Handle keyboard shortcuts with Ctrl/Cmd
       if (e.ctrlKey || e.metaKey) {
@@ -1511,59 +1873,161 @@ const TextObject = React.memo(
         textAreaRef.current?.blur();
       }
     };
-    const handleStyleChange = (newStyle) => {
-      console.log('🎨 TextObject handleStyleChange called:', {
-        id,
-        newStyle,
-        hasTextSelection,
-        selectedText,
-      });
+    const handleStyleChange = useCallback(
+      (newStyle) => {
+        console.log('🎨 TextObject handleStyleChange called:', {
+          id,
+          newStyle,
+          hasTextSelection,
+          selectedText,
+        });
+        
+        // Define applyStyleToSelection function inside useCallback
+        const applyStyleToSelectionInternal = (style, start, end) => {
+          console.log('🎨 Applying style to selection:', { style, start, end });
+    
+          if (!textAreaRef.current) {
+            console.log('❌ No contentEditable ref available');
+            return;
+          }
+    
+          // Store the current selection state from our state
+          const currentSelection = selectedText;
+          if (
+            !currentSelection ||
+            !currentSelection.range ||
+            !currentSelection.selection
+          ) {
+            console.log('❌ No stored selection available');
+            return;
+          }
+    
+          // Restore focus and selection to the contentEditable
+          textAreaRef.current.focus();
+    
+          // Restore the selection
+          try {
+            currentSelection.selection.removeAllRanges();
+            currentSelection.selection.addRange(currentSelection.range);
+            console.log('✅ Restored selection focus');
+          } catch (error) {
+            console.log('❌ Could not restore selection:', error);
+            return;
+          }
+    
+          // Apply styles using document.execCommand
+          // Implementation of style application would be here
+          // This varies based on what styles are being applied
+          if (style.fontWeight === 'bold') {
+            document.execCommand('bold', false, null);
+          } else if (style.fontStyle === 'italic') {
+            document.execCommand('italic', false, null);
+          }
+          // Add other style applications as needed
+          
+          // Update the style state to reflect changes
+          setTextStyle((prev) => ({ ...prev, ...style }));
+        };
 
-      if ('bulletPointMode' in newStyle) {
-        setBulletPointMode(newStyle.bulletPointMode);
-        if (newStyle.bulletPointMode && !text.startsWith('• ')) {
-          setText('• ' + text);
+        if ('bulletPointMode' in newStyle) {
+          setBulletPointMode(newStyle.bulletPointMode);
+          
+          // If turning bullet mode ON
+          if (newStyle.bulletPointMode) {
+            // If text is empty, just add a bullet point
+            if (!text || text.trim() === '' || text === 'Click to edit text...') {
+              setText('• ');
+              
+              // Focus the text area and place cursor after bullet point
+              setTimeout(() => {
+                if (textAreaRef.current) {
+                  textAreaRef.current.focus();
+                  
+                  // Place cursor after the bullet point
+                  const selection = window.getSelection();
+                  const range = document.createRange();
+                  
+                  // Find the text node containing the bullet point
+                  const textNodes = [];
+                  const walker = document.createTreeWalker(
+                    textAreaRef.current,
+                    NodeFilter.SHOW_TEXT,
+                    null,
+                    false
+                  );
+                  
+                  let node;
+                  while ((node = walker.nextNode())) {
+                    textNodes.push(node);
+                  }
+                  
+                  // Find node containing bullet point
+                  for (let i = 0; i < textNodes.length; i++) {
+                    if (textNodes[i].textContent.includes('• ')) {
+                      range.setStart(textNodes[i], textNodes[i].textContent.indexOf('• ') + 2);
+                      range.setEnd(textNodes[i], textNodes[i].textContent.indexOf('• ') + 2);
+                      selection.removeAllRanges();
+                      selection.addRange(range);
+                      break;
+                    }
+                  }
+                }
+              }, 0);
+            } 
+            // If text already exists but doesn't start with a bullet
+            else if (!text.trim().startsWith('• ')) {
+              setText('• ' + text);
+              
+              // If currently editing, update the contentEditable element
+              if (isEditing && textAreaRef.current) {
+                textAreaRef.current.innerHTML = '• ' + textAreaRef.current.innerHTML;
+              }
+            }
+          }
         }
-      }
 
-      // Filter out any 'type' field that shouldn't be in textStyle
-      // eslint-disable-next-line no-unused-vars
-      const { type, bulletPointMode: _, ...actualStyleChanges } = newStyle;
+        // Filter out any 'type' field that shouldn't be in textStyle
+        // eslint-disable-next-line no-unused-vars
+        const { type, bulletPointMode: _, ...actualStyleChanges } = newStyle;
 
-      // If there's selected text, apply styles to just that selection
-      if (hasTextSelection && textAreaRef.current) {
-        const start = selectedText.start;
-        const end = selectedText.end;
+        // If there's selected text, apply styles to just that selection
+        if (hasTextSelection && textAreaRef.current) {
+          const start = selectedText.start;
+          const end = selectedText.end;
 
-        if (start !== end) {
-          console.log('🎨 Applying style to selected text:', {
-            start,
-            end,
-            style: actualStyleChanges,
-          });
-          // Apply style to selected portion only
-          applyStyleToSelection(actualStyleChanges, start, end);
-          return;
+          if (start !== end) {
+            console.log('🎨 Applying style to selected text:', {
+              start,
+              end,
+              style: actualStyleChanges,
+            });
+            // Apply style to selected portion only
+            applyStyleToSelectionInternal(actualStyleChanges, start, end);
+            return;
+          }
         }
-      }
 
-      console.log(
-        '🎨 Applying style to entire text object:',
-        actualStyleChanges
-      );
-      // Apply style changes to the entire text object (existing behavior)
-      setTextStyle((prev) => ({ ...prev, ...actualStyleChanges }));
+        console.log(
+          '🎨 Applying style to entire text object:',
+          actualStyleChanges
+        );
+        // Apply style changes to the entire text object (existing behavior)
+        setTextStyle((prev) => ({ ...prev, ...actualStyleChanges }));
 
-      // Trigger auto-resize if font size changed
-      if ('fontSize' in actualStyleChanges) {
-        setTimeout(() => {
-          autoResizeTextArea();
-        }, 10);
-      }
+        // Trigger auto-resize if font size changed
+        if ('fontSize' in actualStyleChanges) {
+          setTimeout(() => {
+            autoResizeTextArea();
+          }, 10);
+        }
 
-      // Update database
-      updateDatabase();
-    };
+        // Update database
+        updateDatabase();
+      },
+      [id, updateDatabase, hasTextSelection, selectedText, 
+       setText, setBulletPointMode, text, isEditing, 
+       autoResizeTextArea, setTextStyle]
+    );
 
     // Text selection handlers
     const handleTextSelection = () => {
@@ -1623,121 +2087,7 @@ const TextObject = React.memo(
       }
     };
 
-    // Apply styles to selected text using document.execCommand
-    const applyStyleToSelection = (style, start, end) => {
-      console.log('🎨 Applying style to selection:', { style, start, end });
-
-      if (!textAreaRef.current) {
-        console.log('❌ No contentEditable ref available');
-        return;
-      }
-
-      // Store the current selection state from our state
-      const currentSelection = selectedText;
-      if (
-        !currentSelection ||
-        !currentSelection.range ||
-        !currentSelection.selection
-      ) {
-        console.log('❌ No stored selection available');
-        return;
-      }
-
-      // Restore focus and selection to the contentEditable
-      textAreaRef.current.focus();
-
-      // Restore the selection
-      try {
-        currentSelection.selection.removeAllRanges();
-        currentSelection.selection.addRange(currentSelection.range);
-        console.log('✅ Restored selection focus');
-      } catch (error) {
-        console.log('❌ Could not restore selection:', error);
-        return;
-      }
-
-      // Now apply the style using document.execCommand
-      try {
-        let commandApplied = false;
-
-        if (style.fontWeight === 'bold' || style.fontWeight === 700) {
-          commandApplied = document.execCommand('bold', false, null);
-          console.log('✅ Applied bold formatting:', commandApplied);
-        } else if (style.fontStyle === 'italic') {
-          commandApplied = document.execCommand('italic', false, null);
-          console.log('✅ Applied italic formatting:', commandApplied);
-        } else if (style.textDecoration === 'underline') {
-          commandApplied = document.execCommand('underline', false, null);
-          console.log('✅ Applied underline formatting:', commandApplied);
-        } else if (style.color) {
-          commandApplied = document.execCommand(
-            'foreColor',
-            false,
-            style.color
-          );
-          console.log(
-            '✅ Applied color formatting:',
-            commandApplied,
-            style.color
-          );
-        } else if (style.fontSize) {
-          // For font size, we need to set it as a style
-          commandApplied = document.execCommand('fontSize', false, '7'); // Max size, then we'll override
-          if (commandApplied) {
-            // Find the font elements and update their size
-            const fontElements =
-              textAreaRef.current.querySelectorAll('font[size="7"]');
-            fontElements.forEach((el) => {
-              el.style.fontSize =
-                typeof style.fontSize === 'number'
-                  ? `${style.fontSize}px`
-                  : style.fontSize;
-              el.removeAttribute('size'); // Remove the size attribute
-            });
-          }
-          console.log(
-            '✅ Applied font size formatting:',
-            commandApplied,
-            style.fontSize
-          );
-        }
-
-        if (commandApplied) {
-          // Get the updated HTML content
-          const newContent = textAreaRef.current.innerHTML;
-          console.log('📝 Updated content after formatting:', newContent);
-
-          // Update our local state and ref
-          setLocalText(newContent);
-          textContentRef.current = newContent;
-
-          // Save the changes to database immediately
-          console.log('💾 Saving rich text formatting to database');
-          updateDatabase();
-
-          // Restore focus to the contentEditable to continue editing
-          setTimeout(() => {
-            textAreaRef.current.focus();
-            autoResizeTextArea();
-          }, 10);
-
-          // Clear the selection state since formatting is complete
-          setSelectedText({ start: 0, end: 0 });
-          setHasTextSelection(false);
-        } else {
-          console.log(
-            '❌ Failed to apply formatting command or command not supported'
-          );
-          // Fallback: Apply style to entire text object if execCommand fails
-          console.log('🔄 Falling back to entire text object styling');
-          setTextStyle((prev) => ({ ...prev, ...style }));
-        }
-      } catch (error) {
-        console.error('❌ Error applying formatting:', error);
-        // Fallback to entire text object styling
-        setTextStyle((prev) => ({ ...prev, ...style }));
-      }
-    };
+    // Text styling is now handled inside handleStyleChange useCallback
 
     // Enhanced stylesheet to apply text styles
     const getTextAreaStyle = () => ({
@@ -1775,6 +2125,8 @@ const TextObject = React.memo(
       height: 'auto', // Allow container to expand with content
       position: 'relative',
       transform: 'scale(1)',
+      opacity: showTransform || showResizeControls ? 0.5 : 1, // Add opacity when controls are active
+      transition: 'opacity 0.2s ease', // Smooth opacity transition
     });
 
     // Effect to synchronize invisible mesh scale with visualScale
@@ -1899,6 +2251,10 @@ const TextObject = React.memo(
 
     // Cleanup effect to save any pending changes on unmount
     useEffect(() => {
+      // Store a reference to the current group ref inside the effect
+      // to avoid the lint warning about refs in cleanup functions
+      const currentGroupRef = groupRef.current;
+
       return () => {
         // Clear any pending timeouts
         if (textUpdateTimeoutRef.current) {
@@ -1908,33 +2264,141 @@ const TextObject = React.memo(
           clearTimeout(resizeUpdateTimeoutRef.current);
         }
 
-        // Save final state if there are unsaved changes
-        if (textContentRef.current && onUpdate) {
+        // Get the most current position - either from userData or props
+        let finalPosition = position;
+
+        if (currentGroupRef?.userData?.finalPosition) {
+          finalPosition = currentGroupRef.userData.finalPosition;
+        } else if (currentGroupRef?.position) {
+          const pos = currentGroupRef.position;
+          finalPosition = [pos.x, pos.y, pos.z];
+        }
+
+        // Save final state if there are unsaved changes or position changed
+        if (onUpdate) {
           console.log('🔄 Component unmounting - saving final state:', {
             id,
-            text: textContentRef.current,
+            text: textContentRef.current || text,
+            finalPosition,
+            propPosition: position,
+            positionChanged: !isEqual(finalPosition, position),
           });
 
           onUpdate(id, {
             type: 'text',
             id,
-            position,
+            position: finalPosition,
+            _finalPosition: true,
+            _forceUpdate: true,
             scale,
-            text: textContentRef.current,
+            text: textContentRef.current || text,
             textStyle,
             bulletPointMode,
             lastEditTime: Date.now(),
           });
+
+          // Also update the store directly as a safety measure
+          const objectsStore = useObjectsStore.getState();
+          const updatedObjects = objectsStore.objects.map((obj) =>
+            obj.id === id
+              ? {
+                  ...obj,
+                  position: finalPosition,
+                  _lastPositionUpdate: Date.now(),
+                }
+              : obj
+          );
+          objectsStore.setObjects(updatedObjects);
         }
       };
-    }, [id, onUpdate, position, scale, textStyle, bulletPointMode]);
+    }, [id, onUpdate, position, scale, textStyle, bulletPointMode, text]);
+
+    // Helper function to get the correct position to use for the group
+    const getEffectivePosition = useCallback(() => {
+      // If we have a recent finalPosition that should override the prop, use it
+      if (
+        groupRef.current?.userData?.finalPosition &&
+        groupRef.current?.userData?.positionUpdated &&
+        Date.now() - groupRef.current.userData.positionUpdated < 5000
+      ) {
+        const finalPos = groupRef.current.userData.finalPosition;
+        console.log('🎯 Using finalPosition for group:', {
+          id,
+          finalPos,
+          propPos: position,
+          timeSince: Date.now() - groupRef.current.userData.positionUpdated,
+        });
+        return finalPos;
+      }
+
+      // Check if store has a more recent position than props
+      const objectsStore = useObjectsStore.getState();
+      const storeObject = objectsStore.objects.find((obj) => obj.id === id);
+      if (
+        storeObject?.position &&
+        !isEqual(storeObject.position, position) &&
+        storeObject._lastPositionUpdate &&
+        Date.now() - storeObject._lastPositionUpdate < 5000
+      ) {
+        console.log('🎯 Using store position for group:', {
+          id,
+          storePos: storeObject.position,
+          propPos: position,
+          timeSince: Date.now() - storeObject._lastPositionUpdate,
+        });
+        return storeObject.position;
+      }
+
+      // Otherwise use the prop position
+      return position || [0, 0, 0];
+    }, [position, id]);
+
+    // State to track the current effective position for the group
+    const [effectivePosition, setEffectivePosition] = useState(
+      () => position || [0, 0, 0]
+    );
+
+    // Effect to update effective position when needed
+    useEffect(() => {
+      // Skip position updates if transform is active to prevent snap-back
+      if (groupRef.current?.userData?._transformActive) {
+        console.log(
+          '⚠️ Skipping effectivePosition update during active transform:',
+          id
+        );
+        return;
+      }
+
+      const newPos = getEffectivePosition();
+
+      // Only update if the position actually changed
+      if (!isEqual(effectivePosition, newPos)) {
+        console.log('🔄 Updating effective position:', {
+          id,
+          oldPos: effectivePosition,
+          newPos,
+          reason: groupRef.current?.userData?.finalPosition
+            ? 'finalPosition'
+            : groupRef.current?.userData?.position
+            ? 'userData'
+            : 'propPosition',
+        });
+
+        // Force directly setting the THREE.js object position to ensure consistency
+        if (groupRef.current) {
+          groupRef.current.position.set(newPos[0], newPos[1], newPos[2]);
+        }
+
+        setEffectivePosition(newPos);
+      }
+    }, [position, getEffectivePosition, effectivePosition, id]);
 
     // Enhanced render with _transformActive flag in userData
     return (
       <>
         <group
           ref={groupRef}
-          position={position}
+          position={effectivePosition} // Use state-managed position
           userData={{
             type: 'textObject',
             id: stringId,
@@ -1944,7 +2408,8 @@ const TextObject = React.memo(
             indicatorOffset: getIndicatorOffset(),
             face: 'top',
             isMoving: isMoving,
-            _transformActive: isMoving,
+            _transformActive: isMoving || showTransform,
+            initialPosition: position ? [...position] : null,
           }}
         >
           {/* Invisible mesh for resize controls - positioned same as text container */}
@@ -1953,7 +2418,12 @@ const TextObject = React.memo(
             <meshBasicMaterial transparent opacity={0} />
           </mesh>
 
-          <Html transform position={[0, 0, 0.1]} center>
+          <Html
+            transform
+            position={[0, 0, 0.1]}
+            center
+            occlude={!showTransform && !showResizeControls}
+          >
             <div
               style={getContainerStyle()}
               className="text-object-container"
@@ -2248,128 +2718,391 @@ const TextObject = React.memo(
             />
           )}
         </group>
-        {/* Transform controls - Fixed to match Cube pattern */}
-        {console.log('🔧 Transform Controls Render Check:', {
-          selected,
-          showTransform,
-          hasGroupRef: !!groupRef.current,
-          shouldRender: selected && showTransform && groupRef.current,
-        })}
-        {selected && showTransform && groupRef.current && (
-          <TransformControls
-            ref={transformRef}
-            object={groupRef.current}
-            onObjectChange={handleDrag}
-            onMouseDown={() => {
-              if (window.orbitControls) {
-                window.orbitControls.enabled = false;
-              }
-              onTransformStart?.(id);
-            }}
-            onMouseUp={() => {
-              if (window.orbitControls) {
-                window.orbitControls.enabled = true;
-              }
-              onTransformEnd?.(id);
-            }}
-            mode="translate"
-            space="world"
-            size={0.5}
-          />
-        )}
-        {/* Resize transform controls - using invisible mesh for scale operations */}
-        {console.log('🔧 Resize Controls Render Check:', {
-          id,
-          selected,
-          showResizeControls,
-          hasGroupRef: !!groupRef.current,
-          hasResizeMeshRef: !!resizeMeshRef.current,
-          resizeMeshScale: resizeMeshRef.current
-            ? resizeMeshRef.current.scale.toArray()
-            : null,
-          visualScale,
-          shouldRender: selected && showResizeControls && resizeMeshRef.current,
-        })}
-        {selected && showResizeControls && resizeMeshRef.current && (
-          <TransformControls
-            object={resizeMeshRef.current}
-            mode="scale"
-            size={0.5}
-            onObjectChange={(e) => {
-              // Real-time updates during resize drag
-              if (e && e.target && e.target.object) {
-                console.log('📏 onObjectChange - real-time resize:', {
-                  id,
-                  meshScale: e.target.object.scale.toArray(),
-                  currentVisualScale: visualScale,
-                });
+        {/* Camera distance calculation for dynamic transform control sizing */}
+        {(() => {
+          // Calculate distance from camera to object for dynamic control sizing
+          const getTransformControlSize = () => {
+            if (!groupRef.current || !camera) return 0.5; // Default size
 
-                const newScale = [
-                  e.target.object.scale.x,
-                  e.target.object.scale.y,
-                  visualScale[2], // Keep Z scale unchanged
-                ];
+            const objectPosition = new THREE.Vector3();
+            groupRef.current.getWorldPosition(objectPosition);
+            const cameraDistance = camera.position.distanceTo(objectPosition);
 
-                // Update visual scale immediately for real-time feedback
-                setVisualScale(newScale);
+            // Scale transform controls based on camera distance
+            // Closer = smaller controls, further = larger controls
+            // Base size of 0.5, with scaling factor based on distance
+            const baseSize = 0.5;
+            const scaleFactor = Math.max(
+              0.3,
+              Math.min(2.0, cameraDistance / 20)
+            );
+            return baseSize * scaleFactor;
+          };
 
-                console.log('📏 Updated visualScale during drag:', {
-                  id,
-                  oldScale: visualScale,
-                  newScale,
-                });
+          const transformControlSize = getTransformControlSize();
 
-                // Store the updated scale in userData for immediate access
-                if (groupRef.current) {
-                  groupRef.current.userData.currentScale = newScale;
-                }
-              }
-            }}
-            onChange={(e) => {
-              // Called on every frame during resize - this handles the final update
-              handleScale(e);
-            }}
-            onMouseDown={() => {
-              if (window.orbitControls) {
-                window.orbitControls.enabled = false;
-              }
-              onResizeStart?.(id);
-            }}
-            onMouseUp={() => {
-              if (window.orbitControls) {
-                window.orbitControls.enabled = true;
-              }
-              onResizeEnd?.(id);
-            }}
-            showX={true}
-            showY={true}
-            showZ={false}
-            space="local"
-          />
-        )}{' '}
-        {/* Text style UI */}
-        {selected && (
-          <TextObjectUI
-            ref={uiMenuRef}
-            id={id}
-            textStyle={textStyle}
-            onStyleChange={handleStyleChange}
-            onDelete={onDelete ? () => onDelete(id) : undefined}
-            onTransformToggle={handleTransformToggle}
-            onResizeToggle={handleResizeToggle}
-            showTransform={showTransform}
-            followTarget={groupRef}
-          />
-        )}{' '}
+          return (
+            <>
+              {/* Transform controls - Fixed to match Cube pattern */}
+              {console.log('🔧 Transform Controls Render Check:', {
+                selected,
+                showTransform,
+                hasGroupRef: !!groupRef.current,
+                shouldRender: selected && showTransform && groupRef.current,
+                cameraDistance:
+                  groupRef.current && camera
+                    ? camera.position.distanceTo(
+                        (() => {
+                          const pos = new THREE.Vector3();
+                          groupRef.current.getWorldPosition(pos);
+                          return pos;
+                        })()
+                      )
+                    : 'N/A',
+                transformControlSize,
+              })}
+              {selected && showTransform && groupRef.current && (
+                <TransformControls
+                  ref={transformRef}
+                  object={groupRef.current}
+                  onObjectChange={handleDrag}
+                  onStart={() => {
+                    console.log(
+                      '🔄 Transform controls started for TextObject:',
+                      id
+                    );
+
+                    // Mark object as actively being transformed
+                    if (groupRef.current) {
+                      groupRef.current.userData._transformActive = true;
+
+                      // Store current position as the start position to ensure consistency
+                      const currentPos = groupRef.current.position;
+                      const currentPosArray = [
+                        currentPos.x,
+                        currentPos.y,
+                        currentPos.z,
+                      ];
+                      groupRef.current.userData.startTransformPosition =
+                        currentPosArray;
+
+                      console.log(
+                        '🔄 Transform started - stored current position:',
+                        {
+                          id,
+                          startPosition: currentPosArray,
+                        }
+                      );
+                    }
+
+                    // Get latest position from store as a fallback
+                    const objectsStore = useObjectsStore.getState();
+                    const storeObject = objectsStore.objects.find(
+                      (obj) => obj.id === id
+                    );
+
+                    if (groupRef.current && storeObject?.position) {
+                      const storePos = storeObject.position;
+                      const currentPos = groupRef.current.position.toArray();
+
+                      // Only update from store if significantly different
+                      if (
+                        !isEqual(storePos, currentPos) &&
+                        !storePos.every(
+                          (val, idx) => Math.abs(val - currentPos[idx]) < 0.1
+                        )
+                      ) {
+                        console.log(
+                          '🔄 Significant position difference detected, syncing with store:',
+                          {
+                            id,
+                            storePos,
+                            currentPos,
+                          }
+                        );
+                        groupRef.current.position.set(
+                          storePos[0],
+                          storePos[1],
+                          storePos[2]
+                        );
+                      }
+                    }
+                  }}
+                  onMouseDown={() => {
+                    if (window.orbitControls) {
+                      window.orbitControls.enabled = false;
+                    }
+                    // Set transform flag on mouse down
+                    if (groupRef.current) {
+                      groupRef.current.userData._transformActive = true;
+
+                      // Capture current position as starting position
+                      const pos = groupRef.current.position;
+                      groupRef.current.userData.startDragPosition = [
+                        pos.x,
+                        pos.y,
+                        pos.z,
+                      ];
+                    }
+                    onTransformStart?.(id);
+                  }}
+                  onMouseUp={() => {
+                    if (window.orbitControls) {
+                      window.orbitControls.enabled = true;
+                    }
+
+                    // Capture current position before any other operations
+                    const currentPos = groupRef.current?.position;
+                    const finalPos = currentPos
+                      ? [currentPos.x, currentPos.y, currentPos.z]
+                      : null;
+
+                    console.log(
+                      '🏁 Transform controls mouseUp - capturing final position:',
+                      {
+                        id,
+                        finalPos,
+                        propPos: position,
+                      }
+                    );
+
+                    // Run transform end handler first to finalize position
+                    handleTransformEnd();
+
+                    // Then notify parent after our internal update completes
+                    onTransformEnd?.(id);
+
+                    // Double safety - check again after a delay to ensure position stuck
+                    setTimeout(() => {
+                      if (groupRef.current && finalPos) {
+                        const newPos = groupRef.current.position;
+                        const newPosArray = [newPos.x, newPos.y, newPos.z];
+
+                        if (!isEqual(finalPos, newPosArray)) {
+                          console.log(
+                            '⚠️ Position changed after transform end, forcing correction:',
+                            {
+                              id,
+                              finalPos,
+                              currentPos: newPosArray,
+                            }
+                          );
+
+                          // Force position back to final position
+                          groupRef.current.position.set(
+                            finalPos[0],
+                            finalPos[1],
+                            finalPos[2]
+                          );
+
+                          // Update store
+                          const objectsStore = useObjectsStore.getState();
+                          const updatedObjects = objectsStore.objects.map(
+                            (obj) =>
+                              obj.id === id
+                                ? { ...obj, position: finalPos }
+                                : obj
+                          );
+                          objectsStore.setObjects(updatedObjects);
+
+                          // Send update to parent
+                          if (onUpdate) {
+                            onUpdate(id, {
+                              type: 'text',
+                              position: finalPos,
+                              _finalPosition: true,
+                              _forceUpdate: true,
+                              text: textContentRef.current || text,
+                              scale: scale,
+                              textStyle: textStyle,
+                              bulletPointMode: bulletPointMode,
+                            });
+                          }
+                        }
+                      }
+                    }, 100);
+                  }}
+                  mode="translate"
+                  space="world"
+                  size={transformControlSize}
+                />
+              )}
+              {/* Resize transform controls - using invisible mesh for scale operations */}
+              {console.log('🔧 Resize Controls Render Check:', {
+                id,
+                selected,
+                showResizeControls,
+                hasGroupRef: !!groupRef.current,
+                hasResizeMeshRef: !!resizeMeshRef.current,
+                resizeMeshScale: resizeMeshRef.current
+                  ? resizeMeshRef.current.scale.toArray()
+                  : null,
+                visualScale,
+                shouldRender:
+                  selected && showResizeControls && resizeMeshRef.current,
+                transformControlSize,
+              })}
+              {selected && showResizeControls && resizeMeshRef.current && (
+                <TransformControls
+                  object={resizeMeshRef.current}
+                  mode="scale"
+                  size={transformControlSize}
+                  onObjectChange={(e) => {
+                    // Real-time updates during resize drag
+                    if (e && e.target && e.target.object) {
+                      console.log('📏 onObjectChange - real-time resize:', {
+                        id,
+                        meshScale: e.target.object.scale.toArray(),
+                        currentVisualScale: visualScale,
+                      });
+
+                      const newScale = [
+                        e.target.object.scale.x,
+                        e.target.object.scale.y,
+                        visualScale[2], // Keep Z scale unchanged
+                      ];
+
+                      // Update visual scale immediately for real-time feedback
+                      setVisualScale(newScale);
+
+                      console.log('📏 Updated visualScale during drag:', {
+                        id,
+                        oldScale: visualScale,
+                        newScale,
+                      });
+
+                      // Store the updated scale in userData for immediate access
+                      if (groupRef.current) {
+                        groupRef.current.userData.currentScale = newScale;
+                        groupRef.current.userData.finalScale = newScale;
+                        groupRef.current.userData.scaleUpdated = Date.now();
+                      }
+                    }
+                  }}
+                  onChange={(e) => {
+                    // Called on every frame during resize - this handles the final update
+                    handleScale(e);
+                  }}
+                  onMouseDown={() => {
+                    if (window.orbitControls) {
+                      window.orbitControls.enabled = false;
+                    }
+                    onResizeStart?.(id);
+                  }}
+                  onMouseUp={() => {
+                    if (window.orbitControls) {
+                      window.orbitControls.enabled = true;
+                    }
+                    
+                    // Capture final scale values
+                    const finalScale = [...visualScale]; // Use current visual scale
+                    
+                    console.log('📏 Resize complete - final scale:', {
+                      id,
+                      finalScale,
+                      resizeMeshScale: resizeMeshRef.current?.scale.toArray()
+                    });
+                    
+                    // Ensure the scale is saved to the store immediately
+                    const objectsStore = useObjectsStore.getState();
+                    const updatedObjects = objectsStore.objects.map((obj) =>
+                      obj.id === id
+                        ? { 
+                            ...obj, 
+                            scale: finalScale,
+                            _lastScaleUpdate: Date.now(),
+                            _finalScale: true
+                          }
+                        : obj
+                    );
+                    objectsStore.setObjects(updatedObjects);
+                    
+                    // Force an immediate update to the database to ensure persistence
+                    if (onUpdate) {
+                      const worldInfo = updateWorldMatrix();
+                      const finalUpdatePayload = {
+                        type: 'text',
+                        position,
+                        scale: finalScale,
+                        _finalScale: true,
+                        _forceUpdate: true,
+                        text: textContentRef.current || text,
+                        textStyle,
+                        bulletPointMode,
+                        worldPosition: worldInfo?.worldPos,
+                        indicatorPosition: worldInfo?.indicatorPos,
+                        lastResizeTime: Date.now()
+                      };
+                      
+                      console.log('📏 Sending final scale update to database:', {
+                        id,
+                        scale: finalScale
+                      });
+                      
+                      onUpdate(id, finalUpdatePayload);
+                    }
+                    
+                    // Notify parent
+                    onResizeEnd?.(id);
+                    
+                    // Double safety - check again after a delay to ensure scale stuck
+                    setTimeout(() => {
+                      // Update store once more to be certain
+                      const objectsStore = useObjectsStore.getState();
+                      const updatedObjects = objectsStore.objects.map((obj) =>
+                        obj.id === id
+                          ? { 
+                              ...obj, 
+                              scale: finalScale,
+                              _lastScaleUpdate: Date.now()
+                            }
+                          : obj
+                      );
+                      objectsStore.setObjects(updatedObjects);
+                    }, 100);
+                  }}
+                  showX={true}
+                  showY={true}
+                  showZ={false}
+                  space="local"
+                />
+              )}
+              {/* Text style UI */}
+              {selected && (
+                <TextObjectUI
+                  ref={uiMenuRef}
+                  id={id}
+                  textStyle={textStyle}
+                  onStyleChange={handleStyleChange}
+                  onDelete={onDelete ? () => onDelete(id) : undefined}
+                  onTransformToggle={handleTransformToggle}
+                  onResizeToggle={handleResizeToggle}
+                  showTransform={showTransform}
+                  followTarget={groupRef}
+                />
+              )}
+            </>
+          );
+        })()}
       </>
     );
   },
   (prevProps, nextProps) => {
     // Custom comparison function for React.memo
     // Only re-render if critical props change
+
+    // Deep compare positions to ensure we catch position array changes
+    const positionsEqual =
+      Array.isArray(prevProps.position) &&
+      Array.isArray(nextProps.position) &&
+      prevProps.position.length === nextProps.position.length &&
+      prevProps.position.every(
+        (val, idx) => Math.abs(val - nextProps.position[idx]) < 0.001
+      );
+
     return (
       prevProps.id === nextProps.id &&
-      prevProps.position === nextProps.position &&
+      positionsEqual &&
       prevProps.selected === nextProps.selected &&
       prevProps.showAllIndicators === nextProps.showAllIndicators &&
       prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&

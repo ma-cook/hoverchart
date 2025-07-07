@@ -14,6 +14,7 @@ export const TextStyleUIContent = ({
   onTransformToggle, // added new prop
   onResizeToggle, // added new prop
   onDelete, // Add onDelete prop
+  onEyeClick, // Add eye button click handler
   textStyle = {}, // Add textStyle prop to show current state
 }) => {
   // Use color picker store
@@ -101,6 +102,7 @@ export const TextStyleUIContent = ({
       'bullets',
       'transform',
       'resize',
+      'eye',
       'delete',
     ],
   };
@@ -318,6 +320,20 @@ export const TextStyleUIContent = ({
           title="Resize text object"
         >
           ↔
+        </button>
+      )}
+      {tools.includes('eye') && uiType === 'textObject' && onEyeClick && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            e.nativeEvent?.preventDefault?.();
+            onEyeClick(e);
+          }}
+          className="face-tool-button"
+          title="Look at this object"
+          style={{ marginLeft: 4 }}
+        >
+          👁
         </button>
       )}
       {tools.includes('delete') && uiType === 'textObject' && onDelete && (

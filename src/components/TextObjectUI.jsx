@@ -1,6 +1,6 @@
 import React from 'react';
 import { Html } from '@react-three/drei';
-import { useRef, forwardRef } from 'react';
+import { useRef, forwardRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { TextStyleUIContent } from './TextStyleUI';
 import * as THREE from 'three';
@@ -24,6 +24,7 @@ const TextObjectUI = forwardRef(
   ) => {
     const groupRef = useRef();
     const lastPosition = useRef(null);
+    const [distance, setDistance] = useState(50); // Add distance state for scaling
 
     // Use color picker store
     const isColorPickerOpen = useColorPickerStore(
@@ -68,7 +69,7 @@ const TextObjectUI = forwardRef(
     useFrame(({ camera }) => {
       if (groupRef.current && followTarget?.current) {
         const targetPos = followTarget.current.position;
-        const verticalOffset = 6; // Increased upward offset
+        const verticalOffset = 12; // Increased upward offset from 9 to 12
         // Use global up vector instead of camera.up
         const newPos = targetPos
           .clone()
@@ -82,6 +83,12 @@ const TextObjectUI = forwardRef(
           lastPosition.current = newPos.clone();
         }
         groupRef.current.quaternion.copy(camera.quaternion);
+
+        // Calculate distance for UI scaling
+        const newDistance = camera.position.distanceTo(
+          groupRef.current.position
+        );
+        setDistance(newDistance);
       }
     });
 
@@ -150,16 +157,9 @@ const TextObjectUI = forwardRef(
               onTransformToggle={onTransformToggle} // Pass down the transform toggle prop
               onResizeToggle={handleResizeToggle} // Use our local handler
               onDelete={onDelete} // Pass the delete handler
+              onEyeClick={handleEyeClick} // Pass the eye button handler
+              distance={distance} // Pass distance for proper scaling
             />
-            {/* Eye button for camera look-at */}
-            <button
-              className="face-tool-button"
-              title="Look at this object"
-              onClick={handleEyeClick}
-              style={{ marginLeft: 4 }}
-            >
-              👁
-            </button>
             {showColorPicker && (
               <ColorPicker
                 onColorSelect={(color) => {
