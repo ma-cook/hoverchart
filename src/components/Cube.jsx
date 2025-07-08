@@ -13,6 +13,8 @@ import { Line } from '@react-three/drei';
 import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
 import { useCubeStore, useObjectsStore, useConnectionStore } from '../stores';
+// Import snapping utilities
+import { calculateAxisSnap } from '../utils/snappingUtils';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -876,19 +878,65 @@ const Cube = ({
   );
   const handleDrag = (e) => {
     // Get new position from the transform controls event
+    if (!e.target || !e.target.object || !e.target.object.position) {
+      console.error('Invalid transform event in handleDrag');
+      return;
+    }
+
     const newPos = e.target.object.position;
+    // Ensure we have valid numerical values for position
+    if (
+      typeof newPos.x !== 'number' ||
+      typeof newPos.y !== 'number' ||
+      typeof newPos.z !== 'number'
+    ) {
+      console.error('Invalid position values in handleDrag', newPos);
+      return;
+    }
 
-    // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
-    const objectsStore = useObjectsStore.getState();
-    const currentObjects = objectsStore.objects;
-    const updatedObjects = currentObjects.map((obj) =>
-      obj.id === id ? { ...obj, position: [newPos.x, newPos.y, newPos.z] } : obj
-    );
-    objectsStore.setObjects(updatedObjects);
+    const currentPosition = [newPos.x, newPos.y, newPos.z];
 
-    // Use the spatial system via onMove instead of direct onUpdate
-    if (onMove) {
-      onMove([newPos.x, newPos.y, newPos.z]);
+    try {
+      // Get all objects for axis snapping calculation
+      const objectsStore = useObjectsStore.getState();
+      const currentObjects = Array.isArray(objectsStore.objects)
+        ? objectsStore.objects
+        : [];
+
+      // Calculate any axis snapping using our utility - it returns an array [x,y,z] or null
+      const snappedPosition = calculateAxisSnap(
+        currentPosition,
+        currentObjects,
+        id
+      );
+
+      // Use snapped position if available, otherwise use current position
+      const finalPosition = snappedPosition || currentPosition;
+
+      // If snapping occurred, update the object's position in the scene
+      if (snappedPosition) {
+        e.target.object.position.set(
+          snappedPosition[0],
+          snappedPosition[1],
+          snappedPosition[2]
+        );
+      }
+
+      // Update the objects store position immediately for real-time connection updates
+      const updatedObjects = currentObjects.map((obj) =>
+        obj.id === id ? { ...obj, position: finalPosition } : obj
+      );
+      objectsStore.setObjects(updatedObjects);
+
+      // Use the spatial system via onMove instead of direct onUpdate
+      if (onMove) {
+        onMove(finalPosition);
+      }
+
+      // Update cube state with the final position
+      updateCube(id, { position: finalPosition });
+    } catch (error) {
+      console.error('Error in cube handleDrag:', error);
     }
   };
   // Store actions for scale modification
@@ -1168,7 +1216,8 @@ const Cube = ({
             args={[isMobile ? 16 : 10, isMobile ? 16 : 10, isMobile ? 16 : 10]}
           />
           <meshBasicMaterial visible={false} />
-        </mesh>{' '}        {/* Cube edge lines */}
+        </mesh>{' '}
+        {/* Cube edge lines */}
         <Line
           points={cubeLinePoints}
           color={cube?.color || color}

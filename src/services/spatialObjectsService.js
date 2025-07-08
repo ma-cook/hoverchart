@@ -19,6 +19,9 @@ const updateThrottles = new Map();
 const lastReceivedObjects = new Map();
 const movingObjects = new Map(); // Track objects currently being moved to prevent race conditions
 
+// Track objects that are being deleted to prevent re-addition
+const deletingObjects = new Set(); // Set of objectId strings being deleted
+
 // Helper function for position-only comparison
 const positionsEqual = (posA, posB) => {
   if (!posA || !posB) return false;
@@ -74,6 +77,14 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
   try {
     const objectId = object.id.toString();
     const cacheKey = `${spaceId}_${objectId}`;
+
+    // Check if object is being deleted - if so, prevent save
+    if (deletingObjects.has(objectId)) {
+      console.log(
+        `🚫 [Save Debug] Blocked save for deleting object: ${objectId}`
+      );
+      return;
+    }
 
     // Enhanced throttling
     const now = Date.now();
@@ -253,6 +264,22 @@ export const deleteObjectFromSpatialCell = async (
     const objectIdString = objectId.toString();
     const cacheKey = `${spaceId}_${objectIdString}`;
 
+    // Mark object as being deleted to prevent any save operations
+    deletingObjects.add(objectIdString);
+    console.log(
+      `🗑️ [Delete Debug] Marked object ${objectIdString} as deleting`
+    );
+
+    // Auto-cleanup deletion blacklist after timeout to prevent permanent blocking
+    setTimeout(() => {
+      if (deletingObjects.has(objectIdString)) {
+        deletingObjects.delete(objectIdString);
+        console.warn(
+          `⚠️ [Delete Debug] Auto-cleared deletion blacklist for ${objectIdString} after timeout`
+        );
+      }
+    }, 30000); // 30 second timeout
+
     // Clear from cache immediately to prevent re-additions
     console.log(
       `🗑️ [Delete Debug] Clearing cache for object ${objectIdString}`
@@ -329,10 +356,21 @@ export const deleteObjectFromSpatialCell = async (
     );
 
     if (!deleteResult) {
+      // If deletion failed, remove from blacklist to allow retry
+      deletingObjects.delete(objectIdString);
+      console.log(
+        `🗑️ [Delete Debug] Removed ${objectIdString} from deletion blacklist due to failure`
+      );
       throw new Error(
         `Failed to delete object ${objectIdString} from spatial cell`
       );
     }
+
+    // Remove from deletion blacklist after successful deletion
+    deletingObjects.delete(objectIdString);
+    console.log(
+      `✅ [Delete Debug] Removed ${objectIdString} from deletion blacklist after successful deletion`
+    );
 
     console.log(
       `✅ [Delete Debug] Successfully completed deletion for object ${objectIdString}`
@@ -344,8 +382,11 @@ export const deleteObjectFromSpatialCell = async (
       lastReceivedObjects.delete(cacheKey);
     }, 100);
   } catch (error) {
+    // Clean up deletion blacklist on error
+    const objectIdString = objectId.toString();
+    deletingObjects.delete(objectIdString);
     console.error(
-      `❌ [Delete Debug] Error deleting object ${objectId} from cell:`,
+      `❌ [Delete Debug] Error deleting object ${objectId} from cell (cleaned up blacklist):`,
       error
     );
     throw error; // Re-throw to allow caller to handle
@@ -902,5 +943,29 @@ export const updateObject = async (userId, spaceId, objectData) => {
 export const subscribeToObjects = (userId, spaceId, loadedCells, callback) => {
   return subscribeToSpatialObjects(userId, spaceId, loadedCells, callback);
 };
+
+// Debug utility to check deletion blacklist
+export const getObjectDeletionStatus = () => {
+  return {
+    deletingObjects: [...deletingObjects],
+    deletingCount: deletingObjects.size,
+  };
+};
+
+// Debug utility to clear deletion blacklist (emergency use)
+export const clearObjectDeletionBlacklist = () => {
+  const count = deletingObjects.size;
+  deletingObjects.clear();
+  console.log(
+    `🧹 [Delete Debug] Cleared ${count} objects from deletion blacklist`
+  );
+  return count;
+};
+
+// Expose deletion status globally for cross-module access
+if (typeof window !== 'undefined') {
+  window.getObjectDeletionStatus = getObjectDeletionStatus;
+  window.clearObjectDeletionBlacklist = clearObjectDeletionBlacklist;
+}
 
 export { positionsEqual };

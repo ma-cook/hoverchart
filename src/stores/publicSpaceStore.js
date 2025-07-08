@@ -194,10 +194,51 @@ const usePublicSpaceStore = create((set, get) => ({
     try {
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
       const { saveConnection } = await import('../services/connectionsService');
+      const { useConnectionStore } = await import('./connectionStore');
+      const { useObjectsStore } = await import('./objectsStore');
 
-      // Save all connections that have been updated
+      // Get current deletion blacklist and objects to verify references
+      const connectionStore = useConnectionStore.getState();
+      const objectsStore = useObjectsStore.getState();
+      const objects = objectsStore.objects;
+
+      console.log(
+        `💾 [saveConnectionsImmediately] Processing ${connections.length} connections for immediate save`
+      );
+
+      // Save all connections that have been updated, but check for deletion and object existence
       const savePromises = connections
-        .filter((conn) => conn._localUpdate) // Only save connections that were locally updated
+        .filter((conn) => {
+          // Only save connections that were locally updated
+          if (!conn._localUpdate) {
+            return false;
+          }
+
+          // Check if connection is in deletion blacklist
+          if (connectionStore.deletingConnections.has(conn.id)) {
+            console.log(
+              `🚫 [saveConnectionsImmediately] Skipping save for deleted connection: ${conn.id}`
+            );
+            return false;
+          }
+
+          // Check if both referenced objects still exist
+          const startObjectExists = objects.some(
+            (obj) => obj.id.toString() === conn.start?.objectId
+          );
+          const endObjectExists = objects.some(
+            (obj) => obj.id.toString() === conn.end?.objectId
+          );
+
+          if (!startObjectExists || !endObjectExists) {
+            console.log(
+              `🚫 [saveConnectionsImmediately] Skipping save for connection with missing objects: ${conn.id} (start: ${startObjectExists}, end: ${endObjectExists})`
+            );
+            return false;
+          }
+
+          return true;
+        })
         .map(async (conn) => {
           const connectionToSave = { ...conn };
           delete connectionToSave._localUpdate; // Remove local update flag

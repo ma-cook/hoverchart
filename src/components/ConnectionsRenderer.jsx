@@ -10,8 +10,8 @@ import {
 } from '../utils/pathfindingUtils';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
-import PublicConnectionsRenderer from './PublicConnectionsRenderer';
-import { useConnectionStore } from '../stores';
+import useConnectionStore from '../stores/connectionStore';
+import { saveConnection } from '../services/connectionsService';
 
 // Separate connection rendering into a sub-component to fix the hooks issue
 const Connection = ({
@@ -28,6 +28,9 @@ const Connection = ({
   const connections = useConnectionStore((state) => state.connections);
   const selectedConnection = useConnectionStore(
     (state) => state.selectedConnection
+  );
+  const deletingConnections = useConnectionStore(
+    (state) => state.deletingConnections
   );
   const lineTexts = useConnectionStore((state) => state.lineTexts);
   const showLineTextInput = useConnectionStore(
@@ -65,7 +68,7 @@ const Connection = ({
       onLineTextClick(e, connectionId);
     } else {
       e.stopPropagation();
-      setShowLineTextInput(connectionId);
+      setShowLineTextStyleUI(connectionId);
     }
   };
 
@@ -73,10 +76,27 @@ const Connection = ({
     if (onLineTextSubmit) {
       return onLineTextSubmit(connectionId, text);
     } else {
+      // Check if connection is being deleted before saving
+      if (deletingConnections.has(connectionId)) {
+        console.log(
+          `🚫 [ConnectionsRenderer] Blocked text save for deleted connection: ${connectionId}`
+        );
+        return false;
+      }
+
       setLineText(connectionId, text);
       setShowLineTextInput(null);
-      // Update the connection object with the new text
+      // Update both store and database
       updateConnection(connectionId, { text });
+      const updatedConnection = connections.find(
+        (conn) => conn.id === connectionId
+      );
+      if (updatedConnection) {
+        saveConnection(window.currentUser?.uid, window.currentSpaceId, {
+          ...updatedConnection,
+          text,
+        });
+      }
       return true;
     }
   };
@@ -85,6 +105,14 @@ const Connection = ({
     if (onLineTextStyleChange) {
       onLineTextStyleChange(connectionId, style);
     } else {
+      // Check if connection is being deleted before saving
+      if (deletingConnections.has(connectionId)) {
+        console.log(
+          `🚫 [ConnectionsRenderer] Blocked style save for deleted connection: ${connectionId}`
+        );
+        return;
+      }
+
       // Get current connection to merge with existing textStyle (like cube header text)
       const currentConnection = connections.find(
         (conn) => conn.id === connectionId
@@ -94,15 +122,57 @@ const Connection = ({
         ...style,
       };
 
-      // Update the connection object with the merged text style
+      // Update both store and database
       updateConnection(connectionId, { textStyle: mergedTextStyle });
+      const updatedConnection = connections.find(
+        (conn) => conn.id === connectionId
+      );
+      if (updatedConnection) {
+        saveConnection(window.currentUser?.uid, window.currentSpaceId, {
+          ...updatedConnection,
+          textStyle: mergedTextStyle,
+        });
+      }
     }
   };
   const handleLineStyleChange = (connectionId, styleType) => {
     if (onLineStyleChange) {
       onLineStyleChange(connectionId, styleType);
     } else {
-      updateConnection(connectionId, { lineStyle: styleType });
+      // Check if connection is being deleted before saving
+      if (deletingConnections.has(connectionId)) {
+        console.log(
+          `🚫 [ConnectionsRenderer] Blocked line style save for deleted connection: ${connectionId}`
+        );
+        return;
+      }
+
+      // Parse the styleType to separate base style and direction
+      let baseStyle = styleType;
+      let direction = null;
+
+      if (styleType.includes('-')) {
+        const parts = styleType.split('-');
+        baseStyle = parts[0];
+        direction = parts[1];
+      }
+
+      // Update both styleType and dashDirection
+      updateConnection(connectionId, {
+        styleType: baseStyle,
+        dashDirection: direction,
+      });
+
+      const updatedConnection = connections.find(
+        (conn) => conn.id === connectionId
+      );
+      if (updatedConnection) {
+        saveConnection(window.currentUser?.uid, window.currentSpaceId, {
+          ...updatedConnection,
+          styleType: baseStyle,
+          dashDirection: direction,
+        });
+      }
     }
   };
 
@@ -110,7 +180,25 @@ const Connection = ({
     if (onLineColorChange) {
       onLineColorChange(connectionId, color);
     } else {
-      updateConnection(connectionId, { lineColor: color });
+      // Check if connection is being deleted before saving
+      if (deletingConnections.has(connectionId)) {
+        console.log(
+          `🚫 [ConnectionsRenderer] Blocked color save for deleted connection: ${connectionId}`
+        );
+        return;
+      }
+
+      // Update store with correct color property name
+      updateConnection(connectionId, { color: color });
+      const updatedConnection = connections.find(
+        (conn) => conn.id === connectionId
+      );
+      if (updatedConnection) {
+        saveConnection(window.currentUser?.uid, window.currentSpaceId, {
+          ...updatedConnection,
+          color: color, // Use 'color' not 'lineColor'
+        });
+      }
     }
   };
   // Always call hooks first, before any conditional returns
@@ -473,6 +561,7 @@ const Connection = ({
           }
           onClose={() => setShowLineTextStyleUI(null)}
           currentStyle={connection.textStyle || {}}
+          uiType="connection"
         />
       )}
       {/* Connection controls */}
@@ -496,41 +585,6 @@ const Connection = ({
   );
 };
 
-// Simplified memoization to reduce excessive re-renders
-const MemoizedConnection = React.memo(Connection, (prevProps, nextProps) => {
-  // Always re-render if connection has visual updates
-  if (
-    nextProps.connection?._visualUpdate !== prevProps.connection?._visualUpdate
-  ) {
-    return false; // Re-render
-  }
-
-  // Always re-render if connection has local updates
-  if (
-    nextProps.connection?._localUpdate !== prevProps.connection?._localUpdate
-  ) {
-    return false; // Re-render
-  }
-
-  // Re-render if connection object reference has actually changed
-  if (prevProps.connection !== nextProps.connection) return false;
-
-  // Re-render if objects array reference has changed
-  if (prevProps.objects !== nextProps.objects) return false;
-
-  // Re-render if any handlers have changed
-  if (prevProps.onLineStyleChange !== nextProps.onLineStyleChange) return false;
-  if (prevProps.onLineColorChange !== nextProps.onLineColorChange) return false;
-  if (prevProps.onConnectionClick !== nextProps.onConnectionClick) return false;
-  if (prevProps.onLineTextClick !== nextProps.onLineTextClick) return false;
-  if (prevProps.onLineTextSubmit !== nextProps.onLineTextSubmit) return false;
-  if (prevProps.onLineTextStyleChange !== nextProps.onLineTextStyleChange)
-    return false;
-
-  // If none changed, prevent re-render
-  return true;
-});
-
 /**
  * Component for rendering all connections
  */
@@ -543,53 +597,32 @@ const ConnectionsRenderer = ({
   onLineTextSubmit,
   onLineTextStyleChange,
 }) => {
-  // Use connection store for state
-  const connectionsFromStore = useConnectionStore((state) => state.connections);
+  // Get all connections from store
+  const connections = useConnectionStore((state) => state.connections);
 
-  // Ensure connections is always an array
-  const connections = useMemo(() => {
-    if (Array.isArray(connectionsFromStore)) {
-      return connectionsFromStore;
-    }
-    return []; // Fallback to empty array
-  }, [connectionsFromStore]);
+  // Debugging log
+  console.log('🔗 Rendering connections:', {
+    connectionCount: connections.length,
+    connectionIds: connections.map((c) => c.id),
+  });
 
-  // DEBUG: Removed console.log to prevent infinite re-render loop
-
-  // Check if we're in read-only public mode (anonymous access)
-  const isAnonymous = !window.currentUser;
-  const isPublicSpace = window.publicAccessSpace && window.currentSpaceOwner;
-
-  // For anonymous users in public spaces, use the dedicated public renderer
-  if (isAnonymous && isPublicSpace) {
-    return (
-      <PublicConnectionsRenderer
-        spaceId={window.publicAccessSpace}
-        ownerId={window.currentSpaceOwner}
-        objects={objects}
-      />
-    );
-  }
-  // Regular rendering for authenticated users
+  // Render each connection
   return (
-    <>
-      {' '}
-      {connections.map((connection) => {
-        return (
-          <MemoizedConnection
-            key={connection?.id || Math.random().toString()}
-            connection={connection}
-            objects={objects}
-            onLineStyleChange={onLineStyleChange}
-            onLineColorChange={onLineColorChange}
-            onConnectionClick={onConnectionClick}
-            onLineTextClick={onLineTextClick}
-            onLineTextSubmit={onLineTextSubmit}
-            onLineTextStyleChange={onLineTextStyleChange}
-          />
-        );
-      })}
-    </>
+    <group>
+      {connections.map((connection) => (
+        <Connection
+          key={connection.id}
+          connection={connection}
+          objects={objects}
+          onLineStyleChange={onLineStyleChange}
+          onLineColorChange={onLineColorChange}
+          onConnectionClick={onConnectionClick}
+          onLineTextClick={onLineTextClick}
+          onLineTextSubmit={onLineTextSubmit}
+          onLineTextStyleChange={onLineTextStyleChange}
+        />
+      ))}
+    </group>
   );
 };
 

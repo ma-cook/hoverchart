@@ -1,11 +1,9 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import isEqual from 'lodash/isEqual';
 import {
   saveObjectToCell,
   deleteObjectFromSpatialCell,
 } from '../services/spatialObjectsService';
-import { deleteConnection } from '../services/connectionsService';
 import useConnectionStore from './connectionStore';
 
 const useObjectsStore = create((set, get) => ({
@@ -14,8 +12,6 @@ const useObjectsStore = create((set, get) => ({
   objects: [],
   isInitialLoading: true,
   hasLoadedInitialObjects: false,
-  recentlyDeletedObjects: new Map(), // Track recently deleted objects with timestamps
-  deletedObjectTombstones: new Set(), // Permanent tombstone tracking for deleted objects
 
   // Internal tracking refs (stored as state for persistence)
   lastUpdate: {},
@@ -157,140 +153,7 @@ const useObjectsStore = create((set, get) => ({
     newSet.delete(id?.toString());
     set({ createdObjectIds: newSet });
   },
-  addRecentlyDeletedObject: (id) => {
-    const state = get();
-    const newMap = new Map(state.recentlyDeletedObjects);
-    newMap.set(id.toString(), Date.now());
 
-    // Add to permanent tombstone tracking
-    const newTombstones = new Set(state.deletedObjectTombstones);
-    newTombstones.add(id.toString());
-
-    set({
-      recentlyDeletedObjects: newMap,
-      deletedObjectTombstones: newTombstones,
-    });
-
-    // Store both recent and tombstone data in localStorage to persist across page reloads
-    try {
-      const persistentDeleted = JSON.parse(
-        localStorage.getItem('recentlyDeletedObjects') || '{}'
-      );
-      persistentDeleted[id.toString()] = Date.now();
-      localStorage.setItem(
-        'recentlyDeletedObjects',
-        JSON.stringify(persistentDeleted)
-      );
-
-      // Store tombstones permanently
-      const tombstones = JSON.parse(
-        localStorage.getItem('deletedObjectTombstones') || '[]'
-      );
-      if (!tombstones.includes(id.toString())) {
-        tombstones.push(id.toString());
-        localStorage.setItem(
-          'deletedObjectTombstones',
-          JSON.stringify(tombstones)
-        );
-      }
-    } catch (error) {
-      console.warn('Failed to persist deleted objects to localStorage:', error);
-    }
-
-    // Clean up old entries after a much longer time to prevent memory leaks
-    // but still allow permanent tracking for connection filtering
-    setTimeout(() => {
-      const currentState = get();
-      const updatedMap = new Map(currentState.recentlyDeletedObjects);
-      updatedMap.delete(id.toString());
-      set({ recentlyDeletedObjects: updatedMap });
-
-      // Also clean up from localStorage (but keep tombstones)
-      try {
-        const persistentDeleted = JSON.parse(
-          localStorage.getItem('recentlyDeletedObjects') || '{}'
-        );
-        delete persistentDeleted[id.toString()];
-        localStorage.setItem(
-          'recentlyDeletedObjects',
-          JSON.stringify(persistentDeleted)
-        );
-      } catch (error) {
-        console.warn('Failed to clean up localStorage deleted objects:', error);
-      }
-    }, 3600000); // 1 hour instead of 5 minutes - much longer window
-  },
-  isRecentlyDeleted: (id) => {
-    const state = get();
-
-    // First check permanent tombstones - if an object is tombstoned, it's permanently deleted
-    if (state.deletedObjectTombstones.has(id.toString())) {
-      console.log(
-        `🪦 [Tombstone] Object ${id} is permanently deleted (in tombstone)`
-      );
-      return true;
-    }
-
-    // Also check localStorage for persistent tombstones across page reloads
-    try {
-      const tombstones = JSON.parse(
-        localStorage.getItem('deletedObjectTombstones') || '[]'
-      );
-      if (tombstones.includes(id.toString())) {
-        // Add back to memory set for faster future checks
-        const newTombstones = new Set(state.deletedObjectTombstones);
-        newTombstones.add(id.toString());
-        set({ deletedObjectTombstones: newTombstones });
-
-        console.log(
-          `🪦 [Tombstone] Object ${id} is permanently deleted (from localStorage)`
-        );
-        return true;
-      }
-    } catch (error) {
-      console.warn('Failed to check localStorage tombstones:', error);
-    }
-
-    // Fallback to time-based recent deletion check
-    let deleteTime = state.recentlyDeletedObjects.get(id.toString());
-
-    // Also check localStorage for persistent tracking across page reloads
-    if (!deleteTime) {
-      try {
-        const persistentDeleted = JSON.parse(
-          localStorage.getItem('recentlyDeletedObjects') || '{}'
-        );
-        deleteTime = persistentDeleted[id.toString()];
-
-        // If found in localStorage, add back to memory map
-        if (deleteTime) {
-          const newMap = new Map(state.recentlyDeletedObjects);
-          newMap.set(id.toString(), deleteTime);
-          set({ recentlyDeletedObjects: newMap });
-        }
-      } catch (error) {
-        console.warn(
-          'Failed to check localStorage for recently deleted objects:',
-          error
-        );
-      }
-    }
-    if (!deleteTime) return false;
-
-    // Consider recently deleted for 1 hour - much longer than before
-    // This prevents connections to deleted objects from reappearing
-    const isDeleted = Date.now() - deleteTime < 3600000; // 1 hour
-
-    if (isDeleted) {
-      console.log(
-        `🚫 [Objects Debug] Object ${id} is still recently deleted (${Math.round(
-          (Date.now() - deleteTime) / 1000
-        )}s ago)`
-      );
-    }
-
-    return isDeleted;
-  },
   // Initialize objects loading state
   initializeObjectsLoading: () => {
     const state = get();
@@ -632,34 +495,25 @@ const useObjectsStore = create((set, get) => ({
     }
   },
   // Delete an object and its connections
-  handleObjectDelete: (
-    id,
-    user,
-    currentSpaceId,
-    connections,
-    setConnections
-  ) => {
+  handleObjectDelete: (id, user, currentSpaceId, connections) => {
     if (!user || !currentSpaceId) return;
 
     const state = get();
 
     // Find the object to get its position for spatial deletion
     const objectToDelete = state.objects.find(
-      (obj) => obj.id.toString() === id.toString()
+      (obj) => obj.id?.toString() === id?.toString()
     );
     console.log(`🗑️ [Delete Debug] Deleting object:`, {
-      id: id.toString(),
+      id: id?.toString(),
       objectToDelete,
-      isInCreatedSet: state.createdObjectIds.has(id.toString()),
+      isInCreatedSet: state.createdObjectIds.has(id?.toString()),
       totalObjects: state.objects.length,
     });
 
-    // Mark as recently deleted to prevent re-addition
-    get().addRecentlyDeletedObject(id);
-
     // Update UI first for responsiveness
     const filteredObjects = state.objects.filter(
-      (obj) => obj.id.toString() !== id.toString()
+      (obj) => obj.id?.toString() !== id?.toString()
     );
     set({ objects: filteredObjects });
 
@@ -668,77 +522,73 @@ const useObjectsStore = create((set, get) => ({
     }
 
     // Also delete any connections attached to this object
-    if (connections && setConnections) {
-      const objectIdStr = id.toString();
-      const relatedConnections = connections.filter(
+    const objectIdStr = id?.toString() || '';
+
+    console.log(
+      `🗑️ [Delete Debug] Starting connection cleanup for object: ${objectIdStr}`
+    );
+
+    // Try to get connections from the parameters first, then from the store
+    let relatedConnections = [];
+    if (connections && Array.isArray(connections)) {
+      console.log(
+        `🗑️ [Delete Debug] Using connections from parameters (${connections.length} total)`
+      );
+      relatedConnections = connections.filter(
         (conn) =>
           conn.start?.objectId === objectIdStr ||
           conn.end?.objectId === objectIdStr
-      ); // Remove from UI
-      setConnections((prev) =>
-        prev.filter(
-          (conn) =>
-            conn.start?.objectId !== objectIdStr &&
-            conn.end?.objectId !== objectIdStr
-        )
-      ); // Also remove from connection store
-      if (relatedConnections.length > 0) {
-        try {
-          relatedConnections.forEach((conn) => {
-            useConnectionStore.getState().removeConnection(conn.id);
-          });
-        } catch (error) {
-          console.warn('Failed to remove connections from store:', error);
-        }
-      } // Delete from database
-      if (relatedConnections.length > 0) {
-        const spaceOwnerId = window.currentSpaceOwner || user.uid;
-        console.log(
-          `🗑️ [Delete Debug] About to delete ${relatedConnections.length} connections from database:`,
-          relatedConnections.map((c) => c.id)
-        );
+      );
+    } else {
+      console.log(
+        `🗑️ [Delete Debug] No connections parameter, getting from store`
+      );
+      // Fallback: get connections from the store directly
+      const storeConnections = useConnectionStore.getState().connections;
+      console.log(
+        `🗑️ [Delete Debug] Store has ${storeConnections.length} connections`
+      );
+      relatedConnections = storeConnections.filter(
+        (conn) =>
+          conn.start?.objectId === objectIdStr ||
+          conn.end?.objectId === objectIdStr
+      );
+    }
 
-        // Delete connections from database asynchronously
-        (async () => {
-          try {
-            await Promise.all(
-              relatedConnections.map(async (conn) => {
-                console.log(
-                  `🗑️ [Delete Debug] Deleting connection ${conn.id} from database...`
-                );
-                const result = await deleteConnection(
-                  spaceOwnerId,
-                  currentSpaceId,
-                  conn.id
-                );
-                console.log(
-                  `🗑️ [Delete Debug] Connection ${conn.id} deletion result:`,
-                  result
-                );
-                return result;
-              })
-            );
-            console.log(
-              `✅ [Delete Debug] Successfully deleted ${relatedConnections.length} connections from database`
-            );
-          } catch (error) {
-            console.error(
-              `❌ [Delete Debug] Error deleting connections from database:`,
-              error
-            );
-          }
-        })();
-      }
-    } // Remove from tracking set if present
-    const wasInCreatedSet = state.createdObjectIds.has(id.toString());
+    console.log(
+      `🗑️ [Delete Debug] Found ${relatedConnections.length} connections to delete for object ${objectIdStr}:`,
+      relatedConnections.map((c) => ({
+        id: c.id,
+        startObj: c.start?.objectId,
+        endObj: c.end?.objectId,
+      }))
+    );
+
+    // Always call the store method to remove connections, even if array is empty
+    console.log(
+      `🗑️ [Delete Debug] Calling deleteConnectionsByObject for: ${objectIdStr} in space: ${currentSpaceId}`
+    );
+    useConnectionStore
+      .getState()
+      .deleteConnectionsByObject(objectIdStr, currentSpaceId);
+
+    // Connection deletion is now handled entirely by the connection store
+    console.log(
+      `✅ [Delete Debug] Connection deletion delegated to connection store`
+    );
+
+    // Remove from tracking set if present
+    const wasInCreatedSet = state.createdObjectIds.has(id?.toString());
     get().removeCreatedObjectId(id);
 
     console.log(`🗑️ [Delete Debug] Before database deletion:`, {
-      id: id.toString(),
+      id: id?.toString(),
       wasInCreatedSet,
       hasPosition: !!objectToDelete?.position,
       position: objectToDelete?.position,
-    }); // Delete from database - IMPORTANT: Wait for deletion to complete
+    });
+
+    // Delete from database - IMPORTANT: Wait for deletion to complete
     const spaceOwnerId = window.currentSpaceOwner || user.uid;
 
     if (objectToDelete?.position) {
@@ -753,253 +603,284 @@ const useObjectsStore = create((set, get) => ({
           );
           console.log(
             `✅ [Delete Debug] Successfully deleted from database:`,
-            id.toString()
+            id?.toString()
           );
-          // Additional verification: wait a moment then check if object still exists
-          setTimeout(async () => {
-            try {
-              const { findObjectInCells } = await import(
-                '../services/spatialPartitioning'
-              );
-              const found = await findObjectInCells(
-                spaceOwnerId,
-                currentSpaceId,
-                id.toString()
-              );
-              if (found) {
-                console.error(
-                  `❌ [Delete Debug] VERIFICATION FAILED: Object ${id} still exists in database after deletion!`,
-                  found
-                );
-
-                // Try deletion one more time with more aggressive approach
-                console.log(
-                  `🔄 [Delete Debug] Attempting final deletion for object ${id}`
-                );
-                try {
-                  // Import and use the direct database deletion function
-                  const { deleteObjectFromCell } = await import(
-                    '../services/spatialPartitioning'
-                  );
-                  await deleteObjectFromCell(
-                    spaceOwnerId,
-                    currentSpaceId,
-                    id.toString(),
-                    objectToDelete.position
-                  );
-
-                  // Final verification after aggressive retry
-                  setTimeout(async () => {
-                    const finalFound = await findObjectInCells(
-                      spaceOwnerId,
-                      currentSpaceId,
-                      id.toString()
-                    );
-                    if (finalFound) {
-                      console.error(
-                        `❌ [Delete Debug] FINAL VERIFICATION FAILED: Object ${id} still exists after aggressive retry!`
-                      );
-                    } else {
-                      console.log(
-                        `✅ [Delete Debug] FINAL VERIFICATION PASSED: Object ${id} successfully deleted after retry`
-                      );
-                    }
-                  }, 1500);
-                } catch (retryError) {
-                  console.error(
-                    `❌ [Delete Debug] Final deletion retry failed for object ${id}:`,
-                    retryError
-                  );
-                }
-              } else {
-                console.log(
-                  `✅ [Delete Debug] VERIFICATION PASSED: Object ${id} confirmed deleted from database`
-                );
-              }
-            } catch (verifyError) {
-              console.warn(
-                `⚠️ [Delete Debug] Could not verify deletion of object ${id}:`,
-                verifyError
-              );
-            }
-          }, 2000); // Wait 2 seconds for Firebase to propagate changes
         } catch (error) {
           console.error(
             `❌ [Delete Debug] Failed to delete from database:`,
-            id.toString(),
+            id?.toString(),
             error
           );
-
-          // If deletion failed, remove from recently deleted to allow UI re-addition
-          const state = get();
-          const updatedMap = new Map(state.recentlyDeletedObjects);
-          updatedMap.delete(id.toString());
-          set({ recentlyDeletedObjects: updatedMap });
         }
       })();
     } else {
       console.warn(
         `⚠️ [Delete Debug] No position found for object, skipping database deletion:`,
-        id.toString()
+        id?.toString()
       );
     }
   },
+  // FIXED VERSION: Delete an object and its connections (prevents double deletion)
+  handleObjectDeleteFixed: (id, user, currentSpaceId, connections) => {
+    if (!user || !currentSpaceId || !id) return;
 
-  // Enhanced transform tracking with robust locking and position history
-  registerTransformingObject: (id, isTransforming, position) => {
-    const objId = id?.toString();
-    if (!objId) return;
-
-    const now = Date.now();
     const state = get();
+    const objectIdStr = id?.toString() || '';
 
-    if (isTransforming) {
-      // Mark as transforming
-      get().addTransformingObject(objId);
-
-      // Store current position to help resolve conflicts later
-      if (position) {
-        get().setTransformPosition(objId, position);
-        // Also store in position history to detect jitter oscillations
-        get().setPositionHistory(objId, {
-          position: [...position],
-          timestamp: now,
-        });
-      } else {
-        // Find existing position from objects array
-        const obj = state.objects.find((o) => o.id.toString() === objId);
-        if (obj?.position) {
-          get().setTransformPosition(objId, obj.position);
-          get().setPositionHistory(objId, {
-            position: [...obj.position],
-            timestamp: now,
-          });
-        }
-      }
-
-      // Store transform start time
-      get().setTransformLockTime(objId, now); // Block any db updates for this object
-      get().addDraggingObject(objId); // Connection updates are now handled by the connection store/real-time updater
-
-      // Freeze object to prevent any subscription updates during transform
-      const updatedObjects = state.objects.map((obj) => {
-        if (obj.id.toString() === objId) {
-          return {
-            ...obj,
-            _transformLocked: true,
-            _lockTime: now,
-            _positionLocked: true,
-          };
-        }
-        return obj;
-      });
-      set({ objects: updatedObjects });
-    } else {
-      // On transform end
-      const lockTime = state.transformLockTime.get(objId) || 0;
-
-      // Keep transform locked briefly to prevent jitter
-      setTimeout(() => {
-        const currentState = get();
-        // Check if another transform hasn't started
-        if (currentState.transformLockTime.get(objId) === lockTime) {
-          get().removeTransformingObject(objId);
-          get().removeTransformLockTime(objId);
-
-          // Get final position before unlocking
-          const finalPosition = currentState.transformPositions.get(objId);
-          get().removeTransformPosition(objId); // Save final position to position history to prevent jitter
-          if (finalPosition) {
-            get().setPositionHistory(objId, {
-              position: [...finalPosition],
-              timestamp: now,
-              isFinal: true,
-            });
-          }
-
-          // Connection unlocking is now handled by the connection store/real-time updater
-
-          // Remove transform lock flag from object
-          const newState = get();
-          const updatedObjects = newState.objects.map((obj) => {
-            if (obj.id.toString() === objId) {
-              const newObj = { ...obj };
-              delete newObj._transformLocked;
-              delete newObj._lockTime;
-              delete newObj._positionLocked;
-
-              // Update position one final time if it changed
-              if (finalPosition && !isEqual(newObj.position, finalPosition)) {
-                newObj.position = [...finalPosition];
-                newObj._positionConfirmed = now;
-              }
-
-              return newObj;
-            }
-            return obj;
-          });
-          set({ objects: updatedObjects });
-
-          // Extend dragging block slightly after transform ends
-          setTimeout(() => {
-            get().removeDraggingObject(objId);
-          }, 300);
-        }
-      }, 150);
-    }
-  },
-
-  // Helper function to calculate new connection position after object move
-  calculateNewConnectionPosition: (connectionEnd, newObjectPosition) => {
-    if (!connectionEnd?.faceCenter) return null;
-
-    try {
-      // Re-calculate position based on new object position
-      const faceCenter = connectionEnd.faceCenter || [0, 0, 0];
-      const worldPos = new THREE.Vector3(...faceCenter);
-      const worldMatrix = new THREE.Matrix4()
-        .makeScale(...(connectionEnd.cube?.scale || [1, 1, 1]))
-        .setPosition(
-          newObjectPosition[0],
-          newObjectPosition[1],
-          newObjectPosition[2]
-        );
-      worldPos.applyMatrix4(worldMatrix);
-
-      // Return new position as array
-      return [worldPos.x, worldPos.y, worldPos.z];
-    } catch (err) {
-      console.error('Error calculating connection position:', err);
-      return null;
-    }
-  },
-
-  // Check if a received position update is likely jitter/oscillation
-  checkPositionJitter: (objId, newPosition) => {
-    const state = get();
-    const history = state.positionHistory.get(objId?.toString());
-    if (!history) return false;
-
-    // If this position is very close to a recent confirmed position, it's likely jitter
-    const dist = history.position.reduce(
-      (acc, val, idx) => acc + Math.pow(val - newPosition[idx], 2),
-      0
+    console.log(
+      `🔧 [FIXED DELETE] Starting deletion for object: ${objectIdStr}`
     );
 
-    // If squared distance is very small and the history is recent, consider it jitter
-    const isVeryClose = Math.sqrt(dist) < 0.05; // Threshold for "close enough"
-    const isRecentHistory = Date.now() - history.timestamp < 2000; // Within 2 seconds
+    // Prevent duplicate deletions
+    if (
+      window.currentlyDeletingObjects &&
+      window.currentlyDeletingObjects.has(objectIdStr)
+    ) {
+      console.log(
+        `⚠️ [FIXED DELETE] Object ${objectIdStr} already being deleted, skipping`
+      );
+      return;
+    }
 
-    return isVeryClose && isRecentHistory;
+    // Mark this object as being deleted
+    if (!window.currentlyDeletingObjects) {
+      window.currentlyDeletingObjects = new Set();
+    }
+    window.currentlyDeletingObjects.add(objectIdStr);
+
+    // Auto-cleanup after 10 seconds
+    setTimeout(() => {
+      if (window.currentlyDeletingObjects) {
+        window.currentlyDeletingObjects.delete(objectIdStr);
+        console.log(
+          `🧹 [FIXED DELETE] Auto-cleared deletion flag for ${objectIdStr}`
+        );
+      }
+    }, 10000);
+
+    // Find the object to get its position for spatial deletion
+    const objectToDelete = state.objects.find(
+      (obj) => obj.id.toString() === objectIdStr
+    );
+
+    if (!objectToDelete) {
+      console.log(`⚠️ [FIXED DELETE] Object ${objectIdStr} not found in store`);
+      window.currentlyDeletingObjects?.delete(objectIdStr);
+      return;
+    }
+
+    console.log(`🔧 [FIXED DELETE] Found object to delete:`, {
+      id: objectToDelete.id,
+      type: objectToDelete.type,
+      position: objectToDelete.position,
+    });
+
+    // Update UI first for responsiveness - ONLY remove the target object
+    const filteredObjects = state.objects.filter(
+      (obj) => obj.id.toString() !== objectIdStr
+    );
+
+    console.log(
+      `🔧 [FIXED DELETE] Removing object from UI store. Before: ${state.objects.length}, After: ${filteredObjects.length}`
+    );
+
+    set({ objects: filteredObjects });
+
+    if (state.selectedId === id) {
+      set({ selectedId: null });
+    }
+
+    // Delete connections for this object (should NOT delete other objects)
+    console.log(
+      `🔧 [FIXED DELETE] Starting connection cleanup for object: ${objectIdStr}`
+    );
+
+    // Try to get connections from the parameters first, then from the store
+    let relatedConnections = [];
+    if (connections && Array.isArray(connections)) {
+      console.log(
+        `🔧 [FIXED DELETE] Using connections from parameters (${connections.length} total)`
+      );
+      relatedConnections = connections.filter(
+        (conn) =>
+          conn.start?.objectId === objectIdStr ||
+          conn.end?.objectId === objectIdStr
+      );
+    } else {
+      console.log(
+        `🔧 [FIXED DELETE] No connections parameter, getting from store`
+      );
+      // Fallback: get connections from the store directly
+      const storeConnections = useConnectionStore.getState().connections;
+      console.log(
+        `🔧 [FIXED DELETE] Store has ${storeConnections.length} connections`
+      );
+      relatedConnections = storeConnections.filter(
+        (conn) =>
+          conn.start?.objectId === objectIdStr ||
+          conn.end?.objectId === objectIdStr
+      );
+    }
+
+    console.log(
+      `🔧 [FIXED DELETE] Found ${relatedConnections.length} connections to delete for object ${objectIdStr}:`,
+      relatedConnections.map((c) => ({
+        id: c.id,
+        startObj: c.start?.objectId,
+        endObj: c.end?.objectId,
+      }))
+    );
+
+    // Always call the store method to remove connections, even if array is empty
+    console.log(
+      `🔧 [FIXED DELETE] Calling deleteConnectionsByObject for: ${objectIdStr} in space: ${currentSpaceId}`
+    );
+    useConnectionStore
+      .getState()
+      .deleteConnectionsByObject(objectIdStr, currentSpaceId);
+
+    // Delete connections from database with enhanced error handling
+    if (relatedConnections.length > 0) {
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      console.log(
+        `🔧 [FIXED DELETE] About to delete ${relatedConnections.length} connections from database:`,
+        relatedConnections.map((c) => c.id)
+      );
+
+      // Delete connections from database asynchronously
+      (async () => {
+        try {
+          console.log(
+            `🔧 [FIXED DELETE] Starting database deletion for ${relatedConnections.length} connections`
+          );
+
+          // Import the enhanced connection deletion service
+          const { deleteConnection } = await import(
+            '../services/connectionsService'
+          );
+          const { removeConnectionFromAllCells } = await import(
+            '../services/spatialPartitioning'
+          );
+
+          const deletionResults = await Promise.all(
+            relatedConnections.map(async (conn) => {
+              console.log(
+                `🔧 [FIXED DELETE] Deleting connection ${conn.id} from database...`
+              );
+
+              let result = false;
+
+              try {
+                // First try the regular deletion service
+                result = await deleteConnection(
+                  spaceOwnerId,
+                  currentSpaceId,
+                  conn.id,
+                  conn // Pass the connection data
+                );
+
+                console.log(
+                  `🔧 [FIXED DELETE] Connection ${conn.id} deletion result:`,
+                  result
+                );
+
+                if (!result) {
+                  // If regular deletion failed, try the fallback method
+                  console.log(
+                    `🔧 [FIXED DELETE] Trying fallback deletion for connection ${conn.id}`
+                  );
+                  result = await removeConnectionFromAllCells(
+                    spaceOwnerId,
+                    currentSpaceId,
+                    conn.id
+                  );
+                  console.log(
+                    `🔧 [FIXED DELETE] Fallback deletion result for ${conn.id}:`,
+                    result
+                  );
+                }
+              } catch (error) {
+                console.error(
+                  `❌ [FIXED DELETE] Error deleting connection ${conn.id}:`,
+                  error
+                );
+                result = false;
+              }
+
+              return { connectionId: conn.id, success: result };
+            })
+          );
+
+          const successCount = deletionResults.filter((r) => r.success).length;
+          const failCount = deletionResults.length - successCount;
+
+          console.log(
+            `✅ [FIXED DELETE] Database deletion completed: ${successCount} successful, ${failCount} failed`
+          );
+
+          if (failCount > 0) {
+            const failedConnections = deletionResults.filter((r) => !r.success);
+            console.error(
+              `❌ [FIXED DELETE] Failed deletions:`,
+              failedConnections
+            );
+          }
+        } catch (error) {
+          console.error(
+            `❌ [FIXED DELETE] Error deleting connections from database:`,
+            error
+          );
+        }
+      })();
+    } else {
+      console.log(
+        `🔧 [FIXED DELETE] No connections found to delete from database for object ${objectIdStr}`
+      );
+    }
+
+    // Delete the object from database
+    const spaceOwnerId = window.currentSpaceOwner || user.uid;
+
+    if (objectToDelete?.position) {
+      console.log(
+        `🔧 [FIXED DELETE] Deleting object from database: ${objectIdStr}`
+      );
+
+      // Use async/await to ensure deletion completes before proceeding
+      (async () => {
+        try {
+          await deleteObjectFromSpatialCell(
+            spaceOwnerId,
+            currentSpaceId,
+            objectIdStr,
+            objectToDelete.position
+          );
+
+          console.log(
+            `✅ [FIXED DELETE] Successfully deleted object ${objectIdStr} from database`
+          );
+
+          // Clear the deletion flag
+          window.currentlyDeletingObjects?.delete(objectIdStr);
+        } catch (error) {
+          console.error(
+            `❌ [FIXED DELETE] Failed to delete object ${objectIdStr} from database:`,
+            error
+          );
+          window.currentlyDeletingObjects?.delete(objectIdStr);
+        }
+      })();
+    } else {
+      console.warn(
+        `⚠️ [FIXED DELETE] No position found for object ${objectIdStr}, skipping database deletion`
+      );
+      window.currentlyDeletingObjects?.delete(objectIdStr);
+    }
+
+    console.log(
+      `✅ [FIXED DELETE] Deletion process completed for object ${objectIdStr}`
+    );
   },
-
-  // Expose previous position for transform operations
-  getTransformStartPosition: (id) => {
-    if (!id) return null;
-    const state = get();
-    return state.transformPositions.get(id.toString());
-  },
-
   // Reset all object state
   resetObjects: () => {
     console.log('🔄 [Reset Debug] Resetting objects store to initial state');
@@ -1008,8 +889,6 @@ const useObjectsStore = create((set, get) => ({
       objects: [],
       isInitialLoading: true,
       hasLoadedInitialObjects: false,
-      recentlyDeletedObjects: new Map(),
-      deletedObjectTombstones: new Set(),
       lastUpdate: {},
       draggingObjects: new Set(),
       lastSaved: null,
@@ -1019,55 +898,6 @@ const useObjectsStore = create((set, get) => ({
       transformLockTime: new Map(),
       positionHistory: new Map(),
     });
-  },
-
-  // Tombstone system utilities
-  initializeTombstones: () => {
-    try {
-      const tombstones = JSON.parse(
-        localStorage.getItem('deletedObjectTombstones') || '[]'
-      );
-      if (tombstones.length > 0) {
-        console.log(
-          `🪦 [Tombstone] Loaded ${tombstones.length} tombstones from localStorage`
-        );
-        set({ deletedObjectTombstones: new Set(tombstones) });
-      }
-    } catch (error) {
-      console.warn('Failed to initialize tombstones from localStorage:', error);
-    }
-  },
-
-  clearTombstone: (id) => {
-    const state = get();
-    const newTombstones = new Set(state.deletedObjectTombstones);
-    newTombstones.delete(id.toString());
-    set({ deletedObjectTombstones: newTombstones });
-
-    // Also remove from localStorage
-    try {
-      const tombstones = JSON.parse(
-        localStorage.getItem('deletedObjectTombstones') || '[]'
-      );
-      const filteredTombstones = tombstones.filter((t) => t !== id.toString());
-      localStorage.setItem(
-        'deletedObjectTombstones',
-        JSON.stringify(filteredTombstones)
-      );
-      console.log(`🪦 [Tombstone] Cleared tombstone for object ${id}`);
-    } catch (error) {
-      console.warn('Failed to clear tombstone from localStorage:', error);
-    }
-  },
-
-  clearAllTombstones: () => {
-    set({ deletedObjectTombstones: new Set() });
-    try {
-      localStorage.removeItem('deletedObjectTombstones');
-      console.log('🪦 [Tombstone] Cleared all tombstones');
-    } catch (error) {
-      console.warn('Failed to clear all tombstones from localStorage:', error);
-    }
   },
 }));
 

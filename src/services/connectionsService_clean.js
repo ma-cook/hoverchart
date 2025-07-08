@@ -5,12 +5,10 @@ import {
   doc,
   onSnapshot,
 } from 'firebase/firestore';
-import { enableIndexedDbPersistence } from 'firebase/firestore';
 import { isSharedSpace } from './sharedSpacesService';
 import {
   addConnectionToCells,
   removeConnectionFromCells,
-  getOccupiedCells,
 } from './spatialPartitioning';
 import useConnectionStore from '../stores/connectionStore';
 
@@ -21,14 +19,7 @@ import {
   SUBSCRIPTION_TYPES,
 } from './globalSubscriptionManager';
 
-// Enable offline persistence
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') {
-    // Multiple tabs open, persistence can only be enabled in one tab at a time.
-  } else if (err.code === 'unimplemented') {
-    // Browser doesn't support persistence
-  }
-});
+// Note: Firestore persistence is now configured in firebase.js
 
 // Add connection state tracking - keep simple tracking but remove reconnection logic
 let isNetworkEnabled = true;
@@ -234,36 +225,10 @@ const subscribeToCellConnections = (
       // Use the owner's ID to get connections from the correct cells
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
 
-      // If no cells are loaded yet, try to discover cells with connections for initial load
+      // If no cells are loaded, skip subscription since there's no area to monitor
       if (effectiveCells.length === 0) {
-        console.log(
-          '🔗 No loaded cells, discovering cells with connections for initial load'
-        );
-        try {
-          // Try to get occupied cells that might have connections
-          const occupiedCells = await getOccupiedCells(userId, spaceId);
-
-          if (occupiedCells && occupiedCells.length > 0) {
-            // Use first few occupied cells for initial connection loading
-            effectiveCells = occupiedCells.slice(0, 3); // Limit to first 3 cells to avoid loading too much
-            console.log(
-              '🔗 Using occupied cells for initial connection load:',
-              effectiveCells
-            );
-          } else {
-            // Fallback to origin cell
-            effectiveCells = ['0,0,0'];
-            console.log(
-              '🔗 No occupied cells found, using origin cell as fallback'
-            );
-          }
-        } catch (error) {
-          console.warn(
-            '🔗 Failed to discover occupied cells, using origin cell fallback:',
-            error
-          );
-          effectiveCells = ['0,0,0'];
-        }
+        console.log('🔗 No cells loaded, skipping connection subscription');
+        return;
       }
 
       // Subscribe to each loaded cell

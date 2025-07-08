@@ -28,14 +28,14 @@ export function calculateMidpoint(pos1, pos2) {
 export function calculateMidpointVector(pos1, pos2) {
   // Convert to Vector3 if they're arrays
   const v1 = Array.isArray(pos1)
-    ? new THREE.Vector3(pos1[0], pos1[1], pos1[2])
-    : pos1;
-
+    ? new THREE.Vector3(...pos1)
+    : new THREE.Vector3(pos1.x, pos1.y, pos1.z);
   const v2 = Array.isArray(pos2)
-    ? new THREE.Vector3(pos2[0], pos2[1], pos2[2])
-    : pos2;
+    ? new THREE.Vector3(...pos2)
+    : new THREE.Vector3(pos2.x, pos2.y, pos2.z);
 
-  return v1.clone().add(v2).multiplyScalar(0.5);
+  // Calculate midpoint
+  return new THREE.Vector3().addVectors(v1, v2).multiplyScalar(0.5);
 }
 
 // Additional utility for calculating a point along a line at a given fraction (0-1)
@@ -49,3 +49,26 @@ export function lerp(a, b, t) {
   }
   return 0;
 }
+
+// Check if a position change is just jitter
+export function checkPositionJitter(oldPos, newPos, threshold = 0.001) {
+  if (!oldPos || !newPos) return false;
+
+  // Handle array positions
+  if (Array.isArray(oldPos) && Array.isArray(newPos)) {
+    return (
+      Math.abs(oldPos[0] - newPos[0]) < threshold &&
+      Math.abs(oldPos[1] - newPos[1]) < threshold &&
+      Math.abs(oldPos[2] - newPos[2]) < threshold
+    );
+  }
+
+  // Handle Vector3 or object positions
+  return (
+    Math.abs(oldPos.x - newPos.x) < threshold &&
+    Math.abs(oldPos.y - newPos.y) < threshold &&
+    Math.abs(oldPos.z - newPos.z) < threshold
+  );
+}
+
+// Export other position-related utilities...

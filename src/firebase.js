@@ -6,7 +6,7 @@ import {
   setPersistence,
   browserLocalPersistence,
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
 import { getStorage } from 'firebase/storage';
 
@@ -24,6 +24,16 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+
+// Initialize Firestore with cache enabled
+const db = initializeFirestore(app, {
+  cache: {
+    // Use persistent cache (IndexedDB)
+    persistenceEnabled: true,
+    // Enable synchronization between tabs
+    synchronizeTabs: true,
+  },
+});
 
 // Set persistence and handle token refresh
 setPersistence(auth, browserLocalPersistence)
@@ -48,7 +58,6 @@ provider.setCustomParameters({
   prompt: 'select_account',
 });
 
-const db = getFirestore(app);
 const database = getDatabase(app);
 const storage = getStorage(app);
 

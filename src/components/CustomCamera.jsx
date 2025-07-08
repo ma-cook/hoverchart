@@ -34,15 +34,6 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
       scene.orbitControls = controlsRef.current;
       // Also make orbit controls globally available for text objects to pause/resume
       window.orbitControls = controlsRef.current;
-      console.log(
-        '🎮 CustomCamera: Orbit controls set up and globally available',
-        {
-          controls: controlsRef.current,
-          enabled: controlsRef.current.enabled,
-          windowHasControls: !!window.orbitControls,
-          sceneHasControls: !!scene.orbitControls,
-        }
-      );
     }
   }, [scene]);
 
@@ -65,10 +56,6 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
             scene.orbitControls = controls;
             // Make orbit controls globally available for text objects to pause/resume
             window.orbitControls = controls;
-            console.log('🎮 CustomCamera: Orbit controls ref callback', {
-              controls: controls,
-              enabled: controls.enabled,
-            });
           }
         }}
         args={[cameraRef.current, gl.domElement]}

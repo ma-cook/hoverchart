@@ -6,6 +6,7 @@ import ObjectUI from './ObjectUI';
 import TextSprite from './TextSprite';
 import HeaderInput from './HeaderInput';
 import { useDodecahedronStore, useObjectsStore } from '../stores';
+import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
@@ -699,19 +700,65 @@ const Sphere = React.memo(
     };
     const handleDrag = (e) => {
       // Get new position from the transform controls event
-      const newPos = e.target.object.position;
+      if (!e.target || !e.target.object || !e.target.object.position) {
+        console.error('Invalid transform event in Dodecahedron handleDrag');
+        return;
+      }
 
-      // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
-      const objectsStore = useObjectsStore.getState();
-      const currentObjects = objectsStore.objects;
-      const updatedObjects = currentObjects.map((obj) =>
-        obj.id === id
-          ? { ...obj, position: [newPos.x, newPos.y, newPos.z] }
-          : obj
-      );
-      objectsStore.setObjects(updatedObjects); // Use the spatial system via onMove instead of direct onUpdate
-      if (onMove) {
-        onMove([newPos.x, newPos.y, newPos.z]);
+      const newPos = e.target.object.position;
+      // Ensure we have valid numerical values for position
+      if (
+        typeof newPos.x !== 'number' ||
+        typeof newPos.y !== 'number' ||
+        typeof newPos.z !== 'number'
+      ) {
+        console.error(
+          'Invalid position values in Dodecahedron handleDrag',
+          newPos
+        );
+        return;
+      }
+
+      const currentPosition = [newPos.x, newPos.y, newPos.z];
+
+      try {
+        // Get all objects for axis snapping calculation
+        const objectsStore = useObjectsStore.getState();
+        const currentObjects = Array.isArray(objectsStore.objects)
+          ? objectsStore.objects
+          : [];
+
+        // Calculate any axis snapping using our utility
+        const snappedPosition = calculateAxisSnap(
+          currentPosition,
+          currentObjects,
+          id
+        );
+
+        // Use snapped position if available, otherwise use current position
+        const finalPosition = snappedPosition || currentPosition;
+
+        // If snapping occurred, update the object's position in the scene
+        if (snappedPosition) {
+          e.target.object.position.set(
+            snappedPosition[0],
+            snappedPosition[1],
+            snappedPosition[2]
+          );
+        }
+
+        // Update the objects store position immediately for real-time connection updates
+        const updatedObjects = currentObjects.map((obj) =>
+          obj.id === id ? { ...obj, position: finalPosition } : obj
+        );
+        objectsStore.setObjects(updatedObjects);
+
+        // Use the spatial system via onMove instead of direct onUpdate
+        if (onMove) {
+          onMove(finalPosition);
+        }
+      } catch (error) {
+        console.error('Error in Dodecahedron handleDrag:', error);
       }
     }; // Add handler for scale changes from TransformControls
     const handleScale = (e) => {

@@ -83,16 +83,9 @@ export const TextStyleUIContent = ({
     return Math.min(Math.max(baseScale, minScale), maxScale);
   }; // Only show relevant tools based on uiType
   const showTools = {
-    header: [
-      'size',
-      'color',
-      'bold',
-      'italic',
-      'underline',
-      'transform',
-      'resize',
-    ],
-    faceText: ['size', 'color', 'bold', 'italic', 'underline'],
+    header: ['size', 'color', 'transform', 'resize'],
+    connection: ['size', 'color'], // Only size and color for connections
+    faceText: ['size', 'color'], // Only size and color for face text
     textObject: [
       'size',
       'color',

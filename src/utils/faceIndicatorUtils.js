@@ -346,6 +346,19 @@ export const handleFaceIndicatorClick = async ({
     // Save to database; if error, rollback state
     if (user) {
       try {
+        // Check if connection is being deleted before saving
+        const connectionStore = useConnectionStore.getState();
+        if (connectionStore.deletingConnections.has(connectionId)) {
+          console.log(
+            `🚫 [faceIndicatorUtils] Connection ${connectionId} is being deleted, not saving to database`
+          );
+          return {
+            success: false,
+            complete: true,
+            message: 'Connection is being deleted',
+          };
+        }
+
         const spaceOwnerId = window.currentSpaceOwner || user.uid;
         console.log('🔄 Saving connection to database...', {
           connectionId,

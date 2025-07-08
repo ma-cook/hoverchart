@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useObjectsStore } from '../stores';
+import useConnectionStore from '../stores/connectionStore';
 
 /**
  * Custom hook to manage objects state and operations
@@ -14,7 +15,6 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
     handleCreateObject: storeHandleCreateObject,
     handleObjectDelete: storeHandleObjectDelete,
     registerTransformingObject: storeRegisterTransformingObject,
-    checkPositionJitter,
     getTransformStartPosition,
     // Internal refs equivalent
     draggingObjects,
@@ -47,7 +47,10 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
     );
   };
   const handleObjectDelete = (id) => {
-    storeHandleObjectDelete(id, user, currentSpaceId);
+    // Get connections from the connection store
+    const connections = useConnectionStore.getState().connections;
+
+    storeHandleObjectDelete(id, user, currentSpaceId, connections);
   };
 
   const registerTransformingObject = (id, isTransforming, position) => {
@@ -73,6 +76,5 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
     registerTransformingObject,
     transformingObjectsRef,
     getTransformStartPosition,
-    checkPositionJitter,
   };
 }

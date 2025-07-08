@@ -18,16 +18,7 @@ export const handleObjectMove = ({
   setObjects,
   user,
   currentSpaceId,
-  checkPositionJitter,
 }) => {
-  console.log(`🎯 [handleObjectMove] Called for ${id}:`, {
-    newPosition,
-    isDragStart,
-    isDragEnd,
-    hasUser: !!user,
-    hasSpaceId: !!currentSpaceId,
-  });
-
   const objectId = id.toString();
 
   if (isDragStart) {
@@ -55,18 +46,10 @@ export const handleObjectMove = ({
       return prev;
     }
 
-    // Skip if we think this is oscillation jitter
-    if (
-      checkPositionJitter &&
-      existingObject.position &&
-      checkPositionJitter(objectId, [
-        newPosition.x,
-        newPosition.y,
-        newPosition.z,
-      ])
-    ) {
-      return prev;
-    } // Create updated objects array - prevent jitter by not changing refs
+    // Position jitter checking is now handled at the App.jsx level
+    // through checkPositionJitterWithHistory before calling this function
+
+    // Create updated objects array - prevent jitter by not changing refs
     const updatedObjects = prev.map((obj) => {
       if (obj.id === id) {
         // Form new object carefully to avoid unnecessary re-renders
@@ -80,14 +63,7 @@ export const handleObjectMove = ({
       }
       return obj;
     });
-    console.log(
-      `🔄 [setObjects] Objects array updated, triggering store change`
-    );
-    console.log(`🔄 [setObjects] Updated object ${id} position to:`, [
-      newPosition.x,
-      newPosition.y,
-      newPosition.z,
-    ]);
+
     return updatedObjects;
   });
   // Find connections related to this object and update them
@@ -167,28 +143,14 @@ export const handleObjectMove = ({
   */
   // ONLY save to database when drag ends
   if (user && isDragEnd) {
-    console.log(
-      `🎯 [handleObjectMove] DRAG END - Starting save process for ${id}`
-    );
-
     // Find the object from current state, not the passed objects array
     // to ensure we have the most recent state
     const currentObjects = objects || [];
     const object = currentObjects.find((obj) => obj.id === id);
 
     if (object) {
-      console.log(`🎯 [handleObjectMove] Found object for saving:`, {
-        id: object.id,
-        currentPosition: object.position,
-        newPosition: [newPosition.x, newPosition.y, newPosition.z],
-        transformLocked: object._transformLocked,
-      });
-
       // Skip saving if this object is transform locked
       if (object._transformLocked) {
-        console.log(
-          `🎯 [handleObjectMove] Skipping save - object is transform locked`
-        );
         draggingObjectsRef.current.delete(objectId);
         return;
       }
@@ -203,20 +165,11 @@ export const handleObjectMove = ({
       delete updatedObject._moveTimestamp;
       delete updatedObject._transformActive;
 
-      console.log(`🎯 [handleObjectMove] About to save object to database:`, {
-        id: updatedObject.id,
-        position: updatedObject.position,
-        spaceOwnerId: window.currentSpaceOwner || user.uid,
-        currentSpaceId,
-      }); // Save immediately to prevent Firebase from overriding with old position
       (async () => {
         try {
           // Check if we're still in initial loading phase
           const { isInitialLoading } = useObjectsStore.getState();
           if (isInitialLoading) {
-            console.log(
-              `⏸️ [handleObjectMove] Skipping save for object ${id} - still in initial loading phase`
-            );
             // Still remove from dragging set and clear flags
             setTimeout(() => {
               draggingObjectsRef.current.delete(objectId);
@@ -225,18 +178,12 @@ export const handleObjectMove = ({
           }
 
           const spaceOwnerId = window.currentSpaceOwner || user.uid;
-          console.log(`🎯 [handleObjectMove] Calling saveObjectToCell...`);
+
           await saveObjectToCell(spaceOwnerId, currentSpaceId, updatedObject);
-          console.log(
-            `🎯 [handleObjectMove] ✅ Successfully saved object ${id} to database`
-          );
 
           // Clear transitioning flag if object was being transitioned between cells
           if (window.transitioningObjectsRef?.current?.has(id.toString())) {
             window.transitioningObjectsRef.current.delete(id.toString());
-            console.log(
-              `🔄 Cleared transitioning flag for object ${id} after successful save`
-            );
           }
 
           // IMPORTANT: Trigger immediate connection saves when object movement ends
@@ -244,18 +191,52 @@ export const handleObjectMove = ({
           try {
             const { useConnectionStore } = await import('../stores');
             const { usePublicSpaceStore } = await import('../stores');
+            const { useObjectsStore } = await import('../stores');
 
             const connections = useConnectionStore.getState().connections;
+            const connectionStore = useConnectionStore.getState();
+            const objects = useObjectsStore.getState().objects;
             const saveConnectionsImmediately =
               usePublicSpaceStore.getState().saveConnectionsImmediately; // Save connections that were updated during this object movement
             // BUT EXCLUDE visual-only updates from RealTimeConnectionUpdater
-            const connectionsToSave = connections.filter(
-              (conn) =>
-                !conn._visualUpdate && // Skip visual-only updates
-                (conn._moveTimestamp || conn._needsSave) // Only save if explicitly marked for saving
-            );
+            // AND EXCLUDE connections that are being deleted or reference deleted objects
+            const connectionsToSave = connections.filter((conn) => {
+              // Skip visual-only updates
+              if (conn._visualUpdate) return false;
+
+              // Only save if explicitly marked for saving
+              if (!conn._moveTimestamp && !conn._needsSave) return false;
+
+              // Skip connections in deletion blacklist
+              if (connectionStore.deletingConnections.has(conn.id)) {
+                console.log(
+                  `🚫 [objectUpdateHandlers] Skipping save for deleted connection: ${conn.id}`
+                );
+                return false;
+              }
+
+              // Skip connections with missing objects
+              const startObjectExists = objects.some(
+                (obj) => obj.id.toString() === conn.start?.objectId
+              );
+              const endObjectExists = objects.some(
+                (obj) => obj.id.toString() === conn.end?.objectId
+              );
+
+              if (!startObjectExists || !endObjectExists) {
+                console.log(
+                  `🚫 [objectUpdateHandlers] Skipping save for connection with missing objects: ${conn.id} (start: ${startObjectExists}, end: ${endObjectExists})`
+                );
+                return false;
+              }
+
+              return true;
+            });
 
             if (connectionsToSave.length > 0) {
+              console.log(
+                `💾 [objectUpdateHandlers] Saving ${connectionsToSave.length} connections after object movement`
+              );
               await saveConnectionsImmediately(
                 connectionsToSave,
                 user,
@@ -337,9 +318,6 @@ export const handleObjectUpdate = ({
   // Check if we're still in initial loading phase
   const { isInitialLoading } = useObjectsStore.getState();
   if (isInitialLoading) {
-    console.log(
-      `⏸️ [handleObjectUpdate] Skipping save for object ${id} - still in initial loading phase`
-    );
     return;
   }
 

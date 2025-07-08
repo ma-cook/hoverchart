@@ -20,6 +20,7 @@ import isEqual from 'lodash/isEqual';
 import { uploadImageToStorage } from '../services/storageService';
 import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
 import { usePlaneStore, useObjectsStore, useConnectionStore } from '../stores';
+import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 
 // Mobile detection constant
 const isMobile =
@@ -341,7 +342,8 @@ const Plane = ({
             // Dispose of the previous material if it exists
             if (meshRef.current.material && meshRef.current.material.map) {
               meshRef.current.material.map.dispose();
-            }            if (meshRef.current.material) {
+            }
+            if (meshRef.current.material) {
               meshRef.current.material.dispose();
             }
 
@@ -593,21 +595,62 @@ const Plane = ({
   const handleDrag = useCallback(
     (e) => {
       // Get new position from the transform controls event
+      if (!e.target || !e.target.object || !e.target.object.position) {
+        console.error('Invalid transform event in Plane handleDrag');
+        return;
+      }
+
       const newPos = e.target.object.position;
+      // Ensure we have valid numerical values for position
+      if (
+        typeof newPos.x !== 'number' ||
+        typeof newPos.y !== 'number' ||
+        typeof newPos.z !== 'number'
+      ) {
+        console.error('Invalid position values in Plane handleDrag', newPos);
+        return;
+      }
 
-      // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
-      const objectsStore = useObjectsStore.getState();
-      const currentObjects = objectsStore.objects;
-      const updatedObjects = currentObjects.map((obj) =>
-        obj.id === id
-          ? { ...obj, position: [newPos.x, newPos.y, newPos.z] }
-          : obj
-      );
-      objectsStore.setObjects(updatedObjects);
+      const currentPosition = [newPos.x, newPos.y, newPos.z];
 
-      // Use the spatial system via onMove instead of direct onUpdate
-      if (onMove) {
-        onMove([newPos.x, newPos.y, newPos.z]);
+      try {
+        // Get all objects for axis snapping calculation
+        const objectsStore = useObjectsStore.getState();
+        const currentObjects = Array.isArray(objectsStore.objects)
+          ? objectsStore.objects
+          : [];
+
+        // Calculate any axis snapping using our utility
+        const snappedPosition = calculateAxisSnap(
+          currentPosition,
+          currentObjects,
+          id
+        );
+
+        // Use snapped position if available, otherwise use current position
+        const finalPosition = snappedPosition || currentPosition;
+
+        // If snapping occurred, update the object's position in the scene
+        if (snappedPosition) {
+          e.target.object.position.set(
+            snappedPosition[0],
+            snappedPosition[1],
+            snappedPosition[2]
+          );
+        }
+
+        // Update the objects store position immediately for real-time connection updates
+        const updatedObjects = currentObjects.map((obj) =>
+          obj.id === id ? { ...obj, position: finalPosition } : obj
+        );
+        objectsStore.setObjects(updatedObjects);
+
+        // Use the spatial system via onMove instead of direct onUpdate
+        if (onMove) {
+          onMove(finalPosition);
+        }
+      } catch (error) {
+        console.error('Error in Plane handleDrag:', error);
       }
     },
     [id, onMove]
@@ -704,7 +747,8 @@ const Plane = ({
         if (meshRef.current) {
           if (meshRef.current.material) {
             meshRef.current.material.dispose();
-          }          const material = new THREE.MeshBasicMaterial({
+          }
+          const material = new THREE.MeshBasicMaterial({
             color: newColor,
             transparent: true,
             opacity: 1,
@@ -1177,7 +1221,7 @@ const Plane = ({
               }
               if (meshRef.current.material) {
                 meshRef.current.material.dispose();
-              }              // Create new material with the texture
+              } // Create new material with the texture
               const material = new THREE.MeshBasicMaterial({
                 map: texture,
                 transparent: true,
@@ -1290,7 +1334,8 @@ const Plane = ({
   }, [plane?.scale, scale]);
 
   const indicatorPosition = useMemo(() => [0, -size - 1, 0], [size]);
-  const meshMaterial = useMemo(() => {    // If we have an image texture, use it
+  const meshMaterial = useMemo(() => {
+    // If we have an image texture, use it
     if (plane?.imageTexture) {
       return (
         <meshBasicMaterial
@@ -1347,7 +1392,9 @@ const Plane = ({
     <>
       <group ref={groupRef} position={position}>
         {' '}
-        <group ref={contentRef} scale={scale}>          <mesh ref={meshRef} onClick={handleClick} renderOrder={-2}>
+        <group ref={contentRef} scale={scale}>
+          {' '}
+          <mesh ref={meshRef} onClick={handleClick} renderOrder={-2}>
             <planeGeometry args={[size * 2 - 0.2, size * 2 - 0.2]} />
             {meshMaterial}
           </mesh>{' '}

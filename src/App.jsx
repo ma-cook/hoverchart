@@ -33,6 +33,7 @@ import {
   handleObjectUpdate,
 } from './utils/objectUpdateHandlers';
 import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
+import { checkPositionJitter } from './utils/positionUtils';
 
 import { signInUser } from './services/authService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
@@ -61,7 +62,6 @@ const App = () => {
     return Array.isArray(objectsFromStore) ? objectsFromStore : [];
   }, [objectsFromStore]);
   const setObjects = useObjectsStore((state) => state.setObjects);
-  const isRecentlyDeleted = useObjectsStore((state) => state.isRecentlyDeleted);
   const setIsInitialLoading = useObjectsStore(
     (state) => state.setIsInitialLoading
   ); // Plane store
@@ -131,12 +131,7 @@ const App = () => {
     initPerformanceTracking();
   }, []);
 
-  // Initialize tombstone system for tracking deleted objects
-  useEffect(() => {
-    const initializeTombstones =
-      useObjectsStore.getState().initializeTombstones;
-    initializeTombstones();
-  }, []);
+  // REMOVED: No longer using tombstone tracking
 
   // Initialize animation system for connection line animations
   useEffect(() => {
@@ -184,7 +179,36 @@ const App = () => {
     handleLineTextClick,
     handleLineTextSubmit,
     handleLineTextStyleChange,
-  } = useConnections({ user, currentSpaceId: effectiveSpaceId, loadedCells }); // Objects hook gets the connections from above
+  } = useConnections({ user, currentSpaceId: effectiveSpaceId, loadedCells });
+
+  // Create position jitter checker that uses object store history
+  const checkPositionJitterWithHistory = useCallback(
+    (objectId, newPosition) => {
+      const objectsStore = useObjectsStore.getState();
+      const history =
+        objectsStore.positionHistory.get(objectId.toString()) || [];
+
+      if (history.length === 0) {
+        // No history, record this position and allow
+        objectsStore.setPositionHistory(objectId.toString(), [newPosition]);
+        return false;
+      }
+
+      const lastPosition = history[history.length - 1];
+      const isJitter = checkPositionJitter(lastPosition, newPosition, 0.001);
+
+      if (!isJitter) {
+        // Position change is significant, update history
+        const newHistory = [...history.slice(-4), newPosition]; // Keep last 5 positions
+        objectsStore.setPositionHistory(objectId.toString(), newHistory);
+      }
+
+      return isJitter;
+    },
+    []
+  );
+
+  // Objects hook gets the connections from above
   const {
     selectedId,
     setSelectedId,
@@ -195,7 +219,6 @@ const App = () => {
     registerTransformingObject, // Get the transform function
     transformingObjectsRef, // Get the transform ref
     getTransformStartPosition, // Add this new property
-    checkPositionJitter, // Get the jitter check function
   } = useObjects({
     user,
     currentSpaceId,
@@ -326,6 +349,20 @@ const App = () => {
     window._currentSpaceId = currentSpaceId;
     window._currentUserId = user?.uid;
     window._firebaseDb = db;
+
+    // Setup global context for stores that need it
+    window.currentSpaceId = currentSpaceId;
+    window.currentUser = user;
+
+    // Debug logging for space ID availability
+    if (currentSpaceId) {
+      console.log('🌍 [App] Setting global space context:', {
+        currentSpaceId,
+        userId: user?.uid,
+      });
+    } else {
+      console.warn('⚠️ [App] No currentSpaceId available for global context');
+    }
   }, [user, currentSpaceId, isAuthReady]);
   const isReadOnly =
     !!publicSpaceId && (!user || currentSpaceOwner !== user?.uid);
@@ -548,14 +585,32 @@ const App = () => {
         currentSetObjects((prev) => {
           switch (change.type) {
             case 'added': {
+              // Check deletion blacklist before adding object
+              // Import deletion status check dynamically to avoid circular dependencies
+              try {
+                // Check if object is in deletion blacklist
+                if (window.getObjectDeletionStatus) {
+                  const deletionStatus = window.getObjectDeletionStatus();
+                  if (
+                    deletionStatus &&
+                    deletionStatus.deletingObjects.includes(
+                      change.id.toString()
+                    )
+                  ) {
+                    console.log(
+                      `🚫 [App] Blocked re-adding object during deletion: ${change.id}`
+                    );
+                    return prev;
+                  }
+                }
+              } catch (error) {
+                // If deletion status check fails, continue with normal flow
+                console.warn('Could not check deletion status:', error);
+              }
+
               // Track object change for spatial operation detection
               if (window.trackObjectChange) {
                 window.trackObjectChange(change.id, 'add');
-              }
-
-              // Check if this object was recently deleted
-              if (isRecentlyDeleted(change.id)) {
-                return prev;
               }
 
               // Clear transitioning flag if object is being re-added
@@ -940,7 +995,7 @@ const App = () => {
         } // If position looks like jitter (oscillation), skip it - but not for final positions
         if (
           !updates._finalPosition &&
-          checkPositionJitter(id, updates.position)
+          checkPositionJitterWithHistory(id, updates.position)
         ) {
           const updatesWithoutPosition = { ...updates };
           delete updatesWithoutPosition.position;
@@ -972,7 +1027,7 @@ const App = () => {
       effectiveSpaceId, // Use effectiveSpaceId
       lastUpdateRef,
       transformingObjectsRef,
-      checkPositionJitter,
+      checkPositionJitterWithHistory,
     ]
   );
   // Face indicator click handler
@@ -1182,7 +1237,7 @@ const App = () => {
         handleIndicatorSelected={handleIndicatorSelected}
         globalIndicatorSelected={globalIndicatorSelected}
         handleObjectDelete={handleObjectDelete}
-        checkPositionJitter={checkPositionJitter}
+        checkPositionJitter={checkPositionJitterWithHistory}
         user={user}
         currentSpaceId={effectiveSpaceId}
         useLOD={useLOD}
@@ -1213,7 +1268,7 @@ const App = () => {
     handleIndicatorSelected,
     globalIndicatorSelected,
     handleObjectDelete,
-    checkPositionJitter,
+    checkPositionJitterWithHistory,
     user,
     effectiveSpaceId,
   ]);
