@@ -38,6 +38,9 @@ const useDodecahedronStore = create((set, get) => ({
         selectedIndicator: null,
         isConnected: false,
         connectedFaces: new Set(),
+        showSnapLine: false,
+        snapLinePoints: [],
+        snapAxis: null,
         isScaleModified: false,
         ...initialState,
       });

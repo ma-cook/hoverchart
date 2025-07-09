@@ -21,6 +21,7 @@ import { uploadImageToStorage } from '../services/storageService';
 import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
 import { usePlaneStore, useObjectsStore, useConnectionStore } from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
+import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 
 // Mobile detection constant
 const isMobile =
@@ -621,22 +622,37 @@ const Plane = ({
           : [];
 
         // Calculate any axis snapping using our utility
-        const snappedPosition = calculateAxisSnap(
+        const snapResult = calculateAxisSnap(
           currentPosition,
           currentObjects,
           id
         );
 
         // Use snapped position if available, otherwise use current position
-        const finalPosition = snappedPosition || currentPosition;
+        const finalPosition = snapResult?.position || currentPosition;
 
-        // If snapping occurred, update the object's position in the scene
-        if (snappedPosition) {
+        // If snapping occurred, update the object's position in the scene and show indicator
+        if (snapResult) {
           e.target.object.position.set(
-            snappedPosition[0],
-            snappedPosition[1],
-            snappedPosition[2]
+            snapResult.position[0],
+            snapResult.position[1],
+            snapResult.position[2]
           );
+
+          // Update plane store with snap info for the visual indicator
+          updatePlane(id, {
+            showSnapLine: true,
+            snapLinePoints: snapResult.linePoints,
+            snapAxis: snapResult.snapAxis,
+          });
+
+          // Auto-hide the snap line after 2 seconds
+          setTimeout(() => {
+            updatePlane(id, { showSnapLine: false });
+          }, 2000);
+        } else {
+          // No snapping, ensure indicator is hidden
+          updatePlane(id, { showSnapLine: false });
         }
 
         // Update the objects store position immediately for real-time connection updates
@@ -653,7 +669,7 @@ const Plane = ({
         console.error('Error in Plane handleDrag:', error);
       }
     },
-    [id, onMove]
+    [id, onMove, updatePlane]
   );
 
   const handleTransformStart = useCallback(() => {
@@ -1390,6 +1406,14 @@ const Plane = ({
   );
   return (
     <>
+      {/* Snap line indicator - only visible during snapping */}
+      {plane?.showSnapLine && (
+        <SnapLineIndicator
+          points={plane.snapLinePoints}
+          axis={plane.snapAxis}
+          visible={plane.showSnapLine}
+        />
+      )}
       <group ref={groupRef} position={position}>
         {' '}
         <group ref={contentRef} scale={scale}>

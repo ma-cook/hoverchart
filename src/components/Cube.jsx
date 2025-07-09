@@ -1,4 +1,10 @@
-import React, { useRef, useMemo, useEffect, useCallback } from 'react';
+import React, {
+  useRef,
+  useState,
+  useMemo,
+  useEffect,
+  useCallback,
+} from 'react';
 
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -15,6 +21,8 @@ import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
 import { useCubeStore, useObjectsStore, useConnectionStore } from '../stores';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
+// Import snap line indicator
+import SnapLineIndicator from './SnapLineIndicator';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -903,23 +911,34 @@ const Cube = ({
         ? objectsStore.objects
         : [];
 
-      // Calculate any axis snapping using our utility - it returns an array [x,y,z] or null
-      const snappedPosition = calculateAxisSnap(
-        currentPosition,
-        currentObjects,
-        id
-      );
+      // Calculate any axis snapping using our utility
+      const snapResult = calculateAxisSnap(currentPosition, currentObjects, id);
 
       // Use snapped position if available, otherwise use current position
-      const finalPosition = snappedPosition || currentPosition;
+      const finalPosition = snapResult?.position || currentPosition;
 
-      // If snapping occurred, update the object's position in the scene
-      if (snappedPosition) {
+      // If snapping occurred, update the object's position in the scene and show indicator
+      if (snapResult) {
         e.target.object.position.set(
-          snappedPosition[0],
-          snappedPosition[1],
-          snappedPosition[2]
+          snapResult.position[0],
+          snapResult.position[1],
+          snapResult.position[2]
         );
+
+        // Update cube store with snap info for the visual indicator
+        updateCube(id, {
+          showSnapLine: true,
+          snapLinePoints: snapResult.linePoints,
+          snapAxis: snapResult.snapAxis,
+        });
+
+        // Auto-hide the snap line after 2 seconds
+        setTimeout(() => {
+          updateCube(id, { showSnapLine: false });
+        }, 2000);
+      } else {
+        // No snapping, ensure indicator is hidden
+        updateCube(id, { showSnapLine: false });
       }
 
       // Update the objects store position immediately for real-time connection updates
@@ -1194,6 +1213,14 @@ const Cube = ({
 
   return (
     <>
+      {/* Snap line indicator - only visible during snapping */}
+      {cube?.showSnapLine && (
+        <SnapLineIndicator
+          points={cube.snapLinePoints}
+          axis={cube.snapAxis}
+          visible={cube.showSnapLine}
+        />
+      )}
       {/* Main cube group */}{' '}
       <group
         ref={contentRef}

@@ -27,6 +27,10 @@ const useCubeStore = create((set, get) => ({
           right: { fontSize: 0.5, color: 'black', underline: false },
           left: { fontSize: 0.5, color: 'black', underline: false },
         },
+        // Properties for snap line indicator
+        showSnapLine: false,
+        snapLinePoints: [],
+        snapAxis: null,
         selectedFace: null,
         selectedIndicator: null,
         showTransform: false,

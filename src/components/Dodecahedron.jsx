@@ -7,6 +7,7 @@ import TextSprite from './TextSprite';
 import HeaderInput from './HeaderInput';
 import { useDodecahedronStore, useObjectsStore } from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
+import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
@@ -698,69 +699,87 @@ const Sphere = React.memo(
         setDodecahedronShowTransform(id, false);
       }
     };
-    const handleDrag = (e) => {
-      // Get new position from the transform controls event
-      if (!e.target || !e.target.object || !e.target.object.position) {
-        console.error('Invalid transform event in Dodecahedron handleDrag');
-        return;
-      }
+    const handleDrag = useCallback(
+      (e) => {
+        // Get new position from the transform controls event
+        if (!e.target || !e.target.object || !e.target.object.position) {
+          console.error('Invalid transform event in Dodecahedron handleDrag');
+          return;
+        }
 
-      const newPos = e.target.object.position;
-      // Ensure we have valid numerical values for position
-      if (
-        typeof newPos.x !== 'number' ||
-        typeof newPos.y !== 'number' ||
-        typeof newPos.z !== 'number'
-      ) {
-        console.error(
-          'Invalid position values in Dodecahedron handleDrag',
-          newPos
-        );
-        return;
-      }
-
-      const currentPosition = [newPos.x, newPos.y, newPos.z];
-
-      try {
-        // Get all objects for axis snapping calculation
-        const objectsStore = useObjectsStore.getState();
-        const currentObjects = Array.isArray(objectsStore.objects)
-          ? objectsStore.objects
-          : [];
-
-        // Calculate any axis snapping using our utility
-        const snappedPosition = calculateAxisSnap(
-          currentPosition,
-          currentObjects,
-          id
-        );
-
-        // Use snapped position if available, otherwise use current position
-        const finalPosition = snappedPosition || currentPosition;
-
-        // If snapping occurred, update the object's position in the scene
-        if (snappedPosition) {
-          e.target.object.position.set(
-            snappedPosition[0],
-            snappedPosition[1],
-            snappedPosition[2]
+        const newPos = e.target.object.position;
+        // Ensure we have valid numerical values for position
+        if (
+          typeof newPos.x !== 'number' ||
+          typeof newPos.y !== 'number' ||
+          typeof newPos.z !== 'number'
+        ) {
+          console.error(
+            'Invalid position values in Dodecahedron handleDrag',
+            newPos
           );
+          return;
         }
 
-        // Update the objects store position immediately for real-time connection updates
-        const updatedObjects = currentObjects.map((obj) =>
-          obj.id === id ? { ...obj, position: finalPosition } : obj
-        );
-        objectsStore.setObjects(updatedObjects);
+        const currentPosition = [newPos.x, newPos.y, newPos.z];
 
-        // Use the spatial system via onMove instead of direct onUpdate
-        if (onMove) {
-          onMove(finalPosition);
+        try {
+          // Get all objects for axis snapping calculation
+          const objectsStore = useObjectsStore.getState();
+          const currentObjects = Array.isArray(objectsStore.objects)
+            ? objectsStore.objects
+            : [];
+
+          // Calculate any axis snapping using our utility
+          const snapResult = calculateAxisSnap(
+            currentPosition,
+            currentObjects,
+            id
+          );
+
+          // Use snapped position if available, otherwise use current position
+          const finalPosition = snapResult?.position || currentPosition;
+
+          // If snapping occurred, update the object's position in the scene and show indicator
+          if (snapResult) {
+            e.target.object.position.set(
+              snapResult.position[0],
+              snapResult.position[1],
+              snapResult.position[2]
+            );
+
+            // Update dodecahedron store with snap info for the visual indicator
+            updateDodecahedron(id, {
+              showSnapLine: true,
+              snapLinePoints: snapResult.linePoints,
+              snapAxis: snapResult.snapAxis,
+            });
+
+            // Auto-hide the snap line after 2 seconds
+            setTimeout(() => {
+              updateDodecahedron(id, { showSnapLine: false });
+            }, 2000);
+          } else {
+            // No snapping, ensure indicator is hidden
+            updateDodecahedron(id, { showSnapLine: false });
+          }
+
+          // Update the objects store position immediately for real-time connection updates
+          const updatedObjects = currentObjects.map((obj) =>
+            obj.id === id ? { ...obj, position: finalPosition } : obj
+          );
+          objectsStore.setObjects(updatedObjects);
+
+          // Use the spatial system via onMove instead of direct onUpdate
+          if (onMove) {
+            onMove(finalPosition);
+          }
+        } catch (error) {
+          console.error('Error in Dodecahedron handleDrag:', error);
         }
-      } catch (error) {
-        console.error('Error in Dodecahedron handleDrag:', error);
-      }
-    }; // Add handler for scale changes from TransformControls
+      },
+      [id, onMove, updateDodecahedron]
+    ); // Add handler for scale changes from TransformControls
     const handleScale = (e) => {
       if (!e.target || !e.target.object) return;
 
@@ -1085,6 +1104,14 @@ const Sphere = React.memo(
 
     return (
       <>
+        {/* Snap line indicator - only visible during snapping */}
+        {dodecahedron?.showSnapLine && (
+          <SnapLineIndicator
+            points={dodecahedron.snapLinePoints}
+            axis={dodecahedron.snapAxis}
+            visible={dodecahedron.showSnapLine}
+          />
+        )}
         {/* Remove the outer position group and apply position directly to content group */}{' '}
         <group
           ref={contentRef}

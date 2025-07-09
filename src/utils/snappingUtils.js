@@ -14,7 +14,11 @@ const SNAP_THRESHOLD = 10;
  * @param {Array} position - [x, y, z] position to check for snapping
  * @param {Array} objects - Array of all objects in the scene
  * @param {String} currentObjectId - ID of the object being moved (to exclude from snap calculations)
- * @returns {Array|null} - Snapped position [x, y, z] or null if no snapping needed
+ * @returns {Object|null} - Object containing snap information or null if no snapping needed
+ * @returns {Array} result.position - Snapped position [x, y, z]
+ * @returns {String} result.snapToObjectId - ID of the object being snapped to
+ * @returns {String} result.snapAxis - The axis being snapped to ('x', 'y', or 'z')
+ * @returns {Array} result.linePoints - Points for the indicator line ([start, end])
  */
 export const calculateAxisSnap = (position, objects, currentObjectId) => {
   try {
@@ -52,6 +56,7 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
     let closestAxis = null;
     let closestDistance = SNAP_THRESHOLD;
     let closestAxisOrigin = null;
+    let snapToObjectId = null;
 
     // Check each object for potential axis snaps
     for (const obj of objects) {
@@ -70,6 +75,7 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
         closestDistance = distanceToXAxis;
         closestAxis = 'x';
         closestAxisOrigin = objPosition.clone();
+        snapToObjectId = obj.id;
       }
 
       // Check snapping to Y-axis of this object
@@ -78,6 +84,7 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
         closestDistance = distanceToYAxis;
         closestAxis = 'y';
         closestAxisOrigin = objPosition.clone();
+        snapToObjectId = obj.id;
       }
 
       // Check snapping to Z-axis of this object
@@ -86,6 +93,7 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
         closestDistance = distanceToZAxis;
         closestAxis = 'z';
         closestAxisOrigin = objPosition.clone();
+        snapToObjectId = obj.id;
       }
     }
 
@@ -97,7 +105,25 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
         closestAxisOrigin,
         closestAxis
       );
-      return [snappedPosition.x, snappedPosition.y, snappedPosition.z];
+
+      // Create line points for the visual indicator
+      // These will form a dotted line along the axis between the object and the snapped position
+      const lineStart = [
+        closestAxisOrigin.x,
+        closestAxisOrigin.y,
+        closestAxisOrigin.z,
+      ];
+
+      const lineEnd = [snappedPosition.x, snappedPosition.y, snappedPosition.z];
+
+      // Return both the snapped position and information needed for visual indicator
+      return {
+        position: [snappedPosition.x, snappedPosition.y, snappedPosition.z],
+        snapToObjectId: snapToObjectId,
+        snapAxis: closestAxis,
+        linePoints: [lineStart, lineEnd],
+        referenceObjectPosition: lineStart,
+      };
     }
 
     // No snapping needed
@@ -116,8 +142,7 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
  * @returns {number} - Distance from point to axis
  */
 function distanceToAxis(point, axisOrigin, axisName) {
-  // Create a point on the axis by moving along that axis from the origin
-  const pointOnAxis = axisOrigin.clone();
+  // Calculate the distance from the point to the specified axis
 
   // Create a vector representing the axis direction
   const axisDirection = new THREE.Vector3();
