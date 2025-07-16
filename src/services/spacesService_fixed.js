@@ -154,64 +154,76 @@ export const migrateToDefaultSpace = async (userId) => {
 
     return true;
   } catch (error) {
-    console.error('Error migrating data to default space:', error);
+    console.error('Error migrating to default space:', error);
+    return false;
+  }
+};
+
+// Get user's spaces list
+export const getUserSpaces = async (userId) => {
+  if (!userId) return [];
+
+  try {
+    const spacesRef = collection(db, 'users', userId, 'spaces');
+    const q = query(spacesRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+  } catch (error) {
+    console.error('Error getting user spaces:', error);
+    return [];
+  }
+};
+
+// Delete a space
+export const deleteSpace = async (userId, spaceId) => {
+  if (!userId || !spaceId) return false;
+
+  try {
+    // TODO: Implement proper space deletion with cleanup
+    // For now, just mark as deleted
+    const spaceRef = doc(db, 'users', userId, 'spaces', spaceId);
+    await setDoc(spaceRef, { deleted: true }, { merge: true });
+
+    return true;
+  } catch (error) {
+    console.error('Error deleting space:', error);
+    return false;
+  }
+};
+
+// Check if space exists and user has access
+export const hasSpaceAccess = async (userId, spaceId) => {
+  if (!userId || !spaceId) return false;
+
+  try {
+    const space = await getSpaceById(userId, spaceId);
+    return !!space;
+  } catch (error) {
+    console.error('Error checking space access:', error);
     return false;
   }
 };
 
 // Get public space metadata without authentication - comprehensive approach
 export const getPublicSpaceMetadata = async (spaceId) => {
-  if (!spaceId) return null;
+  if (!spaceId) {
+    console.log('❌ getPublicSpaceMetadata: No spaceId provided');
+    return null;
+  }
 
   console.log('🔍 getPublicSpaceMetadata called with spaceId:', spaceId);
 
   try {
-    // FIRST: Test basic Firestore access as anonymous user
-    console.log('🧪 Testing basic Firestore access as anonymous user...');
-    try {
-      const testRef = doc(db, 'test', 'test');
-      console.log('🧪 Created test document reference');
-
-      // Create a longer timeout for the test (network might be slow)
-      const testTimeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => {
-          console.error(
-            '🧪 TEST TIMEOUT: getDoc call is hanging after 8 seconds'
-          );
-          reject(new Error('Test Firestore access timeout (8s)'));
-        }, 8000)
-      );
-
-      console.log('🧪 About to call getDoc for test document...');
-      await Promise.race([getDoc(testRef), testTimeoutPromise]);
-      console.log(
-        '🧪 getDoc call completed for test document. Test access successful.'
-      );
-    } catch (testError) {
-      console.error('🧪 Basic Firestore test failed:', testError);
-      console.error('🧪 Error message:', testError.message);
-      console.error('🧪 Error code:', testError.code);
-      console.error(
-        '🧪 This indicates a fundamental Firestore connection issue'
-      );
-
-      // If basic test fails, return null immediately
-      if (testError.message?.includes('timeout')) {
-        console.error(
-          '🧪 TIMEOUT: Basic Firestore access is hanging - likely network or permission issue'
-        );
-      }
-
-      // Don't return null yet - let's try the main lookup anyway
-      console.log('🧪 Continuing with main lookup despite test failure...');
-    }
-
-    // PRIORITY: Try the known owner directly first since we know the space exists
+    // Step 1: Try the known owner directly first since we know the space exists
     const knownOwnerIds = [
       'VsKDyU5XjiNYHzKVuwVanCPd90A2', // Known admin/owner ID - this should find your space!
     ];
 
-    console.log('📋 Trying fallback with known owner IDs FIRST...');
+    console.log('📋 Step 1: Trying fallback with known owner IDs FIRST...');
     for (const ownerId of knownOwnerIds) {
       console.log('🔍 Checking space with fallback owner:', ownerId);
       try {
@@ -352,9 +364,10 @@ export const getPublicSpaceMetadata = async (spaceId) => {
     return null;
   } catch (error) {
     console.error('💥 CRITICAL ERROR in getPublicSpaceMetadata:', error);
-    console.error('� Error message:', error.message);
+    console.error('💥 Error message:', error.message);
     console.error('💥 Error code:', error.code);
-    console.error('� Stack trace:', error.stack);
+    console.error('💥 Error name:', error.name);
+    console.error('💥 Stack trace:', error.stack);
     return null;
   }
 };

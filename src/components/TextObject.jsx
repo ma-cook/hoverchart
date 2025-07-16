@@ -5,7 +5,10 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import { Html, TransformControls } from '@react-three/drei';
+import {
+  Html,
+  TransformControls as DreiTransformControls,
+} from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
@@ -16,6 +19,11 @@ import {
   useObjectsStore,
   useConnectionStore,
 } from '../stores';
+// Import snapping utilities
+import { calculateAxisSnap } from '../utils/snappingUtils';
+// Import snap line indicator
+import SnapLineIndicator from './SnapLineIndicator';
+
 const TextObject = React.memo(
   ({
     id,
@@ -31,10 +39,6 @@ const TextObject = React.memo(
     indicatorMode,
     onUpdate,
     onDelete,
-    onTransformStart,
-    onTransformEnd,
-    onResizeStart,
-    onResizeEnd,
   }) => {
     // Access Three.js scene and camera for orbit controls and distance calculation
     const { scene, camera } = useThree();
@@ -1335,249 +1339,89 @@ const TextObject = React.memo(
     // Enhanced handleDrag to use the simpler Cube approach
     const handleDrag = useCallback(
       (e) => {
-        console.log('🚀 handleDrag called in TextObject:', {
-          id,
-          event: e,
-          hasGroupRef: !!groupRef.current,
-          hasOnUpdate: !!onUpdate,
-          newPosition: e?.target?.object?.position?.toArray(),
-        });
-
-        if (!groupRef.current || !onUpdate) return;
-
-        // Get the new position directly like in Cube component
-        const newPos = e.target.object.position;
-        const newPosition = [newPos.x, newPos.y, newPos.z];
-
-        console.log('🚀 TextObject drag - updating position:', {
-          id,
-          oldPosition: position,
-          newPosition: newPosition,
-          positionEqual: isEqual(position, newPosition),
-        });
-
-        // IMMEDIATE UPDATE: Update the objects store position immediately for real-time connection updates
-        const objectsStore = useObjectsStore.getState();
-        const currentObjects = objectsStore.objects;
-        const updatedObjects = currentObjects.map((obj) =>
-          obj.id === id ? { ...obj, position: newPosition } : obj
-        );
-        objectsStore.setObjects(updatedObjects);
-
-        // Calculate indicator position for connections
-        const offset = new THREE.Vector3(...getIndicatorOffset());
-        offset.applyQuaternion(groupRef.current.quaternion);
-        const indicatorWorldPos = new THREE.Vector3(
-          newPos.x,
-          newPos.y,
-          newPos.z
-        ).add(offset);
-        const indicatorPosArray = [
-          indicatorWorldPos.x,
-          indicatorWorldPos.y,
-          indicatorWorldPos.z,
-        ]; // Update all connections in real-time if needed
-        if (connectionsFromStore && Array.isArray(connectionsFromStore)) {
-          connectionsFromStore.forEach((conn) => {
-            if (conn.start?.objectId === stringId) {
-              conn.start.position = [...indicatorPosArray];
-              conn.start.worldPosition = [...indicatorPosArray];
-              if (conn.start.plane === groupRef.current) {
-                conn.start.facePosition = [...indicatorPosArray];
-                conn.start.faceCenter = [...indicatorPosArray];
-              }
-            }
-            if (conn.end?.objectId === stringId) {
-              conn.end.position = [...indicatorPosArray];
-              conn.end.worldPosition = [...indicatorPosArray];
-              if (conn.end.plane === groupRef.current) {
-                conn.end.facePosition = [...indicatorPosArray];
-                conn.end.faceCenter = [...indicatorPosArray];
-              }
-            }
-          });
+        // Get new position from the transform controls event
+        if (!e.target || !e.target.object || !e.target.object.position) {
+          console.error('Invalid transform event in TextObject handleDrag');
+          return;
         }
 
-        // Use the same simple update approach as handleTransformEnd and Cube
-        const updatePayload = {
-          // Include type FIRST like in Cube.jsx
-          type: 'text',
+        const newPos = e.target.object.position;
+        // Ensure we have valid numerical values for position
+        if (
+          typeof newPos.x !== 'number' ||
+          typeof newPos.y !== 'number' ||
+          typeof newPos.z !== 'number'
+        ) {
+          console.error(
+            'Invalid position values in TextObject handleDrag',
+            newPos
+          );
+          return;
+        }
 
-          // Simple position format with _finalPosition flag to ensure persistence
-          position: [newPos.x, newPos.y, newPos.z],
-          _finalPosition: false, // No filtering during active movement
+        const currentPosition = [newPos.x, newPos.y, newPos.z];
 
-          // Include ALL essential properties
-          scale: scale,
-          text: textContentRef.current || text, // Use most current text
-          textStyle: textStyle,
-          bulletPointMode: bulletPointMode,
-        };
+        try {
+          // Get all objects for axis snapping calculation
+          const objectsStore = useObjectsStore.getState();
+          const currentObjects = Array.isArray(objectsStore.objects)
+            ? objectsStore.objects
+            : [];
 
-        console.log('🚀 TextObject calling onUpdate with payload:', {
-          id,
-          updatePayload,
-          oldPositionProp: position,
-          newPositionArray: [newPos.x, newPos.y, newPos.z],
-          positionChanged:
-            JSON.stringify(position) !==
-            JSON.stringify([newPos.x, newPos.y, newPos.z]),
-        });
+          // Calculate any axis snapping using our utility
+          const snapResult = calculateAxisSnap(
+            currentPosition,
+            currentObjects,
+            id
+          );
 
-        onUpdate(id, updatePayload);
+          // Use snapped position if available, otherwise use current position
+          const finalPosition = snapResult?.position || currentPosition;
 
-        // Store the updated positions in userData for any component that needs it
-        if (groupRef.current) {
-          // Store current position in multiple places for redundancy and debugging
-          const currentPosition = [newPos.x, newPos.y, newPos.z];
-          groupRef.current.userData.position = currentPosition;
-          groupRef.current.userData.lastPosition = currentPosition;
-          groupRef.current.userData.indicatorPosition = indicatorPosArray;
-          groupRef.current.userData._transformActive = true; // Mark as being transformed
-          groupRef.current.userData.lastDragTime = Date.now(); // Track last update time
+          // If snapping occurred, update the object's position in the scene and show indicator
+          if (snapResult) {
+            e.target.object.position.set(
+              snapResult.position[0],
+              snapResult.position[1],
+              snapResult.position[2]
+            );
 
-          // CRITICAL: Force position directly to handle any potential racing conditions
-          groupRef.current.position.set(newPos.x, newPos.y, newPos.z);
+            // Update text object store with snap info for the visual indicator
+            const { updateTextObjectProperty } = useTextObjectStore.getState();
+            updateTextObjectProperty(id, 'showSnapLine', true);
+            updateTextObjectProperty(
+              id,
+              'snapLinePoints',
+              snapResult.linePoints
+            );
+            updateTextObjectProperty(id, 'snapAxis', snapResult.snapAxis);
+
+            // Auto-hide the snap line after 2 seconds
+            setTimeout(() => {
+              const { updateTextObjectProperty } =
+                useTextObjectStore.getState();
+              updateTextObjectProperty(id, 'showSnapLine', false);
+            }, 2000);
+          } else {
+            // No snapping, ensure indicator is hidden
+            const { updateTextObjectProperty } = useTextObjectStore.getState();
+            updateTextObjectProperty(id, 'showSnapLine', false);
+          }
+
+          // Update the objects store position immediately for real-time connection updates
+          const updatedObjects = currentObjects.map((obj) =>
+            obj.id === id ? { ...obj, position: finalPosition } : obj
+          );
+          objectsStore.setObjects(updatedObjects);
+
+          // Simple approach like Cube - let debounced effect handle database saves
+          // No immediate onUpdate call during drag to prevent interference with transform controls
+        } catch (error) {
+          console.error('Error in TextObject handleDrag:', error);
         }
       },
-      [
-        id,
-        text,
-        scale,
-        textStyle,
-        bulletPointMode,
-        position,
-        onUpdate,
-        getIndicatorOffset,
-        connectionsFromStore,
-        stringId,
-      ]
+      [id]
     );
-
-    // Add a separate handler for transform end to ensure position persistence
-    const handleTransformEnd = useCallback(() => {
-      console.log('🏁 TextObject handleTransformEnd called:', { id });
-
-      if (!groupRef.current || !onUpdate) return;
-
-      // Get the current position from the ref
-      const currentPos = groupRef.current.position;
-      const finalPosition = [currentPos.x, currentPos.y, currentPos.z];
-
-      console.log('🏁 TextObject finalizing position:', {
-        id,
-        finalPosition,
-        positionProp: position,
-        positionEqual: isEqual(position, finalPosition),
-      });
-
-      // CRITICAL: Always update position at transform end, even if it seems unchanged
-      // This ensures the position is properly saved and won't revert
-
-      // Send final position update with flag to ensure persistence
-      const finalUpdatePayload = {
-        type: 'text',
-        position: finalPosition,
-        _finalPosition: true, // Flag to bypass filtering in App.jsx
-        scale: scale,
-        text: textContentRef.current || text,
-        textStyle: textStyle,
-        bulletPointMode: bulletPointMode,
-      };
-
-      // Update the store immediately with timestamp to track most recent position
-      const objectsStore = useObjectsStore.getState();
-      const currentObjects = objectsStore.objects;
-      const updatedObjects = currentObjects.map((obj) =>
-        obj.id === id
-          ? {
-              ...obj,
-              position: finalPosition,
-              _lastPositionUpdate: Date.now(),
-              _finalPosition: true,
-            }
-          : obj
-      );
-      objectsStore.setObjects(updatedObjects);
-
-      // Send the update to parent
-      console.log(
-        '🏁 TextObject sending final position update:',
-        finalUpdatePayload
-      );
-      onUpdate(id, finalUpdatePayload);
-
-      // CRITICAL: Store final position in userData and refs for immediate access
-      // Also clear the transform active flag to allow normal updates to resume
-      if (groupRef.current) {
-        groupRef.current.userData.finalPosition = finalPosition;
-        groupRef.current.userData.lastPosition = finalPosition;
-        groupRef.current.userData.position = finalPosition;
-        groupRef.current.userData.positionUpdated = Date.now();
-
-        // Immediately update the effective position state to force a re-render
-        console.log('🎯 Updating effective position from handleTransformEnd:', {
-          id,
-          finalPosition,
-        });
-        setEffectivePosition([...finalPosition]); // Force new array reference
-
-        // Create a delay before clearing transform active to ensure position update completes
-        setTimeout(() => {
-          if (groupRef.current) {
-            groupRef.current.userData._transformActive = false;
-            console.log('🏁 TextObject transform active flag cleared:', {
-              id,
-              finalPosition,
-            });
-          }
-        }, 100);
-
-        // CRITICAL: Force position again to ensure it's set correctly
-        groupRef.current.position.set(
-          finalPosition[0],
-          finalPosition[1],
-          finalPosition[2]
-        );
-      }
-
-      // Add a safety timeout to double-check position after a delay
-      // This ensures the position is correct even if there are racing conditions
-      setTimeout(() => {
-        if (groupRef.current && onUpdate) {
-          const currentPos = groupRef.current.position;
-          const currentPosArray = [currentPos.x, currentPos.y, currentPos.z];
-
-          console.log('🏁 TextObject delayed position check:', {
-            id,
-            finalPosition,
-            currentPosArray,
-            equal: isEqual(finalPosition, currentPosArray),
-          });
-
-          // If position somehow changed, force another update
-          if (!isEqual(finalPosition, currentPosArray)) {
-            console.log('⚠️ Position mismatch detected, forcing final update', {
-              id,
-            });
-
-            // Update position again with force flag
-            const forceUpdatePayload = {
-              type: 'text',
-              position: currentPosArray,
-              _finalPosition: true,
-              _forceUpdate: true,
-              scale: scale,
-              text: textContentRef.current || text,
-              textStyle: textStyle,
-              bulletPointMode: bulletPointMode,
-            };
-
-            onUpdate(id, forceUpdatePayload);
-          }
-        }
-      }, 200);
-    }, [id, text, scale, textStyle, bulletPointMode, position, onUpdate]);
 
     // --- Update handleScale to update visualScale immediately and adjust height dynamically ---
     const handleScale = (e) => {
@@ -1674,7 +1518,7 @@ const TextObject = React.memo(
 
       setVisualScale(finalScale);
       setScale(finalScale); // Also update store (triggers DB update)
-      
+
       // Store scale in userData for persistent tracking
       if (groupRef.current) {
         groupRef.current.userData.currentScale = finalScale;
@@ -1725,27 +1569,27 @@ const TextObject = React.memo(
         resizeUpdateTimeoutRef.current = setTimeout(() => {
           console.log('📏 Executing deferred scale update to database:', {
             id,
-            scale: finalScale
+            scale: finalScale,
           });
-          
+
           // Force scale update to local store
           const objectsStore = useObjectsStore.getState();
           const updatedObjects = objectsStore.objects.map((obj) =>
             obj.id === id
-              ? { 
-                  ...obj, 
+              ? {
+                  ...obj,
                   scale: finalScale,
-                  _lastScaleUpdate: Date.now()
+                  _lastScaleUpdate: Date.now(),
                 }
               : obj
           );
           objectsStore.setObjects(updatedObjects);
-          
+
           // Send to parent/database with force flags to ensure it persists
           onUpdate(id, {
             ...updatePayload,
             _forceUpdate: true,
-            _finalScale: true
+            _finalScale: true,
           });
         }, 300);
       }
@@ -1757,10 +1601,10 @@ const TextObject = React.memo(
       if (e.key === 'Enter' && bulletPointMode) {
         e.preventDefault();
         const el = e.target;
-        
+
         // Get the current HTML content
         const currentHTML = el.innerHTML;
-        
+
         // Find cursor position and surrounding content
         const selection = window.getSelection();
         const range = selection.getRangeAt(0);
@@ -1768,18 +1612,18 @@ const TextObject = React.memo(
         preCaretRange.selectNodeContents(el);
         preCaretRange.setEnd(range.endContainer, range.endOffset);
         const cursorPosition = preCaretRange.toString().length;
-        
+
         // Split HTML content at cursor position
         // This is more complex with HTML, we'll use a simple approach
         let textBeforeCursor = currentHTML.substring(0, cursorPosition);
         let textAfterCursor = currentHTML.substring(cursorPosition);
-        
+
         // Create new bullet point
         const newHTML = textBeforeCursor + '<br>• ' + textAfterCursor;
-        
+
         // Update the HTML content
         el.innerHTML = newHTML;
-        
+
         // Move cursor after the new bullet point
         // Need to find the new position in DOM
         setTimeout(() => {
@@ -1791,16 +1635,16 @@ const TextObject = React.memo(
             null,
             false
           );
-          
+
           let node;
           while ((node = walker.nextNode())) {
             textNodes.push(node);
           }
-          
+
           // Find node containing our new bullet point
           let bulletNode = null;
           let bulletOffset = 0;
-          
+
           for (let i = 0; i < textNodes.length; i++) {
             if (textNodes[i].textContent.includes('• ')) {
               const bulletIndex = textNodes[i].textContent.indexOf('• ');
@@ -1811,22 +1655,22 @@ const TextObject = React.memo(
               }
             }
           }
-          
+
           // Set cursor position after the last inserted bullet
           if (bulletNode) {
             const newRange = document.createRange();
             newRange.setStart(bulletNode, bulletOffset);
             newRange.setEnd(bulletNode, bulletOffset);
-            
+
             selection.removeAllRanges();
             selection.addRange(newRange);
           }
         }, 0);
-        
+
         // Update local state and ref
         setLocalText(el.innerHTML);
         textContentRef.current = el.innerHTML;
-        
+
         return;
       } // Handle keyboard shortcuts with Ctrl/Cmd
       if (e.ctrlKey || e.metaKey) {
@@ -1881,16 +1725,16 @@ const TextObject = React.memo(
           hasTextSelection,
           selectedText,
         });
-        
+
         // Define applyStyleToSelection function inside useCallback
         const applyStyleToSelectionInternal = (style, start, end) => {
           console.log('🎨 Applying style to selection:', { style, start, end });
-    
+
           if (!textAreaRef.current) {
             console.log('❌ No contentEditable ref available');
             return;
           }
-    
+
           // Store the current selection state from our state
           const currentSelection = selectedText;
           if (
@@ -1901,10 +1745,10 @@ const TextObject = React.memo(
             console.log('❌ No stored selection available');
             return;
           }
-    
+
           // Restore focus and selection to the contentEditable
           textAreaRef.current.focus();
-    
+
           // Restore the selection
           try {
             currentSelection.selection.removeAllRanges();
@@ -1914,7 +1758,7 @@ const TextObject = React.memo(
             console.log('❌ Could not restore selection:', error);
             return;
           }
-    
+
           // Apply styles using document.execCommand
           // Implementation of style application would be here
           // This varies based on what styles are being applied
@@ -1924,29 +1768,33 @@ const TextObject = React.memo(
             document.execCommand('italic', false, null);
           }
           // Add other style applications as needed
-          
+
           // Update the style state to reflect changes
           setTextStyle((prev) => ({ ...prev, ...style }));
         };
 
         if ('bulletPointMode' in newStyle) {
           setBulletPointMode(newStyle.bulletPointMode);
-          
+
           // If turning bullet mode ON
           if (newStyle.bulletPointMode) {
             // If text is empty, just add a bullet point
-            if (!text || text.trim() === '' || text === 'Click to edit text...') {
+            if (
+              !text ||
+              text.trim() === '' ||
+              text === 'Click to edit text...'
+            ) {
               setText('• ');
-              
+
               // Focus the text area and place cursor after bullet point
               setTimeout(() => {
                 if (textAreaRef.current) {
                   textAreaRef.current.focus();
-                  
+
                   // Place cursor after the bullet point
                   const selection = window.getSelection();
                   const range = document.createRange();
-                  
+
                   // Find the text node containing the bullet point
                   const textNodes = [];
                   const walker = document.createTreeWalker(
@@ -1955,17 +1803,23 @@ const TextObject = React.memo(
                     null,
                     false
                   );
-                  
+
                   let node;
                   while ((node = walker.nextNode())) {
                     textNodes.push(node);
                   }
-                  
+
                   // Find node containing bullet point
                   for (let i = 0; i < textNodes.length; i++) {
                     if (textNodes[i].textContent.includes('• ')) {
-                      range.setStart(textNodes[i], textNodes[i].textContent.indexOf('• ') + 2);
-                      range.setEnd(textNodes[i], textNodes[i].textContent.indexOf('• ') + 2);
+                      range.setStart(
+                        textNodes[i],
+                        textNodes[i].textContent.indexOf('• ') + 2
+                      );
+                      range.setEnd(
+                        textNodes[i],
+                        textNodes[i].textContent.indexOf('• ') + 2
+                      );
                       selection.removeAllRanges();
                       selection.addRange(range);
                       break;
@@ -1973,14 +1827,15 @@ const TextObject = React.memo(
                   }
                 }
               }, 0);
-            } 
+            }
             // If text already exists but doesn't start with a bullet
             else if (!text.trim().startsWith('• ')) {
               setText('• ' + text);
-              
+
               // If currently editing, update the contentEditable element
               if (isEditing && textAreaRef.current) {
-                textAreaRef.current.innerHTML = '• ' + textAreaRef.current.innerHTML;
+                textAreaRef.current.innerHTML =
+                  '• ' + textAreaRef.current.innerHTML;
               }
             }
           }
@@ -2024,9 +1879,18 @@ const TextObject = React.memo(
         // Update database
         updateDatabase();
       },
-      [id, updateDatabase, hasTextSelection, selectedText, 
-       setText, setBulletPointMode, text, isEditing, 
-       autoResizeTextArea, setTextStyle]
+      [
+        id,
+        updateDatabase,
+        hasTextSelection,
+        selectedText,
+        setText,
+        setBulletPointMode,
+        text,
+        isEditing,
+        autoResizeTextArea,
+        setTextStyle,
+      ]
     );
 
     // Text selection handlers
@@ -2176,10 +2040,12 @@ const TextObject = React.memo(
 
     // Combined orbit controls and transform mode effects
     useEffect(() => {
+      // Ensure transform control is in translate mode
       if (transformRef.current) {
         transformRef.current.setMode('translate');
       }
 
+      // Cleanup: Always ensure orbit controls are re-enabled when component unmounts
       return () => {
         if (window.orbitControls) {
           window.orbitControls.enabled = true;
@@ -2396,6 +2262,14 @@ const TextObject = React.memo(
     // Enhanced render with _transformActive flag in userData
     return (
       <>
+        {/* Snap line indicator - only visible during snapping */}
+        {textObject?.showSnapLine && (
+          <SnapLineIndicator
+            points={textObject.snapLinePoints}
+            axis={textObject.snapAxis}
+            visible={textObject.showSnapLine}
+          />
+        )}
         <group
           ref={groupRef}
           position={effectivePosition} // Use state-managed position
@@ -2408,7 +2282,7 @@ const TextObject = React.memo(
             indicatorOffset: getIndicatorOffset(),
             face: 'top',
             isMoving: isMoving,
-            _transformActive: isMoving || showTransform,
+            // Use the same pattern as in Cube - don't set _transformActive flag here
             initialPosition: position ? [...position] : null,
           }}
         >
@@ -2428,21 +2302,6 @@ const TextObject = React.memo(
               style={getContainerStyle()}
               className="text-object-container"
               onClick={handleDivClick}
-              onMouseDown={(e) => {
-                // Only pause orbit controls if clicking on the text object itself
-                if (e.target.closest('.text-object-container')) {
-                  e.stopPropagation();
-                  if (window.orbitControls) {
-                    window.orbitControls.enabled = false;
-                  }
-                }
-              }}
-              onMouseUp={() => {
-                // Re-enable orbit controls after any mouse interaction
-                if (window.orbitControls) {
-                  window.orbitControls.enabled = true;
-                }
-              }}
             >
               {' '}
               {isEditing ? (
@@ -2762,169 +2621,24 @@ const TextObject = React.memo(
                 transformControlSize,
               })}
               {selected && showTransform && groupRef.current && (
-                <TransformControls
-                  ref={transformRef}
+                <DreiTransformControls
                   object={groupRef.current}
                   onObjectChange={handleDrag}
-                  onStart={() => {
-                    console.log(
-                      '🔄 Transform controls started for TextObject:',
-                      id
-                    );
-
-                    // Mark object as actively being transformed
-                    if (groupRef.current) {
-                      groupRef.current.userData._transformActive = true;
-
-                      // Store current position as the start position to ensure consistency
-                      const currentPos = groupRef.current.position;
-                      const currentPosArray = [
-                        currentPos.x,
-                        currentPos.y,
-                        currentPos.z,
-                      ];
-                      groupRef.current.userData.startTransformPosition =
-                        currentPosArray;
-
-                      console.log(
-                        '🔄 Transform started - stored current position:',
-                        {
-                          id,
-                          startPosition: currentPosArray,
-                        }
-                      );
-                    }
-
-                    // Get latest position from store as a fallback
-                    const objectsStore = useObjectsStore.getState();
-                    const storeObject = objectsStore.objects.find(
-                      (obj) => obj.id === id
-                    );
-
-                    if (groupRef.current && storeObject?.position) {
-                      const storePos = storeObject.position;
-                      const currentPos = groupRef.current.position.toArray();
-
-                      // Only update from store if significantly different
-                      if (
-                        !isEqual(storePos, currentPos) &&
-                        !storePos.every(
-                          (val, idx) => Math.abs(val - currentPos[idx]) < 0.1
-                        )
-                      ) {
-                        console.log(
-                          '🔄 Significant position difference detected, syncing with store:',
-                          {
-                            id,
-                            storePos,
-                            currentPos,
-                          }
-                        );
-                        groupRef.current.position.set(
-                          storePos[0],
-                          storePos[1],
-                          storePos[2]
-                        );
-                      }
-                    }
-                  }}
                   onMouseDown={() => {
                     if (window.orbitControls) {
                       window.orbitControls.enabled = false;
                     }
-                    // Set transform flag on mouse down
-                    if (groupRef.current) {
-                      groupRef.current.userData._transformActive = true;
-
-                      // Capture current position as starting position
-                      const pos = groupRef.current.position;
-                      groupRef.current.userData.startDragPosition = [
-                        pos.x,
-                        pos.y,
-                        pos.z,
-                      ];
-                    }
-                    onTransformStart?.(id);
+                    // Don't use extra handlers - let it work like Cube
                   }}
                   onMouseUp={() => {
                     if (window.orbitControls) {
                       window.orbitControls.enabled = true;
                     }
-
-                    // Capture current position before any other operations
-                    const currentPos = groupRef.current?.position;
-                    const finalPos = currentPos
-                      ? [currentPos.x, currentPos.y, currentPos.z]
-                      : null;
-
-                    console.log(
-                      '🏁 Transform controls mouseUp - capturing final position:',
-                      {
-                        id,
-                        finalPos,
-                        propPos: position,
-                      }
-                    );
-
-                    // Run transform end handler first to finalize position
-                    handleTransformEnd();
-
-                    // Then notify parent after our internal update completes
-                    onTransformEnd?.(id);
-
-                    // Double safety - check again after a delay to ensure position stuck
-                    setTimeout(() => {
-                      if (groupRef.current && finalPos) {
-                        const newPos = groupRef.current.position;
-                        const newPosArray = [newPos.x, newPos.y, newPos.z];
-
-                        if (!isEqual(finalPos, newPosArray)) {
-                          console.log(
-                            '⚠️ Position changed after transform end, forcing correction:',
-                            {
-                              id,
-                              finalPos,
-                              currentPos: newPosArray,
-                            }
-                          );
-
-                          // Force position back to final position
-                          groupRef.current.position.set(
-                            finalPos[0],
-                            finalPos[1],
-                            finalPos[2]
-                          );
-
-                          // Update store
-                          const objectsStore = useObjectsStore.getState();
-                          const updatedObjects = objectsStore.objects.map(
-                            (obj) =>
-                              obj.id === id
-                                ? { ...obj, position: finalPos }
-                                : obj
-                          );
-                          objectsStore.setObjects(updatedObjects);
-
-                          // Send update to parent
-                          if (onUpdate) {
-                            onUpdate(id, {
-                              type: 'text',
-                              position: finalPos,
-                              _finalPosition: true,
-                              _forceUpdate: true,
-                              text: textContentRef.current || text,
-                              scale: scale,
-                              textStyle: textStyle,
-                              bulletPointMode: bulletPointMode,
-                            });
-                          }
-                        }
-                      }
-                    }, 100);
+                    // No immediate save - let the debounced effect handle it like Cube
                   }}
                   mode="translate"
                   space="world"
-                  size={transformControlSize}
+                  size={0.5}
                 />
               )}
               {/* Resize transform controls - using invisible mesh for scale operations */}
@@ -2943,128 +2657,23 @@ const TextObject = React.memo(
                 transformControlSize,
               })}
               {selected && showResizeControls && resizeMeshRef.current && (
-                <TransformControls
+                <DreiTransformControls
                   object={resizeMeshRef.current}
-                  mode="scale"
-                  size={transformControlSize}
-                  onObjectChange={(e) => {
-                    // Real-time updates during resize drag
-                    if (e && e.target && e.target.object) {
-                      console.log('📏 onObjectChange - real-time resize:', {
-                        id,
-                        meshScale: e.target.object.scale.toArray(),
-                        currentVisualScale: visualScale,
-                      });
-
-                      const newScale = [
-                        e.target.object.scale.x,
-                        e.target.object.scale.y,
-                        visualScale[2], // Keep Z scale unchanged
-                      ];
-
-                      // Update visual scale immediately for real-time feedback
-                      setVisualScale(newScale);
-
-                      console.log('📏 Updated visualScale during drag:', {
-                        id,
-                        oldScale: visualScale,
-                        newScale,
-                      });
-
-                      // Store the updated scale in userData for immediate access
-                      if (groupRef.current) {
-                        groupRef.current.userData.currentScale = newScale;
-                        groupRef.current.userData.finalScale = newScale;
-                        groupRef.current.userData.scaleUpdated = Date.now();
-                      }
-                    }
-                  }}
-                  onChange={(e) => {
-                    // Called on every frame during resize - this handles the final update
-                    handleScale(e);
-                  }}
+                  onChange={handleScale}
                   onMouseDown={() => {
                     if (window.orbitControls) {
                       window.orbitControls.enabled = false;
                     }
-                    onResizeStart?.(id);
+                    // Don't use extra handlers - let it work like Cube
                   }}
                   onMouseUp={() => {
                     if (window.orbitControls) {
                       window.orbitControls.enabled = true;
                     }
-                    
-                    // Capture final scale values
-                    const finalScale = [...visualScale]; // Use current visual scale
-                    
-                    console.log('📏 Resize complete - final scale:', {
-                      id,
-                      finalScale,
-                      resizeMeshScale: resizeMeshRef.current?.scale.toArray()
-                    });
-                    
-                    // Ensure the scale is saved to the store immediately
-                    const objectsStore = useObjectsStore.getState();
-                    const updatedObjects = objectsStore.objects.map((obj) =>
-                      obj.id === id
-                        ? { 
-                            ...obj, 
-                            scale: finalScale,
-                            _lastScaleUpdate: Date.now(),
-                            _finalScale: true
-                          }
-                        : obj
-                    );
-                    objectsStore.setObjects(updatedObjects);
-                    
-                    // Force an immediate update to the database to ensure persistence
-                    if (onUpdate) {
-                      const worldInfo = updateWorldMatrix();
-                      const finalUpdatePayload = {
-                        type: 'text',
-                        position,
-                        scale: finalScale,
-                        _finalScale: true,
-                        _forceUpdate: true,
-                        text: textContentRef.current || text,
-                        textStyle,
-                        bulletPointMode,
-                        worldPosition: worldInfo?.worldPos,
-                        indicatorPosition: worldInfo?.indicatorPos,
-                        lastResizeTime: Date.now()
-                      };
-                      
-                      console.log('📏 Sending final scale update to database:', {
-                        id,
-                        scale: finalScale
-                      });
-                      
-                      onUpdate(id, finalUpdatePayload);
-                    }
-                    
-                    // Notify parent
-                    onResizeEnd?.(id);
-                    
-                    // Double safety - check again after a delay to ensure scale stuck
-                    setTimeout(() => {
-                      // Update store once more to be certain
-                      const objectsStore = useObjectsStore.getState();
-                      const updatedObjects = objectsStore.objects.map((obj) =>
-                        obj.id === id
-                          ? { 
-                              ...obj, 
-                              scale: finalScale,
-                              _lastScaleUpdate: Date.now()
-                            }
-                          : obj
-                      );
-                      objectsStore.setObjects(updatedObjects);
-                    }, 100);
+                    // No immediate save - let the debounced effect handle it like Cube
                   }}
-                  showX={true}
-                  showY={true}
-                  showZ={false}
-                  space="local"
+                  mode="scale"
+                  size={0.5}
                 />
               )}
               {/* Text style UI */}

@@ -345,6 +345,19 @@ const useObjectsStore = create((set, get) => ({
             },
             textStyle: { fontSize: 1.5, color: 'black', underline: false },
           }
+        : type === 'tetrahedron'
+        ? {
+            color: '#000000',
+            headerText: '',
+            faceColors: {},
+            faceTexts: {
+              front: '',
+              back: '',
+              left: '',
+              right: '',
+            },
+            textStyle: { fontSize: 1.5, color: 'black', underline: false },
+          }
         : type === 'plane'
         ? {
             borderStyle: 'solid',

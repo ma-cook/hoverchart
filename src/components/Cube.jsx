@@ -1060,7 +1060,6 @@ const Cube = ({
               isConnected={isConnected}
               objectId={id}
               face={name}
-              renderOrder={20}
             />
           )}
         </mesh>

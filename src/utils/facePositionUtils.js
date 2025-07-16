@@ -197,8 +197,12 @@ export const calculateFacePosition = (indicator, objects) => {
       }
     }
 
-    // For cube or sphere indicators - with safer error handling
-    if (indicator.type === 'cube' || indicator.type === 'sphere') {
+    // For cube, sphere, or tetrahedron indicators - with safer error handling
+    if (
+      indicator.type === 'cube' ||
+      indicator.type === 'sphere' ||
+      indicator.type === 'tetrahedron'
+    ) {
       try {
         // Get position data safely
         let worldPos;
@@ -243,8 +247,12 @@ export const calculateFacePosition = (indicator, objects) => {
           );
         }
 
-        // Calculate the offset based on face name and cube size
-        const cubeSize = 5; // Half-size of cube
+        // Calculate the offset based on face name and object size
+        let objectSize = 5; // Default size for cubes
+        if (indicator.type === 'tetrahedron') {
+          objectSize = 5; // Tetrahedron size constant
+        }
+
         let faceOffset;
         if (
           indicator.type === 'sphere' &&
@@ -261,26 +269,121 @@ export const calculateFacePosition = (indicator, objects) => {
           ];
 
           return finalPos;
+        } else if (indicator.type === 'tetrahedron') {
+          // Tetrahedron face offset calculation - use accurate face centers
+          // Tetrahedron vertices (same as in component)
+          const TETRAHEDRON_SIZE = 5;
+          const tetrahedronVertices = [
+            [0, TETRAHEDRON_SIZE, 0], // top vertex
+            [-TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE, TETRAHEDRON_SIZE], // bottom-left-front
+            [TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE, TETRAHEDRON_SIZE], // bottom-right-front
+            [0, -TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE * 1.5], // bottom-back
+          ];
+
+          let faceCenter;
+          switch (indicator.face) {
+            case 'bottom': {
+              // Bottom face: vertices 1, 2, 3 (bottom triangle)
+              faceCenter = [
+                (tetrahedronVertices[1][0] +
+                  tetrahedronVertices[2][0] +
+                  tetrahedronVertices[3][0]) /
+                  3,
+                (tetrahedronVertices[1][1] +
+                  tetrahedronVertices[2][1] +
+                  tetrahedronVertices[3][1]) /
+                  3,
+                (tetrahedronVertices[1][2] +
+                  tetrahedronVertices[2][2] +
+                  tetrahedronVertices[3][2]) /
+                  3,
+              ];
+              break;
+            }
+            case 'front': {
+              // Front face: vertices 0, 2, 1 (top, bottom-right-front, bottom-left-front)
+              faceCenter = [
+                (tetrahedronVertices[0][0] +
+                  tetrahedronVertices[2][0] +
+                  tetrahedronVertices[1][0]) /
+                  3,
+                (tetrahedronVertices[0][1] +
+                  tetrahedronVertices[2][1] +
+                  tetrahedronVertices[1][1]) /
+                  3,
+                (tetrahedronVertices[0][2] +
+                  tetrahedronVertices[2][2] +
+                  tetrahedronVertices[1][2]) /
+                  3,
+              ];
+              break;
+            }
+            case 'left': {
+              // Left face: vertices 0, 1, 3 (top, bottom-left-front, bottom-back)
+              faceCenter = [
+                (tetrahedronVertices[0][0] +
+                  tetrahedronVertices[1][0] +
+                  tetrahedronVertices[3][0]) /
+                  3,
+                (tetrahedronVertices[0][1] +
+                  tetrahedronVertices[1][1] +
+                  tetrahedronVertices[3][1]) /
+                  3,
+                (tetrahedronVertices[0][2] +
+                  tetrahedronVertices[1][2] +
+                  tetrahedronVertices[3][2]) /
+                  3,
+              ];
+              break;
+            }
+            case 'right': {
+              // Right face: vertices 0, 3, 2 (top, bottom-back, bottom-right-front)
+              faceCenter = [
+                (tetrahedronVertices[0][0] +
+                  tetrahedronVertices[3][0] +
+                  tetrahedronVertices[2][0]) /
+                  3,
+                (tetrahedronVertices[0][1] +
+                  tetrahedronVertices[3][1] +
+                  tetrahedronVertices[2][1]) /
+                  3,
+                (tetrahedronVertices[0][2] +
+                  tetrahedronVertices[3][2] +
+                  tetrahedronVertices[2][2]) /
+                  3,
+              ];
+              break;
+            }
+            default:
+              faceCenter = [0, 0, 0];
+          }
+
+          // Apply scaling to face center
+          faceOffset = new THREE.Vector3(
+            faceCenter[0] * worldScale.x,
+            faceCenter[1] * worldScale.y,
+            faceCenter[2] * worldScale.z
+          );
         } else {
           // Standard cube face offset calculation
           switch (indicator.face) {
             case 'top':
-              faceOffset = new THREE.Vector3(0, cubeSize * worldScale.y, 0);
+              faceOffset = new THREE.Vector3(0, objectSize * worldScale.y, 0);
               break;
             case 'bottom':
-              faceOffset = new THREE.Vector3(0, -cubeSize * worldScale.y, 0);
+              faceOffset = new THREE.Vector3(0, -objectSize * worldScale.y, 0);
               break;
             case 'front':
-              faceOffset = new THREE.Vector3(0, 0, cubeSize * worldScale.z);
+              faceOffset = new THREE.Vector3(0, 0, objectSize * worldScale.z);
               break;
             case 'back':
-              faceOffset = new THREE.Vector3(0, 0, -cubeSize * worldScale.z);
+              faceOffset = new THREE.Vector3(0, 0, -objectSize * worldScale.z);
               break;
             case 'right':
-              faceOffset = new THREE.Vector3(cubeSize * worldScale.x, 0, 0);
+              faceOffset = new THREE.Vector3(objectSize * worldScale.x, 0, 0);
               break;
             case 'left':
-              faceOffset = new THREE.Vector3(-cubeSize * worldScale.x, 0, 0);
+              faceOffset = new THREE.Vector3(-objectSize * worldScale.x, 0, 0);
               break;
             default:
               faceOffset = new THREE.Vector3(0, 0, 0);

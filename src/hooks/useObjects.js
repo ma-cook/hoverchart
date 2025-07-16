@@ -14,8 +14,9 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
     initializeObjectsLoading,
     handleCreateObject: storeHandleCreateObject,
     handleObjectDelete: storeHandleObjectDelete,
-    registerTransformingObject: storeRegisterTransformingObject,
-    getTransformStartPosition,
+    addTransformingObject,
+    removeTransformingObject,
+    setTransformPosition,
     // Internal refs equivalent
     draggingObjects,
     transformingObjects,
@@ -54,13 +55,14 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
   };
 
   const registerTransformingObject = (id, isTransforming, position) => {
-    storeRegisterTransformingObject(
-      id,
-      isTransforming,
-      position,
-      user,
-      currentSpaceId
-    );
+    if (isTransforming) {
+      addTransformingObject(id);
+      if (position) {
+        setTransformPosition(id, position);
+      }
+    } else {
+      removeTransformingObject(id);
+    }
   };
   // Update refs with current store values
   draggingObjectsRef.current = draggingObjects;
@@ -75,6 +77,5 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
     draggingObjectsRef,
     registerTransformingObject,
     transformingObjectsRef,
-    getTransformStartPosition,
   };
 }

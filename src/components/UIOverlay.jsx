@@ -416,6 +416,7 @@ const UIOverlay = ({
                       }
                     >
                       <option value="cube">Cube</option>
+                      <option value="tetrahedron">Tetrahedron</option>
                       <option value="dodecahedron">Dodecahedron</option>
                       <option value="plane">Plane</option>
                       <option value="text">Text</option>
@@ -512,6 +513,13 @@ const UIOverlay = ({
               title="Add Cube"
             >
               □
+            </button>
+            <button
+              className="shape-button"
+              onClick={() => onCreateObject('tetrahedron')}
+              title="Add Tetrahedron"
+            >
+              ▲
             </button>
             <button
               className="shape-button"

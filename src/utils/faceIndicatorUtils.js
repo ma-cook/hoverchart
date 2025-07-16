@@ -1,6 +1,7 @@
 import { saveConnection } from '../services/connectionsService';
 import useConnectionStore from '../stores/connectionStore';
 import { calculateFacePosition } from './facePositionUtils';
+import { validateConnection } from './connectionUtils';
 
 /**
  * Handle face indicator click events with connection creation
@@ -96,6 +97,20 @@ export const handleFaceIndicatorClick = async ({
     const endObj = objects.find((obj) => String(obj.id) === endIdStr);
 
     console.log('Found objects:', { startObj, endObj });
+
+    // Validate connection between specific face indicators
+    const validationResult = validateConnection(startIndicator, indicator);
+    if (!validationResult.valid) {
+      console.warn('Connection validation failed:', validationResult.message);
+      // Reset selection state but stay in connect mode to allow trying different faces
+      selectedIndicatorsRef.current = [];
+      setSelectedIndicators([]);
+      return {
+        success: false,
+        complete: false,
+        message: validationResult.message,
+      };
+    }
 
     // Better error handling
     if (!startObj || !endObj) {
@@ -443,14 +458,17 @@ export const processConnectionCreation = (
     const startObjectId = startIndicator.cube.id.toString();
     const endObjectId = indicator.cube.id.toString();
 
-    // Don't connect an object to itself
-    if (startObjectId === endObjectId) {
-      console.warn('Cannot connect an object to itself');
+    // Allow connections between different faces of the same object, but prevent face-to-itself connections
+    if (
+      startObjectId === endObjectId &&
+      startIndicator.face === indicator.face
+    ) {
+      console.warn('Cannot connect a face to itself');
       selectedIndicatorsRef.current = [];
       return {
         success: false,
         complete: true,
-        message: 'Cannot connect an object to itself',
+        message: 'Cannot connect a face to itself',
       };
     }
 

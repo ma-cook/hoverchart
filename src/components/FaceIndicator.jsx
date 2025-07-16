@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useRef, useState, useEffect } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useFaceIndicatorStore } from '../stores';
@@ -17,6 +17,8 @@ const FaceIndicator = ({
 }) => {
   const meshRef = useRef();
   const groupRef = useRef();
+  const { scene, camera } = useThree();
+  const [isOccluded, setIsOccluded] = useState(false);
 
   // Use Zustand store for hover state
   const isHovered = useFaceIndicatorStore((state) =>
@@ -26,23 +28,76 @@ const FaceIndicator = ({
     (state) => state.setIndicatorHovered
   );
 
+  // Mark this mesh as a face indicator for raycasting exclusion
+  useEffect(() => {
+    if (meshRef.current) {
+      meshRef.current.userData = { isFaceIndicator: true };
+    }
+  }, []);
+
   // Only log when DEBUG is true
   useFrame(() => {
     if (meshRef.current && groupRef.current) {
-      // Throttle updates for performance
+      // Throttle updates for performance - occlusion checks are expensive
       if (
         !meshRef.current._lastIndicatorUpdate ||
-        Date.now() - meshRef.current._lastIndicatorUpdate > 16
+        Date.now() - meshRef.current._lastIndicatorUpdate > 250 // Check occlusion every 250ms
       ) {
-        // ~60fps throttle
+        // Update scale for consistent size
         const worldScale = new THREE.Vector3();
         groupRef.current.getWorldScale(worldScale);
-        // Make indicator size consistent regardless of parent scale
         meshRef.current.scale.set(
           1 / Math.max(0.1, worldScale.x),
           1 / Math.max(0.1, worldScale.y),
           1 / Math.max(0.1, worldScale.z)
         );
+
+        // Check occlusion with raycasting (only if not active/connected)
+        if (!isActive && !isConnected) {
+          try {
+            const worldPosition = new THREE.Vector3();
+            meshRef.current.getWorldPosition(worldPosition);
+
+            // Only do occlusion checking if indicator is reasonably close to camera
+            const cameraDistance = camera.position.distanceTo(worldPosition);
+            if (cameraDistance < 500) {
+              // Reasonable view distance
+              const direction = new THREE.Vector3()
+                .subVectors(worldPosition, camera.position)
+                .normalize();
+
+              const raycaster = new THREE.Raycaster(camera.position, direction);
+              raycaster.far = cameraDistance - 0.1; // Only check up to indicator position
+
+              const intersects = raycaster.intersectObjects(
+                scene.children,
+                true
+              );
+
+              // Check if any solid object is between camera and indicator
+              let occluded = false;
+              for (const intersect of intersects) {
+                if (
+                  intersect.object !== meshRef.current &&
+                  !intersect.object.userData?.isFaceIndicator &&
+                  !intersect.object.userData?.isUI &&
+                  intersect.distance < cameraDistance - 0.5
+                ) {
+                  occluded = true;
+                  break;
+                }
+              }
+
+              setIsOccluded(occluded);
+            } else {
+              setIsOccluded(false); // Too far to be occluded
+            }
+          } catch {
+            // Fallback: don't hide indicator if raycasting fails
+            setIsOccluded(false);
+          }
+        }
+
         meshRef.current._lastIndicatorUpdate = Date.now();
       }
     }
@@ -55,12 +110,18 @@ const FaceIndicator = ({
     ? '#aaaaaa' // Light gray for hover
     : '#aaaaaa'; // Darker gray for normal state
 
+  // Don't render if occluded (except when active or connected)
+  if (isOccluded && !isActive && !isConnected) {
+    return null;
+  }
+
   return (
     <group ref={groupRef}>
       <mesh
         ref={meshRef}
         position={position}
         rotation={rotation}
+        renderOrder={5} // Render after most objects but respect depth
         onClick={(e) => {
           if (e) {
             e.stopPropagation();
@@ -83,14 +144,11 @@ const FaceIndicator = ({
         <meshBasicMaterial
           color={color}
           opacity={isActive || isConnected ? 1.0 : 0.6}
-          transparent={true}
+          transparent={isActive || isConnected ? false : true}
           depthTest={true}
-          depthWrite={false} // Change to false to prevent z-fighting
+          depthWrite={isActive || isConnected ? true : false}
           side={THREE.FrontSide}
-          polygonOffset={true}
-          polygonOffsetFactor={2} // Increase this value to push further behind faces
-          polygonOffsetUnits={2} // Increase this value to push further behind faces
-          renderOrder={-1} // Make this negative to ensure it's behind colored faces
+          alphaTest={0.5}
         />
       </mesh>
     </group>

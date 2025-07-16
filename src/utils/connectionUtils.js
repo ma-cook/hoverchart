@@ -2,42 +2,61 @@ import * as THREE from 'three';
 import { useConnectionStore } from '../stores';
 
 /**
- * Checks if a connection can be created between two objects
- * @param {object} startObj - The first object to connect
- * @param {object} endObj - The second object to connect
+ * Checks if a connection can be created between two face indicators
+ * Allows multiple connections from the same face indicator as long as they don't
+ * connect to the exact same destination face indicator
+ * Allows connections between different faces of the same object
+ * @param {object} startIndicator - The first indicator to connect
+ * @param {object} endIndicator - The second indicator to connect
  * @returns {object} - Result with success boolean and message
  */
-export const validateConnection = (startObj, endObj) => {
-  if (!startObj || !endObj) {
+export const validateConnection = (startIndicator, endIndicator) => {
+  if (!startIndicator || !endIndicator) {
     return {
       valid: false,
-      message: 'Missing start or end object',
+      message: 'Missing start or end indicator',
     };
   }
 
-  // Standardize IDs
-  const startId = String(startObj.id);
-  const endId = String(endObj.id);
+  // Extract object IDs and face information
+  const startObjectId = String(
+    startIndicator.cube?.id || startIndicator.id || startIndicator.objectId
+  );
+  const endObjectId = String(
+    endIndicator.cube?.id || endIndicator.id || endIndicator.objectId
+  );
+  const startFace = startIndicator.face;
+  const endFace = endIndicator.face;
 
-  // Check for self-connection
-  if (startId === endId) {
+  // Allow connections between different faces of the same object, but prevent face-to-itself connections
+  if (startObjectId === endObjectId && startFace === endFace) {
     return {
       valid: false,
-      message: 'Cannot connect an object to itself',
+      message: 'Cannot connect a face to itself',
     };
   }
-  // Check for existing connection using store
+
+  // Check for existing connection between the exact same face pairs only
+  // This allows multiple connections from the same face indicator to different destinations
   const connectionStore = useConnectionStore.getState();
   const existingConnection = connectionStore.connections.find(
     (conn) =>
-      (conn.start?.objectId === startId && conn.end?.objectId === endId) ||
-      (conn.start?.objectId === endId && conn.end?.objectId === startId)
+      // Exact same face-to-face connection already exists
+      (conn.start?.objectId === startObjectId &&
+        conn.start?.face === startFace &&
+        conn.end?.objectId === endObjectId &&
+        conn.end?.face === endFace) ||
+      // Or reverse direction
+      (conn.start?.objectId === endObjectId &&
+        conn.start?.face === endFace &&
+        conn.end?.objectId === startObjectId &&
+        conn.end?.face === startFace)
   );
 
   if (existingConnection) {
     return {
       valid: false,
-      message: 'Objects are already connected',
+      message: 'These specific face indicators are already connected',
     };
   }
 

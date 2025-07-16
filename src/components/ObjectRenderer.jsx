@@ -1,5 +1,6 @@
 import React from 'react';
 import Cube from './Cube';
+import Tetrahedron from './Tetrahedron';
 import Sphere from './Dodecahedron';
 import Plane from './Plane';
 import TextObject from './TextObject';
@@ -34,6 +35,44 @@ const ObjectRenderer = React.memo(
     if (obj.type === 'cube') {
       return (
         <Cube
+          key={obj.id}
+          id={obj.id}
+          selected={selectedId === obj.id}
+          onClick={() => handleObjectClick(obj.id)}
+          onUpdate={handleObjectUpdate}
+          disableOrbitControls={disableOrbitControls}
+          enableOrbitControls={enableOrbitControls}
+          onFaceIndicatorClick={handleFaceIndicatorClick}
+          onFaceClick={handleFaceClick}
+          showAllCubesIndicators={showAllCubesIndicators}
+          activeIndicator={activeIndicator}
+          indicatorMode={indicatorMode}
+          selectedIndicators={selectedIndicators}
+          activeTextStyleUI={activeTextStyleUI}
+          setActiveTextStyleUI={setActiveTextStyleUI}
+          handleIndicatorDeselected={handleIndicatorDeselected}
+          registerTransformingObject={registerTransformingObject}
+          onTransformStart={() => registerTransformingObject(obj.id, true)}
+          onTransformEnd={() => registerTransformingObject(obj.id, false)}
+          onMatrixChanged={(matrixWorld) =>
+            handleObjectMatrixChanged(obj.id, matrixWorld)
+          }
+          transformControls={{
+            matrixAutoUpdate: false,
+            coordinateSystem: 'local',
+            stackBehavior: 'detach_on_modify',
+          }}
+          onDelete={() => handleObjectDelete(obj.id)}
+          handleObjectMove={handleObjectMove}
+          onMove={(newPosition) =>
+            handleObjectMove(obj.id, newPosition, false, false)
+          }
+        />
+      );
+    }
+    if (obj.type === 'tetrahedron') {
+      return (
+        <Tetrahedron
           key={obj.id}
           id={obj.id}
           selected={selectedId === obj.id}

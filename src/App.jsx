@@ -3,6 +3,67 @@ import { Canvas } from '@react-three/fiber';
 import { EffectComposer, SMAA } from '@react-three/postprocessing';
 import './App.css';
 
+// Simple error boundary for Canvas WebGL errors
+function CanvasErrorBoundary({ children, onError }) {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    const handleError = (error) => {
+      console.error('🚨 Canvas error boundary caught:', error);
+      setHasError(true);
+      if (onError) onError(error);
+    };
+
+    window.addEventListener('error', handleError);
+    window.addEventListener('unhandledrejection', handleError);
+
+    return () => {
+      window.removeEventListener('error', handleError);
+      window.removeEventListener('unhandledrejection', handleError);
+    };
+  }, [onError]);
+
+  if (hasError) {
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          background: 'white',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '18px',
+          color: '#666',
+          padding: '20px',
+          textAlign: 'center',
+        }}
+      >
+        <h2>Graphics Not Supported</h2>
+        <p>Your device doesn&apos;t support WebGL or 3D graphics.</p>
+        <p>Please try a different browser or update your graphics drivers.</p>
+        <button
+          onClick={() => setHasError(false)}
+          style={{
+            marginTop: '20px',
+            padding: '10px 20px',
+            fontSize: '16px',
+            cursor: 'pointer',
+          }}
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
+  return children;
+}
+
 // Component imports
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
@@ -24,6 +85,7 @@ import {
   useConnectionStore,
   usePlaneStore,
   useCubeStore,
+  useTetrahedronStore,
   useDodecahedronStore,
 } from './stores';
 
@@ -53,8 +115,8 @@ const App = () => {
   // Base state
   const [backgroundColor] = useState('white');
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
-  const [isLookingUpPublicSpace, setIsLookingUpPublicSpace] = useState(false);
   const [currentSpaceOwner, setCurrentSpaceOwner] = useState(null);
+  const redirectTimeoutRef = useRef(null); // Add ref to track redirect timeout
   const cameraRef = useRef();
   const intentionalSpaceChangeRef = useRef(false); // Get objects from store with safety check
   const objectsFromStore = useObjectsStore((state) => state.objects);
@@ -76,6 +138,11 @@ const App = () => {
     (state) => state.setCubeShowHeaderTextStyleUI
   );
 
+  // Tetrahedron store
+  const setTetrahedronShowHeaderTextStyleUI = useTetrahedronStore(
+    (state) => state.setTetrahedronShowHeaderTextStyleUI
+  );
+
   // Dodecahedron store
   const setDodecahedronShowStyleMenu = useDodecahedronStore(
     (state) => state.setDodecahedronShowStyleMenu
@@ -90,14 +157,115 @@ const App = () => {
     intentionalSpaceChangeRef,
   });
   // Calculate effective space ID early to avoid circular dependency
-  const publicSpaceId = window.publicAccessSpace;
+  // Initialize publicSpaceId and isLookingUpPublicSpace immediately from URL to prevent timing issues
+  const { publicSpaceId, shouldLookupPublicSpace } = useMemo(() => {
+    // First check if already set in window
+    if (window.publicAccessSpace) {
+      return {
+        publicSpaceId: window.publicAccessSpace,
+        shouldLookupPublicSpace: false,
+      };
+    }
+
+    // Otherwise, extract from URL parameters immediately
+    const params = new URLSearchParams(window.location.search);
+    const spaceParam = params.get('space') || params.get('spaceId');
+    const uidParam = params.get('uid');
+    const tokenParam = params.get('token');
+    const ownerParam = params.get('owner');
+
+    // Only treat as public space if no auth params and no owner param
+    if (spaceParam && !uidParam && !tokenParam && !ownerParam) {
+      // Check if we already know this is a public space from session storage
+      const isKnownPublic =
+        sessionStorage.getItem(`isPublicSpace_${spaceParam}`) === 'true';
+      const knownOwner = sessionStorage.getItem(
+        `sharedSpaceOwner_${spaceParam}`
+      );
+
+      if (isKnownPublic && knownOwner) {
+        // We already know this space and its owner, no lookup needed
+        window.publicAccessSpace = spaceParam;
+        window.currentSpaceOwner = knownOwner;
+        return { publicSpaceId: spaceParam, shouldLookupPublicSpace: false };
+      } else {
+        // Need to lookup public space metadata
+        return { publicSpaceId: spaceParam, shouldLookupPublicSpace: true };
+      }
+    }
+
+    return {
+      publicSpaceId: window.publicAccessSpace,
+      shouldLookupPublicSpace: false,
+    };
+  }, []); // Empty deps - only calculate once on mount
+
+  // Initialize isLookingUpPublicSpace based on whether we need to lookup
+  const [isLookingUpPublicSpace, setIsLookingUpPublicSpace] = useState(
+    shouldLookupPublicSpace
+  );
+
   const effectiveSpaceId = publicSpaceId || currentSpaceId;
 
-  // Calculate access early for spatial manager
-  const canViewSpace = !!(
-    user ||
-    (publicSpaceId && (currentSpaceOwner || publicSpaceReady))
-  );
+  // Memoize canViewSpace calculation to prevent unnecessary recalculations
+  const canViewSpace = useMemo(() => {
+    return !!(
+      user ||
+      (publicSpaceId &&
+        (currentSpaceOwner || publicSpaceReady || isLookingUpPublicSpace)) ||
+      // Also allow access if we have cached public space info from session storage
+      (publicSpaceId && window.currentSpaceOwner)
+    );
+  }, [
+    user,
+    publicSpaceId,
+    currentSpaceOwner,
+    publicSpaceReady,
+    isLookingUpPublicSpace,
+  ]);
+
+  // Debug canViewSpace calculation only when dependencies change
+  useEffect(() => {
+    console.log('🔍 [App] canViewSpace calculation:', {
+      user: !!user,
+      publicSpaceId,
+      currentSpaceOwner,
+      publicSpaceReady,
+      isLookingUpPublicSpace,
+      canViewSpace,
+    });
+  }, [
+    user,
+    publicSpaceId,
+    currentSpaceOwner,
+    publicSpaceReady,
+    isLookingUpPublicSpace,
+    canViewSpace,
+  ]);
+
+  // Memoize redirect decision to prevent unnecessary recalculations
+  const shouldRedirect = useMemo(() => !canViewSpace, [canViewSpace]);
+
+  // Debug redirect decision only when canViewSpace changes
+  useEffect(() => {
+    console.log('🔍 [App] canViewSpace final check before redirect:', {
+      canViewSpace,
+      user: !!user,
+      publicSpaceId,
+      currentSpaceOwner,
+      publicSpaceReady,
+      isLookingUpPublicSpace,
+      shouldRedirect,
+    });
+  }, [
+    canViewSpace,
+    user,
+    publicSpaceId,
+    currentSpaceOwner,
+    publicSpaceReady,
+    isLookingUpPublicSpace,
+    shouldRedirect,
+  ]);
 
   // Spatial partitioning hook with object change handler
   const handleSpatialObjectChange = useCallback(
@@ -277,6 +445,13 @@ const App = () => {
 
       // If we have an authenticated user, let the space manager handle it
       if (user?.uid) {
+        // Reset lookup state since we're letting space manager handle this
+        if (isLookingUpPublicSpace) {
+          console.log(
+            '🔄 [App] Authenticated user detected, letting space manager handle space access'
+          );
+          setIsLookingUpPublicSpace(false);
+        }
         return;
       }
 
@@ -298,16 +473,37 @@ const App = () => {
         sessionStorage.setItem(`isPublicSpace_${spaceParam}`, 'true');
       } else {
         // Only try public space lookup if we're not authenticated and no auth params
-        if (!user && !uidParam && !tokenParam) {
+        // AND we don't already have the space data
+        if (
+          !user &&
+          !uidParam &&
+          !tokenParam &&
+          !publicSpaceReady &&
+          !currentSpaceOwner
+        ) {
+          // Set window variable for consistency (may already be set by useMemo above)
           window.publicAccessSpace = spaceParam;
           setIsLookingUpPublicSpace(true);
+
+          console.log('🔍 [App] Starting public space lookup for:', spaceParam);
 
           // We'll need to fetch the space metadata to get the owner
           import('./services/spacesService')
             .then(({ getPublicSpaceMetadata }) => {
+              console.log(
+                '📋 [App] About to call getPublicSpaceMetadata with:',
+                spaceParam
+              );
               getPublicSpaceMetadata(spaceParam)
                 .then((spaceData) => {
+                  console.log(
+                    '📋 [App] getPublicSpaceMetadata returned:',
+                    spaceData
+                  );
                   if (spaceData && spaceData.isPublic && spaceData.ownerId) {
+                    console.log(
+                      '✅ [App] Successfully found public space, setting up access'
+                    );
                     window.currentSpaceOwner = spaceData.ownerId;
                     setCurrentSpaceOwner(spaceData.ownerId);
                     sessionStorage.setItem(
@@ -325,22 +521,45 @@ const App = () => {
                     // Trigger a re-render
                     setPublicSpaceReady(true);
                   } else {
+                    console.log(
+                      '❌ [App] Public space lookup failed, redirecting. SpaceData:',
+                      spaceData
+                    );
                     window.location.href = 'https://volscape.com/';
                     return;
                   }
                   setIsLookingUpPublicSpace(false);
                 })
                 .catch((error) => {
-                  console.error('Failed to fetch space metadata:', error);
+                  console.error(
+                    '❌ [App] Failed to fetch space metadata:',
+                    error
+                  );
                   // Redirect to volscape.com for failed space access
 
                   window.location.href = 'https://volscape.com/';
                 });
             })
             .catch((importError) => {
-              console.error('Failed to import spacesService:', importError);
+              console.error(
+                '❌ [App] Failed to import spacesService:',
+                importError
+              );
               setIsLookingUpPublicSpace(false);
             });
+        } else if (
+          !user &&
+          !uidParam &&
+          !tokenParam &&
+          (publicSpaceReady || currentSpaceOwner)
+        ) {
+          // We already have public space data, just make sure lookup state is correct
+          console.log(
+            '🔄 [App] Public space data already available, skipping lookup'
+          );
+          if (isLookingUpPublicSpace) {
+            setIsLookingUpPublicSpace(false);
+          }
         }
       }
     }
@@ -363,18 +582,42 @@ const App = () => {
     } else {
       console.warn('⚠️ [App] No currentSpaceId available for global context');
     }
-  }, [user, currentSpaceId, isAuthReady]);
+  }, [
+    user,
+    currentSpaceId,
+    isAuthReady,
+    isLookingUpPublicSpace,
+    setIsLookingUpPublicSpace,
+    currentSpaceOwner,
+    publicSpaceReady,
+  ]);
   const isReadOnly =
     !!publicSpaceId && (!user || currentSpaceOwner !== user?.uid);
 
   // Check for unauthorized access and redirect to volscape.com
   useEffect(() => {
     // If we have a currentSpaceId but no authentication and no public space access
-    if (currentSpaceId && !user && !publicSpaceId && isAuthReady) {
+    // BUT don't redirect if we're currently looking up a public space
+    if (
+      currentSpaceId &&
+      !user &&
+      !publicSpaceId &&
+      isAuthReady &&
+      !isLookingUpPublicSpace
+    ) {
+      console.log(
+        '🔄 [App] Redirecting to volscape.com - no auth and no public space access'
+      );
       window.location.href = 'https://volscape.com/';
       return;
     }
-  }, [currentSpaceId, user, publicSpaceId, isAuthReady]);
+  }, [
+    currentSpaceId,
+    user,
+    publicSpaceId,
+    isAuthReady,
+    isLookingUpPublicSpace,
+  ]);
 
   // Create stable key for loaded cells to prevent infinite subscription loop
   const loadedCellsKey = useMemo(() => {
@@ -1111,6 +1354,8 @@ const App = () => {
           setPlaneShowHeaderStyleUI(obj.id, false);
         } else if (obj.type === 'cube') {
           setCubeShowHeaderTextStyleUI(obj.id, false);
+        } else if (obj.type === 'tetrahedron') {
+          setTetrahedronShowHeaderTextStyleUI(obj.id, false);
         } else if (obj.type === 'dodecahedron' || obj.type === 'sphere') {
           setDodecahedronShowStyleMenu(obj.id, false);
           setDodecahedronShowFaceTextStyleMenu(obj.id, false);
@@ -1133,6 +1378,7 @@ const App = () => {
     setPlaneShowTextStyleUI,
     setPlaneShowHeaderStyleUI,
     setCubeShowHeaderTextStyleUI,
+    setTetrahedronShowHeaderTextStyleUI,
     setDodecahedronShowStyleMenu,
     setDodecahedronShowFaceTextStyleMenu,
     isConnectMode,
@@ -1423,14 +1669,29 @@ const App = () => {
 
   // Show loading when looking up public space metadata
   if (isLookingUpPublicSpace) {
+    console.log('🔍 [App] Showing loading screen for public space lookup');
     return <div className="loading">Loading public space...</div>;
   }
-  if (!canViewSpace) {
-    // Defer redirect to not block rendering
-    setTimeout(() => {
+
+  if (shouldRedirect) {
+    console.log('🔄 [App] Triggering redirect due to !canViewSpace');
+    // Clear any existing redirect timeout
+    if (redirectTimeoutRef.current) {
+      clearTimeout(redirectTimeoutRef.current);
+    }
+    // Schedule redirect with cancellable timeout
+    redirectTimeoutRef.current = setTimeout(() => {
+      console.log('🔄 [App] Executing redirect to volscape.com');
       window.location.href = 'https://volscape.com/';
     }, 0);
     return <div className="loading">Redirecting...</div>;
+  }
+
+  // Clear redirect timeout if canViewSpace becomes true
+  if (redirectTimeoutRef.current) {
+    console.log('🔄 [App] Cancelling redirect - canViewSpace is now true');
+    clearTimeout(redirectTimeoutRef.current);
+    redirectTimeoutRef.current = null;
   }
   return (
     <>
@@ -1455,43 +1716,57 @@ const App = () => {
         </div>
       )}{' '}
       {shouldRenderCanvas && (
-        <Canvas
-          style={{
-            background: backgroundColor,
-            width: '100vw',
-            height: '100vh',
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            touchAction: 'none', // Enable touch gestures for mobile
+        <CanvasErrorBoundary
+          onError={(error) => {
+            console.error('🚨 WebGL/Canvas error detected:', error);
+            // Don't redirect on WebGL errors - let the error boundary handle it
           }}
-          onPointerMissed={handleCanvasClick}
-          {...canvasSettings}
         >
-          {' '}
-          <CustomCamera ref={cameraRef} />{' '}
-          <group>
-            {/* Real-time connection position updater - reactive to store changes */}
-            <RealTimeConnectionUpdater />{' '}
-            {/* Render connections with virtualization */}
-            <ConnectionsRenderer
-              objects={visibleObjectsForConnections}
-              onLineStyleChange={handleLineStyleChange}
-              onLineColorChange={handleLineColorChange}
-              onConnectionClick={handleConnectionClick}
-              onLineTextClick={handleLineTextClick}
-              onLineTextSubmit={handleLineTextSubmit}
-              onLineTextStyleChange={handleLineTextStyleChange}
-            />{' '}
-            {/* Render all objects */}
-            {renderedObjects}
-            {/* Render cell boundaries */}
-            <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
-          </group>
-          <EffectComposer>
-            <SMAA />
-          </EffectComposer>
-        </Canvas>
+          <Canvas
+            style={{
+              background: backgroundColor,
+              width: '100vw',
+              height: '100vh',
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              touchAction: 'none', // Enable touch gestures for mobile
+            }}
+            onPointerMissed={handleCanvasClick}
+            onCreated={() => {
+              console.log('🎨 Canvas created successfully');
+            }}
+            onError={(error) => {
+              console.error('🚨 Canvas error (WebGL issue):', error);
+              // Don't redirect on WebGL errors - show fallback UI instead
+            }}
+            {...canvasSettings}
+          >
+            {' '}
+            <CustomCamera ref={cameraRef} />{' '}
+            <group>
+              {/* Real-time connection position updater - reactive to store changes */}
+              <RealTimeConnectionUpdater />{' '}
+              {/* Render connections with virtualization */}
+              <ConnectionsRenderer
+                objects={visibleObjectsForConnections}
+                onLineStyleChange={handleLineStyleChange}
+                onLineColorChange={handleLineColorChange}
+                onConnectionClick={handleConnectionClick}
+                onLineTextClick={handleLineTextClick}
+                onLineTextSubmit={handleLineTextSubmit}
+                onLineTextStyleChange={handleLineTextStyleChange}
+              />{' '}
+              {/* Render all objects */}
+              {renderedObjects}
+              {/* Render cell boundaries */}
+              <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
+            </group>
+            <EffectComposer>
+              <SMAA />
+            </EffectComposer>
+          </Canvas>
+        </CanvasErrorBoundary>
       )}
       <UIOverlay
         onCreateObject={handleCreateObject}

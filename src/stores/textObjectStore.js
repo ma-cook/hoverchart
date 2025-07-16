@@ -23,6 +23,10 @@ const useTextObjectStore = create((set, get) => ({
         showTransform: false,
         showResizeControls: false,
         bulletPointMode: false,
+        // Add snap line state properties matching Cube component
+        showSnapLine: false,
+        snapLinePoints: null,
+        snapAxis: null,
       }
     );
   },
