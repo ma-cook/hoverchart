@@ -12,6 +12,14 @@ import {
   CELL_UNLOAD_DISTANCE,
 } from '../services/spatialPartitioning';
 
+// Import caches from spatialObjectsService
+import {
+  objectsCache,
+  saveTimeouts,
+  updateThrottles,
+  lastReceivedObjects,
+} from '../services/spatialObjectsService';
+
 import { getIsInitialLoading } from '../utils/loadingState';
 
 // Version marker
@@ -33,9 +41,25 @@ const useSpatialManagerStore = create((set, get) => ({
   objectsByCell: new Map(), // Map of cellId -> Set of objectIds
 
   // Constants
-  CELL_LOAD_COOLDOWN: 1000, // Minimum 1 second between cell loading operations
-  MAX_CONCURRENT_LOADS: 5, // Limit concurrent cell loading operations
-  POSITION_UPDATE_THROTTLE: 250, // Throttle position updates
+  CELL_LOAD_COOLDOWN: 50, // Reduced to 50ms for very responsive loading
+  MAX_CONCURRENT_LOADS: 16, // Increased to allow loading more cells at once
+  POSITION_UPDATE_THROTTLE: 0, // No throttling - we handle this in the hook
+
+  // Handler for when cells are reloaded
+  handleCellsReloaded: (loadedCells) => {
+    if (!loadedCells?.length) return;
+
+    // Import objects store dynamically to avoid circular dependencies
+    import('./objectsStore')
+      .then(({ default: objectsStore }) => {
+        // Force a recheck of all objects against the current loaded cells
+        const currentObjects = objectsStore.getState().objects;
+        objectsStore.getState().setObjects([...currentObjects]);
+      })
+      .catch((error) => {
+        console.error('Error updating objects after cell reload:', error);
+      });
+  },
 
   // Actions
   setLoadedCells: (cells) => {
@@ -126,6 +150,34 @@ const useSpatialManagerStore = create((set, get) => ({
   loadCellsBatch: async (cellCoordsList, user, currentSpaceId) => {
     if (!currentSpaceId || !cellCoordsList?.length) return [];
 
+    // Get cell IDs for the cells we're loading
+    const loadingCellIds = cellCoordsList.map((coords) =>
+      getCellId(coords.x, coords.y, coords.z)
+    );
+
+    // Remove unloaded flags for the cells and their objects
+    if (window._unloadedObjects || window._unloadedCells) {
+      loadingCellIds.forEach((cellId) => {
+        // Remove cell from unloaded tracking
+        if (window._unloadedCells) {
+          window._unloadedCells.delete(cellId);
+        }
+
+        // Remove all objects in this cell from unloaded tracking
+        const state = get();
+        const cellObjects = state.objectsByCell.get(cellId);
+        if (cellObjects && window._unloadedObjects) {
+          cellObjects.forEach((objId) => {
+            const objIdStr = objId.toString();
+            window._unloadedObjects.delete(objIdStr);
+            console.log(
+              `📦 Removing unloaded flag for object: ${objIdStr} in cell: ${cellId}`
+            );
+          });
+        }
+      });
+    }
+
     const ownerUserId = window.currentSpaceOwner || user?.uid;
     if (!ownerUserId) return [];
 
@@ -163,6 +215,24 @@ const useSpatialManagerStore = create((set, get) => ({
         currentSpaceId,
         cellsToLoadNow
       );
+
+      // For successfully loaded cells, remove from unloaded tracking
+      const loadedCellIds = [];
+      cellsToLoadNow.forEach((coords, index) => {
+        if (results[index]) {
+          const cellId = getCellId(coords.x, coords.y, coords.z);
+          loadedCellIds.push(cellId);
+          if (window._unloadedCells) {
+            window._unloadedCells.delete(cellId);
+            console.log(`📦 Removed cell from unloaded tracking: ${cellId}`);
+          }
+        }
+      });
+
+      // Trigger object restoration for reloaded cells
+      if (loadedCellIds.length > 0) {
+        get().handleCellsReloaded(loadedCellIds);
+      }
 
       // Update loaded cells with successful loads
       const newCellIds = cellsToLoadNow
@@ -302,7 +372,7 @@ const useSpatialManagerStore = create((set, get) => ({
   },
 
   // Unload multiple cells in batch for better performance
-  unloadCellsBatch: (cellIds, onObjectsChange) => {
+  unloadCellsBatch: (cellIds, onObjectsChange, currentSpaceId) => {
     if (!cellIds?.length) return;
 
     const state = get();
@@ -311,14 +381,29 @@ const useSpatialManagerStore = create((set, get) => ({
     );
 
     if (cellsToRemove.length > 0) {
-      // Notify about objects that should be removed
+      console.log(
+        `🗑️ Unloading ${cellsToRemove.length} cells: ${cellsToRemove.join(
+          ', '
+        )}`
+      );
+
+      // Notify about objects that should be removed and track them
       if (onObjectsChange && state.objectsByCell.size > 0) {
         const objectsToRemove = [];
+        // Create or update the global tracking set for unloaded objects
+        if (!window._unloadedObjects) {
+          window._unloadedObjects = new Set();
+        }
 
         cellsToRemove.forEach((cellId) => {
           const cellObjects = state.objectsByCell.get(cellId);
 
           if (cellObjects) {
+            // Add objects to tracking set
+            cellObjects.forEach((objId) => {
+              window._unloadedObjects.add(objId.toString());
+            });
+
             objectsToRemove.push(...Array.from(cellObjects));
             // Remove from objectsByCell map
             const newMap = new Map(state.objectsByCell);
@@ -328,14 +413,100 @@ const useSpatialManagerStore = create((set, get) => ({
         });
 
         if (objectsToRemove.length > 0) {
+          console.log(
+            `🗑️ Removing ${objectsToRemove.length} objects from unloaded cells`
+          );
           objectsToRemove.forEach((objectId) => {
+            // Clean up object caches and subscriptions
+            const objStr = objectId.toString();
+            const cacheKey = `${currentSpaceId}_${objStr}`;
+            // Clean from objectsCache
+            objectsCache?.delete(cacheKey);
+            // Clean from other caches
+            saveTimeouts?.delete(cacheKey);
+            updateThrottles?.delete(cacheKey);
+            lastReceivedObjects?.delete(cacheKey);
+
             onObjectsChange({
               type: 'removed',
-              id: objectId.toString(),
+              id: objStr,
               source: 'cell-unload',
             });
           });
+
+          // Clean up objects state in the store
+          import('./objectsStore')
+            .then(({ default: objectsStore }) => {
+              objectsStore.getState().cleanupUnloadedObjects();
+            })
+            .catch((error) => {
+              console.error('Error cleaning up objects store:', error);
+            });
         }
+      }
+
+      // Remove connections from unloaded cells synchronously
+      try {
+        // Dynamically import connection store to avoid circular dependency
+        import('./connectionStore')
+          .then(({ default: connectionStore }) => {
+            const state = connectionStore.getState();
+            state.removeConnectionsFromCells(cellsToRemove);
+          })
+          .catch((error) => {
+            console.error(
+              'Error importing connection store for cleanup:',
+              error
+            );
+          });
+      } catch (error) {
+        console.error('Error removing connections from unloaded cells:', error);
+      }
+
+      // Force cleanup connection subscriptions for unloaded cells to ensure fresh subscriptions when reloaded
+      try {
+        import('../services/globalSubscriptionManager')
+          .then(({ forceCleanupSubscription, generateSubscriptionKey }) => {
+            cellsToRemove.forEach((cellKey) => {
+              // Generate the same subscription key that was used for this cell
+              const subscriptionKey = generateSubscriptionKey.connections(
+                currentSpaceId || 'default',
+                cellKey
+              );
+              forceCleanupSubscription(subscriptionKey);
+            });
+          })
+          .catch((error) => {
+            console.error('Error cleaning up connection subscriptions:', error);
+          });
+      } catch (error) {
+        console.error('Error force cleaning connection subscriptions:', error);
+      }
+
+      // Clean up subscriptions for unloaded cells
+      try {
+        import('../services/globalSubscriptionManager')
+          .then(({ forceCleanupSubscription, generateSubscriptionKey }) => {
+            cellsToRemove.forEach((cellKey) => {
+              // Clean up spatial object subscriptions
+              const spatialSubKey = generateSubscriptionKey.spatialObjects(
+                currentSpaceId || 'default',
+                cellKey
+              );
+              forceCleanupSubscription(spatialSubKey);
+            });
+          })
+          .catch((error) => {
+            console.error(
+              'Error cleaning up spatial object subscriptions:',
+              error
+            );
+          });
+      } catch (error) {
+        console.error(
+          'Error force cleaning spatial object subscriptions:',
+          error
+        );
       }
 
       // Remove cells from loaded set
@@ -356,53 +527,17 @@ const useSpatialManagerStore = create((set, get) => ({
 
     if (!state.isInitialized || !currentSpaceId) return;
 
-    // Throttle position updates to improve performance
     const now = Date.now();
-    if (now - state.lastUpdateTime < state.POSITION_UPDATE_THROTTLE) {
-      return;
-    }
-    set({ lastUpdateTime: now });
 
     // Convert position to array if it's a Vector3
     const posArray = Array.isArray(position)
       ? position
       : [position.x, position.y, position.z];
 
-    // Calculate camera velocity for predictive loading
-    const [lastX, lastY, lastZ] = state.lastCameraPosition;
-    const [newX, newY, newZ] = posArray;
-    const timeDelta = state.POSITION_UPDATE_THROTTLE / 1000; // Convert to seconds
+    // Get current cell coordinates and update last position
+    set({ lastCameraPosition: posArray });
 
-    const currentVelocity = [
-      (newX - lastX) / timeDelta,
-      (newY - lastY) / timeDelta,
-      (newZ - lastZ) / timeDelta,
-    ];
-
-    // Update velocity (with smoothing)
-    const smoothing = 0.3;
-    const newCameraVelocity = [
-      state.cameraVelocity[0] * (1 - smoothing) +
-        currentVelocity[0] * smoothing,
-      state.cameraVelocity[1] * (1 - smoothing) +
-        currentVelocity[1] * smoothing,
-      state.cameraVelocity[2] * (1 - smoothing) +
-        currentVelocity[2] * smoothing,
-    ];
-    set({ cameraVelocity: newCameraVelocity });
-
-    const distance = Math.sqrt(
-      Math.pow(newX - lastX, 2) +
-        Math.pow(newY - lastY, 2) +
-        Math.pow(newZ - lastZ, 2)
-    );
-
-    // Check if this is the first position update (initial camera position)
-    const isFirstUpdate = lastX === 0 && lastY === 0 && lastZ === 0;
-
-    // Only update if camera moved more than 25 units OR this is the first update
-    if (distance < 25 && !isFirstUpdate) return;
-
+    // Always update the last position
     set({ lastCameraPosition: posArray });
 
     // Get current cell coordinates
@@ -417,6 +552,11 @@ const useSpatialManagerStore = create((set, get) => ({
       set({ currentCellCoords: newCellCoords });
     }
 
+    // Track a global set of unloaded cells to prevent resubscription
+    if (!window._unloadedCells) {
+      window._unloadedCells = new Set();
+    }
+
     // PRIORITY 1: Unload distant cells FIRST (non-blocking)
     const cellsToUnload = getCellsToUnload(
       posArray,
@@ -425,14 +565,14 @@ const useSpatialManagerStore = create((set, get) => ({
     );
 
     if (cellsToUnload.length > 0) {
-      get().unloadCellsBatch(cellsToUnload, onObjectsChange);
+      get().unloadCellsBatch(cellsToUnload, onObjectsChange, currentSpaceId);
     }
 
     // PRIORITY 2: Load immediate neighbor cells (non-blocking, fire-and-forget)
     const neighborCells = getNeighborCells(posArray, CELL_NEIGHBOR_RADIUS);
     const cellsToLoad = neighborCells.filter((cellCoords) => {
       const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-      return !state.loadedCells.has(cellId);
+      return !state.loadedCells.has(cellId) && !state.loadingCells.has(cellId);
     });
 
     // Add cooldown check to prevent rapid successive cell loading
@@ -440,53 +580,65 @@ const useSpatialManagerStore = create((set, get) => ({
     const shouldLoadCells =
       cellsToLoad.length > 0 && timeSinceLastLoad >= state.CELL_LOAD_COOLDOWN;
 
-    // PRIORITY 3: Predictive loading based on camera movement direction
-    const predictiveCells = [];
-    const speed = Math.sqrt(
-      Math.pow(newCameraVelocity[0], 2) + Math.pow(newCameraVelocity[2], 2) // Only X and Z for horizontal movement
+    console.log(
+      `📍 Camera at [${posArray[0].toFixed(0)}, ${posArray[1].toFixed(
+        0
+      )}, ${posArray[2].toFixed(0)}] - Cell [${newCellCoords.x}, ${
+        newCellCoords.y
+      }, ${newCellCoords.z}]`
+    );
+    console.log(
+      `📦 Loaded cells: ${state.loadedCells.size}, Cells to load: ${cellsToLoad.length}, Loading cells: ${state.loadingCells.size}`
     );
 
-    // Only do predictive loading if camera is moving fast enough but not too fast
-    if (speed > 500 && speed < 2000) {
-      // Added upper limit to prevent loading during rapid movements
-      const direction = [
-        newCameraVelocity[0] / speed,
-        0, // Keep Y the same
-        newCameraVelocity[2] / speed,
-      ];
-
-      // Predict where camera will be in next 2-3 seconds
-      const predictedPosition = [
-        posArray[0] + direction[0] * speed * 2,
-        posArray[1],
-        posArray[2] + direction[2] * speed * 2,
-      ];
-
-      const predictedNeighbors = getNeighborCells(predictedPosition, 1);
-      predictedNeighbors.forEach((cellCoords) => {
-        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-        if (
-          !state.loadedCells.has(cellId) &&
-          !cellsToLoad.some(
-            (c) =>
-              c.x === cellCoords.x &&
-              c.y === cellCoords.y &&
-              c.z === cellCoords.z
-          )
-        ) {
-          predictiveCells.push(cellCoords);
-        }
-      });
+    if (cellsToLoad.length > 0) {
+      console.log(
+        `🔄 Cells to load: ${cellsToLoad
+          .map((c) => `[${c.x},${c.y},${c.z}]`)
+          .join(', ')}`
+      );
     }
+
+    // PRIORITY 3: Load cells in the direction of movement
+    const predictiveCells = [];
+    // Get a few cells ahead in the current view direction
+    const forwardCells = getNeighborCells(posArray, 2);
+    forwardCells.forEach((cellCoords) => {
+      const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+      if (
+        !state.loadedCells.has(cellId) &&
+        !cellsToLoad.some(
+          (c) =>
+            c.x === cellCoords.x && c.y === cellCoords.y && c.z === cellCoords.z
+        )
+      ) {
+        predictiveCells.push(cellCoords);
+      }
+    });
 
     // Load immediate cells first, then predictive cells with lower priority
     if (shouldLoadCells) {
+      console.log(`🔄 Loading ${cellsToLoad.length} immediate cells`);
       set({ lastCellLoadTime: now }); // Update the last load time
       get()
         .loadCellsBatch(cellsToLoad, user, currentSpaceId)
+        .then((results) => {
+          const successCount = results.filter((r) => r).length;
+          console.log(
+            `✅ Successfully loaded ${successCount}/${cellsToLoad.length} cells`
+          );
+        })
         .catch((error) => {
           console.error('❌ Error in background cell loading:', error);
         });
+    } else if (cellsToLoad.length > 0) {
+      console.log(
+        `⏸️ Cell loading on cooldown. ${
+          cellsToLoad.length
+        } cells waiting. Cooldown remaining: ${
+          state.CELL_LOAD_COOLDOWN - timeSinceLastLoad
+        }ms`
+      );
     }
 
     // Load predictive cells with delay to not interfere with immediate loading

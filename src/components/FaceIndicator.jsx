@@ -14,6 +14,8 @@ const FaceIndicator = ({
   onClick,
   isActive = false,
   isConnected = false,
+  showAllCubesIndicators = false,
+  selectedIndicatorsLength = 0,
 }) => {
   const meshRef = useRef();
   const groupRef = useRef();
@@ -52,8 +54,10 @@ const FaceIndicator = ({
           1 / Math.max(0.1, worldScale.z)
         );
 
-        // Check occlusion with raycasting (only if not active/connected)
-        if (!isActive && !isConnected) {
+        // Check occlusion with raycasting (only if not active/connected and not in connection mode)
+        const inConnectionMode =
+          showAllCubesIndicators || selectedIndicatorsLength > 0;
+        if (!isActive && !isConnected && !inConnectionMode) {
           try {
             const worldPosition = new THREE.Vector3();
             meshRef.current.getWorldPosition(worldPosition);
@@ -67,7 +71,13 @@ const FaceIndicator = ({
                 .normalize();
 
               const raycaster = new THREE.Raycaster(camera.position, direction);
+              raycaster.camera = camera; // Fix LineSegments2 raycasting error
               raycaster.far = cameraDistance - 0.1; // Only check up to indicator position
+
+              // Set global camera reference for LineSegments2
+              if (window.camera !== camera) {
+                window.camera = camera;
+              }
 
               const intersects = raycaster.intersectObjects(
                 scene.children,
@@ -107,11 +117,13 @@ const FaceIndicator = ({
     : isActive
     ? '#0088ff' // Blue for selected (not connected)
     : isHovered
-    ? '#aaaaaa' // Light gray for hover
-    : '#aaaaaa'; // Darker gray for normal state
+    ? '#009909' // Light gray for hover
+    : '#00000a'; // Darker gray for normal state
 
-  // Don't render if occluded (except when active or connected)
-  if (isOccluded && !isActive && !isConnected) {
+  // Don't render if occluded (except when active, connected, or in connection mode)
+  const inConnectionMode =
+    showAllCubesIndicators || selectedIndicatorsLength > 0;
+  if (isOccluded && !isActive && !isConnected && !inConnectionMode) {
     return null;
   }
 
@@ -157,10 +169,12 @@ const FaceIndicator = ({
 
 // Wrap the component in React.memo to prevent unnecessary re-renders
 export default React.memo(FaceIndicator, (prevProps, nextProps) => {
-  // Re-render if active state, connected state, or position changes
+  // Re-render if active state, connected state, connection mode, or position changes
   return (
     prevProps.isActive === nextProps.isActive &&
     prevProps.isConnected === nextProps.isConnected &&
+    prevProps.showAllCubesIndicators === nextProps.showAllCubesIndicators &&
+    prevProps.selectedIndicatorsLength === nextProps.selectedIndicatorsLength &&
     prevProps.position[0] === nextProps.position[0] &&
     prevProps.position[1] === nextProps.position[1] &&
     prevProps.position[2] === nextProps.position[2]

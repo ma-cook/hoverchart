@@ -38,7 +38,7 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
   // This is more efficient and prevents unnecessary database writes
   // Wrapper functions to maintain backward compatibility
   const handleCreateObject = (type, position = null, extraData = {}) => {
-    storeHandleCreateObject(
+    return storeHandleCreateObject(
       type,
       position,
       user,

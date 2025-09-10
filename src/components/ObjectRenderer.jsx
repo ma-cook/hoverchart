@@ -108,7 +108,7 @@ const ObjectRenderer = React.memo(
         />
       );
     }
-    if (obj.type === 'sphere') {
+    if (obj.type === 'sphere' || obj.type === 'dodecahedron') {
       return (
         <Sphere
           key={obj.id}

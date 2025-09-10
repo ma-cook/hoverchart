@@ -1,68 +1,8 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { EffectComposer, SMAA } from '@react-three/postprocessing';
+import * as THREE from 'three';
 import './App.css';
-
-// Simple error boundary for Canvas WebGL errors
-function CanvasErrorBoundary({ children, onError }) {
-  const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    const handleError = (error) => {
-      console.error('🚨 Canvas error boundary caught:', error);
-      setHasError(true);
-      if (onError) onError(error);
-    };
-
-    window.addEventListener('error', handleError);
-    window.addEventListener('unhandledrejection', handleError);
-
-    return () => {
-      window.removeEventListener('error', handleError);
-      window.removeEventListener('unhandledrejection', handleError);
-    };
-  }, [onError]);
-
-  if (hasError) {
-    return (
-      <div
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          background: 'white',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: '18px',
-          color: '#666',
-          padding: '20px',
-          textAlign: 'center',
-        }}
-      >
-        <h2>Graphics Not Supported</h2>
-        <p>Your device doesn&apos;t support WebGL or 3D graphics.</p>
-        <p>Please try a different browser or update your graphics drivers.</p>
-        <button
-          onClick={() => setHasError(false)}
-          style={{
-            marginTop: '20px',
-            padding: '10px 20px',
-            fontSize: '16px',
-            cursor: 'pointer',
-          }}
-        >
-          Try Again
-        </button>
-      </div>
-    );
-  }
-
-  return children;
-}
 
 // Component imports
 import CustomCamera from './components/CustomCamera';
@@ -105,18 +45,31 @@ import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
 import { initAnimationSystem } from './utils/animationUtils';
-import { throttle, initPerformanceTracking } from './utils/performance';
 import { objectVirtualizer } from './utils/objectVirtualization';
 
 /**
  * Main application component
  */
 const App = () => {
+  // Simple throttle function to replace performance utility
+  const throttle = (func, limit) => {
+    let inThrottle;
+    return function (...args) {
+      if (!inThrottle) {
+        func.apply(this, args);
+        inThrottle = true;
+        setTimeout(() => (inThrottle = false), limit);
+      }
+    };
+  };
+
   // Base state
   const [backgroundColor] = useState('white');
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
   const [currentSpaceOwner, setCurrentSpaceOwner] = useState(null);
   const redirectTimeoutRef = useRef(null); // Add ref to track redirect timeout
+  const loadingTimeoutIdRef = useRef(null); // Add ref to track loading timeout
+  const objectLoadingTimeoutIdRef = useRef(null); // Add ref to track object loading timeout
   const cameraRef = useRef();
   const intentionalSpaceChangeRef = useRef(false); // Get objects from store with safety check
   const objectsFromStore = useObjectsStore((state) => state.objects);
@@ -294,12 +247,7 @@ const App = () => {
     currentSpaceOwner, // Pass owner state to enable re-initialization when resolved
     cameraRef,
     onObjectsChange: handleSpatialObjectChange,
-  }); // Initialize performance tracking
-  useEffect(() => {
-    initPerformanceTracking();
-  }, []);
-
-  // REMOVED: No longer using tombstone tracking
+  }); // REMOVED: No longer using tombstone tracking
 
   // Initialize animation system for connection line animations
   useEffect(() => {
@@ -331,7 +279,15 @@ const App = () => {
   // Only update window debug object when values actually change
   useEffect(() => {
     window._spatialManagerDebug = spatialManagerDebug;
-  }, [spatialManagerDebug]);
+
+    // Expose tracking functions for immediate object tracking
+    if (trackObjectInCell) {
+      window.trackObjectInCell = trackObjectInCell;
+    }
+    if (untrackObjectInCell) {
+      window.untrackObjectInCell = untrackObjectInCell;
+    }
+  }, [spatialManagerDebug, trackObjectInCell, untrackObjectInCell]);
   const setSelectedConnection = useConnectionStore(
     (state) => state.selectConnection
   );
@@ -731,7 +687,8 @@ const App = () => {
 
     // Connections are now fully handled by useConnections hook - no cleanup needed here
     return () => {};
-  }, [user?.uid, currentSpaceId, loadedCells]); // Subscribe to spatial objects changes - supports anonymous access to public spaces
+  }, [user?.uid, currentSpaceId, loadedCells]);
+  // Subscribe to spatial objects changes - supports anonymous access to public spaces
   useEffect(() => {
     if (!canViewSpace) {
       return;
@@ -787,27 +744,29 @@ const App = () => {
     // Perform initial fetch before setting up subscriptions
     performInitialObjectFetch();
 
-    // Deterministic approach: Set loading complete based on number of cells
-    // Each cell subscription should be established quickly, so we can set a reasonable timeout
-    const totalCells = loadedCells.length;
-    const cellSubscriptionTimeout = Math.max(1000, totalCells * 200); // 200ms per cell, minimum 1 second
+    // Adaptive loading complete detection
+    let connectionSubscriptionTimeoutId = null;
+    // Timing variables tracked via refs
 
-    const deterministic_LoadingCompleteTimeoutId = setTimeout(() => {
-      currentSetIsInitialLoading(false);
+    // Start a longer timeout for connection subscriptions (they take longer to set up)
+    const totalCells = loadedCells.length;
+    const connectionTimeout = Math.max(2000, totalCells * 500); // 500ms per cell, minimum 2 seconds
+
+    connectionSubscriptionTimeoutId = setTimeout(() => {
       setGlobalInitialLoading(false);
-    }, cellSubscriptionTimeout); // Track when object loading appears to be complete (keep as backup for edge cases)
-    let loadingTimeoutId = null;
+      // Objects might finish loading before connections, so keep object loading state
+    }, connectionTimeout);
+
+    // Separate shorter timeout for object loading
     const scheduleLoadingComplete = () => {
-      // Clear any existing timeout
-      if (loadingTimeoutId) {
-        clearTimeout(loadingTimeoutId);
+      if (objectLoadingTimeoutIdRef.current) {
+        clearTimeout(objectLoadingTimeoutIdRef.current);
       }
 
-      // Set a new timeout - if no more objects are added for 1.5 seconds, consider loading complete
-      loadingTimeoutId = setTimeout(() => {
+      objectLoadingTimeoutIdRef.current = setTimeout(() => {
         currentSetIsInitialLoading(false);
-        setGlobalInitialLoading(false);
-      }, 1500);
+        objectLoadingTimeoutIdRef.current = null;
+      }, 1000); // Objects load faster than connections
     };
     const spaceToLoad = effectiveSpaceId;
     const ownerUserId = currentSpaceOwner || user?.uid;
@@ -860,6 +819,14 @@ const App = () => {
               if (transitioningObjectsRef.current.has(change.id.toString())) {
                 transitioningObjectsRef.current.delete(change.id.toString());
               }
+              // Check if object is in an unloaded cell
+              if (window._unloadedObjects?.has(change.id.toString())) {
+                console.log(
+                  `🚫 Blocked re-adding unloaded object: ${change.id}`
+                );
+                return prev;
+              }
+
               if (!prev.find((obj) => obj.id === change.id)) {
                 // Validate position before adding the object (accept both array and Vector3 formats)
                 const hasValidPosition =
@@ -1032,19 +999,28 @@ const App = () => {
                 window.trackObjectChange(change.id, 'remove');
               }
 
-              // Mark object as transitioning to prevent flicker during cell moves
-              transitioningObjectsRef.current.add(change.id.toString());
+              // For cell unloads, remove the object immediately
+              if (change.source === 'cell-unload') {
+                if (change.cellCoords && currentUntrackObjectInCell) {
+                  const cellId = `${change.cellCoords.x},${
+                    change.cellCoords.y
+                  },${change.cellCoords.z || 0}`;
+                  currentUntrackObjectInCell(change.id.toString(), cellId);
+                }
+                delete currentLastUpdateRef.current[change.id];
+                return prev.filter((obj) => obj.id.toString() !== change.id);
+              }
 
-              // Set a timeout to actually remove the object if it doesn't get re-added
+              // For other removals (like deletions), use transitioning behavior
+              transitioningObjectsRef.current.add(change.id.toString());
               setTimeout(() => {
                 if (transitioningObjectsRef.current.has(change.id.toString())) {
-                  // Object was not re-added, safe to remove now
                   transitioningObjectsRef.current.delete(change.id.toString());
                   currentSetObjects((current) =>
                     current.filter((obj) => obj.id.toString() !== change.id)
                   );
                 }
-              }, 2000); // 2 second grace period
+              }, 500); // Reduced from 2000ms to 500ms for non-cell-unload cases
 
               // Untrack object when removed
               if (change.cellCoords && currentUntrackObjectInCell) {
@@ -1071,11 +1047,9 @@ const App = () => {
 
     return () => {
       unsubscribe();
-      if (loadingTimeoutId) {
-        clearTimeout(loadingTimeoutId);
-      }
-      if (deterministic_LoadingCompleteTimeoutId) {
-        clearTimeout(deterministic_LoadingCompleteTimeoutId);
+      if (loadingTimeoutIdRef.current) {
+        clearTimeout(loadingTimeoutIdRef.current);
+        loadingTimeoutIdRef.current = null;
       }
     };
   }, [
@@ -1138,15 +1112,53 @@ const App = () => {
     window._matrixUpdateMap.set(id.toString(), matrixWorld.clone());
   }, []); // Store camera reference in window for debugging
   useEffect(() => {
-    if (cameraRef.current?.orbitControls) {
-      window.orbitControls = cameraRef.current.orbitControls;
-    }
+    if (cameraRef.current) {
+      window.camera = cameraRef.current;
 
-    // Also ensure the camera is accessible
-    if (cameraRef.current?.camera) {
-      window.camera = cameraRef.current.camera;
+      // CRITICAL: Set up camera for LineSegments2 raycasting
+      if (window.camera) {
+        // Override the intersectObjects method to always set camera
+        const originalIntersectObjects =
+          THREE.Raycaster.prototype.intersectObjects;
+        THREE.Raycaster.prototype.intersectObjects = function (
+          objects,
+          recursive,
+          optionalTarget
+        ) {
+          // Set camera if not already set
+          if (!this.camera && window.camera) {
+            this.camera = window.camera;
+          }
+          return originalIntersectObjects.call(
+            this,
+            objects,
+            recursive,
+            optionalTarget
+          );
+        };
+
+        // Also override intersectObject (singular)
+        const originalIntersectObject =
+          THREE.Raycaster.prototype.intersectObject;
+        THREE.Raycaster.prototype.intersectObject = function (
+          object,
+          recursive,
+          optionalTarget
+        ) {
+          // Set camera if not already set
+          if (!this.camera && window.camera) {
+            this.camera = window.camera;
+          }
+          return originalIntersectObject.call(
+            this,
+            object,
+            recursive,
+            optionalTarget
+          );
+        };
+      }
     }
-  }, [cameraRef.current?.orbitControls, cameraRef.current?.camera]); // Only run when camera references change
+  }, []); // Only run once on mount
 
   // Camera controls
   const disableOrbitControls = useCallback(() => {
@@ -1518,10 +1530,6 @@ const App = () => {
     user,
     effectiveSpaceId,
   ]);
-  // Memoize filtered objects for ConnectionsRenderer to prevent re-renders on camera movement
-  const visibleObjectsForConnections = useMemo(() => {
-    return objects.filter((obj) => visibleObjectIds.has(obj.id));
-  }, [objects, visibleObjectIds]);
 
   // Lazy load state for Canvas
   const [shouldRenderCanvas, setShouldRenderCanvas] = useState(false);
@@ -1569,7 +1577,7 @@ const App = () => {
         camera: {
           fov: 70, // Wider FOV on mobile for better object visibility
           near: 0.01, // Closer near plane on mobile
-          far: 2000,
+          far: 10000,
           position: [0, 0, 30], // Closer starting position on mobile
         },
       };
@@ -1590,7 +1598,7 @@ const App = () => {
         camera: {
           fov: 50,
           near: 0.1,
-          far: 2000,
+          far: 10000,
           position: [0, 0, 50],
         },
       };
@@ -1716,57 +1724,51 @@ const App = () => {
         </div>
       )}{' '}
       {shouldRenderCanvas && (
-        <CanvasErrorBoundary
-          onError={(error) => {
-            console.error('🚨 WebGL/Canvas error detected:', error);
-            // Don't redirect on WebGL errors - let the error boundary handle it
+        <Canvas
+          style={{
+            background: backgroundColor,
+            width: '100vw',
+            height: '100vh',
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            touchAction: 'none', // Enable touch gestures for mobile
           }}
+          onPointerMissed={handleCanvasClick}
+          onCreated={() => {
+            console.log('🎨 Canvas created successfully');
+          }}
+          onError={(error) => {
+            console.error('🚨 Canvas error (WebGL issue):', error);
+            // Don't redirect on WebGL errors - show fallback UI instead
+          }}
+          {...canvasSettings}
         >
-          <Canvas
-            style={{
-              background: backgroundColor,
-              width: '100vw',
-              height: '100vh',
-              position: 'fixed',
-              top: 0,
-              left: 0,
-              touchAction: 'none', // Enable touch gestures for mobile
-            }}
-            onPointerMissed={handleCanvasClick}
-            onCreated={() => {
-              console.log('🎨 Canvas created successfully');
-            }}
-            onError={(error) => {
-              console.error('🚨 Canvas error (WebGL issue):', error);
-              // Don't redirect on WebGL errors - show fallback UI instead
-            }}
-            {...canvasSettings}
-          >
-            {' '}
-            <CustomCamera ref={cameraRef} />{' '}
-            <group>
-              {/* Real-time connection position updater - reactive to store changes */}
-              <RealTimeConnectionUpdater />{' '}
-              {/* Render connections with virtualization */}
-              <ConnectionsRenderer
-                objects={visibleObjectsForConnections}
-                onLineStyleChange={handleLineStyleChange}
-                onLineColorChange={handleLineColorChange}
-                onConnectionClick={handleConnectionClick}
-                onLineTextClick={handleLineTextClick}
-                onLineTextSubmit={handleLineTextSubmit}
-                onLineTextStyleChange={handleLineTextStyleChange}
-              />{' '}
-              {/* Render all objects */}
-              {renderedObjects}
-              {/* Render cell boundaries */}
-              <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
-            </group>
-            <EffectComposer>
-              <SMAA />
-            </EffectComposer>
-          </Canvas>
-        </CanvasErrorBoundary>
+          {' '}
+          <CustomCamera ref={cameraRef} />{' '}
+          <group>
+            {/* Real-time connection position updater - reactive to store changes */}
+            <RealTimeConnectionUpdater />{' '}
+            {/* Render connections with virtualization */}
+            <ConnectionsRenderer
+              objects={objects}
+              visibleObjectIds={visibleObjectIds}
+              onLineStyleChange={handleLineStyleChange}
+              onLineColorChange={handleLineColorChange}
+              onConnectionClick={handleConnectionClick}
+              onLineTextClick={handleLineTextClick}
+              onLineTextSubmit={handleLineTextSubmit}
+              onLineTextStyleChange={handleLineTextStyleChange}
+            />{' '}
+            {/* Render all objects */}
+            {renderedObjects}
+            {/* Render cell boundaries */}
+            <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
+          </group>
+          <EffectComposer>
+            <SMAA />
+          </EffectComposer>
+        </Canvas>
       )}
       <UIOverlay
         onCreateObject={handleCreateObject}

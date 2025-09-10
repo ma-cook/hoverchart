@@ -13,14 +13,26 @@ import {
 } from './spatialPartitioning';
 import { getIsInitialLoading } from '../utils/loadingState';
 
-const objectsCache = new Map();
-const saveTimeouts = new Map();
-const updateThrottles = new Map();
-const lastReceivedObjects = new Map();
-const movingObjects = new Map(); // Track objects currently being moved to prevent race conditions
+// Cache and tracking for objects
+export const objectsCache = new Map();
+export const saveTimeouts = new Map();
+export const updateThrottles = new Map();
+export const lastReceivedObjects = new Map();
+export const movingObjects = new Map(); // Track objects currently being moved to prevent race conditions
+export const objectCellMap = new Map(); // Track which cell each object belongs to
 
 // Track objects that are being deleted to prevent re-addition
 const deletingObjects = new Set(); // Set of objectId strings being deleted
+
+// Helper to remove object from caches
+const removeObjectFromCaches = (spaceId, objectId, cellId) => {
+  const cacheKey = `${spaceId}_${objectId}`;
+  objectsCache.delete(cacheKey);
+  lastReceivedObjects.delete(cacheKey);
+  saveTimeouts.delete(cacheKey);
+  updateThrottles.delete(cacheKey);
+  objectCellMap.delete(objectId);
+};
 
 // Helper function for position-only comparison
 const positionsEqual = (posA, posB) => {
@@ -180,6 +192,12 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
         return;
       }
       // console.log(`[SaveDebug] Object ${objectId} data changed. PosChanged: ${positionChanged}, NonPosDataChanged: ${nonPositionDataChanged}`);
+    }
+
+    // Check if object is marked as unloaded
+    if (window._unloadedObjects && window._unloadedObjects.has(objectId)) {
+      console.log(`🚫 Skipping update for unloaded object: ${objectId}`);
+      return;
     }
 
     // Update cache before saving
@@ -542,7 +560,30 @@ import {
   getOrCreateSubscription,
   generateSubscriptionKey,
   SUBSCRIPTION_TYPES,
+  forceCleanupSubscription,
 } from './globalSubscriptionManager';
+
+/**
+ * Clear cache entries for a cell
+ */
+const clearCellCache = (spaceId, cellId) => {
+  // Find and remove all objects that belong to this cell
+  for (const [objectId, objCellId] of objectCellMap) {
+    if (objCellId === cellId) {
+      const cacheKey = `${spaceId}_${objectId}`;
+      objectsCache.delete(cacheKey);
+      lastReceivedObjects.delete(cacheKey);
+      saveTimeouts.delete(cacheKey);
+      updateThrottles.delete(cacheKey);
+      objectCellMap.delete(objectId);
+    }
+  }
+};
+
+/**
+ * Keep track of object subscriptions by cell
+ */
+const objectSubscriptionsByCell = new Map(); // cellId -> Set of object subscription keys
 
 /**
  * Subscribe to objects in loaded cells with deduplication
@@ -557,6 +598,28 @@ export const subscribeToSpatialObjects = (
 
   // Ensure loadedCells is always an array
   const safeCells = Array.isArray(loadedCells) ? loadedCells : [];
+
+  // Clean up subscriptions for cells that are no longer loaded
+  objectSubscriptionsByCell.forEach((subscriptions, cellId) => {
+    if (!safeCells.includes(cellId)) {
+      subscriptions.forEach((subKey) => {
+        forceCleanupSubscription(subKey);
+      });
+      objectSubscriptionsByCell.delete(cellId);
+    }
+  });
+
+  // Clear caches for any cells that are not in the loadedCells list
+  for (const [objectId, cellId] of objectCellMap) {
+    if (!safeCells.includes(cellId)) {
+      const cacheKey = `${spaceId}_${objectId}`;
+      objectsCache.delete(cacheKey);
+      lastReceivedObjects.delete(cacheKey);
+      saveTimeouts.delete(cacheKey);
+      updateThrottles.delete(cacheKey);
+      objectCellMap.delete(objectId);
+    }
+  }
 
   const isAnonymous = !userId;
   let isSubscribed = true;
@@ -615,12 +678,19 @@ export const subscribeToSpatialObjects = (
           cellKey
         );
 
-        // Use global subscription manager
-        const { unsubscribe: globalUnsubscribe } = getOrCreateSubscription(
+        // Use global subscription manager and track by cell
+        const subscriptionResult = getOrCreateSubscription(
           subscriptionKey,
           SUBSCRIPTION_TYPES.SPATIAL_OBJECTS,
           () => {
             // Create the actual Firebase subscription
+
+            // Track this subscription for the cell
+            if (!objectSubscriptionsByCell.has(cellKey)) {
+              objectSubscriptionsByCell.set(cellKey, new Set());
+            }
+            objectSubscriptionsByCell.get(cellKey).add(subscriptionKey);
+
             return onSnapshot(
               cellRef,
               { includeMetadataChanges: true },
@@ -628,11 +698,48 @@ export const subscribeToSpatialObjects = (
                 if (!snapshot.exists()) {
                   return;
                 }
+                // Check if cell is unloaded
+                if (window._unloadedCells?.has(cellKey)) {
+                  console.log(
+                    `📦 Ignoring updates for unloaded cell: ${cellKey}`
+                  );
+                  return;
+                }
+
                 const cellData = snapshot.data();
                 const cellObjects = cellData.objects || {}; // Process each object in the cell
+
+                // If the cell is loaded, make sure all its objects are marked as loaded
+                if (!window._unloadedCells?.has(cellKey)) {
+                  console.log(
+                    `📦 Processing objects for loaded cell: ${cellKey}`
+                  );
+                  // Ensure all objects in this cell are marked as loaded
+                  Object.keys(cellObjects).forEach((objId) => {
+                    const objIdStr = objId.toString();
+                    if (window._unloadedObjects?.has(objIdStr)) {
+                      console.log(
+                        `🔄 Re-enabling object: ${objIdStr} in cell: ${cellKey}`
+                      );
+                      window._unloadedObjects.delete(objIdStr);
+                    }
+                  });
+                } else {
+                  console.log(
+                    `📦 Cell is still marked as unloaded: ${cellKey}`
+                  );
+                  return;
+                }
+
                 Object.entries(cellObjects).forEach(
                   ([objectId, objectData]) => {
-                    // Loading object from cell - debug logging removed
+                    // Skip if object is marked as unloaded
+                    if (window._unloadedObjects?.has(objectId.toString())) {
+                      console.log(
+                        `🚫 Ignoring update for unloaded object: ${objectId}`
+                      );
+                      return;
+                    }
 
                     const cacheKey = `${spaceId}_${objectId}`;
 
@@ -763,7 +870,7 @@ export const subscribeToSpatialObjects = (
 
         // Store the cleanup function
         localSubscriptionKeys.add(subscriptionKey);
-        unsubscribeFunctions.set(cellKey, globalUnsubscribe);
+        unsubscribeFunctions.set(cellKey, subscriptionResult.unsubscribe);
       }
     } catch (error) {
       console.error('Error starting spatial objects subscriptions:', error);

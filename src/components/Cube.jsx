@@ -104,10 +104,10 @@ const Cube = ({
     () => objectData?.faceTexts || {},
     [objectData?.faceTexts]
   );
-  const headerText = useMemo(
-    () => objectData?.headerText || '',
-    [objectData?.headerText]
-  );
+  const headerText = useMemo(() => {
+    const headerTextValue = objectData?.headerText || '';
+    return headerTextValue;
+  }, [objectData?.headerText, id, objectData]);
   const textStyle = useMemo(
     () =>
       objectData?.textStyle || {
@@ -429,8 +429,10 @@ const Cube = ({
     // Only update if something has changed
     const lastUpdate = contentRef.current?.lastUpdate;
     if (!lastUpdate || !isEqual(lastUpdate, currentState)) {
-      contentRef.current.lastUpdate = currentState;
-      onUpdate(id, currentState);
+      if (contentRef.current) {
+        contentRef.current.lastUpdate = currentState;
+        onUpdate(id, currentState);
+      }
     }
   }, [id, objectData, onUpdate, cube]);
 
@@ -1060,6 +1062,8 @@ const Cube = ({
               isConnected={isConnected}
               objectId={id}
               face={name}
+              showAllCubesIndicators={showAllCubesIndicators}
+              selectedIndicatorsLength={selectedIndicators.length}
             />
           )}
         </mesh>
@@ -1247,7 +1251,7 @@ const Cube = ({
         <Line
           points={cubeLinePoints}
           color={cube?.color || color}
-          lineWidth={isMobile ? 3 : 1}
+          lineWidth={isMobile ? 3 : 2}
           segments={true}
           renderOrder={10} // Much higher render order to ensure cube edges always render in front
           transparent={false}
@@ -1259,13 +1263,13 @@ const Cube = ({
         {/* Face text elements */}
         {renderFaceTexts}
         {/* Header text */}
-        {(cube?.headerText || headerText) && (
+        {headerText && (
           <group
             scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
             position={getUIPositions.headerText}
           >
             <TextSprite
-              text={cube?.headerText || headerText}
+              text={headerText}
               position={[0, 0, 0]}
               followTarget={null}
               onClick={(e) => {
@@ -1279,7 +1283,7 @@ const Cube = ({
                 isHeaderText: true,
                 fixedSize: false,
               }}
-            />{' '}
+            />
             {/* Remove the activeTextStyleUI condition */}
             {cube?.showHeaderTextStyleUI && (
               <TextStyleUI

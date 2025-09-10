@@ -2,6 +2,8 @@ import { useUIOverlayStore } from '../stores';
 import { useRef, useState, useCallback } from 'react';
 import { uploadModelToStorage } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
+import { markdownDiagramService } from '../services/markdownDiagramService';
+import * as THREE from 'three';
 
 const UIOverlay = ({
   onCreateObject,
@@ -24,6 +26,11 @@ const UIOverlay = ({
   // Model upload functionality
   const modelFileInputRef = useRef(null);
   const [isUploadingModel, setIsUploadingModel] = useState(false);
+
+  // Markdown upload functionality
+  const markdownFileInputRef = useRef(null);
+  const [isProcessingMarkdown, setIsProcessingMarkdown] = useState(false);
+
   // Screen recording functionality
   const [isRecording, setIsRecording] = useState(false);
 
@@ -36,8 +43,7 @@ const UIOverlay = ({
           screenRecorder.downloadRecording(blob);
         }
         setIsRecording(false);
-      } catch (error) {
-        console.error('Error stopping recording:', error);
+      } catch {
         alert('Failed to stop recording');
       }
     } else {
@@ -100,79 +106,84 @@ const UIOverlay = ({
             window.orbitControls?.object;
 
           if (camera) {
-            // Get camera position
-            const cameraPos = camera.position;
+            // Get camera position and direction
+            const cameraPosition = camera.position;
+            const cameraDirection = new THREE.Vector3();
+            camera.getWorldDirection(cameraDirection);
 
-            // Get camera's forward direction
-            const direction = { x: 0, y: 0, z: -1 };
-            const quaternion = camera.quaternion;
-
-            // Apply camera rotation to direction vector
-            const rotatedDirection = {
-              x:
-                direction.x *
-                  (1 -
-                    2 *
-                      (quaternion.y * quaternion.y +
-                        quaternion.z * quaternion.z)) +
-                direction.y *
-                  2 *
-                  (quaternion.x * quaternion.y - quaternion.w * quaternion.z) +
-                direction.z *
-                  2 *
-                  (quaternion.x * quaternion.z + quaternion.w * quaternion.y),
-              y:
-                direction.x *
-                  2 *
-                  (quaternion.x * quaternion.y + quaternion.w * quaternion.z) +
-                direction.y *
-                  (1 -
-                    2 *
-                      (quaternion.x * quaternion.x +
-                        quaternion.z * quaternion.z)) +
-                direction.z *
-                  2 *
-                  (quaternion.y * quaternion.z - quaternion.w * quaternion.x),
-              z:
-                direction.x *
-                  2 *
-                  (quaternion.x * quaternion.z - quaternion.w * quaternion.y) +
-                direction.y *
-                  2 *
-                  (quaternion.y * quaternion.z + quaternion.w * quaternion.x) +
-                direction.z *
-                  (1 -
-                    2 *
-                      (quaternion.x * quaternion.x +
-                        quaternion.y * quaternion.y)),
-            };
-
-            // Calculate model position 50 units in front of camera
+            // Position model 50 units in front of camera
             modelPosition = [
-              cameraPos.x + rotatedDirection.x * 50,
-              cameraPos.y + rotatedDirection.y * 50,
-              cameraPos.z + rotatedDirection.z * 50,
+              cameraPosition.x + cameraDirection.x * 50,
+              cameraPosition.y + cameraDirection.y * 50,
+              cameraPosition.z + cameraDirection.z * 50,
             ];
           }
-        } catch (error) {
-          console.warn(
-            'Could not get camera position for model, using default:',
-            error
-          );
-        } // Create the 3D model object with the uploaded URL
+        } catch {
+          // Using default position
+        }
+
+        // Create model object
         onCreateObject('model', modelPosition, { modelUrl });
-      } catch (error) {
-        console.error('Model upload failed:', error);
-        alert(`Model upload failed: ${error.message}`);
+
+        alert('3D model uploaded successfully!');
+      } catch {
+        alert('Failed to upload model. Please try again.');
       } finally {
         setIsUploadingModel(false);
-        // Reset the file input
+        // Reset file input
         if (modelFileInputRef.current) {
           modelFileInputRef.current.value = '';
         }
       }
     },
     [user, currentSpaceId, onCreateObject]
+  );
+
+  const handleMarkdownUpload = useCallback(() => {
+    if (markdownFileInputRef.current) {
+      markdownFileInputRef.current.click();
+    }
+  }, []);
+
+  const handleMarkdownFileSelect = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      setIsProcessingMarkdown(true);
+
+      try {
+        const result = await markdownDiagramService.processMarkdownFile(
+          file,
+          onCreateObject,
+          currentSpaceId,
+          user
+        );
+
+        if (result.success) {
+          alert(
+            `Successfully processed ${result.diagramCount} diagram(s) and created ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections!`
+          );
+        } else {
+          alert(
+            'No 3D objects were created. Please check that your Merfolk syntax is correct.'
+          );
+        }
+      } catch (error) {
+        alert(
+          `Failed to process markdown file: ${error.message}. Please check the file format and try again.`
+        );
+      } finally {
+        setIsProcessingMarkdown(false);
+        // Reset file input
+        if (markdownFileInputRef.current) {
+          markdownFileInputRef.current.value = '';
+        }
+      }
+    },
+    [onCreateObject, currentSpaceId, user]
   );
 
   // Get store state for main overlay - use direct selectors for better reactivity
@@ -273,11 +284,8 @@ const UIOverlay = ({
           cameraPos.z + rotatedDirection.z * 50,
         ];
       }
-    } catch (error) {
-      console.warn(
-        'Could not get camera position for template, using default:',
-        error
-      );
+    } catch {
+      // Using default position if camera access fails
     }
     if (templateShape === 'plane') {
       // Create objects in a grid pattern
@@ -492,6 +500,25 @@ const UIOverlay = ({
                 </div>
               </div>
             )}
+          </div>
+          {/* Markdown Upload Section */}
+          <div className="markdown-section">
+            <button
+              className="markdown-upload-button"
+              onClick={handleMarkdownUpload}
+              disabled={isProcessingMarkdown}
+              title="Upload Markdown with Merfolk diagrams"
+            >
+              {isProcessingMarkdown ? 'Processing...' : '📄 Upload Markdown'}
+            </button>
+            {/* Hidden file input for markdown upload */}
+            <input
+              ref={markdownFileInputRef}
+              type="file"
+              accept=".md,.markdown"
+              style={{ display: 'none' }}
+              onChange={handleMarkdownFileSelect}
+            />
           </div>
           {/* Menu content will go here */}
         </div>

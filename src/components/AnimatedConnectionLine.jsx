@@ -24,16 +24,16 @@ const AnimatedConnectionLine = ({
   // Use store for global animation state only
   const globalAnimationEnabled = useAnimatedConnectionLineStore(
     (state) => state.globalAnimationEnabled
-  );  // Create a stable key based on points to force re-render when points change
+  ); // Create a stable key based on points to force re-render when points change
   const pointsKey = useMemo(() => {
     if (!points || !Array.isArray(points) || points.length === 0) {
       return 'empty';
     }
-    
+
     return points
       .map((p) => {
         let x, y, z;
-        
+
         // Handle both Vector3 objects and arrays
         if (p && typeof p === 'object' && 'x' in p && 'y' in p && 'z' in p) {
           // Vector3 object
@@ -49,7 +49,7 @@ const AnimatedConnectionLine = ({
           console.warn('Invalid point in AnimatedConnectionLine:', p);
           return '0,0,0';
         }
-        
+
         return `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`;
       })
       .join('|');
@@ -110,7 +110,7 @@ const AnimatedConnectionLine = ({
         material.needsUpdate = true;
       }
     }
-  });  // Parameters for the line visual style
+  }); // Parameters for the line visual style
   const isDashed = lineStyle === 'dashed' || lineStyle === 'dotted';
   const dashScale = lineStyle === 'dotted' ? 1 : 0.5;
   const dashSize = lineStyle === 'dotted' ? 0.5 : 4;
@@ -176,7 +176,8 @@ const AnimatedConnectionLine = ({
 
   return (
     <>
-      {/* Main visible line with optimized rendering and material ref */}      <Line
+      {/* Main visible line with optimized rendering and material ref */}{' '}
+      <Line
         key={`line-${connectionId}-${pointsKey}`}
         ref={lineRef}
         points={normalizedPoints}
@@ -197,7 +198,6 @@ const AnimatedConnectionLine = ({
         toneMapped={false}
         resolution={2} // Reduced for better performance
       />
-
       {/* Invisible hitbox for interaction */}
       <Line
         key={`hitbox-${connectionId}-${pointsKey}`}

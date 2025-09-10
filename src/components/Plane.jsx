@@ -860,7 +860,7 @@ const Plane = ({
       } else if (option.type === 'thickness') {
         const newThickness =
           (plane?.lineThickness || 1) >= 6
-            ? 1
+            ? 2
             : (plane?.lineThickness || 1) + 2;
         updates.lineThickness = newThickness;
         updatePlane(id, { lineThickness: newThickness });
@@ -1495,6 +1495,8 @@ const Plane = ({
               position={indicatorPosition}
               onClick={handleIndicatorClick}
               isActive={indicatorSelected || isIndicatorConnected}
+              showAllCubesIndicators={showAllIndicators}
+              selectedIndicatorsLength={selectedIndicators?.length || 0}
             />
           )}{' '}
           {faceText && (

@@ -24,7 +24,7 @@ export class ObjectVirtualizer {
     // Get current quality from local storage or default to medium
     const canvasQuality = localStorage.getItem('canvasQuality') || 'medium';
     // Mobile-aware object limits and distance culling
-    const maxObjectDistance = isMobile ? 800 : 1000; // Less aggressive distance culling on mobile
+    const maxObjectDistance = isMobile ? 15000 : 20000; // Increased for large coordinate spaces
     const getMaxObjects = () => {
       if (isMobile) {
         return canvasQuality === 'low'

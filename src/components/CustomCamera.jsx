@@ -43,9 +43,9 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
       <PerspectiveCamera
         ref={cameraRef}
         makeDefault
-        fov={70}
-        near={0.1}
-        far={50000}
+        fov={75} // Increased FOV slightly to help with frustum culling at edges
+        near={1} // Increased near plane slightly to help with precision at large distances
+        far={1000000} // Increased far plane to handle objects at very large distances
         position={[5100, 5000, 5000]} // 100 units away from target [5000,5000,5000]
         aspect={window.innerWidth / window.innerHeight}
       />{' '}
@@ -65,8 +65,8 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
         screenSpacePanning={true}
         minPolarAngle={Math.PI / 4}
         maxPolarAngle={Math.PI / 1.5}
-        minDistance={5}
-        maxDistance={50000}
+        minDistance={10} // Increased minimum distance to help with precision at large distances
+        maxDistance={1000000} // Increased max zoom distance to match far plane
       />
     </>
   );

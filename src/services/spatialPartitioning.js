@@ -342,7 +342,6 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
     !objectData.id ||
     !objectData.position
   ) {
-    console.warn('addObjectToCell: Missing required parameters');
     return false;
   }
 
@@ -367,7 +366,6 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
       cellData = cellDoc.data();
     } else {
       // Create cell if it doesn't exist
-      console.log(`📦 Creating new cell ${cellId} for object ${objectData.id}`);
       await createCell(
         userId,
         spaceId,
@@ -395,11 +393,9 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
     // Check if object already exists in this cell
     const objectExists = cellData.objects[objectData.id];
     if (objectExists) {
-      console.log(
-        `🔄 Updating existing object ${objectData.id} in cell ${cellId}`
-      );
+      // Object exists, will be updated
     } else {
-      console.log(`➕ Adding new object ${objectData.id} to cell ${cellId}`);
+      // Object doesn't exist, will be added
     } // Add object data to cell with object ID as key
     const objectToAdd = {
       ...objectData,
@@ -412,13 +408,8 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
       [`objects.${objectData.id}`]: objectToAdd,
     });
 
-    console.log(
-      `✅ Successfully saved object ${objectData.id} to cell ${cellId}`
-    );
-
     return true;
-  } catch (error) {
-    console.error(`❌ Error adding object ${objectData.id} to cell:`, error);
+  } catch {
     return false;
   }
 };
@@ -438,7 +429,6 @@ export const removeObjectFromCell = async (
   position
 ) => {
   if (!userId || !spaceId || !objectId || !position) {
-    console.warn('removeObjectFromCell: Missing required parameters');
     return false;
   }
 
@@ -458,9 +448,6 @@ export const removeObjectFromCell = async (
     // First, check if the cell exists and the object is actually there
     const cellDoc = await getDoc(cellRef);
     if (!cellDoc.exists()) {
-      console.log(
-        `📍 Cell ${cellId} doesn't exist, object ${objectId} already removed`
-      );
       return true; // Cell doesn't exist, object not in any cell
     }
 
@@ -490,26 +477,13 @@ export const removeObjectFromCell = async (
     }
 
     if (!objectExists) {
-      console.log(`ℹ️ Object ${objectId} was not found in cell ${cellId}`);
-      console.log(
-        `ℹ️ Available objects in cell ${cellId}:`,
-        Object.keys(cellData.objects || {})
-      );
       return true; // Object doesn't exist, consider it "removed"
     }
-
-    console.log(
-      `🗑️ REMOVING: Object ${objectId} from cell ${cellId} using atomic deleteField`
-    );
 
     // Use atomic updateDoc with deleteField for safe removal
     await updateDoc(cellRef, {
       [`objects.${objectId}`]: deleteField(),
     });
-
-    console.log(
-      `🗑️ ATOMIC DELETE: Completed deleteField operation for object ${objectId} in cell ${cellId}`
-    );
 
     // Verify the removal with retries for eventual consistency
     let verificationAttempts = 0;
@@ -526,39 +500,25 @@ export const removeObjectFromCell = async (
         const verifyData = verifyDoc.data();
         if (verifyData.objects && verifyData.objects[objectId]) {
           verificationAttempts++;
-          console.warn(
-            `⚠️ VERIFICATION ATTEMPT ${verificationAttempts}: Object ${objectId} still exists in cell ${cellId}`
-          );
 
           if (verificationAttempts < maxAttempts) {
             // Retry the deletion
-            console.log(
-              `🔄 RETRY ${verificationAttempts}: Re-attempting atomic deletion for object ${objectId}`
-            );
             await updateDoc(cellRef, {
               [`objects.${objectId}`]: deleteField(),
             });
           } else {
-            console.error(
-              `❌ FINAL VERIFICATION FAILED: Object ${objectId} still exists after ${maxAttempts} attempts!`
-            );
             return false;
           }
         } else {
-          console.log(
-            `✅ VERIFICATION SUCCESS: Object ${objectId} confirmed removed from cell ${cellId}`
-          );
           return true;
         }
       } else {
-        console.log(`✅ VERIFICATION SUCCESS: Cell ${cellId} no longer exists`);
         return true;
       }
     }
 
     return false;
-  } catch (error) {
-    console.error(`❌ Error removing object ${objectId} from cell:`, error);
+  } catch {
     return false;
   }
 };
@@ -581,22 +541,7 @@ export const moveObjectBetweenCells = async (
   newPosition,
   objectData = null // This is the optional one if objectIdOrData is a string
 ) => {
-  console.log(
-    `[MoveDebug] moveObjectBetweenCells ENTER. User: ${userId}, Space: ${spaceId}`,
-    `objectIdOrData:`,
-    objectIdOrData,
-    `oldPosition:`,
-    oldPosition,
-    `newPosition:`,
-    newPosition,
-    `objectData (param):`,
-    objectData
-  );
-
   if (!userId || !spaceId || !objectIdOrData || !oldPosition || !newPosition) {
-    console.warn(
-      '[MoveDebug] Missing required parameters for moveObjectBetweenCells. Aborting.'
-    );
     return false;
   }
 
@@ -608,23 +553,12 @@ export const moveObjectBetweenCells = async (
     effectiveObjectData = objectData
       ? { ...objectData, id: objectId, position: newPosition }
       : { id: objectId, position: newPosition };
-    console.log(
-      `[MoveDebug] Signature: objectId string. Derived objectId: ${objectId}, effectiveObjectData prepared:`,
-      effectiveObjectData
-    );
   } else {
     effectiveObjectData = { ...objectIdOrData, position: newPosition };
     objectId = effectiveObjectData.id;
-    console.log(
-      `[MoveDebug] Signature: objectData object. Derived objectId: ${objectId}, effectiveObjectData prepared:`,
-      effectiveObjectData
-    );
   }
 
   if (!objectId) {
-    console.error(
-      '[MoveDebug] No object ID could be determined. Aborting moveObjectBetweenCells.'
-    );
     return false;
   }
   if (!effectiveObjectData.id) {
@@ -638,24 +572,13 @@ export const moveObjectBetweenCells = async (
   if (existing) {
     const timeSinceLastMove = now - existing.timestamp;
     if (timeSinceLastMove < MOVE_TIMEOUT) {
-      console.log(
-        `[MoveDebug] ⚠️ Object ${objectId} is already being moved (${timeSinceLastMove}ms ago). Waiting for existing operation...`
-      );
       try {
         await existing.promise;
-        console.log(
-          `[MoveDebug] ✅ Previous move operation for ${objectId} completed. Proceeding with new move.`
-        );
-      } catch (error) {
-        console.warn(
-          `[MoveDebug] ⚠️ Previous move operation for ${objectId} failed:`,
-          error
-        );
+      } catch {
+        // Previous move operation failed, continue with new move
       }
     } else {
-      console.log(
-        `[MoveDebug] 🕐 Previous move for ${objectId} timed out (${timeSinceLastMove}ms). Proceeding with new move.`
-      );
+      // Previous move timed out, proceed with new move
     }
   }
 
@@ -675,93 +598,30 @@ export const moveObjectBetweenCells = async (
         newCellCoords.z
       );
 
-      console.log(`[MoveDebug] Object ID for move: ${objectId}`);
-      console.log(
-        `[MoveDebug] Old position: ${JSON.stringify(
-          oldPosition
-        )} -> Old cell ID: ${oldCellId} (Coords: ${JSON.stringify(
-          oldCellCoords
-        )})`
-      );
-      console.log(
-        `[MoveDebug] New position: ${JSON.stringify(
-          newPosition
-        )} -> New cell ID: ${newCellId} (Coords: ${JSON.stringify(
-          newCellCoords
-        )})`
-      );
-
       if (oldCellId === newCellId) {
-        console.log(
-          `[MoveDebug] Object ${objectId} remains in the same cell: ${oldCellId}. Attempting to update object data in this cell.`
-        );
-        console.log(
-          `[MoveDebug] Calling addObjectToCell (for same-cell update) for object ${objectId} with data:`,
-          effectiveObjectData
-        );
         const updateResult = await addObjectToCell(
           userId,
           spaceId,
           effectiveObjectData
         );
-        console.log(
-          `[MoveDebug] addObjectToCell (for same-cell update) for object ${objectId} result: ${updateResult}`
-        );
         return updateResult;
       }
 
       // If cells are different, proceed with move
-      console.log(
-        `[MoveDebug] Object ${objectId} is moving from cell ${oldCellId} to ${newCellId}.`
-      );
+      await removeObjectFromCell(userId, spaceId, objectId, oldPosition);
 
-      console.log(
-        `[MoveDebug] Step 1: Attempting to remove object ${objectId} from old cell ${oldCellId} (using oldPosition: ${JSON.stringify(
-          oldPosition
-        )})`
-      );
-      const removed = await removeObjectFromCell(
-        userId,
-        spaceId,
-        objectId,
-        oldPosition
-      );
-      console.log(
-        `[MoveDebug] removeObjectFromCell result for object ${objectId} from old cell ${oldCellId}: ${removed}`
-      );
-
-      console.log(
-        `[MoveDebug] Step 2: Attempting to add object ${objectId} to new cell ${newCellId} with data:`,
-        effectiveObjectData
-      );
       const added = await addObjectToCell(userId, spaceId, effectiveObjectData);
-      console.log(
-        `[MoveDebug] addObjectToCell result for object ${objectId} to new cell ${newCellId}: ${added}`
-      );
 
       if (added) {
-        console.log(
-          `[MoveDebug] ✅ Successfully moved object ${objectId} from ${oldCellId} to ${newCellId}.`
-        );
         return true;
       } else {
-        console.error(
-          `[MoveDebug] ❌ Failed to add object ${objectId} to new cell ${newCellId}. The object might be in an inconsistent state (potentially removed from old, but not added to new).`
-        );
         return false;
       }
-    } catch (error) {
-      console.error(
-        `[MoveDebug] ❌ CRITICAL ERROR during moveObjectBetweenCells for ${objectId}:`,
-        error
-      );
+    } catch {
       return false;
     } finally {
       // Clean up the moving objects cache
       movingObjects.delete(objectId);
-      console.log(
-        `[MoveDebug] 🧹 Cleaned up move tracking for object ${objectId}`
-      );
     }
   })();
 
@@ -770,10 +630,6 @@ export const moveObjectBetweenCells = async (
     timestamp: now,
     promise: movePromise,
   });
-
-  console.log(
-    `[MoveDebug] 📝 Registered move operation for object ${objectId}`
-  );
 
   return await movePromise;
 };
@@ -824,7 +680,6 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
 
     for (const coords of cellCoords) {
       const cellId = getCellId(coords.x, coords.y, coords.z);
-      console.debug('🔍 Fetching cell:', cellId);
 
       const cellRef = doc(
         db,
@@ -837,29 +692,12 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
       );
 
       const cellDoc = await getDoc(cellRef);
-      console.debug(
-        '🔍 Cell doc exists:',
-        cellDoc.exists(),
-        'for cellId:',
-        cellId
-      );
       if (cellDoc.exists()) {
         const cellData = cellDoc.data();
-        console.debug('🔍 Cell data:', {
-          cellId,
-          hasObjects: !!cellData.objects,
-          objectsType: typeof cellData.objects,
-        });
 
         // Handle both old array format and new object format
         if (cellData.objects) {
           if (Array.isArray(cellData.objects)) {
-            console.log(
-              '📝 Found old array format objects in cell',
-              cellId,
-              '- count:',
-              cellData.objects.length
-            );
             // Old format - we'll need to load objects from global collection
             // This is for backward compatibility
           } else if (typeof cellData.objects === 'object') {
@@ -868,17 +706,15 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
             allObjects.push(...cellObjects);
           }
         } else {
-          console.debug('🔍 No objects found in cell', cellId);
+          // No objects found in this cell
         }
       } else {
         // Cell doesn't exist - this is expected for empty areas
-        console.debug('📍 Cell is empty (no objects):', cellId);
       }
     }
 
     return allObjects;
-  } catch (error) {
-    console.error('❌ Error in getObjectsFromCells:', error);
+  } catch {
     return [];
   }
 };
@@ -893,9 +729,6 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
 export const updateObjectInCell = async (userId, spaceId, objectData) => {
   // Check if we're still in initial loading phase - no saves during app startup
   if (getIsInitialLoading()) {
-    console.log(
-      `⏸️ [updateObjectInCell] Skipping save for object ${objectData?.id} - still in initial loading phase`
-    );
     return false;
   }
 
@@ -906,10 +739,6 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
     !objectData.id ||
     !objectData.position
   ) {
-    console.warn(
-      '[updateObjectInCell] Missing required parameters. Aborting update for object:',
-      objectData?.id || 'unknown'
-    );
     return false;
   }
   try {
@@ -928,28 +757,16 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
 
     const cellDoc = await getDoc(cellRef);
     if (!cellDoc.exists()) {
-      console.log(
-        `[updateObjectInCell] Cell ${cellId} does not exist. Calling addObjectToCell for object ${objectData.id}.`
-      );
       return await addObjectToCell(userId, spaceId, objectData);
     }
 
-    console.log(
-      `[updateObjectInCell] Cell ${cellId} exists. Directly updating object ${objectData.id} in this cell's object map.`
-    );
     const cellData = cellDoc.data();
     if (Array.isArray(cellData.objects)) {
-      console.warn(
-        `[updateObjectInCell] Cell ${cellId} has legacy array for objects. Converting to map for object ${objectData.id}.`
-      );
       cellData.objects = {}; // Convert or handle appropriately
     }
 
     // Ensure cellData.objects is an object map
     if (typeof cellData.objects !== 'object' || cellData.objects === null) {
-      console.warn(
-        `[updateObjectInCell] cellData.objects for cell ${cellId} is not an object or is null. Initializing to empty object.`
-      );
       cellData.objects = {};
     }
 
@@ -959,15 +776,8 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
       cellId: cellId,
     };
     await setDoc(cellRef, cellData, { merge: true });
-    console.log(
-      `[updateObjectInCell] ✅ Successfully updated object ${objectData.id} directly in cell ${cellId}.`
-    );
     return true;
-  } catch (error) {
-    console.error(
-      `[updateObjectInCell] ❌ Error updating object ${objectData.id} in cell:`,
-      error
-    );
+  } catch {
     return false;
   }
 };
@@ -1004,9 +814,6 @@ export const deleteObjectFromCell = async (
     // Check if cell exists first
     const cellDoc = await getDoc(cellRef);
     if (!cellDoc.exists()) {
-      console.log(
-        `📍 Cell ${cellId} doesn't exist, object ${objectId} already deleted`
-      );
       return true; // Cell doesn't exist, object already not present
     }
 
@@ -1024,15 +831,8 @@ export const deleteObjectFromCell = async (
     }
 
     if (!objectExists) {
-      console.log(
-        `ℹ️ Object ${objectId} not found in cell ${cellId} for deletion`
-      );
       return true; // Object doesn't exist, consider it deleted
     }
-
-    console.log(
-      `🗑️ DELETING: Object ${objectId} from cell ${cellId} using atomic operation`
-    );
 
     // Use atomic updateDoc with deleteField for safe deletion
     await updateDoc(cellRef, {
@@ -1048,40 +848,26 @@ export const deleteObjectFromCell = async (
 
       const verifyDoc = await getDoc(cellRef);
       if (!verifyDoc.exists()) {
-        console.log(`✅ DELETION SUCCESS: Cell ${cellId} no longer exists`);
         return true;
       }
 
       const verifyData = verifyDoc.data();
       if (!verifyData.objects || !verifyData.objects[objectId]) {
-        console.log(
-          `✅ DELETION SUCCESS: Object ${objectId} confirmed deleted from cell ${cellId}`
-        );
         return true;
       }
 
       attempts++;
       if (attempts < maxAttempts) {
-        console.warn(
-          `⚠️ DELETION RETRY ${attempts}: Object ${objectId} still exists, retrying...`
-        );
         await updateDoc(cellRef, {
           [`objects.${objectId}`]: deleteField(),
         });
       } else {
-        console.error(
-          `❌ DELETION FAILED: Object ${objectId} still exists after ${maxAttempts} attempts`
-        );
         return false;
       }
     }
 
     return false;
-  } catch (error) {
-    console.error(
-      `❌ Error in deleteObjectFromCell for object ${objectId}:`,
-      error
-    );
+  } catch {
     return false;
   }
 };
@@ -1119,8 +905,6 @@ export const subscribeToCells = (userId, spaceId, cellCoords, callback) => {
       subscriptionKey,
       SUBSCRIPTION_TYPES.CELLS,
       () => {
-        console.log(`🔥 Creating NEW cell subscription for: ${cellId}`);
-
         const cellRef = doc(
           db,
           'users',
@@ -1148,8 +932,8 @@ export const subscribeToCells = (userId, spaceId, cellCoords, callback) => {
               }
             }
           },
-          (error) => {
-            console.error(`Cell subscription error for ${cellId}:`, error);
+          () => {
+            // Error handler - no logging
           }
         );
       }
@@ -1263,22 +1047,10 @@ export const getCellsToUnload = (
  */
 export const addConnectionToCells = async (userId, spaceId, connectionData) => {
   if (!userId || !spaceId || !connectionData || !connectionData.id) {
-    console.error('❌ addConnectionToCells: Missing required parameters', {
-      userId: !!userId,
-      spaceId: !!spaceId,
-      connectionData: !!connectionData,
-      connectionId: connectionData?.id,
-    });
     return false;
   }
 
   try {
-    console.log('🔄 Adding connection to cells:', {
-      connectionId: connectionData.id,
-      userId,
-      spaceId,
-    });
-
     // Check if this connection is in the deletion blacklist
     const { default: useConnectionStore } = await import(
       '../stores/connectionStore'
@@ -1286,9 +1058,6 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
     const connectionStore = useConnectionStore.getState();
 
     if (connectionStore.deletingConnections.has(connectionData.id)) {
-      console.log(
-        `🚫 [addConnectionToCells] Blocked saving deleted connection: ${connectionData.id}`
-      );
       return false;
     }
 
@@ -1297,10 +1066,6 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
     const endPosition = connectionData.end?.position;
 
     if (!startPosition || !endPosition) {
-      console.error('❌ addConnectionToCells: Missing connection positions', {
-        startPosition,
-        endPosition,
-      });
       return false;
     }
 
@@ -1315,7 +1080,6 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
       startCellCoords.z
     );
 
-    console.log('🔄 Adding connection to start cell:', startCellId);
     await addConnectionToCell(userId, spaceId, startCellId, connectionData);
 
     // Add connection to end cell if different from start cell
@@ -1325,14 +1089,89 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
       endCellCoords.z
     );
     if (startCellId !== endCellId) {
-      console.log('🔄 Adding connection to end cell:', endCellId);
       await addConnectionToCell(userId, spaceId, endCellId, connectionData);
     }
 
-    console.log('✅ Successfully added connection to cells');
     return true;
-  } catch (error) {
-    console.error('❌ Error in addConnectionToCells:', error);
+  } catch {
+    return false;
+  }
+};
+
+export const bulkSaveConnectionsToCell = async (
+  userId,
+  spaceId,
+  cellId,
+  connectionsArray
+) => {
+  if (
+    !userId ||
+    !spaceId ||
+    !cellId ||
+    !connectionsArray ||
+    !Array.isArray(connectionsArray)
+  ) {
+    return false;
+  }
+
+  if (connectionsArray.length === 0) {
+    return true;
+  }
+
+  try {
+    const cellRef = doc(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells',
+      cellId
+    );
+
+    // Get current cell data
+    const cellDoc = await getDoc(cellRef);
+    let cellData;
+
+    if (cellDoc.exists()) {
+      cellData = cellDoc.data();
+    } else {
+      // Cell doesn't exist, create it
+      const [x, y, z] = cellId.split(',').map(Number);
+      await createCell(userId, spaceId, x, y, z);
+      cellData = {
+        id: cellId,
+        x,
+        y,
+        z,
+        bounds: getCellBounds(x, y, z),
+        createdAt: new Date(),
+        objects: {},
+        connections: {},
+      };
+    }
+
+    // Initialize or fix connections structure
+    if (!cellData.connections || Array.isArray(cellData.connections)) {
+      cellData.connections = {};
+    }
+
+    // Add all connections in bulk
+    cellData.hasConnections = true;
+    const currentTime = new Date();
+
+    for (const connectionData of connectionsArray) {
+      cellData.connections[connectionData.id] = {
+        ...connectionData,
+        lastUpdated: currentTime,
+        cellId: cellId,
+      };
+    }
+
+    await setDoc(cellRef, cellData, { merge: true });
+
+    return true;
+  } catch {
     return false;
   }
 };
@@ -1352,21 +1191,10 @@ export const addConnectionToCell = async (
   connectionData
 ) => {
   if (!userId || !spaceId || !cellId || !connectionData) {
-    console.error('❌ addConnectionToCell: Missing required parameters', {
-      userId: !!userId,
-      spaceId: !!spaceId,
-      cellId,
-      connectionData: !!connectionData,
-    });
     return false;
   }
 
   try {
-    console.log('🔄 Adding connection to specific cell:', {
-      cellId,
-      connectionId: connectionData.id,
-    });
-
     // Check if this connection is in the deletion blacklist
     const { default: useConnectionStore } = await import(
       '../stores/connectionStore'
@@ -1374,9 +1202,6 @@ export const addConnectionToCell = async (
     const connectionStore = useConnectionStore.getState();
 
     if (connectionStore.deletingConnections.has(connectionData.id)) {
-      console.log(
-        `🚫 [addConnectionToCell] Blocked saving deleted connection: ${connectionData.id} to cell ${cellId}`
-      );
       return false;
     }
 
@@ -1396,9 +1221,7 @@ export const addConnectionToCell = async (
 
     if (cellDoc.exists()) {
       cellData = cellDoc.data();
-      console.log('📁 Cell exists, updating existing cell');
     } else {
-      console.log('📁 Cell does not exist, creating new cell');
       // Cell doesn't exist, create it
       const [x, y, z] = cellId.split(',').map(Number);
       await createCell(userId, spaceId, x, y, z);
@@ -1416,7 +1239,6 @@ export const addConnectionToCell = async (
 
     // Initialize or fix connections structure
     if (!cellData.connections || Array.isArray(cellData.connections)) {
-      console.log('🔧 Fixing connections structure in cell');
       cellData.connections = {};
     }
 
@@ -1428,12 +1250,9 @@ export const addConnectionToCell = async (
       cellId: cellId,
     };
 
-    console.log('💾 Saving connection to cell document');
     await setDoc(cellRef, cellData, { merge: true });
-    console.log('✅ Successfully saved connection to cell:', cellId);
     return true;
-  } catch (error) {
-    console.error('❌ Error in addConnectionToCell:', error);
+  } catch {
     return false;
   }
 };
@@ -1451,22 +1270,10 @@ export const removeConnectionFromAllCells = async (
   connectionId
 ) => {
   if (!userId || !spaceId || !connectionId) {
-    console.error(
-      '❌ removeConnectionFromAllCells: Missing required parameters',
-      {
-        userId: !!userId,
-        spaceId: !!spaceId,
-        connectionId: !!connectionId,
-      }
-    );
     return false;
   }
 
   try {
-    console.log(
-      `🔍 removeConnectionFromAllCells: Searching all cells for connection ${connectionId}`
-    );
-
     // Get all cells in the space
     const cellsRef = collection(
       db,
@@ -1478,20 +1285,14 @@ export const removeConnectionFromAllCells = async (
     );
     const snapshot = await getDocs(cellsRef);
 
-    let removedCount = 0;
     let errorCount = 0;
 
     // Process each cell
     for (const cellDoc of snapshot.docs) {
       const cellData = cellDoc.data();
-      const cellId = cellDoc.id;
 
       if (cellData.connections && typeof cellData.connections === 'object') {
         if (cellData.connections[connectionId]) {
-          console.log(
-            `🗑️ removeConnectionFromAllCells: Found connection ${connectionId} in cell ${cellId}, removing...`
-          );
-
           try {
             delete cellData.connections[connectionId];
 
@@ -1502,30 +1303,15 @@ export const removeConnectionFromAllCells = async (
             }
 
             await setDoc(cellDoc.ref, cellData, { merge: true });
-            removedCount++;
-            console.log(
-              `✅ removeConnectionFromAllCells: Successfully removed connection ${connectionId} from cell ${cellId}`
-            );
-          } catch (error) {
-            console.error(
-              `❌ removeConnectionFromAllCells: Error removing connection ${connectionId} from cell ${cellId}:`,
-              error
-            );
+          } catch {
             errorCount++;
           }
         }
       }
     }
 
-    console.log(
-      `${
-        removedCount > 0 || errorCount === 0 ? '✅' : '❌'
-      } removeConnectionFromAllCells: Completed - removed from ${removedCount} cells, ${errorCount} errors`
-    );
-
     return errorCount === 0;
-  } catch (error) {
-    console.error('❌ removeConnectionFromAllCells: Error:', error);
+  } catch {
     return false;
   }
 };
@@ -1591,11 +1377,6 @@ export const removeConnectionFromCells = async (
   connectionData
 ) => {
   if (!userId || !spaceId || !connectionId) {
-    console.error('❌ removeConnectionFromCells: Missing required parameters', {
-      userId: !!userId,
-      spaceId: !!spaceId,
-      connectionId: !!connectionId,
-    });
     return false;
   }
 
@@ -1607,46 +1388,16 @@ export const removeConnectionFromCells = async (
     const startPosition = normalizePosition(rawStartPosition);
     const endPosition = normalizePosition(rawEndPosition);
 
-    console.log(`🔍 [removeConnectionFromCells] Position analysis:`, {
-      connectionId,
-      rawStartPosition,
-      rawEndPosition,
-      normalizedStartPosition: startPosition,
-      normalizedEndPosition: endPosition,
-      willUseFallback: !startPosition || !endPosition,
-    });
-
     if (!startPosition || !endPosition) {
-      console.warn(
-        '⚠️ removeConnectionFromCells: Invalid or missing connection positions, using fallback search',
-        {
-          connectionId,
-          hasRawStart: !!rawStartPosition,
-          hasRawEnd: !!rawEndPosition,
-          normalizedStart: startPosition,
-          normalizedEnd: endPosition,
-          connectionData,
-        }
-      );
       // Fallback: search all cells for this connection
       const fallbackResult = await removeConnectionFromAllCells(
         userId,
         spaceId,
         connectionId
       );
-      console.log(
-        `🔍 [removeConnectionFromCells] Fallback result: ${fallbackResult}`
-      );
+
       return fallbackResult;
     }
-
-    console.log(
-      `🔍 removeConnectionFromCells: Removing connection ${connectionId}`,
-      {
-        startPosition,
-        endPosition,
-      }
-    );
 
     // Get cell coordinates for both endpoints
     const startCellCoords = getCellCoordinates(startPosition);
@@ -1658,9 +1409,7 @@ export const removeConnectionFromCells = async (
       startCellCoords.y,
       startCellCoords.z
     );
-    console.log(
-      `🗑️ removeConnectionFromCells: Removing from start cell ${startCellId}`
-    );
+
     const startResult = await removeConnectionFromCell(
       userId,
       spaceId,
@@ -1676,18 +1425,11 @@ export const removeConnectionFromCells = async (
     );
     let endResult = true;
     if (startCellId !== endCellId) {
-      console.log(
-        `🗑️ removeConnectionFromCells: Removing from end cell ${endCellId}`
-      );
       endResult = await removeConnectionFromCell(
         userId,
         spaceId,
         endCellId,
         connectionId
-      );
-    } else {
-      console.log(
-        `ℹ️ removeConnectionFromCells: Start and end cells are the same (${startCellId})`
       );
     }
 
@@ -1695,30 +1437,18 @@ export const removeConnectionFromCells = async (
 
     // If the position-based approach failed, try the all-cells fallback
     if (!success) {
-      console.warn(
-        `⚠️ removeConnectionFromCells: Position-based removal failed for connection ${connectionId}, using fallback search`
-      );
       const fallbackResult = await removeConnectionFromAllCells(
         userId,
         spaceId,
         connectionId
       );
       if (fallbackResult) {
-        console.log(
-          `✅ removeConnectionFromCells: Fallback search succeeded for connection ${connectionId}`
-        );
         return true;
       }
     }
 
-    console.log(
-      `${success ? '✅' : '❌'} removeConnectionFromCells: ${
-        success ? 'Success' : 'Failed'
-      } for connection ${connectionId}`
-    );
     return success;
-  } catch (error) {
-    console.error('❌ removeConnectionFromCells: Error:', error);
+  } catch {
     return false;
   }
 };
@@ -1738,12 +1468,6 @@ export const removeConnectionFromCell = async (
   connectionId
 ) => {
   if (!userId || !spaceId || !cellId || !connectionId) {
-    console.error('❌ removeConnectionFromCell: Missing required parameters', {
-      userId: !!userId,
-      spaceId: !!spaceId,
-      cellId: !!cellId,
-      connectionId: !!connectionId,
-    });
     return false;
   }
 
@@ -1760,28 +1484,14 @@ export const removeConnectionFromCell = async (
     const cellDoc = await getDoc(cellRef);
 
     if (!cellDoc.exists()) {
-      console.log(
-        `✅ removeConnectionFromCell: Cell ${cellId} doesn't exist, connection ${connectionId} already not present`
-      );
       return true; // Cell doesn't exist, connection already not present
     }
 
     const cellData = cellDoc.data();
-    console.log(`🔍 removeConnectionFromCell: Cell ${cellId} data:`, {
-      hasConnections: !!cellData.connections,
-      connectionsType: typeof cellData.connections,
-      hasTargetConnection: !!cellData.connections?.[connectionId],
-      totalConnections: cellData.connections
-        ? Object.keys(cellData.connections).length
-        : 0,
-    });
 
     // Ensure connections is an object
     if (cellData.connections && typeof cellData.connections === 'object') {
       if (cellData.connections[connectionId]) {
-        console.log(
-          `🗑️ removeConnectionFromCell: Deleting connection ${connectionId} from cell ${cellId}`
-        );
         delete cellData.connections[connectionId];
 
         // If this was the last connection, clean up the cell's connection data
@@ -1791,26 +1501,11 @@ export const removeConnectionFromCell = async (
         }
 
         await setDoc(cellRef, cellData, { merge: true });
-        console.log(
-          `✅ removeConnectionFromCell: Successfully deleted connection ${connectionId} from cell ${cellId}`
-        );
-      } else {
-        console.log(
-          `ℹ️ removeConnectionFromCell: Connection ${connectionId} not found in cell ${cellId}`
-        );
       }
-    } else {
-      console.log(
-        `ℹ️ removeConnectionFromCell: No connections object in cell ${cellId}`
-      );
     }
 
     return true;
-  } catch (error) {
-    console.error(
-      `❌ removeConnectionFromCell: Error removing connection ${connectionId} from cell ${cellId}:`,
-      error
-    );
+  } catch {
     return false;
   }
 };
@@ -1824,23 +1519,8 @@ export const removeConnectionFromCell = async (
  */
 export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
   if (!userId || !spaceId || !cellCoords || cellCoords.length === 0) {
-    console.log(
-      '🔍 getConnectionsFromCells: Early return due to missing parameters:',
-      {
-        userId: !!userId,
-        spaceId: !!spaceId,
-        cellCoords: cellCoords?.length || 0,
-      }
-    );
     return [];
   }
-
-  console.log('🔍 getConnectionsFromCells: Starting with params:', {
-    userId,
-    spaceId,
-    cellCoordsLength: cellCoords.length,
-    cellCoords: cellCoords.slice(0, 5), // Show first 5 for debugging
-  });
 
   // Filter out invalid cell coordinates
   const validCellCoords = cellCoords.filter(
@@ -1852,10 +1532,6 @@ export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
       !isNaN(coords.x) &&
       !isNaN(coords.y) &&
       !isNaN(coords.z)
-  );
-
-  console.log(
-    `🔍 getConnectionsFromCells: Filtered to ${validCellCoords.length} valid cells`
   );
 
   try {
@@ -1874,49 +1550,26 @@ export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
         cellId
       );
       const cellDoc = await getDoc(cellRef);
-      console.log(`🔍 Checking cell ${cellId} for connections:`, {
-        exists: cellDoc.exists(),
-        cellId,
-      });
 
       if (cellDoc.exists()) {
         const cellData = cellDoc.data();
 
         if (cellData.connections && typeof cellData.connections === 'object') {
           const cellConnections = Object.values(cellData.connections);
-          // Only log when connections are found to reduce noise
-          if (cellConnections.length > 0) {
-            console.log(
-              `🔗 Found ${cellConnections.length} connections in cell ${cellId}:`,
-              {
-                connectionIds: cellConnections.map((c) => c.id),
-              }
-            );
-          }
 
           // Only add connections we haven't seen before
           cellConnections.forEach((connection) => {
             if (!seenConnectionIds.has(connection.id)) {
               seenConnectionIds.add(connection.id);
               allConnections.push(connection);
-              console.log(
-                `✅ Added connection ${connection.id} from cell ${cellId}`
-              );
             }
           });
-        } else {
-          console.log(
-            `📭 Cell ${cellId} has no connections or invalid connections data`
-          );
         }
-      } else {
-        console.log(`❌ Cell ${cellId} does not exist`);
       }
     }
 
     return allConnections;
-  } catch (error) {
-    console.error('❌ Error in getConnectionsFromCells:', error);
+  } catch {
     return [];
   }
 };
@@ -2041,51 +1694,10 @@ export const getNeighborCells = (
  * Debug function to test cell radius loading
  */
 export const debugCellRadius = () => {
-  console.log('=== DEBUG: Testing cell radius loading ===');
-
   const cameraPosition = [20, 20, 50];
-  console.log('Camera position:', cameraPosition);
-  console.log('Load radius:', CELL_NEIGHBOR_RADIUS);
-
-  // Get the camera's cell coordinates
-  const cameraCell = getCellCoordinates(cameraPosition);
-  console.log('Camera cell coordinates:', cameraCell);
 
   // Get all cells within radius
   const cellsInRadius = getCellsInRadius(cameraPosition, CELL_NEIGHBOR_RADIUS);
-  console.log(
-    `Cells within radius ${CELL_NEIGHBOR_RADIUS}:`,
-    cellsInRadius.length
-  );
-
-  // Show a sampling of cells
-  console.log(
-    'First 10 cells:',
-    cellsInRadius.slice(0, 10).map((c) => `(${c.x},${c.y},${c.z})`)
-  );
-  console.log(
-    'Last 10 cells:',
-    cellsInRadius.slice(-10).map((c) => `(${c.x},${c.y},${c.z})`)
-  );
-
-  // Calculate expected number of cells
-  const expectedCells = Math.pow(2 * CELL_NEIGHBOR_RADIUS + 1, 3);
-  console.log(
-    `Expected cells for radius ${CELL_NEIGHBOR_RADIUS}: ${expectedCells}`
-  );
-  console.log(`Actual cells: ${cellsInRadius.length}`);
-
-  // Check if origin cell is included
-  const hasOrigin = cellsInRadius.some(
-    (c) => c.x === 0 && c.y === 0 && c.z === 0
-  );
-  console.log('Includes origin cell (0,0,0):', hasOrigin);
-
-  // Check if camera cell is included
-  const hasCameraCell = cellsInRadius.some(
-    (c) => c.x === cameraCell.x && c.y === cameraCell.y && c.z === cameraCell.z
-  );
-  console.log('Includes camera cell:', hasCameraCell);
 
   return cellsInRadius;
 };
@@ -2094,19 +1706,7 @@ export const debugCellRadius = () => {
  * Debug function to test getNeighborCells specifically
  */
 export const debugNeighborCells = (position = [20, 20, 50]) => {
-  console.log('=== DEBUG: Testing getNeighborCells function ===');
-  console.log('Position:', position);
-  console.log('CELL_NEIGHBOR_RADIUS:', CELL_NEIGHBOR_RADIUS);
-
   const neighborCells = getNeighborCells(position, CELL_NEIGHBOR_RADIUS);
-  console.log('Neighbor cells count:', neighborCells.length);
-  console.log('Expected count for radius 1:', Math.pow(3, 3), '(3x3x3)');
-
-  // Show all cells
-  console.log('All neighbor cells:');
-  neighborCells.forEach((cell, index) => {
-    console.log(`  ${index + 1}. (${cell.x}, ${cell.y}, ${cell.z})`);
-  });
 
   return neighborCells;
 };
@@ -2118,19 +1718,9 @@ export const debugCurrentCellLoading = () => {
   // Test getNeighborCells function
   const testPosition = [0, 0, 0]; // Origin position
   const neighborCells = getNeighborCells(testPosition, CELL_NEIGHBOR_RADIUS);
-  console.log(`\ngetNeighborCells([0,0,0], ${CELL_NEIGHBOR_RADIUS}):`);
-  console.log('- Expected cells:', Math.pow(3, 3), '(3x3x3)');
-  console.log('- Actual cells:', neighborCells.length);
-  console.log('- Cell coordinates:');
-  neighborCells.forEach((cell, index) => {
-    console.log(`  ${index + 1}. (${cell.x}, ${cell.y}, ${cell.z})`);
-  });
 
   // Test getCellsInRadius function
   const cellsInRadius = getCellsInRadius(testPosition, CELL_NEIGHBOR_RADIUS);
-  console.log(`\ngetCellsInRadius([0,0,0], ${CELL_NEIGHBOR_RADIUS}):`);
-  console.log('- Expected cells:', Math.pow(3, 3), '(3x3x3)');
-  console.log('- Actual cells:', cellsInRadius.length);
 
   return {
     neighborCells,
@@ -2193,8 +1783,7 @@ export const findObjectInCells = async (userId, spaceId, objectId) => {
     }
 
     return null;
-  } catch (error) {
-    console.error('Error finding object in cells:', error);
+  } catch {
     return null;
   }
 };
@@ -2245,8 +1834,7 @@ export const findConnectionInCells = async (userId, spaceId, connectionId) => {
     }
 
     return null;
-  } catch (error) {
-    console.error('Error finding connection in cells:', error);
+  } catch {
     return null;
   }
 };
@@ -2266,10 +1854,6 @@ export const purgeConnectionFromAllCells = async (
   if (!userId || !spaceId || !connectionId) return 0;
 
   try {
-    console.log(
-      `🧹 [Purge Debug] Starting aggressive purge of connection ${connectionId} from all cells`
-    );
-
     // Get all cells in the space
     const cellsRef = collection(
       db,
@@ -2290,10 +1874,6 @@ export const purgeConnectionFromAllCells = async (
 
       if (cellData.connections && typeof cellData.connections === 'object') {
         if (cellData.connections[connectionId]) {
-          console.log(
-            `🧹 [Purge Debug] Found connection ${connectionId} in cell ${cellDoc.id}, removing...`
-          );
-
           // Remove the connection from this cell
           const purgePromise = (async () => {
             try {
@@ -2306,15 +1886,9 @@ export const purgeConnectionFromAllCells = async (
               }
 
               await setDoc(cellDoc.ref, cellData, { merge: true });
-              console.log(
-                `✅ [Purge Debug] Successfully purged connection ${connectionId} from cell ${cellDoc.id}`
-              );
+
               return 1;
-            } catch (error) {
-              console.error(
-                `❌ [Purge Debug] Failed to purge connection ${connectionId} from cell ${cellDoc.id}:`,
-                error
-              );
+            } catch {
               return 0;
             }
           })();
@@ -2328,15 +1902,8 @@ export const purgeConnectionFromAllCells = async (
     const results = await Promise.all(purgePromises);
     purgedCount = results.reduce((sum, result) => sum + result, 0);
 
-    console.log(
-      `🧹 [Purge Debug] Aggressive purge complete: removed connection ${connectionId} from ${purgedCount} cells`
-    );
     return purgedCount;
-  } catch (error) {
-    console.error(
-      `❌ [Purge Debug] Error during aggressive purge of connection ${connectionId}:`,
-      error
-    );
+  } catch {
     return 0;
   }
 };

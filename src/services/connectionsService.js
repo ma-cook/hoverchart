@@ -4,6 +4,8 @@ import {
   disableNetwork,
   doc,
   onSnapshot,
+  collection,
+  getDocs,
 } from 'firebase/firestore';
 import { isSharedSpace } from './sharedSpacesService';
 import {
@@ -138,19 +140,10 @@ export const getConnectionNetworkState = () => isNetworkEnabled;
 // Modified to use cell-based storage instead of space-level storage
 export const saveConnection = async (userId, spaceId, connection) => {
   if (!userId || !spaceId || !connection?.id) {
-    console.log(`🚫 [saveConnection] Missing required parameters:`, {
-      userId: !!userId,
-      spaceId: !!spaceId,
-      connectionId: connection?.id,
-    });
-    return;
+    return false;
   }
 
   try {
-    console.log(
-      `💾 [saveConnection] Starting save for connection: ${connection.id}`
-    );
-
     // First, check if this connection is in the deletion blacklist
     // Use direct imports instead of dynamic imports to avoid getState issues
     const connectionStore = useConnectionStore.getState();
@@ -160,25 +153,18 @@ export const saveConnection = async (userId, spaceId, connection) => {
 
     // Check if connection is being deleted
     if (connectionStore.deletingConnections.has(connection.id)) {
-      console.log(
-        `🚫 [saveConnection] Blocked saving deleted connection: ${connection.id}`
-      );
-      return;
+      return false;
     }
 
     // For now, skip the object existence check for new connections to avoid timing issues
     // The deletion blacklist will handle the main case of preventing re-saves of deleted connections
-    console.log(
-      `� [saveConnection] Connection ${connection.id} passed deletion blacklist check, proceeding with save`
-    );
 
     // Check if this is a shared space
     const sharedStatus = await isSharedSpace(userId, spaceId);
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      console.log(`🚫 [saveConnection] No write permission for shared space`);
-      return;
+      return false;
     }
 
     // Use the owner's ID to save to the correct collection
@@ -202,10 +188,6 @@ export const saveConnection = async (userId, spaceId, connection) => {
     serializedConnection.lastUpdated = new Date().toISOString();
     serializedConnection._lastSaved = Date.now(); // Add save timestamp for conflict resolution
 
-    console.log(
-      `💾 [saveConnection] Saving connection ${connection.id} to database`
-    );
-
     // Save connection to appropriate cells instead of space-level collection
     const success = await addConnectionToCells(
       ownerUserId,
@@ -214,32 +196,18 @@ export const saveConnection = async (userId, spaceId, connection) => {
     );
 
     if (success) {
-      console.log(
-        `✅ [saveConnection] Successfully saved connection ${connection.id}`
-      );
       return true; // Indicate success
     } else {
       throw new Error('Failed to save connection to cells');
     }
   } catch (error) {
-    console.error(
-      `❌ [saveConnection] Error saving connection ${connection.id}:`,
-      error
-    );
-
     // Error saving connection
     // Simple fallback
     try {
       const fallbackKey = `connection_${userId}_${spaceId}_${connection.id}`;
       localStorage.setItem(fallbackKey, JSON.stringify(connection));
-      console.log(
-        `💾 [saveConnection] Saved connection ${connection.id} to localStorage as fallback`
-      );
-    } catch (fallbackError) {
-      console.error(
-        `❌ [saveConnection] Failed to save connection to localStorage:`,
-        fallbackError
-      );
+    } catch {
+      // Failed to save to localStorage as well
       // Failed to save connection to localStorage
     }
     throw new Error(`Failed to save connection: ${error.message}`);
@@ -302,10 +270,72 @@ const subscribeToCellConnections = (
       // Use the owner's ID to get connections from the correct cells
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
 
-      // If no cells are loaded, skip subscription since there's no area to monitor
+      // If no cells are loaded, try to load connections from all cells in the space
+      // This handles the case where the app just started and spatial manager hasn't loaded cells yet
       if (effectiveCells.length === 0) {
-        console.log('🔗 No cells loaded, skipping connection subscription');
-        return;
+        // No cells loaded yet, attempting to load connections from all cells in space
+
+        try {
+          // Get all cells that contain connections for this space
+          const spaceRef = doc(db, 'users', ownerUserId, 'spaces', spaceId);
+          const cellsCollectionRef = collection(spaceRef, 'cells');
+
+          // Query for all cells that have connections
+          const cellsSnapshot = await getDocs(cellsCollectionRef);
+
+          if (!cellsSnapshot.empty) {
+            // Found cells in space, checking for connections
+
+            cellsSnapshot.forEach((cellDoc) => {
+              if (cellDoc.exists()) {
+                const cellData = cellDoc.data();
+                const cellConnections = cellData.connections || {};
+
+                if (Object.keys(cellConnections).length > 0) {
+                  // Process each connection in the cell
+                  Object.entries(cellConnections).forEach(
+                    ([connectionId, connectionData]) => {
+                      // Check deletion blacklist before processing
+                      if (window._deletingConnections?.has(connectionId)) {
+                        return;
+                      }
+
+                      try {
+                        const { useConnectionStore } = window;
+                        if (useConnectionStore) {
+                          const connectionStore = useConnectionStore.getState();
+                          if (
+                            connectionStore.deletingConnections.has(
+                              connectionId
+                            )
+                          ) {
+                            return;
+                          }
+                        }
+                      } catch {
+                        // Continue processing if store access fails
+                      }
+
+                      // Add the connection
+                      if (connectionData && typeof callback === 'function') {
+                        callback({
+                          type: 'added',
+                          id: connectionId,
+                          data: connectionData,
+                          cell: cellDoc.id,
+                        });
+                      }
+                    }
+                  );
+                }
+              }
+            });
+          }
+        } catch {
+          // Error loading connections from all cells
+        }
+
+        return; // Don't set up individual cell subscriptions if we loaded from all cells
       }
 
       // Subscribe to each loaded cell
@@ -337,35 +367,17 @@ const subscribeToCellConnections = (
           SUBSCRIPTION_TYPES.CONNECTIONS,
           () => {
             // Create the actual Firebase subscription
-            console.log(
-              '🔗 Setting up Firebase subscription for cell:',
-              cellKey
-            );
+
             return onSnapshot(
               cellRef,
               { includeMetadataChanges: false },
               (snapshot) => {
-                console.log(
-                  '🔥 Firebase snapshot received for cell:',
-                  cellKey,
-                  'exists:',
-                  snapshot.exists()
-                );
-
                 if (!snapshot.exists()) {
-                  console.log('📭 Cell document does not exist:', cellKey);
                   return;
                 }
 
                 const cellData = snapshot.data();
                 const cellConnections = cellData.connections || {};
-
-                console.log('📄 Cell data:', {
-                  cellKey,
-                  hasConnections: !!cellData.connections,
-                  connectionCount: Object.keys(cellConnections).length,
-                  connectionIds: Object.keys(cellConnections),
-                });
 
                 // Process each connection in the cell
                 Object.entries(cellConnections).forEach(
@@ -373,9 +385,6 @@ const subscribeToCellConnections = (
                     // CRITICAL FIX: Check deletion blacklist before processing any connection
                     // This prevents stale Firebase data from re-adding deleted connections
                     if (window._deletingConnections?.has(connectionId)) {
-                      console.log(
-                        `🚫 [Firebase Listener] Blocked stale connection data: ${connectionId}`
-                      );
                       return;
                     }
 
@@ -387,13 +396,10 @@ const subscribeToCellConnections = (
                         if (
                           connectionStore.deletingConnections.has(connectionId)
                         ) {
-                          console.log(
-                            `🚫 [Firebase Listener] Blocked connection in store deletion blacklist: ${connectionId}`
-                          );
                           return;
                         }
                       }
-                    } catch (error) {
+                    } catch {
                       // Ignore errors accessing store
                     }
 
@@ -416,10 +422,7 @@ const subscribeToCellConnections = (
                         cacheKey,
                         JSON.parse(JSON.stringify(connectionData))
                       );
-                      console.log('📤 Sending connection event to callback:', {
-                        type: 'added',
-                        id: connectionId,
-                      });
+
                       callback({
                         type: 'added',
                         id: connectionId,
@@ -463,15 +466,8 @@ const subscribeToCellConnections = (
                   }
                 }
               },
-              (error) => {
-                console.warn(
-                  'Firebase snapshot error for cell:',
-                  cellKey,
-                  error
-                );
-                if (error.code === 'permission-denied') {
-                  return;
-                }
+              () => {
+                // Firebase snapshot error - permission denied is expected for unauthorized cells
               }
             );
           }
@@ -480,8 +476,8 @@ const subscribeToCellConnections = (
         // Store the cleanup function
         unsubscribeFunctions.set(cellKey, globalUnsubscribe);
       }
-    } catch (error) {
-      console.error('Error starting connection subscriptions:', error);
+    } catch {
+      // Error starting connection subscriptions - handle silently
     }
   };
 
@@ -502,50 +498,27 @@ export const deleteConnection = async (
   connectionId,
   connectionData = null
 ) => {
-  console.log(`🗑️ [Connection Service] deleteConnection called:`, {
-    userId,
-    spaceId,
-    connectionId,
-    hasConnectionData: !!connectionData,
-  });
-
   if (!userId || !spaceId || !connectionId) {
-    console.error(`❌ [Connection Service] Missing required parameters:`, {
-      userId: !!userId,
-      spaceId: !!spaceId,
-      connectionId: !!connectionId,
-    });
     return false;
   }
 
   try {
     // Clear from cache immediately
     clearConnectionCache(spaceId, connectionId);
-    console.log(
-      `🗑️ [Connection Service] Cleared cache for connection ${connectionId}`
-    );
 
     // Check if this is a shared space
     const sharedStatus = await isSharedSpace(userId, spaceId);
-    console.log(`🗑️ [Connection Service] Shared space status:`, sharedStatus);
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      console.warn(
-        `❌ [Connection Service] No write permission for shared space`
-      );
       return false;
     }
 
     // Use the owner's ID to delete from the correct cells
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-    console.log(`🗑️ [Connection Service] Using owner ID: ${ownerUserId}`);
 
     // If we don't have connection data, we need to find it first
     if (!connectionData) {
-      console.log(
-        `🗑️ [Connection Service] No connection data provided, searching store...`
-      );
       // Try to find the connection in the connection store first
       const connections = useConnectionStore.getState().connections;
       const foundConnection = connections.find(
@@ -554,27 +527,15 @@ export const deleteConnection = async (
 
       if (foundConnection) {
         connectionData = foundConnection;
-        console.log(`🗑️ [Connection Service] Found connection data in store:`, {
-          id: connectionData.id,
-          startPos: connectionData.start?.position,
-          endPos: connectionData.end?.position,
-        });
       } else {
         // If not found in store, we'll use a basic deletion approach
-        console.warn(
-          `⚠️ [Connection Service] Connection data not found for deletion: ${connectionId}`
-        );
       }
     } else {
-      console.log(`🗑️ [Connection Service] Using provided connection data:`, {
-        id: connectionData.id,
-        startPos: connectionData.start?.position,
-        endPos: connectionData.end?.position,
-      });
+      // Using provided connection data
     }
 
     // Remove connection from cells
-    console.log(`🗑️ [Connection Service] Calling removeConnectionFromCells...`);
+
     const success = await removeConnectionFromCells(
       ownerUserId,
       spaceId,
@@ -582,12 +543,8 @@ export const deleteConnection = async (
       connectionData
     );
 
-    console.log(
-      `🗑️ [Connection Service] removeConnectionFromCells result: ${success}`
-    );
     return success;
-  } catch (error) {
-    console.error(`❌ [Connection Service] Error deleting connection:`, error);
+  } catch {
     return false;
   }
 };
@@ -599,55 +556,27 @@ export const deleteConnectionEnhanced = async (
   connectionId,
   connectionData = null
 ) => {
-  console.log(
-    `🔧 [Enhanced Connection Delete] Starting deletion for connection: ${connectionId}`
-  );
-
   if (!userId || !spaceId || !connectionId) {
-    console.error(
-      `❌ [Enhanced Connection Delete] Missing required parameters:`,
-      {
-        userId: !!userId,
-        spaceId: !!spaceId,
-        connectionId: !!connectionId,
-      }
-    );
     return false;
   }
 
   try {
     // Clear from cache immediately
     clearConnectionCache(spaceId, connectionId);
-    console.log(
-      `🔧 [Enhanced Connection Delete] Cleared cache for connection ${connectionId}`
-    );
 
     // Check if this is a shared space
     const sharedStatus = await isSharedSpace(userId, spaceId);
-    console.log(
-      `🔧 [Enhanced Connection Delete] Shared space status:`,
-      sharedStatus
-    );
 
     // If it's shared but without write permission, return early
     if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      console.warn(
-        `❌ [Enhanced Connection Delete] No write permission for shared space`
-      );
       return false;
     }
 
     // Use the owner's ID to delete from the correct cells
     const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-    console.log(
-      `🔧 [Enhanced Connection Delete] Using owner ID: ${ownerUserId}`
-    );
 
     // If we don't have connection data, try to find it
     if (!connectionData) {
-      console.log(
-        `🔧 [Enhanced Connection Delete] No connection data provided, searching store...`
-      );
       // Try to find the connection in the connection store first
       const connections = useConnectionStore.getState().connections;
       const foundConnection = connections.find(
@@ -656,13 +585,8 @@ export const deleteConnectionEnhanced = async (
 
       if (foundConnection) {
         connectionData = foundConnection;
-        console.log(
-          `🔧 [Enhanced Connection Delete] Found connection data in store`
-        );
       } else {
-        console.log(
-          `🔧 [Enhanced Connection Delete] Connection not found in store, proceeding with fallback deletion`
-        );
+        // Connection not found in store, proceeding with fallback deletion
       }
     }
 
@@ -674,40 +598,25 @@ export const deleteConnectionEnhanced = async (
       connectionData.start?.position &&
       connectionData.end?.position
     ) {
-      console.log(
-        `🔧 [Enhanced Connection Delete] Attempting standard deletion with position data...`
-      );
       success = await removeConnectionFromCells(
         ownerUserId,
         spaceId,
         connectionId,
         connectionData
       );
-      console.log(
-        `🔧 [Enhanced Connection Delete] Standard deletion result: ${success}`
-      );
     }
 
     // If standard deletion failed or we don't have position data, use fallback
     if (!success) {
-      console.log(
-        `🔧 [Enhanced Connection Delete] Standard deletion failed or no position data, trying fallback...`
-      );
       success = await removeConnectionFromAllCells(
         ownerUserId,
         spaceId,
         connectionId
       );
-      console.log(
-        `🔧 [Enhanced Connection Delete] Fallback deletion result: ${success}`
-      );
     }
 
     // **CRITICAL FIX**: If both methods failed, try aggressive deletion with updateDoc
     if (!success) {
-      console.log(
-        `🔧 [Enhanced Connection Delete] Both methods failed, trying AGGRESSIVE deletion...`
-      );
       try {
         const { db } = await import('../firebase');
         const { collection, getDocs, doc, updateDoc, deleteField } =
@@ -724,17 +633,10 @@ export const deleteConnectionEnhanced = async (
         const cellsSnapshot = await getDocs(cellsRef);
 
         let removedCount = 0;
-        console.log(
-          `🔧 [Aggressive Delete] Checking ${cellsSnapshot.size} cells for connection ${connectionId}`
-        );
 
         for (const cellDoc of cellsSnapshot.docs) {
           const cellData = cellDoc.data();
           if (cellData.connections && cellData.connections[connectionId]) {
-            console.log(
-              `🔧 [Aggressive Delete] Found connection ${connectionId} in cell ${cellDoc.id}, removing...`
-            );
-
             try {
               const cellRef = doc(
                 db,
@@ -750,30 +652,20 @@ export const deleteConnectionEnhanced = async (
               });
 
               removedCount++;
-              console.log(
-                `✅ [Aggressive Delete] Removed connection ${connectionId} from cell ${cellDoc.id}`
-              );
-            } catch (error) {
-              console.error(
-                `❌ [Aggressive Delete] Failed to remove from cell ${cellDoc.id}:`,
-                error
-              );
+            } catch {
+              // Failed to remove from cell
             }
           }
         }
 
         success = removedCount > 0;
-        console.log(
-          `🔧 [Aggressive Delete] Removed connection from ${removedCount} cells. Success: ${success}`
-        );
-      } catch (aggressiveError) {
-        console.error(`❌ [Aggressive Delete] Error:`, aggressiveError);
+      } catch {
+        // Aggressive delete error - handle silently
       }
     }
 
     // Final verification - check if connection still exists
     if (success) {
-      console.log(`🔧 [Enhanced Connection Delete] Verifying deletion...`);
       setTimeout(async () => {
         try {
           // Try to find the connection in any cell
@@ -787,41 +679,23 @@ export const deleteConnectionEnhanced = async (
           );
 
           if (found) {
-            console.error(
-              `❌ [Enhanced Connection Delete] VERIFICATION FAILED: Connection ${connectionId} still exists in database!`
-            );
-            // Try one more aggressive deletion
-            console.log(
-              `🔧 [Enhanced Connection Delete] Attempting final aggressive deletion...`
-            );
+            // Connection still exists - try one more aggressive deletion
             await removeConnectionFromAllCells(
               ownerUserId,
               spaceId,
               connectionId
             );
           } else {
-            console.log(
-              `✅ [Enhanced Connection Delete] VERIFICATION PASSED: Connection ${connectionId} successfully deleted`
-            );
+            // Connection successfully deleted
           }
-        } catch (verifyError) {
-          console.warn(
-            `⚠️ [Enhanced Connection Delete] Could not verify deletion:`,
-            verifyError
-          );
+        } catch {
+          // Could not verify deletion
         }
       }, 1000);
     }
 
-    console.log(
-      `🔧 [Enhanced Connection Delete] Final result for connection ${connectionId}: ${success}`
-    );
     return success;
-  } catch (error) {
-    console.error(
-      `❌ [Enhanced Connection Delete] Error deleting connection:`,
-      error
-    );
+  } catch {
     return false;
   }
 };

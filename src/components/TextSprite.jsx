@@ -348,7 +348,27 @@ const TextSprite = React.memo(
             const targetPos = followTarget.current.position;
             const targetScale = followTarget.current.scale;
 
-            if (style.isHeaderText && style.isPlaneHeader) {
+            if (style.isDodecahedronHeader) {
+              // Use the calculated position from dodecahedron (it already accounts for scale and offset)
+              const calculatedPos = Array.isArray(position)
+                ? position
+                : [position?.x || 0, position?.y || 0, position?.z || 0];
+              const distanceToCamera = camera.position.distanceTo(
+                new THREE.Vector3(...calculatedPos)
+              );
+              const baseScale = Math.min(
+                Math.max(distanceToCamera * 0.01, 0.5),
+                1.5
+              );
+
+              textRef.current.position.set(
+                calculatedPos[0],
+                calculatedPos[1],
+                calculatedPos[2]
+              );
+              textRef.current.scale.set(baseScale, baseScale, baseScale);
+              textRef.current.quaternion.copy(camera.quaternion);
+            } else if (style.isHeaderText && style.isPlaneHeader) {
               // If fixedPosition is true, do not override the provided position.
               if (!style.fixedPosition) {
                 const [x, y, z] = position;
@@ -385,20 +405,6 @@ const TextSprite = React.memo(
                   1.5
                 );
               }
-
-              textRef.current.position.set(targetPos.x, adjustedY, targetPos.z);
-              textRef.current.scale.set(baseScale, baseScale, baseScale);
-              textRef.current.quaternion.copy(camera.quaternion);
-            } else if (style.isDodecahedronHeader) {
-              // Similar to cube, but with different positioning logic
-              const distanceToCamera = camera.position.distanceTo(targetPos);
-              const targetY = targetPos.y + 15;
-              const scale = distanceToCamera * ZOOM_OFFSET_FACTOR;
-              const adjustedY = targetY + scale;
-              const baseScale = Math.min(
-                Math.max(distanceToCamera * 0.01, 0.5),
-                1.5
-              );
 
               textRef.current.position.set(targetPos.x, adjustedY, targetPos.z);
               textRef.current.scale.set(baseScale, baseScale, baseScale);
@@ -507,6 +513,19 @@ const TextSprite = React.memo(
             anchorY="middle"
             strokeWidth={0}
             billboard={!style.fixedSize}
+            depthTest={style.isFaceText ? true : false} // Match main text visibility
+            depthWrite={false}
+            renderOrder={
+              style.isDodecahedronHeader
+                ? 2000 // Highest priority for dodecahedron headers
+                : style.isFaceText
+                ? -2
+                : 1000 // Match main text render order
+            }
+            side={THREE.DoubleSide} // Match main text side rendering
+            transparent={true}
+            opacity={1}
+            frustumCulled={false} // Match main text culling behavior
           >
             _________________
           </Text>
@@ -520,15 +539,22 @@ const TextSprite = React.memo(
           anchorY="middle"
           strokeWidth={0}
           billboard={billboard}
-          depthTest={true}
-          depthWrite={false} // Change to false to prevent z-fighting
-          renderOrder={-2} // Even lower than indicators to ensure proper occlusion
-          side={THREE.FrontSide}
-          polygonOffset={true}
-          polygonOffsetFactor={3} // Higher value to push further behind faces
-          polygonOffsetUnits={3} // Higher value to push further behind faces
+          depthTest={style.isFaceText ? true : false} // Disable depth test for header/connection text to make them always visible
+          depthWrite={false} // Keep false to prevent z-fighting
+          renderOrder={
+            style.isDodecahedronHeader
+              ? 2000 // Highest priority for dodecahedron headers
+              : style.isFaceText
+              ? -2
+              : 1000 // High render order for other header/connection text
+          }
+          side={THREE.DoubleSide} // Render both sides so text is visible from any angle
+          polygonOffset={style.isFaceText ? true : false} // Only use polygon offset for face text
+          polygonOffsetFactor={style.isFaceText ? 3 : 0}
+          polygonOffsetUnits={style.isFaceText ? 3 : 0}
           transparent={true}
           opacity={1}
+          frustumCulled={false} // Prevent text from being culled when inside objects
         >
           {text || ''}
         </Text>{' '}

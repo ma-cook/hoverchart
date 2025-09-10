@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import TextSprite from './TextSprite';
 import LineUI from './LineUI';
 import HeaderInput from './HeaderInput';
@@ -78,9 +78,6 @@ const Connection = ({
     } else {
       // Check if connection is being deleted before saving
       if (deletingConnections.has(connectionId)) {
-        console.log(
-          `🚫 [ConnectionsRenderer] Blocked text save for deleted connection: ${connectionId}`
-        );
         return false;
       }
 
@@ -107,9 +104,6 @@ const Connection = ({
     } else {
       // Check if connection is being deleted before saving
       if (deletingConnections.has(connectionId)) {
-        console.log(
-          `🚫 [ConnectionsRenderer] Blocked style save for deleted connection: ${connectionId}`
-        );
         return;
       }
 
@@ -141,9 +135,6 @@ const Connection = ({
     } else {
       // Check if connection is being deleted before saving
       if (deletingConnections.has(connectionId)) {
-        console.log(
-          `🚫 [ConnectionsRenderer] Blocked line style save for deleted connection: ${connectionId}`
-        );
         return;
       }
 
@@ -182,9 +173,6 @@ const Connection = ({
     } else {
       // Check if connection is being deleted before saving
       if (deletingConnections.has(connectionId)) {
-        console.log(
-          `🚫 [ConnectionsRenderer] Blocked color save for deleted connection: ${connectionId}`
-        );
         return;
       }
 
@@ -220,7 +208,7 @@ const Connection = ({
       // First priority: Recalculate face position based on current object position
       try {
         const indicatorData = {
-          type: startObject.type || 'cube',
+          type: connection.start.type || startObject.type || 'cube', // Use stored connection type first, then object type as fallback
           face: connection.start.face,
           objectId: connection.start.objectId,
           faceCenter: connection.start.faceCenter, // Include faceCenter for dodecahedrons
@@ -236,8 +224,50 @@ const Connection = ({
                 }
               : undefined,
         };
+
+        // Debug logging for face issues - DISABLED for performance
+        // if (startObject.type === 'dodecahedron') {
+        //   console.log('🔍 ConnectionsRenderer START face debug:', {
+        //     connectionId: connection.id,
+        //     objectType: startObject.type,
+        //     originalFace: connection.start.face,
+        //     faceType: typeof connection.start.face,
+        //     indicatorData: indicatorData,
+        //   });
+        // }
+
         startPosition = calculateFacePosition(indicatorData, objects);
+
+        // Debug the calculated position - DISABLED for performance
+        // if (
+        //   startObject.type === 'dodecahedron' ||
+        //   indicatorData.type === 'dodecahedron'
+        // ) {
+        //   console.log('🎯 ConnectionsRenderer START calculated position:', {
+        //     connectionId: connection.id,
+        //     calculatedPosition: startPosition,
+        //     objectCenter: startObject.position,
+        //     face: connection.start.face,
+        //     indicatorType: indicatorData.type,
+        //   });
+        // }
       } catch {
+        // Calculate error fallback - debug disabled for performance
+        // if (startObject.type === 'dodecahedron') {
+        //   console.log(
+        //     '⚠️ ConnectionsRenderer START calculateFacePosition FAILED - using fallback logic:',
+        //     {
+        //       connectionId: connection.id,
+        //       face: connection.start.face,
+        //       objectType: startObject.type,
+        //       error: error.message,
+        //       storedPosition: connection.start.position,
+        //       fallbackSequence:
+        //         'about to try stored position, facePosition, worldPosition, then center',
+        //     }
+        //   );
+        // }
+
         startPosition = startObject.position;
       }
     } else if (Array.isArray(connection.start?.position)) {
@@ -251,14 +281,20 @@ const Connection = ({
       // Last resort: Use current object center position
       startPosition = startObject.position;
     } else {
-      startPosition = [0, 0, 0];
+      // REMOVED: No fallback to [0, 0, 0] - this causes 5000+ unit distances
+      // If we can't find the object or position, skip this connection
+      // console.warn(
+      //   '⚠️ ConnectionsRenderer: No valid start position found for connection',
+      //   connection.id
+      // );
+      return { isValid: false, midpoint: [0, 0, 0] };
     } // For end position - same priority order
     let endPosition;
     if (endObject && endObject.position && connection.end?.face) {
       // First priority: Recalculate face position based on current object position
       try {
         const indicatorData = {
-          type: endObject.type || 'cube',
+          type: connection.end.type || endObject.type || 'cube', // Use stored connection type first, then object type as fallback
           face: connection.end.face,
           objectId: connection.end.objectId,
           faceCenter: connection.end.faceCenter, // Include faceCenter for dodecahedrons
@@ -274,8 +310,50 @@ const Connection = ({
                 }
               : undefined,
         };
+
+        // Debug logging for face issues - DISABLED for performance
+        // if (endObject.type === 'dodecahedron') {
+        //   console.log('🔍 ConnectionsRenderer END face debug:', {
+        //     connectionId: connection.id,
+        //     objectType: endObject.type,
+        //     originalFace: connection.end.face,
+        //     faceType: typeof connection.end.face,
+        //     indicatorData: indicatorData,
+        //   });
+        // }
+
         endPosition = calculateFacePosition(indicatorData, objects);
+
+        // Debug the calculated position - DISABLED for performance
+        // if (
+        //   endObject.type === 'dodecahedron' ||
+        //   indicatorData.type === 'dodecahedron'
+        // ) {
+        //   console.log('🎯 ConnectionsRenderer END calculated position:', {
+        //     connectionId: connection.id,
+        //     calculatedPosition: endPosition,
+        //     objectCenter: endObject.position,
+        //     face: connection.end.face,
+        //     indicatorType: indicatorData.type,
+        //   });
+        // }
       } catch {
+        // Calculate error fallback - debug disabled for performance
+        // if (endObject.type === 'dodecahedron') {
+        //   console.log(
+        //     '⚠️ ConnectionsRenderer END calculateFacePosition FAILED - using fallback logic:',
+        //     {
+        //       connectionId: connection.id,
+        //       face: connection.end.face,
+        //       objectType: endObject.type,
+        //       error: error.message,
+        //       storedPosition: connection.end.position,
+        //       fallbackSequence:
+        //         'about to try stored position, facePosition, worldPosition, then center',
+        //     }
+        //   );
+        // }
+
         endPosition = endObject.position;
       }
     } else if (Array.isArray(connection.end?.position)) {
@@ -289,7 +367,13 @@ const Connection = ({
       // Last resort: Use current object center position
       endPosition = endObject.position;
     } else {
-      endPosition = [0, 0, 0];
+      // REMOVED: No fallback to [0, 0, 0] - this causes 5000+ unit distances
+      // If we can't find the object or position, skip this connection
+      // console.warn(
+      //   '⚠️ ConnectionsRenderer: No valid end position found for connection',
+      //   connection.id
+      // );
+      return { isValid: false, midpoint: [0, 0, 0] };
     }
     return {
       isValid: Boolean(
@@ -364,27 +448,70 @@ const Connection = ({
       filteredObjects
     );
 
+    // PATHFINDING DEBUG: Log intersection results for troubleshooting
+    if (connection.id && connection.id.includes('merfolk')) {
+      // Debug logging removed
+    }
+
     // Generate path (curved if needed)
+    // PATHFINDING FIX: Curve lines automatically when intersections are detected
+    const shouldCurve =
+      lineStyle === 'curved' || (intersections && intersections.length > 0);
+
+    // DEBUG: Log the shouldCurve decision
+    if (
+      connection.id &&
+      connection.id.includes('merfolk') &&
+      intersections &&
+      intersections.length > 0
+    ) {
+      // Debug logging removed
+    }
+
     const calculatedPathPoints =
       pathPoints ||
-      generateCurvedPath(
-        startPosition,
-        endPosition,
-        intersections,
-        startObjectId,
-        endObjectId,
-        lineStyle === 'curved'
-      ); // Determine if path should be curved
+      (shouldCurve
+        ? (() => {
+            // DEBUG: Log right before generateCurvedPath call
+            if (connection.id && connection.id.includes('merfolk')) {
+              // Debug logging removed
+            }
+            return generateCurvedPath(
+              startPosition,
+              endPosition,
+              intersections,
+              startObjectId,
+              endObjectId,
+              shouldCurve // Curve when intersections found OR explicitly set to curved
+            );
+          })()
+        : (() => {
+            // DEBUG: Log when using straight line
+            if (connection.id && connection.id.includes('merfolk')) {
+              // Debug logging removed
+            }
+            return [startPosition, endPosition];
+          })()); // Straight line - just use start and end points
+
+    // DEBUG: Log the path calculation result
+    if (
+      connection.id &&
+      connection.id.includes('merfolk') &&
+      intersections &&
+      intersections.length > 0
+    ) {
+      // Debug logging removed
+    }
+
+    // Determine if path should be curved
     const isCurvedPath =
       calculatedPathPoints &&
       calculatedPathPoints.length > 2 &&
-      intersections &&
-      intersections.length > 0; // Determine effective line style
-    const effectiveLineStyle =
-      isCurvedPath || lineStyle === 'curved' ? 'curved' : lineStyle;
+      (shouldCurve || (intersections && intersections.length > 0)); // Determine effective line style
+    const effectiveLineStyle = isCurvedPath ? 'curved' : lineStyle;
     const finalPathPoints = calculatedPathPoints || [
-      startPosition || [0, 0, 0],
-      endPosition || [0, 0, 0],
+      startPosition,
+      endPosition,
     ];
 
     return {
@@ -480,6 +607,11 @@ const Connection = ({
   // Determine connection text - prioritize lineTexts store over connection.text
   const connectionText =
     (lineTexts && lineTexts[connection.id]) || connection.text || '';
+
+  // DEBUG: Log connection text for markdown connections
+  if (connection.merfolkData) {
+    // Debug logging removed
+  }
   return (
     <group
       key={`${connection.id}-${connection._visualUpdate || 0}-${
@@ -502,7 +634,7 @@ const Connection = ({
             /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
               navigator.userAgent
             );
-          const baseWidth = isMobile ? 3 : 1;
+          const baseWidth = isMobile ? 3 : 2;
           return selectedConnection === connection.id
             ? baseWidth * 1.5
             : baseWidth;
@@ -590,6 +722,7 @@ const Connection = ({
  */
 const ConnectionsRenderer = ({
   objects,
+  visibleObjectIds,
   onLineStyleChange,
   onLineColorChange,
   onConnectionClick,
@@ -600,16 +733,30 @@ const ConnectionsRenderer = ({
   // Get all connections from store
   const connections = useConnectionStore((state) => state.connections);
 
-  // Debugging log
-  console.log('🔗 Rendering connections:', {
-    connectionCount: connections.length,
-    connectionIds: connections.map((c) => c.id),
-  });
+  // Filter connections to only show those where both endpoint objects are visible
+  const visibleConnections = useMemo(() => {
+    if (!visibleObjectIds || visibleObjectIds.size === 0) {
+      return connections; // If no spatial filtering is active, show all connections
+    }
 
-  // Render each connection
+    return connections.filter((connection) => {
+      const startObjectId = connection.start?.objectId?.toString();
+      const endObjectId = connection.end?.objectId?.toString();
+
+      // Only show connection if both endpoint objects are currently loaded/visible
+      return (
+        startObjectId &&
+        endObjectId &&
+        visibleObjectIds.has(startObjectId) &&
+        visibleObjectIds.has(endObjectId)
+      );
+    });
+  }, [connections, visibleObjectIds]);
+
+  // Render each visible connection
   return (
     <group>
-      {connections.map((connection) => (
+      {visibleConnections.map((connection) => (
         <Connection
           key={connection.id}
           connection={connection}
@@ -626,42 +773,6 @@ const ConnectionsRenderer = ({
   );
 };
 
-// Memoize the entire ConnectionsRenderer to prevent re-renders when objects array reference changes
-const MemoizedConnectionsRenderer = React.memo(
-  ConnectionsRenderer,
-  (prevProps, nextProps) => {
-    // Quick reference equality check first
-    if (prevProps.objects === nextProps.objects) return true;
-
-    // Compare the objects array length
-    if (prevProps.objects?.length !== nextProps.objects?.length) return false;
-
-    // Simple reference check for first few objects to detect meaningful changes
-    // This is much faster than deep position comparison
-    if (prevProps.objects && nextProps.objects) {
-      const checkCount = Math.min(5, prevProps.objects.length); // Only check first 5 objects
-      for (let i = 0; i < checkCount; i++) {
-        if (prevProps.objects[i] !== nextProps.objects[i]) {
-          return false; // Objects reference changed, re-render
-        }
-      }
-    }
-
-    // Check if any handler props changed
-    if (prevProps.onLineStyleChange !== nextProps.onLineStyleChange)
-      return false;
-    if (prevProps.onLineColorChange !== nextProps.onLineColorChange)
-      return false;
-    if (prevProps.onConnectionClick !== nextProps.onConnectionClick)
-      return false;
-    if (prevProps.onLineTextClick !== nextProps.onLineTextClick) return false;
-    if (prevProps.onLineTextSubmit !== nextProps.onLineTextSubmit) return false;
-    if (prevProps.onLineTextStyleChange !== nextProps.onLineTextStyleChange)
-      return false;
-
-    // If nothing meaningful changed, prevent re-render
-    return true;
-  }
-);
-
-export default MemoizedConnectionsRenderer;
+// Export the ConnectionsRenderer directly without aggressive memoization
+// The useConnectionStore hook will handle re-rendering when connections change
+export default ConnectionsRenderer;

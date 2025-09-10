@@ -35,36 +35,23 @@ const useObjectsStore = create((set, get) => ({
       const currentObjects = Array.isArray(state.objects) ? state.objects : [];
       const newObjects = objects(currentObjects);
       if (Array.isArray(newObjects)) {
-        set({ objects: newObjects });
+        // Filter out objects that belong to unloaded cells
+        const filteredObjects = newObjects.filter((obj) => {
+          const objId = obj.id?.toString();
+          return !window._unloadedObjects?.has(objId);
+        });
+        set({ objects: filteredObjects });
       } else {
         set({ objects: [] }); // Fallback to empty array
       }
     } else if (Array.isArray(objects)) {
-      const state = get();
-      const currentObjects = Array.isArray(state.objects) ? state.objects : [];
-
-      // Debug logging for object additions
-      const addedObjects = objects.filter(
-        (newObj) =>
-          !currentObjects.some((currentObj) => currentObj.id === newObj.id)
-      );
-      if (addedObjects.length > 0) {
-        console.log(
-          `➕ [Objects Debug] Objects added via array:`,
-          addedObjects.map((obj) => ({
-            id: obj.id,
-            type: obj.type,
-            position: obj.position,
-          }))
-        );
-      }
-
-      set({ objects });
+      // Filter out objects that belong to unloaded cells
+      const filteredObjects = objects.filter((obj) => {
+        const objId = obj.id?.toString();
+        return !window._unloadedObjects?.has(objId);
+      });
+      set({ objects: filteredObjects });
     } else {
-      console.error(
-        '❌ setObjects called with non-array, non-function:',
-        objects
-      );
       set({ objects: [] }); // Fallback to empty array
     }
   },
@@ -172,7 +159,6 @@ const useObjectsStore = create((set, get) => ({
   // DISABLED: Periodic saving replaced with immediate saves when objects are modified
   saveObjectsPeriodically: () => {
     // Objects are now saved immediately when created/modified, no need for periodic saves
-    console.log('📝 Periodic save disabled - using immediate saves instead');
     return;
   },
 
@@ -182,9 +168,6 @@ const useObjectsStore = create((set, get) => ({
     // during app startup. The logic below has been commented out to prevent unnecessary
     // database writes when objects are loaded from the database during startup.
 
-    console.log(
-      '📝 _disabledPeriodicSaveLogic (old createObjectWithPosition) disabled'
-    );
     return;
 
     /*
@@ -192,20 +175,11 @@ const useObjectsStore = create((set, get) => ({
 
     // Validate that objects is an array
     if (!Array.isArray(state.objects)) {
-      console.error(
-        '❌ state.objects is not an array in createObjectWithPosition:',
-        typeof state.objects,
-        state.objects
-      );
       set({ objects: [] }); // Reset to empty array
       return;
     }
 
     // Add debugging
-    console.log(
-      '🔍 saveObjectsPeriodically called, state.objects length:',
-      state.objects.length
-    );
 
     // Skip object saving if we're in read-only mode (public space)
     const isReadOnly =
@@ -225,10 +199,6 @@ const useObjectsStore = create((set, get) => ({
         Array.isArray(state.objects) &&
         state.objects.length > 0
       ) {
-        console.log(
-          '🔧 Skipping automatic save during initial loading phase, objects:',
-          state.objects.length
-        );
       }
       return;
     }
@@ -256,12 +226,6 @@ const useObjectsStore = create((set, get) => ({
         set({ lastSaved: clonedObjects });
       }
     } catch (error) {
-      console.warn(
-        '⚠️ Failed to clone objects for lastSaved:',
-        error,
-        'state.objects:',
-        state.objects
-      );
       set({ lastSaved: [...state.objects.filter((obj) => obj && obj.id)] }); // Fallback to shallow copy with basic filtering
     }
     const spaceOwnerId = window.currentSpaceOwner || user.uid;
@@ -288,6 +252,8 @@ const useObjectsStore = create((set, get) => ({
     currentSpaceId,
     extraData = {}
   ) => {
+    // DEBUG: Log incoming extraData
+
     // Create a truly unique ID with a UUID suffix
     const uniqueId =
       Date.now() + '-' + Math.random().toString(36).substring(2, 10);
@@ -358,6 +324,29 @@ const useObjectsStore = create((set, get) => ({
             },
             textStyle: { fontSize: 1.5, color: 'black', underline: false },
           }
+        : type === 'dodecahedron'
+        ? {
+            color: '#000000',
+            headerText: '',
+            faceColors: {},
+            faceTexts: Array(12)
+              .fill('')
+              .reduce((acc, _, idx) => {
+                acc[idx] = '';
+                return acc;
+              }, {}),
+            faceTextStyles: Array(12)
+              .fill(null)
+              .reduce((acc, _, idx) => {
+                acc[idx] = {
+                  fontSize: 0.5,
+                  color: 'black',
+                  underline: false,
+                };
+                return acc;
+              }, {}),
+            textStyle: { fontSize: 1.5, color: 'black', underline: false },
+          }
         : type === 'plane'
         ? {
             borderStyle: 'solid',
@@ -396,23 +385,31 @@ const useObjectsStore = create((set, get) => ({
       ...extraData,
     };
 
-    // Add to tracking set to prevent duplicate addition
-    get().addCreatedObjectId(uniqueId); // Update local state first for immediate feedback
+    // DEBUG: Log final object
+
+    // Add to tracking set and objects array in a single state update to prevent multiple renders
     const state = get();
     const currentObjects = state.objects || [];
-    set({ objects: [...currentObjects, newObject] });
+    const newCreatedObjectIds = new Set(state.createdObjectIds);
+    newCreatedObjectIds.add(uniqueId.toString());
 
-    // For user-created objects, enable saves immediately (bypass loading phase)
-    if (state.isInitialLoading) {
-      console.log(
-        '🔧 User created object during loading phase, enabling saves'
-      );
-      set({ isInitialLoading: false });
-    }
+    // Determine if we need to disable initial loading
+    const shouldDisableInitialLoading = state.isInitialLoading;
+
+    set({
+      objects: [...currentObjects, newObject],
+      createdObjectIds: newCreatedObjectIds,
+      ...(shouldDisableInitialLoading && { isInitialLoading: false }),
+    });
+
+    // Log if we disabled initial loading
 
     // Save to database (this handles spatial partitioning automatically)
     const spaceOwnerId = window.currentSpaceOwner || user.uid;
     saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
+
+    // Return the created object ID
+    return uniqueId;
   },
   // Create a new object with a guaranteed unique ID
   handleCreateObject: (
@@ -423,7 +420,7 @@ const useObjectsStore = create((set, get) => ({
     cameraRef,
     extraData = {}
   ) => {
-    if (!user || !currentSpaceId) return;
+    if (!user || !currentSpaceId) return null;
 
     try {
       // If a position is provided (e.g., from template creation), use it directly
@@ -433,14 +430,13 @@ const useObjectsStore = create((set, get) => ({
           position[1],
           position[2]
         );
-        get().createObjectWithPosition(
+        return get().createObjectWithPosition(
           type,
           newPosition,
           user,
           currentSpaceId,
           extraData
         );
-        return;
       }
 
       // Try multiple approaches to access the camera
@@ -456,22 +452,19 @@ const useObjectsStore = create((set, get) => ({
       }
       // Approach 3: Check if there's a THREE.PerspectiveCamera in the scene
       else {
-        console.warn('Falling back to default camera position');
         // Create a position in front of where the camera would typically be
         const newPosition = new THREE.Vector3(0, 0, -75);
-        get().createObjectWithPosition(
+        return get().createObjectWithPosition(
           type,
           newPosition,
           user,
           currentSpaceId,
           extraData
         );
-        return;
       }
 
       if (!camera) {
-        console.error('Could not find camera using any method');
-        return;
+        return null;
       }
 
       // Create vectors for position calculation
@@ -487,18 +480,17 @@ const useObjectsStore = create((set, get) => ({
       const newPosition = new THREE.Vector3();
       newPosition.copy(cameraPos).add(direction.multiplyScalar(distance));
 
-      get().createObjectWithPosition(
+      return get().createObjectWithPosition(
         type,
         newPosition,
         user,
         currentSpaceId,
         extraData
       );
-    } catch (err) {
-      console.error('Error creating object:', err);
+    } catch {
       // Fallback - create object at origin if all else fails
       const newPosition = new THREE.Vector3(0, 0, 0);
-      get().createObjectWithPosition(
+      return get().createObjectWithPosition(
         type,
         newPosition,
         user,
@@ -507,8 +499,25 @@ const useObjectsStore = create((set, get) => ({
       );
     }
   },
+  // Clean up objects when cells unload
+  cleanupUnloadedObjects: () => {
+    const state = get();
+    if (!Array.isArray(state.objects)) return;
+
+    // Filter out any objects that belong to unloaded cells
+    const filteredObjects = state.objects.filter((obj) => {
+      const objId = obj.id?.toString();
+      return !window._unloadedObjects?.has(objId);
+    });
+
+    // Only update if we actually removed objects
+    if (filteredObjects.length !== state.objects.length) {
+      set({ objects: filteredObjects });
+    }
+  },
+
   // Delete an object and its connections
-  handleObjectDelete: (id, user, currentSpaceId, connections) => {
+  handleObjectDelete: (id, user, currentSpaceId) => {
     if (!user || !currentSpaceId) return;
 
     const state = get();
@@ -517,89 +526,35 @@ const useObjectsStore = create((set, get) => ({
     const objectToDelete = state.objects.find(
       (obj) => obj.id?.toString() === id?.toString()
     );
-    console.log(`🗑️ [Delete Debug] Deleting object:`, {
-      id: id?.toString(),
-      objectToDelete,
-      isInCreatedSet: state.createdObjectIds.has(id?.toString()),
-      totalObjects: state.objects.length,
-    });
 
-    // Update UI first for responsiveness
+    // Update UI first for responsiveness - batch all state updates together
     const filteredObjects = state.objects.filter(
       (obj) => obj.id?.toString() !== id?.toString()
     );
-    set({ objects: filteredObjects });
+
+    const newCreatedObjectIds = new Set(state.createdObjectIds);
+    newCreatedObjectIds.delete(id?.toString());
+
+    const stateUpdates = {
+      objects: filteredObjects,
+      createdObjectIds: newCreatedObjectIds,
+    };
 
     if (state.selectedId === id) {
-      set({ selectedId: null });
+      stateUpdates.selectedId = null;
     }
+
+    set(stateUpdates);
 
     // Also delete any connections attached to this object
     const objectIdStr = id?.toString() || '';
 
-    console.log(
-      `🗑️ [Delete Debug] Starting connection cleanup for object: ${objectIdStr}`
-    );
-
-    // Try to get connections from the parameters first, then from the store
-    let relatedConnections = [];
-    if (connections && Array.isArray(connections)) {
-      console.log(
-        `🗑️ [Delete Debug] Using connections from parameters (${connections.length} total)`
-      );
-      relatedConnections = connections.filter(
-        (conn) =>
-          conn.start?.objectId === objectIdStr ||
-          conn.end?.objectId === objectIdStr
-      );
-    } else {
-      console.log(
-        `🗑️ [Delete Debug] No connections parameter, getting from store`
-      );
-      // Fallback: get connections from the store directly
-      const storeConnections = useConnectionStore.getState().connections;
-      console.log(
-        `🗑️ [Delete Debug] Store has ${storeConnections.length} connections`
-      );
-      relatedConnections = storeConnections.filter(
-        (conn) =>
-          conn.start?.objectId === objectIdStr ||
-          conn.end?.objectId === objectIdStr
-      );
-    }
-
-    console.log(
-      `🗑️ [Delete Debug] Found ${relatedConnections.length} connections to delete for object ${objectIdStr}:`,
-      relatedConnections.map((c) => ({
-        id: c.id,
-        startObj: c.start?.objectId,
-        endObj: c.end?.objectId,
-      }))
-    );
-
     // Always call the store method to remove connections, even if array is empty
-    console.log(
-      `🗑️ [Delete Debug] Calling deleteConnectionsByObject for: ${objectIdStr} in space: ${currentSpaceId}`
-    );
     useConnectionStore
       .getState()
       .deleteConnectionsByObject(objectIdStr, currentSpaceId);
 
     // Connection deletion is now handled entirely by the connection store
-    console.log(
-      `✅ [Delete Debug] Connection deletion delegated to connection store`
-    );
-
-    // Remove from tracking set if present
-    const wasInCreatedSet = state.createdObjectIds.has(id?.toString());
-    get().removeCreatedObjectId(id);
-
-    console.log(`🗑️ [Delete Debug] Before database deletion:`, {
-      id: id?.toString(),
-      wasInCreatedSet,
-      hasPosition: !!objectToDelete?.position,
-      position: objectToDelete?.position,
-    });
 
     // Delete from database - IMPORTANT: Wait for deletion to complete
     const spaceOwnerId = window.currentSpaceOwner || user.uid;
@@ -614,23 +569,10 @@ const useObjectsStore = create((set, get) => ({
             id,
             objectToDelete.position
           );
-          console.log(
-            `✅ [Delete Debug] Successfully deleted from database:`,
-            id?.toString()
-          );
-        } catch (error) {
-          console.error(
-            `❌ [Delete Debug] Failed to delete from database:`,
-            id?.toString(),
-            error
-          );
+        } catch {
+          // Silently handle database deletion errors
         }
       })();
-    } else {
-      console.warn(
-        `⚠️ [Delete Debug] No position found for object, skipping database deletion:`,
-        id?.toString()
-      );
     }
   },
   // FIXED VERSION: Delete an object and its connections (prevents double deletion)
@@ -640,18 +582,11 @@ const useObjectsStore = create((set, get) => ({
     const state = get();
     const objectIdStr = id?.toString() || '';
 
-    console.log(
-      `🔧 [FIXED DELETE] Starting deletion for object: ${objectIdStr}`
-    );
-
     // Prevent duplicate deletions
     if (
       window.currentlyDeletingObjects &&
       window.currentlyDeletingObjects.has(objectIdStr)
     ) {
-      console.log(
-        `⚠️ [FIXED DELETE] Object ${objectIdStr} already being deleted, skipping`
-      );
       return;
     }
 
@@ -665,9 +600,6 @@ const useObjectsStore = create((set, get) => ({
     setTimeout(() => {
       if (window.currentlyDeletingObjects) {
         window.currentlyDeletingObjects.delete(objectIdStr);
-        console.log(
-          `🧹 [FIXED DELETE] Auto-cleared deletion flag for ${objectIdStr}`
-        );
       }
     }, 10000);
 
@@ -677,57 +609,35 @@ const useObjectsStore = create((set, get) => ({
     );
 
     if (!objectToDelete) {
-      console.log(`⚠️ [FIXED DELETE] Object ${objectIdStr} not found in store`);
       window.currentlyDeletingObjects?.delete(objectIdStr);
       return;
     }
-
-    console.log(`🔧 [FIXED DELETE] Found object to delete:`, {
-      id: objectToDelete.id,
-      type: objectToDelete.type,
-      position: objectToDelete.position,
-    });
 
     // Update UI first for responsiveness - ONLY remove the target object
     const filteredObjects = state.objects.filter(
       (obj) => obj.id.toString() !== objectIdStr
     );
 
-    console.log(
-      `🔧 [FIXED DELETE] Removing object from UI store. Before: ${state.objects.length}, After: ${filteredObjects.length}`
-    );
-
-    set({ objects: filteredObjects });
-
+    // Batch state updates together
+    const stateUpdates = { objects: filteredObjects };
     if (state.selectedId === id) {
-      set({ selectedId: null });
+      stateUpdates.selectedId = null;
     }
+    set(stateUpdates);
 
     // Delete connections for this object (should NOT delete other objects)
-    console.log(
-      `🔧 [FIXED DELETE] Starting connection cleanup for object: ${objectIdStr}`
-    );
 
     // Try to get connections from the parameters first, then from the store
     let relatedConnections = [];
     if (connections && Array.isArray(connections)) {
-      console.log(
-        `🔧 [FIXED DELETE] Using connections from parameters (${connections.length} total)`
-      );
       relatedConnections = connections.filter(
         (conn) =>
           conn.start?.objectId === objectIdStr ||
           conn.end?.objectId === objectIdStr
       );
     } else {
-      console.log(
-        `🔧 [FIXED DELETE] No connections parameter, getting from store`
-      );
       // Fallback: get connections from the store directly
       const storeConnections = useConnectionStore.getState().connections;
-      console.log(
-        `🔧 [FIXED DELETE] Store has ${storeConnections.length} connections`
-      );
       relatedConnections = storeConnections.filter(
         (conn) =>
           conn.start?.objectId === objectIdStr ||
@@ -735,19 +645,7 @@ const useObjectsStore = create((set, get) => ({
       );
     }
 
-    console.log(
-      `🔧 [FIXED DELETE] Found ${relatedConnections.length} connections to delete for object ${objectIdStr}:`,
-      relatedConnections.map((c) => ({
-        id: c.id,
-        startObj: c.start?.objectId,
-        endObj: c.end?.objectId,
-      }))
-    );
-
     // Always call the store method to remove connections, even if array is empty
-    console.log(
-      `🔧 [FIXED DELETE] Calling deleteConnectionsByObject for: ${objectIdStr} in space: ${currentSpaceId}`
-    );
     useConnectionStore
       .getState()
       .deleteConnectionsByObject(objectIdStr, currentSpaceId);
@@ -755,18 +653,10 @@ const useObjectsStore = create((set, get) => ({
     // Delete connections from database with enhanced error handling
     if (relatedConnections.length > 0) {
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
-      console.log(
-        `🔧 [FIXED DELETE] About to delete ${relatedConnections.length} connections from database:`,
-        relatedConnections.map((c) => c.id)
-      );
 
       // Delete connections from database asynchronously
       (async () => {
         try {
-          console.log(
-            `🔧 [FIXED DELETE] Starting database deletion for ${relatedConnections.length} connections`
-          );
-
           // Import the enhanced connection deletion service
           const { deleteConnection } = await import(
             '../services/connectionsService'
@@ -777,10 +667,6 @@ const useObjectsStore = create((set, get) => ({
 
           const deletionResults = await Promise.all(
             relatedConnections.map(async (conn) => {
-              console.log(
-                `🔧 [FIXED DELETE] Deleting connection ${conn.id} from database...`
-              );
-
               let result = false;
 
               try {
@@ -792,31 +678,15 @@ const useObjectsStore = create((set, get) => ({
                   conn // Pass the connection data
                 );
 
-                console.log(
-                  `🔧 [FIXED DELETE] Connection ${conn.id} deletion result:`,
-                  result
-                );
-
                 if (!result) {
                   // If regular deletion failed, try the fallback method
-                  console.log(
-                    `🔧 [FIXED DELETE] Trying fallback deletion for connection ${conn.id}`
-                  );
                   result = await removeConnectionFromAllCells(
                     spaceOwnerId,
                     currentSpaceId,
                     conn.id
                   );
-                  console.log(
-                    `🔧 [FIXED DELETE] Fallback deletion result for ${conn.id}:`,
-                    result
-                  );
                 }
-              } catch (error) {
-                console.error(
-                  `❌ [FIXED DELETE] Error deleting connection ${conn.id}:`,
-                  error
-                );
+              } catch {
                 result = false;
               }
 
@@ -824,41 +694,21 @@ const useObjectsStore = create((set, get) => ({
             })
           );
 
-          const successCount = deletionResults.filter((r) => r.success).length;
-          const failCount = deletionResults.length - successCount;
-
-          console.log(
-            `✅ [FIXED DELETE] Database deletion completed: ${successCount} successful, ${failCount} failed`
-          );
+          const failCount = deletionResults.filter((r) => !r.success).length;
 
           if (failCount > 0) {
-            const failedConnections = deletionResults.filter((r) => !r.success);
-            console.error(
-              `❌ [FIXED DELETE] Failed deletions:`,
-              failedConnections
-            );
+            // Log failed connections for debugging if needed
           }
-        } catch (error) {
-          console.error(
-            `❌ [FIXED DELETE] Error deleting connections from database:`,
-            error
-          );
+        } catch {
+          // Silently handle connection deletion errors
         }
       })();
-    } else {
-      console.log(
-        `🔧 [FIXED DELETE] No connections found to delete from database for object ${objectIdStr}`
-      );
     }
 
     // Delete the object from database
     const spaceOwnerId = window.currentSpaceOwner || user.uid;
 
     if (objectToDelete?.position) {
-      console.log(
-        `🔧 [FIXED DELETE] Deleting object from database: ${objectIdStr}`
-      );
-
       // Use async/await to ensure deletion completes before proceeding
       (async () => {
         try {
@@ -869,34 +719,18 @@ const useObjectsStore = create((set, get) => ({
             objectToDelete.position
           );
 
-          console.log(
-            `✅ [FIXED DELETE] Successfully deleted object ${objectIdStr} from database`
-          );
-
           // Clear the deletion flag
           window.currentlyDeletingObjects?.delete(objectIdStr);
-        } catch (error) {
-          console.error(
-            `❌ [FIXED DELETE] Failed to delete object ${objectIdStr} from database:`,
-            error
-          );
+        } catch {
           window.currentlyDeletingObjects?.delete(objectIdStr);
         }
       })();
     } else {
-      console.warn(
-        `⚠️ [FIXED DELETE] No position found for object ${objectIdStr}, skipping database deletion`
-      );
       window.currentlyDeletingObjects?.delete(objectIdStr);
     }
-
-    console.log(
-      `✅ [FIXED DELETE] Deletion process completed for object ${objectIdStr}`
-    );
   },
   // Reset all object state
   resetObjects: () => {
-    console.log('🔄 [Reset Debug] Resetting objects store to initial state');
     set({
       selectedId: null,
       objects: [],

@@ -2574,6 +2574,8 @@ const TextObject = React.memo(
               isActive={indicatorSelected || isIndicatorConnected()}
               objectId={stringId}
               face="top"
+              showAllCubesIndicators={showAllIndicators}
+              selectedIndicatorsLength={selectedIndicators?.length || 0}
             />
           )}
         </group>

@@ -1236,6 +1236,8 @@ const Tetrahedron = ({
               isConnected={isConnected}
               objectId={id}
               face={name}
+              showAllCubesIndicators={showAllCubesIndicators}
+              selectedIndicatorsLength={selectedIndicators?.length || 0}
             />
           )}
         </mesh>

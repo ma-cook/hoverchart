@@ -47,7 +47,19 @@ export const useSpatialManager = ({
     const needsOwner = isPublicSpace && !currentSpaceOwner;
 
     if (currentSpaceId && !isInitialized && !needsOwner) {
+      console.log('🌟 Initializing spatial system...');
       initializeSpatialSystem(user, currentSpaceId, cameraRef);
+
+      // Force initial camera position update after initialization
+      if (cameraRef?.current?.camera) {
+        const pos = cameraRef.current.camera.position;
+        updateCameraPosition(
+          { x: pos.x, y: pos.y, z: pos.z },
+          user,
+          currentSpaceId,
+          onObjectsChange
+        );
+      }
     }
   }, [
     currentSpaceId,
@@ -56,62 +68,92 @@ export const useSpatialManager = ({
     initializeSpatialSystem,
     user,
     cameraRef,
+    onObjectsChange,
+    updateCameraPosition,
   ]);
 
-  // Track camera position with optimized frequency and movement detection
+  // Track camera position for cell loading
   useEffect(() => {
-    if (!cameraRef?.current?.camera || !isInitialized) return;
+    if (!isInitialized || !currentSpaceId) return;
 
-    const camera = cameraRef.current.camera;
-    let animationId;
-    let lastCheckTime = 0;
-    let lastPosition = { x: 0, y: 0, z: 0 };
-    const CAMERA_CHECK_INTERVAL = 1000; // Increased from 500ms to 1s to reduce Firebase requests
-    const MOVEMENT_THRESHOLD = 300; // Increased from 200 to 300 units to reduce cell transitions
+    let cleanup = () => {};
+    let retryCount = 0;
+    const maxRetries = 10;
 
-    const trackCameraPosition = () => {
-      const now = Date.now();
+    const setupCameraListeners = () => {
+      console.log('🎥 Setting up camera listeners...');
 
-      if (now - lastCheckTime >= CAMERA_CHECK_INTERVAL) {
-        if (camera && camera.position) {
-          const currentPos = camera.position;
+      if (!cameraRef?.current?.camera || !cameraRef?.current?.orbitControls) {
+        if (retryCount < maxRetries) {
+          retryCount++;
+          console.log(
+            `🔄 Retrying camera setup (${retryCount}/${maxRetries})...`
+          );
+          setTimeout(setupCameraListeners, 100);
+        } else {
+          console.error(
+            '❌ Failed to set up camera listeners after max retries'
+          );
+        }
+        return;
+      }
 
-          // Calculate movement distance
-          const distance = Math.sqrt(
-            Math.pow(currentPos.x - lastPosition.x, 2) +
-              Math.pow(currentPos.y - lastPosition.y, 2) +
-              Math.pow(currentPos.z - lastPosition.z, 2)
+      const camera = cameraRef.current.camera;
+      const controls = cameraRef.current.orbitControls;
+      let lastCellCoords = null;
+
+      const handleCameraMove = () => {
+        const currentPos = camera.position;
+        const currentCellCoords = getCellForPosition([
+          currentPos.x,
+          currentPos.y,
+          currentPos.z,
+        ]);
+
+        // Only trigger update when crossing cell boundaries
+        if (
+          !lastCellCoords ||
+          currentCellCoords.x !== lastCellCoords.x ||
+          currentCellCoords.y !== lastCellCoords.y ||
+          currentCellCoords.z !== lastCellCoords.z
+        ) {
+          console.log('📸 Camera entered new cell:', {
+            from: lastCellCoords
+              ? `[${lastCellCoords.x},${lastCellCoords.y},${lastCellCoords.z}]`
+              : 'initial',
+            to: `[${currentCellCoords.x},${currentCellCoords.y},${currentCellCoords.z}]`,
+          });
+
+          updateCameraPosition(
+            { x: currentPos.x, y: currentPos.y, z: currentPos.z },
+            user,
+            currentSpaceId,
+            onObjectsChange
           );
 
-          // Only update if movement is significant
-          if (distance >= MOVEMENT_THRESHOLD) {
-            updateCameraPosition(
-              currentPos,
-              user,
-              currentSpaceId,
-              onObjectsChange
-            );
-            lastPosition = {
-              x: currentPos.x,
-              y: currentPos.y,
-              z: currentPos.z,
-            };
-          }
+          lastCellCoords = currentCellCoords;
         }
-        lastCheckTime = now;
-      }
+      };
 
-      animationId = requestAnimationFrame(trackCameraPosition);
+      // Set up event handlers for camera movement
+      controls.addEventListener('change', handleCameraMove);
+
+      // Force initial position update
+      handleCameraMove();
+
+      cleanup = () => {
+        if (controls) {
+          controls.removeEventListener('change', handleCameraMove);
+        }
+      };
+
+      console.log('✅ Camera listeners set up successfully');
     };
 
-    // Start tracking
-    trackCameraPosition();
+    // Start the setup process
+    setupCameraListeners();
 
-    return () => {
-      if (animationId) {
-        cancelAnimationFrame(animationId);
-      }
-    };
+    return () => cleanup();
   }, [
     cameraRef,
     isInitialized,
@@ -119,6 +161,7 @@ export const useSpatialManager = ({
     user,
     currentSpaceId,
     onObjectsChange,
+    getCellForPosition,
   ]);
 
   // Wrapper functions to maintain backward compatibility

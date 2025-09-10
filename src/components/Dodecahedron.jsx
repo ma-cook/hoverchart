@@ -5,7 +5,11 @@ import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import ObjectUI from './ObjectUI';
 import TextSprite from './TextSprite';
 import HeaderInput from './HeaderInput';
-import { useDodecahedronStore, useObjectsStore } from '../stores';
+import {
+  useDodecahedronStore,
+  useObjectsStore,
+  useConnectionStore,
+} from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 
@@ -26,7 +30,6 @@ const Sphere = React.memo(
     globalIndicatorSelected,
     onFaceIndicatorClick, // Add this prop
     onIndicatorSelected, // Add this prop
-    connections, // Add this prop
     selectedIndicators, // Add this prop
     indicatorMode,
     onUpdate, // Add this prop
@@ -43,6 +46,9 @@ const Sphere = React.memo(
     const objects = useObjectsStore((state) => state.objects);
     const setObjects = useObjectsStore((state) => state.setObjects);
     const objectData = objects.find((obj) => obj.id === id);
+
+    // Get connections from connection store instead of props
+    const connections = useConnectionStore((state) => state.connections);
     // Debug: Watch for position changes
     useEffect(() => {
       if (objectData?.position) {
@@ -67,10 +73,10 @@ const Sphere = React.memo(
       () => objectData?.scale || [1, 1, 1],
       [objectData?.scale]
     );
-    const headerText = useMemo(
-      () => objectData?.headerText || '',
-      [objectData?.headerText]
-    );
+    const headerText = useMemo(() => {
+      const headerTextValue = objectData?.headerText || '';
+      return headerTextValue;
+    }, [objectData?.headerText]);
     const lineColor = useMemo(
       () => objectData?.lineColor || 'black',
       [objectData?.lineColor]
@@ -627,7 +633,9 @@ const Sphere = React.memo(
       }; // Only update if something has changed
       const lastUpdate = contentRef.current?.lastUpdate;
       if (!lastUpdate || !isEqual(lastUpdate, currentState)) {
-        contentRef.current.lastUpdate = currentState;
+        if (contentRef.current) {
+          contentRef.current.lastUpdate = currentState;
+        }
         onUpdate(id, currentState);
       }
     }, [id, objectData, onUpdate, dodecahedron]);
@@ -703,7 +711,6 @@ const Sphere = React.memo(
       (e) => {
         // Get new position from the transform controls event
         if (!e.target || !e.target.object || !e.target.object.position) {
-          console.error('Invalid transform event in Dodecahedron handleDrag');
           return;
         }
 
@@ -714,10 +721,6 @@ const Sphere = React.memo(
           typeof newPos.y !== 'number' ||
           typeof newPos.z !== 'number'
         ) {
-          console.error(
-            'Invalid position values in Dodecahedron handleDrag',
-            newPos
-          );
           return;
         }
 
@@ -774,8 +777,8 @@ const Sphere = React.memo(
           if (onMove) {
             onMove(finalPosition);
           }
-        } catch (error) {
-          console.error('Error in Dodecahedron handleDrag:', error);
+        } catch {
+          // Error handling without logging
         }
       },
       [id, onMove, updateDodecahedron]
@@ -799,15 +802,17 @@ const Sphere = React.memo(
         Math.abs(newScale[2] - currentScale[2]) < epsilon
       ) {
         return;
-      } // Update the UI store first
-      updateDodecahedron(id, { scale: newScale });
+      }
 
-      // Update objects store immediately for instant visual feedback
+      // Update objects store for instant visual feedback and persistence
       setObjects((prevObjects) =>
         prevObjects.map((obj) =>
           obj.id === id ? { ...obj, scale: newScale } : obj
         )
       );
+
+      // Also update the dodecahedron UI store to prevent double scaling
+      updateDodecahedron(id, { scale: newScale });
 
       // Mark that scale has been modified (for onMouseUp to detect)
       setDodecahedronIsScaleModified(id, true);
@@ -943,14 +948,25 @@ const Sphere = React.memo(
     };
 
     const getHeaderPosition = () => {
-      // A dodecahedron has a radius of approximately 5 units based on the geometry
-      const dodecahedronRadius = 5; // Use the actual 5-unit base radius
-      // Position exactly 10 units above the top edge of the dodecahedron
-      return [
+      // For Three.js dodecahedronGeometry, the actual "height" from center to top face
+      // is different from the circumradius. Let's use a more empirical approach.
+
+      // Through testing, a dodecahedron with radius 5.1 has approximately 8-9 units
+      // from center to the topmost point when considering face orientation
+      const dodecahedronEffectiveHeight = 8.5; // More accurate height estimate
+
+      // Apply Y-scale to get the actual scaled height
+      const scaledHeight = dodecahedronEffectiveHeight * scale[1];
+
+      // Use a generous margin to ensure clearance
+      const clearanceMargin = 5; // Additional clearance above the top
+      const headerPosition = [
         position[0],
-        position[1] + dodecahedronRadius + 5, // Exactly 10 units above the top
+        position[1] + scaledHeight + clearanceMargin,
         position[2],
       ];
+
+      return headerPosition;
     };
 
     const getFaceUIPosition = (faceIndex, offset = 3) => {
@@ -1113,11 +1129,7 @@ const Sphere = React.memo(
           />
         )}
         {/* Remove the outer position group and apply position directly to content group */}{' '}
-        <group
-          ref={contentRef}
-          position={position}
-          scale={dodecahedron?.scale || scale}
-        >
+        <group ref={contentRef} position={position} scale={scale}>
           {/* Add invisible helper mesh for better click detection */}
           <mesh onClick={handleBackgroundClick} visible={false}>
             <sphereGeometry args={[isMobile ? 10 : 6, 32, 32]} />{' '}
@@ -1180,7 +1192,7 @@ const Sphere = React.memo(
                 polygonOffset
                 polygonOffsetFactor={-1}
                 depthTest={true}
-                depthWrite={true}
+                depthWrite={false} // Disable depth write to allow header text to show through
                 renderOrder={-3}
               />
             </mesh>
@@ -1191,7 +1203,7 @@ const Sphere = React.memo(
               key={idx}
               points={linePoints}
               color={lineColor}
-              lineWidth={isMobile ? 3 : 1}
+              lineWidth={isMobile ? 3 : 2}
             />
           ))}
           {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}
@@ -1204,9 +1216,7 @@ const Sphere = React.memo(
               color: 'black',
               underline: false,
             };
-            const inverseScale = (dodecahedron?.scale || scale).map(
-              (s) => 1 / Math.max(0.0001, s)
-            );
+            const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
             const faceRotation = getFaceRotation(faceIdx);
 
             // Adjust position slightly outward along the normal to prevent z-fighting
@@ -1272,6 +1282,8 @@ const Sphere = React.memo(
                 onClick={(e) => handleIndicatorClick(idx, e)}
                 isActive={isSelected}
                 isConnected={isConnected}
+                showAllCubesIndicators={showAllIndicators}
+                selectedIndicatorsLength={selectedIndicators?.length || 0}
               />
             ) : null;
           })}
@@ -1294,11 +1306,7 @@ const Sphere = React.memo(
         {selected &&
           dodecahedron?.showFaceUI &&
           dodecahedron?.activeFace !== null && (
-            <group
-              ref={faceUIGroupRef}
-              position={position}
-              scale={dodecahedron?.scale || scale}
-            >
+            <group ref={faceUIGroupRef} position={position} scale={scale}>
               <FaceUI
                 position={getFaceUIPosition(dodecahedron.activeFace)}
                 onColorChange={(color) => {
@@ -1317,12 +1325,8 @@ const Sphere = React.memo(
         {selected && dodecahedron?.showHeader && (
           <group position={position}>
             {' '}
-            <group scale={dodecahedron?.scale || scale}>
-              <group
-                scale={(dodecahedron?.scale || scale).map(
-                  (s) => 1 / Math.max(s, 0.0001)
-                )}
-              >
+            <group scale={scale}>
+              <group scale={scale.map((s) => 1 / Math.max(s, 0.0001))}>
                 {' '}
                 <HeaderInput
                   position={getHeaderInputPosition()}
@@ -1348,7 +1352,7 @@ const Sphere = React.memo(
               fixedDistance: true, // Add this to ensure consistent distance if supported
             }}
           />
-        )}{' '}
+        )}
         {dodecahedron?.showStyleMenu && headerText && (
           <TextStyleUI
             position={getHeaderPosition()}
@@ -1407,7 +1411,7 @@ const Sphere = React.memo(
         {selected &&
           dodecahedron?.showFaceTextInput &&
           dodecahedron?.activeFace !== null && (
-            <group position={position} scale={dodecahedron?.scale || scale}>
+            <group position={position} scale={scale}>
               <FaceTextInput
                 position={getFaceTextInputPosition(dodecahedron.activeFace)}
                 onTextSubmit={handleFaceTextSubmit}
@@ -1470,7 +1474,6 @@ const Sphere = React.memo(
       prevProps.showAllIndicators === nextProps.showAllIndicators &&
       prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
       prevProps.indicatorMode === nextProps.indicatorMode &&
-      prevProps.connections?.length === nextProps.connections?.length &&
       prevProps.selectedIndicators?.length ===
         nextProps.selectedIndicators?.length
     );

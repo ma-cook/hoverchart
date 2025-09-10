@@ -132,20 +132,24 @@ const PublicConnection = ({ connection, objects }) => {
   // Generate path points
   let pathPoints = [startPosition, endPosition];
 
-  // Use curved path if specified
-  if (connection.lineStyle === 'curved') {
-    const filteredObjects = objects.filter(
-      (obj) =>
-        obj.id.toString() !== connection.start.objectId &&
-        obj.id.toString() !== connection.end.objectId
-    );
+  // PATHFINDING FIX: Always check for intersections and curve when needed
+  const filteredObjects = objects.filter(
+    (obj) =>
+      obj.id.toString() !== connection.start.objectId &&
+      obj.id.toString() !== connection.end.objectId
+  );
 
-    const intersections = checkLineIntersection(
-      startPosition,
-      endPosition,
-      filteredObjects
-    );
+  const intersections = checkLineIntersection(
+    startPosition,
+    endPosition,
+    filteredObjects
+  );
 
+  // Curve path if explicitly set to curved OR if intersections are detected
+  const shouldCurve =
+    connection.lineStyle === 'curved' ||
+    (intersections && intersections.length > 0);
+  if (shouldCurve) {
     pathPoints = generateCurvedPath(
       startPosition,
       endPosition,

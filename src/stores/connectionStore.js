@@ -19,48 +19,42 @@ const useConnectionStore = create((set, get) => ({
   showLineTextInput: null, // Connection ID that has text input open
   showLineTextStyleUI: null, // Connection ID that has style UI open
 
-  // Debug helper
+  // Debug helper with performance throttling
   _logState: () => {
     const state = get();
-    console.log('🔗 Connection Store State:', {
-      connectionCount: state.connections.length,
-      connectionIds: state.connections.map((c) => c.id),
-      selected: state.selectedConnection,
-      active: state.activeConnection,
-      isCreating: state.isCreatingConnection,
-      hasStart: !!state.connectionStartPoint,
-      hasEnd: !!state.connectionEndPoint,
-      loaded: state.connectionsLoaded,
-      deletingCount: state.deletingConnections.size,
-      deletingIds: [...state.deletingConnections],
-    });
+
+    // PERFORMANCE FIX: Throttle excessive logging during bulk operations
+    const now = performance.now();
+    const lastLog = window._lastConnectionStoreLog || 0;
+    const logThreshold = 1000; // Only log once per second during bulk operations
+
+    if (now - lastLog < logThreshold && state.connections.length > 50) {
+      return; // Skip logging during bulk operations
+    }
+
+    window._lastConnectionStoreLog = now;
+
+    // Debug logging removed
   },
 
   // Actions
   addConnection: (connection) => {
     if (!connection || !connection.id) {
-      console.warn('Attempted to add invalid connection:', connection);
       return;
     }
 
     // Check if this connection is being deleted - if so, don't add it back
     const state = get();
     if (state.deletingConnections.has(connection.id)) {
-      console.log(
-        '🚫 Blocked re-adding connection during deletion:',
-        connection.id
-      );
       return;
     }
 
-    console.log('Adding connection to store:', connection.id);
     set((state) => {
       // Check if connection already exists
       const exists = state.connections.some(
         (conn) => conn.id === connection.id
       );
       if (exists) {
-        console.log('Connection already exists:', connection.id);
         return state;
       }
 
@@ -76,11 +70,9 @@ const useConnectionStore = create((set, get) => ({
 
   removeConnection: (connectionId) => {
     if (!connectionId) {
-      console.warn('Attempted to remove connection with no ID');
       return;
     }
 
-    console.log('Removing connection from store:', connectionId);
     set((state) => {
       // Mark as being deleted to prevent re-addition
       const newDeletingSet = new Set(state.deletingConnections);
@@ -109,6 +101,110 @@ const useConnectionStore = create((set, get) => ({
             ? null
             : state.showLineTextStyleUI,
       };
+
+      // Log state after update
+      setTimeout(() => get()._logState(), 0);
+      return newState;
+    });
+  },
+
+  // Remove connections from unloaded cells
+  removeConnectionsFromCells: (unloadedCellIds) => {
+    if (
+      !unloadedCellIds ||
+      !Array.isArray(unloadedCellIds) ||
+      unloadedCellIds.length === 0
+    ) {
+      return;
+    }
+
+    set((state) => {
+      const connectionsToRemove = new Set();
+
+      // Find connections that belong to unloaded cells
+      state.connections.forEach((connection) => {
+        if (!connection.start?.position || !connection.end?.position) {
+          return;
+        }
+
+        try {
+          // Use simple cell calculation inline to avoid import issues
+          const getCellCoords = (position) => {
+            const CELL_SIZE = 10000;
+            return {
+              x: Math.floor(position[0] / CELL_SIZE),
+              y: Math.floor(position[1] / CELL_SIZE),
+              z: Math.floor(position[2] / CELL_SIZE),
+            };
+          };
+
+          const getCellIdFromCoords = (x, y, z) => `${x},${y},${z}`;
+
+          const startCellCoords = getCellCoords(connection.start.position);
+          const endCellCoords = getCellCoords(connection.end.position);
+
+          const startCellId = getCellIdFromCoords(
+            startCellCoords.x,
+            startCellCoords.y,
+            startCellCoords.z
+          );
+          const endCellId = getCellIdFromCoords(
+            endCellCoords.x,
+            endCellCoords.y,
+            endCellCoords.z
+          );
+
+          // Remove connection if either endpoint is in an unloaded cell
+          if (
+            unloadedCellIds.includes(startCellId) ||
+            unloadedCellIds.includes(endCellId)
+          ) {
+            connectionsToRemove.add(connection.id);
+          }
+        } catch {
+          // Skip connection if there's an error processing it
+        }
+      });
+
+      if (connectionsToRemove.size === 0) {
+        return state;
+      }
+
+      // For cell-based removal, don't add to deletingConnections since these are temporary
+      // spatial partitioning removals, not permanent deletions
+      const filteredConnections = state.connections.filter(
+        (conn) => !connectionsToRemove.has(conn.id)
+      );
+
+      // Clean up related state for removed connections
+      const cleanLineTexts = { ...state.lineTexts };
+      const cleanLineTextStyles = { ...state.lineTextStyles };
+      let newShowLineTextInput = state.showLineTextInput;
+      let newShowLineTextStyleUI = state.showLineTextStyleUI;
+
+      connectionsToRemove.forEach((connectionId) => {
+        delete cleanLineTexts[connectionId];
+        delete cleanLineTextStyles[connectionId];
+        if (state.showLineTextInput === connectionId) {
+          newShowLineTextInput = null;
+        }
+        if (state.showLineTextStyleUI === connectionId) {
+          newShowLineTextStyleUI = null;
+        }
+      });
+
+      const newState = {
+        connections: filteredConnections,
+        deletingConnections: state.deletingConnections, // Keep existing deletingConnections unchanged
+        lineTexts: cleanLineTexts,
+        lineTextStyles: cleanLineTextStyles,
+        showLineTextInput: newShowLineTextInput,
+        showLineTextStyleUI: newShowLineTextStyleUI,
+      };
+
+      console.log(
+        `🗑️ Removed ${connectionsToRemove.size} connections from unloaded cells`
+      );
 
       // Log state after update
       setTimeout(() => get()._logState(), 0);
@@ -210,14 +306,6 @@ const useConnectionStore = create((set, get) => ({
       ...styleUpdates,
     };
 
-    console.log('🎨 updateLineTextStyle store update:', {
-      connectionId,
-      existingStyle,
-      styleUpdates,
-      newStyle,
-      timestamp: Date.now(),
-    });
-
     set((state) => ({
       lineTextStyles: {
         ...state.lineTextStyles,
@@ -278,23 +366,10 @@ const useConnectionStore = create((set, get) => ({
 
   // Delete all connections for a specific object
   deleteConnectionsByObject: (objectId, spaceId = null) => {
-    console.log(
-      `🗑️ [Connection Store] deleteConnectionsByObject called for: ${objectId} in space: ${spaceId}`
-    );
-
     set((state) => {
       const connectionsToDelete = state.connections.filter(
         (conn) =>
           conn.start?.objectId === objectId || conn.end?.objectId === objectId
-      );
-
-      console.log(
-        `🗑️ [Connection Store] Found ${connectionsToDelete.length} connections to delete:`,
-        connectionsToDelete.map((c) => ({
-          id: c.id,
-          startObj: c.start?.objectId,
-          endObj: c.end?.objectId,
-        }))
       );
 
       const connectionIdsToDelete = connectionsToDelete.map((conn) => conn.id);
@@ -307,9 +382,6 @@ const useConnectionStore = create((set, get) => ({
         setTimeout(() => {
           const currentState = get();
           if (currentState.deletingConnections.has(id)) {
-            console.warn(
-              `⚠️ [Connection Store] Auto-clearing deletion tracking for ${id} after timeout`
-            );
             get().markConnectionDeletionComplete(id);
           }
         }, 60000); // 1 minute timeout - simplified
@@ -339,11 +411,8 @@ const useConnectionStore = create((set, get) => ({
                 );
                 const spaceManagerState = useSpaceManagerStore.getState();
                 finalSpaceId = spaceManagerState.currentSpaceId;
-              } catch (importError) {
-                console.warn(
-                  'Could not import space manager store:',
-                  importError
-                );
+              } catch {
+                // Could not import space manager store
               }
             }
 
@@ -354,25 +423,8 @@ const useConnectionStore = create((set, get) => ({
             }
 
             if (!user || !finalSpaceId) {
-              console.error(
-                '❌ [Connection Store] Cannot delete connections - missing auth context',
-                {
-                  hasUser: !!user,
-                  hasSpaceId: !!finalSpaceId,
-                  providedSpaceId: spaceId,
-                  authCurrentUser: !!auth.currentUser,
-                  windowCurrentUser: !!window.currentUser,
-                  windowCurrentSpaceId: !!window.currentSpaceId,
-                  windowInternalSpaceId: !!window._currentSpaceId,
-                  finalSpaceId: finalSpaceId,
-                }
-              );
               return;
             }
-
-            console.log(
-              `🗑️ [Connection Store] Removing ${connectionIdsToDelete.length} connections from database for user ${user.uid} in space ${finalSpaceId}`
-            );
 
             // Get all cells and remove the connections directly
             const cellsRef = collection(
@@ -385,8 +437,6 @@ const useConnectionStore = create((set, get) => ({
             );
             const cellsSnapshot = await getDocs(cellsRef);
 
-            let totalRemoved = 0;
-
             for (const cellDoc of cellsSnapshot.docs) {
               const cellData = cellDoc.data();
               if (cellData.connections) {
@@ -397,7 +447,6 @@ const useConnectionStore = create((set, get) => ({
                   if (cellData.connections[connId]) {
                     updates[`connections.${connId}`] = deleteField();
                     hasChanges = true;
-                    totalRemoved++;
                   }
                 });
 
@@ -412,21 +461,11 @@ const useConnectionStore = create((set, get) => ({
                     cellDoc.id
                   );
                   await updateDoc(cellRef, updates);
-                  console.log(
-                    `🗑️ [Connection Store] Removed connections from cell ${cellDoc.id}`
-                  );
                 }
               }
             }
-
-            console.log(
-              `✅ [Connection Store] Successfully removed ${totalRemoved} connection instances from database`
-            );
-          } catch (error) {
-            console.error(
-              '❌ [Connection Store] Database deletion error:',
-              error
-            );
+          } catch {
+            // Database deletion error
           }
         }, 100); // Small delay to avoid race conditions
       }
@@ -465,23 +504,12 @@ const useConnectionStore = create((set, get) => ({
           : state.selectedConnection,
       };
 
-      console.log(
-        `🗑️ [Connection Store] After deletion - connections remaining: ${newState.connections.length}`
-      );
-      console.log(
-        `🗑️ [Connection Store] Deleted connection IDs now in blacklist: ${connectionIdsToDelete.join(
-          ', '
-        )}`
-      );
       return newState;
     });
   },
 
   // Mark a connection deletion as complete (remove from deletingConnections)
   markConnectionDeletionComplete: (connectionId) => {
-    console.log(
-      `✅ [Connection Store] Marking deletion complete for: ${connectionId}`
-    );
     set((state) => ({
       deletingConnections: new Set(
         [...state.deletingConnections].filter((id) => id !== connectionId)
@@ -492,9 +520,6 @@ const useConnectionStore = create((set, get) => ({
   // Mark connection as being deleted with automatic cleanup after timeout
   markConnectionDeleting: (connectionId, timeoutMs = 120000) => {
     // Increased to 2 minutes
-    console.log(
-      `🗑️ [Connection Store] Marking connection ${connectionId} as deleting`
-    );
     set((state) => ({
       deletingConnections: new Set([
         ...state.deletingConnections,
@@ -506,9 +531,6 @@ const useConnectionStore = create((set, get) => ({
     setTimeout(() => {
       const currentState = get();
       if (currentState.deletingConnections.has(connectionId)) {
-        console.warn(
-          `⚠️ [Connection Store] Auto-clearing deletion tracking for ${connectionId} after timeout`
-        );
         get().markConnectionDeletionComplete(connectionId);
       }
     }, timeoutMs);
@@ -516,7 +538,6 @@ const useConnectionStore = create((set, get) => ({
 
   // Clean up all deletion tracking (use sparingly, for error recovery)
   clearDeletionTracking: () => {
-    console.log(`🧹 [Connection Store] Clearing all deletion tracking`);
     set(() => ({
       deletingConnections: new Set(),
     }));
@@ -525,45 +546,23 @@ const useConnectionStore = create((set, get) => ({
   // Enhanced connection blocking with database verification
   addConnectionWithVerification: (connection) => {
     if (!connection || !connection.id) {
-      console.warn('Attempted to add invalid connection:', connection);
       return;
     }
 
     // Check if this connection is being deleted - if so, don't add it back
     const state = get();
     if (state.deletingConnections.has(connection.id)) {
-      console.log(
-        `🚫 [Enhanced] Blocked re-adding connection during deletion: ${connection.id}`
-      );
-
       // Additional check: verify if this connection should actually still be blocked
       // Sometimes Firebase sends stale data, so we should verify the timestamp
-      const now = Date.now();
-      const connectionTimestamp = connection._lastSaved || connection.createdAt;
-      const connectionTime =
-        typeof connectionTimestamp === 'string'
-          ? new Date(connectionTimestamp).getTime()
-          : connectionTimestamp;
-
-      // If the connection data is older than when we started deleting, definitely block it
-      console.log(
-        `🚫 [Enhanced] Connection timestamp: ${connectionTime}, Current time: ${now}`
-      );
-      console.log(
-        `🚫 [Enhanced] This appears to be stale data from Firebase - keeping block active`
-      );
-
       return;
     }
 
-    console.log('Adding connection to store:', connection.id);
     set((state) => {
       // Check if connection already exists
       const exists = state.connections.some(
         (conn) => conn.id === connection.id
       );
       if (exists) {
-        console.log('Connection already exists:', connection.id);
         return state;
       }
 
@@ -579,9 +578,6 @@ const useConnectionStore = create((set, get) => ({
 
   // Force clear a specific connection from deletion blacklist (emergency use)
   forceUnblockConnection: (connectionId) => {
-    console.log(
-      `🔓 [Connection Store] Force unblocking connection: ${connectionId}`
-    );
     set((state) => ({
       deletingConnections: new Set(
         [...state.deletingConnections].filter((id) => id !== connectionId)

@@ -217,13 +217,21 @@ const subscribeToCellConnections = (
   const unsubscribeFunctions = new Map();
 
   const startCellSubscriptions = async () => {
+    console.log(
+      '🔗 [connectionsService] startCellSubscriptions called with cells:',
+      effectiveCells
+    );
+
     try {
       // Check if this is a shared space
       const sharedStatus = await isSharedSpace(userId, spaceId);
+      console.log('🔗 [connectionsService] SharedSpace status:', sharedStatus);
+
       if (!isSubscribed) return;
 
       // Use the owner's ID to get connections from the correct cells
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+      console.log('🔗 [connectionsService] Using ownerUserId:', ownerUserId);
 
       // If no cells are loaded, skip subscription since there's no area to monitor
       if (effectiveCells.length === 0) {
@@ -231,150 +239,153 @@ const subscribeToCellConnections = (
         return;
       }
 
-      // Subscribe to each loaded cell
-      for (const cellKey of effectiveCells) {
-        if (!cellKey || typeof cellKey !== 'string') {
-          continue;
-        }
+      console.log(
+        '🔗 [connectionsService] Setting up subscriptions for cells:',
+        effectiveCells
+      );
 
-        const [x, y, z] = cellKey.split(',').map(Number);
-        const subscriptionKey = generateSubscriptionKey.connections(
-          spaceId,
-          cellKey
-        );
-
-        // Create cell reference
-        const cellRef = doc(
-          db,
-          'users',
-          ownerUserId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellKey
-        );
-
-        // Use global subscription manager
-        const { unsubscribe: globalUnsubscribe } = getOrCreateSubscription(
-          subscriptionKey,
-          SUBSCRIPTION_TYPES.CONNECTIONS,
-          () => {
-            // Create the actual Firebase subscription
+      // Subscribe to each loaded cell, but stagger creation to avoid blocking UI
+      const STAGGER_MS = 50; // milliseconds between creating each subscription
+      for (let idx = 0; idx < effectiveCells.length; idx++) {
+        const cellKey = effectiveCells[idx];
+        // Schedule subscription creation
+        setTimeout(() => {
+          if (!isSubscribed) return; // don't create if already unsubscribed
+          if (!cellKey || typeof cellKey !== 'string') {
             console.log(
-              '🔗 Setting up Firebase subscription for cell:',
+              '🔗 [connectionsService] Skipping invalid cellKey:',
               cellKey
             );
-            return onSnapshot(
-              cellRef,
-              { includeMetadataChanges: false },
-              (snapshot) => {
-                console.log(
-                  '🔥 Firebase snapshot received for cell:',
-                  cellKey,
-                  'exists:',
-                  snapshot.exists()
-                );
+            return;
+          }
 
-                if (!snapshot.exists()) {
-                  console.log('📭 Cell document does not exist:', cellKey);
-                  return;
-                }
+          const [x, y, z] = cellKey.split(',').map(Number);
+          const subscriptionKey = generateSubscriptionKey.connections(
+            spaceId,
+            cellKey
+          );
 
-                const cellData = snapshot.data();
-                const cellConnections = cellData.connections || {};
+          console.log(
+            '🔗 [connectionsService] (staggered) Setting up subscription for cellKey:',
+            cellKey,
+            'subscriptionKey:',
+            subscriptionKey
+          );
 
-                console.log('📄 Cell data:', {
-                  cellKey,
-                  hasConnections: !!cellData.connections,
-                  connectionCount: Object.keys(cellConnections).length,
-                  connectionIds: Object.keys(cellConnections),
-                });
+          // Create cell reference
+          const cellRef = doc(
+            db,
+            'users',
+            ownerUserId,
+            'spaces',
+            spaceId,
+            'cells',
+            cellKey
+          );
 
-                // Process each connection in the cell
-                Object.entries(cellConnections).forEach(
-                  ([connectionId, connectionData]) => {
-                    const cacheKey = `${spaceId}_${connectionId}`;
+          // Use global subscription manager
+          const { unsubscribe: globalUnsubscribe } = getOrCreateSubscription(
+            subscriptionKey,
+            SUBSCRIPTION_TYPES.CONNECTIONS,
+            () => {
+              // Create the actual Firebase subscription
+              console.log(
+                '🔗 Setting up Firebase subscription for cell:',
+                cellKey
+              );
+              return onSnapshot(
+                cellRef,
+                { includeMetadataChanges: false },
+                (snapshot) => {
+                  if (!snapshot.exists()) {
+                    return;
+                  }
 
-                    // Check if connection data has changed
-                    const cachedData = connectionCache.get(cacheKey);
-                    let hasChanged = false;
+                  const cellData = snapshot.data();
+                  const cellConnections = cellData.connections || {};
 
-                    if (cachedData) {
-                      hasChanged =
-                        JSON.stringify(cachedData) !==
-                        JSON.stringify(connectionData);
-                    } else {
-                      hasChanged = true;
+                  // Process each connection in the cell
+                  Object.entries(cellConnections).forEach(
+                    ([connectionId, connectionData]) => {
+                      const cacheKey = `${spaceId}_${connectionId}`;
+
+                      // Check if connection data has changed
+                      const cachedData = connectionCache.get(cacheKey);
+                      let hasChanged = false;
+
+                      if (cachedData) {
+                        hasChanged =
+                          JSON.stringify(cachedData) !==
+                          JSON.stringify(connectionData);
+                      } else {
+                        hasChanged = true;
+                      }
+
+                      if (hasChanged) {
+                        connectionCache.set(
+                          cacheKey,
+                          JSON.parse(JSON.stringify(connectionData))
+                        );
+                        callback({
+                          type: 'added',
+                          id: connectionId,
+                          connection: connectionData,
+                          cellCoords: { x, y, z: z || 0 },
+                        });
+                      }
                     }
+                  );
 
-                    if (hasChanged) {
-                      connectionCache.set(
-                        cacheKey,
-                        JSON.parse(JSON.stringify(connectionData))
+                  // Handle removed connections (compare with cache)
+                  const currentConnectionIds = new Set(
+                    Object.keys(cellConnections)
+                  );
+                  const cachedConnectionIds = new Set();
+
+                  for (const cacheKey of connectionCache.keys()) {
+                    if (cacheKey.startsWith(`${spaceId}_`)) {
+                      const connectionId = cacheKey.substring(
+                        `${spaceId}_`.length
                       );
-                      console.log('📤 Sending connection event to callback:', {
-                        type: 'added',
-                        id: connectionId,
-                      });
+                      const connectionData = connectionCache.get(cacheKey);
+
+                      // Check if this connection belongs to this cell
+                      if (connectionData && connectionData.cellId === cellKey) {
+                        cachedConnectionIds.add(connectionId);
+                      }
+                    }
+                  }
+
+                  // Find removed connections
+                  for (const connectionId of cachedConnectionIds) {
+                    if (!currentConnectionIds.has(connectionId)) {
+                      const cacheKey = `${spaceId}_${connectionId}`;
+                      connectionCache.delete(cacheKey);
                       callback({
-                        type: 'added',
+                        type: 'removed',
                         id: connectionId,
-                        connection: connectionData,
                         cellCoords: { x, y, z: z || 0 },
                       });
                     }
                   }
-                );
-
-                // Handle removed connections (compare with cache)
-                const currentConnectionIds = new Set(
-                  Object.keys(cellConnections)
-                );
-                const cachedConnectionIds = new Set();
-
-                for (const cacheKey of connectionCache.keys()) {
-                  if (cacheKey.startsWith(`${spaceId}_`)) {
-                    const connectionId = cacheKey.substring(
-                      `${spaceId}_`.length
-                    );
-                    const connectionData = connectionCache.get(cacheKey);
-
-                    // Check if this connection belongs to this cell
-                    if (connectionData && connectionData.cellId === cellKey) {
-                      cachedConnectionIds.add(connectionId);
-                    }
+                },
+                (error) => {
+                  console.warn(
+                    'Firebase snapshot error for cell:',
+                    cellKey,
+                    error
+                  );
+                  if (error.code === 'permission-denied') {
+                    return;
                   }
                 }
+              );
+            }
+          );
 
-                // Find removed connections
-                for (const connectionId of cachedConnectionIds) {
-                  if (!currentConnectionIds.has(connectionId)) {
-                    const cacheKey = `${spaceId}_${connectionId}`;
-                    connectionCache.delete(cacheKey);
-                    callback({
-                      type: 'removed',
-                      id: connectionId,
-                      cellCoords: { x, y, z: z || 0 },
-                    });
-                  }
-                }
-              },
-              (error) => {
-                console.warn(
-                  'Firebase snapshot error for cell:',
-                  cellKey,
-                  error
-                );
-                if (error.code === 'permission-denied') {
-                  return;
-                }
-              }
-            );
-          }
-        );
-
-        // Store the cleanup function
-        unsubscribeFunctions.set(cellKey, globalUnsubscribe);
+          // Store the cleanup function
+          unsubscribeFunctions.set(cellKey, globalUnsubscribe);
+        }, idx * STAGGER_MS);
       }
     } catch (error) {
       console.error('Error starting connection subscriptions:', error);
