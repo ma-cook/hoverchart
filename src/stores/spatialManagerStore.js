@@ -229,9 +229,24 @@ const useSpatialManagerStore = create((set, get) => ({
         }
       });
 
-      // Trigger object restoration for reloaded cells
+      // Trigger object and connection restoration for reloaded cells
       if (loadedCellIds.length > 0) {
+        // Restore objects
         get().handleCellsReloaded(loadedCellIds);
+
+        // Restore connections
+        import('./connectionStore')
+          .then(({ default: connectionStore }) => {
+            connectionStore
+              .getState()
+              .clearUnloadedConnectionsForCells(loadedCellIds);
+          })
+          .catch((error) => {
+            console.error(
+              'Error restoring connections for reloaded cells:',
+              error
+            );
+          });
       }
 
       // Update loaded cells with successful loads

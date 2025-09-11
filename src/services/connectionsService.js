@@ -45,8 +45,13 @@ export const addConnectionStateListener = (listener) => {
   return () => connectionListeners.delete(listener);
 };
 
-// Connection caching system
+// Connection caching and unloading system
 const connectionCache = new Map();
+
+// Initialize global unloaded connections tracking if needed
+if (typeof window !== 'undefined' && !window._unloadedConnections) {
+  window._unloadedConnections = new Set();
+}
 
 const clearConnectionCache = (spaceId, connectionId) => {
   const cacheKey = connectionId ? `${spaceId}_${connectionId}` : null;
@@ -261,6 +266,9 @@ const subscribeToCellConnections = (
   let isSubscribed = true;
   const unsubscribeFunctions = new Map();
 
+  // Track which cells we're actively subscribed to
+  const activeSubscriptionCells = new Set();
+
   const startCellSubscriptions = async () => {
     try {
       // Check if this is a shared space
@@ -269,6 +277,63 @@ const subscribeToCellConnections = (
 
       // Use the owner's ID to get connections from the correct cells
       const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+
+      // For each cell, set up a subscription if we don't already have one
+      for (const cellId of effectiveCells) {
+        if (!activeSubscriptionCells.has(cellId)) {
+          console.log(
+            `📡 Setting up connection subscription for cell: ${cellId}`
+          );
+
+          const [x, y, z] = cellId.split(',').map(Number);
+          const cellRef = doc(
+            db,
+            'users',
+            ownerUserId,
+            'spaces',
+            spaceId,
+            'cells',
+            cellId
+          );
+
+          const unsubscribe = onSnapshot(cellRef, (cellDoc) => {
+            if (!cellDoc.exists()) return;
+
+            const cellData = cellDoc.data();
+            const cellConnections = cellData.connections || {};
+
+            // Process each connection in the cell
+            Object.entries(cellConnections).forEach(
+              ([connectionId, connectionData]) => {
+                try {
+                  // Skip if connection is in deletion blacklist
+                  const connectionStore = useConnectionStore.getState();
+                  if (connectionStore.deletingConnections.has(connectionId))
+                    return;
+
+                  // Add cell coordinates to connection data
+                  const enrichedConnectionData = {
+                    ...connectionData,
+                    cellId,
+                  };
+
+                  callback({
+                    type: 'added',
+                    id: connectionId,
+                    connection: enrichedConnectionData,
+                    cellCoords: { x, y, z: z || 0 },
+                  });
+                } catch (error) {
+                  console.error('Error processing connection:', error);
+                }
+              }
+            );
+          });
+
+          unsubscribeFunctions.set(cellId, unsubscribe);
+          activeSubscriptionCells.add(cellId);
+        }
+      }
 
       // If no cells are loaded, try to load connections from all cells in the space
       // This handles the case where the app just started and spatial manager hasn't loaded cells yet

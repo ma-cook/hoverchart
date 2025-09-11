@@ -162,33 +162,46 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
   // Enhanced connection callback that tracks spatial cell associations
   const enhancedConnectionCallback = useCallback(
     (event) => {
-      // Handle the connection event normally
-      connectionCallback(event);
+      // Handle fresh connections from Firebase immediately
+      if (event && event.type === 'added' && event.connection) {
+        // Always add the connection to the store first
+        addConnection(event.connection);
 
-      // Track which cell this connection belongs to for spatial unloading
-      if (
-        event &&
-        event.type === 'added' &&
-        event.connection &&
-        event.cellCoords
-      ) {
-        const cellId = `${event.cellCoords.x},${event.cellCoords.y},${
-          event.cellCoords.z || 0
-        }`;
+        // Track cell association if we have coordinates
+        if (event.cellCoords) {
+          const cellId = `${event.cellCoords.x},${event.cellCoords.y},${
+            event.cellCoords.z || 0
+          }`;
 
-        // Track in local map for useConnections-specific logic
-        if (!connectionsByCellRef.current.has(cellId)) {
-          connectionsByCellRef.current.set(cellId, new Set());
+          // Track in local map for useConnections-specific logic
+          if (!connectionsByCellRef.current.has(cellId)) {
+            connectionsByCellRef.current.set(cellId, new Set());
+          }
+          connectionsByCellRef.current.get(cellId).add(event.id);
         }
-        connectionsByCellRef.current.get(cellId).add(event.id);
+
+        // Clear unloaded status if it was previously unloaded
+        if (
+          window._unloadedConnections &&
+          window._unloadedConnections.has(event.id)
+        ) {
+          console.log(`🔄 Connection ${event.id} restored from Firebase`);
+          window._unloadedConnections.delete(event.id);
+        }
       } else if (event && event.type === 'removed') {
-        // Remove from all cells when connection is deleted
+        // Remove from connection tracking when deleted
         connectionsByCellRef.current.forEach((cellConnections) => {
           cellConnections.delete(event.id);
         });
+
+        // Handle the remove event normally
+        connectionCallback(event);
+      } else {
+        // Handle other events normally
+        connectionCallback(event);
       }
     },
-    [connectionCallback]
+    [connectionCallback, addConnection]
   );
 
   // Set up and manage connection subscriptions with performance optimizations
@@ -329,26 +342,44 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     const previousCells = previousLoadedCellsRef.current;
     const currentCells = stableLoadedCells;
 
-    // Initial load: just record the loaded cells and let the main subscription
-    // effect handle creating the connection subscription. Creating a second
-    // subscription here caused duplicate Firebase listeners and the startup
-    // performance spike.
+    // Skip effect if no cells are loaded yet
+    if (!currentCells || currentCells.length === 0) {
+      return;
+    }
+
+    // Initial load: record loaded cells and set up initial subscription
     if (!previousCells || previousCells.length === 0) {
       console.log(
         '🔍 [CONNECTION SPATIAL DEBUG] Initial cell load - recording cells:',
         currentCells
       );
+
+      // Create initial subscription
+      const initialCleanup = subscribeToConnections(
+        user.uid,
+        currentSpaceId,
+        enhancedConnectionCallback,
+        currentCells
+      );
+
+      if (subscriptionCleanupRef.current) {
+        subscriptionCleanupRef.current();
+      }
+      subscriptionCleanupRef.current = initialCleanup;
+
       previousLoadedCellsRef.current = currentCells;
       return;
     }
 
-    // Find cells that were unloaded
+    // Find cells that were unloaded and cells that were reloaded
     const currentCellsSet = new Set(currentCells);
+    const previousCellsSet = new Set(previousCells);
     const unloadedCells = previousCells.filter(
       (cellId) => !currentCellsSet.has(cellId)
     );
-
-    // Find connections that should be removed because their cells were unloaded
+    const reloadedCells = currentCells.filter(
+      (cellId) => !previousCellsSet.has(cellId)
+    ); // Track connections that should be removed due to unloaded cells
     if (unloadedCells.length > 0) {
       console.log(
         '🔍 [CONNECTION SPATIAL DEBUG] Cells unloaded:',
@@ -359,6 +390,18 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       unloadedCells.forEach((cellId) => {
         const cellConnections = connectionsByCellRef.current.get(cellId);
         if (cellConnections) {
+          // Track unloaded connections
+          if (!window._unloadedConnections) {
+            window._unloadedConnections = new Set();
+          }
+
+          cellConnections.forEach((connectionId) => {
+            window._unloadedConnections.add(connectionId);
+            console.log(
+              `🚫 Marking connection as unloaded: ${connectionId} from cell: ${cellId}`
+            );
+          });
+
           connectionsToRemove.push(...Array.from(cellConnections));
           connectionsByCellRef.current.delete(cellId);
         }
@@ -376,6 +419,61 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       }
     }
 
+    // Handle reloaded cells
+    if (reloadedCells.length > 0) {
+      console.log(
+        '🔍 [CONNECTION SPATIAL DEBUG] Cells reloaded:',
+        reloadedCells
+      );
+
+      // Create a fresh subscription for all reloaded cells
+      const newSubscriptionCleanup = subscribeToConnections(
+        user.uid,
+        currentSpaceId,
+        enhancedConnectionCallback,
+        reloadedCells
+      );
+
+      // Update cleanup to handle both existing and new subscriptions
+      const oldCleanupFn = subscriptionCleanupRef.current;
+      subscriptionCleanupRef.current = () => {
+        if (oldCleanupFn) oldCleanupFn();
+        if (newSubscriptionCleanup) newSubscriptionCleanup();
+      };
+
+      // Clear unloaded status for connections in reloaded cells
+      reloadedCells.forEach((cellId) => {
+        if (
+          window._unloadedConnections &&
+          window._unloadedConnections.size > 0
+        ) {
+          console.log(
+            `🔄 Checking for connections to restore in cell: ${cellId}`
+          );
+          Array.from(window._unloadedConnections).forEach((connectionId) => {
+            window._unloadedConnections.delete(connectionId);
+            console.log(
+              `🔄 Cleared unloaded status for connection: ${connectionId} in cell: ${cellId}`
+            );
+          });
+        }
+      });
+
+      // Trigger subscription refresh for reloaded cells
+      const cleanup = subscribeToConnections(
+        user.uid,
+        currentSpaceId,
+        enhancedConnectionCallback,
+        reloadedCells
+      );
+
+      const existingCleanup = subscriptionCleanupRef.current;
+      subscriptionCleanupRef.current = () => {
+        if (existingCleanup) existingCleanup();
+        if (cleanup) cleanup();
+      };
+    }
+
     // Update previous cells reference
     previousLoadedCellsRef.current = currentCells;
   }, [
@@ -384,9 +482,9 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     currentSpaceId,
     user?.uid,
     enhancedConnectionCallback,
-  ]);
-
-  // Use the enhanced callback in the subscription setup
+    addConnection,
+    getConnection,
+  ]); // Use the enhanced callback in the subscription setup
 
   // Handler functions for connection interactions
   const handleLineStyleChange = useCallback(

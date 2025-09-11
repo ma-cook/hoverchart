@@ -13,6 +13,28 @@ const useConnectionStore = create((set, get) => ({
   // Track connections being deleted to prevent re-addition during async deletion
   deletingConnections: new Set(), // Set of connection IDs being deleted
 
+  // Clear unloaded status for connections in reloaded cells
+  clearUnloadedConnectionsForCells: (cellIds) => {
+    if (!window._unloadedConnections) return;
+
+    cellIds.forEach((cellId) => {
+      // Get connections from this cell
+      const cellConnections = get().connections.filter((conn) =>
+        conn.cells?.includes(cellId)
+      );
+
+      // Remove unloaded status for these connections
+      cellConnections.forEach((conn) => {
+        if (window._unloadedConnections.has(conn.id)) {
+          console.log(
+            `🔄 Re-enabling connection: ${conn.id} in cell: ${cellId}`
+          );
+          window._unloadedConnections.delete(conn.id);
+        }
+      });
+    });
+  },
+
   // UI state for connection text and styling
   lineTexts: {}, // Object mapping connection IDs to their text
   lineTextStyles: {}, // Object mapping connection IDs to their text styles
