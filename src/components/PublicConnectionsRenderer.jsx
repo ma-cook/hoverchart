@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Line } from '@react-three/drei';
+import PooledLine from './PooledLine';
 import TextSprite from './TextSprite';
 import { calculateMidpoint } from '../utils/positionUtils';
 import {
@@ -163,7 +163,7 @@ const PublicConnection = ({ connection, objects }) => {
   return (
     <group>
       {/* Main connection line */}
-      <Line
+      <PooledLine
         points={pathPoints}
         color={connection.color || 'black'}
         lineWidth={2}
@@ -175,6 +175,7 @@ const PublicConnection = ({ connection, objects }) => {
         gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
         dashOffset={connection.dashOffset || 0}
         renderOrder={20}
+        enablePooling={true}
       />
 
       {/* Text on the connection if it exists */}

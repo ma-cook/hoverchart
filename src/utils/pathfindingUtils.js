@@ -1,22 +1,101 @@
 import * as THREE from 'three';
 
+// Cache settings
+const CACHE_LIFETIME = 5000; // 5 seconds
+const POSITION_PRECISION = 2; // Decimal places for position rounding
+const CLEAN_PROBABILITY = 0.01; // 1% chance to clean cache per call
+
+// Create cache for intersection and path results
+const intersectionCache = new Map();
+const pathCache = new Map();
+
+// Clean old entries from caches periodically
+function cleanCaches() {
+  const now = Date.now();
+  for (const cache of [intersectionCache, pathCache]) {
+    for (const [key, value] of cache) {
+      if (now - value.timestamp > CACHE_LIFETIME) {
+        cache.delete(key);
+      }
+    }
+  }
+}
+
+// Round positions for cache keys
+function roundForCache(pos) {
+  if (!Array.isArray(pos)) return [0, 0, 0];
+  return pos.map(
+    (v) =>
+      Math.round(v * Math.pow(10, POSITION_PRECISION)) /
+      Math.pow(10, POSITION_PRECISION)
+  );
+}
+
+// Generate cache key from positions
+function generateCacheKey(startPos, endPos) {
+  const roundedStart = roundForCache(startPos);
+  const roundedEnd = roundForCache(endPos);
+  return `${roundedStart.join(',')}_${roundedEnd.join(',')}`;
+}
+
+/**
+ * Checks if positions have changed significantly
+ */
+export function havePositionsChanged(pos1, pos2, threshold = 0.1) {
+  if (!Array.isArray(pos1) || !Array.isArray(pos2)) return true;
+  return pos1.some((v, i) => Math.abs(v - pos2[i]) > threshold);
+}
+
 /**
  * Checks if a straight line between two points intersects with any objects
  */
 export function checkLineIntersection(startPos, endPos, objects) {
-  // PATHFINDING FIX: Add targeted debug logging
-  const lineLength = Math.sqrt(
-    (endPos[0] - startPos[0]) ** 2 +
-      (endPos[1] - startPos[1]) ** 2 +
-      (endPos[2] - startPos[2]) ** 2
-  );
+  if (!startPos || !endPos || !objects) return [];
 
-  // Only log for shorter lines where intersections are likely
-  if (lineLength < 1000) {
-    // Debug logging removed
+  // Clean caches periodically
+  if (Math.random() < CLEAN_PROBABILITY) {
+    cleanCaches();
   }
 
-  // Create a ray for intersection testing
+  // Generate cache key
+  const cacheKey = generateCacheKey(startPos, endPos);
+
+  // Check cache first
+  const cached = intersectionCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_LIFETIME) {
+    return cached.intersections;
+  }
+
+  // Calculate line length for optimization
+  const lineLength = Math.sqrt(
+    Math.pow(endPos[0] - startPos[0], 2) +
+      Math.pow(endPos[1] - startPos[1], 2) +
+      Math.pow(endPos[2] - startPos[2], 2)
+  );
+
+  // Skip long lines and cache empty result
+  if (lineLength > 1000) {
+    const result = [];
+    intersectionCache.set(cacheKey, {
+      intersections: result,
+      timestamp: Date.now(),
+    });
+    return result;
+  }
+
+  // Filter and process objects for intersection testing
+  const objectsToTest = objects.filter((obj) => {
+    if (!obj?.position || !Array.isArray(obj.position)) return false;
+
+    // Quick distance check to rule out far away objects
+    const distanceSquared = obj.position.reduce(
+      (sum, val, i) => sum + Math.pow(val - startPos[i], 2),
+      0
+    );
+
+    // Only check objects within reasonable distance
+    return distanceSquared < lineLength * lineLength * 1.5;
+  });
   const direction = new THREE.Vector3(
     endPos[0] - startPos[0],
     endPos[1] - startPos[1],
@@ -28,8 +107,8 @@ export function checkLineIntersection(startPos, endPos, objects) {
     direction
   );
 
-  // Create simplified bounding boxes for objects - include ALL object types
-  const objectBoxes = objects
+  // Create simplified bounding boxes for filtered objects
+  const objectBoxes = objectsToTest
     .filter((obj) => obj.type && obj.position) // Include all objects with valid type and position
     .map((obj) => {
       // PATHFINDING FIX: Better handling of scale property
@@ -154,7 +233,16 @@ export function checkLineIntersection(startPos, endPos, objects) {
     }
   });
 
-  return intersections.sort((a, b) => a.distance - b.distance);
+  // Sort intersections by distance and cache the result
+  const result = intersections.sort((a, b) => a.distance - b.distance);
+
+  // Cache the result
+  intersectionCache.set(cacheKey, {
+    intersections: result,
+    timestamp: Date.now(),
+  });
+
+  return result;
 }
 
 /**
@@ -168,77 +256,145 @@ export function generateCurvedPath(
   endConnId,
   forceCurved = false
 ) {
-  // If not forced to be curved and no intersections, return straight line
-  if (!forceCurved && intersections.length === 0) {
-    return [startPos, endPos];
+  if (!startPos || !endPos) {
+    return [startPos || [0, 0, 0], endPos || [0, 0, 0]];
   }
 
-  // Filter out objects that are the start or end connection points
-  const filteredIntersections = intersections.filter(
+  const cacheKey = generateCacheKey(startPos, endPos);
+  const pathCacheKey = `path_${cacheKey}_${forceCurved}_${startConnId}_${endConnId}`;
+
+  const cachedPath = pathCache.get(pathCacheKey);
+  if (cachedPath && Date.now() - cachedPath.timestamp < CACHE_LIFETIME) {
+    return cachedPath.path;
+  }
+
+  // If not forced curved and no intersections, return and cache straight line
+  if (!forceCurved && (!intersections || intersections.length === 0)) {
+    const straightPath = [startPos, endPos];
+    pathCache.set(pathCacheKey, {
+      path: straightPath,
+      timestamp: Date.now(),
+    });
+    return straightPath;
+  }
+
+  // Filter out start/end objects
+  const relevantIntersections = intersections.filter(
     (int) => int.objectId !== startConnId && int.objectId !== endConnId
   );
 
-  // If not forced to be curved and no relevant intersections, return straight line
-  if (!forceCurved && filteredIntersections.length === 0) {
-    return [startPos, endPos];
+  if (!forceCurved && relevantIntersections.length === 0) {
+    const straightPath = [startPos, endPos];
+    pathCache.set(pathCacheKey, {
+      path: straightPath,
+      timestamp: Date.now(),
+    });
+    return straightPath;
   }
-
-  // Calculate line direction and length
-  const direction = new THREE.Vector3(
-    endPos[0] - startPos[0],
-    endPos[1] - startPos[1],
-    endPos[2] - startPos[2]
-  );
-  direction.normalize();
 
   // Calculate multiple curve options and choose the best one
   const curveOptions = [];
+  const curveDirections = ['up', 'right', 'left'];
 
-  // Option 1: Curve upward
-  const upwardCurve = generateSingleCurve(
-    startPos,
-    endPos,
-    filteredIntersections,
-    'up'
-  );
-  curveOptions.push({ curve: upwardCurve, direction: 'up' });
-
-  // Option 2: Curve to the right (perpendicular to line direction)
-  const rightCurve = generateSingleCurve(
-    startPos,
-    endPos,
-    filteredIntersections,
-    'right'
-  );
-  curveOptions.push({ curve: rightCurve, direction: 'right' });
-
-  // Option 3: Curve to the left
-  const leftCurve = generateSingleCurve(
-    startPos,
-    endPos,
-    filteredIntersections,
-    'left'
-  );
-  curveOptions.push({ curve: leftCurve, direction: 'left' });
-
-  // Test each curve option and pick the first one that doesn't intersect
-  for (const option of curveOptions) {
-    // Validate that this curve doesn't intersect with objects
-    // We'll use a simpler validation for now and can enhance it later
-    if (option.curve && option.curve.length > 2) {
-      return option.curve;
+  for (const direction of curveDirections) {
+    const curve = generateSingleCurve(
+      startPos,
+      endPos,
+      relevantIntersections,
+      direction
+    );
+    if (curve) {
+      curveOptions.push({ curve, direction });
     }
   }
 
-  // Fallback: return the upward curve even if not perfect
-  const finalCurve = upwardCurve || [startPos, endPos];
+  // Test each curve option and pick the best one
+  let bestOption = null;
+  let minIntersections = Infinity;
 
-  return finalCurve;
+  for (const option of curveOptions) {
+    if (!option.curve || option.curve.length <= 2) continue;
+
+    // Quick validation of the curve path
+    const intersectionCount = checkCurveIntersections(
+      option.curve,
+      relevantIntersections
+    );
+    if (intersectionCount === 0) {
+      // Found a perfect path, use it immediately
+      const finalPath = option.curve;
+      pathCache.set(pathCacheKey, {
+        path: finalPath,
+        timestamp: Date.now(),
+      });
+      return finalPath;
+    }
+
+    if (intersectionCount < minIntersections) {
+      bestOption = option;
+      minIntersections = intersectionCount;
+    }
+  }
+
+  // Use the best available option or fallback to a straight line
+  const finalPath = (bestOption && bestOption.curve) || [startPos, endPos];
+
+  // Cache the result
+  pathCache.set(pathCacheKey, {
+    path: finalPath,
+    timestamp: Date.now(),
+  });
+
+  return finalPath;
 }
 
 /**
- * Generate a single curve in a specific direction
+ * Check how many objects the curve intersects with
  */
+function checkCurveIntersections(curvePoints, intersections) {
+  let intersectionCount = 0;
+
+  // Skip expensive checks if there are no intersections to test against
+  if (!intersections || intersections.length === 0) {
+    return 0;
+  }
+
+  // Check each segment of the curve
+  for (let i = 0; i < curvePoints.length - 1; i++) {
+    const start = curvePoints[i];
+    const end = curvePoints[i + 1];
+
+    // Check against each intersection's bounding box
+    for (const intersection of intersections) {
+      if (!intersection.boundingBox) continue;
+
+      // Create line segment
+      const lineStart = new THREE.Vector3(...start);
+      const lineEnd = new THREE.Vector3(...end);
+      const lineDir = new THREE.Vector3().subVectors(lineEnd, lineStart);
+      const lineLength = lineDir.length();
+
+      if (lineLength < 0.1) continue; // Skip tiny segments
+      lineDir.normalize();
+
+      // Quick box intersection test
+      const ray = new THREE.Ray(lineStart, lineDir);
+      const intersectionPoint = new THREE.Vector3();
+
+      if (ray.intersectBox(intersection.boundingBox, intersectionPoint)) {
+        // Check if intersection point is within segment bounds
+        const dist = intersectionPoint.distanceTo(lineStart);
+        if (dist <= lineLength) {
+          intersectionCount++;
+          break; // Count each object only once
+        }
+      }
+    }
+  }
+
+  return intersectionCount;
+}
+
 function generateSingleCurve(startPos, endPos, intersections, curveDirection) {
   // Create a midpoint with offset
   const midX = (startPos[0] + endPos[0]) / 2;

@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback, useMemo } from 'react';
-import { Line } from '@react-three/drei';
+import PooledLine from './PooledLine';
 import * as THREE from 'three';
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import ObjectUI from './ObjectUI';
@@ -1130,25 +1130,39 @@ const Sphere = React.memo(
         )}
         {/* Remove the outer position group and apply position directly to content group */}{' '}
         <group ref={contentRef} position={position} scale={scale}>
-          {/* Add invisible helper mesh for better click detection */}
-          <mesh onClick={handleBackgroundClick} visible={false}>
-            <sphereGeometry args={[isMobile ? 10 : 6, 32, 32]} />{' '}
-            {/* Slightly larger than dodecahedron */}
-            <meshBasicMaterial transparent opacity={0} />
-          </mesh>
-          {/* Original background mesh */}
-          <mesh
-            onClick={handleBackgroundClick}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <dodecahedronGeometry args={[5.1]} />{' '}
-            {/* Slightly larger than face geometries */}
-            <meshBasicMaterial
+          {/* Add invisible helper mesh for better click detection - only when not selected */}
+          {!selected && (
+            <mesh
+              onClick={handleBackgroundClick}
               visible={false}
-              transparent={false}
-              opacity={1}
-            />
-          </mesh>
+              userData={{ isHelper: true, isClickHelper: true }}
+            >
+              <sphereGeometry args={[isMobile ? 10 : 6, 32, 32]} />{' '}
+              {/* Slightly larger than dodecahedron */}
+              <meshBasicMaterial
+                transparent
+                opacity={0}
+                side={THREE.DoubleSide} // Allow interaction from both sides
+              />
+            </mesh>
+          )}
+          {/* Original background mesh - only when not selected to avoid blocking nested interactions */}
+          {!selected && (
+            <mesh
+              onClick={handleBackgroundClick}
+              onPointerDown={(e) => e.stopPropagation()}
+              userData={{ isHelper: true, isBackgroundHelper: true }}
+            >
+              <dodecahedronGeometry args={[5.1]} />{' '}
+              {/* Slightly larger than face geometries */}
+              <meshBasicMaterial
+                visible={false}
+                transparent={false}
+                opacity={1}
+                side={THREE.DoubleSide} // Allow interaction from both sides
+              />
+            </mesh>
+          )}
           {/* Modified face rendering to handle colors correctly */}
           {geometry.map((faceGeometry, idx) => (
             <mesh
@@ -1188,22 +1202,23 @@ const Sphere = React.memo(
                     ? 1.0
                     : 0 // Hide faces without custom colors when not selected
                 }
-                side={THREE.FrontSide} // Changed from DoubleSide to FrontSide
+                side={THREE.DoubleSide} // Changed to DoubleSide for better interaction when camera is inside
+                depthWrite={false} // Disable depth write to allow nested interactions
                 polygonOffset
                 polygonOffsetFactor={-1}
                 depthTest={true}
-                depthWrite={false} // Disable depth write to allow header text to show through
                 renderOrder={-3}
               />
             </mesh>
           ))}{' '}
           {/* Wireframe lines */}
           {points.map((linePoints, idx) => (
-            <Line
+            <PooledLine
               key={idx}
               points={linePoints}
               color={lineColor}
               lineWidth={isMobile ? 3 : 2}
+              enablePooling={true}
             />
           ))}
           {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}

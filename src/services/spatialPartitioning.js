@@ -8,6 +8,7 @@ import {
   collection,
   onSnapshot,
   deleteField,
+  writeBatch,
 } from 'firebase/firestore';
 
 // Import global subscription manager
@@ -22,7 +23,8 @@ import { getIsInitialLoading } from '../utils/loadingState';
 // Cell size constants
 export const CELL_SIZE = 10000;
 export const CELL_NEIGHBOR_RADIUS = 1; // Load 3x3 horizontal grid around camera (9 cells)
-export const CELL_UNLOAD_DISTANCE = 3; // Distance in cell blocks to unload cells (increased to reduce reload)
+export const CELL_UNLOAD_DISTANCE = 4; // Increased distance to reduce premature unloading
+export const CELL_BOUNDARY_HYSTERESIS = 1000; // 1000 units buffer zone to prevent rapid switching near boundaries
 
 // Cache for cell existence checks to reduce redundant fetch calls
 const cellExistenceCache = new Map(); // cellId -> { exists: boolean, timestamp: number }
@@ -83,6 +85,52 @@ export const getCellCoordinates = (position) => {
     y: Math.floor(y / CELL_SIZE),
     z: Math.floor(z / CELL_SIZE),
   };
+};
+
+/**
+ * Get cell coordinates with hysteresis to prevent rapid switching near boundaries
+ * @param {Array} position - [x, y, z] world position
+ * @param {Object} currentCell - Current cell coordinates {x, y, z}
+ * @returns {Object} - {x, y, z} cell coordinates with hysteresis applied
+ */
+export const getCellCoordinatesWithHysteresis = (position, currentCell) => {
+  if (!currentCell) {
+    return getCellCoordinates(position);
+  }
+
+  const [x, y, z] = position;
+  const newCoords = getCellCoordinates(position);
+
+  // If we haven't changed cells, no need for hysteresis
+  if (
+    newCoords.x === currentCell.x &&
+    newCoords.y === currentCell.y &&
+    newCoords.z === currentCell.z
+  ) {
+    return currentCell;
+  }
+
+  // Check if we're within the hysteresis buffer zone of the current cell
+  const currentCellCenter = [
+    (currentCell.x + 0.5) * CELL_SIZE,
+    (currentCell.y + 0.5) * CELL_SIZE,
+    (currentCell.z + 0.5) * CELL_SIZE,
+  ];
+
+  const distanceFromCenter = Math.sqrt(
+    Math.pow(x - currentCellCenter[0], 2) +
+      Math.pow(y - currentCellCenter[1], 2) +
+      Math.pow(z - currentCellCenter[2], 2)
+  );
+
+  // If we're still within the buffer zone, stick to current cell
+  const bufferDistance = CELL_SIZE / 2 - CELL_BOUNDARY_HYSTERESIS;
+  if (distanceFromCenter < bufferDistance) {
+    return currentCell;
+  }
+
+  // Only switch cells if we're clearly outside the buffer zone
+  return newCoords;
 };
 
 /**
@@ -175,8 +223,8 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
   }
 };
 
-// Request deduplication for concurrent cell loading
-const cellLoadingPromises = new Map(); // cellKey -> Promise
+// Request deduplication for concurrent cell loading (legacy - now handled in batch)
+// const cellLoadingPromises = new Map(); // cellKey -> Promise
 
 /**
  * Create multiple cells in batch for better performance with optimized existence checks
@@ -190,62 +238,180 @@ export const createCellsBatch = async (userId, spaceId, cellCoordsList) => {
     return [];
   }
 
-  // First, check which cells already exist using cached existence checks
-  const existenceChecks = await Promise.all(
-    cellCoordsList.map(async ({ x, y, z }) => {
-      const exists = await cellExists(userId, spaceId, x, y, z);
-      return { coords: { x, y, z }, exists };
-    })
-  );
+  // Limit batch size for conservative performance
+  const BATCH_SIZE = 6;
+  const results = [];
 
-  // Filter out cells that already exist
-  const cellsToCreate = existenceChecks
-    .filter(({ exists }) => !exists)
-    .map(({ coords }) => coords);
+  // Process in small batches to avoid overwhelming Firestore
+  for (let i = 0; i < cellCoordsList.length; i += BATCH_SIZE) {
+    const batch = cellCoordsList.slice(i, i + BATCH_SIZE);
+    const batchResults = await createCellsBatchOptimized(
+      userId,
+      spaceId,
+      batch
+    );
+    results.push(...batchResults);
+  }
+
+  return results;
+};
+
+/**
+ * Optimized batch cell creation with reduced database round trips
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {Array} cellCoordsList - Array of {x, y, z} cell coordinates (max 6-8)
+ * @returns {Promise<Array>} - Array of success status for each cell
+ */
+const createCellsBatchOptimized = async (userId, spaceId, cellCoordsList) => {
+  if (!userId || !spaceId || !cellCoordsList?.length) {
+    return [];
+  }
+
+  // Step 1: Check cache first for all cells
+  const cacheChecks = cellCoordsList.map(({ x, y, z }) => {
+    const cellId = getCellId(x, y, z);
+    const cacheKey = `${userId}:${spaceId}:${cellId}`;
+    const cached = cellExistenceCache.get(cacheKey);
+
+    return {
+      coords: { x, y, z },
+      cellId,
+      cacheKey,
+      cached:
+        cached && Date.now() - cached.timestamp < CACHE_DURATION
+          ? cached
+          : null,
+    };
+  });
+
+  // Step 2: Separate cached vs uncached cells
+  const cachedExisting = cacheChecks.filter((item) => item.cached?.exists);
+  const cachedNonExisting = cacheChecks.filter(
+    (item) => item.cached && !item.cached.exists
+  );
+  const uncachedCells = cacheChecks.filter((item) => !item.cached);
+
+  // Step 3: Batch check existence for uncached cells only
+  let existenceResults = [];
+  if (uncachedCells.length > 0) {
+    // Use Promise.all for parallel existence checks
+    const existencePromises = uncachedCells.map(
+      async ({ coords, cellId, cacheKey }) => {
+        try {
+          const cellRef = doc(
+            db,
+            'users',
+            userId,
+            'spaces',
+            spaceId,
+            'cells',
+            cellId
+          );
+          const cellDoc = await getDoc(cellRef);
+          const exists = cellDoc.exists();
+
+          // Cache the result
+          cellExistenceCache.set(cacheKey, {
+            exists,
+            timestamp: Date.now(),
+          });
+
+          return { coords, cellId, exists, cellDoc: exists ? cellDoc : null };
+        } catch (error) {
+          console.warn(`Failed to check cell existence for ${cellId}:`, error);
+          return { coords, cellId, exists: false, cellDoc: null };
+        }
+      }
+    );
+
+    existenceResults = await Promise.all(existencePromises);
+  }
+
+  // Step 4: Combine all results
+  const allResults = [
+    ...cachedExisting.map((item) => ({ ...item, exists: true })),
+    ...cachedNonExisting.map((item) => ({ ...item, exists: false })),
+    ...existenceResults,
+  ];
+
+  // Step 5: Filter cells that need creation and use batch write
+  const cellsToCreate = allResults.filter((item) => !item.exists);
 
   if (cellsToCreate.length === 0) {
     // All cells already exist
     return cellCoordsList.map(() => true);
   }
 
-  // Deduplicate concurrent requests
-  const results = await Promise.all(
-    cellsToCreate.map(async ({ x, y, z }) => {
-      const cellKey = `${userId}:${spaceId}:${getCellId(x, y, z)}`;
+  // Step 6: Use Firestore batch write for creating multiple cells
+  try {
+    const batch = writeBatch(db);
 
-      // Check if this cell is already being created
-      if (cellLoadingPromises.has(cellKey)) {
-        return await cellLoadingPromises.get(cellKey);
+    cellsToCreate.forEach(({ coords, cellId }) => {
+      const { x, y, z } = coords;
+      const cellRef = doc(
+        db,
+        'users',
+        userId,
+        'spaces',
+        spaceId,
+        'cells',
+        cellId
+      );
+
+      const cellData = {
+        id: cellId,
+        x: x,
+        y: y,
+        z: z,
+        bounds: getCellBounds(x, y, z),
+        createdAt: new Date(),
+        objects: {},
+        connections: {},
+      };
+
+      batch.set(cellRef, cellData);
+    });
+
+    // Commit the batch
+    await batch.commit();
+
+    // Update cache for newly created cells
+    cellsToCreate.forEach(({ cacheKey }) => {
+      cellExistenceCache.set(cacheKey, {
+        exists: true,
+        timestamp: Date.now(),
+      });
+    });
+
+    // Return success for all cells
+    return cellCoordsList.map(() => true);
+  } catch (error) {
+    console.error('Failed to create cells batch:', error);
+
+    // Fallback: create cells individually
+    const fallbackPromises = cellsToCreate.map(async ({ coords }) => {
+      const { x, y, z } = coords;
+      return await createCell(userId, spaceId, x, y, z);
+    });
+
+    const fallbackResults = await Promise.all(fallbackPromises);
+
+    // Reconstruct full results array
+    const fullResults = [];
+    let createIndex = 0;
+
+    for (const item of allResults) {
+      if (item.exists) {
+        fullResults.push(true);
+      } else {
+        fullResults.push(fallbackResults[createIndex] || false);
+        createIndex++;
       }
-
-      // Create new loading promise
-      const loadingPromise = createCell(userId, spaceId, x, y, z);
-      cellLoadingPromises.set(cellKey, loadingPromise);
-
-      try {
-        const result = await loadingPromise;
-        return result;
-      } finally {
-        // Clean up the promise when done
-        cellLoadingPromises.delete(cellKey);
-      }
-    })
-  );
-
-  // Reconstruct full results array matching original input order
-  const fullResults = [];
-  let createIndex = 0;
-
-  for (const { exists } of existenceChecks) {
-    if (exists) {
-      fullResults.push(true); // Cell already existed
-    } else {
-      fullResults.push(results[createIndex] || false);
-      createIndex++;
     }
-  }
 
-  return fullResults;
+    return fullResults;
+  }
 };
 
 /**
@@ -292,6 +458,83 @@ export const cellExists = async (userId, spaceId, cellX, cellY, cellZ) => {
   } catch {
     return false;
   }
+};
+
+/**
+ * Bulk check if multiple cells exist - optimized for batch operations
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {Array} cellCoordsList - Array of {x, y, z} cell coordinates
+ * @returns {Promise<Array>} - Array of {coords, exists} objects
+ */
+export const cellExistsBulk = async (userId, spaceId, cellCoordsList) => {
+  if (!userId || !spaceId || !cellCoordsList?.length) {
+    return [];
+  }
+
+  // Check cache first for all cells
+  const cacheResults = [];
+  const uncachedCells = [];
+
+  cellCoordsList.forEach((coords) => {
+    const { x, y, z } = coords;
+    const cellId = getCellId(x, y, z);
+    const cacheKey = `${userId}:${spaceId}:${cellId}`;
+    const cached = cellExistenceCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+      cacheResults.push({ coords, exists: cached.exists });
+    } else {
+      uncachedCells.push({ coords, cellId, cacheKey });
+    }
+  });
+
+  // For uncached cells, check in parallel
+  let uncachedResults = [];
+  if (uncachedCells.length > 0) {
+    const promises = uncachedCells.map(async ({ coords, cellId, cacheKey }) => {
+      try {
+        const cellRef = doc(
+          db,
+          'users',
+          userId,
+          'spaces',
+          spaceId,
+          'cells',
+          cellId
+        );
+        const cellDoc = await getDoc(cellRef);
+        const exists = cellDoc.exists();
+
+        // Cache the result
+        cellExistenceCache.set(cacheKey, {
+          exists,
+          timestamp: Date.now(),
+        });
+
+        return { coords, exists };
+      } catch {
+        return { coords, exists: false };
+      }
+    });
+
+    uncachedResults = await Promise.all(promises);
+  }
+
+  // Combine and maintain original order
+  const allResults = [...cacheResults, ...uncachedResults];
+
+  // Sort to match original input order
+  return cellCoordsList.map((inputCoords) => {
+    return (
+      allResults.find(
+        (result) =>
+          result.coords.x === inputCoords.x &&
+          result.coords.y === inputCoords.y &&
+          result.coords.z === inputCoords.z
+      ) || { coords: inputCoords, exists: false }
+    );
+  });
 };
 
 /**

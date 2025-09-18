@@ -1,8 +1,8 @@
 import {
-  Line,
   TransformControls as DreiTransformControls,
   Html,
 } from '@react-three/drei';
+import PooledLine from './PooledLine';
 import { Vector3 } from 'three';
 import { useRef, useEffect, useCallback, useMemo } from 'react';
 import React from 'react';
@@ -1489,7 +1489,11 @@ const Plane = ({
               </div>
             </Html>
           )}
-          <Line points={points} {...lineMaterialProps} />
+          <PooledLine
+            points={points}
+            {...lineMaterialProps}
+            enablePooling={true}
+          />
           {shouldShowIndicator && (
             <FaceIndicator
               position={indicatorPosition}

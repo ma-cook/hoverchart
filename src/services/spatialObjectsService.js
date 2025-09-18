@@ -53,9 +53,6 @@ const positionsEqual = (posA, posB) => {
 export const saveObjectToCell = async (userId, spaceId, object) => {
   // Check if we're still in initial loading phase - no saves during app startup
   if (getIsInitialLoading()) {
-    console.log(
-      `⏸️ [saveObjectToCell] Skipping save for object ${object.id} - still in initial loading phase`
-    );
     return;
   }
 
@@ -92,9 +89,6 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
 
     // Check if object is being deleted - if so, prevent save
     if (deletingObjects.has(objectId)) {
-      console.log(
-        `🚫 [Save Debug] Blocked save for deleting object: ${objectId}`
-      );
       return;
     }
 
@@ -196,7 +190,6 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
 
     // Check if object is marked as unloaded
     if (window._unloadedObjects && window._unloadedObjects.has(objectId)) {
-      console.log(`🚫 Skipping update for unloaded object: ${objectId}`);
       return;
     }
 
@@ -225,9 +218,6 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
             oldCellId !== newCellId &&
             oldPosition
           ) {
-            console.log(
-              `[SaveDebug] Object ${objectId} MOVED from cell ${oldCellId} to ${newCellId}. Calling moveObjectBetweenCellsSpatial.`
-            );
             await moveObjectBetweenCellsSpatial(
               ownerUserId,
               spaceId,
@@ -273,20 +263,12 @@ export const deleteObjectFromSpatialCell = async (
     );
   }
 
-  console.log(
-    `🗑️ [Delete Debug] Starting deletion for object ${objectId} at position:`,
-    position
-  );
-
   try {
     const objectIdString = objectId.toString();
     const cacheKey = `${spaceId}_${objectIdString}`;
 
     // Mark object as being deleted to prevent any save operations
     deletingObjects.add(objectIdString);
-    console.log(
-      `🗑️ [Delete Debug] Marked object ${objectIdString} as deleting`
-    );
 
     // Auto-cleanup deletion blacklist after timeout to prevent permanent blocking
     setTimeout(() => {
@@ -299,17 +281,12 @@ export const deleteObjectFromSpatialCell = async (
     }, 30000); // 30 second timeout
 
     // Clear from cache immediately to prevent re-additions
-    console.log(
-      `🗑️ [Delete Debug] Clearing cache for object ${objectIdString}`
-    );
+
     objectsCache.delete(cacheKey);
     lastReceivedObjects.delete(cacheKey);
 
     // Clear any pending save timeouts that might re-add the object
     if (saveTimeouts.has(cacheKey)) {
-      console.log(
-        `🗑️ [Delete Debug] Clearing pending save timeout for object ${objectIdString}`
-      );
       clearTimeout(saveTimeouts.get(cacheKey));
       saveTimeouts.delete(cacheKey);
     }
@@ -329,9 +306,6 @@ export const deleteObjectFromSpatialCell = async (
 
     // If no position provided, try to find the object in all cells
     if (!position) {
-      console.log(
-        `🗑️ [Delete Debug] No position provided, searching all cells for object ${objectIdString}`
-      );
       const { findObjectInCells } = await import('./spatialPartitioning');
       const found = await findObjectInCells(
         ownerUserId,
@@ -341,10 +315,6 @@ export const deleteObjectFromSpatialCell = async (
 
       if (found && found.object && found.object.position) {
         position = found.object.position;
-        console.log(
-          `🗑️ [Delete Debug] Found object ${objectIdString} at position:`,
-          position
-        );
       } else {
         console.warn(
           `⚠️ [Delete Debug] Could not find object ${objectIdString} in any cell`
@@ -352,15 +322,7 @@ export const deleteObjectFromSpatialCell = async (
         return; // Object doesn't exist in database anyway
       }
     }
-    console.log(
-      `🗑️ [Delete Debug] Calling deleteObjectFromCellSpatial for object ${objectIdString} with:`,
-      {
-        ownerUserId,
-        spaceId,
-        objectIdString,
-        position,
-      }
-    );
+
     const deleteResult = await deleteObjectFromCellSpatial(
       ownerUserId,
       spaceId,
@@ -368,17 +330,10 @@ export const deleteObjectFromSpatialCell = async (
       position
     );
 
-    console.log(
-      `🗑️ [Delete Debug] deleteObjectFromCellSpatial returned:`,
-      deleteResult
-    );
-
     if (!deleteResult) {
       // If deletion failed, remove from blacklist to allow retry
       deletingObjects.delete(objectIdString);
-      console.log(
-        `🗑️ [Delete Debug] Removed ${objectIdString} from deletion blacklist due to failure`
-      );
+
       throw new Error(
         `Failed to delete object ${objectIdString} from spatial cell`
       );
@@ -386,13 +341,6 @@ export const deleteObjectFromSpatialCell = async (
 
     // Remove from deletion blacklist after successful deletion
     deletingObjects.delete(objectIdString);
-    console.log(
-      `✅ [Delete Debug] Removed ${objectIdString} from deletion blacklist after successful deletion`
-    );
-
-    console.log(
-      `✅ [Delete Debug] Successfully completed deletion for object ${objectIdString}`
-    );
 
     // Additional safety: Clear any cached references that might cause re-addition
     setTimeout(() => {
@@ -421,9 +369,6 @@ export const updateObjectInSpatialCell = async (
 ) => {
   // Check if we're still in initial loading phase - no saves during app startup
   if (getIsInitialLoading()) {
-    console.log(
-      `⏸️ [updateObjectInSpatialCell] Skipping save for object ${objectData.id} - still in initial loading phase`
-    );
     return;
   }
 
@@ -463,9 +408,6 @@ export const updateObjectInSpatialCell = async (
 
       // If a move is already in progress and it's recent (less than 2 seconds), skip this update
       if (timeSinceMove < 2000) {
-        console.log(
-          `[updateObjectInSpatialCell] Object ${objectId} is already being moved. Skipping concurrent update.`
-        );
         return;
       } else {
         // Clean up stale move tracking
@@ -518,10 +460,6 @@ export const updateObjectInSpatialCell = async (
           );
 
           if (oldCellId !== newCellId) {
-            console.log(
-              `[updateObjectInSpatialCell] Object ${objectData.id} crossed cell boundary from ${oldCellId} to ${newCellId}. Using moveObjectBetweenCells.`
-            );
-
             // Use moveObjectBetweenCells for cell boundary crossings
             await moveObjectBetweenCellsSpatial(
               ownerUserId,
@@ -650,7 +588,6 @@ export const subscribeToSpatialObjects = (
       }
       window.currentSpaceOwner = ownerUserId; // Guard against empty cells
       if (safeCells.length === 0) {
-        console.log('⚠️ [subscribeToSpatialObjects] No cells to subscribe to');
         return;
       }
 
@@ -700,9 +637,6 @@ export const subscribeToSpatialObjects = (
                 }
                 // Check if cell is unloaded
                 if (window._unloadedCells?.has(cellKey)) {
-                  console.log(
-                    `📦 Ignoring updates for unloaded cell: ${cellKey}`
-                  );
                   return;
                 }
 
@@ -711,23 +645,14 @@ export const subscribeToSpatialObjects = (
 
                 // If the cell is loaded, make sure all its objects are marked as loaded
                 if (!window._unloadedCells?.has(cellKey)) {
-                  console.log(
-                    `📦 Processing objects for loaded cell: ${cellKey}`
-                  );
                   // Ensure all objects in this cell are marked as loaded
                   Object.keys(cellObjects).forEach((objId) => {
                     const objIdStr = objId.toString();
                     if (window._unloadedObjects?.has(objIdStr)) {
-                      console.log(
-                        `🔄 Re-enabling object: ${objIdStr} in cell: ${cellKey}`
-                      );
                       window._unloadedObjects.delete(objIdStr);
                     }
                   });
                 } else {
-                  console.log(
-                    `📦 Cell is still marked as unloaded: ${cellKey}`
-                  );
                   return;
                 }
 
@@ -735,9 +660,6 @@ export const subscribeToSpatialObjects = (
                   ([objectId, objectData]) => {
                     // Skip if object is marked as unloaded
                     if (window._unloadedObjects?.has(objectId.toString())) {
-                      console.log(
-                        `🚫 Ignoring update for unloaded object: ${objectId}`
-                      );
                       return;
                     }
 
@@ -816,10 +738,6 @@ export const subscribeToSpatialObjects = (
                         object: objectData,
                         cellCoords: { x, y, z: z || 0 },
                       });
-                    } else {
-                      console.log(
-                        `⏭️ [subscribeToSpatialObjects] Skipping object ${objectId} from cell ${cellKey} (no changes detected)`
-                      );
                     }
                   }
                 );
@@ -923,9 +841,6 @@ export const moveObjectBetweenCells = async (
 ) => {
   // Check if we're still in initial loading phase - no saves during app startup
   if (getIsInitialLoading()) {
-    console.log(
-      `⏸️ [moveObjectBetweenCells] Skipping save for object ${objectData.id} - still in initial loading phase`
-    );
     return false;
   }
 
@@ -1063,9 +978,7 @@ export const getObjectDeletionStatus = () => {
 export const clearObjectDeletionBlacklist = () => {
   const count = deletingObjects.size;
   deletingObjects.clear();
-  console.log(
-    `🧹 [Delete Debug] Cleared ${count} objects from deletion blacklist`
-  );
+
   return count;
 };
 

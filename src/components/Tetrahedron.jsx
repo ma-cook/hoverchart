@@ -9,7 +9,7 @@ import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
-import { Line } from '@react-three/drei';
+import PooledLine from './PooledLine';
 import isEqual from 'lodash/isEqual';
 import {
   useTetrahedronStore,
@@ -1305,18 +1305,23 @@ const Tetrahedron = ({
               e.stopPropagation();
               handleSceneClick();
             }}
+            userData={{ isHelper: true, isClickHelper: true }}
           >
             <boxGeometry args={[10, 10, 10]} />
-            <meshBasicMaterial visible={false} />
+            <meshBasicMaterial
+              visible={false}
+              side={THREE.DoubleSide} // Allow interaction from both sides
+            />
           </mesh>
         )}
 
         {/* Tetrahedron edge lines */}
-        <Line
+        <PooledLine
           points={tetrahedronLinePoints}
           color={tetrahedron?.color || color}
           lineWidth={2}
           dashed={false}
+          enablePooling={true}
         />
 
         {/* Render faces */}

@@ -3,8 +3,9 @@ import * as THREE from 'three';
 export const faceMaterialProps = {
   transparent: true,
   opacity: 0.1, // Reverted back to original value
-  side: THREE.FrontSide,
+  side: THREE.DoubleSide, // Changed to DoubleSide for better interaction when camera is inside
   depthTest: true,
+  depthWrite: false, // Disable depth write to allow nested interactions
   polygonOffset: true,
   polygonOffsetFactor: -1,
   polygonOffsetUnits: -4,

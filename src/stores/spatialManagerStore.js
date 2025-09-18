@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   getCellCoordinates,
+  getCellCoordinatesWithHysteresis,
   getCellId,
   getNeighborCells,
   createCellsBatch,
@@ -40,10 +41,12 @@ const useSpatialManagerStore = create((set, get) => ({
   lastCellLoadTime: 0,
   objectsByCell: new Map(), // Map of cellId -> Set of objectIds
 
-  // Constants
-  CELL_LOAD_COOLDOWN: 50, // Reduced to 50ms for very responsive loading
-  MAX_CONCURRENT_LOADS: 16, // Increased to allow loading more cells at once
-  POSITION_UPDATE_THROTTLE: 0, // No throttling - we handle this in the hook
+  // Constants - Optimized for smoother performance with conservative limits
+  CELL_LOAD_COOLDOWN: 150, // Increased cooldown to reduce rapid loading
+  MAX_CONCURRENT_LOADS: 6, // Conservative limit to prevent overwhelming Firestore
+  POSITION_UPDATE_THROTTLE: 0, // No throttling - handled by hysteresis
+  UNLOAD_BATCH_SIZE: 6, // Conservative unload batch size
+  LOAD_BATCH_SIZE: 6, // Conservative load batch size for optimal performance
 
   // Handler for when cells are reloaded
   handleCellsReloaded: (loadedCells) => {
@@ -146,16 +149,59 @@ const useSpatialManagerStore = create((set, get) => ({
     }
   },
 
+  // Helper method to efficiently determine which cells need loading
+  getCellsNeedingLoad: (cellCoordsList) => {
+    const state = get();
+    return cellCoordsList.filter((coords) => {
+      const cellId = getCellId(coords.x, coords.y, coords.z);
+      return !state.loadedCells.has(cellId) && !state.loadingCells.has(cellId);
+    });
+  },
+
+  // Helper method to check if we can load more cells
+  canLoadMoreCells: () => {
+    const state = get();
+    return state.loadingCells.size < state.MAX_CONCURRENT_LOADS;
+  },
+
   // Load multiple cells in parallel for better performance
   loadCellsBatch: async (cellCoordsList, user, currentSpaceId) => {
     if (!currentSpaceId || !cellCoordsList?.length) return [];
 
-    // Get cell IDs for the cells we're loading
-    const loadingCellIds = cellCoordsList.map((coords) =>
+    const state = get();
+
+    // Quick exit if we can't load more cells
+    if (!state.canLoadMoreCells()) {
+      return [];
+    }
+
+    // Efficiently filter cells that need loading
+    const cellsToLoad = state.getCellsNeedingLoad(cellCoordsList);
+
+    if (cellsToLoad.length === 0) {
+      return [];
+    }
+
+    const ownerUserId = window.currentSpaceOwner || user?.uid;
+    if (!ownerUserId) return [];
+
+    // Apply conservative batch limits
+    const availableSlots = state.MAX_CONCURRENT_LOADS - state.loadingCells.size;
+    const effectiveBatchSize = Math.min(availableSlots, state.LOAD_BATCH_SIZE);
+    const cellsToLoadNow = cellsToLoad.slice(0, effectiveBatchSize);
+
+    // Get cell IDs for cleanup operations
+    const loadingCellIds = cellsToLoadNow.map((coords) =>
       getCellId(coords.x, coords.y, coords.z)
     );
 
-    // Remove unloaded flags for the cells and their objects
+    // Mark cells as being loaded
+    cellsToLoadNow.forEach((coords) => {
+      const cellId = getCellId(coords.x, coords.y, coords.z);
+      get().addLoadingCell(cellId);
+    });
+
+    // Remove unloaded flags for the cells and their objects (batch operation)
     if (window._unloadedObjects || window._unloadedCells) {
       loadingCellIds.forEach((cellId) => {
         // Remove cell from unloaded tracking
@@ -164,59 +210,24 @@ const useSpatialManagerStore = create((set, get) => ({
         }
 
         // Remove all objects in this cell from unloaded tracking
-        const state = get();
         const cellObjects = state.objectsByCell.get(cellId);
         if (cellObjects && window._unloadedObjects) {
           cellObjects.forEach((objId) => {
-            const objIdStr = objId.toString();
-            window._unloadedObjects.delete(objIdStr);
-            console.log(
-              `📦 Removing unloaded flag for object: ${objIdStr} in cell: ${cellId}`
-            );
+            window._unloadedObjects.delete(objId);
           });
         }
       });
     }
 
-    const ownerUserId = window.currentSpaceOwner || user?.uid;
-    if (!ownerUserId) return [];
-
-    const state = get();
-
-    // Filter out cells that are already loaded OR currently being loaded
-    const cellsToLoad = cellCoordsList.filter((coords) => {
-      const cellId = getCellId(coords.x, coords.y, coords.z);
-      return !state.loadedCells.has(cellId) && !state.loadingCells.has(cellId);
-    });
-
-    if (cellsToLoad.length === 0) {
-      return [];
-    }
-
-    // Apply concurrency limit
-    const currentlyLoading = state.loadingCells.size;
-    if (currentlyLoading >= state.MAX_CONCURRENT_LOADS) {
-      return [];
-    }
-
-    const availableSlots = state.MAX_CONCURRENT_LOADS - currentlyLoading;
-    const cellsToLoadNow = cellsToLoad.slice(0, availableSlots);
-
-    // Mark cells as being loaded
-    cellsToLoadNow.forEach((coords) => {
-      const cellId = getCellId(coords.x, coords.y, coords.z);
-      get().addLoadingCell(cellId);
-    });
-
     try {
-      // Use batch creation for better performance
+      // Use optimized batch creation for better performance
       const results = await createCellsBatch(
         ownerUserId,
         currentSpaceId,
         cellsToLoadNow
       );
 
-      // For successfully loaded cells, remove from unloaded tracking
+      // Process successful loads in batch
       const loadedCellIds = [];
       cellsToLoadNow.forEach((coords, index) => {
         if (results[index]) {
@@ -224,12 +235,11 @@ const useSpatialManagerStore = create((set, get) => ({
           loadedCellIds.push(cellId);
           if (window._unloadedCells) {
             window._unloadedCells.delete(cellId);
-            console.log(`📦 Removed cell from unloaded tracking: ${cellId}`);
           }
         }
       });
 
-      // Trigger object and connection restoration for reloaded cells
+      // Batch restore objects and connections for loaded cells
       if (loadedCellIds.length > 0) {
         // Restore objects
         get().handleCellsReloaded(loadedCellIds);
@@ -395,9 +405,25 @@ const useSpatialManagerStore = create((set, get) => ({
       state.loadedCells.has(cellId)
     );
 
-    if (cellsToRemove.length > 0) {
+    // Limit unload batch size to prevent frame drops
+    const unloadBatchSize = Math.min(
+      cellsToRemove.length,
+      state.UNLOAD_BATCH_SIZE
+    );
+    const cellsToUnloadNow = cellsToRemove.slice(0, unloadBatchSize);
+
+    // Queue remaining cells for next batch if needed
+    if (cellsToRemove.length > unloadBatchSize) {
+      const remainingCells = cellsToRemove.slice(unloadBatchSize);
+      // Schedule next batch with a delay to spread the work
+      setTimeout(() => {
+        get().unloadCellsBatch(remainingCells, onObjectsChange, currentSpaceId);
+      }, 50); // 50ms delay between batches
+    }
+
+    if (cellsToUnloadNow.length > 0) {
       console.log(
-        `🗑️ Unloading ${cellsToRemove.length} cells: ${cellsToRemove.join(
+        `🗑️ Unloading ${cellsToUnloadNow.length} cells: ${cellsToUnloadNow.join(
           ', '
         )}`
       );
@@ -410,7 +436,7 @@ const useSpatialManagerStore = create((set, get) => ({
           window._unloadedObjects = new Set();
         }
 
-        cellsToRemove.forEach((cellId) => {
+        cellsToUnloadNow.forEach((cellId) => {
           const cellObjects = state.objectsByCell.get(cellId);
 
           if (cellObjects) {
@@ -466,7 +492,7 @@ const useSpatialManagerStore = create((set, get) => ({
         import('./connectionStore')
           .then(({ default: connectionStore }) => {
             const state = connectionStore.getState();
-            state.removeConnectionsFromCells(cellsToRemove);
+            state.removeConnectionsFromCells(cellsToUnloadNow);
           })
           .catch((error) => {
             console.error(
@@ -482,7 +508,7 @@ const useSpatialManagerStore = create((set, get) => ({
       try {
         import('../services/globalSubscriptionManager')
           .then(({ forceCleanupSubscription, generateSubscriptionKey }) => {
-            cellsToRemove.forEach((cellKey) => {
+            cellsToUnloadNow.forEach((cellKey) => {
               // Generate the same subscription key that was used for this cell
               const subscriptionKey = generateSubscriptionKey.connections(
                 currentSpaceId || 'default',
@@ -502,7 +528,7 @@ const useSpatialManagerStore = create((set, get) => ({
       try {
         import('../services/globalSubscriptionManager')
           .then(({ forceCleanupSubscription, generateSubscriptionKey }) => {
-            cellsToRemove.forEach((cellKey) => {
+            cellsToUnloadNow.forEach((cellKey) => {
               // Clean up spatial object subscriptions
               const spatialSubKey = generateSubscriptionKey.spatialObjects(
                 currentSpaceId || 'default',
@@ -526,7 +552,7 @@ const useSpatialManagerStore = create((set, get) => ({
 
       // Remove cells from loaded set
       const newLoadedCells = new Set(state.loadedCells);
-      cellsToRemove.forEach((cellId) => newLoadedCells.delete(cellId));
+      cellsToUnloadNow.forEach((cellId) => newLoadedCells.delete(cellId));
       set({ loadedCells: newLoadedCells });
     }
   },
@@ -549,22 +575,27 @@ const useSpatialManagerStore = create((set, get) => ({
       ? position
       : [position.x, position.y, position.z];
 
-    // Get current cell coordinates and update last position
-    set({ lastCameraPosition: posArray });
+    // Use hysteresis to prevent rapid cell switching near boundaries
+    const newCellCoords = getCellCoordinatesWithHysteresis(
+      posArray,
+      state.currentCellCoords
+    );
 
-    // Always update the last position
-    set({ lastCameraPosition: posArray });
-
-    // Get current cell coordinates
-    const newCellCoords = getCellCoordinates(posArray);
-
-    // Update current cell if changed
-    if (
+    // Only proceed if we've actually changed cells
+    const cellChanged =
       newCellCoords.x !== state.currentCellCoords.x ||
       newCellCoords.y !== state.currentCellCoords.y ||
-      newCellCoords.z !== state.currentCellCoords.z
-    ) {
-      set({ currentCellCoords: newCellCoords });
+      newCellCoords.z !== state.currentCellCoords.z;
+
+    // Update camera position and cell coordinates
+    set({
+      lastCameraPosition: posArray,
+      currentCellCoords: newCellCoords,
+    });
+
+    // If we haven't changed cells, skip most processing to reduce overhead
+    if (!cellChanged) {
+      return;
     }
 
     // Track a global set of unloaded cells to prevent resubscription
@@ -577,9 +608,17 @@ const useSpatialManagerStore = create((set, get) => ({
       posArray,
       Array.from(state.loadedCells),
       CELL_UNLOAD_DISTANCE
-    );
+    ).filter((cellId) => {
+      // Don't unload cells that are in the loading state
+      if (state.loadingCells.has(cellId)) return false;
+
+      // Don't unload cells that were recently loaded (2 second grace period)
+      const timeSinceLastLoad = now - state.lastCellLoadTime;
+      return timeSinceLastLoad > 2000;
+    });
 
     if (cellsToUnload.length > 0) {
+      window._lastCellUnloadTime = now;
       get().unloadCellsBatch(cellsToUnload, onObjectsChange, currentSpaceId);
     }
 
@@ -587,13 +626,32 @@ const useSpatialManagerStore = create((set, get) => ({
     const neighborCells = getNeighborCells(posArray, CELL_NEIGHBOR_RADIUS);
     const cellsToLoad = neighborCells.filter((cellCoords) => {
       const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-      return !state.loadedCells.has(cellId) && !state.loadingCells.has(cellId);
+
+      // Don't load if the cell is already loaded or loading
+      if (state.loadedCells.has(cellId) || state.loadingCells.has(cellId))
+        return false;
+
+      // Enforce a cooldown period after unloading before reloading
+      // This prevents the rapid unload-reload cycle
+      if (window._unloadedCells?.has(cellId)) {
+        const timeSinceUnload = now - (window._lastCellUnloadTime || 0);
+        if (timeSinceUnload < 2000) return false; // 2 second cooldown
+        window._unloadedCells.delete(cellId); // Clear the unloaded flag after cooldown
+      }
+
+      return true;
     });
 
     // Add cooldown check to prevent rapid successive cell loading
     const timeSinceLastLoad = now - state.lastCellLoadTime;
+    // Enforce a longer cooldown period if there are unloaded cells
+    const hasUnloadedCells = window._unloadedCells?.size > 0;
+    const effectiveCooldown = hasUnloadedCells
+      ? state.CELL_LOAD_COOLDOWN * 2 // Double cooldown when cells were recently unloaded
+      : state.CELL_LOAD_COOLDOWN;
+
     const shouldLoadCells =
-      cellsToLoad.length > 0 && timeSinceLastLoad >= state.CELL_LOAD_COOLDOWN;
+      cellsToLoad.length > 0 && timeSinceLastLoad >= effectiveCooldown;
 
     console.log(
       `📍 Camera at [${posArray[0].toFixed(0)}, ${posArray[1].toFixed(

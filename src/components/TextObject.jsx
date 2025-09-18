@@ -2287,9 +2287,17 @@ const TextObject = React.memo(
           }}
         >
           {/* Invisible mesh for resize controls - positioned same as text container */}
-          <mesh ref={resizeMeshRef} visible={false}>
+          <mesh
+            ref={resizeMeshRef}
+            visible={false}
+            userData={{ isHelper: true, isResizeHelper: true }}
+          >
             <boxGeometry args={[1, 1, 0.1]} />
-            <meshBasicMaterial transparent opacity={0} />
+            <meshBasicMaterial
+              transparent
+              opacity={0}
+              side={THREE.DoubleSide} // Allow interaction from both sides
+            />
           </mesh>
 
           <Html

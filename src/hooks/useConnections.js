@@ -72,7 +72,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     (event) => {
       // Handle single event objects from connection service
       if (!event) {
-        console.log('⚠️ [useConnections] Empty connection event received');
         return;
       }
 
@@ -80,13 +79,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
         console.error('❌ [useConnections] Error event received:', event);
         return;
       }
-
-      console.log('📨 [useConnections] Connection event received:', {
-        type: event.type,
-        id: event.id,
-        hasConnection: !!event.connection,
-        cellCoords: event.cellCoords,
-      });
 
       // Process single event - CRITICAL: Prevent excessive re-renders during bulk operations
       try {
@@ -185,7 +177,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
           window._unloadedConnections &&
           window._unloadedConnections.has(event.id)
         ) {
-          console.log(`🔄 Connection ${event.id} restored from Firebase`);
           window._unloadedConnections.delete(event.id);
         }
       } else if (event && event.type === 'removed') {
@@ -206,16 +197,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
   // Set up and manage connection subscriptions with performance optimizations
   useEffect(() => {
-    console.log('🔄 [useConnections] Effect triggered:', {
-      hasUser: !!user?.uid,
-      hasSpace: !!currentSpaceId,
-      cellCount: stableLoadedCells.length,
-      isInitialLoading: getIsInitialLoading(),
-      hasExistingSubscription: !!subscriptionCleanupRef.current,
-    });
-
     if (!user?.uid || !currentSpaceId) {
-      console.log('🔄 [useConnections] Skipping - no user or space');
       return;
     }
 
@@ -229,24 +211,11 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     const initialLoadingJustFinished =
       !getIsInitialLoading() && lastSub.wasInitialLoading;
 
-    console.log('🔄 [useConnections] Change detection:', {
-      cellsChanged,
-      userChanged,
-      spaceChanged,
-      initialLoadingJustFinished,
-      currentCells: stableLoadedCells,
-      lastCells: lastSub.loadedCells,
-    });
-
     // Always create initial subscription for the first set of cells, regardless of loading state
     if (
       !lastSubscriptionRef.current.loadedCells ||
       lastSubscriptionRef.current.loadedCells.length === 0
     ) {
-      console.log(
-        `🔄 [useConnections] Setting up first-time connection subscription. Cells: ${stableLoadedCells.length}`
-      );
-
       if (subscriptionCleanupRef.current) {
         subscriptionCleanupRef.current();
         subscriptionCleanupRef.current = null;
@@ -277,31 +246,20 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       !initialLoadingJustFinished &&
       subscriptionCleanupRef.current
     ) {
-      console.log(
-        '🔄 [useConnections] No changes detected, keeping existing subscription'
-      );
       return;
     }
-
-    console.log(
-      `🔄 [useConnections] Updating connection subscription. Cells: ${stableLoadedCells.length}, Changed: cells=${cellsChanged}, user=${userChanged}, space=${spaceChanged}`
-    );
 
     // Clean up existing subscription before starting new one
     if (
       subscriptionCleanupRef.current &&
       typeof subscriptionCleanupRef.current === 'function'
     ) {
-      console.log('🔄 [useConnections] Cleaning up existing subscription');
       subscriptionCleanupRef.current();
       subscriptionCleanupRef.current = null;
     }
 
     // Start a new subscription with current loaded cells
-    console.log(
-      '🔄 [useConnections] Creating new subscription with cells:',
-      stableLoadedCells
-    );
+
     const cleanup = subscribeToConnections(
       user.uid,
       currentSpaceId,
@@ -349,11 +307,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
     // Initial load: record loaded cells and set up initial subscription
     if (!previousCells || previousCells.length === 0) {
-      console.log(
-        '🔍 [CONNECTION SPATIAL DEBUG] Initial cell load - recording cells:',
-        currentCells
-      );
-
       // Create initial subscription
       const initialCleanup = subscribeToConnections(
         user.uid,
@@ -381,10 +334,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       (cellId) => !previousCellsSet.has(cellId)
     ); // Track connections that should be removed due to unloaded cells
     if (unloadedCells.length > 0) {
-      console.log(
-        '🔍 [CONNECTION SPATIAL DEBUG] Cells unloaded:',
-        unloadedCells
-      );
       const connectionsToRemove = [];
 
       unloadedCells.forEach((cellId) => {
@@ -397,9 +346,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
           cellConnections.forEach((connectionId) => {
             window._unloadedConnections.add(connectionId);
-            console.log(
-              `🚫 Marking connection as unloaded: ${connectionId} from cell: ${cellId}`
-            );
           });
 
           connectionsToRemove.push(...Array.from(cellConnections));
@@ -409,10 +355,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
       // Remove connections that belong to unloaded cells
       if (connectionsToRemove.length > 0) {
-        console.log(
-          '🔍 [CONNECTION SPATIAL DEBUG] Removing connections from unloaded cells:',
-          connectionsToRemove
-        );
         connectionsToRemove.forEach((connectionId) => {
           removeConnection(connectionId);
         });
@@ -421,11 +363,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
     // Handle reloaded cells
     if (reloadedCells.length > 0) {
-      console.log(
-        '🔍 [CONNECTION SPATIAL DEBUG] Cells reloaded:',
-        reloadedCells
-      );
-
       // Create a fresh subscription for all reloaded cells
       const newSubscriptionCleanup = subscribeToConnections(
         user.uid,
@@ -442,19 +379,13 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       };
 
       // Clear unloaded status for connections in reloaded cells
-      reloadedCells.forEach((cellId) => {
+      reloadedCells.forEach(() => {
         if (
           window._unloadedConnections &&
           window._unloadedConnections.size > 0
         ) {
-          console.log(
-            `🔄 Checking for connections to restore in cell: ${cellId}`
-          );
           Array.from(window._unloadedConnections).forEach((connectionId) => {
             window._unloadedConnections.delete(connectionId);
-            console.log(
-              `🔄 Cleared unloaded status for connection: ${connectionId} in cell: ${cellId}`
-            );
           });
         }
       });

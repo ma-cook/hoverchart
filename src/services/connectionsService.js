@@ -4,8 +4,6 @@ import {
   disableNetwork,
   doc,
   onSnapshot,
-  collection,
-  getDocs,
 } from 'firebase/firestore';
 import { isSharedSpace } from './sharedSpacesService';
 import {
@@ -281,10 +279,6 @@ const subscribeToCellConnections = (
       // For each cell, set up a subscription if we don't already have one
       for (const cellId of effectiveCells) {
         if (!activeSubscriptionCells.has(cellId)) {
-          console.log(
-            `📡 Setting up connection subscription for cell: ${cellId}`
-          );
-
           const [x, y, z] = cellId.split(',').map(Number);
           const cellRef = doc(
             db,
@@ -335,72 +329,11 @@ const subscribeToCellConnections = (
         }
       }
 
-      // If no cells are loaded, try to load connections from all cells in the space
-      // This handles the case where the app just started and spatial manager hasn't loaded cells yet
+      // If no cells are loaded, wait for spatial partitioning to determine which cells to load
+      // This ensures connections are only loaded through the spatial partitioning system
       if (effectiveCells.length === 0) {
-        // No cells loaded yet, attempting to load connections from all cells in space
-
-        try {
-          // Get all cells that contain connections for this space
-          const spaceRef = doc(db, 'users', ownerUserId, 'spaces', spaceId);
-          const cellsCollectionRef = collection(spaceRef, 'cells');
-
-          // Query for all cells that have connections
-          const cellsSnapshot = await getDocs(cellsCollectionRef);
-
-          if (!cellsSnapshot.empty) {
-            // Found cells in space, checking for connections
-
-            cellsSnapshot.forEach((cellDoc) => {
-              if (cellDoc.exists()) {
-                const cellData = cellDoc.data();
-                const cellConnections = cellData.connections || {};
-
-                if (Object.keys(cellConnections).length > 0) {
-                  // Process each connection in the cell
-                  Object.entries(cellConnections).forEach(
-                    ([connectionId, connectionData]) => {
-                      // Check deletion blacklist before processing
-                      if (window._deletingConnections?.has(connectionId)) {
-                        return;
-                      }
-
-                      try {
-                        const { useConnectionStore } = window;
-                        if (useConnectionStore) {
-                          const connectionStore = useConnectionStore.getState();
-                          if (
-                            connectionStore.deletingConnections.has(
-                              connectionId
-                            )
-                          ) {
-                            return;
-                          }
-                        }
-                      } catch {
-                        // Continue processing if store access fails
-                      }
-
-                      // Add the connection
-                      if (connectionData && typeof callback === 'function') {
-                        callback({
-                          type: 'added',
-                          id: connectionId,
-                          data: connectionData,
-                          cell: cellDoc.id,
-                        });
-                      }
-                    }
-                  );
-                }
-              }
-            });
-          }
-        } catch {
-          // Error loading connections from all cells
-        }
-
-        return; // Don't set up individual cell subscriptions if we loaded from all cells
+        // No cells loaded yet - waiting for spatial partitioning system to provide cells
+        return; // Don't load any connections until spatial manager provides cells
       }
 
       // Subscribe to each loaded cell

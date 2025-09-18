@@ -15,7 +15,7 @@ import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
-import { Line } from '@react-three/drei';
+import PooledLine from './PooledLine';
 import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
 import { useCubeStore, useObjectsStore, useConnectionStore } from '../stores';
@@ -1248,7 +1248,7 @@ const Cube = ({
           <meshBasicMaterial visible={false} />
         </mesh>{' '}
         {/* Cube edge lines */}
-        <Line
+        <PooledLine
           points={cubeLinePoints}
           color={cube?.color || color}
           lineWidth={isMobile ? 3 : 2}
@@ -1257,6 +1257,7 @@ const Cube = ({
           transparent={false}
           depthTest={true}
           depthWrite={true}
+          enablePooling={true}
         />
         {/* Colored faces and indicators */}
         {renderFaces}

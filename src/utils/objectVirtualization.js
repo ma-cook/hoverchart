@@ -15,7 +15,7 @@ export class ObjectVirtualizer {
     this.updateThreshold = 5; // Update when camera moves 5 units
     this.retentionTime = 10000; // Keep objects visible for 10 seconds after they leave frustum
   }
-  updateVisibility(camera, objects) {
+  updateVisibility(camera, objects, loadedCells = null) {
     const isMobile =
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
         navigator.userAgent
@@ -23,8 +23,54 @@ export class ObjectVirtualizer {
 
     // Get current quality from local storage or default to medium
     const canvasQuality = localStorage.getItem('canvasQuality') || 'medium';
+
+    // If spatial partitioning is active (loadedCells provided), respect it
+    if (loadedCells && loadedCells.size > 0) {
+      // In spatial mode: only filter by object count, not distance
+      // This ensures objects don't disappear due to distance culling when spatial system has them loaded
+      const getMaxObjects = () => {
+        if (isMobile) {
+          return canvasQuality === 'low'
+            ? 80 // Increased for spatial system
+            : canvasQuality === 'medium'
+            ? 120
+            : 160;
+        }
+        return canvasQuality === 'low'
+          ? 100
+          : canvasQuality === 'medium'
+          ? 200
+          : 400; // Much higher limits when using spatial system
+      };
+
+      const maxObjects = getMaxObjects();
+      const cameraPosition = camera.position.clone();
+
+      // Filter objects by distance but use much larger distances
+      const objectsWithDistance = objects
+        .map((obj) => ({
+          id: obj.id,
+          distance: cameraPosition.distanceTo(
+            new THREE.Vector3(
+              obj.position?.x || obj.position?.[0] || 0,
+              obj.position?.y || obj.position?.[1] || 0,
+              obj.position?.z || obj.position?.[2] || 0
+            )
+          ),
+        }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, maxObjects); // Only limit by count, not distance
+
+      const visibleIds = objectsWithDistance.map((obj) => obj.id);
+      this.visibleObjects = new Set(visibleIds);
+      return visibleIds;
+    }
+
+    // Fallback mode: traditional distance-based culling for when spatial system isn't active
     // Mobile-aware object limits and distance culling
-    const maxObjectDistance = isMobile ? 15000 : 20000; // Increased for large coordinate spaces
+    // Coordinate with spatial partitioning system: CELL_SIZE = 10000, UNLOAD_DISTANCE = 4
+    // So objects should be visible up to ~50000 units to match spatial system
+    const maxObjectDistance = isMobile ? 45000 : 60000; // Increased to match spatial partitioning
     const getMaxObjects = () => {
       if (isMobile) {
         return canvasQuality === 'low'

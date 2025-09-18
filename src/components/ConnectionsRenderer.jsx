@@ -735,8 +735,9 @@ const ConnectionsRenderer = ({
 
   // Filter connections to only show those where both endpoint objects are visible
   const visibleConnections = useMemo(() => {
+    // Only show connections when spatial filtering is active AND objects are visible
     if (!visibleObjectIds || visibleObjectIds.size === 0) {
-      return connections; // If no spatial filtering is active, show all connections
+      return []; // Don't show any connections until spatial system loads objects
     }
 
     return connections.filter((connection) => {

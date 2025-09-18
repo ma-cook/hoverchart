@@ -101,6 +101,7 @@ export const useSpatialManager = ({
       const camera = cameraRef.current.camera;
       const controls = cameraRef.current.orbitControls;
       let lastCellCoords = null;
+      let debounceTimer = null;
 
       const handleCameraMove = () => {
         const currentPos = camera.position;
@@ -124,12 +125,21 @@ export const useSpatialManager = ({
             to: `[${currentCellCoords.x},${currentCellCoords.y},${currentCellCoords.z}]`,
           });
 
-          updateCameraPosition(
-            { x: currentPos.x, y: currentPos.y, z: currentPos.z },
-            user,
-            currentSpaceId,
-            onObjectsChange
-          );
+          // Clear any existing debounce timer
+          if (debounceTimer) {
+            clearTimeout(debounceTimer);
+          }
+
+          // Add a small debounce to prevent rapid successive calls
+          debounceTimer = setTimeout(() => {
+            updateCameraPosition(
+              { x: currentPos.x, y: currentPos.y, z: currentPos.z },
+              user,
+              currentSpaceId,
+              onObjectsChange
+            );
+            debounceTimer = null;
+          }, 25); // 25ms debounce to smooth out rapid movements
 
           lastCellCoords = currentCellCoords;
         }
@@ -144,6 +154,10 @@ export const useSpatialManager = ({
       cleanup = () => {
         if (controls) {
           controls.removeEventListener('change', handleCameraMove);
+        }
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
         }
       };
 

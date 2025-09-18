@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Line } from '@react-three/drei';
+import PooledLine from './PooledLine';
 
 /**
  * Visual indicator showing a dotted line between objects when snapping
@@ -39,7 +39,7 @@ const SnapLineIndicator = ({ points, axis, visible }) => {
   if (!visible || !points || points.length !== 2) return null;
 
   return (
-    <Line
+    <PooledLine
       points={points}
       color={color}
       lineWidth={2}
@@ -49,6 +49,7 @@ const SnapLineIndicator = ({ points, axis, visible }) => {
       dashOffset={0}
       opacity={fadeOut ? 0.3 : 1}
       transparent
+      enablePooling={true}
     />
   );
 };
