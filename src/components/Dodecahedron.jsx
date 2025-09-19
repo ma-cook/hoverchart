@@ -12,6 +12,9 @@ import {
 } from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
+// Import unified utilities
+import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
+import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
 
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
@@ -501,35 +504,27 @@ const Sphere = React.memo(
       if (contentRef.current && window.orbitControls) {
         contentRef.current.orbitControls = window.orbitControls;
       }
-    }, []); // Add effect for handling global clicks
-    useEffect(() => {
-      const handleGlobalClick = (event) => {
-        // Don't close if clicking within the TextStyleUI components
-        if (
-          event.target &&
-          event.target.closest(
-            '.object-ui-content, .color-picker-container, .face-ui-content, .face-ui-container'
-          )
-        ) {
-          return;
-        }
+    }, []);
 
-        if (dodecahedron?.showFaceTextStyleMenu) {
-          setDodecahedronShowFaceTextStyleMenu(id, false);
-          setDodecahedronActiveFaceText(id, null);
-        }
-      };
-
-      window.addEventListener('click', handleGlobalClick);
-      return () => {
-        window.removeEventListener('click', handleGlobalClick);
-      };
+    // Use unified global click handler instead of duplicate pattern
+    const onClickOutside = useCallback(() => {
+      if (dodecahedron?.showFaceTextStyleMenu) {
+        setDodecahedronShowFaceTextStyleMenu(id, false);
+        setDodecahedronActiveFaceText(id, null);
+      }
     }, [
       dodecahedron?.showFaceTextStyleMenu,
       id,
       setDodecahedronActiveFaceText,
       setDodecahedronShowFaceTextStyleMenu,
     ]);
+
+    useGlobalClickHandler(
+      [], // No additional selectors needed, using defaults
+      onClickOutside,
+      'click', // Dodecahedron uses 'click' instead of 'mousedown'
+      [dodecahedron?.showFaceTextStyleMenu]
+    );
 
     // Update effect for connection tracking to be more thorough
     useEffect(() => {
@@ -640,45 +635,8 @@ const Sphere = React.memo(
       }
     }, [id, objectData, onUpdate, dodecahedron]);
 
-    // Add debounced update to prevent excessive database calls
-    const debouncedUpdateTimeoutRef = useRef(null);
-    const isInitialRenderRef = useRef(true);
-
-    useEffect(() => {
-      // Skip updates during initial render
-      if (isInitialRenderRef.current) {
-        isInitialRenderRef.current = false;
-        return;
-      }
-
-      // Skip if objectData is not yet loaded
-      if (!objectData) {
-        return;
-      }
-
-      // Skip if we're still in initial loading phase - no saves during app startup
-      const { isInitialLoading } = useObjectsStore.getState();
-      if (isInitialLoading) {
-        return;
-      }
-
-      // Clear any pending update
-      if (debouncedUpdateTimeoutRef.current) {
-        clearTimeout(debouncedUpdateTimeoutRef.current);
-      }
-
-      // Debounce property updates to prevent excessive calls
-      debouncedUpdateTimeoutRef.current = setTimeout(() => {
-        updateDatabase();
-      }, 100); // 100ms debounce delay
-
-      // Cleanup timeout on unmount
-      return () => {
-        if (debouncedUpdateTimeoutRef.current) {
-          clearTimeout(debouncedUpdateTimeoutRef.current);
-        }
-      };
-    }, [updateDatabase, objectData]);
+    // Use unified debounced update instead of duplicate pattern
+    useDebouncedUpdate(updateDatabase, objectData);
     const handleTransformToggle = () => {
       // When enabling transform mode, we should disable resize mode
       const newShowTransform = !dodecahedron?.showTransform;

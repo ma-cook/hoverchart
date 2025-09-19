@@ -3,6 +3,10 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { startBroadcasting, joinBroadcast } from '../services/webRservice';
 import { useWebcamStreamStore } from '../stores';
+// Import unified resource cleanup
+import { resourceCleanupService } from '../services/resourceCleanupService';
+// Import unified texture updater
+import useTextureUpdater from '../hooks/useTextureUpdater';
 
 const WebcamStream = ({
   active = false,
@@ -148,8 +152,13 @@ const WebcamStream = ({
                   console.log('Disposing previous material map');
                   currentMesh.material.map.dispose();
                 }
-                console.log('Disposing previous material');
-                currentMesh.material.dispose();
+                console.log(
+                  'Disposing previous material using unified service'
+                );
+                resourceCleanupService.disposeMaterial(
+                  currentMesh.material,
+                  `webcam-${streamId}-material`
+                );
               }
 
               const material = new THREE.MeshBasicMaterial({
@@ -337,10 +346,11 @@ const WebcamStream = ({
                     currentMesh.material &&
                     currentMesh.material.map !== texture
                   ) {
-                    if (currentMesh.material.map) {
-                      currentMesh.material.map.dispose();
-                    }
-                    currentMesh.material.dispose();
+                    // Use unified resource cleanup service
+                    resourceCleanupService.disposeMaterial(
+                      currentMesh.material,
+                      `webcam-${streamId}-material-update`
+                    );
                   }
 
                   const material = new THREE.MeshBasicMaterial({
@@ -424,34 +434,13 @@ const WebcamStream = ({
     retryTrigger,
   ]);
 
-  // Texture update effect
-  useEffect(() => {
-    if (!active || !textureRef.current) return;
-
-    let frameId;
-    let lastUpdateTime = 0;
-    const THROTTLE_MS = 16; // ~60fps throttling
-
-    const updateTexture = (currentTime) => {
-      if (currentTime - lastUpdateTime >= THROTTLE_MS) {
-        if (
-          textureRef.current &&
-          meshRef.current?.material?.map === textureRef.current
-        ) {
-          textureRef.current.needsUpdate = true;
-        }
-        lastUpdateTime = currentTime;
-      }
-      frameId = requestAnimationFrame(updateTexture);
-    };
-    frameId = requestAnimationFrame(updateTexture);
-
-    return () => {
-      if (frameId) {
-        cancelAnimationFrame(frameId);
-      }
-    };
-  }, [active, meshRef]);
+  // Use unified texture updater with 60fps throttling for webcam
+  useTextureUpdater({
+    active: active && textureRef.current,
+    textureRef,
+    meshRef,
+    throttleMs: 16, // ~60fps for webcam
+  });
 
   // Cleanup on unmount
   useEffect(() => {

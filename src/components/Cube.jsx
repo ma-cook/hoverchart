@@ -7,6 +7,7 @@ import React, {
 } from 'react';
 
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
+import PooledLine from './PooledLine';
 import * as THREE from 'three';
 import FaceIndicator from './FaceIndicator';
 import TextSprite from './TextSprite';
@@ -15,7 +16,6 @@ import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
-import PooledLine from './PooledLine';
 import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
 import { useCubeStore, useObjectsStore, useConnectionStore } from '../stores';
@@ -23,6 +23,10 @@ import { useCubeStore, useObjectsStore, useConnectionStore } from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils';
 // Import snap line indicator
 import SnapLineIndicator from './SnapLineIndicator';
+// Import unified utilities
+import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
+import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
+import { debounce } from '../utils/unifiedPerformanceUtils';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -37,6 +41,63 @@ const isMobile =
 const CUBE_SIZE = isMobile ? 8 : 5; // Larger cubes on mobile
 const FACE_SIZE = isMobile ? 15.6 : 9.8; // Larger faces on mobile
 const FACE_THICKNESS = 0.05; // Thickness of face overlay
+
+// Cube edges - following dodecahedron pattern for PooledLine
+const cubeEdges = [
+  // Bottom face edges (4 edges)
+  [
+    [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+    [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+  ],
+  [
+    [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+    [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+  ],
+  [
+    [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+    [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+  ],
+  [
+    [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+    [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+  ],
+
+  // Top face edges (4 edges)
+  [
+    [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+    [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+  ],
+  [
+    [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+    [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+  ],
+  [
+    [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+    [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+  ],
+  [
+    [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+    [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+  ],
+
+  // Vertical edges (4 edges)
+  [
+    [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+    [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+  ],
+  [
+    [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
+    [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
+  ],
+  [
+    [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+    [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+  ],
+  [
+    [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
+    [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
+  ],
+];
 
 /**
  * Optimized Cube component - Gets object data from store
@@ -69,7 +130,7 @@ const Cube = ({
   // Refs - declare early so they can be used in memoized values
   const meshRef = useRef();
   const contentRef = useRef(); // Add contentRef like in Dodecahedron
-  const lastUpdateTimeRef = useRef(0); // Memoize derived values to prevent unnecessary re-renders
+  // Memoize derived values to prevent unnecessary re-renders
   const position = useMemo(() => {
     const pos = objectData?.position;
     // Ensure position has valid numbers, not undefined/null values
@@ -310,42 +371,6 @@ const Cube = ({
     ]
   );
 
-  // Cube edge line points
-  const cubeLinePoints = useMemo(
-    () => [
-      // Bottom face edges
-      [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-      [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-      [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-      [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-      [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-
-      // Top face edges
-      [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-      [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-      [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-      [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-      [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-
-      // Vertical edges connecting top and bottom
-      [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-      [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-      [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-      [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-      [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-      [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-      [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-    ],
-    []
-  );
-
   // Calculate face text offset based on font size
   const getFaceTextOffset = useCallback((fontSize, faceName) => {
     const baseOffset =
@@ -436,80 +461,31 @@ const Cube = ({
     }
   }, [id, objectData, onUpdate, cube]);
 
-  // Add debounced update to prevent excessive database calls (same pattern as Dodecahedron)
-  const debouncedUpdateTimeoutRef = useRef(null);
-  const isInitialRenderRef = useRef(true);
+  // Use unified debounced update instead of duplicate pattern
+  useDebouncedUpdate(updateDatabase, objectData);
 
-  useEffect(() => {
-    // Skip updates during initial render
-    if (isInitialRenderRef.current) {
-      isInitialRenderRef.current = false;
-      return;
+  // Use unified global click handler instead of duplicate pattern
+  const onClickOutside = useCallback(() => {
+    if (cube?.showHeaderTextStyleUI || cube?.activeTextFace) {
+      setCubeShowHeaderTextStyleUI(id, false);
+      setCubeActiveTextFace(id, null);
+      setActiveTextStyleUI(null);
     }
-
-    // Skip if objectData is not yet loaded
-    if (!objectData) {
-      return;
-    }
-
-    // Skip if we're still in initial loading phase - no saves during app startup
-    const { isInitialLoading } = useObjectsStore.getState();
-    if (isInitialLoading) {
-      return;
-    }
-
-    // Clear any pending update
-    if (debouncedUpdateTimeoutRef.current) {
-      clearTimeout(debouncedUpdateTimeoutRef.current);
-    }
-
-    // Debounce property updates to prevent excessive calls
-    debouncedUpdateTimeoutRef.current = setTimeout(() => {
-      updateDatabase();
-    }, 100); // 100ms debounce delay
-
-    // Cleanup timeout on unmount
-    return () => {
-      if (debouncedUpdateTimeoutRef.current) {
-        clearTimeout(debouncedUpdateTimeoutRef.current);
-      }
-    };
-  }, [updateDatabase, objectData]);
-  // Add a new effect to close text style UI when clicking elsewhere
-  useEffect(() => {
-    const handleGlobalClick = (event) => {
-      // Don't close if clicking within the TextStyleUI components
-      if (
-        event.target &&
-        event.target.closest(
-          '.object-ui-content, .color-picker-container, .face-ui-content, .face-ui-container'
-        )
-      ) {
-        return;
-      }
-
-      // Close text styling UI when clicking elsewhere
-      if (cube?.showHeaderTextStyleUI || cube?.activeTextFace) {
-        setCubeShowHeaderTextStyleUI(id, false);
-        setCubeActiveTextFace(id, null);
-        setActiveTextStyleUI(null);
-      }
-    };
-
-    // Add a global click handler to the window
-    window.addEventListener('mousedown', handleGlobalClick);
-
-    return () => {
-      window.removeEventListener('mousedown', handleGlobalClick);
-    };
   }, [
     cube?.showHeaderTextStyleUI,
     cube?.activeTextFace,
-    setActiveTextStyleUI,
     id,
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
+    setActiveTextStyleUI,
   ]);
+
+  useGlobalClickHandler(
+    [], // No additional selectors needed, using defaults
+    onClickOutside,
+    'mousedown',
+    [cube?.showHeaderTextStyleUI, cube?.activeTextFace]
+  );
 
   const handleFaceClick = useCallback(
     (e, faceName) => {
@@ -646,31 +622,38 @@ const Cube = ({
       position,
     ]
   );
+
+  // Create debounced update functions using unified utility
+  const debouncedUpdate = useMemo(
+    () =>
+      debounce((id, updateData) => {
+        if (onUpdate) {
+          onUpdate(id, updateData);
+        }
+      }, 300),
+    [onUpdate]
+  );
+
   const handleLineColorChange = useCallback(
     (newColor) => {
       updateCube(id, { color: newColor });
 
-      if (onUpdate) {
-        // Debounce updates to avoid excessive database writes
-        clearTimeout(lastUpdateTimeRef.current);
-        lastUpdateTimeRef.current = setTimeout(() => {
-          onUpdate(id, {
-            color: newColor,
-            headerText: cube?.headerText || headerText,
-            scale: cube?.scale || scale,
-            position: position,
-            faceColors: cube?.faceColors || faceColors,
-            faceTexts: cube?.faceTexts || faceTexts,
-            faceTextStyles: cube?.faceTextStyles || faceTextStyles,
-            textStyle: cube?.textStyle || textStyle,
-            type: 'cube',
-          });
-        }, 300);
-      }
+      // Use unified debounced update
+      debouncedUpdate(id, {
+        color: newColor,
+        headerText: cube?.headerText || headerText,
+        scale: cube?.scale || scale,
+        position: position,
+        faceColors: cube?.faceColors || faceColors,
+        faceTexts: cube?.faceTexts || faceTexts,
+        faceTextStyles: cube?.faceTextStyles || faceTextStyles,
+        textStyle: cube?.textStyle || textStyle,
+        type: 'cube',
+      });
     },
     [
       id,
-      onUpdate,
+      debouncedUpdate,
       cube,
       headerText,
       scale,
@@ -691,29 +674,23 @@ const Cube = ({
 
       updateCubeFaceColor(id, face, color);
 
-      if (onUpdate) {
-        // Debounce updates
-        clearTimeout(lastUpdateTimeRef.current);
-        lastUpdateTimeRef.current = setTimeout(() => {
-          onUpdate(id, {
-            color: cube?.color || color,
-            headerText: cube?.headerText || headerText,
-            scale: cube?.scale || scale,
-            position: position,
-            faceColors: updatedFaceColors,
-            faceTexts: cube?.faceTexts || faceTexts,
-            faceTextStyles: cube?.faceTextStyles || faceTextStyles,
-            textStyle: cube?.textStyle || textStyle,
-            type: 'cube',
-          });
-        }, 300);
-      }
+      // Use unified debounced update
+      debouncedUpdate(id, {
+        color: cube?.color || color,
+        headerText: cube?.headerText || headerText,
+        scale: cube?.scale || scale,
+        position: position,
+        faceColors: updatedFaceColors,
+        faceTexts: cube?.faceTexts || faceTexts,
+        faceTextStyles: cube?.faceTextStyles || faceTextStyles,
+        textStyle: cube?.textStyle || textStyle,
+        type: 'cube',
+      });
     },
     [
       id,
-      onUpdate,
+      debouncedUpdate,
       cube,
-      color,
       headerText,
       scale,
       faceColors,
@@ -1247,18 +1224,16 @@ const Cube = ({
           />
           <meshBasicMaterial visible={false} />
         </mesh>{' '}
-        {/* Cube edge lines */}
-        <PooledLine
-          points={cubeLinePoints}
-          color={cube?.color || color}
-          lineWidth={isMobile ? 3 : 2}
-          segments={true}
-          renderOrder={10} // Much higher render order to ensure cube edges always render in front
-          transparent={false}
-          depthTest={true}
-          depthWrite={true}
-          enablePooling={true}
-        />
+        {/* Cube edges using PooledLine - following dodecahedron pattern */}
+        {cubeEdges.map((edgePoints, idx) => (
+          <PooledLine
+            key={idx}
+            points={edgePoints}
+            color={cube?.color || color}
+            lineWidth={isMobile ? 3 : 2}
+            enablePooling={true}
+          />
+        ))}
         {/* Colored faces and indicators */}
         {renderFaces}
         {/* Face text elements */}

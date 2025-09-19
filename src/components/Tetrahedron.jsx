@@ -20,6 +20,9 @@ import {
 import { calculateAxisSnap } from '../utils/snappingUtils';
 // Import snap line indicator
 import SnapLineIndicator from './SnapLineIndicator';
+// Import unified utilities
+import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
+import { debounce } from '../utils/unifiedPerformanceUtils';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -253,7 +256,17 @@ const Tetrahedron = ({
   // Refs
   const contentRef = useRef();
   const meshRef = useRef();
-  const lastUpdateTimeRef = useRef(0);
+
+  // Create debounced update functions using unified utility
+  const debouncedUpdate = useMemo(
+    () =>
+      debounce((id, updateData) => {
+        if (onUpdate) {
+          onUpdate(id, updateData);
+        }
+      }, 300),
+    [onUpdate]
+  );
 
   // Store state and actions
   const tetrahedron = useTetrahedronStore((state) => state.getTetrahedron(id));
@@ -554,39 +567,8 @@ const Tetrahedron = ({
     }
   }, [id, objectData, onUpdate, tetrahedron]);
 
-  // Add debounced update to prevent excessive database calls
-  const debouncedUpdateTimeoutRef = useRef(null);
-  const isInitialRenderRef = useRef(true);
-
-  useEffect(() => {
-    if (isInitialRenderRef.current) {
-      isInitialRenderRef.current = false;
-      return;
-    }
-
-    if (!objectData) {
-      return;
-    }
-
-    const { isInitialLoading } = useObjectsStore.getState();
-    if (isInitialLoading) {
-      return;
-    }
-
-    if (debouncedUpdateTimeoutRef.current) {
-      clearTimeout(debouncedUpdateTimeoutRef.current);
-    }
-
-    debouncedUpdateTimeoutRef.current = setTimeout(() => {
-      updateDatabase();
-    }, 100);
-
-    return () => {
-      if (debouncedUpdateTimeoutRef.current) {
-        clearTimeout(debouncedUpdateTimeoutRef.current);
-      }
-    };
-  }, [updateDatabase, objectData]);
+  // Use unified debounced update instead of duplicate pattern
+  useDebouncedUpdate(updateDatabase, objectData);
 
   const handleFaceClick = useCallback(
     (e, faceName) => {
@@ -778,26 +760,22 @@ const Tetrahedron = ({
     (newColor) => {
       updateTetrahedron(id, { color: newColor });
 
-      if (onUpdate) {
-        clearTimeout(lastUpdateTimeRef.current);
-        lastUpdateTimeRef.current = setTimeout(() => {
-          onUpdate(id, {
-            color: newColor,
-            headerText: tetrahedron?.headerText || headerText,
-            scale: tetrahedron?.scale || scale,
-            position: position,
-            faceColors: tetrahedron?.faceColors || faceColors,
-            faceTexts: tetrahedron?.faceTexts || faceTexts,
-            faceTextStyles: tetrahedron?.faceTextStyles || faceTextStyles,
-            textStyle: tetrahedron?.textStyle || textStyle,
-            type: 'tetrahedron',
-          });
-        }, 300);
-      }
+      // Use unified debounced update
+      debouncedUpdate(id, {
+        color: newColor,
+        headerText: tetrahedron?.headerText || headerText,
+        scale: tetrahedron?.scale || scale,
+        position: position,
+        faceColors: tetrahedron?.faceColors || faceColors,
+        faceTexts: tetrahedron?.faceTexts || faceTexts,
+        faceTextStyles: tetrahedron?.faceTextStyles || faceTextStyles,
+        textStyle: tetrahedron?.textStyle || textStyle,
+        type: 'tetrahedron',
+      });
     },
     [
       id,
-      onUpdate,
+      debouncedUpdate,
       tetrahedron,
       headerText,
       scale,
@@ -958,24 +936,23 @@ const Tetrahedron = ({
       });
 
       if (onUpdate) {
-        clearTimeout(lastUpdateTimeRef.current);
-        lastUpdateTimeRef.current = setTimeout(() => {
-          onUpdate(id, {
-            color: tetrahedron?.color || color,
-            headerText: tetrahedron?.headerText || headerText,
-            scale: tetrahedron?.scale || scale,
-            position: position,
-            faceColors: tetrahedron?.faceColors || faceColors,
-            faceTexts: tetrahedron?.faceTexts || faceTexts,
-            faceTextStyles: updatedFaceTextStyles,
-            textStyle: tetrahedron?.textStyle || textStyle,
-            type: 'tetrahedron',
-          });
-        }, 300);
+        // Use unified debounced update
+        debouncedUpdate(id, {
+          color: tetrahedron?.color || color,
+          headerText: tetrahedron?.headerText || headerText,
+          scale: tetrahedron?.scale || scale,
+          position: position,
+          faceColors: tetrahedron?.faceColors || faceColors,
+          faceTexts: tetrahedron?.faceTexts || faceTexts,
+          faceTextStyles: updatedFaceTextStyles,
+          textStyle: tetrahedron?.textStyle || textStyle,
+          type: 'tetrahedron',
+        });
       }
     },
     [
       id,
+      debouncedUpdate,
       tetrahedron,
       color,
       headerText,
@@ -1168,21 +1145,19 @@ const Tetrahedron = ({
                 updateTetrahedronFaceColor(id, name, color);
 
                 if (onUpdate) {
-                  clearTimeout(lastUpdateTimeRef.current);
-                  lastUpdateTimeRef.current = setTimeout(() => {
-                    onUpdate(id, {
-                      color: tetrahedron?.color || color,
-                      headerText: tetrahedron?.headerText || headerText,
-                      scale: tetrahedron?.scale || scale,
-                      position: position,
-                      faceColors: updatedFaceColors,
-                      faceTexts: tetrahedron?.faceTexts || faceTexts,
-                      faceTextStyles:
-                        tetrahedron?.faceTextStyles || faceTextStyles,
-                      textStyle: tetrahedron?.textStyle || textStyle,
-                      type: 'tetrahedron',
-                    });
-                  }, 300);
+                  // Use unified debounced update
+                  debouncedUpdate(id, {
+                    color: tetrahedron?.color || color,
+                    headerText: tetrahedron?.headerText || headerText,
+                    scale: tetrahedron?.scale || scale,
+                    position: position,
+                    faceColors: updatedFaceColors,
+                    faceTexts: tetrahedron?.faceTexts || faceTexts,
+                    faceTextStyles:
+                      tetrahedron?.faceTextStyles || faceTextStyles,
+                    textStyle: tetrahedron?.textStyle || textStyle,
+                    type: 'tetrahedron',
+                  });
                 }
               }}
               face={name}

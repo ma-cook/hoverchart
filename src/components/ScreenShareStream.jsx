@@ -3,6 +3,10 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { startBroadcasting, joinBroadcast } from '../services/webRservice';
 import { useScreenShareStore } from '../stores';
+// Import unified resource cleanup
+import { resourceCleanupService } from '../services/resourceCleanupService';
+// Import unified texture updater
+import useTextureUpdater from '../hooks/useTextureUpdater';
 
 const ScreenShareStream = ({
   active = false,
@@ -157,8 +161,13 @@ const ScreenShareStream = ({
                   console.log('Disposing previous material map');
                   currentMesh.material.map.dispose();
                 }
-                console.log('Disposing previous material');
-                currentMesh.material.dispose();
+                console.log(
+                  'Disposing previous material using unified service'
+                );
+                resourceCleanupService.disposeMaterial(
+                  currentMesh.material,
+                  `screenshare-${streamId}-material`
+                );
               }
 
               const material = new THREE.MeshBasicMaterial({
@@ -351,10 +360,11 @@ const ScreenShareStream = ({
                     currentMesh.material &&
                     currentMesh.material.map !== texture
                   ) {
-                    if (currentMesh.material.map) {
-                      currentMesh.material.map.dispose();
-                    }
-                    currentMesh.material.dispose();
+                    // Use unified resource cleanup service
+                    resourceCleanupService.disposeMaterial(
+                      currentMesh.material,
+                      `screenshare-${streamId}-material-update`
+                    );
                   }
 
                   const material = new THREE.MeshBasicMaterial({
@@ -445,34 +455,13 @@ const ScreenShareStream = ({
     streamId,
   ]);
 
-  // Texture update effect
-  useEffect(() => {
-    if (!active || !textureRef.current) return;
-
-    let frameId;
-    let lastUpdateTime = 0;
-    const THROTTLE_MS = 33; // ~30fps throttling for screen share
-
-    const updateTexture = (currentTime) => {
-      if (currentTime - lastUpdateTime >= THROTTLE_MS) {
-        if (
-          textureRef.current &&
-          meshRef.current?.material?.map === textureRef.current
-        ) {
-          textureRef.current.needsUpdate = true;
-        }
-        lastUpdateTime = currentTime;
-      }
-      frameId = requestAnimationFrame(updateTexture);
-    };
-    frameId = requestAnimationFrame(updateTexture);
-
-    return () => {
-      if (frameId) {
-        cancelAnimationFrame(frameId);
-      }
-    };
-  }, [active, meshRef]);
+  // Use unified texture updater with 30fps throttling for screen share
+  useTextureUpdater({
+    active: active && textureRef.current,
+    textureRef,
+    meshRef,
+    throttleMs: 33, // ~30fps for screen share
+  });
 
   // Cleanup on unmount
   useEffect(() => {

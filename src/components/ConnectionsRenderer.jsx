@@ -4,6 +4,7 @@ import LineUI from './LineUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 import AnimatedConnectionLine from './AnimatedConnectionLine';
+import PooledLine from './PooledLine';
 import {
   checkLineIntersection,
   generateCurvedPath,
@@ -618,41 +619,73 @@ const Connection = ({
         connection._localUpdate || 0
       }`}
     >
-      {/* Replace standard Line with optimized AnimatedConnectionLine */}{' '}
-      <AnimatedConnectionLine
-        key={`line-${connection.id}-${effectiveLineStyle}-${
-          connection._lastStyleUpdate || 0
-        }`}
-        points={calculatedPathPoints}
-        connectionId={connection.id}
-        color={
-          connection.color ||
-          (selectedConnection === connection.id ? '#ffff00' : 'black')
-        }
-        lineWidth={(() => {
-          const isMobile =
-            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-              navigator.userAgent
-            );
-          const baseWidth = isMobile ? 3 : 2;
-          return selectedConnection === connection.id
-            ? baseWidth * 1.5
-            : baseWidth;
-        })()}
-        lineStyle={effectiveLineStyle}
-        dashDirection={connection.dashDirection || null}
-        dashOffset={connection.dashOffset || 0}
-        isSelected={selectedConnection === connection.id}
-        onClick={(e) => handleConnectionClick(e, connection.id)}
-        onPointerOver={(e) => {
-          e.stopPropagation();
-          document.body.style.cursor = 'pointer';
-        }}
-        onPointerOut={(e) => {
-          e.stopPropagation();
-          document.body.style.cursor = 'auto';
-        }}
-      />
+      {/* Conditional line rendering: PooledLine for simple straight lines, AnimatedConnectionLine for complex/animated lines */}
+      {effectiveLineStyle === 'straight' ? (
+        <PooledLine
+          key={`pooled-line-${connection.id}-${
+            connection._lastStyleUpdate || 0
+          }`}
+          points={calculatedPathPoints}
+          color={
+            connection.color ||
+            (selectedConnection === connection.id ? '#ffff00' : 'black')
+          }
+          lineWidth={(() => {
+            const isMobile =
+              /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                navigator.userAgent
+              );
+            const baseWidth = isMobile ? 3 : 2;
+            return selectedConnection === connection.id
+              ? baseWidth * 1
+              : baseWidth;
+          })()}
+          onClick={(e) => handleConnectionClick(e, connection.id)}
+          onPointerOver={(e) => {
+            e.stopPropagation();
+            document.body.style.cursor = 'pointer';
+          }}
+          onPointerOut={(e) => {
+            e.stopPropagation();
+            document.body.style.cursor = 'auto';
+          }}
+        />
+      ) : (
+        <AnimatedConnectionLine
+          key={`animated-line-${connection.id}-${effectiveLineStyle}-${
+            connection._lastStyleUpdate || 0
+          }`}
+          points={calculatedPathPoints}
+          connectionId={connection.id}
+          color={
+            connection.color ||
+            (selectedConnection === connection.id ? '#ffff00' : 'black')
+          }
+          lineWidth={(() => {
+            const isMobile =
+              /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                navigator.userAgent
+              );
+            const baseWidth = isMobile ? 1.5 : 1;
+            return selectedConnection === connection.id
+              ? baseWidth * 1
+              : baseWidth;
+          })()}
+          lineStyle={effectiveLineStyle}
+          dashDirection={connection.dashDirection || null}
+          dashOffset={connection.dashOffset || 0}
+          isSelected={selectedConnection === connection.id}
+          onClick={(e) => handleConnectionClick(e, connection.id)}
+          onPointerOver={(e) => {
+            e.stopPropagation();
+            document.body.style.cursor = 'pointer';
+          }}
+          onPointerOut={(e) => {
+            e.stopPropagation();
+            document.body.style.cursor = 'auto';
+          }}
+        />
+      )}
       {/* Connection text */}
       <TextSprite
         key={`text-${connection.id}-${

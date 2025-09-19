@@ -23,6 +23,8 @@ import {
 import { calculateAxisSnap } from '../utils/snappingUtils';
 // Import snap line indicator
 import SnapLineIndicator from './SnapLineIndicator';
+// Import unified global click handler
+import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
 
 const TextObject = React.memo(
   ({
@@ -226,34 +228,32 @@ const TextObject = React.memo(
       }
     }, [setOrbitControlsEnabled, hasTextSelection, isEditing]); // Now safe to include since useCallback is stable
 
-    // Effect to handle clicks outside textarea to clear selection and re-enable orbit controls
-    useEffect(() => {
-      const handleGlobalClick = (event) => {
-        if (
-          textAreaRef.current &&
-          !textAreaRef.current.contains(event.target)
-        ) {
-          // Clicked outside textarea
-          if (hasTextSelection) {
-            console.log(
-              '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
-            );
-            setHasTextSelection(false);
-            setSelectedText({ start: 0, end: 0 });
-            setTimeout(() => {
-              setOrbitControlsEnabled(true);
-            }, 50);
+    // Unified click handler for text selection (first instance)
+    useGlobalClickHandler(
+      [], // No additional selectors needed
+      hasTextSelection
+        ? (event) => {
+            if (
+              textAreaRef.current &&
+              !textAreaRef.current.contains(event.target)
+            ) {
+              // Clicked outside textarea
+              if (hasTextSelection) {
+                console.log(
+                  '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
+                );
+                setHasTextSelection(false);
+                setSelectedText({ start: 0, end: 0 });
+                setTimeout(() => {
+                  setOrbitControlsEnabled(true);
+                }, 50);
+              }
+            }
           }
-        }
-      };
-
-      if (hasTextSelection) {
-        document.addEventListener('click', handleGlobalClick);
-        return () => {
-          document.removeEventListener('click', handleGlobalClick);
-        };
-      }
-    }, [hasTextSelection, setOrbitControlsEnabled]);
+        : null, // Only active when hasTextSelection is true
+      'click',
+      [hasTextSelection, setOrbitControlsEnabled, textAreaRef]
+    );
 
     // Debug logging for transform control states
     console.log('🔧 TextObject transform states:', {
@@ -450,36 +450,34 @@ const TextObject = React.memo(
     const containerDimensionsRef = useRef({ width: 0, height: 0 });
     const resizeUpdateTimeoutRef = useRef(null);
 
-    // Effect to handle clicks outside textarea to clear selection and re-enable orbit controls
-    useEffect(() => {
-      const handleGlobalClick = (event) => {
-        if (
-          textAreaRef.current &&
-          !textAreaRef.current.contains(event.target)
-        ) {
-          // Clicked outside textarea
-          if (hasTextSelection) {
-            console.log(
-              '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
-            );
-            setHasTextSelection(false);
-            setSelectedText({ start: 0, end: 0 });
-            setTimeout(() => {
-              if (!isEditing) {
-                setOrbitControlsEnabled(true);
+    // Unified click handler for text selection (second instance)
+    useGlobalClickHandler(
+      [], // No additional selectors needed
+      hasTextSelection
+        ? (event) => {
+            if (
+              textAreaRef.current &&
+              !textAreaRef.current.contains(event.target)
+            ) {
+              // Clicked outside textarea
+              if (hasTextSelection) {
+                console.log(
+                  '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
+                );
+                setHasTextSelection(false);
+                setSelectedText({ start: 0, end: 0 });
+                setTimeout(() => {
+                  if (!isEditing) {
+                    setOrbitControlsEnabled(true);
+                  }
+                }, 50);
               }
-            }, 50);
+            }
           }
-        }
-      };
-
-      if (hasTextSelection) {
-        document.addEventListener('click', handleGlobalClick);
-        return () => {
-          document.removeEventListener('click', handleGlobalClick);
-        };
-      }
-    }, [hasTextSelection, isEditing, setOrbitControlsEnabled]);
+        : null, // Only active when hasTextSelection is true
+      'click',
+      [hasTextSelection, isEditing, setOrbitControlsEnabled, textAreaRef]
+    );
 
     const lastUpdateRef = useRef(null);
     const worldMatrixRef = useRef(null);

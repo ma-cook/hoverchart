@@ -22,6 +22,9 @@ import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastMana
 import { usePlaneStore, useObjectsStore, useConnectionStore } from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
+// Import unified utilities
+import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
+import { resourceCleanupService } from '../services/resourceCleanupService';
 
 // Mobile detection constant
 const isMobile =
@@ -340,12 +343,12 @@ const Plane = ({
           texture.flipY = true;
 
           if (meshRef.current && isMountedRef.current) {
-            // Dispose of the previous material if it exists
-            if (meshRef.current.material && meshRef.current.material.map) {
-              meshRef.current.material.map.dispose();
-            }
+            // Use unified resource cleanup service
             if (meshRef.current.material) {
-              meshRef.current.material.dispose();
+              resourceCleanupService.disposeMaterial(
+                meshRef.current.material,
+                `plane-${id}-material`
+              );
             }
 
             const material = new THREE.MeshBasicMaterial({
@@ -451,85 +454,46 @@ const Plane = ({
     }
   }, [position, plane?.scale]);
 
-  // Add debounced update to prevent excessive database calls (like Cube/Dodecahedron)
-  const debouncedUpdateTimeoutRef = useRef(null);
-  const isInitialRenderRef = useRef(true);
-  useEffect(() => {
-    if (!isMountedRef.current) return;
+  // Create unified update function
+  const updateDatabase = useCallback(() => {
+    if (!isMountedRef.current || !objectData || !onUpdate || !id) return;
 
-    // Skip updates during initial render to prevent thousands of simultaneous calls
-    // when camera moves between cells and loads many objects at once
-    if (isInitialRenderRef.current) {
-      isInitialRenderRef.current = false;
-      return;
-    }
+    // Ensure position has valid numbers, not undefined/null values
+    const currentPosition = objectData.position;
+    const validPosition =
+      Array.isArray(currentPosition) &&
+      currentPosition.length === 3 &&
+      currentPosition.every((val) => typeof val === 'number' && !isNaN(val))
+        ? currentPosition
+        : [0, 0, 0];
 
-    // Skip if objectData is not yet loaded
-    if (!objectData) {
-      return;
-    }
-
-    // Skip if we're still in initial loading phase - no saves during app startup
-    const { isInitialLoading } = useObjectsStore.getState();
-    if (isInitialLoading) {
-      return;
-    }
-
-    // Clear any pending update
-    if (debouncedUpdateTimeoutRef.current) {
-      clearTimeout(debouncedUpdateTimeoutRef.current);
-    }
-
-    // Debounce property updates to prevent excessive calls
-    debouncedUpdateTimeoutRef.current = setTimeout(() => {
-      // Ensure position has valid numbers, not undefined/null values
-      const currentPosition = objectData.position;
-      const validPosition =
-        Array.isArray(currentPosition) &&
-        currentPosition.length === 3 &&
-        currentPosition.every((val) => typeof val === 'number' && !isNaN(val))
-          ? currentPosition
-          : [0, 0, 0];
-      const updates = {
-        type: 'plane',
-        position: validPosition,
-        scale: objectData?.scale || plane?.scale || [1, 1, 1], // Use objectData as primary source
-        color: plane?.color || objectData?.color || '#000000',
-        headerText: plane?.headerText || objectData?.headerText || '',
-        headerStyle: plane?.headerStyle || objectData?.headerStyle || {},
-        borderStyle: plane?.borderStyle || objectData?.borderStyle || 'solid',
-        borderColor: plane?.borderColor || objectData?.borderColor || '#000000',
-        lineThickness: plane?.lineThickness || objectData?.lineThickness || 1,
-        faceText: plane?.faceText || objectData?.faceText || '',
-        faceTextStyle: plane?.faceTextStyle || objectData?.faceTextStyle || {},
-        webcamActive: plane?.webcamActive || objectData?.webcamActive || false,
-        screenShareActive:
-          plane?.screenShareActive || objectData?.screenShareActive || false,
-        broadcasting:
-          (plane?.webcamActive || objectData?.webcamActive || false) &&
-          (plane?.isBroadcasting || false),
-        screenSharing:
-          (plane?.screenShareActive ||
-            objectData?.screenShareActive ||
-            false) &&
-          (plane?.isScreenSharing || false),
-        imageUrl: plane?.imageUrl || objectData?.imageUrl || '',
-      };
-
-      // Call onUpdate directly instead of directUpdate to include position
-      if (onUpdate && id) {
-        onUpdate(id, updates);
-      }
-    }, 100); // 100ms debounce delay
-
-    // Cleanup timeout on unmount
-    return () => {
-      if (debouncedUpdateTimeoutRef.current) {
-        clearTimeout(debouncedUpdateTimeoutRef.current);
-      }
+    const updates = {
+      type: 'plane',
+      position: validPosition,
+      scale: objectData?.scale || plane?.scale || [1, 1, 1], // Use objectData as primary source
+      color: plane?.color || objectData?.color || '#000000',
+      headerText: plane?.headerText || objectData?.headerText || '',
+      headerStyle: plane?.headerStyle || objectData?.headerStyle || {},
+      borderStyle: plane?.borderStyle || objectData?.borderStyle || 'solid',
+      borderColor: plane?.borderColor || objectData?.borderColor || '#000000',
+      lineThickness: plane?.lineThickness || objectData?.lineThickness || 1,
+      faceText: plane?.faceText || objectData?.faceText || '',
+      faceTextStyle: plane?.faceTextStyle || objectData?.faceTextStyle || {},
+      webcamActive: plane?.webcamActive || objectData?.webcamActive || false,
+      screenShareActive:
+        plane?.screenShareActive || objectData?.screenShareActive || false,
+      broadcasting:
+        (plane?.webcamActive || objectData?.webcamActive || false) &&
+        (plane?.isBroadcasting || false),
+      screenSharing:
+        (plane?.screenShareActive || objectData?.screenShareActive || false) &&
+        (plane?.isScreenSharing || false),
+      imageUrl: plane?.imageUrl || objectData?.imageUrl || '',
     };
+
+    onUpdate(id, updates);
   }, [
-    objectData, // Watch objectData for position changes like Cube/Dodecahedron
+    objectData,
     plane?.scale,
     plane?.color,
     plane?.headerText,
@@ -547,6 +511,9 @@ const Plane = ({
     onUpdate,
     id,
   ]);
+
+  // Use unified debounced update instead of duplicate pattern
+  useDebouncedUpdate(updateDatabase, objectData);
   const handleScale = useCallback(
     (e) => {
       if (!e.target || !e.target.object) return;
@@ -754,15 +721,21 @@ const Plane = ({
     (newColor) => {
       updatePlane(id, { color: newColor });
 
-      // Clear image texture when color is applied
+      // Clear image texture when color is applied using unified service
       if (plane?.imageTexture) {
-        plane.imageTexture.dispose();
+        resourceCleanupService.disposeTexture(
+          plane.imageTexture,
+          `plane-${id}-texture`
+        );
         setPlaneImageTexture(id, null);
 
         // Reset mesh material to color-based material
         if (meshRef.current) {
           if (meshRef.current.material) {
-            meshRef.current.material.dispose();
+            resourceCleanupService.disposeMaterial(
+              meshRef.current.material,
+              `plane-${id}-material`
+            );
           }
           const material = new THREE.MeshBasicMaterial({
             color: newColor,
@@ -1231,12 +1204,12 @@ const Plane = ({
 
             // Apply the texture to the mesh
             if (meshRef.current) {
-              // Dispose of the previous material if it exists
-              if (meshRef.current.material && meshRef.current.material.map) {
-                meshRef.current.material.map.dispose();
-              }
+              // Use unified resource cleanup service
               if (meshRef.current.material) {
-                meshRef.current.material.dispose();
+                resourceCleanupService.disposeMaterial(
+                  meshRef.current.material,
+                  `plane-${id}-material`
+                );
               } // Create new material with the texture
               const material = new THREE.MeshBasicMaterial({
                 map: texture,

@@ -11,7 +11,6 @@ import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
 import ObjectRenderer from './components/ObjectRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
-import BVHIntegration from './components/BVHIntegration';
 
 // Hook imports
 import { useAuthState } from './hooks/useAuthState';
@@ -21,6 +20,7 @@ import { useIndicators } from './hooks/useIndicators';
 import { useSpatialManager } from './hooks/useSpatialManager';
 import { useCentralizedBroadcastManager } from './hooks/useCentralizedBroadcastManager';
 import { useConnections } from './hooks/useConnections';
+import useTimeoutManager from './hooks/useTimeoutManager';
 import {
   useObjectsStore,
   useConnectionStore,
@@ -37,6 +37,7 @@ import {
 } from './utils/objectUpdateHandlers';
 import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { checkPositionJitter } from './utils/positionUtils';
+import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle utility
 
 import { signInUser } from './services/authService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
@@ -52,45 +53,21 @@ import { objectVirtualizer } from './utils/objectVirtualization';
  * Main application component
  */
 const App = () => {
-  // Initialize BVH system early to ensure it's available for manual refreshes
-  useEffect(() => {
-    if (!window.bvhSystem) {
-      // Import and initialize BVH system immediately on app startup
-      import('./utils/bvhRaycasting')
-        .then(({ initBVHRaycasting }) => {
-          try {
-            const bvh = initBVHRaycasting();
-            window.bvhSystem = bvh;
-            console.log('🚀 BVH Raycasting system initialized on app startup');
-          } catch (error) {
-            console.warn('Failed to initialize BVH system:', error);
-          }
-        })
-        .catch((error) => {
-          console.warn('Failed to load BVH system module:', error);
-        });
-    }
-  }, []); // Run only once on mount
-
-  // Simple throttle function to replace performance utility
-  const throttle = (func, limit) => {
-    let inThrottle;
-    return function (...args) {
-      if (!inThrottle) {
-        func.apply(this, args);
-        inThrottle = true;
-        setTimeout(() => (inThrottle = false), limit);
-      }
-    };
-  };
-
   // Base state
   const [backgroundColor] = useState('white');
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
   const [currentSpaceOwner, setCurrentSpaceOwner] = useState(null);
-  const redirectTimeoutRef = useRef(null); // Add ref to track redirect timeout
-  const loadingTimeoutIdRef = useRef(null); // Add ref to track loading timeout
-  const objectLoadingTimeoutIdRef = useRef(null); // Add ref to track object loading timeout
+
+  // Unified timeout manager (replaces individual timeout refs)
+  const {
+    setRedirectTimeout,
+    clearRedirectTimeout,
+    setLoadingTimeout,
+    clearLoadingTimeout,
+    setObjectLoadingTimeout,
+    clearObjectLoadingTimeout,
+  } = useTimeoutManager();
+
   const cameraRef = useRef();
   const intentionalSpaceChangeRef = useRef(false); // Get objects from store with safety check
   const objectsFromStore = useObjectsStore((state) => state.objects);
@@ -370,197 +347,6 @@ const App = () => {
     cameraRef,
     connections,
   });
-
-  // Update BVH system when objects or connections change (with debouncing)
-  const lastBVHUpdateRef = useRef({ objectCount: 0, connectionCount: 0 });
-
-  useEffect(() => {
-    // Wait for BVH system to be available
-    if (!window.bvhSystem) {
-      return; // Skip if BVH not initialized yet
-    }
-
-    // Check if data has actually changed
-    const currentCounts = {
-      objectCount: objects.length,
-      connectionCount: connections.length,
-    };
-
-    if (
-      currentCounts.objectCount === lastBVHUpdateRef.current.objectCount &&
-      currentCounts.connectionCount === lastBVHUpdateRef.current.connectionCount
-    ) {
-      console.log('🔄 Skipping BVH update - data unchanged');
-      return;
-    }
-
-    // Debug: Log what we have in state
-    console.log(
-      `🔍 BVH Update Check: objects=${objects.length}, connections=${
-        connections.length
-      }, bvhSystem=${!!window.bvhSystem}, scene=${!!cameraRef.current?.scene}`
-    );
-
-    // Only update BVH if we have actual data to work with
-    const hasStateData = objects.length > 0 || connections.length > 0;
-
-    if (!hasStateData) {
-      console.log(
-        '🔄 Skipping BVH update - no objects or connections loaded yet'
-      );
-      return;
-    }
-
-    // Debounce BVH updates during rapid changes (like startup)
-    const timeoutId = setTimeout(() => {
-      // Update BVH with current objects and connection lines for accelerated raycasting
-      try {
-        // Convert objects to BVH format using state data (more reliable than scene traversal)
-        const threeObjects = [];
-        const connectionLines = [];
-
-        console.log(
-          '🔍 Creating BVH data from state objects and connections...'
-        );
-
-        // Process objects from state data (more reliable than waiting for scene)
-        objects.forEach((obj) => {
-          if (obj && obj.position) {
-            // Create a virtual object for BVH with position and bounds
-            const pos = Array.isArray(obj.position)
-              ? obj.position
-              : [obj.position.x || 0, obj.position.y || 0, obj.position.z || 0];
-            const scaleArray = Array.isArray(obj.scale)
-              ? obj.scale
-              : [obj.scale?.x || 1, obj.scale?.y || 1, obj.scale?.z || 1];
-
-            const virtualObject = {
-              id: obj.id,
-              position: { x: pos[0], y: pos[1], z: pos[2] }, // Convert array to object for BVH
-              type: obj.type || 'cube',
-              scale: { x: scaleArray[0], y: scaleArray[1], z: scaleArray[2] },
-              visible: obj.visible !== false,
-              _isVirtualObject: true, // Flag for BVH system
-              userData: { isVirtualObject: true, originalData: obj },
-              // Create a simple bounding box
-              geometry: {
-                boundingBox: {
-                  min: {
-                    x: pos[0] - scaleArray[0],
-                    y: pos[1] - scaleArray[1],
-                    z: pos[2] - scaleArray[2],
-                  },
-                  max: {
-                    x: pos[0] + scaleArray[0],
-                    y: pos[1] + scaleArray[1],
-                    z: pos[2] + scaleArray[2],
-                  },
-                },
-              },
-              matrixWorld: {
-                elements: [
-                  1,
-                  0,
-                  0,
-                  0,
-                  0,
-                  1,
-                  0,
-                  0,
-                  0,
-                  0,
-                  1,
-                  0,
-                  pos[0],
-                  pos[1],
-                  pos[2],
-                  1,
-                ],
-              },
-            };
-            threeObjects.push(virtualObject);
-          }
-        });
-
-        // Process connections from state data
-        console.log(
-          `🔍 Processing ${connections.length} connections for BVH...`
-        );
-        if (connections.length > 0) {
-          console.log('🔍 Sample connection structure:', connections[0]);
-        }
-
-        connections.forEach((conn, index) => {
-          // Check multiple possible property names for start/end positions
-          const startPos = conn.startPosition || conn.start || conn.from;
-          const endPos = conn.endPosition || conn.end || conn.to;
-
-          if (conn && startPos && endPos) {
-            // Handle different position formats
-            const startPoint = [
-              startPos.x || startPos[0] || 0,
-              startPos.y || startPos[1] || 0,
-              startPos.z || startPos[2] || 0,
-            ];
-            const endPoint = [
-              endPos.x || endPos[0] || 0,
-              endPos.y || endPos[1] || 0,
-              endPos.z || endPos[2] || 0,
-            ];
-
-            const lineData = {
-              id: conn.id,
-              points: [startPoint, endPoint],
-              lineWidth: conn.lineWidth || conn.width || 2,
-              color: conn.color || '#000000',
-              visible: conn.visible !== false,
-              _isConnectionLine: true,
-              userData: { connectionId: conn.id, originalData: conn },
-            };
-            connectionLines.push(lineData);
-          } else {
-            if (index < 3) {
-              // Log first few invalid connections for debugging
-              console.log(
-                `🔍 Invalid connection ${index} - startPos:`,
-                startPos,
-                'endPos:',
-                endPos,
-                'conn:',
-                conn
-              );
-            }
-          }
-        });
-
-        console.log(
-          `🔍 Created ${threeObjects.length} virtual objects and ${connectionLines.length} connection lines from state`
-        );
-
-        // Update BVH with virtual objects and connection data
-        if (threeObjects.length > 0 || connectionLines.length > 0) {
-          window.bvhSystem.setObjects(threeObjects, connectionLines);
-
-          // Update our tracking ref to prevent redundant rebuilds
-          lastBVHUpdateRef.current = {
-            objectCount: objects.length,
-            connectionCount: connections.length,
-          };
-
-          console.log(
-            `🚀 BVH updated with ${threeObjects.length} objects + ${connectionLines.length} connection lines`
-          );
-        } else {
-          console.log('🔄 No valid objects found in state data');
-        }
-      } catch (error) {
-        console.warn('Failed to update BVH system:', error);
-      }
-    }, 100); // 100ms debounce
-
-    // Cleanup timeout on unmount or dependency change
-    return () => clearTimeout(timeoutId);
-  }, [objects, connections]); // Update BVH when objects or connections change (removed cameraRef dependency)
 
   // Indicators hook
   const {
@@ -971,13 +757,10 @@ const App = () => {
 
     // Separate shorter timeout for object loading
     const scheduleLoadingComplete = () => {
-      if (objectLoadingTimeoutIdRef.current) {
-        clearTimeout(objectLoadingTimeoutIdRef.current);
-      }
+      clearObjectLoadingTimeout();
 
-      objectLoadingTimeoutIdRef.current = setTimeout(() => {
+      setObjectLoadingTimeout(() => {
         currentSetIsInitialLoading(false);
-        objectLoadingTimeoutIdRef.current = null;
       }, 1000); // Objects load faster than connections
     };
     const spaceToLoad = effectiveSpaceId;
@@ -1259,10 +1042,7 @@ const App = () => {
 
     return () => {
       unsubscribe();
-      if (loadingTimeoutIdRef.current) {
-        clearTimeout(loadingTimeoutIdRef.current);
-        loadingTimeoutIdRef.current = null;
-      }
+      clearLoadingTimeout();
       if (connectionSubscriptionTimeoutId) {
         clearTimeout(connectionSubscriptionTimeoutId);
       }
@@ -1330,175 +1110,6 @@ const App = () => {
   useEffect(() => {
     if (cameraRef.current) {
       window.camera = cameraRef.current;
-
-      // CRITICAL: Set up enhanced camera for LineSegments2 raycasting and nested object interaction with BVH acceleration
-      if (window.camera) {
-        // Wait for BVH system to be available if not already initialized
-        const setupBVHIntegration = () => {
-          if (window.bvhSystem) {
-            console.log('🔗 Integrating BVH system with camera raycasting');
-          } else {
-            // Retry after a short delay if BVH system isn't ready yet
-            setTimeout(setupBVHIntegration, 100);
-          }
-        };
-
-        setupBVHIntegration();
-
-        // Override the intersectObjects method to always set camera and handle nested objects with BVH acceleration
-        const originalIntersectObjects =
-          THREE.Raycaster.prototype.intersectObjects;
-        THREE.Raycaster.prototype.intersectObjects = function (
-          objects,
-          recursive,
-          optionalTarget
-        ) {
-          // Set camera if not already set
-          if (!this.camera && window.camera) {
-            this.camera = window.camera;
-          }
-
-          let intersections;
-
-          // Use BVH acceleration if available
-          if (window.bvhSystem) {
-            // Throttled logging to avoid spam
-            if (
-              !window._lastRaycastLog ||
-              Date.now() - window._lastRaycastLog > 2000
-            ) {
-              console.log(`🎯 Using BVH for ${objects.length} objects`);
-              window._lastRaycastLog = Date.now();
-            }
-            try {
-              // Don't update BVH here - it should already be updated with scene objects
-              // Use BVH-accelerated intersection
-              intersections = window.bvhSystem.intersectObjects(
-                this,
-                recursive
-              );
-            } catch (error) {
-              console.warn(
-                'BVH intersection failed, falling back to standard:',
-                error
-              );
-              // Fallback to standard raycasting
-              intersections = originalIntersectObjects.call(
-                this,
-                objects,
-                recursive,
-                optionalTarget
-              );
-            }
-          } else {
-            // Throttled logging to avoid spam
-            if (
-              !window._lastStandardLog ||
-              Date.now() - window._lastStandardLog > 2000
-            ) {
-              console.log(
-                `🎯 Using standard raycasting for ${objects.length} objects (no BVH)`
-              );
-              window._lastStandardLog = Date.now();
-            }
-            // Use standard raycasting for small object counts or if BVH not available
-            intersections = originalIntersectObjects.call(
-              this,
-              objects,
-              recursive,
-              optionalTarget
-            );
-          }
-
-          // Enhanced filtering for nested object interaction when camera is inside objects
-          if (intersections.length > 0) {
-            // Sort by distance to get closest intersections first
-            intersections.sort((a, b) => a.distance - b.distance);
-
-            // Filter out intersections that might be blocking nested objects
-            const filteredIntersections = [];
-
-            for (let i = 0; i < intersections.length; i++) {
-              const intersection = intersections[i];
-              const object = intersection.object;
-
-              // Skip face indicators and UI elements
-              if (
-                object.userData?.isFaceIndicator ||
-                object.userData?.isUI ||
-                object.userData?.isHelper
-              ) {
-                continue;
-              }
-
-              // For objects with very low opacity or invisible materials,
-              // check if camera might be inside them
-              if (
-                object.material &&
-                (object.material.opacity < 0.1 || !object.material.visible)
-              ) {
-                // Calculate if camera is potentially inside this object's bounds
-                const objectBounds = new THREE.Box3().setFromObject(object);
-                const cameraPosition = this.ray.origin;
-
-                if (objectBounds.containsPoint(cameraPosition)) {
-                  // Camera is inside this object - prioritize smaller/nested objects
-                  const objectSize = objectBounds
-                    .getSize(new THREE.Vector3())
-                    .length();
-                  intersection._insideObject = true;
-                  intersection._objectSize = objectSize;
-                }
-              }
-
-              filteredIntersections.push(intersection);
-            }
-
-            // If we have objects that camera is inside, prioritize smaller ones
-            if (filteredIntersections.some((i) => i._insideObject)) {
-              filteredIntersections.sort((a, b) => {
-                if (a._insideObject && b._insideObject) {
-                  // Both inside - prioritize smaller objects (more specific/nested)
-                  return a._objectSize - b._objectSize;
-                } else if (a._insideObject) {
-                  // 'a' is inside, 'b' is not - prioritize 'a' only if it's significantly smaller
-                  return a._objectSize < 50 ? -1 : 1;
-                } else if (b._insideObject) {
-                  // 'b' is inside, 'a' is not - prioritize 'b' only if it's significantly smaller
-                  return b._objectSize < 50 ? 1 : -1;
-                } else {
-                  // Neither inside - use normal distance sorting
-                  return a.distance - b.distance;
-                }
-              });
-            }
-
-            return filteredIntersections;
-          }
-
-          return intersections;
-        };
-
-        // Also override intersectObject (singular)
-        const originalIntersectObject =
-          THREE.Raycaster.prototype.intersectObject;
-        THREE.Raycaster.prototype.intersectObject = function (
-          object,
-          recursive,
-          optionalTarget
-        ) {
-          // Set camera if not already set
-          if (!this.camera && window.camera) {
-            this.camera = window.camera;
-          }
-          return originalIntersectObject.call(
-            this,
-            object,
-            recursive,
-            optionalTarget
-          );
-        };
-      }
     }
   }, []); // Only run once on mount
 
@@ -2031,12 +1642,9 @@ const App = () => {
 
   if (shouldRedirect) {
     console.log('🔄 [App] Triggering redirect due to !canViewSpace');
-    // Clear any existing redirect timeout
-    if (redirectTimeoutRef.current) {
-      clearTimeout(redirectTimeoutRef.current);
-    }
-    // Schedule redirect with cancellable timeout
-    redirectTimeoutRef.current = setTimeout(() => {
+    // Clear any existing redirect timeout and schedule new one
+    clearRedirectTimeout();
+    setRedirectTimeout(() => {
       console.log('🔄 [App] Executing redirect to volscape.com');
       window.location.href = 'https://volscape.com/';
     }, 0);
@@ -2044,11 +1652,8 @@ const App = () => {
   }
 
   // Clear redirect timeout if canViewSpace becomes true
-  if (redirectTimeoutRef.current) {
-    console.log('🔄 [App] Cancelling redirect - canViewSpace is now true');
-    clearTimeout(redirectTimeoutRef.current);
-    redirectTimeoutRef.current = null;
-  }
+  clearRedirectTimeout();
+  console.log('🔄 [App] Cancelling redirect - canViewSpace is now true');
   return (
     <>
       {/* Show a minimal loading UI while Canvas is being prepared */}
@@ -2094,7 +1699,6 @@ const App = () => {
         >
           {' '}
           <CustomCamera ref={cameraRef} />
-          <BVHIntegration onObjectClick={handleObjectClick} />
           <group>
             {/* Real-time connection position updater - reactive to store changes */}
             <RealTimeConnectionUpdater />{' '}
