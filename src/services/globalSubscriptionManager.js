@@ -126,7 +126,6 @@ export const forceCleanupSubscription = (subscriptionKey) => {
     globalSubscriptions.delete(subscriptionKey);
     subscriptionMetrics.cleaned++;
     subscriptionMetrics.active = globalSubscriptions.size;
-    console.log(`🧹 Force cleaned subscription: ${subscriptionKey}`);
   }
 };
 
@@ -146,10 +145,6 @@ export const getSubscriptionMetrics = () => {
  * Cleanup all subscriptions (for app shutdown)
  */
 export const cleanupAllSubscriptions = () => {
-  console.log(
-    `🧹 Cleaning up all ${globalSubscriptions.size} subscriptions...`
-  );
-
   for (const [key, subscription] of globalSubscriptions.entries()) {
     try {
       subscription.unsubscribe();
@@ -161,8 +156,6 @@ export const cleanupAllSubscriptions = () => {
   globalSubscriptions.clear();
   subscriptionMetrics.cleaned += subscriptionMetrics.active;
   subscriptionMetrics.active = 0;
-
-  console.log('✅ All subscriptions cleaned up');
 };
 
 /**
@@ -187,7 +180,6 @@ const periodicCleanup = () => {
       subscription.unsubscribe();
       globalSubscriptions.delete(key);
       subscriptionMetrics.cleaned++;
-      console.log(`🧹 Cleaned up stale subscription: ${key}`);
     }
   });
 

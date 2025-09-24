@@ -174,7 +174,9 @@ const PublicConnection = ({ connection, objects }) => {
         dashSize={connection.lineStyle === 'dotted' ? 0.5 : 4}
         gapSize={connection.lineStyle === 'dotted' ? 1 : 10}
         dashOffset={connection.dashOffset || 0}
-        renderOrder={20}
+        renderOrder={10} // Lower than header text (3000-5000)
+        depthWrite={false} // Prevent connection lines from writing to depth buffer
+        depthTest={true}
         enablePooling={true}
       />
 
@@ -193,7 +195,7 @@ const PublicConnection = ({ connection, objects }) => {
             padding: 0.3,
           }}
           billboard={true}
-          renderOrder={20}
+          renderOrder={20} // Higher than connection lines (10) but lower than header text (3000-5000)
         />
       )}
     </group>

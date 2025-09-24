@@ -5,6 +5,17 @@ import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import ObjectUI from './ObjectUI';
 import TextSprite from './TextSprite';
 import HeaderInput from './HeaderInput';
+
+// Stable default objects to prevent infinite re-renders
+const EMPTY_FACE_COLORS = {};
+const EMPTY_FACE_TEXTS = {};
+const EMPTY_FACE_TEXT_STYLES = {};
+const DEFAULT_HEADER_STYLE = {
+  fontSize: 'medium',
+  color: 'black',
+  underline: false,
+};
+
 import {
   useDodecahedronStore,
   useObjectsStore,
@@ -48,6 +59,7 @@ const Sphere = React.memo(
     // Get object data from objects store
     const objects = useObjectsStore((state) => state.objects);
     const setObjects = useObjectsStore((state) => state.setObjects);
+    const _triggerComponentInit = useObjectsStore((state) => state._triggerComponentInit);
     const objectData = objects.find((obj) => obj.id === id);
 
     // Get connections from connection store instead of props
@@ -85,24 +97,20 @@ const Sphere = React.memo(
       [objectData?.lineColor]
     );
     const faceColors = useMemo(
-      () => objectData?.faceColors || {},
+      () => objectData?.faceColors || EMPTY_FACE_COLORS,
       [objectData?.faceColors]
     );
     const faceTexts = useMemo(
-      () => objectData?.faceTexts || {},
+      () => objectData?.faceTexts || EMPTY_FACE_TEXTS,
       [objectData?.faceTexts]
     );
     const faceTextStyles = useMemo(
-      () => objectData?.faceTextStyles || {},
+      () => objectData?.faceTextStyles || EMPTY_FACE_TEXT_STYLES,
       [objectData?.faceTextStyles]
     );
     const headerStyle = useMemo(
       () =>
-        objectData?.headerStyle || {
-          fontSize: 'medium',
-          color: 'black',
-          underline: false,
-        },
+        objectData?.headerStyle || DEFAULT_HEADER_STYLE,
       [objectData?.headerStyle]
     );
     // Store state and actions
@@ -182,6 +190,13 @@ const Sphere = React.memo(
     // Helper function to update both stores and database
     const updateObjectAndStores = useCallback(
       (updates) => {
+        // Prevent updates during bulk operations or component initialization
+        const { isBulkOperation, isInitializingComponents } = useObjectsStore.getState();
+        if (isBulkOperation || isInitializingComponents) {
+          console.log('🚫 Skipping object update during bulk operation/initialization');
+          return;
+        }
+
         // Update UI store
         updateDodecahedron(id, updates);
 
@@ -200,12 +215,20 @@ const Sphere = React.memo(
           });
         }
       },
-      [id, updateDodecahedron, setObjects, onUpdate, objectData]
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [id, updateDodecahedron, onUpdate, objectData] // setObjects intentionally omitted to prevent infinite re-renders
     );
 
     // Helper function to update face-specific properties
     const updateFaceProperty = useCallback(
       (propertyName, faceIndex, value) => {
+        // Prevent updates during bulk operations or component initialization
+        const { isBulkOperation, isInitializingComponents } = useObjectsStore.getState();
+        if (isBulkOperation || isInitializingComponents) {
+          console.log('🚫 Skipping face property update during bulk operation/initialization');
+          return;
+        }
+
         // Update UI store
         if (propertyName === 'faceColors') {
           updateDodecahedronFaceColor(id, faceIndex, value);
@@ -241,12 +264,13 @@ const Sphere = React.memo(
           });
         }
       },
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       [
         id,
         updateDodecahedronFaceColor,
         updateDodecahedronFaceText,
         updateDodecahedronFaceTextStyle,
-        setObjects,
+        // setObjects intentionally omitted to prevent infinite re-renders
         onUpdate,
         objectData,
       ]
@@ -254,6 +278,10 @@ const Sphere = React.memo(
 
     // Initialize dodecahedron UI state in store if it doesn't exist
     useEffect(() => {
+      // Skip initialization during bulk operations or component initialization to prevent infinite loops
+      const { isBulkOperation, isInitializingComponents } = useObjectsStore.getState();
+      if (isBulkOperation || isInitializingComponents) return;
+      
       if (!dodecahedron) {
         createDodecahedron(id, {
           // Initialize with object data from persistent storage
@@ -276,10 +304,10 @@ const Sphere = React.memo(
           activeTextFace: null,
         });
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
       id,
       dodecahedron,
-      createDodecahedron,
       position,
       scale,
       lineColor,
@@ -288,6 +316,7 @@ const Sphere = React.memo(
       faceColors,
       faceTexts,
       faceTextStyles,
+      _triggerComponentInit, // Force re-run after bulk operations complete
     ]);
     // Handle selection changes
     useEffect(() => {
@@ -586,7 +615,7 @@ const Sphere = React.memo(
           : [0, 0, 0];
 
       const currentState = {
-        type: 'sphere',
+        type: 'dodecahedron',
         position: validPosition,
         scale: currentScale, // Use current scale from store
         lineColor: objectData.lineColor || 'black',
@@ -811,7 +840,7 @@ const Sphere = React.memo(
       // Create the indicator data with consistent ID format
       const stringId = String(id);
       const indicator = {
-        type: 'sphere',
+        type: 'dodecahedron',
         face: faceIndex,
         cube: {
           id: stringId,
@@ -1356,7 +1385,7 @@ const Sphere = React.memo(
                   objectData.scale || [1, 1, 1];
 
                 onUpdate(id, {
-                  type: 'sphere',
+                  type: 'dodecahedron',
                   position: objectData.position || [0, 0, 0],
                   scale: currentScale,
                   lineColor: objectData.lineColor || 'black',

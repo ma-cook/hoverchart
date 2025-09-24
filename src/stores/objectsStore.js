@@ -408,6 +408,19 @@ const useObjectsStore = create((set, get) => ({
     const spaceOwnerId = window.currentSpaceOwner || user.uid;
     saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
 
+    // Track object in spatial system for dynamic objects
+    const spatialManagerStore = (await import('../stores/spatialManagerStore'))
+      .default;
+    const spatialManager = spatialManagerStore.getState();
+    if (spatialManager.trackObjectInCell) {
+      const { getCellCoordinates } = await import(
+        '../services/spatialPartitioning'
+      );
+      const cellCoords = getCellCoordinates(position);
+      const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+      spatialManager.trackObjectInCell(uniqueId.toString(), cellId);
+    }
+
     // Return the created object ID
     return uniqueId;
   },
@@ -507,7 +520,8 @@ const useObjectsStore = create((set, get) => ({
     // Filter out any objects that belong to unloaded cells
     const filteredObjects = state.objects.filter((obj) => {
       const objId = obj.id?.toString();
-      return !window._unloadedObjects?.has(objId);
+      const shouldKeep = !window._unloadedObjects?.has(objId);
+      return shouldKeep;
     });
 
     // Only update if we actually removed objects

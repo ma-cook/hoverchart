@@ -517,10 +517,10 @@ const TextSprite = React.memo(
             depthWrite={false}
             renderOrder={
               style.isDodecahedronHeader
-                ? 2000 // Highest priority for dodecahedron headers
+                ? 4999 // Slightly lower than main text for dodecahedron headers
                 : style.isFaceText
                 ? -2
-                : 1000 // Match main text render order
+                : 2999 // Very high render order for header text underlines
             }
             side={THREE.DoubleSide} // Match main text side rendering
             transparent={true}
@@ -543,10 +543,10 @@ const TextSprite = React.memo(
           depthWrite={false} // Keep false to prevent z-fighting
           renderOrder={
             style.isDodecahedronHeader
-              ? 2000 // Highest priority for dodecahedron headers
+              ? 5000 // Highest priority for dodecahedron headers
               : style.isFaceText
               ? -2
-              : 1000 // High render order for other header/connection text
+              : 3000 // Very high render order for header text to ensure it's always in front of connections
           }
           side={THREE.DoubleSide} // Render both sides so text is visible from any angle
           polygonOffset={style.isFaceText ? true : false} // Only use polygon offset for face text

@@ -70,7 +70,7 @@ const resolveConnectionEndpoint = (endpoint, currentObject) => {
         // Dodecahedron: face is a number (0-11)
         // Create an indicator object for calculateFacePosition
         const dodecahedronIndicator = {
-          type: 'sphere',
+          type: 'dodecahedron',
           face: endpoint.face,
           faceCenter: endpoint.faceCenter,
           cube: {

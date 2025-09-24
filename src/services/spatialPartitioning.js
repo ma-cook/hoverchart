@@ -21,10 +21,10 @@ import {
 import { getIsInitialLoading } from '../utils/loadingState';
 
 // Cell size constants
-export const CELL_SIZE = 10000;
+export const CELL_SIZE = 6667; // Reduced by 1/3rd (was 10000)
 export const CELL_NEIGHBOR_RADIUS = 1; // Load 3x3 horizontal grid around camera (9 cells)
-export const CELL_UNLOAD_DISTANCE = 4; // Increased distance to reduce premature unloading
-export const CELL_BOUNDARY_HYSTERESIS = 1000; // 1000 units buffer zone to prevent rapid switching near boundaries
+export const CELL_UNLOAD_DISTANCE = 1.5; // More aggressive unloading
+export const CELL_BOUNDARY_HYSTERESIS = 667; // Proportionally reduced with cell size (was 1000)
 
 // Cache for cell existence checks to reduce redundant fetch calls
 const cellExistenceCache = new Map(); // cellId -> { exists: boolean, timestamp: number }
@@ -1277,7 +1277,6 @@ export const getCellsToUnload = (
       cellsToUnload.push(cellId);
     }
   }
-
   return cellsToUnload;
 };
 
@@ -1414,7 +1413,8 @@ export const bulkSaveConnectionsToCell = async (
     await setDoc(cellRef, cellData, { merge: true });
 
     return true;
-  } catch {
+  } catch (error) {
+    console.error('❌ Database save error:', error.message);
     return false;
   }
 };

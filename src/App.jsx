@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { EffectComposer, SMAA } from '@react-three/postprocessing';
-import * as THREE from 'three';
+
 import './App.css';
 
 // Component imports
@@ -21,6 +21,7 @@ import { useSpatialManager } from './hooks/useSpatialManager';
 import { useCentralizedBroadcastManager } from './hooks/useCentralizedBroadcastManager';
 import { useConnections } from './hooks/useConnections';
 import useTimeoutManager from './hooks/useTimeoutManager';
+import { getCellCoordinates } from './services/spatialPartitioning';
 import {
   useObjectsStore,
   useConnectionStore,
@@ -62,7 +63,7 @@ const App = () => {
   const {
     setRedirectTimeout,
     clearRedirectTimeout,
-    setLoadingTimeout,
+
     clearLoadingTimeout,
     setObjectLoadingTimeout,
     clearObjectLoadingTimeout,
@@ -175,39 +176,14 @@ const App = () => {
     isLookingUpPublicSpace,
   ]);
 
-  // Debug canViewSpace calculation only when dependencies change
-  useEffect(() => {
-    console.log('🔍 [App] canViewSpace calculation:', {
-      user: !!user,
-      publicSpaceId,
-      currentSpaceOwner,
-      publicSpaceReady,
-      isLookingUpPublicSpace,
-      canViewSpace,
-    });
-  }, [
-    user,
-    publicSpaceId,
-    currentSpaceOwner,
-    publicSpaceReady,
-    isLookingUpPublicSpace,
-    canViewSpace,
-  ]);
-
   // Memoize redirect decision to prevent unnecessary recalculations
   const shouldRedirect = useMemo(() => !canViewSpace, [canViewSpace]);
 
   // Debug redirect decision only when canViewSpace changes
   useEffect(() => {
-    console.log('🔍 [App] canViewSpace final check before redirect:', {
-      canViewSpace,
-      user: !!user,
-      publicSpaceId,
-      currentSpaceOwner,
-      publicSpaceReady,
-      isLookingUpPublicSpace,
-      shouldRedirect,
-    });
+    if (canViewSpace) {
+      console.log('🔄 [App] Redirect cancelled - canViewSpace is now true');
+    }
   }, [
     canViewSpace,
     user,
@@ -224,10 +200,9 @@ const App = () => {
       if (change.source === 'cell-unload') {
         // Remove objects when their cells are unloaded
         setObjects((prev) => {
-          const filtered = prev.filter(
+          return prev.filter(
             (obj) => obj.id.toString() !== change.id.toString()
           );
-          return filtered;
         });
       }
     },
@@ -870,6 +845,11 @@ const App = () => {
                     change.cellCoords.y
                   },${change.cellCoords.z || 0}`;
                   currentTrackObjectInCell(change.id.toString(), cellId);
+                } else if (change.object.position && currentTrackObjectInCell) {
+                  // Calculate cell coordinates from object position
+                  const cellCoords = getCellCoordinates(change.object.position);
+                  const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+                  currentTrackObjectInCell(change.id.toString(), cellId);
                 }
 
                 // Track object loading for completion detection
@@ -1410,13 +1390,18 @@ const App = () => {
     updateVisibleObjects,
   ]);
   // Initial setup for all objects to be visible if no camera yet or if objects changed
+  // Debounced to prevent infinite loops during rapid object creation
   useEffect(() => {
-    if (objects.length > 0) {
-      // Always ensure all objects are in the visible set initially
-      // This prevents objects from disappearing due to virtualization timing issues
-      const allObjectIds = new Set(objects.map((obj) => obj.id));
-      setVisibleObjectIds(allObjectIds);
-    }
+    const timeoutId = setTimeout(() => {
+      if (objects.length > 0) {
+        // Always ensure all objects are in the visible set initially
+        // This prevents objects from disappearing due to virtualization timing issues
+        const allObjectIds = new Set(objects.map((obj) => obj.id));
+        setVisibleObjectIds(allObjectIds);
+      }
+    }, 100); // 100ms debounce
+
+    return () => clearTimeout(timeoutId);
   }, [objects]);
 
   // Memoize expensive object rendering operations with virtualization
@@ -1653,7 +1638,6 @@ const App = () => {
 
   // Clear redirect timeout if canViewSpace becomes true
   clearRedirectTimeout();
-  console.log('🔄 [App] Cancelling redirect - canViewSpace is now true');
   return (
     <>
       {/* Show a minimal loading UI while Canvas is being prepared */}

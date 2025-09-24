@@ -42,7 +42,7 @@ const useSpatialManagerStore = create((set, get) => ({
   objectsByCell: new Map(), // Map of cellId -> Set of objectIds
 
   // Constants - Optimized for smoother performance with conservative limits
-  CELL_LOAD_COOLDOWN: 150, // Increased cooldown to reduce rapid loading
+  CELL_LOAD_COOLDOWN: 0, // No cooldown for immediate loading
   MAX_CONCURRENT_LOADS: 6, // Conservative limit to prevent overwhelming Firestore
   POSITION_UPDATE_THROTTLE: 0, // No throttling - handled by hysteresis
   UNLOAD_BATCH_SIZE: 6, // Conservative unload batch size
@@ -290,11 +290,6 @@ const useSpatialManagerStore = create((set, get) => ({
     const state = get();
 
     if (!currentSpaceId || state.isInitialized || state.initializationPromise) {
-      console.debug('🚫 Skipping spatial initialization:', {
-        noSpaceId: !currentSpaceId,
-        alreadyInitialized: state.isInitialized,
-        hasPromise: !!state.initializationPromise,
-      });
       return;
     }
 
@@ -415,19 +410,11 @@ const useSpatialManagerStore = create((set, get) => ({
     // Queue remaining cells for next batch if needed
     if (cellsToRemove.length > unloadBatchSize) {
       const remainingCells = cellsToRemove.slice(unloadBatchSize);
-      // Schedule next batch with a delay to spread the work
-      setTimeout(() => {
-        get().unloadCellsBatch(remainingCells, onObjectsChange, currentSpaceId);
-      }, 50); // 50ms delay between batches
+      // Process immediately without delay
+      get().unloadCellsBatch(remainingCells, onObjectsChange, currentSpaceId);
     }
 
     if (cellsToUnloadNow.length > 0) {
-      console.log(
-        `🗑️ Unloading ${cellsToUnloadNow.length} cells: ${cellsToUnloadNow.join(
-          ', '
-        )}`
-      );
-
       // Notify about objects that should be removed and track them
       if (onObjectsChange && state.objectsByCell.size > 0) {
         const objectsToRemove = [];
@@ -454,9 +441,6 @@ const useSpatialManagerStore = create((set, get) => ({
         });
 
         if (objectsToRemove.length > 0) {
-          console.log(
-            `🗑️ Removing ${objectsToRemove.length} objects from unloaded cells`
-          );
           objectsToRemove.forEach((objectId) => {
             // Clean up object caches and subscriptions
             const objStr = objectId.toString();
@@ -467,12 +451,6 @@ const useSpatialManagerStore = create((set, get) => ({
             saveTimeouts?.delete(cacheKey);
             updateThrottles?.delete(cacheKey);
             lastReceivedObjects?.delete(cacheKey);
-
-            onObjectsChange({
-              type: 'removed',
-              id: objStr,
-              source: 'cell-unload',
-            });
           });
 
           // Clean up objects state in the store
@@ -610,11 +588,7 @@ const useSpatialManagerStore = create((set, get) => ({
       CELL_UNLOAD_DISTANCE
     ).filter((cellId) => {
       // Don't unload cells that are in the loading state
-      if (state.loadingCells.has(cellId)) return false;
-
-      // Don't unload cells that were recently loaded (2 second grace period)
-      const timeSinceLastLoad = now - state.lastCellLoadTime;
-      return timeSinceLastLoad > 2000;
+      return !state.loadingCells.has(cellId);
     });
 
     if (cellsToUnload.length > 0) {
@@ -624,53 +598,29 @@ const useSpatialManagerStore = create((set, get) => ({
 
     // PRIORITY 2: Load immediate neighbor cells (non-blocking, fire-and-forget)
     const neighborCells = getNeighborCells(posArray, CELL_NEIGHBOR_RADIUS);
+
     const cellsToLoad = neighborCells.filter((cellCoords) => {
       const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
-      // Don't load if the cell is already loaded or loading
-      if (state.loadedCells.has(cellId) || state.loadingCells.has(cellId))
-        return false;
+      // Debug each cell's status
+      const isAlreadyLoaded = state.loadedCells.has(cellId);
+      const isLoading = state.loadingCells.has(cellId);
 
-      // Enforce a cooldown period after unloading before reloading
-      // This prevents the rapid unload-reload cycle
+      // Don't load if the cell is already loaded or loading
+      if (isAlreadyLoaded || isLoading) {
+        return false;
+      }
+
+      // Clear unloaded flag immediately when trying to reload
       if (window._unloadedCells?.has(cellId)) {
-        const timeSinceUnload = now - (window._lastCellUnloadTime || 0);
-        if (timeSinceUnload < 2000) return false; // 2 second cooldown
-        window._unloadedCells.delete(cellId); // Clear the unloaded flag after cooldown
+        window._unloadedCells.delete(cellId);
       }
 
       return true;
     });
 
-    // Add cooldown check to prevent rapid successive cell loading
-    const timeSinceLastLoad = now - state.lastCellLoadTime;
-    // Enforce a longer cooldown period if there are unloaded cells
-    const hasUnloadedCells = window._unloadedCells?.size > 0;
-    const effectiveCooldown = hasUnloadedCells
-      ? state.CELL_LOAD_COOLDOWN * 2 // Double cooldown when cells were recently unloaded
-      : state.CELL_LOAD_COOLDOWN;
-
-    const shouldLoadCells =
-      cellsToLoad.length > 0 && timeSinceLastLoad >= effectiveCooldown;
-
-    console.log(
-      `📍 Camera at [${posArray[0].toFixed(0)}, ${posArray[1].toFixed(
-        0
-      )}, ${posArray[2].toFixed(0)}] - Cell [${newCellCoords.x}, ${
-        newCellCoords.y
-      }, ${newCellCoords.z}]`
-    );
-    console.log(
-      `📦 Loaded cells: ${state.loadedCells.size}, Cells to load: ${cellsToLoad.length}, Loading cells: ${state.loadingCells.size}`
-    );
-
-    if (cellsToLoad.length > 0) {
-      console.log(
-        `🔄 Cells to load: ${cellsToLoad
-          .map((c) => `[${c.x},${c.y},${c.z}]`)
-          .join(', ')}`
-      );
-    }
+    // Load cells immediately without cooldown
+    const shouldLoadCells = cellsToLoad.length > 0;
 
     // PRIORITY 3: Load cells in the direction of movement
     const predictiveCells = [];
@@ -691,38 +641,22 @@ const useSpatialManagerStore = create((set, get) => ({
 
     // Load immediate cells first, then predictive cells with lower priority
     if (shouldLoadCells) {
-      console.log(`🔄 Loading ${cellsToLoad.length} immediate cells`);
       set({ lastCellLoadTime: now }); // Update the last load time
       get()
         .loadCellsBatch(cellsToLoad, user, currentSpaceId)
-        .then((results) => {
-          const successCount = results.filter((r) => r).length;
-          console.log(
-            `✅ Successfully loaded ${successCount}/${cellsToLoad.length} cells`
-          );
-        })
+
         .catch((error) => {
           console.error('❌ Error in background cell loading:', error);
         });
-    } else if (cellsToLoad.length > 0) {
-      console.log(
-        `⏸️ Cell loading on cooldown. ${
-          cellsToLoad.length
-        } cells waiting. Cooldown remaining: ${
-          state.CELL_LOAD_COOLDOWN - timeSinceLastLoad
-        }ms`
-      );
     }
 
-    // Load predictive cells with delay to not interfere with immediate loading
+    // Load predictive cells immediately
     if (predictiveCells.length > 0) {
-      setTimeout(() => {
-        get()
-          .loadCellsBatch(predictiveCells, user, currentSpaceId)
-          .catch((error) => {
-            console.error('❌ Error in predictive cell loading:', error);
-          });
-      }, 500); // 500ms delay for predictive loading
+      get()
+        .loadCellsBatch(predictiveCells, user, currentSpaceId)
+        .catch((error) => {
+          console.error('❌ Error in predictive cell loading:', error);
+        });
     }
   },
 
@@ -760,19 +694,8 @@ const useSpatialManagerStore = create((set, get) => ({
   ) => {
     // Check if we're still in initial loading phase - no saves during app startup
     if (getIsInitialLoading()) {
-      console.log(
-        `⏸️ [SpatialManager] Skipping moveObjectInSpatialSystem for object ${objectId} - still in initial loading phase`
-      );
       return false;
     }
-
-    console.log(
-      '[SpatialManagerDebug] moveObjectInSpatialSystem ENTER.',
-      `ObjectId: ${objectId}`,
-      `OldPos: ${JSON.stringify(oldPosition)}`,
-      `NewPos: ${JSON.stringify(newPosition)}`,
-      `CurrentSpaceId: ${currentSpaceId}`
-    );
 
     if (!currentSpaceId || !objectId || !oldPosition || !newPosition) {
       console.warn(
@@ -790,40 +713,11 @@ const useSpatialManagerStore = create((set, get) => ({
         return false;
       }
 
-      // Determine old and new cell IDs here for logging and decision making
-      const oldCellCoords = getCellCoordinates(oldPosition);
-      const oldCellId = getCellId(
-        oldCellCoords.x,
-        oldCellCoords.y,
-        oldCellCoords.z
-      );
-      const newCellCoords = getCellCoordinates(newPosition);
-      const newCellId = getCellId(
-        newCellCoords.x,
-        newCellCoords.y,
-        newCellCoords.z
-      );
-
-      console.log(
-        `[SpatialManagerDebug] Calculated Old Cell ID: ${oldCellId}, New Cell ID: ${newCellId}`
-      );
-
       // The objectData to pass to moveObjectBetweenCells should be the full object data if available,
       // or at least { id: objectId, position: newPosition }.
       const effectiveObjectDataForMove = objectDataFull
         ? { ...objectDataFull, position: newPosition, id: objectId }
         : { id: objectId, position: newPosition };
-
-      console.log(
-        '[SpatialManagerDebug] Calling moveObjectBetweenCells with:',
-        `Owner: ${ownerUserId}`,
-        `Space: ${currentSpaceId}`,
-        `ObjID: ${objectId}`,
-        `OldPos: ${JSON.stringify(oldPosition)}`,
-        `NewPos: ${JSON.stringify(newPosition)}`,
-        `Payload:`,
-        effectiveObjectDataForMove
-      );
 
       const result = await moveObjectBetweenCells(
         ownerUserId,
@@ -834,9 +728,6 @@ const useSpatialManagerStore = create((set, get) => ({
         effectiveObjectDataForMove // This is the 6th param (objectData) for moveObjectBetweenCells
       );
 
-      console.log(
-        `[SpatialManagerDebug] moveObjectBetweenCells result: ${result}`
-      );
       return result;
     } catch (error) {
       console.error(

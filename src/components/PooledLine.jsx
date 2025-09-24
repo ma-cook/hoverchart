@@ -35,10 +35,14 @@ const PooledLine = forwardRef(
 
     // Disable pooling only when complex line properties are actually being used
     // For dash properties, only consider them complex if dashed is true
+    // Also disable pooling if click handlers are present for reliable interaction
     const hasComplexProps =
       dashed === true ||
       (dashOffset !== undefined && dashOffset !== 0) ||
-      (resolution !== undefined && resolution !== 2);
+      (resolution !== undefined && resolution !== 2) ||
+      onClick !== undefined || // Disable pooling for clickable lines
+      onPointerOver !== undefined ||
+      onPointerOut !== undefined;
 
     const usePooling = enablePooling && !hasComplexProps;
 

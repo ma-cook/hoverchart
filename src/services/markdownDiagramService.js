@@ -186,11 +186,11 @@ export class MarkdownDiagramService {
     } else if (node.type === 'handler') {
       objectType = 'cube';
     } else if (node.type === 'state') {
-      objectType = 'sphere';
+      objectType = 'dodecahedron';
     } else if (node.type === 'control') {
       objectType = 'cube';
     } else if (node.type === 'data') {
-      objectType = 'sphere';
+      objectType = 'dodecahedron';
     }
 
     return objectType;
@@ -616,8 +616,6 @@ export class MarkdownDiagramService {
       graphNodes
     );
 
-    console.log(`Created ${node.type} object at position:`, nodePosition);
-
     // Store position and scale
     nodePositions.set(nodeId, nodePosition);
     nodeScales.set(nodeId, nodeScale);
@@ -693,67 +691,97 @@ export class MarkdownDiagramService {
       );
     });
 
-    // Create 3D objects
+    // Create 3D objects with batch processing for better performance
     let objectsCreated = 0;
-    for (const [nodeId, position] of nodePositions) {
-      const node = graph.nodes.get(nodeId);
-      const scale = nodeScales.get(nodeId);
-      const objectType = this.getObjectTypeForNode(node);
+    const nodeEntries = Array.from(nodePositions);
+    const OBJECT_BATCH_SIZE = 50; // Process objects in smaller batches
 
-      if (!objectType || !node) continue;
+    console.log(
+      `🔄 Creating ${nodeEntries.length} objects in batches of ${OBJECT_BATCH_SIZE}...`
+    );
 
-      try {
-        // Calculate appropriate header style based on object scale
-        // This matches the TextStyleUI scaling system (values 1-10 with 0.7 multiplier)
-        const calculateHeaderStyle = (scale, objectType) => {
-          if (objectType !== 'dodecahedron' || !scale) {
+    for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
+      const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
+      const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(nodeEntries.length / OBJECT_BATCH_SIZE);
+
+      console.log(
+        `📦 Processing object batch ${batchNumber}/${totalBatches} (${batch.length} objects)...`
+      );
+
+      for (const [nodeId, position] of batch) {
+        const node = graph.nodes.get(nodeId);
+        const scale = nodeScales.get(nodeId);
+        const objectType = this.getObjectTypeForNode(node);
+
+        if (!objectType || !node) continue;
+
+        try {
+          // Calculate appropriate header style based on object scale
+          // This matches the TextStyleUI scaling system (values 1-10 with 0.7 multiplier)
+          const calculateHeaderStyle = (scale, objectType) => {
+            if (objectType !== 'dodecahedron' || !scale) {
+              return {
+                fontSize: 'medium', // Default for non-dodecahedrons
+                color: 'black',
+                underline: false,
+              };
+            }
+
+            // Get the maximum scale factor (assuming uniform scaling)
+            const scaleFactor = Math.max(...scale);
+
+            // Calculate TextStyleUI-compatible value (1-10 scale)
+            // Scale factor of 1.0 → UI value of 2 (small but readable)
+            // Scale factor of 2.0 → UI value of 4
+            // Scale factor of 3.0 → UI value of 6, etc.
+            const uiValue = Math.min(
+              10,
+              Math.max(1, Math.round(1 + scaleFactor * 1.5))
+            );
+
+            // Apply the same multiplier as TextStyleUI for headers (0.7)
+            const fontSize = uiValue * 0.7;
+
             return {
-              fontSize: 'medium', // Default for non-dodecahedrons
+              fontSize: fontSize,
               color: 'black',
               underline: false,
             };
+          };
+
+          const headerStyle = calculateHeaderStyle(scale, objectType);
+
+          const objectId = await onCreateObject(objectType, position, {
+            scale,
+            headerText: node.label || node.id || '',
+            headerStyle: headerStyle,
+            // Add any additional properties based on node type
+            ...(node.properties || {}),
+          });
+
+          if (objectId) {
+            nodeToObjectIdMap.set(nodeId, objectId);
+            objectsCreated++;
           }
 
-          // Get the maximum scale factor (assuming uniform scaling)
-          const scaleFactor = Math.max(...scale);
-
-          // Calculate TextStyleUI-compatible value (1-10 scale)
-          // Scale factor of 1.0 → UI value of 2 (small but readable)
-          // Scale factor of 2.0 → UI value of 4
-          // Scale factor of 3.0 → UI value of 6, etc.
-          const uiValue = Math.min(
-            10,
-            Math.max(1, Math.round(1 + scaleFactor * 1.5))
-          );
-
-          // Apply the same multiplier as TextStyleUI for headers (0.7)
-          const fontSize = uiValue * 0.7;
-
-          return {
-            fontSize: fontSize,
-            color: 'black',
-            underline: false,
-          };
-        };
-
-        const headerStyle = calculateHeaderStyle(scale, objectType);
-
-        const objectId = await onCreateObject(objectType, position, {
-          scale,
-          headerText: node.label || node.id || '',
-          headerStyle: headerStyle,
-          // Add any additional properties based on node type
-          ...(node.properties || {}),
-        });
-
-        if (objectId) {
-          nodeToObjectIdMap.set(nodeId, objectId);
-          objectsCreated++;
+          // Longer delay between object creations to prevent Firebase overload
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        } catch (error) {
+          console.error(`Failed to create object for node ${nodeId}:`, error);
         }
-      } catch (error) {
-        console.error(`Failed to create object for node ${nodeId}:`, error);
+      }
+
+      // Longer delay between object batches to prevent overwhelming the system
+      if (i + OBJECT_BATCH_SIZE < nodeEntries.length) {
+        console.log('⏱️ Waiting 500ms before next object batch...');
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
+
+    console.log(
+      `🎉 Object creation completed: ${objectsCreated} objects created`
+    );
 
     return objectsCreated;
   }
@@ -833,8 +861,8 @@ export class MarkdownDiagramService {
           return faceIndex;
         };
 
-        // Calculate dodecahedron face position (same logic as original code)
-        const calculateDodecahedronFacePosition = (
+        // Calculate dodecahedron face position (same logic as original code) - UNUSED
+        /* const calculateDodecahedronFacePosition = (
           objectType,
           faceIndex,
           objectPosition,
@@ -962,42 +990,112 @@ export class MarkdownDiagramService {
           ];
 
           return indicatorPosition;
-        };
+        }; */
 
         // Calculate face positions for both objects
         let sourceFaceIndex, targetFaceIndex;
         let sourceWorldPosition, targetWorldPosition;
-        let sourceFaceCenter, targetFaceCenter;
 
         if (sourceObject.type === 'dodecahedron') {
           sourceFaceIndex = getFaceForObject(sourceObjectId, true);
-          sourceWorldPosition = calculateDodecahedronFacePosition(
-            sourceObject.type,
-            sourceFaceIndex,
-            sourceObject.position,
-            sourceObject.scale || [1, 1, 1]
-          );
-          sourceFaceCenter = sourceWorldPosition;
+          // For dodecahedrons, we don't pre-calculate world positions
+          // Let the existing facePositionUtils.js handle this
+          sourceWorldPosition = [...sourceObject.position];
         } else {
           sourceFaceIndex = 'front';
           sourceWorldPosition = [...sourceObject.position];
-          sourceFaceCenter = sourceWorldPosition;
         }
 
         if (targetObject.type === 'dodecahedron') {
           targetFaceIndex = getFaceForObject(targetObjectId, false);
-          targetWorldPosition = calculateDodecahedronFacePosition(
-            targetObject.type,
-            targetFaceIndex,
-            targetObject.position,
-            targetObject.scale || [1, 1, 1]
-          );
-          targetFaceCenter = targetWorldPosition;
+          // For dodecahedrons, we don't pre-calculate world positions
+          // Let the existing facePositionUtils.js handle this
+          targetWorldPosition = [...targetObject.position];
         } else {
           targetFaceIndex = 'front';
           targetWorldPosition = [...targetObject.position];
-          targetFaceCenter = targetWorldPosition;
         }
+
+        // Calculate face centers for dodecahedrons using EXACT same logic as Dodecahedron.jsx getFaceInfo
+        const calculateDodecahedronFaceCenter = (faceIndex) => {
+          // This must match EXACTLY with Dodecahedron.jsx's geometry and getFaceInfo function
+          const phi = (1 + Math.sqrt(5)) / 2;
+          const scale = 5;
+
+          // EXACT same vertices as Dodecahedron component
+          const vertices = [
+            [-1, -1, -1],
+            [1, -1, -1],
+            [1, 1, -1],
+            [-1, 1, -1],
+            [-1, -1, 1],
+            [1, -1, 1],
+            [1, 1, 1],
+            [-1, 1, 1],
+            [0, -phi, -1 / phi],
+            [0, phi, -1 / phi],
+            [0, phi, 1 / phi],
+            [0, -phi, 1 / phi],
+            [-1 / phi, 0, -phi],
+            [1 / phi, 0, -phi],
+            [1 / phi, 0, phi],
+            [-1 / phi, 0, phi],
+            [-phi, -1 / phi, 0],
+            [-phi, 1 / phi, 0],
+            [phi, 1 / phi, 0],
+            [phi, -1 / phi, 0],
+          ];
+
+          // EXACT same faces array as Dodecahedron component
+          const faces = [
+            [0, 12, 13, 1, 8],
+            [0, 16, 17, 3, 12],
+            [0, 8, 11, 4, 16],
+            [1, 19, 5, 11, 8],
+            [1, 13, 2, 18, 19],
+            [2, 13, 12, 3, 9],
+            [2, 9, 10, 6, 18],
+            [3, 17, 7, 10, 9],
+            [4, 11, 5, 14, 15],
+            [4, 15, 7, 17, 16],
+            [5, 19, 18, 6, 14],
+            [6, 10, 7, 15, 14],
+          ];
+
+          if (faceIndex < 0 || faceIndex >= faces.length) {
+            return [0, 0, 0]; // Default to center if invalid face
+          }
+
+          // Generate face geometry positions (same as Dodecahedron component)
+          const faceVertices = faces[faceIndex];
+          const positions = [];
+
+          for (const vertexIndex of faceVertices) {
+            const vertex = vertices[vertexIndex];
+            positions.push(
+              vertex[0] * scale,
+              vertex[1] * scale,
+              vertex[2] * scale
+            );
+          }
+
+          // Calculate center using EXACT same logic as getFaceInfo in Dodecahedron.jsx
+          let centerX = 0,
+            centerY = 0,
+            centerZ = 0;
+          for (let i = 0; i < positions.length; i += 3) {
+            centerX += positions[i];
+            centerY += positions[i + 1];
+            centerZ += positions[i + 2];
+          }
+          const vertexCount = positions.length / 3;
+
+          return [
+            centerX / vertexCount,
+            centerY / vertexCount,
+            centerZ / vertexCount,
+          ];
+        };
 
         const connectionData = {
           id: connectionId,
@@ -1010,11 +1108,18 @@ export class MarkdownDiagramService {
             face:
               sourceObject.type === 'dodecahedron' ? sourceFaceIndex : 'front',
             position: sourceWorldPosition,
-            faceCenter: sourceFaceCenter,
+            ...(sourceObject.type === 'dodecahedron' && {
+              faceCenter: calculateDodecahedronFaceCenter(sourceFaceIndex),
+            }),
             cube: {
+              id: sourceObjectId,
               position: [...sourceObject.position],
               scale: sourceObject.scale || [1, 1, 1],
+              userData: {
+                objectId: sourceObjectId,
+              },
             },
+            id: sourceObjectId,
           },
           end: {
             objectId: targetObjectId,
@@ -1025,18 +1130,25 @@ export class MarkdownDiagramService {
             face:
               targetObject.type === 'dodecahedron' ? targetFaceIndex : 'front',
             position: targetWorldPosition,
-            faceCenter: targetFaceCenter,
+            ...(targetObject.type === 'dodecahedron' && {
+              faceCenter: calculateDodecahedronFaceCenter(targetFaceIndex),
+            }),
             cube: {
+              id: targetObjectId,
               position: [...targetObject.position],
               scale: targetObject.scale || [1, 1, 1],
+              userData: {
+                objectId: targetObjectId,
+              },
             },
+            id: targetObjectId,
           },
           text: connectionText,
           color: connection.visual?.color || '#888888',
           thickness: connection.visual?.thickness || 2,
           lineStyle: 'straight',
           textStyle: {
-            fontSize: 1,
+            fontSize: 4,
             color: 'black',
           },
           // Mark as created from Merfolk for debugging
@@ -1053,7 +1165,7 @@ export class MarkdownDiagramService {
   }
 
   /**
-   * Save all connections to the connection store
+   * Save all connections to the connection store using Firebase batches
    * @param {Array} allConnectionsToSave - Array of connection data to save
    * @param {string} currentSpaceId - Current space ID
    * @param {Object} user - User object for authentication
@@ -1063,39 +1175,134 @@ export class MarkdownDiagramService {
 
     const connectionStore = useConnectionStore.getState();
 
-    // Use Promise.all with individual error handling for each connection
-    const connectionPromises = allConnectionsToSave.map(
-      async (connectionData) => {
-        try {
-          // Add connection to the store
-          connectionStore.addConnection(connectionData);
-
-          // Save to database if user and space are available
-          if (user && currentSpaceId) {
-            const { saveConnection } = await import('./connectionsService');
-            await saveConnection(user.uid, currentSpaceId, connectionData);
-          }
-
-          return 1;
-        } catch (connectionError) {
-          console.error('Failed to create connection:', connectionError);
-          return 0;
-        }
-      }
+    console.log(
+      `🔄 Starting batch save of ${allConnectionsToSave.length} connections...`
     );
 
-    try {
-      const results = await Promise.all(connectionPromises);
-      const successCount = results.reduce((sum, result) => sum + result, 0);
-
-      if (successCount > 0) {
-        console.log(
-          `Successfully created ${successCount}/${allConnectionsToSave.length} connections`
-        );
+    // First, add all connections to the store immediately for UI responsiveness
+    allConnectionsToSave.forEach((connectionData) => {
+      try {
+        connectionStore.addConnection(connectionData);
+      } catch (error) {
+        console.error('Failed to add connection to store:', error);
       }
-    } catch (error) {
-      console.error('Failed to create some connections:', error);
+    });
+
+    // If no user or space, we're done (local-only mode)
+    if (!user || !currentSpaceId) {
+      console.log('✅ Connections added to local store (no Firebase save)');
+      return;
     }
+
+    // Save to Firebase in very small batches with aggressive rate limiting
+    const BATCH_SIZE = 10; // Very small batches to prevent Firebase write stream exhaustion
+    let savedCount = 0;
+    let batchCount = 0;
+
+    for (let i = 0; i < allConnectionsToSave.length; i += BATCH_SIZE) {
+      const batch = allConnectionsToSave.slice(i, i + BATCH_SIZE);
+      batchCount++;
+
+      console.log(
+        `📦 Processing batch ${batchCount} (${batch.length} connections)...`
+      );
+
+      try {
+        // Import spatial partitioning for bulk operations
+        const { bulkSaveConnectionsToCell, getCellCoordinates, getCellId } =
+          await import('./spatialPartitioning');
+
+        let batchSavedCount = 0;
+
+        // Group connections by cell for bulk operations
+        const connectionsByCell = new Map();
+
+        for (const connectionData of batch) {
+          const startPosition = connectionData.start?.position;
+          const endPosition = connectionData.end?.position;
+
+          if (!startPosition || !endPosition) {
+            console.warn(
+              '⚠️ Skipping connection due to missing positions:',
+              connectionData.id
+            );
+            continue;
+          }
+
+          // Get cell coordinates for both endpoints
+          const startCellCoords = getCellCoordinates(startPosition);
+          const endCellCoords = getCellCoordinates(endPosition);
+
+          const startCellId = getCellId(
+            startCellCoords.x,
+            startCellCoords.y,
+            startCellCoords.z
+          );
+          const endCellId = getCellId(
+            endCellCoords.x,
+            endCellCoords.y,
+            endCellCoords.z
+          );
+
+          // Add to start cell
+          if (!connectionsByCell.has(startCellId)) {
+            connectionsByCell.set(startCellId, []);
+          }
+          connectionsByCell.get(startCellId).push(connectionData);
+
+          // Add to end cell if different
+          if (startCellId !== endCellId) {
+            if (!connectionsByCell.has(endCellId)) {
+              connectionsByCell.set(endCellId, []);
+            }
+            connectionsByCell.get(endCellId).push(connectionData);
+          }
+        }
+
+        // Bulk save to each cell
+        console.log(`📍 Found ${connectionsByCell.size} cells to save to`);
+        for (const [cellId, connections] of connectionsByCell) {
+          try {
+            console.log(
+              `💾 Saving ${connections.length} connections to cell ${cellId}`
+            );
+            const success = await bulkSaveConnectionsToCell(
+              user.uid,
+              currentSpaceId,
+              cellId,
+              connections
+            );
+            console.log(`💾 Cell ${cellId} save result:`, success);
+            if (success) {
+              batchSavedCount += connections.length;
+            }
+
+            // Small delay between cell operations
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          } catch (error) {
+            console.error(`Failed to bulk save to cell ${cellId}:`, error);
+          }
+        }
+
+        savedCount += batchSavedCount;
+
+        console.log(
+          `✅ Batch ${batchCount} completed: ${batchSavedCount}/${batch.length} saved`
+        );
+
+        // Much longer delay between batches to allow Firebase to fully recover
+        if (i + BATCH_SIZE < allConnectionsToSave.length) {
+          console.log('⏱️ Waiting 5 seconds before next batch...');
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+      } catch (error) {
+        console.error(`❌ Batch ${batchCount} failed:`, error);
+      }
+    }
+
+    console.log(
+      `🎉 Batch save completed: ${savedCount}/${allConnectionsToSave.length} connections saved to Firebase`
+    );
   }
 
   /**
@@ -1176,6 +1383,14 @@ export class MarkdownDiagramService {
         nodeToObjectIdMap,
         allConnectionsToSave
       );
+    }
+
+    // Give Firebase time to recover after object creation before starting connections
+    if (allConnectionsToSave.length > 0) {
+      console.log(
+        '⏱️ Allowing Firebase to recover after object creation (3 seconds)...'
+      );
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
 
     // Save all connections

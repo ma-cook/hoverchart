@@ -550,8 +550,8 @@ const UIOverlay = ({
             </button>
             <button
               className="shape-button"
-              onClick={() => onCreateObject('sphere')}
-              title="Add Sphere"
+              onClick={() => onCreateObject('dodecahedron')}
+              title="Add Dodecahedron"
             >
               ○
             </button>

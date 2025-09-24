@@ -385,112 +385,35 @@ export const calculateFacePosition = (indicator, objects) => {
             faceCenter[2] * worldScale.z
           );
         } else if (indicator.type === 'dodecahedron') {
-          // Dodecahedron face offset calculation
-          // First check if we have a stored faceCenter (from second click or stored data)
+          // Dodecahedron face positioning - USE EXACT SAME LOGIC AS Dodecahedron component FaceIndicator
+
+          // If we have a stored faceCenter (from markdown service), use it directly
           if (
             Array.isArray(indicator.faceCenter) &&
             indicator.faceCenter.some((val) => val !== 0)
           ) {
-            // Check if this is a manual connection by looking at the faceCenter values
-            // Manual connections from Dodecahedron component might store local coordinates
             const objectPosition = indicator.cube?.position ||
               indicator.position || [0, 0, 0];
             const objectScale = indicator.cube?.scale ||
               indicator.scale || [1, 1, 1];
 
-            // Check if faceCenter seems to be in local coordinates (small values)
-            const maxAbsValue = Math.max(...indicator.faceCenter.map(Math.abs));
-            const isLikelyLocalCoordinates = maxAbsValue < 10; // Local coords are usually < 10
+            // The faceCenter is local coordinates - transform to world coordinates
+            // This matches exactly how Dodecahedron component transforms getFaceInfo().center
+            const worldFaceCenter = [
+              objectPosition[0] + indicator.faceCenter[0] * objectScale[0],
+              objectPosition[1] + indicator.faceCenter[1] * objectScale[1],
+              objectPosition[2] + indicator.faceCenter[2] * objectScale[2],
+            ];
 
-            if (isLikelyLocalCoordinates) {
-              // This appears to be local coordinates, so we need to transform them
-              const scaledFaceCenter = [
-                indicator.faceCenter[0] * objectScale[0],
-                indicator.faceCenter[1] * objectScale[1],
-                indicator.faceCenter[2] * objectScale[2],
-              ];
-
-              const worldFacePosition = [
-                objectPosition[0] + scaledFaceCenter[0],
-                objectPosition[1] + scaledFaceCenter[1],
-                objectPosition[2] + scaledFaceCenter[2],
-              ];
-
-              // console.log(
-              //   '🎯 Dodecahedron face position (local to world transformation):',
-              //   {
-              //     objectId: indicator.objectId,
-              //     localFaceCenter: indicator.faceCenter,
-              //     maxAbsValue: maxAbsValue,
-              //     isLikelyLocalCoordinates: true,
-              //     objectScale: objectScale,
-              //     scaledFaceCenter: scaledFaceCenter,
-              //     objectPosition: objectPosition,
-              //     worldFacePosition: worldFacePosition,
-              //   }
-              // );
-
-              return worldFacePosition;
-            } else {
-              // This appears to be world coordinates already - debug disabled for performance
-              // console.log(
-              //   '🎯 Using stored faceCenter as world position (manual connection style):',
-              //   {
-              //     objectId: indicator.objectId,
-              //     storedFaceCenter: indicator.faceCenter,
-              //     maxAbsValue: maxAbsValue,
-              //     isLikelyLocalCoordinates: false,
-              //     objectPosition: objectPosition,
-              //     usingFaceCenterDirectly: true,
-              //   }
-              // );
-
-              return indicator.faceCenter;
-            }
+            return worldFaceCenter;
           } else {
-            // Fallback: Calculate face position using the same geometry as Dodecahedron component
-            // This ensures manual connections match the actual face positions
-            const phi = (1 + Math.sqrt(5)) / 2; // Golden ratio
-            const vertices = [
-              [-1, -1, -1],
-              [1, -1, -1],
-              [1, 1, -1],
-              [-1, 1, -1], // back face vertices
-              [-1, -1, 1],
-              [1, -1, 1],
-              [1, 1, 1],
-              [-1, 1, 1], // front face vertices
-              [0, -phi, -1 / phi],
-              [0, phi, -1 / phi],
-              [0, phi, 1 / phi],
-              [0, -phi, 1 / phi], // top/bottom middle vertices
-              [-1 / phi, 0, -phi],
-              [1 / phi, 0, -phi],
-              [1 / phi, 0, phi],
-              [-1 / phi, 0, phi], // left/right middle vertices
-              [-phi, -1 / phi, 0],
-              [phi, -1 / phi, 0],
-              [phi, 1 / phi, 0],
-              [-phi, 1 / phi, 0], // front/back middle vertices
-            ];
+            // Fallback: Use the same calculation as the main case, but calculate faceCenter first
+            const objectPosition = indicator.cube?.position ||
+              indicator.position || [0, 0, 0];
+            const objectScale = indicator.cube?.scale ||
+              indicator.scale || [1, 1, 1];
 
-            // Face definitions (12 pentagonal faces) - MUST MATCH Dodecahedron component
-            const faces = [
-              [4, 11, 15, 7, 10], // Face 0
-              [1, 8, 0, 12, 13], // Face 1
-              [5, 17, 1, 13, 14], // Face 2
-              [4, 16, 0, 8, 11], // Face 3
-              [2, 9, 3, 19, 10], // Face 4
-              [6, 14, 15, 11, 10], // Face 5 (bottom)
-              [7, 15, 14, 6, 18], // Face 6
-              [5, 14, 6, 10, 11], // Face 7 - This is the 'front-bottom' face
-              [1, 17, 18, 2, 13], // Face 8
-              [0, 16, 19, 3, 12], // Face 9
-              [2, 18, 17, 5, 9], // Face 10
-              [3, 9, 12, 13, 19], // Face 11 (top)
-            ];
-
-            // Get the face index
+            // Get face index
             let faceIndex = 0;
             if (typeof indicator.face === 'number') {
               faceIndex = indicator.face;
@@ -501,56 +424,92 @@ export const calculateFacePosition = (indicator, objects) => {
               faceIndex = parseInt(indicator.face);
             }
 
-            // Ensure face index is within bounds
-            if (faceIndex < 0 || faceIndex >= faces.length) {
-              console.warn(
-                `Invalid dodecahedron face index ${faceIndex}, using face 0`
-              );
-              faceIndex = 0;
-            }
+            // Use the same calculateDodecahedronFaceCenter function from markdown service
+            const calculateFaceCenter = (faceIndex) => {
+              const phi = (1 + Math.sqrt(5)) / 2;
+              const scale = 5; // Same as Dodecahedron component
 
-            // Calculate the actual face center by averaging vertices of the pentagonal face
-            const faceVertices = faces[faceIndex];
-            let faceCenter = [0, 0, 0];
+              const vertices = [
+                [-1, -1, -1],
+                [1, -1, -1],
+                [1, 1, -1],
+                [-1, 1, -1],
+                [-1, -1, 1],
+                [1, -1, 1],
+                [1, 1, 1],
+                [-1, 1, 1],
+                [0, -phi, -1 / phi],
+                [0, phi, -1 / phi],
+                [0, phi, 1 / phi],
+                [0, -phi, 1 / phi],
+                [-1 / phi, 0, -phi],
+                [1 / phi, 0, -phi],
+                [1 / phi, 0, phi],
+                [-1 / phi, 0, phi],
+                [-phi, -1 / phi, 0],
+                [-phi, 1 / phi, 0],
+                [phi, 1 / phi, 0],
+                [phi, -1 / phi, 0],
+              ];
 
-            for (const vertexIndex of faceVertices) {
-              faceCenter[0] += vertices[vertexIndex][0];
-              faceCenter[1] += vertices[vertexIndex][1];
-              faceCenter[2] += vertices[vertexIndex][2];
-            }
+              const faces = [
+                [0, 12, 13, 1, 8],
+                [0, 16, 17, 3, 12],
+                [0, 8, 11, 4, 16],
+                [1, 19, 5, 11, 8],
+                [1, 13, 2, 18, 19],
+                [2, 13, 12, 3, 9],
+                [2, 9, 10, 6, 18],
+                [3, 17, 7, 10, 9],
+                [4, 11, 5, 14, 15],
+                [4, 15, 7, 17, 16],
+                [5, 19, 18, 6, 14],
+                [6, 10, 7, 15, 14],
+              ];
 
-            // Average the vertices
-            faceCenter = faceCenter.map((coord) => coord / faceVertices.length);
+              if (faceIndex < 0 || faceIndex >= faces.length) {
+                return [0, 0, 0];
+              }
 
-            // The face center is now in local coordinates matching the Dodecahedron component
-            // Scale by 6 to match the dodecahedron radius used in the component
-            const DODECAHEDRON_SCALE = 6;
+              const faceVertices = faces[faceIndex];
+              const positions = [];
 
-            // Normalize and scale - DON'T apply worldScale as dodecahedron geometry is already properly scaled
-            const length = Math.sqrt(
-              faceCenter[0] ** 2 + faceCenter[1] ** 2 + faceCenter[2] ** 2
-            );
-            faceOffset = new THREE.Vector3(
-              (faceCenter[0] / length) * DODECAHEDRON_SCALE,
-              (faceCenter[1] / length) * DODECAHEDRON_SCALE,
-              (faceCenter[2] / length) * DODECAHEDRON_SCALE
-            );
+              for (const vertexIndex of faceVertices) {
+                const vertex = vertices[vertexIndex];
+                positions.push(
+                  vertex[0] * scale,
+                  vertex[1] * scale,
+                  vertex[2] * scale
+                );
+              }
 
-            // console.log('🎯 Calculated dodecahedron face position:', {
-            //   face: indicator.face,
-            //   faceIndex: faceIndex,
-            //   faceCenter: faceCenter,
-            //   normalized: [
-            //     faceCenter[0] / length,
-            //     faceCenter[1] / length,
-            //     faceCenter[2] / length,
-            //   ],
-            //   scaledOffset: {
-            //     x: faceOffset.x,
-            //     y: faceOffset.y,
-            //     z: faceOffset.z,
-            //   },
-            // });
+              let centerX = 0,
+                centerY = 0,
+                centerZ = 0;
+              for (let i = 0; i < positions.length; i += 3) {
+                centerX += positions[i];
+                centerY += positions[i + 1];
+                centerZ += positions[i + 2];
+              }
+              const vertexCount = positions.length / 3;
+
+              return [
+                centerX / vertexCount,
+                centerY / vertexCount,
+                centerZ / vertexCount,
+              ];
+            };
+
+            const localFaceCenter = calculateFaceCenter(faceIndex);
+
+            // Transform to world coordinates the same way as the main case
+            const worldFaceCenter = [
+              objectPosition[0] + localFaceCenter[0] * objectScale[0],
+              objectPosition[1] + localFaceCenter[1] * objectScale[1],
+              objectPosition[2] + localFaceCenter[2] * objectScale[2],
+            ];
+
+            return worldFaceCenter;
           }
         } else {
           // Standard cube face offset calculation

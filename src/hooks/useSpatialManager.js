@@ -47,7 +47,6 @@ export const useSpatialManager = ({
     const needsOwner = isPublicSpace && !currentSpaceOwner;
 
     if (currentSpaceId && !isInitialized && !needsOwner) {
-      console.log('🌟 Initializing spatial system...');
       initializeSpatialSystem(user, currentSpaceId, cameraRef);
 
       // Force initial camera position update after initialization
@@ -81,14 +80,10 @@ export const useSpatialManager = ({
     const maxRetries = 10;
 
     const setupCameraListeners = () => {
-      console.log('🎥 Setting up camera listeners...');
-
       if (!cameraRef?.current?.camera || !cameraRef?.current?.orbitControls) {
         if (retryCount < maxRetries) {
           retryCount++;
-          console.log(
-            `🔄 Retrying camera setup (${retryCount}/${maxRetries})...`
-          );
+
           setTimeout(setupCameraListeners, 100);
         } else {
           console.error(
@@ -118,28 +113,18 @@ export const useSpatialManager = ({
           currentCellCoords.y !== lastCellCoords.y ||
           currentCellCoords.z !== lastCellCoords.z
         ) {
-          console.log('📸 Camera entered new cell:', {
-            from: lastCellCoords
-              ? `[${lastCellCoords.x},${lastCellCoords.y},${lastCellCoords.z}]`
-              : 'initial',
-            to: `[${currentCellCoords.x},${currentCellCoords.y},${currentCellCoords.z}]`,
-          });
-
           // Clear any existing debounce timer
           if (debounceTimer) {
             clearTimeout(debounceTimer);
           }
 
-          // Add a small debounce to prevent rapid successive calls
-          debounceTimer = setTimeout(() => {
-            updateCameraPosition(
-              { x: currentPos.x, y: currentPos.y, z: currentPos.z },
-              user,
-              currentSpaceId,
-              onObjectsChange
-            );
-            debounceTimer = null;
-          }, 25); // 25ms debounce to smooth out rapid movements
+          // Call immediately without debounce
+          updateCameraPosition(
+            { x: currentPos.x, y: currentPos.y, z: currentPos.z },
+            user,
+            currentSpaceId,
+            onObjectsChange
+          );
 
           lastCellCoords = currentCellCoords;
         }
@@ -160,8 +145,6 @@ export const useSpatialManager = ({
           debounceTimer = null;
         }
       };
-
-      console.log('✅ Camera listeners set up successfully');
     };
 
     // Start the setup process

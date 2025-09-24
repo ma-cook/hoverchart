@@ -197,16 +197,21 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
   // Set up and manage connection subscriptions with performance optimizations
   useEffect(() => {
-    if (!user?.uid || !currentSpaceId) {
+    // For anonymous users, we need a space ID but don't require user.uid
+    // The service layer will handle using the space owner ID for anonymous access
+    if (!currentSpaceId) {
       return;
     }
+
+    // For anonymous users without user.uid, still allow connection loading
+    const effectiveUserId = user?.uid || null;
 
     // Check if subscription needs to be updated
     const lastSub = lastSubscriptionRef.current;
     const cellsChanged =
       JSON.stringify(stableLoadedCells.sort()) !==
       JSON.stringify((lastSub.loadedCells || []).sort());
-    const userChanged = lastSub.userId !== user.uid;
+    const userChanged = lastSub.userId !== effectiveUserId;
     const spaceChanged = lastSub.spaceId !== currentSpaceId;
     const initialLoadingJustFinished =
       !getIsInitialLoading() && lastSub.wasInitialLoading;
@@ -222,7 +227,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       }
 
       const cleanup = subscribeToConnections(
-        user.uid,
+        effectiveUserId,
         currentSpaceId,
         enhancedConnectionCallback,
         stableLoadedCells
@@ -230,7 +235,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
       subscriptionCleanupRef.current = cleanup;
       lastSubscriptionRef.current = {
-        userId: user.uid,
+        userId: effectiveUserId,
         spaceId: currentSpaceId,
         loadedCells: [...stableLoadedCells],
         wasInitialLoading: getIsInitialLoading(), // Track loading state but don't depend on it
@@ -261,7 +266,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     // Start a new subscription with current loaded cells
 
     const cleanup = subscribeToConnections(
-      user.uid,
+      effectiveUserId,
       currentSpaceId,
       enhancedConnectionCallback,
       stableLoadedCells
@@ -272,7 +277,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
     // Update last subscription ref
     lastSubscriptionRef.current = {
-      userId: user.uid,
+      userId: effectiveUserId,
       spaceId: currentSpaceId,
       loadedCells: [...stableLoadedCells],
       wasInitialLoading: false, // Mark this as a post-initial-loading subscription
@@ -297,6 +302,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
   // Handle spatial cell changes for connection loading/unloading
   useEffect(() => {
+    const effectiveUserId = user?.uid || null; // Define for this useEffect scope
     const previousCells = previousLoadedCellsRef.current;
     const currentCells = stableLoadedCells;
 
@@ -309,7 +315,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     if (!previousCells || previousCells.length === 0) {
       // Create initial subscription
       const initialCleanup = subscribeToConnections(
-        user.uid,
+        effectiveUserId,
         currentSpaceId,
         enhancedConnectionCallback,
         currentCells
@@ -365,7 +371,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     if (reloadedCells.length > 0) {
       // Create a fresh subscription for all reloaded cells
       const newSubscriptionCleanup = subscribeToConnections(
-        user.uid,
+        effectiveUserId,
         currentSpaceId,
         enhancedConnectionCallback,
         reloadedCells
@@ -392,7 +398,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
       // Trigger subscription refresh for reloaded cells
       const cleanup = subscribeToConnections(
-        user.uid,
+        effectiveUserId,
         currentSpaceId,
         enhancedConnectionCallback,
         reloadedCells

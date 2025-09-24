@@ -234,12 +234,97 @@ const useConnectionStore = create((set, get) => ({
     });
   },
   updateConnection: (connectionId, updates) => {
-    set((state) => ({
-      connections: state.connections.map((conn) =>
-        conn.id === connectionId ? { ...conn, ...updates } : conn
-      ),
-    }));
+    set((state) => {
+      // Find the connection index
+      const connectionIndex = state.connections.findIndex(
+        (conn) => conn.id === connectionId
+      );
+
+      if (connectionIndex === -1) {
+        // Connection not found, return current state unchanged
+        return state;
+      }
+
+      // Check if the updates would actually change the connection
+      const currentConnection = state.connections[connectionIndex];
+      let hasChanges = false;
+
+      for (const [key, value] of Object.entries(updates)) {
+        if (JSON.stringify(currentConnection[key]) !== JSON.stringify(value)) {
+          hasChanges = true;
+          break;
+        }
+      }
+
+      if (!hasChanges) {
+        // No actual changes, return current state
+        return state;
+      }
+
+      // Create minimal update - only update the specific connection
+      const newConnections = [...state.connections];
+      newConnections[connectionIndex] = { ...currentConnection, ...updates };
+
+      return {
+        connections: newConnections,
+      };
+    });
     // Log state after update
+    get()._logState();
+  },
+
+  // Batch update multiple connections in a single operation
+  updateConnections: (connectionUpdates) => {
+    if (!connectionUpdates || connectionUpdates.size === 0) {
+      return;
+    }
+
+    set((state) => {
+      let hasChanges = false;
+      const newConnections = [...state.connections];
+
+      // Apply all updates in a single pass
+      connectionUpdates.forEach((updates, connectionId) => {
+        const connectionIndex = newConnections.findIndex(
+          (conn) => conn.id === connectionId
+        );
+
+        if (connectionIndex === -1) {
+          return; // Connection not found
+        }
+
+        const currentConnection = newConnections[connectionIndex];
+
+        // Check if the updates would actually change the connection
+        let hasConnectionChanges = false;
+        for (const [key, value] of Object.entries(updates)) {
+          if (
+            JSON.stringify(currentConnection[key]) !== JSON.stringify(value)
+          ) {
+            hasConnectionChanges = true;
+            break;
+          }
+        }
+
+        if (hasConnectionChanges) {
+          newConnections[connectionIndex] = {
+            ...currentConnection,
+            ...updates,
+          };
+          hasChanges = true;
+        }
+      });
+
+      if (!hasChanges) {
+        return state; // No actual changes
+      }
+
+      return {
+        connections: newConnections,
+      };
+    });
+
+    // Log state after batch update
     get()._logState();
   },
   setConnections: (connections) => {
