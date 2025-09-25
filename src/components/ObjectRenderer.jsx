@@ -207,13 +207,20 @@ const ObjectRenderer = React.memo(
     return null;
   },
   (prevProps, nextProps) => {
-    // Custom comparison function for React.memo
+    // Custom comparison function for React.memo with deep array comparison
+    // Helper function to compare arrays by value
+    const arraysEqual = (a, b) => {
+      if (!Array.isArray(a) || !Array.isArray(b)) return a === b;
+      if (a.length !== b.length) return false;
+      return a.every((val, i) => val === b[i]);
+    };
+
     // Only re-render if critical props change
     return (
       prevProps.obj.id === nextProps.obj.id &&
       prevProps.selectedId === nextProps.selectedId &&
-      prevProps.obj.position === nextProps.obj.position &&
-      prevProps.obj.scale === nextProps.obj.scale &&
+      arraysEqual(prevProps.obj.position, nextProps.obj.position) &&
+      arraysEqual(prevProps.obj.scale, nextProps.obj.scale) &&
       prevProps.obj.color === nextProps.obj.color &&
       prevProps.obj.headerText === nextProps.obj.headerText &&
       prevProps.obj.faceText === nextProps.obj.faceText &&

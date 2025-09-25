@@ -243,18 +243,91 @@ const useSpaceManagerStore = create((set, get) => ({
                 }
               }
             }
-          } catch {
-            // Intentionally ignored
-          }
 
-          window.currentSpaceOwner = urlOwnerUid || user.uid;
+            // If we found a space owner, check if it's a public space or if user has access
+            if (ownerId) {
+              // First check if this is a public space (anyone can access)
+              const isPublicSpace =
+                sessionStorage.getItem(`isPublicSpace_${urlSpaceId}`) ===
+                'true';
+
+              if (isPublicSpace) {
+                console.log(
+                  `✅ Public space access granted for space: ${urlSpaceId}, owner: ${ownerId}`
+                );
+                window.currentSpaceOwner = ownerId;
+                set({ currentSpaceId: urlSpaceId, isLoadingSpace: false });
+                return;
+              }
+
+              // For non-public spaces, check explicit access permissions
+              const ownerSpaceRef = doc(
+                db,
+                'users',
+                ownerId,
+                'spaces',
+                urlSpaceId
+              );
+              const ownerSpaceDoc = await getDoc(ownerSpaceRef);
+
+              if (ownerSpaceDoc.exists()) {
+                const spaceData = ownerSpaceDoc.data();
+                const hasAccess = spaceData.sharedWith?.some(
+                  (share) => share.userId === user.uid
+                );
+
+                if (hasAccess) {
+                  sessionStorage.setItem(`isSharedSpace_${urlSpaceId}`, 'true');
+                  sessionStorage.setItem(
+                    `sharedSpaceOwner_${urlSpaceId}`,
+                    ownerId
+                  );
+                  window.currentSpaceOwner = ownerId;
+                  set({ currentSpaceId: urlSpaceId, isLoadingSpace: false });
+                  return;
+                }
+              }
+            }
+
+            // If we couldn't find the space owner or don't have access, this is an invalid space access
+            console.error(
+              `Invalid space access: Space ${urlSpaceId} not found or access denied`
+            );
+            set({
+              spaceError: `Space not found or access denied: ${urlSpaceId}`,
+              isLoadingSpace: false,
+            });
+            // Redirect to landing page for invalid space access
+            setTimeout(() => {
+              console.log(
+                '🔄 [SpaceManager] Redirecting to volscape.com - invalid space or no access'
+              );
+              window.location.href = 'https://volscape.com/';
+            }, 1000);
+            return;
+          } catch (error) {
+            console.error('Error finding space owner:', error);
+            set({
+              spaceError: `Failed to access space: ${urlSpaceId}`,
+              isLoadingSpace: false,
+            });
+            // Redirect to landing page for space access errors
+            setTimeout(() => {
+              console.log(
+                '🔄 [SpaceManager] Redirecting to volscape.com - space access error'
+              );
+              window.location.href = 'https://volscape.com/';
+            }, 1000);
+            return;
+          }
         } catch (error) {
-          console.error('Error fetching space:', error);
-          window.currentSpaceOwner = user.uid; // Fallback
-          set({ spaceError: error.message });
+          console.error('Error in fetchCurrentSpace main try block:', error);
+          set({
+            spaceError: error.message,
+            isLoadingSpace: false,
+          });
+          return;
         }
-        set({ isLoadingSpace: false });
-        return;
       }
 
       // Check session storage if no URL space ID

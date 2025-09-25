@@ -840,25 +840,42 @@ export const registerUserPresence = async (userId, spaceId) => {
     window.currentSpaceOwner = userId;
   }
 
-  const presenceRef = doc(
-    db,
-    'users',
-    window.currentSpaceOwner,
-    'spaces',
-    spaceId,
-    'presence',
-    userId
-  );
+  // IMPORTANT: Do not create user documents - only update existing ones
+  // User creation should be handled by the landing page application
+  try {
+    // First check if the space owner document exists
+    const ownerDocRef = doc(db, 'users', window.currentSpaceOwner);
+    const ownerDoc = await getDoc(ownerDocRef);
 
-  await setDoc(
-    presenceRef,
-    {
-      online: true,
-      userId,
-      lastSeen: serverTimestamp(),
-    },
-    { merge: true }
-  );
+    if (!ownerDoc.exists()) {
+      console.warn(
+        `User document for ${window.currentSpaceOwner} does not exist. Skipping presence registration to avoid creating empty user documents.`
+      );
+      return;
+    }
+
+    const presenceRef = doc(
+      db,
+      'users',
+      window.currentSpaceOwner,
+      'spaces',
+      spaceId,
+      'presence',
+      userId
+    );
+
+    await setDoc(
+      presenceRef,
+      {
+        online: true,
+        userId,
+        lastSeen: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.error('Error registering user presence:', error);
+  }
 };
 
 export const subscribeToUsersInSpace = (spaceId, callback) => {

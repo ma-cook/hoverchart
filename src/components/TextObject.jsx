@@ -110,9 +110,10 @@ const TextObject = React.memo(
 
     // Store scene reference to avoid dependency issues
     const sceneRef = useRef(scene);
-    useEffect(() => {
-      sceneRef.current = scene;
-    }, [scene]);
+    // Disable scene sync to prevent re-renders - scene reference changes frequently in R3F
+    // useEffect(() => {
+    //   sceneRef.current = scene;
+    // }, [scene]);
 
     // Helper function to safely pause/resume orbit controls
     const setOrbitControlsEnabled = useCallback(

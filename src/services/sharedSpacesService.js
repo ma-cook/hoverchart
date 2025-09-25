@@ -444,31 +444,99 @@ export const getSpaceOwner = async (spaceId) => {
 // Add this new function to find a space's owner regardless of the current user's access
 export const findSpaceOwner = async (spaceId) => {
   if (!spaceId) return null;
+
+  console.log(`🔍 findSpaceOwner: Starting lookup for space: ${spaceId}`);
+  console.log(`🔍 window.currentSpaceOwner: ${window.currentSpaceOwner}`);
+  console.log(`🔍 window.publicAccessSpace: ${window.publicAccessSpace}`);
+  console.log(`🔍 URL search params: ${window.location.search}`);
+
   try {
-    // First try to get the space directly from the spaces collection
-    const spaceDocRef = doc(collection(db, 'spaces'), spaceId);
-    const spaceDocSnapshot = await getDoc(spaceDocRef);
+    // Method 1: Try publicSpaces collection first (this is the main method that works)
+    console.log(`🔍 Checking publicSpaces collection: publicSpaces/${spaceId}`);
+    const publicSpaceDocRef = doc(db, 'publicSpaces', spaceId);
+    const publicSpaceDocSnapshot = await getDoc(publicSpaceDocRef);
 
-    if (spaceDocSnapshot.exists()) {
-      const spaceData = spaceDocSnapshot.data();
+    if (publicSpaceDocSnapshot.exists()) {
+      const spaceData = publicSpaceDocSnapshot.data();
       console.log(
-        `Found space in spaces collection, owner: ${spaceData.ownerId}`
+        `✅ Found space in publicSpaces collection, owner: ${spaceData.ownerId}`
       );
+      console.log(`🔍 Space data:`, spaceData);
+
+      // Cache this for future use
+      if (spaceData.ownerId) {
+        sessionStorage.setItem(
+          `sharedSpaceOwner_${spaceId}`,
+          spaceData.ownerId
+        );
+        sessionStorage.setItem(`isPublicSpace_${spaceId}`, 'true');
+        // Also set window globals for consistency
+        window.currentSpaceOwner = spaceData.ownerId;
+        window.publicAccessSpace = spaceId;
+      }
+
       return spaceData.ownerId;
+    } else {
+      console.log(`❌ Space not found in publicSpaces collection`);
     }
 
-    // If not found directly, try query
-    const spacesRef = collection(db, 'spaces');
-    const spaceQuery = query(spacesRef, where('id', '==', spaceId));
-    const spaceSnapshot = await getDocs(spaceQuery);
+    // Method 2: Check sessionStorage cache
+    const sessionOwner = sessionStorage.getItem(`sharedSpaceOwner_${spaceId}`);
+    console.log(`🔍 Session storage owner: ${sessionOwner}`);
+    if (sessionOwner) {
+      try {
+        console.log(`🔍 Checking space using cached owner: ${sessionOwner}`);
+        const spaceRef = doc(db, 'users', sessionOwner, 'spaces', spaceId);
+        const spaceDoc = await getDoc(spaceRef);
 
-    if (!spaceSnapshot.empty) {
-      const spaceData = spaceSnapshot.docs[0].data();
-      console.log(`Found space by query, owner: ${spaceData.ownerId}`);
-      return spaceData.ownerId;
+        if (spaceDoc.exists()) {
+          console.log(`✅ Found space using cached owner: ${sessionOwner}`);
+          return sessionOwner;
+        } else {
+          console.log(`❌ Space not found using cached owner: ${sessionOwner}`);
+        }
+      } catch (error) {
+        console.warn(
+          `❌ Failed to check cached owner ${sessionOwner}:`,
+          error.message
+        );
+      }
     }
 
-    // Try the sharedSpaces collection as a last resort
+    // Method 3: Check URL parameters for owner hint
+    const urlParams = new URLSearchParams(window.location.search);
+    const ownerFromUrl = urlParams.get('ownerUid') || urlParams.get('owner');
+    console.log(`🔍 URL owner parameter: ${ownerFromUrl}`);
+
+    if (ownerFromUrl) {
+      try {
+        console.log(`🔍 Checking space under URL owner: ${ownerFromUrl}`);
+        const userSpaceRef = doc(db, 'users', ownerFromUrl, 'spaces', spaceId);
+        const userSpaceDoc = await getDoc(userSpaceRef);
+
+        if (userSpaceDoc.exists()) {
+          console.log(`✅ Found space under URL owner: ${ownerFromUrl}`);
+          return ownerFromUrl;
+        } else {
+          console.log(`❌ Space not found under URL owner: ${ownerFromUrl}`);
+        }
+      } catch (error) {
+        console.warn(
+          `❌ Failed to check URL owner ${ownerFromUrl}:`,
+          error.message
+        );
+      }
+    }
+
+    // Method 4: Check window globals (already loaded space data)
+    if (window.currentSpaceOwner && window.publicAccessSpace === spaceId) {
+      console.log(
+        `✅ Found space owner from window globals: ${window.currentSpaceOwner}`
+      );
+      return window.currentSpaceOwner;
+    }
+
+    // Method 3: Try the sharedSpaces collection
     const sharedSpacesRef = collection(db, 'sharedSpaces');
     const q = query(sharedSpacesRef, where('spaceId', '==', spaceId));
     const querySnapshot = await getDocs(q);
@@ -479,6 +547,46 @@ export const findSpaceOwner = async (spaceId) => {
         `Found reference in sharedSpaces collection, owner: ${sharedSpaceData.ownerId}`
       );
       return sharedSpaceData.ownerId;
+    }
+
+    // Method 4: Check URL parameters for owner hint
+    const params = new URLSearchParams(window.location.search);
+    const urlOwnerUid = params.get('ownerUid') || params.get('owner');
+
+    if (urlOwnerUid) {
+      try {
+        const userSpaceRef = doc(db, 'users', urlOwnerUid, 'spaces', spaceId);
+        const userSpaceDoc = await getDoc(userSpaceRef);
+
+        if (userSpaceDoc.exists()) {
+          console.log(`Found space under URL owner: ${urlOwnerUid}`);
+          return urlOwnerUid;
+        }
+      } catch (error) {
+        console.warn(
+          `Failed to check URL owner ${urlOwnerUid}:`,
+          error.message
+        );
+      }
+    }
+
+    // Method 5: Check sessionStorage cache
+    const cachedOwner = sessionStorage.getItem(`sharedSpaceOwner_${spaceId}`);
+    if (cachedOwner) {
+      try {
+        const spaceRef = doc(db, 'users', cachedOwner, 'spaces', spaceId);
+        const spaceDoc = await getDoc(spaceRef);
+
+        if (spaceDoc.exists()) {
+          console.log(`Found space using cached owner: ${cachedOwner}`);
+          return cachedOwner;
+        }
+      } catch (error) {
+        console.warn(
+          `Failed to check cached owner ${cachedOwner}:`,
+          error.message
+        );
+      }
     }
 
     console.log(`Could not find owner for space: ${spaceId}`);

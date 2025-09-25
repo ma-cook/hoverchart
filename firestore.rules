@@ -51,13 +51,20 @@ service cloud.firestore {
       allow write: if isAuthenticated();
     }
 
+    // Allow access to public spaces collection
+    match /publicSpaces/{spaceId} {
+      allow read: if true; // Allow anonymous users to read public spaces
+      allow write: if isAuthenticated() && 
+                    (resource == null || 
+                     resource.data.ownerId == request.auth.uid);
+    }
+
     // User data and nested collections
     match /users/{userId} {
-      // Allow read access to authenticated users OR for public space access
-      allow read: if isAuthenticated() || 
-                   exists(/databases/$(database)/documents/users/$(userId)/spaces) &&
-                   (resource.data.ownerId == userId);
-        // Allow write to own user document
+      // Allow read access to all authenticated users (needed for shared space discovery)
+      allow read: if isAuthenticated();
+      
+      // Allow write to own user document
       allow create, update: if isAuthenticated() && request.auth.uid == userId;
       
       // Personal connections (not in spaces) - keeping for backward compatibility
@@ -74,9 +81,12 @@ service cloud.firestore {
       
       // Spaces owned by this user
       match /spaces/{spaceId} {
-        // MODIFIED: Allow public access to spaces marked as public
-        allow read: if isAuthenticated() || 
-                     (resource != null && isPublicSpace(resource.data));
+        // Allow read for: owner, shared users, or if space is public
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          (resource != null && isSpaceSharedWithUser(request.auth.uid, resource.data)) ||
+          (resource != null && isPublicSpace(resource.data))
+        );
         
         // Space creation/deletion by owner only
         allow create, delete: if isAuthenticated() && request.auth.uid == userId;
@@ -179,9 +189,13 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && isAdmin();
     }
 
-    // Collection group queries for public spaces (for unauthenticated access)
+    // Collection group queries - allow authenticated users to query across collections
     match /{path=**}/spaces/{spaceId} {
-      allow read: if isPublicSpace(resource.data);
+      allow read: if isAuthenticated();
+    }
+    
+    match /{path=**}/sharedSpaces/{spaceId} {
+      allow read: if isAuthenticated();
     }
 
     // Deny all other access by default

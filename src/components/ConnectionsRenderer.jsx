@@ -192,19 +192,32 @@ const Connection = React.memo(
         }
       }
     };
+    // Create stable references for the specific objects we need
+    const startObject = useMemo(() => {
+      if (!connection?.start?.objectId) return null;
+      return (
+        objects?.find(
+          (obj) => obj.id.toString() === connection.start.objectId.toString()
+        ) || null
+      );
+    }, [objects, connection?.start?.objectId]);
+
+    const endObject = useMemo(() => {
+      if (!connection?.end?.objectId) return null;
+      return (
+        objects?.find(
+          (obj) => obj.id.toString() === connection.end.objectId.toString()
+        ) || null
+      );
+    }, [objects, connection?.end?.objectId]);
+
     // Always call hooks first, before any conditional returns
     // Declare all useMemo hooks unconditionally  // First hook: Calculate basic connection data with real-time object positions
     const connectionData = useMemo(() => {
       // Handle invalid connections gracefully inside the hook
       if (!connection) {
         return { isValid: false, midpoint: [0, 0, 0] };
-      } // Find current object positions to ensure real-time updates
-      const startObject = objects?.find(
-        (obj) => obj.id.toString() === connection.start?.objectId?.toString()
-      );
-      const endObject = objects?.find(
-        (obj) => obj.id.toString() === connection.end?.objectId?.toString()
-      ); // Calculate positions using current object positions first (for real-time updates)
+      } // Calculate positions using current object positions first (for real-time updates)
       // Priority: Current object position with face calculation > stored face positions > object centers
       let startPosition;
       if (startObject && startObject.position && connection.start?.face) {
@@ -321,27 +334,29 @@ const Connection = React.memo(
         startPosition,
         endPosition,
       };
-      // Depend on connection and objects, but memoization will still help with expensive calculations
-    }, [connection, objects]);
+      // Depend on connection and the specific objects we need
+    }, [connection, startObject, endObject, objects]);
 
-    // Second hook: Filter relevant objects
+    // Second hook: Filter relevant objects with stable dependencies
     const filteredObjects = useMemo(() => {
-      if (!connection) return [];
+      if (
+        !connection?.start?.objectId ||
+        !connection?.end?.objectId ||
+        !objects
+      )
+        return [];
 
-      const startObjectId = connection.start?.objectId || '';
-      const endObjectId = connection.end?.objectId || '';
-      return objects
-        ? objects.filter(
-            (obj) =>
-              obj &&
-              obj.id &&
-              startObjectId &&
-              endObjectId &&
-              obj.id.toString() !== startObjectId.toString() &&
-              obj.id.toString() !== endObjectId.toString()
-          )
-        : [];
-    }, [connection, objects]); // Extract stable values to prevent unnecessary recalculations
+      const startObjectId = connection.start.objectId.toString();
+      const endObjectId = connection.end.objectId.toString();
+
+      return objects.filter(
+        (obj) =>
+          obj &&
+          obj.id &&
+          obj.id.toString() !== startObjectId &&
+          obj.id.toString() !== endObjectId
+      );
+    }, [connection?.start?.objectId, connection?.end?.objectId, objects]); // Extract stable values to prevent unnecessary recalculations
     const stableLineStyle =
       connection?.styleType || connection?.lineStyle || 'straight';
     const stableStartObjectId = connection?.start?.objectId;
@@ -756,6 +771,12 @@ const ConnectionsRenderer = ({
   // Get all connections from store
   const connections = useConnectionStore((state) => state.connections);
 
+  // Create a stable set of available object IDs to avoid recalculating on every render
+  const availableObjectIds = useMemo(() => {
+    if (!objects || objects.length === 0) return new Set();
+    return new Set(objects.map((obj) => obj.id.toString()));
+  }, [objects]);
+
   // Filter connections to only show those where both endpoint objects are visible
   const visibleConnections = useMemo(() => {
     // ISSUE FIX: For anonymous users or when spatial system hasn't loaded,
@@ -763,19 +784,17 @@ const ConnectionsRenderer = ({
     if (!visibleObjectIds || visibleObjectIds.size === 0) {
       // If we have objects but no visibleObjectIds, fall back to showing all connections
       // where both endpoint objects exist in the objects array
-      if (objects && objects.length > 0 && connections.length > 0) {
+      if (availableObjectIds.size > 0 && connections.length > 0) {
         return connections.filter((connection) => {
           const startObjectId = connection.start?.objectId?.toString();
           const endObjectId = connection.end?.objectId?.toString();
 
-          const startExists = objects.some(
-            (obj) => obj.id.toString() === startObjectId
+          return (
+            startObjectId &&
+            endObjectId &&
+            availableObjectIds.has(startObjectId) &&
+            availableObjectIds.has(endObjectId)
           );
-          const endExists = objects.some(
-            (obj) => obj.id.toString() === endObjectId
-          );
-
-          return startObjectId && endObjectId && startExists && endExists;
         });
       }
 
@@ -795,7 +814,7 @@ const ConnectionsRenderer = ({
         visibleObjectIds.has(endObjectId)
       );
     });
-  }, [connections, visibleObjectIds, objects]);
+  }, [connections, visibleObjectIds, availableObjectIds]);
 
   // Render each visible connection
   return (

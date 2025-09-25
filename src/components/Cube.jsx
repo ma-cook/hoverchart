@@ -143,12 +143,12 @@ const Cube = ({
     }
     return [0, 0, 0];
   }, [objectData?.position]);
-  // Debug: Watch for position changes
-  useEffect(() => {
-    if (objectData?.position) {
-      // Position tracking for debugging - removed for production
-    }
-  }, [objectData?.position, id]);
+  // Debug: Watch for position changes - disabled to prevent unnecessary re-renders
+  // useEffect(() => {
+  //   if (objectData?.position) {
+  //     // Position tracking for debugging - removed for production
+  //   }
+  // }, [objectData?.position, id]);
   const scale = useMemo(
     () => objectData?.scale || [1, 1, 1],
     [objectData?.scale]
