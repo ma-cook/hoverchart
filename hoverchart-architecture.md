@@ -65,8 +65,24 @@ TransformControls{Component: TransformControls}
 Cube --> ObjectUI : "displays"
 Cube --> FaceUI : "face controls"
 Cube --> TransformControls : "transform"
+Cube --> FaceTextInput : "text input"
+Cube --> HeaderInput : "header input"
+Cube --> TextStyleUI : "text styling"
+Dodecahedron --> FaceTextInput : "text input"
+Dodecahedron --> HeaderInput : "header input"
+Dodecahedron --> TextStyleUI : "text styling"
+Tetrahedron --> FaceTextInput : "text input"
+Tetrahedron --> HeaderInput : "header input"
+Tetrahedron --> TextStyleUI : "text styling"
+Plane --> FaceTextInput : "text input"
+Plane --> HeaderInput : "header input"
+Plane --> TextStyleUI : "text styling"
+TextObject --> TextObjectUI : "text controls"
 ConnectionsRenderer --> LineUI : "connection controls"
+ConnectionsRenderer --> HeaderInput : "header input"
+ConnectionsRenderer --> TextStyleUI : "text styling"
 UIOverlay --> ColorPicker : "color selection"
+TextStyleUIContainer --> TextStyleUI : "wraps"
 
 %% ========================================
 %% VISUAL COMPONENTS
@@ -108,8 +124,14 @@ UIOverlay --> WebcamStream : "video stream"
 %% ========================================
 
 BVHIntegration{Component: BVHIntegration}
+ResizeArrows{Component: ResizeArrows}
+ResizeArrow2D{Component: ResizeArrow2D}
+WhitePlane{Component: WhitePlane}
 
 App --> BVHIntegration : "3D optimization"
+
+%% Note: ResizeArrows, ResizeArrow2D, and WhitePlane are available
+%% components but not yet integrated into the active component tree
 
 %% ========================================
 %% STATE MANAGEMENT STORES
@@ -153,6 +175,13 @@ ObjectUI --> transformControlsStore : "transform state"
 ColorPicker --> colorPickerStore : "color state"
 UIOverlay --> uiOverlayStore : "UI state"
 FaceIndicator --> faceIndicatorStore : "indicator state"
+FaceTextInput --> textInputStore : "input state"
+HeaderInput --> textInputStore : "input state"
+AnimatedConnectionLine --> animatedConnectionLineStore : "animation state"
+ScreenShareStream --> screenShareStore : "screen share state"
+WebcamStream --> webcamStreamStore : "webcam state"
+PublicSpaceView --> publicSpaceStore : "public space state"
+PublicConnectionsRenderer --> publicSpaceStore : "public space state"
 
 %% ========================================
 %% CUSTOM HOOKS
@@ -180,6 +209,9 @@ App --> useSpaceManager : "uses"
 App --> useSpatialManager : "uses"
 App --> useCentralizedBroadcastManager : "uses"
 App --> useTimeoutManager : "uses"
+
+useAuth --> authStore : "uses"
+useIndicators --> indicatorsStore : "uses"
 
 ConnectionsRenderer --> useLinePool : "uses"
 Cube --> useDebouncedUpdate : "uses"
@@ -235,6 +267,15 @@ App --> spatialPartitioning : "spatial indexing"
 App --> centralizedBroadcastManager : "broadcasting"
 App --> globalSubscriptionManager : "subscriptions"
 App --> resourceCleanupService : "cleanup"
+
+spaceManagerStore --> presenceService : "presence tracking"
+globalOptimizationCoordinator --> streamlinedSpatialPartitioning : "manages"
+globalOptimizationCoordinator --> unifiedMathUtils : "uses"
+globalOptimizationCoordinator --> unifiedDebugUtils : "uses"
+globalOptimizationCoordinator --> unifiedValidationUtils : "uses"
+globalOptimizationCoordinator --> debugUtils : "monitors"
+streamlinedSpatialPartitioning --> streamlinedSpatialIndex : "uses"
+streamlinedSpatialPartitioning --> spatialPartitioning : "extends"
 
 UIOverlay --> markdownDiagramService : "Merfolk diagrams"
 markdownDiagramService --> AstGenerator : "uses"
@@ -310,6 +351,7 @@ BVHIntegration --> bvhRaycasting : "raycasting"
 
 objectsStore --> storeValidation : "validation"
 objectsStore --> storeUtils : "utilities"
+faceStore --> storeUtils : "utilities"
 
 %% ========================================
 %% CONFIGURATION & BUILD
