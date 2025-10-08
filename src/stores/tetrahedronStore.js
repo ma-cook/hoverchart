@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useTetrahedronStore = create((set, get) => ({
+const useTetrahedronStore = createWithEqualityFn((set, get) => ({
   // State for all tetrahedrons
   tetrahedrons: new Map(), // Map of tetrahedronId -> tetrahedron state
   selectedTetrahedrons: new Set(), // Set of selected tetrahedron IDs

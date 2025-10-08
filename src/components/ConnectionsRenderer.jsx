@@ -14,12 +14,13 @@ import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
 import useConnectionStore from '../stores/connectionStore';
 import { saveConnection } from '../services/connectionsService';
+import { useConnectionObjectPositions } from '../hooks/useConnectionObjects';
 
 // Separate connection rendering into a sub-component to fix the hooks issue
 const Connection = React.memo(
   ({
     connection,
-    objects,
+    allObjectsForPathfinding,
     onLineStyleChange,
     onLineColorChange,
     onConnectionClick,
@@ -27,6 +28,11 @@ const Connection = React.memo(
     onLineTextSubmit,
     onLineTextStyleChange,
   }) => {
+    // Get only the specific objects needed for this connection
+    const { startObject, endObject } = useConnectionObjectPositions(
+      connection?.start?.objectId,
+      connection?.end?.objectId
+    );
     // Use connection store for state
     const connections = useConnectionStore((state) => state.connections);
     const selectedConnection = useConnectionStore(
@@ -192,24 +198,6 @@ const Connection = React.memo(
         }
       }
     };
-    // Create stable references for the specific objects we need
-    const startObject = useMemo(() => {
-      if (!connection?.start?.objectId) return null;
-      return (
-        objects?.find(
-          (obj) => obj.id.toString() === connection.start.objectId.toString()
-        ) || null
-      );
-    }, [objects, connection?.start?.objectId]);
-
-    const endObject = useMemo(() => {
-      if (!connection?.end?.objectId) return null;
-      return (
-        objects?.find(
-          (obj) => obj.id.toString() === connection.end.objectId.toString()
-        ) || null
-      );
-    }, [objects, connection?.end?.objectId]);
 
     // Always call hooks first, before any conditional returns
     // Declare all useMemo hooks unconditionally  // First hook: Calculate basic connection data with real-time object positions
@@ -241,7 +229,10 @@ const Connection = React.memo(
                 : undefined,
           };
 
-          startPosition = calculateFacePosition(indicatorData, objects);
+          startPosition = calculateFacePosition(
+            indicatorData,
+            allObjectsForPathfinding
+          );
         } catch {
           startPosition = startObject.position;
         }
@@ -297,7 +288,10 @@ const Connection = React.memo(
           //   });
           // }
 
-          endPosition = calculateFacePosition(indicatorData, objects);
+          endPosition = calculateFacePosition(
+            indicatorData,
+            allObjectsForPathfinding
+          );
         } catch {
           endPosition = endObject.position;
         }
@@ -335,28 +329,16 @@ const Connection = React.memo(
         endPosition,
       };
       // Depend on connection and the specific objects we need
-    }, [connection, startObject, endObject, objects]);
+    }, [connection, startObject, endObject, allObjectsForPathfinding]);
 
     // Second hook: Filter relevant objects with stable dependencies
+    // IMPORTANT: Include all objects for intersection testing, even endpoints,
+    // Create a stable reference to filtered objects for pathfinding
+    // This will only change when the allObjectsForPathfinding prop actually changes
     const filteredObjects = useMemo(() => {
-      if (
-        !connection?.start?.objectId ||
-        !connection?.end?.objectId ||
-        !objects
-      )
-        return [];
-
-      const startObjectId = connection.start.objectId.toString();
-      const endObjectId = connection.end.objectId.toString();
-
-      return objects.filter(
-        (obj) =>
-          obj &&
-          obj.id &&
-          obj.id.toString() !== startObjectId &&
-          obj.id.toString() !== endObjectId
-      );
-    }, [connection?.start?.objectId, connection?.end?.objectId, objects]); // Extract stable values to prevent unnecessary recalculations
+      if (!allObjectsForPathfinding) return [];
+      return allObjectsForPathfinding.filter((obj) => obj && obj.id);
+    }, [allObjectsForPathfinding]);
     const stableLineStyle =
       connection?.styleType || connection?.lineStyle || 'straight';
     const stableStartObjectId = connection?.start?.objectId;
@@ -364,6 +346,7 @@ const Connection = React.memo(
     const stablePathPoints = connection?._pathPoints;
 
     // Third hook: Calculate path and intersections
+    // Use a more selective dependency to minimize re-renders
     const pathData = useMemo(() => {
       if (!connection || !connectionData.isValid) {
         return {
@@ -391,7 +374,13 @@ const Connection = React.memo(
 
       // PATHFINDING DEBUG: Log intersection results for troubleshooting
       if (connection.id && connection.id.includes('merfolk')) {
-        // Debug logging removed
+        console.log(`🔍 [Pathfinding] Connection ${connection.id}:`, {
+          startPosition,
+          endPosition,
+          intersections: intersections ? intersections.length : 0,
+          filteredObjectsCount: filteredObjects.length,
+          lineStyle,
+        });
       }
 
       // Generate path (curved if needed)
@@ -406,33 +395,25 @@ const Connection = React.memo(
         intersections &&
         intersections.length > 0
       ) {
-        // Debug logging removed
+        console.log(`📐 [Pathfinding] Should curve for ${connection.id}:`, {
+          shouldCurve,
+          lineStyle,
+          intersectionCount: intersections.length,
+        });
       }
 
-      const calculatedPathPoints =
-        pathPoints ||
-        (shouldCurve
-          ? (() => {
-              // DEBUG: Log right before generateCurvedPath call
-              if (connection.id && connection.id.includes('merfolk')) {
-                // Debug logging removed
-              }
-              return generateCurvedPath(
-                startPosition,
-                endPosition,
-                intersections,
-                startObjectId,
-                endObjectId,
-                shouldCurve // Curve when intersections found OR explicitly set to curved
-              );
-            })()
-          : (() => {
-              // DEBUG: Log when using straight line
-              if (connection.id && connection.id.includes('merfolk')) {
-                // Debug logging removed
-              }
-              return [startPosition, endPosition];
-            })()); // Straight line - just use start and end points
+      // RULE: If intersections exist, always recompute a multi-curve path and ignore cached pathPoints
+      const calculatedPathPoints = shouldCurve
+        ? (() =>
+            generateCurvedPath(
+              startPosition,
+              endPosition,
+              intersections,
+              startObjectId,
+              endObjectId,
+              true
+            ))()
+        : pathPoints || [startPosition, endPosition]; // No intersections -> straight line (or use stored path)
 
       // DEBUG: Log the path calculation result
       if (
@@ -441,7 +422,10 @@ const Connection = React.memo(
         intersections &&
         intersections.length > 0
       ) {
-        // Debug logging removed
+        console.log(`🛤️ [Pathfinding] Path calculated for ${connection.id}:`, {
+          pathLength: calculatedPathPoints.length,
+          isCurved: calculatedPathPoints.length > 2,
+        });
       }
 
       // Determine if path should be curved
@@ -469,7 +453,8 @@ const Connection = React.memo(
       stablePathPoints,
       // CRITICAL: Include connectionData to recalculate paths when positions change
       connectionData,
-      filteredObjects, // Include filtered objects for intersection calculations
+      // Only include filteredObjects when the connection actually needs pathfinding
+      filteredObjects,
     ]);
 
     // Fourth hook: Calculate text position
@@ -745,11 +730,9 @@ const Connection = React.memo(
         nextProps.connection.start?.position ||
       prevProps.connection.end?.position !== nextProps.connection.end?.position;
 
-    // Re-render if objects array changed and this connection depends on object positions
-    const objectsChanged = prevProps.objects !== nextProps.objects;
-
-    // Re-render if connection-specific data changed or objects moved
-    return !connectionChanged && !objectsChanged;
+    // Re-render only if connection-specific data changed
+    // We'll handle pathfinding object changes more selectively in the component
+    return !connectionChanged;
   }
 );
 
@@ -776,6 +759,38 @@ const ConnectionsRenderer = ({
     if (!objects || objects.length === 0) return new Set();
     return new Set(objects.map((obj) => obj.id.toString()));
   }, [objects]);
+
+  // Create pathfinding objects for intersection calculations
+  // Use a more stable reference that only changes when objects actually change
+  const allObjectsForPathfinding = useMemo(() => {
+    if (!objects || objects.length === 0) return [];
+
+    // Create a hash of relevant object properties to detect actual changes
+    const objectsHash = objects
+      .map(
+        (obj) =>
+          `${obj.id}:${obj.position?.join(',') || ''}:${
+            obj.scale?.join(',') || ''
+          }:${obj.type || ''}`
+      )
+      .join('|');
+
+    return {
+      objects: objects.map((obj) => ({
+        id: obj.id,
+        position: obj.position,
+        scale: obj.scale || [1, 1, 1],
+        type: obj.type,
+        faceSize: obj.faceSize,
+      })),
+      hash: objectsHash,
+    };
+  }, [objects]);
+
+  // Extract just the objects array but with a stable reference when hash doesn't change
+  const stablePathfindingObjects = useMemo(() => {
+    return allObjectsForPathfinding.objects;
+  }, [allObjectsForPathfinding.hash]);
 
   // Filter connections to only show those where both endpoint objects are visible
   const visibleConnections = useMemo(() => {
@@ -823,7 +838,7 @@ const ConnectionsRenderer = ({
         <Connection
           key={connection.id}
           connection={connection}
-          objects={objects}
+          allObjectsForPathfinding={stablePathfindingObjects}
           onLineStyleChange={onLineStyleChange}
           onLineColorChange={onLineColorChange}
           onConnectionClick={onConnectionClick}

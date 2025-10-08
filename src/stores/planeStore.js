@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const usePlaneStore = create((set, get) => ({
+const usePlaneStore = createWithEqualityFn((set, get) => ({
   // State for all planes
   planes: new Map(), // Map of planeId -> plane state
   selectedPlanes: new Set(), // Set of selected plane IDs

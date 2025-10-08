@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useTransformControlsStore = create((set, get) => ({
+const useTransformControlsStore = createWithEqualityFn((set, get) => ({
   // Transform controls state - keyed by object ID or unique identifier
   transformControls: {}, // { objectId: { isInitialized, isDragging, lastPosition, etc. } }
 

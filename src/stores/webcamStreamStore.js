@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useWebcamStreamStore = create((set, get) => ({
+const useWebcamStreamStore = createWithEqualityFn((set, get) => ({
   // Webcam streams state - keyed by stream ID
   webcamStreams: {}, // { streamId: { hasError, errorMessage, isLoading, retryTrigger } }
 

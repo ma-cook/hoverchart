@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useFaceIndicatorStore = create((set, get) => ({
+const useFaceIndicatorStore = createWithEqualityFn((set, get) => ({
   // State for all face indicators
   indicators: new Map(), // Map of indicatorId -> indicator state
   hoveredIndicators: new Set(), // Set of currently hovered indicator IDs

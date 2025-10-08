@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useFaceStore = create((set, get) => ({
+const useFaceStore = createWithEqualityFn((set, get) => ({
   // State for all faces across all objects
   faces: new Map(), // Map of faceId -> face state
   selectedFaces: new Set(), // Set of selected face IDs

@@ -177,20 +177,48 @@ export class MarkdownDiagramService {
   getObjectTypeForNode(node) {
     let objectType = 'cube'; // Default
 
-    if (node.type === 'component') {
+    // Debug: Log node properties for troubleshooting
+    console.log('🔍 Node type mapping:', {
+      id: node.id,
+      type: node.type,
+      name: node.name,
+    });
+
+    // The 3d-ast-generator correctly sets node.type based on bracket syntax:
+    // {Component: name} → type: 'component' → Dodecahedron
+    // [Function: name] → type: 'function' → Cube
+    // [[Store: name]] → type: 'store' → Cube
+    // ((Service: name)) → type: 'service' → Tetrahedron
+    // <Library: name> → type: 'library' → Cube
+    // <<Utility: name>> → type: 'utility' → Cube
+
+    const nodeType = (node.type || '').toLowerCase().trim();
+
+    if (nodeType === 'component') {
       objectType = 'dodecahedron';
-    } else if (node.type === 'function') {
+      console.log(`✅ COMPONENT → dodecahedron for '${node.id}'`);
+    } else if (nodeType === 'function') {
       objectType = 'cube';
-    } else if (node.type === 'datapath') {
-      return null; // Skip datapath nodes
-    } else if (node.type === 'handler') {
+      console.log(`✅ FUNCTION → cube for '${node.id}'`);
+    } else if (nodeType === 'store') {
       objectType = 'cube';
-    } else if (node.type === 'state') {
-      objectType = 'dodecahedron';
-    } else if (node.type === 'control') {
+      console.log(`✅ STORE → cube for '${node.id}'`);
+    } else if (nodeType === 'service') {
+      objectType = 'tetrahedron';
+      console.log(`✅ SERVICE → tetrahedron for '${node.id}'`);
+    } else if (nodeType === 'library') {
       objectType = 'cube';
-    } else if (node.type === 'data') {
-      objectType = 'dodecahedron';
+      console.log(`✅ LIBRARY → cube for '${node.id}'`);
+    } else if (nodeType === 'utility') {
+      objectType = 'cube';
+      console.log(`✅ UTILITY → cube for '${node.id}'`);
+    } else if (nodeType === 'datapath') {
+      console.log(`⏭️ DATAPATH → skipping '${node.id}'`);
+      return null;
+    } else {
+      console.warn(
+        `⚠️ UNKNOWN TYPE '${nodeType}' → defaulting to cube for '${node.id}'`
+      );
     }
 
     return objectType;
@@ -425,13 +453,20 @@ export class MarkdownDiagramService {
     const node = graphNodes.get(nodeId);
     const nodeType = node ? node.type : 'unknown';
 
+    // Add Y offset for component hierarchies to raise them 300 units higher
+    const componentYOffset = 1200;
+
     if (level === 0) {
       // Root level - arrange in a reasonable grid pattern with adequate spacing for circular children
       const rootArray = Array.from(rootNodes);
       const rootIndex = rootArray.indexOf(nodeId);
 
       if (rootArray.length === 1) {
-        return basePosition;
+        return [
+          basePosition[0],
+          basePosition[1] + componentYOffset,
+          basePosition[2],
+        ];
       } else {
         const gridSize = Math.ceil(Math.sqrt(rootArray.length));
         const row = Math.floor(rootIndex / gridSize);
@@ -442,7 +477,9 @@ export class MarkdownDiagramService {
 
         return [
           basePosition[0] + (col - (gridSize - 1) / 2) * spacing,
-          basePosition[1] + (row - (gridSize - 1) / 2) * spacing,
+          basePosition[1] +
+            (row - (gridSize - 1) / 2) * spacing +
+            componentYOffset,
           basePosition[2],
         ];
       }
@@ -650,7 +687,9 @@ export class MarkdownDiagramService {
     diagram,
     onCreateObject,
     nodeToObjectIdMap,
-    basePosition
+    basePosition,
+    user,
+    currentSpaceId
   ) {
     const graph = diagram.graph;
     if (!graph || !graph.nodes) {
@@ -691,6 +730,163 @@ export class MarkdownDiagramService {
       );
     });
 
+    // Special handling: Position all service nodes in a circle around the store objects
+    const serviceNodes = Array.from(graph.nodes.values()).filter(
+      (node) => node.type === 'service'
+    );
+
+    if (serviceNodes.length > 0) {
+      console.log(
+        `📊 Positioning ${serviceNodes.length} service nodes in a circle around stores`
+      );
+
+      // Calculate the radius of the circle - larger than stores to surround them
+      const circleRadius = 50; // Distance from the center to each service (larger than store radius of 250)
+      const angleIncrement = (Math.PI * 2) / serviceNodes.length; // Evenly space around circle
+
+      serviceNodes.forEach((node, index) => {
+        const angle = index * angleIncrement;
+
+        // Calculate position on the circle (same Y level as components and stores)
+        const offsetX = Math.cos(angle) * circleRadius;
+        const offsetZ = Math.sin(angle) * circleRadius;
+
+        const servicePosition = [
+          basePosition[0] + offsetX,
+          basePosition[1], // Same level as components and stores
+          basePosition[2] + offsetZ,
+        ];
+
+        nodePositions.set(node.id, servicePosition);
+        nodeScales.set(node.id, [1, 1, 1]); // Default scale for tetrahedrons
+        processedNodes.add(node.id);
+
+        console.log(
+          `  📍 Service ${node.id} at position:`,
+          servicePosition,
+          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
+        );
+      });
+    }
+
+    // Special handling: Position all store nodes in a circle around the component objects
+    const storeNodes = Array.from(graph.nodes.values()).filter(
+      (node) => node.type === 'store'
+    );
+
+    if (storeNodes.length > 0) {
+      console.log(
+        `📦 Positioning ${storeNodes.length} store nodes in a circle around components`
+      );
+
+      // Calculate the radius of the circle based on the number of stores
+      const circleRadius = 400; // Distance from the center to each store
+      const angleIncrement = (Math.PI * 2) / storeNodes.length; // Evenly space around circle
+
+      storeNodes.forEach((node, index) => {
+        const angle = index * angleIncrement;
+
+        // Calculate position on the circle (same Y level as components)
+        const offsetX = Math.cos(angle) * circleRadius;
+        const offsetZ = Math.sin(angle) * circleRadius;
+
+        const storePosition = [
+          basePosition[0] + offsetX,
+          basePosition[1], // Same level as components
+          basePosition[2] + offsetZ,
+        ];
+
+        nodePositions.set(node.id, storePosition);
+        nodeScales.set(node.id, [1, 1, 1]); // Default scale for cubes
+        processedNodes.add(node.id);
+
+        console.log(
+          `  📦 Store ${node.id} at position:`,
+          storePosition,
+          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
+        );
+      });
+    }
+
+    // Special handling: Position all utility nodes in a circle around the store objects
+    const utilityNodes = Array.from(graph.nodes.values()).filter(
+      (node) => node.type === 'utility'
+    );
+
+    if (utilityNodes.length > 0) {
+      console.log(
+        `🔧 Positioning ${utilityNodes.length} utility nodes in a circle around stores`
+      );
+
+      // Calculate the radius of the circle - same as stores to be at the same level
+      const circleRadius = 600; // Same distance from center as stores
+      const angleIncrement = (Math.PI * 2) / utilityNodes.length; // Evenly space around circle
+      const angleOffset = Math.PI / utilityNodes.length; // Offset by half increment to position between stores
+
+      utilityNodes.forEach((node, index) => {
+        const angle = index * angleIncrement + angleOffset;
+
+        // Calculate position on the circle (same Y level as components and stores)
+        const offsetX = Math.cos(angle) * circleRadius;
+        const offsetZ = Math.sin(angle) * circleRadius;
+
+        const utilityPosition = [
+          basePosition[0] + offsetX,
+          basePosition[1], // Same level as components and stores
+          basePosition[2] + offsetZ,
+        ];
+
+        nodePositions.set(node.id, utilityPosition);
+        nodeScales.set(node.id, [1, 1, 1]); // Default scale for cubes
+        processedNodes.add(node.id);
+
+        console.log(
+          `  🔧 Utility ${node.id} at position:`,
+          utilityPosition,
+          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
+        );
+      });
+    }
+
+    // Special handling: Position all standalone function nodes (not nested in components) in a circle around service objects
+    const standaloneFunctionNodes = Array.from(graph.nodes.values()).filter(
+      (node) => node.type === 'function' && !childParentMap.has(node.id)
+    );
+
+    if (standaloneFunctionNodes.length > 0) {
+      console.log(
+        `📦 Positioning ${standaloneFunctionNodes.length} standalone function nodes in a circle around services`
+      );
+
+      // Calculate the radius of the circle - larger than services to surround them
+      const circleRadius = 200; // Distance from the center to each function (larger than service radius of 400)
+      const angleIncrement = (Math.PI * 2) / standaloneFunctionNodes.length; // Evenly space around circle
+
+      standaloneFunctionNodes.forEach((node, index) => {
+        const angle = index * angleIncrement;
+
+        // Calculate position on the circle (same Y level as other objects)
+        const offsetX = Math.cos(angle) * circleRadius;
+        const offsetZ = Math.sin(angle) * circleRadius;
+
+        const functionPosition = [
+          basePosition[0] + offsetX,
+          basePosition[1], // Same level as other objects
+          basePosition[2] + offsetZ,
+        ];
+
+        nodePositions.set(node.id, functionPosition);
+        nodeScales.set(node.id, [1, 1, 1]); // Default scale for cubes
+        processedNodes.add(node.id);
+
+        console.log(
+          `  📦 Standalone Function ${node.id} at position:`,
+          functionPosition,
+          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
+        );
+      });
+    }
+
     // Create 3D objects with batch processing for better performance
     let objectsCreated = 0;
     const nodeEntries = Array.from(nodePositions);
@@ -709,38 +905,35 @@ export class MarkdownDiagramService {
         `📦 Processing object batch ${batchNumber}/${totalBatches} (${batch.length} objects)...`
       );
 
-      for (const [nodeId, position] of batch) {
-        const node = graph.nodes.get(nodeId);
-        const scale = nodeScales.get(nodeId);
-        const objectType = this.getObjectTypeForNode(node);
+      // Add a small delay between batches to prevent React's "Maximum update depth exceeded" error
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 50)); // 50ms delay between batches
+      }
 
-        if (!objectType || !node) continue;
+      // Prepare batch data for batch creation to prevent re-render loops
+      const batchData = batch
+        .map(([nodeId, position]) => {
+          const node = graph.nodes.get(nodeId);
+          const scale = nodeScales.get(nodeId);
+          const objectType = this.getObjectTypeForNode(node);
 
-        try {
+          if (!objectType || !node) return null;
+
           // Calculate appropriate header style based on object scale
-          // This matches the TextStyleUI scaling system (values 1-10 with 0.7 multiplier)
           const calculateHeaderStyle = (scale, objectType) => {
             if (objectType !== 'dodecahedron' || !scale) {
               return {
-                fontSize: 'medium', // Default for non-dodecahedrons
+                fontSize: 'medium',
                 color: 'black',
                 underline: false,
               };
             }
 
-            // Get the maximum scale factor (assuming uniform scaling)
             const scaleFactor = Math.max(...scale);
-
-            // Calculate TextStyleUI-compatible value (1-10 scale)
-            // Scale factor of 1.0 → UI value of 2 (small but readable)
-            // Scale factor of 2.0 → UI value of 4
-            // Scale factor of 3.0 → UI value of 6, etc.
             const uiValue = Math.min(
               10,
               Math.max(1, Math.round(1 + scaleFactor * 1.5))
             );
-
-            // Apply the same multiplier as TextStyleUI for headers (0.7)
             const fontSize = uiValue * 0.7;
 
             return {
@@ -752,30 +945,66 @@ export class MarkdownDiagramService {
 
           const headerStyle = calculateHeaderStyle(scale, objectType);
 
-          const objectId = await onCreateObject(objectType, position, {
-            scale,
-            headerText: node.label || node.id || '',
-            headerStyle: headerStyle,
-            // Add any additional properties based on node type
-            ...(node.properties || {}),
-          });
+          return {
+            nodeId,
+            type: objectType,
+            position,
+            extraData: {
+              scale,
+              headerText: node.label || node.id || '',
+              headerStyle: headerStyle,
+              ...(node.properties || {}),
+            },
+          };
+        })
+        .filter(Boolean);
 
-          if (objectId) {
-            nodeToObjectIdMap.set(nodeId, objectId);
+      // Use batch creation to prevent infinite re-render loops
+      try {
+        const { useObjectsStore } = await import('../stores');
+        const objectIds = await useObjectsStore.getState().batchCreateObjects(
+          batchData.map(({ type, position, extraData }) => ({
+            type,
+            position,
+            extraData,
+          })),
+          user,
+          currentSpaceId
+        );
+
+        // Update the mapping
+        batchData.forEach((data, index) => {
+          if (objectIds[index]) {
+            nodeToObjectIdMap.set(data.nodeId, objectIds[index]);
             objectsCreated++;
           }
-
-          // Longer delay between object creations to prevent Firebase overload
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        } catch (error) {
-          console.error(`Failed to create object for node ${nodeId}:`, error);
+        });
+      } catch (error) {
+        console.error(`Failed to batch create objects:`, error);
+        // Fallback to individual creation if batch fails
+        for (const data of batchData) {
+          try {
+            const objectId = await onCreateObject(
+              data.type,
+              data.position,
+              data.extraData
+            );
+            if (objectId) {
+              nodeToObjectIdMap.set(data.nodeId, objectId);
+              objectsCreated++;
+            }
+          } catch (err) {
+            console.error(
+              `Failed to create object for node ${data.nodeId}:`,
+              err
+            );
+          }
         }
       }
 
-      // Longer delay between object batches to prevent overwhelming the system
+      // Continue to next batch immediately for faster rendering
       if (i + OBJECT_BATCH_SIZE < nodeEntries.length) {
-        console.log('⏱️ Waiting 500ms before next object batch...');
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        console.log('🚀 Processing next object batch...');
       }
     }
 
@@ -1146,7 +1375,8 @@ export class MarkdownDiagramService {
           text: connectionText,
           color: connection.visual?.color || '#888888',
           thickness: connection.visual?.thickness || 2,
-          lineStyle: 'straight',
+          // Don't set lineStyle - let it auto-detect intersections and curve when needed
+          // lineStyle will default to 'straight' but will auto-curve when intersections detected
           textStyle: {
             fontSize: 4,
             color: 'black',
@@ -1179,14 +1409,13 @@ export class MarkdownDiagramService {
       `🔄 Starting batch save of ${allConnectionsToSave.length} connections...`
     );
 
-    // First, add all connections to the store immediately for UI responsiveness
-    allConnectionsToSave.forEach((connectionData) => {
-      try {
-        connectionStore.addConnection(connectionData);
-      } catch (error) {
-        console.error('Failed to add connection to store:', error);
-      }
-    });
+    // First, add all connections to the store in a single batch update to prevent re-render loops
+    try {
+      connectionStore.bulkAddConnections(allConnectionsToSave);
+      console.log('✅ All connections added to store in single batch');
+    } catch (error) {
+      console.error('Failed to bulk add connections to store:', error);
+    }
 
     // If no user or space, we're done (local-only mode)
     if (!user || !currentSpaceId) {
@@ -1194,8 +1423,8 @@ export class MarkdownDiagramService {
       return;
     }
 
-    // Save to Firebase in very small batches with aggressive rate limiting
-    const BATCH_SIZE = 10; // Very small batches to prevent Firebase write stream exhaustion
+    // Save to Firebase in batches with rate limiting
+    const BATCH_SIZE = 50; // Process 50 connections per batch
     let savedCount = 0;
     let batchCount = 0;
 
@@ -1277,8 +1506,7 @@ export class MarkdownDiagramService {
               batchSavedCount += connections.length;
             }
 
-            // Small delay between cell operations
-            await new Promise((resolve) => setTimeout(resolve, 50));
+            // No delay needed - batched writes are atomic and efficient
           } catch (error) {
             console.error(`Failed to bulk save to cell ${cellId}:`, error);
           }
@@ -1290,10 +1518,9 @@ export class MarkdownDiagramService {
           `✅ Batch ${batchCount} completed: ${batchSavedCount}/${batch.length} saved`
         );
 
-        // Much longer delay between batches to allow Firebase to fully recover
+        // Minimal delay between batches - just enough to avoid rate limits
         if (i + BATCH_SIZE < allConnectionsToSave.length) {
-          console.log('⏱️ Waiting 5 seconds before next batch...');
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
       } catch (error) {
         console.error(`❌ Batch ${batchCount} failed:`, error);
@@ -1372,7 +1599,9 @@ export class MarkdownDiagramService {
         diagram,
         onCreateObject,
         nodeToObjectIdMap,
-        basePosition
+        basePosition,
+        user,
+        currentSpaceId
       );
 
       totalObjectsCreated += objectsCreated;
@@ -1385,12 +1614,9 @@ export class MarkdownDiagramService {
       );
     }
 
-    // Give Firebase time to recover after object creation before starting connections
+    // Objects created for immediate rendering, proceed with connection processing
     if (allConnectionsToSave.length > 0) {
-      console.log(
-        '⏱️ Allowing Firebase to recover after object creation (3 seconds)...'
-      );
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      console.log('🔗 Processing connections for immediate rendering...');
     }
 
     // Save all connections

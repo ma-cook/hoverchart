@@ -1689,6 +1689,7 @@ const App = () => {
             {/* Render connections with virtualization */}
             <ConnectionsRenderer
               objects={objects}
+              allObjectsForPathfinding={objects}
               visibleObjectIds={visibleObjectIds}
               onLineStyleChange={handleLineStyleChange}
               onLineColorChange={handleLineColorChange}

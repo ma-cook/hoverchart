@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const usePublicSpaceStore = create((set, get) => ({
+const usePublicSpaceStore = createWithEqualityFn((set, get) => ({
   // Public Connections State
   publicConnections: {}, // { spaceId: { connections: [], loading: boolean } }
 

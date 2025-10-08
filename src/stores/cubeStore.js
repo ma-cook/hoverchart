@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useCubeStore = create((set, get) => ({
+const useCubeStore = createWithEqualityFn((set, get) => ({
   // State for all cubes
   cubes: new Map(), // Map of cubeId -> cube state
   selectedCubes: new Set(), // Set of selected cube IDs

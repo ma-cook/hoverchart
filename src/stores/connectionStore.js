@@ -90,6 +90,41 @@ const useConnectionStore = create((set, get) => ({
     });
   },
 
+  // Bulk add connections in a single state update to prevent re-render loops
+  bulkAddConnections: (connectionsArray) => {
+    if (
+      !connectionsArray ||
+      !Array.isArray(connectionsArray) ||
+      connectionsArray.length === 0
+    ) {
+      return;
+    }
+
+    set((state) => {
+      // Filter out connections that already exist or are being deleted
+      const existingIds = new Set(state.connections.map((conn) => conn.id));
+      const newConnections = connectionsArray.filter(
+        (conn) =>
+          conn &&
+          conn.id &&
+          !existingIds.has(conn.id) &&
+          !state.deletingConnections.has(conn.id)
+      );
+
+      if (newConnections.length === 0) {
+        return state;
+      }
+
+      const newState = {
+        connections: [...state.connections, ...newConnections],
+      };
+
+      // Log state after update
+      setTimeout(() => get()._logState(), 0);
+      return newState;
+    });
+  },
+
   removeConnection: (connectionId) => {
     if (!connectionId) {
       return;

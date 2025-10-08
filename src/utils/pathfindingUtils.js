@@ -31,6 +31,57 @@ function roundForCache(pos) {
   );
 }
 
+// Check if a line intersects a bounding box
+function lineIntersectsBoundingBox(line, boundingBox) {
+  const lineStart = line.start;
+  const lineEnd = line.end;
+  const boxMin = boundingBox.min;
+  const boxMax = boundingBox.max;
+
+  // If either endpoint is inside the box, it intersects
+  if (
+    boundingBox.containsPoint(lineStart) ||
+    boundingBox.containsPoint(lineEnd)
+  ) {
+    return true;
+  }
+
+  // Ray-box intersection test
+  const direction = new THREE.Vector3()
+    .subVectors(lineEnd, lineStart)
+    .normalize();
+  const length = lineStart.distanceTo(lineEnd);
+
+  let tMin = 0;
+  let tMax = length;
+
+  for (let i = 0; i < 3; i++) {
+    const axis = ['x', 'y', 'z'][i];
+    const origin = lineStart[axis];
+    const dir = direction[axis];
+
+    if (Math.abs(dir) < 1e-8) {
+      // Ray is parallel to slab
+      if (origin < boxMin[axis] || origin > boxMax[axis]) {
+        return false;
+      }
+    } else {
+      const invDir = 1.0 / dir;
+      let t1 = (boxMin[axis] - origin) * invDir;
+      let t2 = (boxMax[axis] - origin) * invDir;
+
+      if (t1 > t2) [t1, t2] = [t2, t1];
+
+      tMin = Math.max(tMin, t1);
+      tMax = Math.min(tMax, t2);
+
+      if (tMin > tMax) return false;
+    }
+  }
+
+  return tMin <= length && tMax >= 0;
+}
+
 // Generate cache key from positions
 function generateCacheKey(startPos, endPos) {
   const roundedStart = roundForCache(startPos);
@@ -178,7 +229,7 @@ export function checkLineIntersection(startPos, endPos, objects) {
     // Create a simple box for intersection testing
     const bbox = new THREE.Box3(box.min, box.max);
 
-    // IMPROVED INTERSECTION DETECTION: Check if the line segment intersects the box
+    // IMPROVED INTERSECTION DETECTION: Check if the line segment intersects with the box
     // Create line segment from start to end
     const lineStart = new THREE.Vector3(...startPos);
     const lineEnd = new THREE.Vector3(...endPos);
@@ -268,22 +319,211 @@ export function generateCurvedPath(
     return cachedPath.path;
   }
 
-  // If not forced curved and no intersections, return and cache straight line
-  if (!forceCurved && (!intersections || intersections.length === 0)) {
-    const straightPath = [startPos, endPos];
-    pathCache.set(pathCacheKey, {
-      path: straightPath,
-      timestamp: Date.now(),
-    });
-    return straightPath;
+  // EARLY CHECK: Detect parent-child relationships and container objects
+  const startVec = new THREE.Vector3(...startPos);
+  const endVec = new THREE.Vector3(...endPos);
+
+  if (intersections && intersections.length > 0) {
+    for (const int of intersections) {
+      if (int.boundingBox && int.objectId) {
+        const bbox = int.boundingBox;
+
+        // Check if both endpoints are inside this bounding box
+        if (bbox.containsPoint(startVec) && bbox.containsPoint(endVec)) {
+          const lineLength = startVec.distanceTo(endVec);
+          const bboxSize = new THREE.Vector3().subVectors(bbox.max, bbox.min);
+          const avgBboxSize = (bboxSize.x + bboxSize.y + bboxSize.z) / 3;
+
+          // CASE 1: Direct parent-child relationship
+          // If this intersection object is one of the connected objects (parent contains child)
+          if (int.objectId === startConnId || int.objectId === endConnId) {
+            const straightPath = [startPos, endPos];
+            pathCache.set(pathCacheKey, {
+              path: straightPath,
+              timestamp: Date.now(),
+            });
+            return straightPath;
+          }
+
+          // CASE 2: Container object (both objects inside a third object)
+          // If the bounding box is significantly larger than the connection line,
+          // treat this as a container and use straight line
+          if (avgBboxSize > lineLength * 2) {
+            const straightPath = [startPos, endPos];
+            pathCache.set(pathCacheKey, {
+              path: straightPath,
+              timestamp: Date.now(),
+            });
+            return straightPath;
+          }
+        }
+      }
+    }
   }
 
-  // Filter out start/end objects
-  const relevantIntersections = intersections.filter(
+  // Detect when objects are inside other objects and use straight lines
+  let isParentChildInside = false;
+  let parentContainerId = null;
+
+  if (intersections && intersections.length > 0) {
+    // First check: traditional parent-child where both endpoints are inside one object
+    for (const int of intersections) {
+      if (
+        (int.objectId === startConnId || int.objectId === endConnId) &&
+        int.boundingBox
+      ) {
+        const startVec = new THREE.Vector3(...startPos);
+        const endVec = new THREE.Vector3(...endPos);
+        const bbox = int.boundingBox;
+        if (bbox.containsPoint(startVec) && bbox.containsPoint(endVec)) {
+          isParentChildInside = true;
+          parentContainerId = int.objectId;
+          break;
+        }
+      }
+    }
+
+    // Second check: when one or both connected objects are entirely inside another object
+    // Check ALL intersections, not just those different from connected objects
+    if (!isParentChildInside) {
+      for (const int of intersections) {
+        if (int.boundingBox) {
+          const bbox = int.boundingBox;
+          const startVec = new THREE.Vector3(...startPos);
+          const endVec = new THREE.Vector3(...endPos);
+
+          // Check if both connection endpoints are inside this object's bounding box
+          const startInside = bbox.containsPoint(startVec);
+          const endInside = bbox.containsPoint(endVec);
+
+          if (startInside && endInside) {
+            // Check if this is a container (larger than the connection line)
+            const lineLength = startVec.distanceTo(endVec);
+            const bboxSize = new THREE.Vector3().subVectors(bbox.max, bbox.min);
+            const minBboxDimension = Math.min(
+              bboxSize.x,
+              bboxSize.y,
+              bboxSize.z
+            );
+
+            // If the bounding box is significantly larger than the connection line,
+            // it's likely a container holding both objects
+            if (minBboxDimension > lineLength * 1.5) {
+              isParentChildInside = true;
+              parentContainerId = int.objectId;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Additional check: if intersection detection missed container objects,
+  // check if connection line is entirely within any large object
+  if (!isParentChildInside && intersections && intersections.length > 0) {
+    const startVec = new THREE.Vector3(...startPos);
+    const endVec = new THREE.Vector3(...endPos);
+    const lineLength = startVec.distanceTo(endVec);
+
+    // Look for large objects that might contain both endpoints
+    for (const int of intersections) {
+      if (int.boundingBox) {
+        const bbox = int.boundingBox;
+        const bboxSize = new THREE.Vector3().subVectors(bbox.max, bbox.min);
+        const bboxVolume = bboxSize.x * bboxSize.y * bboxSize.z;
+
+        // If this is a large object (volume-based check)
+        if (bboxVolume > lineLength * lineLength * lineLength * 0.1) {
+          // Create a slightly smaller bounding box to check if endpoints are well inside
+          const margin = Math.min(lineLength * 0.1, 5);
+          const innerBbox = bbox.clone();
+          innerBbox.min.addScalar(margin);
+          innerBbox.max.subScalar(margin);
+
+          if (
+            innerBbox.containsPoint(startVec) &&
+            innerBbox.containsPoint(endVec)
+          ) {
+            isParentChildInside = true;
+            parentContainerId = int.objectId;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // If this is a parent-child-inside case, keep straight ONLY when there are no other intersections.
+  // If there are obstacles, we still need to route around them.
+  // Keep straight line only if the only intersection is with the parent container (or none)
+  if (isParentChildInside) {
+    const otherHits = (intersections || []).filter(
+      (hit) => hit.objectId !== parentContainerId
+    );
+    if (otherHits.length === 0) {
+      const straightPath = [startPos, endPos];
+      pathCache.set(pathCacheKey, {
+        path: straightPath,
+        timestamp: Date.now(),
+      });
+      return straightPath;
+    }
+  }
+
+  // Check for front-facing connections that might not need curves
+  const attachmentIntersections = intersections.filter(
+    (int) => int.objectId === startConnId || int.objectId === endConnId
+  );
+
+  // Filter out intersections that are ONLY the attachment objects themselves
+  const obstacleIntersections = intersections.filter(
     (int) => int.objectId !== startConnId && int.objectId !== endConnId
   );
 
-  if (!forceCurved && relevantIntersections.length === 0) {
+  // Check if this is a front face that doesn't intersect its own attachment object
+  let isFrontFaceNoSelfIntersection = false;
+  if (attachmentIntersections.length > 0) {
+    const attachmentHit = attachmentIntersections[0];
+    if (attachmentHit.boundingBox) {
+      const attachmentCenter = new THREE.Vector3()
+        .addVectors(
+          attachmentHit.boundingBox.min,
+          attachmentHit.boundingBox.max
+        )
+        .multiplyScalar(0.5);
+
+      const startVec = new THREE.Vector3(...startPos);
+      const endVec = new THREE.Vector3(...endPos);
+      const distToStart = attachmentCenter.distanceTo(startVec);
+      const distToEnd = attachmentCenter.distanceTo(endVec);
+      const attachmentPoint = distToStart < distToEnd ? startVec : endVec;
+      const destinationPoint = distToStart < distToEnd ? endVec : startVec;
+
+      // Calculate face normal and check if it points toward destination
+      const faceNormal = new THREE.Vector3()
+        .subVectors(attachmentPoint, attachmentCenter)
+        .normalize();
+      const toDestination = new THREE.Vector3()
+        .subVectors(destinationPoint, attachmentPoint)
+        .normalize();
+
+      const alignment = faceNormal.dot(toDestination);
+
+      // Check if straight line intersects the attachment object's bounding box
+      const line = new THREE.Line3(attachmentPoint, destinationPoint);
+      const intersectsAttachment = attachmentHit.boundingBox.intersectsLine
+        ? attachmentHit.boundingBox.intersectsLine(line)
+        : lineIntersectsBoundingBox(line, attachmentHit.boundingBox);
+
+      if (alignment > 0.5 && !intersectsAttachment) {
+        isFrontFaceNoSelfIntersection = true;
+      }
+    }
+  }
+
+  // If front face with no self-intersection, only curve if there are other obstacles
+  if (isFrontFaceNoSelfIntersection && obstacleIntersections.length === 0) {
     const straightPath = [startPos, endPos];
     pathCache.set(pathCacheKey, {
       path: straightPath,
@@ -292,60 +532,40 @@ export function generateCurvedPath(
     return straightPath;
   }
 
-  // Calculate multiple curve options and choose the best one
-  const curveOptions = [];
-  const curveDirections = ['up', 'right', 'left'];
+  // Use multi-segment curves with smart direction selection
+  let curveDirections = ['up', 'right', 'left', 'down'];
 
+  // For front faces, prioritize downward curves to avoid curving into object
+  if (
+    isFrontFaceNoSelfIntersection ||
+    (attachmentIntersections.length > 0 && obstacleIntersections.length > 0)
+  ) {
+    curveDirections = ['down', 'left', 'right', 'up'];
+  }
+
+  let bestCurve = null;
+  let minIntersections = Infinity;
   for (const direction of curveDirections) {
-    const curve = generateSingleCurve(
+    const curve = generateMultiSegmentPath(
       startPos,
       endPos,
-      relevantIntersections,
-      direction
+      intersections,
+      direction,
+      startConnId,
+      endConnId,
+      attachmentIntersections.length > 0 ? attachmentIntersections[0] : null
     );
-    if (curve) {
-      curveOptions.push({ curve, direction });
+    const count = checkCurveIntersections(curve, intersections);
+    if (count < minIntersections) {
+      minIntersections = count;
+      bestCurve = curve;
     }
   }
-
-  // Test each curve option and pick the best one
-  let bestOption = null;
-  let minIntersections = Infinity;
-
-  for (const option of curveOptions) {
-    if (!option.curve || option.curve.length <= 2) continue;
-
-    // Quick validation of the curve path
-    const intersectionCount = checkCurveIntersections(
-      option.curve,
-      relevantIntersections
-    );
-    if (intersectionCount === 0) {
-      // Found a perfect path, use it immediately
-      const finalPath = option.curve;
-      pathCache.set(pathCacheKey, {
-        path: finalPath,
-        timestamp: Date.now(),
-      });
-      return finalPath;
-    }
-
-    if (intersectionCount < minIntersections) {
-      bestOption = option;
-      minIntersections = intersectionCount;
-    }
-  }
-
-  // Use the best available option or fallback to a straight line
-  const finalPath = (bestOption && bestOption.curve) || [startPos, endPos];
-
-  // Cache the result
   pathCache.set(pathCacheKey, {
-    path: finalPath,
+    path: bestCurve,
     timestamp: Date.now(),
   });
-
-  return finalPath;
+  return bestCurve;
 }
 
 /**
@@ -395,110 +615,264 @@ function checkCurveIntersections(curvePoints, intersections) {
   return intersectionCount;
 }
 
-function generateSingleCurve(startPos, endPos, intersections, curveDirection) {
-  // Create a midpoint with offset
-  const midX = (startPos[0] + endPos[0]) / 2;
-  const midY = (startPos[1] + endPos[1]) / 2;
-  const midZ = (startPos[2] + endPos[2]) / 2;
+/**
+ * Generate multi-segment path with waypoints for attachment object avoidance
+ * Uses Catmull-Rom splines for smooth multi-segment curves
+ */
+function generateMultiSegmentPath(
+  startPos,
+  endPos,
+  intersections,
+  curveDirection,
+  startConnId,
+  endConnId,
+  attachmentHit
+) {
+  const startVec = new THREE.Vector3(...startPos);
+  const endVec = new THREE.Vector3(...endPos);
+  const lineDirection = new THREE.Vector3()
+    .subVectors(endVec, startVec)
+    .normalize();
+  const lineLength = startVec.distanceTo(endVec);
 
-  // Calculate perpendicular offset direction based on curve direction
-  const direction = new THREE.Vector3(
-    endPos[0] - startPos[0],
-    endPos[1] - startPos[1],
-    endPos[2] - startPos[2]
-  ).normalize();
+  // Find attachment object intersections
+  const attachmentIntersections = intersections.filter(
+    (int) => int.objectId === startConnId || int.objectId === endConnId
+  );
 
-  let offsetVector;
+  // Use all intersections for avoidance if no attachment intersections
+  const avoidanceIntersections =
+    attachmentIntersections.length > 0
+      ? attachmentIntersections
+      : intersections;
 
-  // Calculate offset distance based on intersecting objects' sizes and line length
-  // Find the largest intersecting object to determine appropriate curve size
-  let maxObjectSize = 20; // Minimum curve offset
-  intersections.forEach((intersection) => {
+  // Calculate avoidance parameters based on largest object size
+  let maxObjectSize = 30;
+  let attachmentCenter = null;
+  avoidanceIntersections.forEach((intersection) => {
     if (intersection.boundingBox) {
-      const box = intersection.boundingBox;
-      const boxWidth = Math.abs(box.max.x - box.min.x);
-      const boxHeight = Math.abs(box.max.y - box.min.y);
-      const boxDepth = Math.abs(box.max.z - box.min.z);
-      const maxBoxDimension = Math.max(boxWidth, boxHeight, boxDepth);
-      maxObjectSize = Math.max(maxObjectSize, maxBoxDimension);
+      const bbox = intersection.boundingBox;
+      const extents = new THREE.Vector3().subVectors(bbox.max, bbox.min);
+      const maxDim = Math.max(extents.x, extents.y, extents.z); // less aggressive than diagonal length
+      maxObjectSize = Math.max(maxObjectSize, maxDim);
+      if (!attachmentCenter) {
+        attachmentCenter = new THREE.Vector3()
+          .addVectors(bbox.min, bbox.max)
+          .multiplyScalar(0.5);
+      }
     }
   });
 
-  const lineLength = new THREE.Vector3(...startPos).distanceTo(
-    new THREE.Vector3(...endPos)
+  // Determine which end is closer to the attachment object (attachment point)
+  let attachmentPoint = startVec;
+  let destinationPoint = endVec;
+  if (attachmentCenter) {
+    const distToStart = attachmentCenter.distanceTo(startVec);
+    const distToEnd = attachmentCenter.distanceTo(endVec);
+    if (distToEnd < distToStart) {
+      attachmentPoint = endVec;
+      destinationPoint = startVec;
+    }
+  }
+
+  // Create waypoints for multi-segment path
+  const waypoints = [];
+  waypoints.push(attachmentPoint);
+
+  // Calculate avoidance direction and distance (scaled with object size)
+  const baseClearance = maxObjectSize * 0.8 + 15; // Increased base clearance
+  const maxClearance = Math.min(lineLength * 0.25, 150); // Increased max clearance
+  const minClearance = Math.max(25, maxObjectSize * 0.6); // Size-aware minimum clearance
+  const clearanceDistance = Math.min(
+    Math.max(baseClearance, minClearance),
+    maxClearance
   );
 
-  // Adaptive curve sizing:
-  // - Base offset should be at least half the largest object size
-  // - Add extra offset based on number of intersections
-  // - Scale with line length for long connections
-  // - Cap at reasonable maximum to avoid extreme curves
-  const baseDistance = maxObjectSize * 0.6 + intersections.length * 15;
-  const scalingFactor = Math.min(lineLength / 500, 3.0); // Scale up for longer lines, cap at 3x
-  const adaptiveOffset = baseDistance * scalingFactor;
-  const offsetDistance = Math.min(adaptiveOffset, lineLength * 0.4); // Allow up to 40% of line length
+  let avoidanceDirection;
+  if (attachmentCenter && attachmentHit) {
+    // Use the actual intersection point to calculate a better face normal
+    const hitPoint = new THREE.Vector3(...attachmentHit.position);
+    const centerPoint = new THREE.Vector3(...attachmentCenter);
 
+    // Calculate face normal from center to hit point
+    avoidanceDirection = new THREE.Vector3()
+      .subVectors(hitPoint, centerPoint)
+      .normalize();
+
+    // If the direction is too weak, fall back to attachment point direction
+    if (avoidanceDirection.length() < 0.1) {
+      avoidanceDirection = new THREE.Vector3()
+        .subVectors(attachmentPoint, centerPoint)
+        .normalize();
+    }
+  } else {
+    avoidanceDirection = new THREE.Vector3()
+      .crossVectors(lineDirection, new THREE.Vector3(0, 1, 0))
+      .normalize();
+    if (avoidanceDirection.length() < 0.1) {
+      avoidanceDirection.set(0, 1, 0);
+    }
+  }
+
+  // Store the original outward direction before applying curve preferences
+  const originalOutwardDirection = avoidanceDirection.clone();
+
+  // Apply curve direction preference (with reduced influence to maintain face normal priority)
   switch (curveDirection) {
     case 'up':
-      // Always curve upward
-      offsetVector = new THREE.Vector3(0, offsetDistance, 0);
+      avoidanceDirection.y = Math.abs(avoidanceDirection.y) + 0.2;
+      avoidanceDirection.normalize();
+      break;
+    case 'down':
+      avoidanceDirection.y = -Math.abs(avoidanceDirection.y) - 0.2;
+      avoidanceDirection.normalize();
       break;
     case 'right': {
-      // Cross with up vector to get right direction
       const rightPerp = new THREE.Vector3()
-        .crossVectors(direction, new THREE.Vector3(0, 1, 0))
+        .crossVectors(new THREE.Vector3(0, 1, 0), lineDirection)
         .normalize();
-      if (rightPerp.length() < 0.1) {
-        // Line is vertical, use X axis
-        offsetVector = new THREE.Vector3(
-          offsetDistance,
-          offsetDistance * 0.5,
-          0
-        );
-      } else {
-        offsetVector = rightPerp.multiplyScalar(offsetDistance);
-        offsetVector.y += offsetDistance * 0.3; // Add slight upward component
+      if (rightPerp.length() > 0.1) {
+        avoidanceDirection.add(rightPerp.multiplyScalar(0.15)).normalize();
       }
       break;
     }
     case 'left': {
-      // Cross with up vector to get left direction
       const leftPerp = new THREE.Vector3()
-        .crossVectors(new THREE.Vector3(0, 1, 0), direction)
+        .crossVectors(lineDirection, new THREE.Vector3(0, 1, 0))
         .normalize();
-      if (leftPerp.length() < 0.1) {
-        // Line is vertical, use negative X axis
-        offsetVector = new THREE.Vector3(
-          -offsetDistance,
-          offsetDistance * 0.5,
-          0
-        );
-      } else {
-        offsetVector = leftPerp.multiplyScalar(offsetDistance);
-        offsetVector.y += offsetDistance * 0.3; // Add slight upward component
+      if (leftPerp.length() > 0.1) {
+        avoidanceDirection.add(leftPerp.multiplyScalar(0.15)).normalize();
       }
       break;
     }
-    default:
-      // Default to upward
-      offsetVector = new THREE.Vector3(0, offsetDistance, 0);
   }
 
-  // Calculate control point
-  const controlPoint = [
-    midX + offsetVector.x,
-    midY + offsetVector.y,
-    midZ + offsetVector.z,
-  ];
+  // Validate that the modified direction is still pointing away from the object center
+  if (attachmentCenter) {
+    const centerPoint = new THREE.Vector3(...attachmentCenter);
+    const testPoint = attachmentPoint
+      .clone()
+      .add(avoidanceDirection.clone().multiplyScalar(10));
+    const distanceFromCenter = testPoint.distanceTo(centerPoint);
+    const originalDistanceFromCenter = attachmentPoint.distanceTo(centerPoint);
 
-  // Create a quadratic bezier curve
-  const curve = new THREE.QuadraticBezierCurve3(
-    new THREE.Vector3(...startPos),
-    new THREE.Vector3(...controlPoint),
-    new THREE.Vector3(...endPos)
+    // If the modified direction brings us closer to the center, use the original outward direction
+    if (distanceFromCenter <= originalDistanceFromCenter) {
+      avoidanceDirection = originalOutwardDirection;
+    }
+  }
+
+  // Special handling for directly facing faces with obstacles between them
+  // Check if faces are roughly facing each other and adjust avoidance direction
+  if (attachmentCenter) {
+    const centerPoint = new THREE.Vector3(...attachmentCenter);
+    const faceNormal = avoidanceDirection.clone();
+    const connectionDirection = new THREE.Vector3()
+      .subVectors(destinationPoint, attachmentPoint)
+      .normalize();
+
+    // If face normal is roughly opposite to connection direction (faces facing each other)
+    const alignment = faceNormal.dot(connectionDirection);
+    if (alignment < -0.3) {
+      // Faces are somewhat facing each other
+      // Find a perpendicular direction that avoids both objects
+      const perpDirection1 = new THREE.Vector3()
+        .crossVectors(connectionDirection, new THREE.Vector3(0, 1, 0))
+        .normalize();
+      const perpDirection2 = new THREE.Vector3()
+        .crossVectors(connectionDirection, perpDirection1)
+        .normalize();
+
+      // Choose the perpendicular direction that moves away from attachment center
+      const testPoint1 = attachmentPoint
+        .clone()
+        .add(perpDirection1.clone().multiplyScalar(10));
+      const testPoint2 = attachmentPoint
+        .clone()
+        .add(perpDirection2.clone().multiplyScalar(10));
+      const dist1 = testPoint1.distanceTo(centerPoint);
+      const dist2 = testPoint2.distanceTo(centerPoint);
+
+      // Use the direction that moves further from the attachment center
+      const chosenPerp = dist1 > dist2 ? perpDirection1 : perpDirection2;
+
+      // Blend the face normal with the perpendicular direction
+      avoidanceDirection = faceNormal
+        .clone()
+        .multiplyScalar(0.6)
+        .add(chosenPerp.multiplyScalar(0.4))
+        .normalize();
+    }
+  }
+
+  // Waypoint 1: Move outward from attachment point (object-size-aware gentle curve)
+  const initialOutwardDistance = Math.max(
+    clearanceDistance * 0.8,
+    maxObjectSize * 0.5
   );
+  const outwardPoint = attachmentPoint
+    .clone()
+    .add(avoidanceDirection.clone().multiplyScalar(initialOutwardDistance));
 
-  // Generate more points for smoother curves and better intersection detection
-  const curvePoints = curve.getPoints(15);
+  // Safety check: ensure waypoint is outside object bounding box
+  if (attachmentHit && attachmentHit.boundingBox) {
+    const bbox = attachmentHit.boundingBox;
+    if (bbox.containsPoint(outwardPoint)) {
+      // If waypoint is inside bounding box, push it further out
+      const extraDistance = Math.max(maxObjectSize * 0.3, 20);
+      outwardPoint.add(
+        avoidanceDirection.clone().multiplyScalar(extraDistance)
+      );
+    }
+  }
+  waypoints.push([outwardPoint.x, outwardPoint.y, outwardPoint.z]);
+
+  // Waypoint 2: Curve around the object (maintaining strong outward emphasis)
+  const midProgress = 0.5;
+  const baseMidPoint = new THREE.Vector3()
+    .addVectors(attachmentPoint, destinationPoint)
+    .multiplyScalar(midProgress);
+  const midOutwardDistance = Math.max(
+    clearanceDistance * 1.0,
+    maxObjectSize * 0.7
+  );
+  const curvePoint = baseMidPoint
+    .clone()
+    .add(avoidanceDirection.clone().multiplyScalar(midOutwardDistance));
+
+  // Safety check for curve point as well
+  if (attachmentHit && attachmentHit.boundingBox) {
+    const bbox = attachmentHit.boundingBox;
+    if (bbox.containsPoint(curvePoint)) {
+      const extraDistance = Math.max(maxObjectSize * 0.4, 25);
+      curvePoint.add(avoidanceDirection.clone().multiplyScalar(extraDistance));
+    }
+  }
+  waypoints.push([curvePoint.x, curvePoint.y, curvePoint.z]);
+
+  // Waypoint 3: Transition back toward destination
+  const approachPoint = destinationPoint
+    .clone()
+    .add(lineDirection.clone().multiplyScalar(-clearanceDistance * 0.2))
+    .add(avoidanceDirection.clone().multiplyScalar(clearanceDistance * 0.2));
+  waypoints.push([approachPoint.x, approachPoint.y, approachPoint.z]);
+
+  // End point
+  waypoints.push(destinationPoint);
+
+  // If we started from the end point, reverse the waypoints
+  if (attachmentPoint.equals(endVec)) {
+    waypoints.reverse();
+  }
+
+  // Create smooth multi-segment curve using Catmull-Rom spline
+  const splinePoints = waypoints.map((wp) => new THREE.Vector3(...wp));
+  const curve = new THREE.CatmullRomCurve3(
+    splinePoints,
+    false,
+    'catmullrom',
+    0.5
+  );
+  const curvePoints = curve.getPoints(Math.max(20, waypoints.length * 6));
   return curvePoints.map((point) => [point.x, point.y, point.z]);
 }

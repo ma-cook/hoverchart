@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useTextObjectStore = create((set, get) => ({
+const useTextObjectStore = createWithEqualityFn((set, get) => ({
   // Text objects state - keyed by object ID
   textObjects: {}, // { objectId: { text, isEditing, isActivelyEditing, textStyle, scale, etc. } }
 

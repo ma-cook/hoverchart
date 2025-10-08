@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useTextInputStore = create((set, get) => ({
+const useTextInputStore = createWithEqualityFn((set, get) => ({
   // State for all text inputs across the app
   textInputs: {}, // { inputId: { text: string, type: 'face' | 'header' } }
   // Get text input state by ID, with optional initial text

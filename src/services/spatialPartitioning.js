@@ -1382,46 +1382,82 @@ export const bulkSaveConnectionsToCell = async (
       cellId
     );
 
-    // Get current cell data
+    // Check if cell exists, create if needed
     const cellDoc = await getDoc(cellRef);
-    let cellData;
-
-    if (cellDoc.exists()) {
-      cellData = cellDoc.data();
-    } else {
-      // Cell doesn't exist, create it
+    if (!cellDoc.exists()) {
       const [x, y, z] = cellId.split(',').map(Number);
       await createCell(userId, spaceId, x, y, z);
-      cellData = {
-        id: cellId,
-        x,
-        y,
-        z,
-        bounds: getCellBounds(x, y, z),
-        createdAt: new Date(),
-        objects: {},
-        connections: {},
-      };
     }
 
-    // Initialize or fix connections structure
-    if (!cellData.connections || Array.isArray(cellData.connections)) {
-      cellData.connections = {};
-    }
+    // Update cell metadata to indicate it has connections
+    await setDoc(
+      cellRef,
+      {
+        hasConnections: true,
+        connectionCount: connectionsArray.length,
+        lastUpdated: new Date(),
+      },
+      { merge: true }
+    );
 
-    // Add all connections in bulk
-    cellData.hasConnections = true;
+    // Save connections to subcollection using Firestore batched writes
+    // This is more efficient and prevents triggering multiple real-time listeners
+    // that could cause "Maximum update depth exceeded" errors
     const currentTime = new Date();
 
-    for (const connectionData of connectionsArray) {
-      cellData.connections[connectionData.id] = {
-        ...connectionData,
-        lastUpdated: currentTime,
-        cellId: cellId,
-      };
+    // Firestore batches can only handle 500 operations, so we need to split if necessary
+    const BATCH_SIZE = 500;
+    const batches = [];
+
+    for (let i = 0; i < connectionsArray.length; i += BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const batchConnections = connectionsArray.slice(i, i + BATCH_SIZE);
+
+      batchConnections.forEach((connectionData) => {
+        const connectionRef = doc(
+          db,
+          'users',
+          userId,
+          'spaces',
+          spaceId,
+          'cells',
+          cellId,
+          'connections',
+          connectionData.id
+        );
+
+        // Save only essential connection data to reduce write size and improve performance
+        const essentialData = {
+          id: connectionData.id,
+          start: {
+            objectId: connectionData.start?.objectId,
+            face: connectionData.start?.face,
+            position: connectionData.start?.position,
+          },
+          end: {
+            objectId: connectionData.end?.objectId,
+            face: connectionData.end?.face,
+            position: connectionData.end?.position,
+          },
+          text: connectionData.text,
+          color: connectionData.color,
+          thickness: connectionData.thickness,
+          textStyle: connectionData.textStyle,
+          merfolkData: connectionData.merfolkData,
+          lastUpdated: currentTime,
+          cellId: cellId,
+        };
+
+        batch.set(connectionRef, essentialData, { merge: true });
+      });
+
+      batches.push(batch);
     }
 
-    await setDoc(cellRef, cellData, { merge: true });
+    // Execute all batches sequentially to avoid overwhelming Firestore
+    for (const batch of batches) {
+      await batch.commit();
+    }
 
     return true;
   } catch (error) {

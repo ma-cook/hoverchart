@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useUIOverlayStore = create((set, get) => ({
+const useUIOverlayStore = createWithEqualityFn((set, get) => ({
   // UI Overlay state - can have multiple overlay instances if needed
   overlays: {}, // { overlayId: { menuOpen, templateOpen, templateConfig } }
 

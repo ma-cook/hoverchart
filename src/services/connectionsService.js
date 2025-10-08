@@ -280,31 +280,36 @@ const subscribeToCellConnections = (
       for (const cellId of effectiveCells) {
         if (!activeSubscriptionCells.has(cellId)) {
           const [x, y, z] = cellId.split(',').map(Number);
-          const cellRef = doc(
+
+          // Subscribe to the connections subcollection instead of the cell document
+          const {
+            collection: firestoreCollection,
+            query,
+            onSnapshot: onSnapshotImport,
+          } = await import('firebase/firestore');
+          const connectionsRef = firestoreCollection(
             db,
             'users',
             ownerUserId,
             'spaces',
             spaceId,
             'cells',
-            cellId
+            cellId,
+            'connections'
           );
 
-          const unsubscribe = onSnapshot(cellRef, (cellDoc) => {
-            if (!cellDoc.exists()) return;
+          const unsubscribe = onSnapshotImport(connectionsRef, (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+              const connectionId = change.doc.id;
+              const connectionData = change.doc.data();
 
-            const cellData = cellDoc.data();
-            const cellConnections = cellData.connections || {};
+              try {
+                // Skip if connection is in deletion blacklist
+                const connectionStore = useConnectionStore.getState();
+                if (connectionStore.deletingConnections.has(connectionId))
+                  return;
 
-            // Process each connection in the cell
-            Object.entries(cellConnections).forEach(
-              ([connectionId, connectionData]) => {
-                try {
-                  // Skip if connection is in deletion blacklist
-                  const connectionStore = useConnectionStore.getState();
-                  if (connectionStore.deletingConnections.has(connectionId))
-                    return;
-
+                if (change.type === 'added' || change.type === 'modified') {
                   // Add cell coordinates to connection data
                   const enrichedConnectionData = {
                     ...connectionData,
@@ -312,16 +317,22 @@ const subscribeToCellConnections = (
                   };
 
                   callback({
-                    type: 'added',
+                    type: change.type === 'added' ? 'added' : 'modified',
                     id: connectionId,
                     connection: enrichedConnectionData,
                     cellCoords: { x, y, z: z || 0 },
                   });
-                } catch (error) {
-                  console.error('Error processing connection:', error);
+                } else if (change.type === 'removed') {
+                  callback({
+                    type: 'removed',
+                    id: connectionId,
+                    cellCoords: { x, y, z: z || 0 },
+                  });
                 }
+              } catch (error) {
+                console.error('Error processing connection:', error);
               }
-            );
+            });
           });
 
           unsubscribeFunctions.set(cellId, unsubscribe);
@@ -348,15 +359,20 @@ const subscribeToCellConnections = (
           cellKey
         );
 
-        // Create cell reference
-        const cellRef = doc(
+        // Create connections subcollection reference
+        const {
+          collection: firestoreCollection,
+          onSnapshot: onSnapshotImport,
+        } = await import('firebase/firestore');
+        const connectionsRef = firestoreCollection(
           db,
           'users',
           ownerUserId,
           'spaces',
           spaceId,
           'cells',
-          cellKey
+          cellKey,
+          'connections'
         );
 
         // Use global subscription manager
@@ -364,45 +380,40 @@ const subscribeToCellConnections = (
           subscriptionKey,
           SUBSCRIPTION_TYPES.CONNECTIONS,
           () => {
-            // Create the actual Firebase subscription
+            // Create the actual Firebase subscription to the connections subcollection
 
-            return onSnapshot(
-              cellRef,
+            return onSnapshotImport(
+              connectionsRef,
               { includeMetadataChanges: false },
               (snapshot) => {
-                if (!snapshot.exists()) {
-                  return;
-                }
+                snapshot.docChanges().forEach((change) => {
+                  const connectionId = change.doc.id;
+                  const connectionData = change.doc.data();
 
-                const cellData = snapshot.data();
-                const cellConnections = cellData.connections || {};
+                  // CRITICAL FIX: Check deletion blacklist before processing any connection
+                  // This prevents stale Firebase data from re-adding deleted connections
+                  if (window._deletingConnections?.has(connectionId)) {
+                    return;
+                  }
 
-                // Process each connection in the cell
-                Object.entries(cellConnections).forEach(
-                  ([connectionId, connectionData]) => {
-                    // CRITICAL FIX: Check deletion blacklist before processing any connection
-                    // This prevents stale Firebase data from re-adding deleted connections
-                    if (window._deletingConnections?.has(connectionId)) {
-                      return;
-                    }
-
-                    // Also check connection store deletion blacklist
-                    try {
-                      const { useConnectionStore } = window;
-                      if (useConnectionStore) {
-                        const connectionStore = useConnectionStore.getState();
-                        if (
-                          connectionStore.deletingConnections.has(connectionId)
-                        ) {
-                          return;
-                        }
+                  // Also check connection store deletion blacklist
+                  try {
+                    const { useConnectionStore } = window;
+                    if (useConnectionStore) {
+                      const connectionStore = useConnectionStore.getState();
+                      if (
+                        connectionStore.deletingConnections.has(connectionId)
+                      ) {
+                        return;
                       }
-                    } catch {
-                      // Ignore errors accessing store
                     }
+                  } catch {
+                    // Ignore errors accessing store
+                  }
 
-                    const cacheKey = `${spaceId}_${connectionId}`;
+                  const cacheKey = `${spaceId}_${connectionId}`;
 
+                  if (change.type === 'added' || change.type === 'modified') {
                     // Check if connection data has changed
                     const cachedData = connectionCache.get(cacheKey);
                     let hasChanged = false;
@@ -422,39 +433,14 @@ const subscribeToCellConnections = (
                       );
 
                       callback({
-                        type: 'added',
+                        type: change.type === 'added' ? 'added' : 'modified',
                         id: connectionId,
                         connection: connectionData,
                         cellCoords: { x, y, z: z || 0 },
                       });
                     }
-                  }
-                );
-
-                // Handle removed connections (compare with cache)
-                const currentConnectionIds = new Set(
-                  Object.keys(cellConnections)
-                );
-                const cachedConnectionIds = new Set();
-
-                for (const cacheKey of connectionCache.keys()) {
-                  if (cacheKey.startsWith(`${spaceId}_`)) {
-                    const connectionId = cacheKey.substring(
-                      `${spaceId}_`.length
-                    );
-                    const connectionData = connectionCache.get(cacheKey);
-
-                    // Check if this connection belongs to this cell
-                    if (connectionData && connectionData.cellId === cellKey) {
-                      cachedConnectionIds.add(connectionId);
-                    }
-                  }
-                }
-
-                // Find removed connections
-                for (const connectionId of cachedConnectionIds) {
-                  if (!currentConnectionIds.has(connectionId)) {
-                    const cacheKey = `${spaceId}_${connectionId}`;
+                  } else if (change.type === 'removed') {
+                    // Handle removed connection
                     connectionCache.delete(cacheKey);
                     callback({
                       type: 'removed',
@@ -462,7 +448,7 @@ const subscribeToCellConnections = (
                       cellCoords: { x, y, z: z || 0 },
                     });
                   }
-                }
+                });
               },
               () => {
                 // Firebase snapshot error - permission denied is expected for unauthorized cells

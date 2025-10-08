@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useScreenShareStore = create((set, get) => ({
+const useScreenShareStore = createWithEqualityFn((set, get) => ({
   // Screen share streams state - keyed by planeId or unique identifier
   screenShares: {}, // { streamId: { hasError, errorMessage, isLoading, retryTrigger, streamData } }
 

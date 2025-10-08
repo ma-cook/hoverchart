@@ -12,6 +12,7 @@ const useObjectsStore = create((set, get) => ({
   objects: [],
   isInitialLoading: true,
   hasLoadedInitialObjects: false,
+  _isUpdating: false, // Prevent rapid successive updates
 
   // Internal tracking refs (stored as state for persistence)
   lastUpdate: {},
@@ -28,31 +29,45 @@ const useObjectsStore = create((set, get) => ({
     set({ selectedId: id });
   },
   setObjects: (objects) => {
-    // Validate that objects is an array or a function that returns an array
-    if (typeof objects === 'function') {
-      // If it's a function, call it with current state
-      const state = get();
-      const currentObjects = Array.isArray(state.objects) ? state.objects : [];
-      const newObjects = objects(currentObjects);
-      if (Array.isArray(newObjects)) {
+    // Add debouncing to prevent rapid successive updates that cause infinite loops
+    if (get()._isUpdating) {
+      return; // Skip update if already updating
+    }
+
+    set({ _isUpdating: true });
+
+    try {
+      // Validate that objects is an array or a function that returns an array
+      if (typeof objects === 'function') {
+        // If it's a function, call it with current state
+        const state = get();
+        const currentObjects = Array.isArray(state.objects)
+          ? state.objects
+          : [];
+        const newObjects = objects(currentObjects);
+        if (Array.isArray(newObjects)) {
+          // Filter out objects that belong to unloaded cells
+          const filteredObjects = newObjects.filter((obj) => {
+            const objId = obj.id?.toString();
+            return !window._unloadedObjects?.has(objId);
+          });
+          set({ objects: filteredObjects, _isUpdating: false });
+        } else {
+          set({ objects: [], _isUpdating: false }); // Fallback to empty array
+        }
+      } else if (Array.isArray(objects)) {
         // Filter out objects that belong to unloaded cells
-        const filteredObjects = newObjects.filter((obj) => {
+        const filteredObjects = objects.filter((obj) => {
           const objId = obj.id?.toString();
           return !window._unloadedObjects?.has(objId);
         });
-        set({ objects: filteredObjects });
+        set({ objects: filteredObjects, _isUpdating: false });
       } else {
-        set({ objects: [] }); // Fallback to empty array
+        set({ objects: [], _isUpdating: false }); // Fallback to empty array
       }
-    } else if (Array.isArray(objects)) {
-      // Filter out objects that belong to unloaded cells
-      const filteredObjects = objects.filter((obj) => {
-        const objId = obj.id?.toString();
-        return !window._unloadedObjects?.has(objId);
-      });
-      set({ objects: filteredObjects });
-    } else {
-      set({ objects: [] }); // Fallback to empty array
+    } catch (error) {
+      set({ _isUpdating: false });
+      throw error;
     }
   },
 
@@ -424,6 +439,131 @@ const useObjectsStore = create((set, get) => ({
     // Return the created object ID
     return uniqueId;
   },
+
+  // Batch create multiple objects to prevent infinite re-render loops
+  batchCreateObjects: async (objectsData, user, currentSpaceId) => {
+    const state = get();
+    const currentObjects = state.objects || [];
+    const newCreatedObjectIds = new Set(state.createdObjectIds);
+    const newObjects = [];
+
+    // Create all objects without triggering individual state updates
+    for (const { type, position, extraData = {} } of objectsData) {
+      const uniqueId =
+        Date.now() + '-' + Math.random().toString(36).substring(2, 10);
+
+      const newObject = {
+        type,
+        position: [
+          position.x || position[0],
+          position.y || position[1],
+          position.z || position[2],
+        ],
+        id: uniqueId,
+        scale: [1, 1, 1],
+        ...(type === 'sphere'
+          ? {
+              lineColor: 'black',
+              headerText: '',
+              headerStyle: { fontSize: 1.5, color: 'black', underline: false },
+              faceColors: Array(12)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = null;
+                  return acc;
+                }, {}),
+              faceTexts: Array(12)
+                .fill('')
+                .reduce((acc, _, idx) => {
+                  acc[idx] = '';
+                  return acc;
+                }, {}),
+              faceTextStyles: Array(12)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = {
+                    fontSize: 0.5,
+                    color: 'black',
+                    underline: false,
+                  };
+                  return acc;
+                }, {}),
+            }
+          : type === 'cube'
+          ? {
+              lineColor: 'black',
+              headerText: '',
+              headerStyle: { fontSize: 1.5, color: 'black', underline: false },
+              faceColors: Array(6)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = null;
+                  return acc;
+                }, {}),
+              faceTexts: Array(6)
+                .fill('')
+                .reduce((acc, _, idx) => {
+                  acc[idx] = '';
+                  return acc;
+                }, {}),
+              faceTextStyles: Array(6)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = {
+                    fontSize: 0.5,
+                    color: 'black',
+                    underline: false,
+                  };
+                  return acc;
+                }, {}),
+            }
+          : type === 'dodecahedron'
+          ? {
+              lineColor: 'black',
+              headerText: '',
+              headerStyle: { fontSize: 1.5, color: 'black', underline: false },
+              faceColors: Array(12)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = null;
+                  return acc;
+                }, {}),
+              faceTexts: Array(12)
+                .fill('')
+                .reduce((acc, _, idx) => {
+                  acc[idx] = '';
+                  return acc;
+                }, {}),
+              faceTextStyles: Array(12)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = {
+                    fontSize: 0.5,
+                    color: 'black',
+                    underline: false,
+                  };
+                  return acc;
+                }, {}),
+            }
+          : {}),
+        ...extraData,
+      };
+
+      newObjects.push(newObject);
+      newCreatedObjectIds.add(uniqueId.toString());
+    }
+
+    // Single state update for all objects to prevent re-render loops
+    set({
+      objects: [...currentObjects, ...newObjects],
+      createdObjectIds: newCreatedObjectIds,
+      isInitialLoading: false,
+    });
+
+    // Return array of created object IDs
+    return newObjects.map((obj) => obj.id);
+  },
+
   // Create a new object with a guaranteed unique ID
   handleCreateObject: (
     type,

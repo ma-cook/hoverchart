@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useDodecahedronStore = create((set, get) => ({
+const useDodecahedronStore = createWithEqualityFn((set, get) => ({
   // State for all dodecahedrons
   dodecahedrons: new Map(), // Map of dodecahedronId -> dodecahedron state
   selectedDodecahedrons: new Set(), // Set of selected dodecahedron IDs

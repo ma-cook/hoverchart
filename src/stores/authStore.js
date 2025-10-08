@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../firebase';
 import {
@@ -7,7 +8,7 @@ import {
   handleUrlAuth,
 } from '../services/authService';
 
-const useAuthStore = create((set, get) => ({
+const useAuthStore = createWithEqualityFn((set, get) => ({
   // Auth state
   authState: {
     isAuthenticated: false,

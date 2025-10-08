@@ -1,6 +1,7 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 
-const useIndicatorsStore = create((set, get) => ({
+const useIndicatorsStore = createWithEqualityFn((set, get) => ({
   // Indicator state
   showAllCubesIndicators: false,
   activeIndicator: null,
