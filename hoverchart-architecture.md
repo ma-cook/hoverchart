@@ -171,6 +171,10 @@ useDebouncedUpdate[Function: useDebouncedUpdate]
 useGlobalClickHandler[Function: useGlobalClickHandler]
 useTextureUpdater[Function: useTextureUpdater]
 useTimeoutManager[Function: useTimeoutManager]
+handleMarkdownUpload[Function: handleMarkdownUpload]
+handleMarkdownFileSelect[Function: handleMarkdownFileSelect]
+markdownFileInputRef[Function: markdownFileInputRef]
+isProcessingMarkdown[Function: isProcessingMarkdown]
 
 App --> useAuthState : "uses"
 App --> useObjects : "uses"
@@ -185,6 +189,11 @@ ConnectionsRenderer --> useLinePool : "uses"
 Cube --> useDebouncedUpdate : "uses"
 Cube --> useGlobalClickHandler : "uses"
 Cube --> useTextureUpdater : "uses"
+
+UIOverlay --> handleMarkdownUpload : "uses"
+UIOverlay --> handleMarkdownFileSelect : "uses"
+UIOverlay --> markdownFileInputRef : "uses"
+UIOverlay --> isProcessingMarkdown : "uses"
 
 %% ========================================
 %% FIREBASE & EXTERNAL SERVICES
@@ -280,6 +289,20 @@ bvhRaycasting[Function: bvhRaycasting]
 debugUtils[Function: debugUtils]
 storeValidation[Function: storeValidation]
 storeUtils[Function: storeUtils]
+initializeProcessor[Function: initializeProcessor]
+getCameraBasedPosition[Function: getCameraBasedPosition]
+buildHierarchicalRelationships[Function: buildHierarchicalRelationships]
+getObjectTypeForNode[Function: getObjectTypeForNode]
+calculateDodecahedronScale[Function: calculateDodecahedronScale]
+calculateMaxChildSize[Function: calculateMaxChildSize]
+countNestedChildren[Function: countNestedChildren]
+calculateNodePosition[Function: calculateNodePosition]
+getCornerPositions[Function: getCornerPositions]
+positionNodeHierarchy[Function: positionNodeHierarchy]
+createObjectsFromDiagram[Function: createObjectsFromDiagram]
+createConnectionsFromDiagram[Function: createConnectionsFromDiagram]
+saveConnections[Function: saveConnections]
+processMarkdownFile[Function: processMarkdownFile]
 
 ConnectionsRenderer --> connectionUtils : "uses"
 FaceIndicator --> faceIndicatorUtils : "uses"
@@ -310,6 +333,21 @@ BVHIntegration --> bvhRaycasting : "raycasting"
 
 objectsStore --> storeValidation : "validation"
 objectsStore --> storeUtils : "utilities"
+
+markdownDiagramService --> initializeProcessor : "uses"
+markdownDiagramService --> getCameraBasedPosition : "uses"
+markdownDiagramService --> buildHierarchicalRelationships : "uses"
+markdownDiagramService --> getObjectTypeForNode : "uses"
+markdownDiagramService --> calculateDodecahedronScale : "uses"
+markdownDiagramService --> calculateMaxChildSize : "uses"
+markdownDiagramService --> countNestedChildren : "uses"
+markdownDiagramService --> calculateNodePosition : "uses"
+markdownDiagramService --> getCornerPositions : "uses"
+markdownDiagramService --> positionNodeHierarchy : "uses"
+markdownDiagramService --> createObjectsFromDiagram : "uses"
+markdownDiagramService --> createConnectionsFromDiagram : "uses"
+markdownDiagramService --> saveConnections : "uses"
+markdownDiagramService --> processMarkdownFile : "uses"
 
 %% ========================================
 %% CONFIGURATION & BUILD
