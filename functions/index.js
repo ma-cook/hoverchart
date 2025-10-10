@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
 import express from 'express';
 import cors from 'cors';
 
@@ -16,31 +17,26 @@ initializeApp({
   }),
 });
 
-const app = express();
+const db = getFirestore();
 
-// Set up CORS with configuration
-const corsOptions = {
-  origin: [
-    'https://hoverchart.web.app',
-    'https://hoverchart.firebaseapp.com',
-    'http://localhost:5173',
-    'http://localhost:5000',
-  ],
-  optionsSuccessStatus: 200,
-};
+// ============= VERIFY AUTH TOKEN FUNCTION =============
+function createVerifyAuthTokenApp() {
+  const app = express();
 
-app.use(cors(corsOptions));
-app.use(express.json());
+  const corsOptions = {
+    origin: [
+      'https://hoverchart.web.app',
+      'https://hoverchart.firebaseapp.com',
+      'http://localhost:5173',
+      'http://localhost:5000',
+    ],
+    optionsSuccessStatus: 200,
+  };
 
-// Export the Cloud Function with the correct path
-export const verifyAuthToken = onRequest(
-  {
-    memory: '256MiB',
-    region: 'us-central1',
-    cors: true,
-    maxInstances: 10,
-  },
-  app.use('/verify-token', async (req, res) => {
+  app.use(cors(corsOptions));
+  app.use(express.json());
+
+  app.post('/', async (req, res) => {
     const idToken = req.body.token;
 
     if (!idToken) {
@@ -50,11 +46,9 @@ export const verifyAuthToken = onRequest(
 
     try {
       console.log('Verifying token...');
-      // First verify the token
       const decodedToken = await getAuth().verifyIdToken(idToken);
       console.log('Token verified for user:', decodedToken.uid);
 
-      // Create a custom token
       const customToken = await getAuth().createCustomToken(decodedToken.uid);
       console.log('Custom token created successfully');
 
@@ -69,5 +63,236 @@ export const verifyAuthToken = onRequest(
         details: error.message,
       });
     }
-  })
+  });
+
+  return app;
+}
+
+export const verifyAuthToken = onRequest(
+  {
+    memory: '256MiB',
+    region: 'us-central1',
+    cors: true,
+    maxInstances: 10,
+  },
+  createVerifyAuthTokenApp()
+);
+
+// ============= BULK IMPORT FUNCTION =============
+function createBulkImportApp() {
+  const app = express();
+
+  app.use(cors({ origin: true }));
+  app.use(express.json({ limit: '50mb' })); // Increase limit for large payloads
+
+  app.post('/', async (req, res) => {
+    try {
+      const { idToken, userId, spaceId, objects, connections } = req.body;
+
+      // Validate required fields
+      if (!idToken || !userId || !spaceId) {
+        return res.status(400).json({
+          error: 'Missing required fields: idToken, userId, spaceId',
+        });
+      }
+
+      // Verify authentication token
+      const decodedToken = await getAuth().verifyIdToken(idToken);
+      if (decodedToken.uid !== userId) {
+        return res.status(403).json({
+          error: 'Token user ID does not match provided userId',
+        });
+      }
+
+      console.log(
+        `🚀 Starting bulk import for user ${userId}, space ${spaceId}`
+      );
+      console.log(
+        `   Objects: ${objects?.length || 0}, Connections: ${
+          connections?.length || 0
+        }`
+      );
+
+      const startTime = Date.now();
+      let objectsWritten = 0;
+      let connectionsWritten = 0;
+
+      // ========== PROCESS OBJECTS ==========
+      if (objects && objects.length > 0) {
+        const objectsByCellId = new Map();
+
+        // Group objects by cellId
+        for (const obj of objects) {
+          if (!obj.cellId || !obj.id) {
+            console.warn('⚠️  Skipping object without cellId or id:', obj);
+            continue;
+          }
+
+          if (!objectsByCellId.has(obj.cellId)) {
+            objectsByCellId.set(obj.cellId, []);
+          }
+          objectsByCellId.get(obj.cellId).push(obj);
+        }
+
+        // Write objects to cells/{cellId} with objects.{id} map fields
+        for (const [cellId, cellObjects] of objectsByCellId.entries()) {
+          const cellRef = db.doc(
+            `users/${userId}/spaces/${spaceId}/cells/${cellId}`
+          );
+
+          // Build the objects map field
+          const objectsMap = {};
+          for (const obj of cellObjects) {
+            objectsMap[obj.id] = {
+              id: obj.id,
+              position: obj.position,
+              scale: obj.size || obj.scale || [1, 1, 1], // Use 'scale' to match client expectations
+              type: obj.type,
+              color: obj.color,
+              content: obj.content || '',
+              createdAt: obj.createdAt || Date.now(),
+              updatedAt: Date.now(),
+              cellId: obj.cellId,
+              ...(obj.rotation && { rotation: obj.rotation }),
+              ...(obj.textStyle && { textStyle: obj.textStyle }),
+              ...(obj.headerText !== undefined && {
+                headerText: obj.headerText,
+              }),
+              ...(obj.headerStyle && { headerStyle: obj.headerStyle }),
+              ...(obj.faceColors && { faceColors: obj.faceColors }),
+              ...(obj.faceTexts && { faceTexts: obj.faceTexts }),
+              ...(obj.faceTextStyles && { faceTextStyles: obj.faceTextStyles }),
+              ...(obj.merfolkData && { merfolkData: obj.merfolkData }),
+            };
+          }
+
+          // Update cell document with objects map (merge to preserve existing data)
+          await cellRef.set({ objects: objectsMap }, { merge: true });
+
+          objectsWritten += cellObjects.length;
+          console.log(
+            `   ✓ Wrote ${cellObjects.length} objects to cell ${cellId}`
+          );
+        }
+      }
+
+      // ========== PROCESS CONNECTIONS ==========
+      if (connections && connections.length > 0) {
+        const connectionsByCellId = new Map();
+
+        // Group connections by cellId
+        for (const conn of connections) {
+          if (!conn.cellId || !conn.id) {
+            console.warn('⚠️  Skipping connection without cellId or id:', conn);
+            continue;
+          }
+
+          if (!connectionsByCellId.has(conn.cellId)) {
+            connectionsByCellId.set(conn.cellId, []);
+          }
+          connectionsByCellId.get(conn.cellId).push(conn);
+        }
+
+        // Write connections to cells/{cellId}/connections/{id} subcollection
+        for (const [cellId, cellConnections] of connectionsByCellId.entries()) {
+          // Process in chunks of 500 (Firestore batch limit)
+          const BATCH_SIZE = 500;
+
+          for (let i = 0; i < cellConnections.length; i += BATCH_SIZE) {
+            const batch = db.batch();
+            const chunk = cellConnections.slice(i, i + BATCH_SIZE);
+
+            for (const conn of chunk) {
+              try {
+                const connectionRef = db.doc(
+                  `users/${userId}/spaces/${spaceId}/cells/${cellId}/connections/${conn.id}`
+                );
+
+                const connectionData = {
+                  id: conn.id,
+                  start: conn.start, // Use existing start object
+                  end: conn.end, // Use existing end object
+                  type: conn.type || 'line',
+                  color: conn.color || '#000000',
+                  createdAt: conn.createdAt || Date.now(),
+                  updatedAt: Date.now(),
+                  cellId: conn.cellId,
+                  ...(conn.text && { text: conn.text }),
+                  ...(conn.thickness && { thickness: conn.thickness }),
+                  ...(conn.textStyle && { textStyle: conn.textStyle }),
+                  ...(conn.label && { label: conn.label }),
+                  ...(conn.curvedPath && { curvedPath: conn.curvedPath }),
+                  ...(conn.merfolkData && { merfolkData: conn.merfolkData }),
+                };
+
+                // Log first connection for debugging
+                if (i === 0 && conn === chunk[0]) {
+                  console.log(
+                    '📝 Sample connection being saved:',
+                    JSON.stringify(connectionData, null, 2)
+                  );
+                }
+
+                batch.set(connectionRef, connectionData);
+              } catch (connError) {
+                console.error(
+                  `❌ Error processing connection ${conn.id}:`,
+                  connError
+                );
+                console.error(
+                  '   Connection data:',
+                  JSON.stringify(conn, null, 2)
+                );
+                throw connError;
+              }
+            }
+
+            await batch.commit();
+            connectionsWritten += chunk.length;
+
+            const progress = Math.min(i + chunk.length, cellConnections.length);
+            console.log(
+              `   ✓ Progress: ${progress}/${cellConnections.length} connections in cell ${cellId}`
+            );
+          }
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      console.log(
+        `✅ Bulk import completed in ${duration}ms (${(duration / 1000).toFixed(
+          2
+        )}s)`
+      );
+      console.log(
+        `   Objects: ${objectsWritten}, Connections: ${connectionsWritten}`
+      );
+
+      res.json({
+        success: true,
+        objectsWritten,
+        connectionsWritten,
+        duration,
+      });
+    } catch (error) {
+      console.error('❌ Bulk import error:', error);
+      res.status(500).json({
+        error: 'Bulk import failed',
+        details: error.message,
+      });
+    }
+  });
+
+  return app;
+}
+
+export const bulkImport = onRequest(
+  {
+    memory: '512MiB',
+    region: 'us-central1',
+    cors: true,
+    timeoutSeconds: 300, // 5 minutes max
+    maxInstances: 5,
+  },
+  createBulkImportApp()
 );
