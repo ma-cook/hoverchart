@@ -7,231 +7,236 @@ import {
 } from '../services/spatialObjectsService';
 import useConnectionStore from './connectionStore';
 
-const useObjectsStore = createWithEqualityFn((set, get) => ({
-  // State
-  selectedId: null,
-  objects: [],
-  isInitialLoading: true,
-  hasLoadedInitialObjects: false,
-  _isUpdating: false, // Prevent rapid successive updates
-  _lastUpdateTime: 0, // Track last update timestamp
+const useObjectsStore = createWithEqualityFn(
+  (set, get) => ({
+    // State
+    selectedId: null,
+    objects: [],
+    isInitialLoading: true,
+    hasLoadedInitialObjects: false,
+    _isUpdating: false, // Prevent rapid successive updates
+    _lastUpdateTime: 0, // Track last update timestamp
 
-  // Internal tracking refs (stored as state for persistence)
-  lastUpdate: {},
-  draggingObjects: new Set(),
-  lastSaved: null,
-  createdObjectIds: new Set(),
-  transformingObjects: new Set(),
-  transformPositions: new Map(),
-  transformLockTime: new Map(),
-  positionHistory: new Map(),
+    // Internal tracking refs (stored as state for persistence)
+    lastUpdate: {},
+    draggingObjects: new Set(),
+    lastSaved: null,
+    createdObjectIds: new Set(),
+    transformingObjects: new Set(),
+    transformPositions: new Map(),
+    transformLockTime: new Map(),
+    positionHistory: new Map(),
 
-  // Actions
-  setSelectedId: (id) => {
-    set({ selectedId: id });
-  },
-  setObjects: (objects) => {
-    // Add debouncing to prevent rapid successive updates that cause infinite loops
-    const now = Date.now();
-    const state = get();
+    // Actions
+    setSelectedId: (id) => {
+      set({ selectedId: id });
+    },
+    setObjects: (objects) => {
+      // Add debouncing to prevent rapid successive updates that cause infinite loops
+      const now = Date.now();
+      const state = get();
 
-    // CRITICAL: Prevent updates that happen too quickly (throttle to max 1 per 16ms = 60fps)
-    if (state._isUpdating || now - state._lastUpdateTime < 16) {
-      return; // Skip update if already updating or too soon
-    }
+      // CRITICAL: Prevent updates that happen too quickly (throttle to max 1 per 16ms = 60fps)
+      if (state._isUpdating || now - state._lastUpdateTime < 16) {
+        return; // Skip update if already updating or too soon
+      }
 
-    set({ _isUpdating: true, _lastUpdateTime: now });
+      set({ _isUpdating: true, _lastUpdateTime: now });
 
-    try {
-      const currentObjects = Array.isArray(state.objects) ? state.objects : [];
-      let newObjects = null;
+      try {
+        const currentObjects = Array.isArray(state.objects)
+          ? state.objects
+          : [];
+        let newObjects = null;
 
-      // Validate that objects is an array or a function that returns an array
-      if (typeof objects === 'function') {
-        // If it's a function, call it with current state
-        newObjects = objects(currentObjects);
-        if (!Array.isArray(newObjects)) {
+        // Validate that objects is an array or a function that returns an array
+        if (typeof objects === 'function') {
+          // If it's a function, call it with current state
+          newObjects = objects(currentObjects);
+          if (!Array.isArray(newObjects)) {
+            set({ objects: [], _isUpdating: false }); // Fallback to empty array
+            return;
+          }
+        } else if (Array.isArray(objects)) {
+          newObjects = objects;
+        } else {
           set({ objects: [], _isUpdating: false }); // Fallback to empty array
           return;
         }
-      } else if (Array.isArray(objects)) {
-        newObjects = objects;
-      } else {
-        set({ objects: [], _isUpdating: false }); // Fallback to empty array
-        return;
-      }
 
-      // Filter out objects that belong to unloaded cells
-      const filteredObjects = newObjects.filter((obj) => {
-        const objId = obj.id?.toString();
-        return !window._unloadedObjects?.has(objId);
-      });
+        // Filter out objects that belong to unloaded cells
+        const filteredObjects = newObjects.filter((obj) => {
+          const objId = obj.id?.toString();
+          return !window._unloadedObjects?.has(objId);
+        });
 
-      // PERFORMANCE FIX: Only update if the objects actually changed
-      // Compare both IDs and a hash of critical properties (position, scale)
-      if (filteredObjects.length !== currentObjects.length) {
-        set({ objects: filteredObjects, _isUpdating: false });
-        return;
-      }
+        // PERFORMANCE FIX: Only update if the objects actually changed
+        // Compare both IDs and a hash of critical properties (position, scale)
+        if (filteredObjects.length !== currentObjects.length) {
+          set({ objects: filteredObjects, _isUpdating: false });
+          return;
+        }
 
-      // Quick ID-based comparison using Set for O(n) instead of O(n²)
-      const currentIds = new Set(
-        currentObjects.map((obj) => obj.id?.toString())
-      );
-      const newIds = new Set(filteredObjects.map((obj) => obj.id?.toString()));
+        // Quick ID-based comparison using Set for O(n) instead of O(n²)
+        const currentIds = new Set(
+          currentObjects.map((obj) => obj.id?.toString())
+        );
+        const newIds = new Set(
+          filteredObjects.map((obj) => obj.id?.toString())
+        );
 
-      // Check if IDs changed (objects added/removed)
-      const idsChanged =
-        currentIds.size !== newIds.size ||
-        filteredObjects.some((obj) => !currentIds.has(obj.id?.toString()));
+        // Check if IDs changed (objects added/removed)
+        const idsChanged =
+          currentIds.size !== newIds.size ||
+          filteredObjects.some((obj) => !currentIds.has(obj.id?.toString()));
 
-      if (idsChanged) {
-        set({ objects: filteredObjects, _isUpdating: false });
-        return;
-      }
+        if (idsChanged) {
+          set({ objects: filteredObjects, _isUpdating: false });
+          return;
+        }
 
-      // IDs are same, but check if any object data changed (position, scale, etc.)
-      // Create a lightweight hash of each object for comparison
-      const currentHash = currentObjects
-        .map(
-          (obj) =>
-            `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
-        )
-        .join('|');
-      const newHash = filteredObjects
-        .map(
-          (obj) =>
-            `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
-        )
-        .join('|');
+        // IDs are same, but check if any object data changed (position, scale, etc.)
+        // Create a lightweight hash of each object for comparison
+        const currentHash = currentObjects
+          .map(
+            (obj) =>
+              `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
+          )
+          .join('|');
+        const newHash = filteredObjects
+          .map(
+            (obj) =>
+              `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
+          )
+          .join('|');
 
-      if (currentHash !== newHash) {
-        set({ objects: filteredObjects, _isUpdating: false });
-      } else {
-        // Objects are truly the same, just reset the flag without triggering a render
+        if (currentHash !== newHash) {
+          set({ objects: filteredObjects, _isUpdating: false });
+        } else {
+          // Objects are truly the same, just reset the flag without triggering a render
+          set({ _isUpdating: false });
+        }
+      } catch (error) {
         set({ _isUpdating: false });
+        throw error;
       }
-    } catch (error) {
-      set({ _isUpdating: false });
-      throw error;
-    }
-  },
+    },
 
-  setIsInitialLoading: (loading) => {
-    set({ isInitialLoading: loading });
-  },
+    setIsInitialLoading: (loading) => {
+      set({ isInitialLoading: loading });
+    },
 
-  setHasLoadedInitialObjects: (loaded) => {
-    set({ hasLoadedInitialObjects: loaded });
-  },
+    setHasLoadedInitialObjects: (loaded) => {
+      set({ hasLoadedInitialObjects: loaded });
+    },
 
-  // Internal tracking actions
-  addDraggingObject: (id) => {
-    const state = get();
-    const newSet = new Set(state.draggingObjects);
-    newSet.add(id?.toString());
-    set({ draggingObjects: newSet });
-  },
+    // Internal tracking actions
+    addDraggingObject: (id) => {
+      const state = get();
+      const newSet = new Set(state.draggingObjects);
+      newSet.add(id?.toString());
+      set({ draggingObjects: newSet });
+    },
 
-  removeDraggingObject: (id) => {
-    const state = get();
-    const newSet = new Set(state.draggingObjects);
-    newSet.delete(id?.toString());
-    set({ draggingObjects: newSet });
-  },
+    removeDraggingObject: (id) => {
+      const state = get();
+      const newSet = new Set(state.draggingObjects);
+      newSet.delete(id?.toString());
+      set({ draggingObjects: newSet });
+    },
 
-  addTransformingObject: (id) => {
-    const state = get();
-    const newSet = new Set(state.transformingObjects);
-    newSet.add(id?.toString());
-    set({ transformingObjects: newSet });
-  },
+    addTransformingObject: (id) => {
+      const state = get();
+      const newSet = new Set(state.transformingObjects);
+      newSet.add(id?.toString());
+      set({ transformingObjects: newSet });
+    },
 
-  removeTransformingObject: (id) => {
-    const state = get();
-    const newSet = new Set(state.transformingObjects);
-    newSet.delete(id?.toString());
-    set({ transformingObjects: newSet });
-  },
+    removeTransformingObject: (id) => {
+      const state = get();
+      const newSet = new Set(state.transformingObjects);
+      newSet.delete(id?.toString());
+      set({ transformingObjects: newSet });
+    },
 
-  setTransformPosition: (id, position) => {
-    const state = get();
-    const newMap = new Map(state.transformPositions);
-    newMap.set(id?.toString(), [...position]);
-    set({ transformPositions: newMap });
-  },
+    setTransformPosition: (id, position) => {
+      const state = get();
+      const newMap = new Map(state.transformPositions);
+      newMap.set(id?.toString(), [...position]);
+      set({ transformPositions: newMap });
+    },
 
-  removeTransformPosition: (id) => {
-    const state = get();
-    const newMap = new Map(state.transformPositions);
-    newMap.delete(id?.toString());
-    set({ transformPositions: newMap });
-  },
+    removeTransformPosition: (id) => {
+      const state = get();
+      const newMap = new Map(state.transformPositions);
+      newMap.delete(id?.toString());
+      set({ transformPositions: newMap });
+    },
 
-  setTransformLockTime: (id, time) => {
-    const state = get();
-    const newMap = new Map(state.transformLockTime);
-    newMap.set(id?.toString(), time);
-    set({ transformLockTime: newMap });
-  },
+    setTransformLockTime: (id, time) => {
+      const state = get();
+      const newMap = new Map(state.transformLockTime);
+      newMap.set(id?.toString(), time);
+      set({ transformLockTime: newMap });
+    },
 
-  removeTransformLockTime: (id) => {
-    const state = get();
-    const newMap = new Map(state.transformLockTime);
-    newMap.delete(id?.toString());
-    set({ transformLockTime: newMap });
-  },
+    removeTransformLockTime: (id) => {
+      const state = get();
+      const newMap = new Map(state.transformLockTime);
+      newMap.delete(id?.toString());
+      set({ transformLockTime: newMap });
+    },
 
-  setPositionHistory: (id, history) => {
-    const state = get();
-    const newMap = new Map(state.positionHistory);
-    newMap.set(id?.toString(), history);
-    set({ positionHistory: newMap });
-  },
+    setPositionHistory: (id, history) => {
+      const state = get();
+      const newMap = new Map(state.positionHistory);
+      newMap.set(id?.toString(), history);
+      set({ positionHistory: newMap });
+    },
 
-  addCreatedObjectId: (id) => {
-    const state = get();
-    const newSet = new Set(state.createdObjectIds);
-    newSet.add(id?.toString());
-    set({ createdObjectIds: newSet });
-  },
-  removeCreatedObjectId: (id) => {
-    const state = get();
-    const newSet = new Set(state.createdObjectIds);
-    newSet.delete(id?.toString());
-    set({ createdObjectIds: newSet });
-  },
+    addCreatedObjectId: (id) => {
+      const state = get();
+      const newSet = new Set(state.createdObjectIds);
+      newSet.add(id?.toString());
+      set({ createdObjectIds: newSet });
+    },
+    removeCreatedObjectId: (id) => {
+      const state = get();
+      const newSet = new Set(state.createdObjectIds);
+      newSet.delete(id?.toString());
+      set({ createdObjectIds: newSet });
+    },
 
-  // Initialize objects loading state
-  initializeObjectsLoading: () => {
-    const state = get();
-    if (state.objects.length > 0 && !state.hasLoadedInitialObjects) {
-      set({ hasLoadedInitialObjects: true });
-      // DISABLED: Automatic timeout removed - isInitialLoading now controlled manually from App.jsx
-      // setTimeout(() => {
-      //   set({ isInitialLoading: false });
-      //   console.log(
-      //     '🔧 Initial object loading complete, enabling automatic saves'
-      //   );
-      // }, 2000); // 2 second grace period for initial loading
-    }
-  },
+    // Initialize objects loading state
+    initializeObjectsLoading: () => {
+      const state = get();
+      if (state.objects.length > 0 && !state.hasLoadedInitialObjects) {
+        set({ hasLoadedInitialObjects: true });
+        // DISABLED: Automatic timeout removed - isInitialLoading now controlled manually from App.jsx
+        // setTimeout(() => {
+        //   set({ isInitialLoading: false });
+        //   console.log(
+        //     '🔧 Initial object loading complete, enabling automatic saves'
+        //   );
+        // }, 2000); // 2 second grace period for initial loading
+      }
+    },
 
-  // DISABLED: Periodic saving replaced with immediate saves when objects are modified
-  saveObjectsPeriodically: () => {
-    // Objects are now saved immediately when created/modified, no need for periodic saves
-    return;
-  },
+    // DISABLED: Periodic saving replaced with immediate saves when objects are modified
+    saveObjectsPeriodically: () => {
+      // Objects are now saved immediately when created/modified, no need for periodic saves
+      return;
+    },
 
-  // DISABLED: Old periodic save logic that was incorrectly named
-  _disabledPeriodicSaveLogic: async () => {
-    // NOTE: This function was incorrectly saving all existing objects to the database
-    // during app startup. The logic below has been commented out to prevent unnecessary
-    // database writes when objects are loaded from the database during startup.
+    // DISABLED: Old periodic save logic that was incorrectly named
+    _disabledPeriodicSaveLogic: async () => {
+      // NOTE: This function was incorrectly saving all existing objects to the database
+      // during app startup. The logic below has been commented out to prevent unnecessary
+      // database writes when objects are loaded from the database during startup.
 
-    return;
+      return;
 
-    /*
+      /*
     const state = get();
 
     // Validate that objects is an array
@@ -304,214 +309,36 @@ const useObjectsStore = createWithEqualityFn((set, get) => ({
       }
     });
     */
-  },
-  // Helper function to create object at a given position
-  createObjectWithPosition: async (
-    type,
-    position,
-    user,
-    currentSpaceId,
-    extraData = {}
-  ) => {
-    // DEBUG: Log incoming extraData
-
-    // Create a truly unique ID with a UUID suffix
-    const uniqueId =
-      Date.now() + '-' + Math.random().toString(36).substring(2, 10);
-
-    // Create object with type-specific defaults
-    const newObject = {
+    },
+    // Helper function to create object at a given position
+    createObjectWithPosition: async (
       type,
-      position: [position.x, position.y, position.z],
-      id: uniqueId,
-      scale: [1, 1, 1],
-      ...(type === 'sphere'
-        ? {
-            lineColor: 'black',
-            headerText: '',
-            headerStyle: {
-              fontSize: 1.5,
-              color: 'black',
-              underline: false,
-            },
-            faceColors: Array(12)
-              .fill(null)
-              .reduce((acc, _, idx) => {
-                acc[idx] = null;
-                return acc;
-              }, {}),
-            faceTexts: Array(12)
-              .fill('')
-              .reduce((acc, _, idx) => {
-                acc[idx] = '';
-                return acc;
-              }, {}),
-            faceTextStyles: Array(12)
-              .fill(null)
-              .reduce((acc, _, idx) => {
-                acc[idx] = {
-                  fontSize: 0.5,
-                  color: 'black',
-                  underline: false,
-                };
-                return acc;
-              }, {}),
-          }
-        : type === 'cube'
-        ? {
-            color: '#000000',
-            headerText: '',
-            faceColors: {},
-            faceTexts: {
-              front: '',
-              back: '',
-              top: '',
-              bottom: '',
-              right: '',
-              left: '',
-            },
-            textStyle: { fontSize: 1.5, color: 'black', underline: false },
-          }
-        : type === 'tetrahedron'
-        ? {
-            color: '#000000',
-            headerText: '',
-            faceColors: {},
-            faceTexts: {
-              front: '',
-              back: '',
-              left: '',
-              right: '',
-            },
-            textStyle: { fontSize: 1.5, color: 'black', underline: false },
-          }
-        : type === 'dodecahedron'
-        ? {
-            color: '#000000',
-            headerText: '',
-            faceColors: {},
-            faceTexts: Array(12)
-              .fill('')
-              .reduce((acc, _, idx) => {
-                acc[idx] = '';
-                return acc;
-              }, {}),
-            faceTextStyles: Array(12)
-              .fill(null)
-              .reduce((acc, _, idx) => {
-                acc[idx] = {
-                  fontSize: 0.5,
-                  color: 'black',
-                  underline: false,
-                };
-                return acc;
-              }, {}),
-            textStyle: { fontSize: 1.5, color: 'black', underline: false },
-          }
-        : type === 'plane'
-        ? {
-            borderStyle: 'solid',
-            borderColor: 'black',
-            lineThickness: 1,
-            color: null,
-            headerText: '',
-            headerStyle: {
-              fontSize: 1.5,
-              color: 'black',
-              underline: false,
-            },
-            faceText: '',
-            faceTextStyle: {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            },
-          }
-        : type === 'text'
-        ? {
-            text: '',
-            textStyle: {
-              fontSize: 32,
-              color: 'black',
-            },
-            bulletPointMode: false,
-          }
-        : type === 'model'
-        ? {
-            modelUrl: extraData.modelUrl || '',
-            rotation: extraData.rotation || [0, 0, 0],
-          }
-        : {}),
-      // Merge any additional extraData
-      ...extraData,
-    };
+      position,
+      user,
+      currentSpaceId,
+      extraData = {}
+    ) => {
+      // DEBUG: Log incoming extraData
 
-    // DEBUG: Log final object
-
-    // Add to tracking set and objects array in a single state update to prevent multiple renders
-    const state = get();
-    const currentObjects = state.objects || [];
-    const newCreatedObjectIds = new Set(state.createdObjectIds);
-    newCreatedObjectIds.add(uniqueId.toString());
-
-    // Determine if we need to disable initial loading
-    const shouldDisableInitialLoading = state.isInitialLoading;
-
-    set({
-      objects: [...currentObjects, newObject],
-      createdObjectIds: newCreatedObjectIds,
-      ...(shouldDisableInitialLoading && { isInitialLoading: false }),
-    });
-
-    // Log if we disabled initial loading
-
-    // Save to database (this handles spatial partitioning automatically)
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-    saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
-
-    // Track object in spatial system for dynamic objects
-    const spatialManagerStore = (await import('../stores/spatialManagerStore'))
-      .default;
-    const spatialManager = spatialManagerStore.getState();
-    if (spatialManager.trackObjectInCell) {
-      const { getCellCoordinates } = await import(
-        '../services/spatialPartitioning'
-      );
-      const cellCoords = getCellCoordinates(position);
-      const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
-      spatialManager.trackObjectInCell(uniqueId.toString(), cellId);
-    }
-
-    // Return the created object ID
-    return uniqueId;
-  },
-
-  // Batch create multiple objects to prevent infinite re-render loops
-  batchCreateObjects: async (objectsData, user, currentSpaceId) => {
-    const state = get();
-    const currentObjects = state.objects || [];
-    const newCreatedObjectIds = new Set(state.createdObjectIds);
-    const newObjects = [];
-
-    // Create all objects without triggering individual state updates
-    for (const { type, position, extraData = {} } of objectsData) {
+      // Create a truly unique ID with a UUID suffix
       const uniqueId =
         Date.now() + '-' + Math.random().toString(36).substring(2, 10);
 
+      // Create object with type-specific defaults
       const newObject = {
         type,
-        position: [
-          position.x || position[0],
-          position.y || position[1],
-          position.z || position[2],
-        ],
+        position: [position.x, position.y, position.z],
         id: uniqueId,
         scale: [1, 1, 1],
         ...(type === 'sphere'
           ? {
               lineColor: 'black',
               headerText: '',
-              headerStyle: { fontSize: 1.5, color: 'black', underline: false },
+              headerStyle: {
+                fontSize: 1.5,
+                color: 'black',
+                underline: false,
+              },
               faceColors: Array(12)
                 .fill(null)
                 .reduce((acc, _, idx) => {
@@ -537,43 +364,37 @@ const useObjectsStore = createWithEqualityFn((set, get) => ({
             }
           : type === 'cube'
           ? {
-              lineColor: 'black',
+              color: '#000000',
               headerText: '',
-              headerStyle: { fontSize: 1.5, color: 'black', underline: false },
-              faceColors: Array(6)
-                .fill(null)
-                .reduce((acc, _, idx) => {
-                  acc[idx] = null;
-                  return acc;
-                }, {}),
-              faceTexts: Array(6)
-                .fill('')
-                .reduce((acc, _, idx) => {
-                  acc[idx] = '';
-                  return acc;
-                }, {}),
-              faceTextStyles: Array(6)
-                .fill(null)
-                .reduce((acc, _, idx) => {
-                  acc[idx] = {
-                    fontSize: 0.5,
-                    color: 'black',
-                    underline: false,
-                  };
-                  return acc;
-                }, {}),
+              faceColors: {},
+              faceTexts: {
+                front: '',
+                back: '',
+                top: '',
+                bottom: '',
+                right: '',
+                left: '',
+              },
+              textStyle: { fontSize: 1.5, color: 'black', underline: false },
+            }
+          : type === 'tetrahedron'
+          ? {
+              color: '#000000',
+              headerText: '',
+              faceColors: {},
+              faceTexts: {
+                front: '',
+                back: '',
+                left: '',
+                right: '',
+              },
+              textStyle: { fontSize: 1.5, color: 'black', underline: false },
             }
           : type === 'dodecahedron'
           ? {
-              lineColor: 'black',
+              color: '#000000',
               headerText: '',
-              headerStyle: { fontSize: 1.5, color: 'black', underline: false },
-              faceColors: Array(12)
-                .fill(null)
-                .reduce((acc, _, idx) => {
-                  acc[idx] = null;
-                  return acc;
-                }, {}),
+              faceColors: {},
               faceTexts: Array(12)
                 .fill('')
                 .reduce((acc, _, idx) => {
@@ -590,362 +411,561 @@ const useObjectsStore = createWithEqualityFn((set, get) => ({
                   };
                   return acc;
                 }, {}),
+              textStyle: { fontSize: 1.5, color: 'black', underline: false },
+            }
+          : type === 'plane'
+          ? {
+              borderStyle: 'solid',
+              borderColor: 'black',
+              lineThickness: 1,
+              color: null,
+              headerText: '',
+              headerStyle: {
+                fontSize: 1.5,
+                color: 'black',
+                underline: false,
+              },
+              faceText: '',
+              faceTextStyle: {
+                fontSize: 0.5,
+                color: 'black',
+                underline: false,
+              },
+            }
+          : type === 'text'
+          ? {
+              text: '',
+              textStyle: {
+                fontSize: 32,
+                color: 'black',
+              },
+              bulletPointMode: false,
+            }
+          : type === 'model'
+          ? {
+              modelUrl: extraData.modelUrl || '',
+              rotation: extraData.rotation || [0, 0, 0],
             }
           : {}),
+        // Merge any additional extraData
         ...extraData,
       };
 
-      newObjects.push(newObject);
+      // DEBUG: Log final object
+
+      // Add to tracking set and objects array in a single state update to prevent multiple renders
+      const state = get();
+      const currentObjects = state.objects || [];
+      const newCreatedObjectIds = new Set(state.createdObjectIds);
       newCreatedObjectIds.add(uniqueId.toString());
-    }
 
-    // Single state update for all objects to prevent re-render loops
-    set({
-      objects: [...currentObjects, ...newObjects],
-      createdObjectIds: newCreatedObjectIds,
-      isInitialLoading: false,
-    });
+      // Determine if we need to disable initial loading
+      const shouldDisableInitialLoading = state.isInitialLoading;
 
-    // Return array of created object IDs
-    return newObjects.map((obj) => obj.id);
-  },
+      set({
+        objects: [...currentObjects, newObject],
+        createdObjectIds: newCreatedObjectIds,
+        ...(shouldDisableInitialLoading && { isInitialLoading: false }),
+      });
 
-  // Create a new object with a guaranteed unique ID
-  handleCreateObject: (
-    type,
-    position = null,
-    user,
-    currentSpaceId,
-    cameraRef,
-    extraData = {}
-  ) => {
-    if (!user || !currentSpaceId) return null;
+      // Log if we disabled initial loading
 
-    try {
-      // If a position is provided (e.g., from template creation), use it directly
-      if (position && Array.isArray(position) && position.length >= 3) {
-        const newPosition = new THREE.Vector3(
-          position[0],
-          position[1],
-          position[2]
+      // Save to database (this handles spatial partitioning automatically)
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
+
+      // Track object in spatial system for dynamic objects
+      const spatialManagerStore = (
+        await import('../stores/spatialManagerStore')
+      ).default;
+      const spatialManager = spatialManagerStore.getState();
+      if (spatialManager.trackObjectInCell) {
+        const { getCellCoordinates } = await import(
+          '../services/spatialPartitioning'
         );
-        return get().createObjectWithPosition(
+        const cellCoords = getCellCoordinates(position);
+        const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+        spatialManager.trackObjectInCell(uniqueId.toString(), cellId);
+      }
+
+      // Return the created object ID
+      return uniqueId;
+    },
+
+    // Batch create multiple objects to prevent infinite re-render loops
+    batchCreateObjects: async (objectsData, user, currentSpaceId) => {
+      const state = get();
+      const currentObjects = state.objects || [];
+      const newCreatedObjectIds = new Set(state.createdObjectIds);
+      const newObjects = [];
+
+      // Create all objects without triggering individual state updates
+      for (const { type, position, extraData = {} } of objectsData) {
+        const uniqueId =
+          Date.now() + '-' + Math.random().toString(36).substring(2, 10);
+
+        const newObject = {
           type,
-          newPosition,
-          user,
-          currentSpaceId,
-          extraData
-        );
+          position: [
+            position.x || position[0],
+            position.y || position[1],
+            position.z || position[2],
+          ],
+          id: uniqueId,
+          scale: [1, 1, 1],
+          ...(type === 'sphere'
+            ? {
+                lineColor: 'black',
+                headerText: '',
+                headerStyle: {
+                  fontSize: 1.5,
+                  color: 'black',
+                  underline: false,
+                },
+                faceColors: Array(12)
+                  .fill(null)
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = null;
+                    return acc;
+                  }, {}),
+                faceTexts: Array(12)
+                  .fill('')
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = '';
+                    return acc;
+                  }, {}),
+                faceTextStyles: Array(12)
+                  .fill(null)
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = {
+                      fontSize: 0.5,
+                      color: 'black',
+                      underline: false,
+                    };
+                    return acc;
+                  }, {}),
+              }
+            : type === 'cube'
+            ? {
+                lineColor: 'black',
+                headerText: '',
+                headerStyle: {
+                  fontSize: 1.5,
+                  color: 'black',
+                  underline: false,
+                },
+                faceColors: Array(6)
+                  .fill(null)
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = null;
+                    return acc;
+                  }, {}),
+                faceTexts: Array(6)
+                  .fill('')
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = '';
+                    return acc;
+                  }, {}),
+                faceTextStyles: Array(6)
+                  .fill(null)
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = {
+                      fontSize: 0.5,
+                      color: 'black',
+                      underline: false,
+                    };
+                    return acc;
+                  }, {}),
+              }
+            : type === 'dodecahedron'
+            ? {
+                lineColor: 'black',
+                headerText: '',
+                headerStyle: {
+                  fontSize: 1.5,
+                  color: 'black',
+                  underline: false,
+                },
+                faceColors: Array(12)
+                  .fill(null)
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = null;
+                    return acc;
+                  }, {}),
+                faceTexts: Array(12)
+                  .fill('')
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = '';
+                    return acc;
+                  }, {}),
+                faceTextStyles: Array(12)
+                  .fill(null)
+                  .reduce((acc, _, idx) => {
+                    acc[idx] = {
+                      fontSize: 0.5,
+                      color: 'black',
+                      underline: false,
+                    };
+                    return acc;
+                  }, {}),
+              }
+            : {}),
+          ...extraData,
+        };
+
+        newObjects.push(newObject);
+        newCreatedObjectIds.add(uniqueId.toString());
       }
 
-      // Try multiple approaches to access the camera
-      let camera = null;
+      // Single state update for all objects to prevent re-render loops
+      set({
+        objects: [...currentObjects, ...newObjects],
+        createdObjectIds: newCreatedObjectIds,
+        isInitialLoading: false,
+      });
 
-      // Approach 1: Use the passed cameraRef if available
-      if (cameraRef?.current?.camera) {
-        camera = cameraRef.current.camera;
-      }
-      // Approach 2: Try to access via window.orbitControls
-      else if (window.orbitControls?.object) {
-        camera = window.orbitControls.object;
-      }
-      // Approach 3: Check if there's a THREE.PerspectiveCamera in the scene
-      else {
-        // Create a position in front of where the camera would typically be
-        const newPosition = new THREE.Vector3(0, 0, -75);
-        return get().createObjectWithPosition(
-          type,
-          newPosition,
-          user,
-          currentSpaceId,
-          extraData
-        );
-      }
+      // Return array of created object IDs
+      return newObjects.map((obj) => obj.id);
+    },
 
-      if (!camera) {
-        return null;
-      }
+    // Create a new object with a guaranteed unique ID
+    handleCreateObject: (
+      type,
+      position = null,
+      user,
+      currentSpaceId,
+      cameraRef,
+      extraData = {}
+    ) => {
+      if (!user || !currentSpaceId) return null;
 
-      // Create vectors for position calculation
-      const cameraPos = new THREE.Vector3();
-      camera.getWorldPosition(cameraPos);
-
-      // Get camera's forward direction
-      const direction = new THREE.Vector3(0, 0, -1);
-      direction.applyQuaternion(camera.quaternion);
-
-      // Calculate position in front of camera
-      const distance = type === 'text' ? 50 : type === 'model' ? 50 : 75;
-      const newPosition = new THREE.Vector3();
-      newPosition.copy(cameraPos).add(direction.multiplyScalar(distance));
-
-      return get().createObjectWithPosition(
-        type,
-        newPosition,
-        user,
-        currentSpaceId,
-        extraData
-      );
-    } catch {
-      // Fallback - create object at origin if all else fails
-      const newPosition = new THREE.Vector3(0, 0, 0);
-      return get().createObjectWithPosition(
-        type,
-        newPosition,
-        user,
-        currentSpaceId,
-        extraData
-      );
-    }
-  },
-  // Clean up objects when cells unload
-  cleanupUnloadedObjects: () => {
-    const state = get();
-    if (!Array.isArray(state.objects)) return;
-
-    // Filter out any objects that belong to unloaded cells
-    const filteredObjects = state.objects.filter((obj) => {
-      const objId = obj.id?.toString();
-      const shouldKeep = !window._unloadedObjects?.has(objId);
-      return shouldKeep;
-    });
-
-    // Only update if we actually removed objects
-    if (filteredObjects.length !== state.objects.length) {
-      set({ objects: filteredObjects });
-    }
-  },
-
-  // Delete an object and its connections
-  handleObjectDelete: (id, user, currentSpaceId) => {
-    if (!user || !currentSpaceId) return;
-
-    const state = get();
-
-    // Find the object to get its position for spatial deletion
-    const objectToDelete = state.objects.find(
-      (obj) => obj.id?.toString() === id?.toString()
-    );
-
-    // Update UI first for responsiveness - batch all state updates together
-    const filteredObjects = state.objects.filter(
-      (obj) => obj.id?.toString() !== id?.toString()
-    );
-
-    const newCreatedObjectIds = new Set(state.createdObjectIds);
-    newCreatedObjectIds.delete(id?.toString());
-
-    const stateUpdates = {
-      objects: filteredObjects,
-      createdObjectIds: newCreatedObjectIds,
-    };
-
-    if (state.selectedId === id) {
-      stateUpdates.selectedId = null;
-    }
-
-    set(stateUpdates);
-
-    // Also delete any connections attached to this object
-    const objectIdStr = id?.toString() || '';
-
-    // Always call the store method to remove connections, even if array is empty
-    useConnectionStore
-      .getState()
-      .deleteConnectionsByObject(objectIdStr, currentSpaceId);
-
-    // Connection deletion is now handled entirely by the connection store
-
-    // Delete from database - IMPORTANT: Wait for deletion to complete
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
-
-    if (objectToDelete?.position) {
-      // Use async/await to ensure deletion completes before proceeding
-      (async () => {
-        try {
-          await deleteObjectFromSpatialCell(
-            spaceOwnerId,
-            currentSpaceId,
-            id,
-            objectToDelete.position
+      try {
+        // If a position is provided (e.g., from template creation), use it directly
+        if (position && Array.isArray(position) && position.length >= 3) {
+          const newPosition = new THREE.Vector3(
+            position[0],
+            position[1],
+            position[2]
           );
-        } catch {
-          // Silently handle database deletion errors
+          return get().createObjectWithPosition(
+            type,
+            newPosition,
+            user,
+            currentSpaceId,
+            extraData
+          );
         }
-      })();
-    }
-  },
-  // FIXED VERSION: Delete an object and its connections (prevents double deletion)
-  handleObjectDeleteFixed: (id, user, currentSpaceId, connections) => {
-    if (!user || !currentSpaceId || !id) return;
 
-    const state = get();
-    const objectIdStr = id?.toString() || '';
+        // Try multiple approaches to access the camera
+        let camera = null;
 
-    // Prevent duplicate deletions
-    if (
-      window.currentlyDeletingObjects &&
-      window.currentlyDeletingObjects.has(objectIdStr)
-    ) {
-      return;
-    }
+        // Approach 1: Use the passed cameraRef if available
+        if (cameraRef?.current?.camera) {
+          camera = cameraRef.current.camera;
+        }
+        // Approach 2: Try to access via window.orbitControls
+        else if (window.orbitControls?.object) {
+          camera = window.orbitControls.object;
+        }
+        // Approach 3: Check if there's a THREE.PerspectiveCamera in the scene
+        else {
+          // Create a position in front of where the camera would typically be
+          const newPosition = new THREE.Vector3(0, 0, -75);
+          return get().createObjectWithPosition(
+            type,
+            newPosition,
+            user,
+            currentSpaceId,
+            extraData
+          );
+        }
 
-    // Mark this object as being deleted
-    if (!window.currentlyDeletingObjects) {
-      window.currentlyDeletingObjects = new Set();
-    }
-    window.currentlyDeletingObjects.add(objectIdStr);
+        if (!camera) {
+          return null;
+        }
 
-    // Auto-cleanup after 10 seconds
-    setTimeout(() => {
-      if (window.currentlyDeletingObjects) {
-        window.currentlyDeletingObjects.delete(objectIdStr);
+        // Create vectors for position calculation
+        const cameraPos = new THREE.Vector3();
+        camera.getWorldPosition(cameraPos);
+
+        // Get camera's forward direction
+        const direction = new THREE.Vector3(0, 0, -1);
+        direction.applyQuaternion(camera.quaternion);
+
+        // Calculate position in front of camera
+        const distance = type === 'text' ? 50 : type === 'model' ? 50 : 75;
+        const newPosition = new THREE.Vector3();
+        newPosition.copy(cameraPos).add(direction.multiplyScalar(distance));
+
+        return get().createObjectWithPosition(
+          type,
+          newPosition,
+          user,
+          currentSpaceId,
+          extraData
+        );
+      } catch {
+        // Fallback - create object at origin if all else fails
+        const newPosition = new THREE.Vector3(0, 0, 0);
+        return get().createObjectWithPosition(
+          type,
+          newPosition,
+          user,
+          currentSpaceId,
+          extraData
+        );
       }
-    }, 10000);
+    },
+    // Clean up objects when cells unload
+    cleanupUnloadedObjects: () => {
+      const state = get();
+      if (!Array.isArray(state.objects)) return;
 
-    // Find the object to get its position for spatial deletion
-    const objectToDelete = state.objects.find(
-      (obj) => obj.id.toString() === objectIdStr
-    );
+      // Filter out any objects that belong to unloaded cells
+      const filteredObjects = state.objects.filter((obj) => {
+        const objId = obj.id?.toString();
+        const shouldKeep = !window._unloadedObjects?.has(objId);
+        return shouldKeep;
+      });
 
-    if (!objectToDelete) {
-      window.currentlyDeletingObjects?.delete(objectIdStr);
-      return;
-    }
+      // Only update if we actually removed objects
+      if (filteredObjects.length !== state.objects.length) {
+        set({ objects: filteredObjects });
+      }
+    },
 
-    // Update UI first for responsiveness - ONLY remove the target object
-    const filteredObjects = state.objects.filter(
-      (obj) => obj.id.toString() !== objectIdStr
-    );
+    // Delete an object and its connections
+    handleObjectDelete: (id, user, currentSpaceId) => {
+      if (!user || !currentSpaceId) return;
 
-    // Batch state updates together
-    const stateUpdates = { objects: filteredObjects };
-    if (state.selectedId === id) {
-      stateUpdates.selectedId = null;
-    }
-    set(stateUpdates);
+      const state = get();
 
-    // Delete connections for this object (should NOT delete other objects)
-
-    // Try to get connections from the parameters first, then from the store
-    let relatedConnections = [];
-    if (connections && Array.isArray(connections)) {
-      relatedConnections = connections.filter(
-        (conn) =>
-          conn.start?.objectId === objectIdStr ||
-          conn.end?.objectId === objectIdStr
+      // Find the object to get its position for spatial deletion
+      const objectToDelete = state.objects.find(
+        (obj) => obj.id?.toString() === id?.toString()
       );
-    } else {
-      // Fallback: get connections from the store directly
-      const storeConnections = useConnectionStore.getState().connections;
-      relatedConnections = storeConnections.filter(
-        (conn) =>
-          conn.start?.objectId === objectIdStr ||
-          conn.end?.objectId === objectIdStr
+
+      // Update UI first for responsiveness - batch all state updates together
+      const filteredObjects = state.objects.filter(
+        (obj) => obj.id?.toString() !== id?.toString()
       );
-    }
 
-    // Always call the store method to remove connections, even if array is empty
-    useConnectionStore
-      .getState()
-      .deleteConnectionsByObject(objectIdStr, currentSpaceId);
+      const newCreatedObjectIds = new Set(state.createdObjectIds);
+      newCreatedObjectIds.delete(id?.toString());
 
-    // Delete connections from database with enhanced error handling
-    if (relatedConnections.length > 0) {
+      const stateUpdates = {
+        objects: filteredObjects,
+        createdObjectIds: newCreatedObjectIds,
+      };
+
+      if (state.selectedId === id) {
+        stateUpdates.selectedId = null;
+      }
+
+      set(stateUpdates);
+
+      // Also delete any connections attached to this object
+      const objectIdStr = id?.toString() || '';
+
+      // Always call the store method to remove connections, even if array is empty
+      useConnectionStore
+        .getState()
+        .deleteConnectionsByObject(objectIdStr, currentSpaceId);
+
+      // Connection deletion is now handled entirely by the connection store
+
+      // Delete from database - IMPORTANT: Wait for deletion to complete
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
 
-      // Delete connections from database asynchronously
-      (async () => {
-        try {
-          // Import the enhanced connection deletion service
-          const { deleteConnection } = await import(
-            '../services/connectionsService'
-          );
-          const { removeConnectionFromAllCells } = await import(
-            '../services/spatialPartitioning'
-          );
+      if (objectToDelete?.position) {
+        // Use async/await to ensure deletion completes before proceeding
+        (async () => {
+          try {
+            await deleteObjectFromSpatialCell(
+              spaceOwnerId,
+              currentSpaceId,
+              id,
+              objectToDelete.position
+            );
+          } catch {
+            // Silently handle database deletion errors
+          }
+        })();
+      }
+    },
+    // FIXED VERSION: Delete an object and its connections (prevents double deletion)
+    handleObjectDeleteFixed: (id, user, currentSpaceId, connections) => {
+      if (!user || !currentSpaceId || !id) return;
 
-          const deletionResults = await Promise.all(
-            relatedConnections.map(async (conn) => {
-              let result = false;
+      const state = get();
+      const objectIdStr = id?.toString() || '';
 
-              try {
-                // First try the regular deletion service
-                result = await deleteConnection(
-                  spaceOwnerId,
-                  currentSpaceId,
-                  conn.id,
-                  conn // Pass the connection data
-                );
+      // Prevent duplicate deletions
+      if (
+        window.currentlyDeletingObjects &&
+        window.currentlyDeletingObjects.has(objectIdStr)
+      ) {
+        return;
+      }
 
-                if (!result) {
-                  // If regular deletion failed, try the fallback method
-                  result = await removeConnectionFromAllCells(
+      // Mark this object as being deleted
+      if (!window.currentlyDeletingObjects) {
+        window.currentlyDeletingObjects = new Set();
+      }
+      window.currentlyDeletingObjects.add(objectIdStr);
+
+      // Auto-cleanup after 10 seconds
+      setTimeout(() => {
+        if (window.currentlyDeletingObjects) {
+          window.currentlyDeletingObjects.delete(objectIdStr);
+        }
+      }, 10000);
+
+      // Find the object to get its position for spatial deletion
+      const objectToDelete = state.objects.find(
+        (obj) => obj.id.toString() === objectIdStr
+      );
+
+      if (!objectToDelete) {
+        window.currentlyDeletingObjects?.delete(objectIdStr);
+        return;
+      }
+
+      // Update UI first for responsiveness - ONLY remove the target object
+      const filteredObjects = state.objects.filter(
+        (obj) => obj.id.toString() !== objectIdStr
+      );
+
+      // Batch state updates together
+      const stateUpdates = { objects: filteredObjects };
+      if (state.selectedId === id) {
+        stateUpdates.selectedId = null;
+      }
+      set(stateUpdates);
+
+      // Delete connections for this object (should NOT delete other objects)
+
+      // Try to get connections from the parameters first, then from the store
+      let relatedConnections = [];
+      if (connections && Array.isArray(connections)) {
+        relatedConnections = connections.filter(
+          (conn) =>
+            conn.start?.objectId === objectIdStr ||
+            conn.end?.objectId === objectIdStr
+        );
+      } else {
+        // Fallback: get connections from the store directly
+        const storeConnections = useConnectionStore.getState().connections;
+        relatedConnections = storeConnections.filter(
+          (conn) =>
+            conn.start?.objectId === objectIdStr ||
+            conn.end?.objectId === objectIdStr
+        );
+      }
+
+      // Always call the store method to remove connections, even if array is empty
+      useConnectionStore
+        .getState()
+        .deleteConnectionsByObject(objectIdStr, currentSpaceId);
+
+      // Delete connections from database with enhanced error handling
+      if (relatedConnections.length > 0) {
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+
+        // Delete connections from database asynchronously
+        (async () => {
+          try {
+            // Import the enhanced connection deletion service
+            const { deleteConnection } = await import(
+              '../services/connectionsService'
+            );
+            const { removeConnectionFromAllCells } = await import(
+              '../services/spatialPartitioning'
+            );
+
+            const deletionResults = await Promise.all(
+              relatedConnections.map(async (conn) => {
+                let result = false;
+
+                try {
+                  // First try the regular deletion service
+                  result = await deleteConnection(
                     spaceOwnerId,
                     currentSpaceId,
-                    conn.id
+                    conn.id,
+                    conn // Pass the connection data
                   );
+
+                  if (!result) {
+                    // If regular deletion failed, try the fallback method
+                    result = await removeConnectionFromAllCells(
+                      spaceOwnerId,
+                      currentSpaceId,
+                      conn.id
+                    );
+                  }
+                } catch {
+                  result = false;
                 }
-              } catch {
-                result = false;
-              }
 
-              return { connectionId: conn.id, success: result };
-            })
-          );
+                return { connectionId: conn.id, success: result };
+              })
+            );
 
-          const failCount = deletionResults.filter((r) => !r.success).length;
+            const failCount = deletionResults.filter((r) => !r.success).length;
 
-          if (failCount > 0) {
-            // Log failed connections for debugging if needed
+            if (failCount > 0) {
+              // Log failed connections for debugging if needed
+            }
+          } catch {
+            // Silently handle connection deletion errors
           }
-        } catch {
-          // Silently handle connection deletion errors
-        }
-      })();
-    }
+        })();
+      }
 
-    // Delete the object from database
-    const spaceOwnerId = window.currentSpaceOwner || user.uid;
+      // Delete the object from database
+      const spaceOwnerId = window.currentSpaceOwner || user.uid;
 
-    if (objectToDelete?.position) {
-      // Use async/await to ensure deletion completes before proceeding
-      (async () => {
-        try {
-          await deleteObjectFromSpatialCell(
-            spaceOwnerId,
-            currentSpaceId,
-            objectIdStr,
-            objectToDelete.position
-          );
+      if (objectToDelete?.position) {
+        // Use async/await to ensure deletion completes before proceeding
+        (async () => {
+          try {
+            await deleteObjectFromSpatialCell(
+              spaceOwnerId,
+              currentSpaceId,
+              objectIdStr,
+              objectToDelete.position
+            );
 
-          // Clear the deletion flag
-          window.currentlyDeletingObjects?.delete(objectIdStr);
-        } catch {
-          window.currentlyDeletingObjects?.delete(objectIdStr);
-        }
-      })();
-    } else {
-      window.currentlyDeletingObjects?.delete(objectIdStr);
-    }
-  },
-  // Reset all object state
-  resetObjects: () => {
-    set({
-      selectedId: null,
-      objects: [],
-      isInitialLoading: true,
-      hasLoadedInitialObjects: false,
-      lastUpdate: {},
-      draggingObjects: new Set(),
-      lastSaved: null,
-      createdObjectIds: new Set(),
-      transformingObjects: new Set(),
-      transformPositions: new Map(),
-      transformLockTime: new Map(),
-      positionHistory: new Map(),
-    });
-  },
-}), shallow);
+            // Clear the deletion flag
+            window.currentlyDeletingObjects?.delete(objectIdStr);
+          } catch {
+            window.currentlyDeletingObjects?.delete(objectIdStr);
+          }
+        })();
+      } else {
+        window.currentlyDeletingObjects?.delete(objectIdStr);
+      }
+    },
+    // Reset all object state
+    resetObjects: () => {
+      set({
+        selectedId: null,
+        objects: [],
+        isInitialLoading: true,
+        hasLoadedInitialObjects: false,
+        lastUpdate: {},
+        draggingObjects: new Set(),
+        lastSaved: null,
+        createdObjectIds: new Set(),
+        transformingObjects: new Set(),
+        transformPositions: new Map(),
+        transformLockTime: new Map(),
+        positionHistory: new Map(),
+      });
+    },
+  }),
+  shallow
+);
 
 export default useObjectsStore;
