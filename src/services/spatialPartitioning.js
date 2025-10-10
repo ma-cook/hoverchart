@@ -5,11 +5,16 @@ import {
   updateDoc,
   getDoc,
   getDocs,
+  deleteDoc,
   collection,
   onSnapshot,
   deleteField,
   writeBatch,
+  Timestamp,
 } from 'firebase/firestore';
+
+// Import stores at top to avoid 5-minute dynamic import delays
+import useConnectionStore from '../stores/connectionStore';
 
 // Import global subscription manager
 import {
@@ -188,6 +193,17 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
 
   try {
     const cellId = getCellId(cellX, cellY, cellZ);
+    const cacheKey = `${userId}:${spaceId}:${cellId}`;
+
+    // Check cache first to avoid unnecessary database calls
+    const cached = cellExistenceCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+      if (cached.exists) {
+        return true; // Cell already exists (from cache)
+      }
+      // If cache says it doesn't exist, we'll create it below
+    }
+
     const cellRef = doc(
       db,
       'users',
@@ -198,10 +214,17 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
       cellId
     );
 
-    // Check if cell already exists
-    const cellDoc = await getDoc(cellRef);
-    if (cellDoc.exists()) {
-      return true;
+    // Check if cell already exists (only if not in cache or cache expired)
+    if (!cached || Date.now() - cached.timestamp >= CACHE_DURATION) {
+      const cellDoc = await getDoc(cellRef);
+      if (cellDoc.exists()) {
+        // Update cache
+        cellExistenceCache.set(cacheKey, {
+          exists: true,
+          timestamp: Date.now(),
+        });
+        return true;
+      }
     }
 
     // Create new cell
@@ -217,6 +240,13 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
     };
 
     await setDoc(cellRef, cellData);
+
+    // Update cache to reflect the newly created cell
+    cellExistenceCache.set(cacheKey, {
+      exists: true,
+      timestamp: Date.now(),
+    });
+
     return true;
   } catch {
     return false;
@@ -1305,9 +1335,7 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
 
   try {
     // Check if this connection is in the deletion blacklist
-    const { default: useConnectionStore } = await import(
-      '../stores/connectionStore'
-    );
+    // Using static import from top of file to avoid 5-minute dynamic import delay
     const connectionStore = useConnectionStore.getState();
 
     if (connectionStore.deletingConnections.has(connectionData.id)) {
@@ -1355,7 +1383,8 @@ export const bulkSaveConnectionsToCell = async (
   userId,
   spaceId,
   cellId,
-  connectionsArray
+  connectionsArray,
+  skipCellCheck = false // New parameter to skip existence check when caller has already created cells
 ) => {
   if (
     !userId ||
@@ -1382,86 +1411,115 @@ export const bulkSaveConnectionsToCell = async (
       cellId
     );
 
-    // Check if cell exists, create if needed
-    const cellDoc = await getDoc(cellRef);
-    if (!cellDoc.exists()) {
-      const [x, y, z] = cellId.split(',').map(Number);
-      await createCell(userId, spaceId, x, y, z);
+    // Only check/create cell if caller hasn't already done it
+    if (!skipCellCheck) {
+      const cellDoc = await getDoc(cellRef);
+
+      if (!cellDoc.exists()) {
+        const [x, y, z] = cellId.split(',').map(Number);
+        await createCell(userId, spaceId, x, y, z);
+      }
     }
 
-    // Update cell metadata to indicate it has connections
-    await setDoc(
-      cellRef,
-      {
-        hasConnections: true,
-        connectionCount: connectionsArray.length,
-        lastUpdated: new Date(),
-      },
-      { merge: true }
+    // Save connections to SUBCOLLECTION (like manual connections do)
+    // Listeners are already unsubscribed by caller, so no event avalanche
+    // Subcollection writes are more efficient with Firebase persistence than field updates
+    console.log(
+      `💾 Saving ${connectionsArray.length} connections to subcollection with 50ms delays...`
     );
+    const saveStart = performance.now();
 
-    // Save connections to subcollection using Firestore batched writes
-    // This is more efficient and prevents triggering multiple real-time listeners
-    // that could cause "Maximum update depth exceeded" errors
-    const currentTime = new Date();
+    for (let i = 0; i < connectionsArray.length; i++) {
+      const connectionData = connectionsArray[i];
 
-    // Firestore batches can only handle 500 operations, so we need to split if necessary
-    const BATCH_SIZE = 500;
-    const batches = [];
-
-    for (let i = 0; i < connectionsArray.length; i += BATCH_SIZE) {
-      const batch = writeBatch(db);
-      const batchConnections = connectionsArray.slice(i, i + BATCH_SIZE);
-
-      batchConnections.forEach((connectionData) => {
-        const connectionRef = doc(
-          db,
-          'users',
-          userId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellId,
-          'connections',
-          connectionData.id
+      // Log progress every 10 connections to see where it hangs
+      if (i % 10 === 0) {
+        console.log(
+          `  💾 Saving connection ${i + 1}/${connectionsArray.length}...`
         );
+      }
 
-        // Save only essential connection data to reduce write size and improve performance
-        const essentialData = {
-          id: connectionData.id,
-          start: {
-            objectId: connectionData.start?.objectId,
-            face: connectionData.start?.face,
-            position: connectionData.start?.position,
-          },
-          end: {
-            objectId: connectionData.end?.objectId,
-            face: connectionData.end?.face,
-            position: connectionData.end?.position,
-          },
-          text: connectionData.text,
-          color: connectionData.color,
-          thickness: connectionData.thickness,
-          textStyle: connectionData.textStyle,
-          merfolkData: connectionData.merfolkData,
-          lastUpdated: currentTime,
-          cellId: cellId,
-        };
+      const essentialData = {
+        id: connectionData.id,
+        start: {
+          objectId: connectionData.start?.objectId,
+          type: connectionData.start?.type,
+          face: connectionData.start?.face,
+          position: connectionData.start?.position,
+        },
+        end: {
+          objectId: connectionData.end?.objectId,
+          type: connectionData.end?.type,
+          face: connectionData.end?.face,
+          position: connectionData.end?.position,
+        },
+        cellId: cellId,
+      };
 
-        batch.set(connectionRef, essentialData, { merge: true });
-      });
+      // Only include fields if they are NOT undefined
+      if (connectionData.text !== undefined)
+        essentialData.text = connectionData.text;
+      if (connectionData.color !== undefined)
+        essentialData.color = connectionData.color;
+      if (connectionData.thickness !== undefined)
+        essentialData.thickness = connectionData.thickness;
+      if (connectionData.lineStyle !== undefined)
+        essentialData.lineStyle = connectionData.lineStyle;
+      if (connectionData.styleType !== undefined)
+        essentialData.styleType = connectionData.styleType;
+      if (connectionData.textStyle !== undefined)
+        essentialData.textStyle = connectionData.textStyle;
+      if (connectionData.merfolkData !== undefined)
+        essentialData.merfolkData = connectionData.merfolkData;
+      if (connectionData.dashDirection !== undefined)
+        essentialData.dashDirection = connectionData.dashDirection;
+      if (connectionData.dashOffset !== undefined)
+        essentialData.dashOffset = connectionData.dashOffset;
 
-      batches.push(batch);
+      // Save to subcollection instead of cell document field
+      // This matches how manual connections are saved and works better with Firebase persistence
+      const connectionRef = doc(
+        db,
+        'users',
+        userId,
+        'spaces',
+        spaceId,
+        'cells',
+        cellId,
+        'connections',
+        connectionData.id
+      );
+
+      try {
+        const writeStart = performance.now();
+        await setDoc(connectionRef, essentialData);
+        const writeDuration = (performance.now() - writeStart).toFixed(0);
+
+        if (writeDuration > 500) {
+          console.warn(
+            `  ⚠️ Slow write for connection ${i + 1}: ${writeDuration}ms`
+          );
+        }
+      } catch (writeError) {
+        console.error(`  ❌ Failed to save connection ${i + 1}:`, writeError);
+        throw writeError;
+      }
+
+      // 200ms delay between writes to prevent Firebase WebChannel overload
+      // 50ms was too fast and caused 400 Bad Request errors
+      if (i < connectionsArray.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
     }
 
-    // Execute all batches sequentially to avoid overwhelming Firestore
-    for (const batch of batches) {
-      await batch.commit();
-    }
+    const saveDuration = ((performance.now() - saveStart) / 1000).toFixed(2);
+    console.log(
+      `✅ Saved ${connectionsArray.length} connections to cell document in ${saveDuration}s`
+    );
 
     return true;
   } catch (error) {
-    console.error('❌ Database save error:', error.message);
+    console.error('❌ Bulk connection save error:', error.message);
     return false;
   }
 };
@@ -1486,9 +1544,7 @@ export const addConnectionToCell = async (
 
   try {
     // Check if this connection is in the deletion blacklist
-    const { default: useConnectionStore } = await import(
-      '../stores/connectionStore'
-    );
+    // Using static import from top of file to avoid 5-minute dynamic import delay
     const connectionStore = useConnectionStore.getState();
 
     if (connectionStore.deletingConnections.has(connectionData.id)) {
@@ -1527,20 +1583,30 @@ export const addConnectionToCell = async (
       };
     }
 
-    // Initialize or fix connections structure
-    if (!cellData.connections || Array.isArray(cellData.connections)) {
-      cellData.connections = {};
-    }
+    // Write connection to subcollection instead of map field
+    const connectionRef = doc(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells',
+      cellId,
+      'connections',
+      connectionData.id
+    );
 
-    // Add connection data to cell and mark cell as having connections
-    cellData.hasConnections = true;
-    cellData.connections[connectionData.id] = {
+    const connectionToSave = {
       ...connectionData,
       lastUpdated: new Date(),
       cellId: cellId,
     };
 
-    await setDoc(cellRef, cellData, { merge: true });
+    await setDoc(connectionRef, connectionToSave);
+
+    // Update cell to mark it has connections (for spatial partitioning queries)
+    await setDoc(cellRef, { hasConnections: true }, { merge: true });
+
     return true;
   } catch {
     return false;
@@ -1577,26 +1643,28 @@ export const removeConnectionFromAllCells = async (
 
     let errorCount = 0;
 
-    // Process each cell
+    // Process each cell - delete from subcollection
     for (const cellDoc of snapshot.docs) {
-      const cellData = cellDoc.data();
+      try {
+        const connectionRef = doc(
+          db,
+          'users',
+          userId,
+          'spaces',
+          spaceId,
+          'cells',
+          cellDoc.id,
+          'connections',
+          connectionId
+        );
 
-      if (cellData.connections && typeof cellData.connections === 'object') {
-        if (cellData.connections[connectionId]) {
-          try {
-            delete cellData.connections[connectionId];
-
-            // If this was the last connection, clean up the cell's connection data
-            if (Object.keys(cellData.connections).length === 0) {
-              delete cellData.connections;
-              delete cellData.hasConnections;
-            }
-
-            await setDoc(cellDoc.ref, cellData, { merge: true });
-          } catch {
-            errorCount++;
-          }
+        // Check if connection exists before deleting
+        const connectionDoc = await getDoc(connectionRef);
+        if (connectionDoc.exists()) {
+          await deleteDoc(connectionRef);
         }
+      } catch {
+        errorCount++;
       }
     }
 
@@ -1762,36 +1830,21 @@ export const removeConnectionFromCell = async (
   }
 
   try {
-    const cellRef = doc(
+    const connectionRef = doc(
       db,
       'users',
       userId,
       'spaces',
       spaceId,
       'cells',
-      cellId
+      cellId,
+      'connections',
+      connectionId
     );
-    const cellDoc = await getDoc(cellRef);
 
-    if (!cellDoc.exists()) {
-      return true; // Cell doesn't exist, connection already not present
-    }
-
-    const cellData = cellDoc.data();
-
-    // Ensure connections is an object
-    if (cellData.connections && typeof cellData.connections === 'object') {
-      if (cellData.connections[connectionId]) {
-        delete cellData.connections[connectionId];
-
-        // If this was the last connection, clean up the cell's connection data
-        if (Object.keys(cellData.connections).length === 0) {
-          delete cellData.connections;
-          delete cellData.hasConnections;
-        }
-
-        await setDoc(cellRef, cellData, { merge: true });
-      }
+    const connectionDoc = await getDoc(connectionRef);
+    if (connectionDoc.exists()) {
+      await deleteDoc(connectionRef);
     }
 
     return true;
@@ -1827,35 +1880,30 @@ export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
   try {
     const allConnections = [];
     const seenConnectionIds = new Set(); // To avoid duplicates across cells
+
     for (const coords of validCellCoords) {
       const cellId = getCellId(coords.x, coords.y, coords.z);
 
-      const cellRef = doc(
+      const connectionsRef = collection(
         db,
         'users',
         userId,
         'spaces',
         spaceId,
         'cells',
-        cellId
+        cellId,
+        'connections'
       );
-      const cellDoc = await getDoc(cellRef);
 
-      if (cellDoc.exists()) {
-        const cellData = cellDoc.data();
+      const connectionsSnapshot = await getDocs(connectionsRef);
 
-        if (cellData.connections && typeof cellData.connections === 'object') {
-          const cellConnections = Object.values(cellData.connections);
-
-          // Only add connections we haven't seen before
-          cellConnections.forEach((connection) => {
-            if (!seenConnectionIds.has(connection.id)) {
-              seenConnectionIds.add(connection.id);
-              allConnections.push(connection);
-            }
-          });
+      connectionsSnapshot.forEach((connectionDoc) => {
+        const connection = connectionDoc.data();
+        if (!seenConnectionIds.has(connection.id)) {
+          seenConnectionIds.add(connection.id);
+          allConnections.push(connection);
         }
-      }
+      });
     }
 
     return allConnections;
@@ -2100,26 +2148,27 @@ export const findConnectionInCells = async (userId, spaceId, connectionId) => {
     );
     const snapshot = await getDocs(cellsRef);
 
-    // Search through all cells for the connection
+    // Search through all cells for the connection in subcollection
     for (const cellDoc of snapshot.docs) {
-      const cellData = cellDoc.data();
+      const connectionRef = doc(
+        db,
+        'users',
+        userId,
+        'spaces',
+        spaceId,
+        'cells',
+        cellDoc.id,
+        'connections',
+        connectionId
+      );
 
-      if (cellData.connections && typeof cellData.connections === 'object') {
-        if (cellData.connections[connectionId]) {
-          return {
-            connection: cellData.connections[connectionId],
-            cellId: cellDoc.id,
-            cellRef: doc(
-              db,
-              'users',
-              userId,
-              'spaces',
-              spaceId,
-              'cells',
-              cellDoc.id
-            ),
-          };
-        }
+      const connectionDoc = await getDoc(connectionRef);
+      if (connectionDoc.exists()) {
+        return {
+          connection: connectionDoc.data(),
+          cellId: cellDoc.id,
+          cellRef: connectionRef,
+        };
       }
     }
 

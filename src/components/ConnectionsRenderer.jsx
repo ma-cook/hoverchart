@@ -200,22 +200,25 @@ const Connection = React.memo(
     };
 
     // Always call hooks first, before any conditional returns
-    // Declare all useMemo hooks unconditionally  // First hook: Calculate basic connection data with real-time object positions
+    // Declare all useMemo hooks unconditionally
+    // First hook: Calculate basic connection data with real-time object positions
     const connectionData = useMemo(() => {
       // Handle invalid connections gracefully inside the hook
       if (!connection) {
         return { isValid: false, midpoint: [0, 0, 0] };
-      } // Calculate positions using current object positions first (for real-time updates)
+      }
+
+      // Calculate positions using current object positions first (for real-time updates)
       // Priority: Current object position with face calculation > stored face positions > object centers
       let startPosition;
-      if (startObject && startObject.position && connection.start?.face) {
+      if (startObject?.position && connection.start?.face) {
         // First priority: Recalculate face position based on current object position
         try {
           const indicatorData = {
-            type: connection.start.type || startObject.type || 'cube', // Use stored connection type first, then object type as fallback
+            type: connection.start.type || startObject.type || 'cube',
             face: connection.start.face,
             objectId: connection.start.objectId,
-            faceCenter: connection.start.faceCenter, // Include faceCenter for dodecahedrons
+            faceCenter: connection.start.faceCenter,
             cube: {
               position: startObject.position,
               scale: startObject.scale || [1, 1, 1],
@@ -243,7 +246,7 @@ const Connection = React.memo(
         startPosition = connection.start.facePosition;
       } else if (Array.isArray(connection.start?.worldPosition)) {
         startPosition = connection.start.worldPosition;
-      } else if (startObject && startObject.position) {
+      } else if (startObject?.position) {
         // Last resort: Use current object center position
         startPosition = startObject.position;
       } else {
@@ -256,14 +259,14 @@ const Connection = React.memo(
         return { isValid: false, midpoint: [0, 0, 0] };
       } // For end position - same priority order
       let endPosition;
-      if (endObject && endObject.position && connection.end?.face) {
+      if (endObject?.position && connection.end?.face) {
         // First priority: Recalculate face position based on current object position
         try {
           const indicatorData = {
-            type: connection.end.type || endObject.type || 'cube', // Use stored connection type first, then object type as fallback
+            type: connection.end.type || endObject.type || 'cube',
             face: connection.end.face,
             objectId: connection.end.objectId,
-            faceCenter: connection.end.faceCenter, // Include faceCenter for dodecahedrons
+            faceCenter: connection.end.faceCenter,
             cube: {
               position: endObject.position,
               scale: endObject.scale || [1, 1, 1],
@@ -276,17 +279,6 @@ const Connection = React.memo(
                   }
                 : undefined,
           };
-
-          // Debug logging for face issues - DISABLED for performance
-          // if (endObject.type === 'dodecahedron') {
-          //   console.log('🔍 ConnectionsRenderer END face debug:', {
-          //     connectionId: connection.id,
-          //     objectType: endObject.type,
-          //     originalFace: connection.end.face,
-          //     faceType: typeof connection.end.face,
-          //     indicatorData: indicatorData,
-          //   });
-          // }
 
           endPosition = calculateFacePosition(
             indicatorData,
@@ -302,7 +294,7 @@ const Connection = React.memo(
         endPosition = connection.end.facePosition;
       } else if (Array.isArray(connection.end?.worldPosition)) {
         endPosition = connection.end.worldPosition;
-      } else if (endObject && endObject.position) {
+      } else if (endObject?.position) {
         // Last resort: Use current object center position
         endPosition = endObject.position;
       } else {
@@ -328,7 +320,6 @@ const Connection = React.memo(
         startPosition,
         endPosition,
       };
-      // Depend on connection and the specific objects we need
     }, [connection, startObject, endObject, allObjectsForPathfinding]);
 
     // Second hook: Filter relevant objects with stable dependencies
@@ -365,68 +356,37 @@ const Connection = React.memo(
       const pathPoints = stablePathPoints;
       const lineStyle = stableLineStyle;
 
-      // Calculate intersections
-      const intersections = checkLineIntersection(
-        startPosition,
-        endPosition,
-        filteredObjects
-      );
+      // PERFORMANCE OPTIMIZATION: Skip expensive pathfinding for connections that:
+      // 1. Have pre-calculated pathPoints stored (from bulk imports)
+      // 2. Are straight lines and user hasn't requested curved
+      const hasStoredPath = pathPoints && pathPoints.length > 0;
+      const userRequestedCurved = lineStyle === 'curved';
 
-      // PATHFINDING DEBUG: Log intersection results for troubleshooting
-      if (connection.id && connection.id.includes('merfolk')) {
-        console.log(`🔍 [Pathfinding] Connection ${connection.id}:`, {
-          startPosition,
-          endPosition,
-          intersections: intersections ? intersections.length : 0,
-          filteredObjectsCount: filteredObjects.length,
-          lineStyle,
-        });
-      }
+      // Only do expensive intersection checking if:
+      // - User explicitly wants curved lines, OR
+      // - Connection doesn't have a pre-calculated path
+      const shouldCheckIntersections = userRequestedCurved || !hasStoredPath;
+
+      const intersections = shouldCheckIntersections
+        ? checkLineIntersection(startPosition, endPosition, filteredObjects)
+        : null;
 
       // Generate path (curved if needed)
       // PATHFINDING FIX: Curve lines automatically when intersections are detected
       const shouldCurve =
         lineStyle === 'curved' || (intersections && intersections.length > 0);
 
-      // DEBUG: Log the shouldCurve decision
-      if (
-        connection.id &&
-        connection.id.includes('merfolk') &&
-        intersections &&
-        intersections.length > 0
-      ) {
-        console.log(`📐 [Pathfinding] Should curve for ${connection.id}:`, {
-          shouldCurve,
-          lineStyle,
-          intersectionCount: intersections.length,
-        });
-      }
-
-      // RULE: If intersections exist, always recompute a multi-curve path and ignore cached pathPoints
+      // Use stored path if available and no intersections detected, otherwise calculate
       const calculatedPathPoints = shouldCurve
-        ? (() =>
-            generateCurvedPath(
-              startPosition,
-              endPosition,
-              intersections,
-              startObjectId,
-              endObjectId,
-              true
-            ))()
-        : pathPoints || [startPosition, endPosition]; // No intersections -> straight line (or use stored path)
-
-      // DEBUG: Log the path calculation result
-      if (
-        connection.id &&
-        connection.id.includes('merfolk') &&
-        intersections &&
-        intersections.length > 0
-      ) {
-        console.log(`🛤️ [Pathfinding] Path calculated for ${connection.id}:`, {
-          pathLength: calculatedPathPoints.length,
-          isCurved: calculatedPathPoints.length > 2,
-        });
-      }
+        ? generateCurvedPath(
+            startPosition,
+            endPosition,
+            intersections,
+            startObjectId,
+            endObjectId,
+            true
+          )
+        : pathPoints || [startPosition, endPosition]; // No intersections -> use stored path or straight line
 
       // Determine if path should be curved
       const isCurvedPath =
@@ -851,6 +811,17 @@ const ConnectionsRenderer = ({
   );
 };
 
-// Export the ConnectionsRenderer directly without aggressive memoization
-// The useConnectionStore hook will handle re-rendering when connections change
-export default ConnectionsRenderer;
+// Wrap in React.memo with custom comparison to prevent unnecessary re-renders
+export default React.memo(ConnectionsRenderer, (prevProps, nextProps) => {
+  // Only re-render if these specific props change
+  return (
+    prevProps.objects === nextProps.objects &&
+    prevProps.visibleObjectIds === nextProps.visibleObjectIds &&
+    prevProps.onLineStyleChange === nextProps.onLineStyleChange &&
+    prevProps.onLineColorChange === nextProps.onLineColorChange &&
+    prevProps.onConnectionClick === nextProps.onConnectionClick &&
+    prevProps.onLineTextClick === nextProps.onLineTextClick &&
+    prevProps.onLineTextSubmit === nextProps.onLineTextSubmit &&
+    prevProps.onLineTextStyleChange === nextProps.onLineTextStyleChange
+  );
+});

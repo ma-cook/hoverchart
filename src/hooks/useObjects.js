@@ -27,12 +27,14 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
   const draggingObjectsRef = useRef(new Set());
   const transformingObjectsRef = useRef(new Set());
 
-  // Initialize objects loading state when objects change
+  // Initialize objects loading state when objects are first loaded
+  // Only trigger when the count changes, not on every object update
+  const objectCount = objects?.length || 0;
   useEffect(() => {
-    if (objects && objects.length > 0) {
+    if (objectCount > 0) {
       initializeObjectsLoading();
     }
-  }, [objects, initializeObjectsLoading]);
+  }, [objectCount, initializeObjectsLoading]);
 
   // NOTE: Removed periodic saving - objects are now saved immediately when modified
   // This is more efficient and prevents unnecessary database writes

@@ -11,6 +11,7 @@ import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
 import ObjectRenderer from './components/ObjectRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
+import FrameTicker from './components/FrameTicker';
 
 // Hook imports
 import { useAuthState } from './hooks/useAuthState';
@@ -1450,29 +1451,7 @@ const App = () => {
     visibleObjectIds,
     cameraDistance,
     selectedId,
-    handleObjectClick,
-    handleObjectMoveCallback,
-    handleObjectUpdateCallback,
-    disableOrbitControls,
-    enableOrbitControls,
-    handleFaceIndicatorClickCallback,
-    handleFaceClick,
-    showAllCubesIndicators,
-    activeIndicator,
-    indicatorMode,
-    selectedIndicators,
-    activeTextStyleUI,
-    setActiveTextStyleUI,
-    handleIndicatorDeselected,
-    registerTransformingObject,
-    getTransformStartPosition,
-    handleObjectMatrixChanged,
-    handleIndicatorSelected,
-    globalIndicatorSelected,
-    handleObjectDelete,
-    checkPositionJitterWithHistory,
-    user,
-    effectiveSpaceId,
+    // Remove callback dependencies - they should be stable with useCallback
   ]);
 
   // Lazy load state for Canvas
@@ -1682,6 +1661,8 @@ const App = () => {
           {...canvasSettings}
         >
           {' '}
+          {/* Global frame counter - updates once per frame for all components */}
+          <FrameTicker />
           <CustomCamera ref={cameraRef} />
           <group>
             {/* Real-time connection position updater - reactive to store changes */}

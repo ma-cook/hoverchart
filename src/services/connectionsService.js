@@ -4,12 +4,18 @@ import {
   disableNetwork,
   doc,
   onSnapshot,
+  collection,
+  query,
+  getDocs,
+  updateDoc,
+  deleteField,
 } from 'firebase/firestore';
 import { isSharedSpace } from './sharedSpacesService';
 import {
   addConnectionToCells,
   removeConnectionFromCells,
   removeConnectionFromAllCells,
+  findConnectionInCells,
 } from './spatialPartitioning';
 import useConnectionStore from '../stores/connectionStore';
 
@@ -25,6 +31,57 @@ import {
 // Add connection state tracking - keep simple tracking but remove reconnection logic
 let isNetworkEnabled = true;
 const connectionListeners = new Set();
+
+// Flag to pause listener processing during bulk operations
+let listenersArePaused = false;
+
+// Store active listener unsubscribe functions globally
+const globalActiveListeners = new Map(); // cellId -> unsubscribe function
+
+// Function to pause listeners during bulk saves
+export const pauseConnectionListeners = async () => {
+  console.log(
+    '⏸️ [ConnectionService] Pausing connection listeners for bulk save'
+  );
+  listenersArePaused = true;
+
+  // Unsubscribe from all active listeners to prevent snapshot events
+  console.log(
+    `🔇 [ConnectionService] Unsubscribing from ${globalActiveListeners.size} active listeners`
+  );
+  for (const [cellId, unsubscribe] of globalActiveListeners.entries()) {
+    try {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    } catch (error) {
+      console.warn(
+        `⚠️ [ConnectionService] Failed to unsubscribe from ${cellId}:`,
+        error
+      );
+    }
+  }
+  globalActiveListeners.clear();
+
+  // Don't disable network - we need it to save connections!
+  // Just unsubscribing listeners is enough to prevent the event avalanche
+  console.log('✅ [ConnectionService] All connection listeners unsubscribed');
+};
+
+// Function to resume listeners after bulk saves
+export const resumeConnectionListeners = async () => {
+  console.log('▶️ [ConnectionService] Resuming connection listeners');
+
+  // Don't need to enable network since we never disabled it
+  // Just allow listeners to re-subscribe naturally
+  listenersArePaused = false;
+
+  // Note: Listeners will automatically re-subscribe when cells are loaded/updated
+  // through the normal spatial partitioning flow
+  console.log(
+    '✅ [ConnectionService] Connection listeners will re-subscribe on next cell load'
+  );
+};
 
 // Function to notify all listeners of connection state changes
 const notifyConnectionListeners = (state) => {
@@ -226,6 +283,14 @@ export const subscribeToConnections = (
 ) => {
   if (!spaceId) return () => {};
 
+  // CRITICAL: Don't create new subscriptions during bulk saves
+  if (listenersArePaused) {
+    console.log(
+      '🚫 [ConnectionService] Skipping subscription - listeners paused for bulk save'
+    );
+    return () => {}; // Return no-op cleanup function
+  }
+
   // Support anonymous access for public spaces
   const isAnonymous = !userId;
   const ownerIdFromUrl = window.currentSpaceOwner;
@@ -282,12 +347,8 @@ const subscribeToCellConnections = (
           const [x, y, z] = cellId.split(',').map(Number);
 
           // Subscribe to the connections subcollection instead of the cell document
-          const {
-            collection: firestoreCollection,
-            query,
-            onSnapshot: onSnapshotImport,
-          } = await import('firebase/firestore');
-          const connectionsRef = firestoreCollection(
+          // Using static imports from top of file to avoid 5-minute dynamic import delay
+          const connectionsRef = collection(
             db,
             'users',
             ownerUserId,
@@ -298,7 +359,15 @@ const subscribeToCellConnections = (
             'connections'
           );
 
-          const unsubscribe = onSnapshotImport(connectionsRef, (snapshot) => {
+          const unsubscribe = onSnapshot(connectionsRef, (snapshot) => {
+            // Skip processing if listeners are paused (during bulk saves)
+            if (listenersArePaused) {
+              console.log(
+                '⏭️ [ConnectionService] Skipping snapshot processing - listeners paused'
+              );
+              return;
+            }
+
             snapshot.docChanges().forEach((change) => {
               const connectionId = change.doc.id;
               const connectionData = change.doc.data();
@@ -337,6 +406,9 @@ const subscribeToCellConnections = (
 
           unsubscribeFunctions.set(cellId, unsubscribe);
           activeSubscriptionCells.add(cellId);
+
+          // Store in global registry so we can unsubscribe during bulk saves
+          globalActiveListeners.set(cellId, unsubscribe);
         }
       }
 
@@ -360,11 +432,8 @@ const subscribeToCellConnections = (
         );
 
         // Create connections subcollection reference
-        const {
-          collection: firestoreCollection,
-          onSnapshot: onSnapshotImport,
-        } = await import('firebase/firestore');
-        const connectionsRef = firestoreCollection(
+        // Using static imports from top of file to avoid 5-minute dynamic import delay
+        const connectionsRef = collection(
           db,
           'users',
           ownerUserId,
@@ -382,7 +451,7 @@ const subscribeToCellConnections = (
           () => {
             // Create the actual Firebase subscription to the connections subcollection
 
-            return onSnapshotImport(
+            return onSnapshot(
               connectionsRef,
               { includeMetadataChanges: false },
               (snapshot) => {
@@ -602,10 +671,7 @@ export const deleteConnectionEnhanced = async (
     // **CRITICAL FIX**: If both methods failed, try aggressive deletion with updateDoc
     if (!success) {
       try {
-        const { db } = await import('../firebase');
-        const { collection, getDocs, doc, updateDoc, deleteField } =
-          await import('firebase/firestore');
-
+        // Using static imports from top of file to avoid 5-minute dynamic import delay
         const cellsRef = collection(
           db,
           'users',
@@ -653,9 +719,7 @@ export const deleteConnectionEnhanced = async (
       setTimeout(async () => {
         try {
           // Try to find the connection in any cell
-          const { findConnectionInCells } = await import(
-            './spatialPartitioning'
-          );
+          // Using static imports from top of file to avoid 5-minute dynamic import delay
           const found = await findConnectionInCells(
             ownerUserId,
             spaceId,

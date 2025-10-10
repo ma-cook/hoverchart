@@ -2,6 +2,16 @@ import { MarkdownProcessor } from '3d-ast-generator';
 import * as THREE from 'three';
 import useConnectionStore from '../stores/connectionStore';
 import { useObjectsStore } from '../stores';
+import {
+  pauseConnectionListeners,
+  resumeConnectionListeners,
+} from './connectionsService';
+import {
+  bulkSaveConnectionsToCell,
+  getCellCoordinates,
+  getCellId,
+} from './spatialPartitioning';
+import { auth } from '../firebase';
 
 /**
  * Service for processing Markdown files containing Merfolk diagrams
@@ -178,11 +188,6 @@ export class MarkdownDiagramService {
     let objectType = 'cube'; // Default
 
     // Debug: Log node properties for troubleshooting
-    console.log('🔍 Node type mapping:', {
-      id: node.id,
-      type: node.type,
-      name: node.name,
-    });
 
     // The 3d-ast-generator correctly sets node.type based on bracket syntax:
     // {Component: name} → type: 'component' → Dodecahedron
@@ -196,24 +201,17 @@ export class MarkdownDiagramService {
 
     if (nodeType === 'component') {
       objectType = 'dodecahedron';
-      console.log(`✅ COMPONENT → dodecahedron for '${node.id}'`);
     } else if (nodeType === 'function') {
       objectType = 'cube';
-      console.log(`✅ FUNCTION → cube for '${node.id}'`);
     } else if (nodeType === 'store') {
       objectType = 'cube';
-      console.log(`✅ STORE → cube for '${node.id}'`);
     } else if (nodeType === 'service') {
       objectType = 'tetrahedron';
-      console.log(`✅ SERVICE → tetrahedron for '${node.id}'`);
     } else if (nodeType === 'library') {
       objectType = 'cube';
-      console.log(`✅ LIBRARY → cube for '${node.id}'`);
     } else if (nodeType === 'utility') {
       objectType = 'cube';
-      console.log(`✅ UTILITY → cube for '${node.id}'`);
     } else if (nodeType === 'datapath') {
-      console.log(`⏭️ DATAPATH → skipping '${node.id}'`);
       return null;
     } else {
       console.warn(
@@ -454,7 +452,7 @@ export class MarkdownDiagramService {
     const nodeType = node ? node.type : 'unknown';
 
     // Add Y offset for component hierarchies to raise them 300 units higher
-    const componentYOffset = 1200;
+    const componentYOffset = 1300;
 
     if (level === 0) {
       // Root level - arrange in a reasonable grid pattern with adequate spacing for circular children
@@ -488,7 +486,33 @@ export class MarkdownDiagramService {
 
       if (nodeType === 'component') {
         // COMPONENT POSITIONING: Horizontal circular arrangement around parent
-        const radiusPerLevel = 300 + level * 100; // Much larger radius for better spacing
+        // Dynamic radius calculation based on sibling count and spacing requirements
+
+        const minSpacingBetweenComponents = 100; // Minimum distance between sibling components
+        const minLayerSpacing = 200; // Minimum distance between parent and child layer
+        const componentSize = 50; // Approximate size of a component (for spacing calculation)
+
+        // Calculate radius needed to maintain spacing between siblings
+        // Formula: circumference = radius * 2 * PI
+        // Required circumference = siblingCount * (minSpacing + componentSize)
+        // Therefore: radius = (siblingCount * (minSpacing + componentSize)) / (2 * PI)
+        let dynamicRadius;
+
+        if (siblingCount === 1) {
+          // Single child - use minimum layer spacing
+          dynamicRadius = minLayerSpacing;
+        } else {
+          // Multiple children - calculate based on sibling count
+          const requiredCircumference =
+            siblingCount * (minSpacingBetweenComponents + componentSize);
+          const calculatedRadius = requiredCircumference / (2 * Math.PI);
+
+          // Ensure minimum layer spacing is maintained
+          dynamicRadius = Math.max(calculatedRadius, minLayerSpacing);
+        }
+
+        // Add additional spacing per level to separate nested layers
+        const radiusPerLevel = dynamicRadius + (level - 1) * minLayerSpacing;
         const depthOffset = level * 20; // Subtle depth variation for visual hierarchy
 
         if (siblingCount === 1) {
@@ -499,24 +523,21 @@ export class MarkdownDiagramService {
             parentPosition[2], // Keep same Z position
           ];
         } else {
-          // Multiple child components - arrange in horizontal circle around parent
+          // Multiple child components - arrange in horizontal circle around parent with EVEN spacing
+          // Ensure perfectly even distribution by using exact angle calculation
           const angleStep = (2 * Math.PI) / siblingCount;
           const angle = siblingIndex * angleStep;
 
+          // Start from angle 0 to ensure consistent positioning
+          const offsetX = Math.cos(angle) * radiusPerLevel;
+          const offsetZ = Math.sin(angle) * radiusPerLevel;
+
           // Debug logging
-          console.log(`Component positioning debug:`, {
-            nodeId: nodeId || 'unknown',
-            siblingIndex,
-            siblingCount,
-            angleStep: angleStep * (180 / Math.PI), // Convert to degrees for easier understanding
-            angle: angle * (180 / Math.PI),
-            radiusPerLevel,
-          });
 
           return [
-            parentPosition[0] + Math.cos(angle) * radiusPerLevel,
+            parentPosition[0] + offsetX,
             parentPosition[1] - depthOffset, // Keep Y constant for horizontal plane, add depth offset
-            parentPosition[2] + Math.sin(angle) * radiusPerLevel, // Use Z-axis for circle
+            parentPosition[2] + offsetZ, // Use Z-axis for circle
           ];
         }
       } else {
@@ -634,12 +655,6 @@ export class MarkdownDiagramService {
     }
 
     // Calculate position
-    console.log(`Positioning node ${nodeId} at level ${level}:`, {
-      siblingIndex,
-      siblingCount,
-      containerSize,
-      parentPosition,
-    });
 
     const nodePosition = this.calculateNodePosition(
       nodeId,
@@ -660,7 +675,8 @@ export class MarkdownDiagramService {
     // Process children recursively
     const children = parentChildMap.get(nodeId) || new Set();
     if (children.size > 0) {
-      const childArray = Array.from(children);
+      // Sort children by ID to ensure consistent ordering for circular arrangement
+      const childArray = Array.from(children).sort();
       childArray.forEach((childId, index) => {
         this.positionNodeHierarchy(
           childId,
@@ -681,6 +697,7 @@ export class MarkdownDiagramService {
    * @param {Function} onCreateObject - Callback to create 3D objects
    * @param {Map} nodeToObjectIdMap - Map to track node ID to object ID mapping
    * @param {Array} basePosition - Base position for root level objects
+   * @param {Array} allObjectsToSave - Array to collect all objects for bulk import
    * @returns {number} - Number of objects created
    */
   async createObjectsFromDiagram(
@@ -689,7 +706,8 @@ export class MarkdownDiagramService {
     nodeToObjectIdMap,
     basePosition,
     user,
-    currentSpaceId
+    currentSpaceId,
+    allObjectsToSave
   ) {
     const graph = diagram.graph;
     if (!graph || !graph.nodes) {
@@ -730,144 +748,138 @@ export class MarkdownDiagramService {
       );
     });
 
-    // Special handling: Position all service nodes in a circle around the store objects
+    // ========================================
+    // DYNAMIC CIRCULAR POSITIONING SYSTEM
+    // Maintains 50 units between objects within a group
+    // Maintains 100 units between groups
+    // ========================================
+
+    // Collect all circular groups
     const serviceNodes = Array.from(graph.nodes.values()).filter(
       (node) => node.type === 'service'
     );
 
-    if (serviceNodes.length > 0) {
-      console.log(
-        `📊 Positioning ${serviceNodes.length} service nodes in a circle around stores`
-      );
-
-      // Calculate the radius of the circle - larger than stores to surround them
-      const circleRadius = 50; // Distance from the center to each service (larger than store radius of 250)
-      const angleIncrement = (Math.PI * 2) / serviceNodes.length; // Evenly space around circle
-
-      serviceNodes.forEach((node, index) => {
-        const angle = index * angleIncrement;
-
-        // Calculate position on the circle (same Y level as components and stores)
-        const offsetX = Math.cos(angle) * circleRadius;
-        const offsetZ = Math.sin(angle) * circleRadius;
-
-        const servicePosition = [
-          basePosition[0] + offsetX,
-          basePosition[1], // Same level as components and stores
-          basePosition[2] + offsetZ,
-        ];
-
-        nodePositions.set(node.id, servicePosition);
-        nodeScales.set(node.id, [1, 1, 1]); // Default scale for tetrahedrons
-        processedNodes.add(node.id);
-
-        console.log(
-          `  📍 Service ${node.id} at position:`,
-          servicePosition,
-          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
-        );
-      });
-    }
-
-    // Special handling: Position all store nodes in a circle around the component objects
     const storeNodes = Array.from(graph.nodes.values()).filter(
       (node) => node.type === 'store'
     );
 
-    if (storeNodes.length > 0) {
-      console.log(
-        `📦 Positioning ${storeNodes.length} store nodes in a circle around components`
-      );
-
-      // Calculate the radius of the circle based on the number of stores
-      const circleRadius = 400; // Distance from the center to each store
-      const angleIncrement = (Math.PI * 2) / storeNodes.length; // Evenly space around circle
-
-      storeNodes.forEach((node, index) => {
-        const angle = index * angleIncrement;
-
-        // Calculate position on the circle (same Y level as components)
-        const offsetX = Math.cos(angle) * circleRadius;
-        const offsetZ = Math.sin(angle) * circleRadius;
-
-        const storePosition = [
-          basePosition[0] + offsetX,
-          basePosition[1], // Same level as components
-          basePosition[2] + offsetZ,
-        ];
-
-        nodePositions.set(node.id, storePosition);
-        nodeScales.set(node.id, [1, 1, 1]); // Default scale for cubes
-        processedNodes.add(node.id);
-
-        console.log(
-          `  📦 Store ${node.id} at position:`,
-          storePosition,
-          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
-        );
-      });
-    }
-
-    // Special handling: Position all utility nodes in a circle around the store objects
     const utilityNodes = Array.from(graph.nodes.values()).filter(
       (node) => node.type === 'utility'
     );
 
-    if (utilityNodes.length > 0) {
-      console.log(
-        `🔧 Positioning ${utilityNodes.length} utility nodes in a circle around stores`
-      );
-
-      // Calculate the radius of the circle - same as stores to be at the same level
-      const circleRadius = 600; // Same distance from center as stores
-      const angleIncrement = (Math.PI * 2) / utilityNodes.length; // Evenly space around circle
-      const angleOffset = Math.PI / utilityNodes.length; // Offset by half increment to position between stores
-
-      utilityNodes.forEach((node, index) => {
-        const angle = index * angleIncrement + angleOffset;
-
-        // Calculate position on the circle (same Y level as components and stores)
-        const offsetX = Math.cos(angle) * circleRadius;
-        const offsetZ = Math.sin(angle) * circleRadius;
-
-        const utilityPosition = [
-          basePosition[0] + offsetX,
-          basePosition[1], // Same level as components and stores
-          basePosition[2] + offsetZ,
-        ];
-
-        nodePositions.set(node.id, utilityPosition);
-        nodeScales.set(node.id, [1, 1, 1]); // Default scale for cubes
-        processedNodes.add(node.id);
-
-        console.log(
-          `  🔧 Utility ${node.id} at position:`,
-          utilityPosition,
-          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
-        );
-      });
-    }
-
-    // Special handling: Position all standalone function nodes (not nested in components) in a circle around service objects
     const standaloneFunctionNodes = Array.from(graph.nodes.values()).filter(
       (node) => node.type === 'function' && !childParentMap.has(node.id)
     );
 
-    if (standaloneFunctionNodes.length > 0) {
-      console.log(
-        `📦 Positioning ${standaloneFunctionNodes.length} standalone function nodes in a circle around services`
-      );
+    // Calculate dynamic radii based on object count and spacing requirements
+    const objectSpacing = 50; // Distance between objects within a group
+    const groupSpacing = 50; // Distance between groups
+    const objectSize = 10; // Approximate size of each object (for spacing calculation)
 
-      // Calculate the radius of the circle - larger than services to surround them
-      const circleRadius = 200; // Distance from the center to each function (larger than service radius of 400)
-      const angleIncrement = (Math.PI * 2) / standaloneFunctionNodes.length; // Evenly space around circle
+    /**
+     * Calculate the radius needed for a circle to maintain desired spacing between objects
+     * Formula: circumference = radius * 2 * PI
+     * Required circumference = objectCount * (objectSpacing + objectSize)
+     * Therefore: radius = (objectCount * (objectSpacing + objectSize)) / (2 * PI)
+     */
+    const calculateRadiusForGroup = (objectCount) => {
+      if (objectCount === 0) return 0;
+      const requiredCircumference = objectCount * (objectSpacing + objectSize);
+      return requiredCircumference / (2 * Math.PI);
+    };
+
+    // Calculate radii for each group
+    const serviceRadius = calculateRadiusForGroup(serviceNodes.length);
+    const storeRadius =
+      serviceRadius > 0
+        ? serviceRadius +
+          groupSpacing +
+          calculateRadiusForGroup(storeNodes.length)
+        : calculateRadiusForGroup(storeNodes.length);
+    const utilityRadius =
+      storeRadius > 0
+        ? storeRadius +
+          groupSpacing +
+          calculateRadiusForGroup(utilityNodes.length)
+        : calculateRadiusForGroup(utilityNodes.length);
+    const functionRadius =
+      utilityRadius > 0
+        ? utilityRadius +
+          groupSpacing +
+          calculateRadiusForGroup(standaloneFunctionNodes.length)
+        : calculateRadiusForGroup(standaloneFunctionNodes.length);
+
+    // Special handling: Position all service nodes in innermost circle
+    if (serviceNodes.length > 0) {
+      const angleIncrement = (Math.PI * 2) / serviceNodes.length;
+
+      serviceNodes.forEach((node, index) => {
+        const angle = index * angleIncrement;
+        const offsetX = Math.cos(angle) * serviceRadius;
+        const offsetZ = Math.sin(angle) * serviceRadius;
+
+        const servicePosition = [
+          basePosition[0] + offsetX,
+          basePosition[1],
+          basePosition[2] + offsetZ,
+        ];
+
+        nodePositions.set(node.id, servicePosition);
+        nodeScales.set(node.id, [1, 1, 1]);
+        processedNodes.add(node.id);
+      });
+    }
+
+    // Special handling: Position all store nodes in second circle
+    if (storeNodes.length > 0) {
+      const angleIncrement = (Math.PI * 2) / storeNodes.length;
+
+      storeNodes.forEach((node, index) => {
+        const angle = index * angleIncrement;
+        const offsetX = Math.cos(angle) * storeRadius;
+        const offsetZ = Math.sin(angle) * storeRadius;
+
+        const storePosition = [
+          basePosition[0] + offsetX,
+          basePosition[1],
+          basePosition[2] + offsetZ,
+        ];
+
+        nodePositions.set(node.id, storePosition);
+        nodeScales.set(node.id, [1, 1, 1]);
+        processedNodes.add(node.id);
+      });
+    }
+
+    // Special handling: Position all utility nodes in third circle
+    if (utilityNodes.length > 0) {
+      const angleIncrement = (Math.PI * 2) / utilityNodes.length;
+
+      utilityNodes.forEach((node, index) => {
+        const angle = index * angleIncrement;
+        const offsetX = Math.cos(angle) * utilityRadius;
+        const offsetZ = Math.sin(angle) * utilityRadius;
+
+        const utilityPosition = [
+          basePosition[0] + offsetX,
+          basePosition[1],
+          basePosition[2] + offsetZ,
+        ];
+
+        nodePositions.set(node.id, utilityPosition);
+        nodeScales.set(node.id, [1, 1, 1]);
+        processedNodes.add(node.id);
+      });
+    }
+
+    // Special handling: Position all standalone function nodes in outermost circle
+    if (standaloneFunctionNodes.length > 0) {
+      const angleIncrement = (Math.PI * 2) / standaloneFunctionNodes.length;
 
       standaloneFunctionNodes.forEach((node, index) => {
         const angle = index * angleIncrement;
-
-        // Calculate position on the circle (same Y level as other objects)
-        const offsetX = Math.cos(angle) * circleRadius;
-        const offsetZ = Math.sin(angle) * circleRadius;
+        const offsetX = Math.cos(angle) * functionRadius;
+        const offsetZ = Math.sin(angle) * functionRadius;
 
         const functionPosition = [
           basePosition[0] + offsetX,
@@ -878,12 +890,6 @@ export class MarkdownDiagramService {
         nodePositions.set(node.id, functionPosition);
         nodeScales.set(node.id, [1, 1, 1]); // Default scale for cubes
         processedNodes.add(node.id);
-
-        console.log(
-          `  📦 Standalone Function ${node.id} at position:`,
-          functionPosition,
-          `(angle: ${((angle * 180) / Math.PI).toFixed(1)}°)`
-        );
       });
     }
 
@@ -892,18 +898,10 @@ export class MarkdownDiagramService {
     const nodeEntries = Array.from(nodePositions);
     const OBJECT_BATCH_SIZE = 50; // Process objects in smaller batches
 
-    console.log(
-      `🔄 Creating ${nodeEntries.length} objects in batches of ${OBJECT_BATCH_SIZE}...`
-    );
-
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
       const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1;
       const totalBatches = Math.ceil(nodeEntries.length / OBJECT_BATCH_SIZE);
-
-      console.log(
-        `📦 Processing object batch ${batchNumber}/${totalBatches} (${batch.length} objects)...`
-      );
 
       // Add a small delay between batches to prevent React's "Maximum update depth exceeded" error
       if (i > 0) {
@@ -959,58 +957,191 @@ export class MarkdownDiagramService {
         })
         .filter(Boolean);
 
-      // Use batch creation to prevent infinite re-render loops
-      try {
-        const { useObjectsStore } = await import('../stores');
-        const objectIds = await useObjectsStore.getState().batchCreateObjects(
-          batchData.map(({ type, position, extraData }) => ({
-            type,
-            position,
-            extraData,
-          })),
-          user,
-          currentSpaceId
-        );
+      // Instead of saving to Firebase immediately, collect objects for bulk import
+      // AND add to local store for immediate rendering
+      const { useObjectsStore } = await import('../stores');
+      const { getCellCoordinates, getCellId } = await import(
+        './spatialPartitioning'
+      );
 
-        // Update the mapping
-        batchData.forEach((data, index) => {
-          if (objectIds[index]) {
-            nodeToObjectIdMap.set(data.nodeId, objectIds[index]);
-            objectsCreated++;
-          }
-        });
-      } catch (error) {
-        console.error(`Failed to batch create objects:`, error);
-        // Fallback to individual creation if batch fails
-        for (const data of batchData) {
-          try {
-            const objectId = await onCreateObject(
-              data.type,
-              data.position,
-              data.extraData
-            );
-            if (objectId) {
-              nodeToObjectIdMap.set(data.nodeId, objectId);
-              objectsCreated++;
-            }
-          } catch (err) {
-            console.error(
-              `Failed to create object for node ${data.nodeId}:`,
-              err
-            );
-          }
+      for (const data of batchData) {
+        try {
+          // Generate unique object ID
+          const objectId = `merfolk-obj-${Date.now()}-${Math.random()
+            .toString(36)
+            .substr(2, 9)}`;
+
+          // Calculate cellId for spatial partitioning
+          const cellCoords = getCellCoordinates(data.position);
+          const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+
+          // Create full object data matching the expected format
+          const objectData = {
+            id: objectId,
+            type: data.type,
+            position: data.position,
+            scale: data.extraData.scale || [1, 1, 1],
+            color: data.extraData.color || '#4a90e2',
+            cellId: cellId,
+            createdAt: Date.now(),
+            // Type-specific fields based on object type
+            ...(data.type === 'dodecahedron'
+              ? {
+                  headerText: data.extraData.headerText || '',
+                  headerStyle: data.extraData.headerStyle || {
+                    fontSize: 1.5,
+                    color: 'black',
+                    underline: false,
+                  },
+                  faceColors: {},
+                  faceTexts: Array(12)
+                    .fill('')
+                    .reduce((acc, _, idx) => {
+                      acc[idx] = '';
+                      return acc;
+                    }, {}),
+                  faceTextStyles: Array(12)
+                    .fill(null)
+                    .reduce((acc, _, idx) => {
+                      acc[idx] = {
+                        fontSize: 0.5,
+                        color: 'black',
+                        underline: false,
+                      };
+                      return acc;
+                    }, {}),
+                }
+              : data.type === 'cube'
+              ? {
+                  headerText: data.extraData.headerText || '',
+                  faceColors: {},
+                  faceTexts: {
+                    front: '',
+                    back: '',
+                    top: '',
+                    bottom: '',
+                    right: '',
+                    left: '',
+                  },
+                  textStyle: data.extraData.headerStyle || {
+                    fontSize: 1.5,
+                    color: 'black',
+                    underline: false,
+                  },
+                }
+              : data.type === 'tetrahedron'
+              ? {
+                  headerText: data.extraData.headerText || '',
+                  faceColors: {},
+                  faceTexts: { front: '', back: '', left: '', right: '' },
+                  textStyle: data.extraData.headerStyle || {
+                    fontSize: 1.5,
+                    color: 'black',
+                    underline: false,
+                  },
+                }
+              : data.type === 'plane'
+              ? {
+                  content: data.extraData.headerText || '',
+                  textStyle: data.extraData.headerStyle || {
+                    fontSize: 1.5,
+                    color: 'black',
+                    underline: false,
+                  },
+                }
+              : {}),
+            merfolkData: {
+              nodeId: data.nodeId,
+              ...(data.extraData.merfolkData || {}),
+            },
+          };
+
+          // Add to local store for immediate rendering
+          const currentObjects = useObjectsStore.getState().objects;
+          useObjectsStore
+            .getState()
+            .setObjects([...currentObjects, objectData]);
+
+          // Prepare complete data for Cloud Function bulk save (including all type-specific fields)
+          const objectForSave = {
+            id: objectId,
+            position: data.position,
+            size: data.extraData.scale || [1, 1, 1], // Cloud Function will convert 'size' to 'scale'
+            scale: data.extraData.scale || [1, 1, 1], // Also send as 'scale' for compatibility
+            type: data.type,
+            color: data.extraData.color || '#4a90e2',
+            content: data.extraData.headerText || '',
+            createdAt: Date.now(),
+            cellId: cellId,
+            ...(data.extraData.rotation && {
+              rotation: data.extraData.rotation,
+            }),
+            ...(data.extraData.headerStyle && {
+              textStyle: data.extraData.headerStyle,
+            }),
+            // Include type-specific fields
+            ...(data.type === 'dodecahedron' && {
+              headerText: data.extraData.headerText || '',
+              headerStyle: data.extraData.headerStyle || {
+                fontSize: 1.5,
+                color: 'black',
+                underline: false,
+              },
+              faceColors: {},
+              faceTexts: Array(12)
+                .fill('')
+                .reduce((acc, _, idx) => {
+                  acc[idx] = '';
+                  return acc;
+                }, {}),
+              faceTextStyles: Array(12)
+                .fill(null)
+                .reduce((acc, _, idx) => {
+                  acc[idx] = {
+                    fontSize: 0.5,
+                    color: 'black',
+                    underline: false,
+                  };
+                  return acc;
+                }, {}),
+            }),
+            ...(data.type === 'cube' && {
+              headerText: data.extraData.headerText || '',
+              faceColors: {},
+              faceTexts: {
+                front: '',
+                back: '',
+                top: '',
+                bottom: '',
+                right: '',
+                left: '',
+              },
+            }),
+            ...(data.type === 'tetrahedron' && {
+              headerText: data.extraData.headerText || '',
+              faceColors: {},
+              faceTexts: { front: '', back: '', left: '', right: '' },
+            }),
+            merfolkData: {
+              nodeId: data.nodeId,
+              ...(data.extraData.merfolkData || {}),
+            },
+          };
+
+          // Collect for bulk Cloud Function save
+          allObjectsToSave.push(objectForSave);
+
+          // Update node mapping
+          nodeToObjectIdMap.set(data.nodeId, objectId);
+          objectsCreated++;
+        } catch (err) {
+          console.error(
+            `Failed to create object for node ${data.nodeId}:`,
+            err
+          );
         }
       }
-
-      // Continue to next batch immediately for faster rendering
-      if (i + OBJECT_BATCH_SIZE < nodeEntries.length) {
-        console.log('🚀 Processing next object batch...');
-      }
     }
-
-    console.log(
-      `🎉 Object creation completed: ${objectsCreated} objects created`
-    );
 
     return objectsCreated;
   }
@@ -1381,6 +1512,11 @@ export class MarkdownDiagramService {
             fontSize: 4,
             color: 'black',
           },
+          // Calculate cellId for Cloud Function bulk import
+          cellId: (() => {
+            const coords = getCellCoordinates(sourceWorldPosition);
+            return getCellId(coords.x, coords.y, coords.z);
+          })(),
           // Mark as created from Merfolk for debugging
           merfolkData: {
             sourceNode: sourceNodeId,
@@ -1395,141 +1531,309 @@ export class MarkdownDiagramService {
   }
 
   /**
-   * Save all connections to the connection store using Firebase batches
+   * Save all connections using Cloud Function for bulk import
+   * This bypasses client-side Firebase SDK limitations (WebChannel crashes)
    * @param {Array} allConnectionsToSave - Array of connection data to save
    * @param {string} currentSpaceId - Current space ID
    * @param {Object} user - User object for authentication
+   * @param {Array} allObjectsToSave - Array of object data to save (optional)
+   * @returns {Promise} Promise that resolves when bulk import completes
    */
-  async saveConnections(allConnectionsToSave, currentSpaceId, user) {
-    if (allConnectionsToSave.length === 0) return;
+  async saveConnections(
+    allConnectionsToSave,
+    currentSpaceId,
+    user,
+    allObjectsToSave = []
+  ) {
+    if (allConnectionsToSave.length === 0 && allObjectsToSave.length === 0)
+      return Promise.resolve();
 
     const connectionStore = useConnectionStore.getState();
 
-    console.log(
-      `🔄 Starting batch save of ${allConnectionsToSave.length} connections...`
-    );
-
-    // First, add all connections to the store in a single batch update to prevent re-render loops
+    // Add connections to store for immediate rendering
+    // Pathfinding is disabled for Merfolk connections to prevent delays
     try {
       connectionStore.bulkAddConnections(allConnectionsToSave);
-      console.log('✅ All connections added to store in single batch');
     } catch (error) {
       console.error('Failed to bulk add connections to store:', error);
     }
 
     // If no user or space, we're done (local-only mode)
     if (!user || !currentSpaceId) {
-      console.log('✅ Connections added to local store (no Firebase save)');
-      return;
+      return Promise.resolve();
     }
 
-    // Save to Firebase in batches with rate limiting
-    const BATCH_SIZE = 50; // Process 50 connections per batch
+    // Call Cloud Function for server-side bulk import
+    return this._cloudFunctionBulkImport(
+      allConnectionsToSave,
+      currentSpaceId,
+      user,
+      allObjectsToSave
+    );
+  }
+
+  /**
+   * Call Cloud Function to perform bulk import server-side
+   * Uses Firebase Admin SDK to bypass client-side WebChannel limitations
+   * @private
+   */
+  async _cloudFunctionBulkImport(
+    allConnectionsToSave,
+    currentSpaceId,
+    user,
+    allObjectsToSave = []
+  ) {
+    const startTime = performance.now();
+
+    try {
+      // Get user's ID token for authentication
+      const idToken = await auth.currentUser.getIdToken();
+
+      // Prepare connections data - serialize complex objects to avoid Cloud Function errors
+      const connections = allConnectionsToSave.map((conn) => ({
+        id: conn.id,
+        start: conn.start || {
+          objectId: conn.from?.objectId || conn.from?.id,
+          type: conn.from?.type,
+          face: conn.from?.face,
+          position: conn.from?.position,
+        },
+        end: conn.end || {
+          objectId: conn.to?.objectId || conn.to?.id,
+          type: conn.to?.type,
+          face: conn.to?.face,
+          position: conn.to?.position,
+        },
+        type: conn.type || 'line',
+        color: conn.color || '#000000',
+        createdAt: conn.createdAt || Date.now(),
+        cellId: conn.cellId,
+        ...(conn.text && { text: conn.text }),
+        ...(conn.thickness && { thickness: conn.thickness }),
+        ...(conn.textStyle && { textStyle: conn.textStyle }),
+        ...(conn.curvedPath && {
+          curvedPath: conn.curvedPath.map((p) =>
+            Array.isArray(p) ? [...p] : p
+          ),
+        }),
+        ...(conn.merfolkData && { merfolkData: conn.merfolkData }),
+      }));
+
+      // Prepare objects data for Cloud Function
+      const objects = allObjectsToSave.map((obj) => ({
+        id: obj.id,
+        position: obj.position,
+        size: obj.size,
+        type: obj.type,
+        color: obj.color,
+        content: obj.content || '',
+        createdAt: obj.createdAt || Date.now(),
+        cellId: obj.cellId,
+        ...(obj.rotation && { rotation: obj.rotation }),
+        ...(obj.textStyle && { textStyle: obj.textStyle }),
+        ...(obj.headerText !== undefined && { headerText: obj.headerText }),
+        ...(obj.headerStyle && { headerStyle: obj.headerStyle }),
+        ...(obj.faceColors && { faceColors: obj.faceColors }),
+        ...(obj.faceTexts && { faceTexts: obj.faceTexts }),
+        ...(obj.faceTextStyles && { faceTextStyles: obj.faceTextStyles }),
+        ...(obj.lineColor && { lineColor: obj.lineColor }),
+        ...(obj.borderStyle && { borderStyle: obj.borderStyle }),
+        ...(obj.borderColor && { borderColor: obj.borderColor }),
+        ...(obj.lineThickness && { lineThickness: obj.lineThickness }),
+        ...(obj.merfolkData && { merfolkData: obj.merfolkData }),
+      }));
+
+      // Use production Cloud Function (always - emulator not needed for this)
+      const functionUrl = 'https://bulkimport-qtk2xsi74a-uc.a.run.app';
+
+      // Call Cloud Function
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          idToken,
+          userId: user.uid,
+          spaceId: currentSpaceId,
+          objects,
+          connections,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          `Cloud Function error: ${errorData.error || response.statusText}`
+        );
+      }
+
+      const result = await response.json();
+      const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+
+      return result;
+    } catch (error) {
+      console.error('❌ [CloudFunction] Bulk import failed:', error);
+
+      // Fall back to client-side save if Cloud Function fails
+
+      return this._backgroundSaveConnections(
+        allConnectionsToSave,
+        currentSpaceId,
+        user
+      );
+    }
+  }
+
+  /**
+   * Background process for saving connections to Firebase (FALLBACK ONLY)
+   * This is now only used if the Cloud Function fails
+   * Runs asynchronously without blocking the main thread
+   * @private
+   */
+  async _backgroundSaveConnections(allConnectionsToSave, currentSpaceId, user) {
+    const BATCH_SIZE = 50; // Back to 50 - the issue is not batch size
     let savedCount = 0;
     let batchCount = 0;
+    const startTime = performance.now();
 
-    for (let i = 0; i < allConnectionsToSave.length; i += BATCH_SIZE) {
-      const batch = allConnectionsToSave.slice(i, i + BATCH_SIZE);
-      batchCount++;
+    try {
+      // PAUSE listeners before bulk save to prevent feedback loops
 
-      console.log(
-        `📦 Processing batch ${batchCount} (${batch.length} connections)...`
-      );
+      await pauseConnectionListeners();
 
+      // CRITICAL: Give Firebase 3 seconds to settle after pausing listeners
+      // The WebChannel streams need time to close and clear their queues
+
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      // CRITICAL: Limit concurrent batches to avoid overwhelming Firebase
+      // Firebase has concurrency limits - too many concurrent writes cause 400 errors
+      // Start with 1 concurrent batch to let Firebase warm up, then increase
+      const MAX_CONCURRENT_BATCHES = 1; // Process 1 batch at a time initially
+      const totalBatches = Math.ceil(allConnectionsToSave.length / BATCH_SIZE);
+      let savedCount = 0;
+
+      // Process batches in controlled groups with throttling (like objects do)
+      for (
+        let batchGroup = 0;
+        batchGroup < totalBatches;
+        batchGroup += MAX_CONCURRENT_BATCHES
+      ) {
+        const groupPromises = [];
+
+        // Add delay between batch groups to prevent Firebase WebChannel overload
+        // No warm-up needed since we already waited 3 seconds before starting
+        if (batchGroup > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+
+        for (
+          let batchOffset = 0;
+          batchOffset < MAX_CONCURRENT_BATCHES;
+          batchOffset++
+        ) {
+          const batchIndex = batchGroup + batchOffset;
+          if (batchIndex >= totalBatches) break;
+
+          const i = batchIndex * BATCH_SIZE;
+          const batch = allConnectionsToSave.slice(
+            i,
+            Math.min(i + BATCH_SIZE, allConnectionsToSave.length)
+          );
+          const currentBatchNumber = batchIndex + 1;
+
+          // Create a promise for this batch
+          const batchPromise = (async () => {
+            const batchStart = performance.now();
+
+            try {
+              // Group connections by cell for bulk operations
+              const connectionsByCell = new Map();
+
+              for (const connectionData of batch) {
+                const startPosition = connectionData.start?.position;
+                const endPosition = connectionData.end?.position;
+
+                if (!startPosition || !endPosition) {
+                  continue;
+                }
+
+                const startCellCoords = getCellCoordinates(startPosition);
+                const startCellId = getCellId(
+                  startCellCoords.x,
+                  startCellCoords.y,
+                  startCellCoords.z
+                );
+
+                if (!connectionsByCell.has(startCellId)) {
+                  connectionsByCell.set(startCellId, []);
+                }
+                connectionsByCell.get(startCellId).push(connectionData);
+              }
+
+              // Process cells SEQUENTIALLY within each batch to avoid Firebase overload
+              // Each cell write creates a Firebase write stream, and too many concurrent streams
+              // cause Firebase to throttle and return 400 errors
+              let batchSavedCount = 0;
+              const cellEntries = Array.from(connectionsByCell.entries());
+
+              for (let cellIdx = 0; cellIdx < cellEntries.length; cellIdx++) {
+                const [cellId, connections] = cellEntries[cellIdx];
+                try {
+                  const success = await bulkSaveConnectionsToCell(
+                    user.uid,
+                    currentSpaceId,
+                    cellId,
+                    connections,
+                    false // Let each cell write check/create its own cell sequentially
+                  );
+                  if (success) {
+                    batchSavedCount += connections.length;
+                  }
+                } catch (error) {
+                  console.error(
+                    `✗ Cell ${cellId} in batch ${currentBatchNumber} failed:`,
+                    error
+                  );
+                }
+              }
+
+              const batchDuration = (
+                (performance.now() - batchStart) /
+                1000
+              ).toFixed(2);
+
+              return batchSavedCount;
+            } catch (error) {
+              console.error(`❌ Batch ${currentBatchNumber} failed:`, error);
+              return 0;
+            }
+          })();
+
+          groupPromises.push(batchPromise);
+        }
+
+        // Wait for this group of batches to complete before starting next group
+        const groupResults = await Promise.all(groupPromises);
+        const groupSaved = groupResults.reduce((sum, count) => sum + count, 0);
+        savedCount += groupSaved;
+      }
+
+      const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+
+      // RESUME listeners after bulk save completes
+      await resumeConnectionListeners();
+    } catch (error) {
+      console.error('❌ Background save process failed:', error);
+
+      // Make sure to resume listeners even if save failed
       try {
-        // Import spatial partitioning for bulk operations
-        const { bulkSaveConnectionsToCell, getCellCoordinates, getCellId } =
-          await import('./spatialPartitioning');
-
-        let batchSavedCount = 0;
-
-        // Group connections by cell for bulk operations
-        const connectionsByCell = new Map();
-
-        for (const connectionData of batch) {
-          const startPosition = connectionData.start?.position;
-          const endPosition = connectionData.end?.position;
-
-          if (!startPosition || !endPosition) {
-            console.warn(
-              '⚠️ Skipping connection due to missing positions:',
-              connectionData.id
-            );
-            continue;
-          }
-
-          // Get cell coordinates for both endpoints
-          const startCellCoords = getCellCoordinates(startPosition);
-          const endCellCoords = getCellCoordinates(endPosition);
-
-          const startCellId = getCellId(
-            startCellCoords.x,
-            startCellCoords.y,
-            startCellCoords.z
-          );
-          const endCellId = getCellId(
-            endCellCoords.x,
-            endCellCoords.y,
-            endCellCoords.z
-          );
-
-          // Add to start cell
-          if (!connectionsByCell.has(startCellId)) {
-            connectionsByCell.set(startCellId, []);
-          }
-          connectionsByCell.get(startCellId).push(connectionData);
-
-          // Add to end cell if different
-          if (startCellId !== endCellId) {
-            if (!connectionsByCell.has(endCellId)) {
-              connectionsByCell.set(endCellId, []);
-            }
-            connectionsByCell.get(endCellId).push(connectionData);
-          }
-        }
-
-        // Bulk save to each cell
-        console.log(`📍 Found ${connectionsByCell.size} cells to save to`);
-        for (const [cellId, connections] of connectionsByCell) {
-          try {
-            console.log(
-              `💾 Saving ${connections.length} connections to cell ${cellId}`
-            );
-            const success = await bulkSaveConnectionsToCell(
-              user.uid,
-              currentSpaceId,
-              cellId,
-              connections
-            );
-            console.log(`💾 Cell ${cellId} save result:`, success);
-            if (success) {
-              batchSavedCount += connections.length;
-            }
-
-            // No delay needed - batched writes are atomic and efficient
-          } catch (error) {
-            console.error(`Failed to bulk save to cell ${cellId}:`, error);
-          }
-        }
-
-        savedCount += batchSavedCount;
-
-        console.log(
-          `✅ Batch ${batchCount} completed: ${batchSavedCount}/${batch.length} saved`
-        );
-
-        // Minimal delay between batches - just enough to avoid rate limits
-        if (i + BATCH_SIZE < allConnectionsToSave.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      } catch (error) {
-        console.error(`❌ Batch ${batchCount} failed:`, error);
+        await resumeConnectionListeners();
+      } catch (resumeError) {
+        console.error('❌ Failed to resume listeners:', resumeError);
       }
     }
-
-    console.log(
-      `🎉 Batch save completed: ${savedCount}/${allConnectionsToSave.length} connections saved to Firebase`
-    );
   }
 
   /**
@@ -1584,6 +1888,7 @@ export class MarkdownDiagramService {
     let totalObjectsCreated = 0;
     const nodeToObjectIdMap = new Map();
     const allConnectionsToSave = [];
+    const allObjectsToSave = [];
 
     // Process each diagram
     for (let diagramIndex = 0; diagramIndex < diagrams.length; diagramIndex++) {
@@ -1594,14 +1899,15 @@ export class MarkdownDiagramService {
         continue;
       }
 
-      // Create objects from diagram
+      // Create objects from diagram (collects data, doesn't save yet)
       const objectsCreated = await this.createObjectsFromDiagram(
         diagram,
         onCreateObject,
         nodeToObjectIdMap,
         basePosition,
         user,
-        currentSpaceId
+        currentSpaceId,
+        allObjectsToSave
       );
 
       totalObjectsCreated += objectsCreated;
@@ -1614,23 +1920,29 @@ export class MarkdownDiagramService {
       );
     }
 
-    // Objects created for immediate rendering, proceed with connection processing
-    if (allConnectionsToSave.length > 0) {
-      console.log('🔗 Processing connections for immediate rendering...');
-    }
+    // Objects and connections added to local store for immediate rendering
 
-    // Save all connections
-    await this.saveConnections(allConnectionsToSave, currentSpaceId, user);
+    // Save all objects and connections via Cloud Function - returns a promise for tracking completion
+    // UI remains responsive, objects/connections render immediately from local store
+    const savePromise = this.saveConnections(
+      allConnectionsToSave,
+      currentSpaceId,
+      user,
+      allObjectsToSave
+    );
 
     const validDiagrams = diagrams.filter(
       (d) => !d.errors || d.errors.length === 0
     );
 
+    // Return results with save tracking promise
     return {
       diagramCount: validDiagrams.length,
       objectsCreated: totalObjectsCreated,
       connectionsCreated: allConnectionsToSave.length,
       success: totalObjectsCreated > 0,
+      // Include the save promise so callers can track when database save completes
+      savePromise: savePromise,
     };
   }
 }

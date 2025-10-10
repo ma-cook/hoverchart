@@ -163,6 +163,13 @@ const UIOverlay = ({
         );
 
         if (result.success) {
+          // Objects and connections are rendered immediately
+          // But wait for database save to complete before showing completion message
+          if (result.savePromise) {
+            console.log('⏳ Waiting for database save to complete...');
+            await result.savePromise;
+          }
+
           alert(
             `Successfully processed ${result.diagramCount} diagram(s) and created ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections!`
           );

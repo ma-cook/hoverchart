@@ -304,6 +304,214 @@ createConnectionsFromDiagram[Function: createConnectionsFromDiagram]
 saveConnections[Function: saveConnections]
 processMarkdownFile[Function: processMarkdownFile]
 
+%% Component Functions - Cube
+cubePosition[Function: cubePosition]
+cubeScale[Function: cubeScale]
+cubeColor[Function: cubeColor]
+cubeFaceColors[Function: cubeFaceColors]
+cubeFaceTexts[Function: cubeFaceTexts]
+cubeHeaderText[Function: cubeHeaderText]
+cubeTextStyle[Function: cubeTextStyle]
+cubeFaceTextStyles[Function: cubeFaceTextStyles]
+cubeIsIndicatorConnected[Function: cubeIsIndicatorConnected]
+cubeIsIndicatorActive[Function: cubeIsIndicatorActive]
+cubeGetUIPositions[Function: cubeGetUIPositions]
+cubeShouldShowIndicator[Function: cubeShouldShowIndicator]
+cubeGetFaceTextOffset[Function: cubeGetFaceTextOffset]
+cubeGetFaceMaterial[Function: cubeGetFaceMaterial]
+cubeHandleSceneClick[Function: cubeHandleSceneClick]
+cubeUpdateDatabase[Function: cubeUpdateDatabase]
+cubeOnClickOutside[Function: cubeOnClickOutside]
+cubeHandleFaceClick[Function: cubeHandleFaceClick]
+cubeHandleColoredFaceClick[Function: cubeHandleColoredFaceClick]
+cubeHandleIndicatorClick[Function: cubeHandleIndicatorClick]
+cubeHandleTransformToggle[Function: cubeHandleTransformToggle]
+cubeHandleResizeToggle[Function: cubeHandleResizeToggle]
+cubeHandleHeaderToggle[Function: cubeHandleHeaderToggle]
+cubeHandleHeaderSubmit[Function: cubeHandleHeaderSubmit]
+cubeDebouncedUpdate[Function: cubeDebouncedUpdate]
+cubeHandleLineColorChange[Function: cubeHandleLineColorChange]
+cubeHandleFaceColorChange[Function: cubeHandleFaceColorChange]
+cubeHandleTextClick[Function: cubeHandleTextClick]
+cubeHandleFaceTextClick[Function: cubeHandleFaceTextClick]
+cubeHandleFaceTextSubmit[Function: cubeHandleFaceTextSubmit]
+cubeHandleFaceTextStyleClick[Function: cubeHandleFaceTextStyleClick]
+cubeHandleStyleChange[Function: cubeHandleStyleChange]
+cubeHandleScale[Function: cubeHandleScale]
+cubeRenderFaces[Function: cubeRenderFaces]
+cubeRenderFaceTexts[Function: cubeRenderFaceTexts]
+cubeHandleDrag[Function: cubeHandleDrag]
+
+%% Component Functions - Tetrahedron
+tetrahedronTriangleFaces[Function: tetrahedronTriangleFaces]
+tetrahedronDebouncedUpdate[Function: tetrahedronDebouncedUpdate]
+tetrahedronIsIndicatorConnected[Function: tetrahedronIsIndicatorConnected]
+tetrahedronIsIndicatorActive[Function: tetrahedronIsIndicatorActive]
+tetrahedronGetUIPositions[Function: tetrahedronGetUIPositions]
+tetrahedronShouldShowIndicator[Function: tetrahedronShouldShowIndicator]
+tetrahedronLinePoints[Function: tetrahedronLinePoints]
+tetrahedronGetFaceMaterial[Function: tetrahedronGetFaceMaterial]
+tetrahedronHandleSceneClick[Function: tetrahedronHandleSceneClick]
+tetrahedronUpdateDatabase[Function: tetrahedronUpdateDatabase]
+tetrahedronHandleFaceClick[Function: tetrahedronHandleFaceClick]
+tetrahedronHandleColoredFaceClick[Function: tetrahedronHandleColoredFaceClick]
+tetrahedronHandleIndicatorClick[Function: tetrahedronHandleIndicatorClick]
+tetrahedronHandleTransformToggle[Function: tetrahedronHandleTransformToggle]
+tetrahedronHandleResizeToggle[Function: tetrahedronHandleResizeToggle]
+tetrahedronHandleHeaderToggle[Function: tetrahedronHandleHeaderToggle]
+tetrahedronHandleHeaderSubmit[Function: tetrahedronHandleHeaderSubmit]
+tetrahedronHandleLineColorChange[Function: tetrahedronHandleLineColorChange]
+tetrahedronHandleScale[Function: tetrahedronHandleScale]
+tetrahedronGetFaceTextOffset[Function: tetrahedronGetFaceTextOffset]
+tetrahedronHandleFaceTextStyleClick[Function: tetrahedronHandleFaceTextStyleClick]
+tetrahedronHandleFaceTextStyleChange[Function: tetrahedronHandleFaceTextStyleChange]
+tetrahedronRenderFaceTexts[Function: tetrahedronRenderFaceTexts]
+tetrahedronRenderFaces[Function: tetrahedronRenderFaces]
+tetrahedronGetFaceIndicatorProps[Function: tetrahedronGetFaceIndicatorProps]
+tetrahedronCreateTriangleGeometry[Function: tetrahedronCreateTriangleGeometry]
+tetrahedronHandleDrag[Function: tetrahedronHandleDrag]
+
+%% Component Functions - TextObject
+textObjectText[Function: textObjectText]
+textObjectTextStyle[Function: textObjectTextStyle]
+textObjectScale[Function: textObjectScale]
+textObjectSetOrbitControlsEnabled[Function: textObjectSetOrbitControlsEnabled]
+textObjectSetText[Function: textObjectSetText]
+textObjectSetTextStyle[Function: textObjectSetTextStyle]
+textObjectSetScale[Function: textObjectSetScale]
+textObjectSetIsEditing[Function: textObjectSetIsEditing]
+textObjectSetIsActivelyEditing[Function: textObjectSetIsActivelyEditing]
+textObjectSetIndicatorSelected[Function: textObjectSetIndicatorSelected]
+textObjectSetContentHeight[Function: textObjectSetContentHeight]
+textObjectSetShowTransform[Function: textObjectSetShowTransform]
+textObjectSetShowResizeControls[Function: textObjectSetShowResizeControls]
+textObjectSetBulletPointMode[Function: textObjectSetBulletPointMode]
+textObjectHandleTransformToggle[Function: textObjectHandleTransformToggle]
+textObjectHandleResizeToggle[Function: textObjectHandleResizeToggle]
+textObjectGetIndicatorOffset[Function: textObjectGetIndicatorOffset]
+textObjectIsIndicatorConnected[Function: textObjectIsIndicatorConnected]
+textObjectShouldShowIndicator[Function: textObjectShouldShowIndicator]
+textObjectGetIndicatorPositions[Function: textObjectGetIndicatorPositions]
+textObjectUpdateWorldMatrix[Function: textObjectUpdateWorldMatrix]
+textObjectCloseAllUIs[Function: textObjectCloseAllUIs]
+textObjectUpdateDatabase[Function: textObjectUpdateDatabase]
+textObjectAutoResizeTextAreaOnly[Function: textObjectAutoResizeTextAreaOnly]
+textObjectAutoResizeTextArea[Function: textObjectAutoResizeTextArea]
+textObjectHandleDrag[Function: textObjectHandleDrag]
+textObjectHandleStyleChange[Function: textObjectHandleStyleChange]
+textObjectGetEffectivePosition[Function: textObjectGetEffectivePosition]
+textObjectHandleBlur[Function: textObjectHandleBlur]
+textObjectHandleDivClick[Function: textObjectHandleDivClick]
+textObjectHandleTextClick[Function: textObjectHandleTextClick]
+textObjectHandleIndicatorClick[Function: textObjectHandleIndicatorClick]
+textObjectHandleScale[Function: textObjectHandleScale]
+textObjectHandleKeyDown[Function: textObjectHandleKeyDown]
+textObjectApplyStyleToSelectionInternal[Function: textObjectApplyStyleToSelectionInternal]
+textObjectHandleTextSelection[Function: textObjectHandleTextSelection]
+textObjectGetTextAreaStyle[Function: textObjectGetTextAreaStyle]
+textObjectGetContainerStyle[Function: textObjectGetContainerStyle]
+textObjectGetTransformControlSize[Function: textObjectGetTransformControlSize]
+
+%% Component Functions - Plane
+planePosition[Function: planePosition]
+planeScale[Function: planeScale]
+planeColor[Function: planeColor]
+planeHeaderText[Function: planeHeaderText]
+planeBorderStyle[Function: planeBorderStyle]
+planeBorderColor[Function: planeBorderColor]
+planeLineThickness[Function: planeLineThickness]
+planeHeaderStyle[Function: planeHeaderStyle]
+planeFaceText[Function: planeFaceText]
+planeFaceTextStyle[Function: planeFaceTextStyle]
+planeImageUrl[Function: planeImageUrl]
+planeWebcamActive[Function: planeWebcamActive]
+planeWebcamInitialized[Function: planeWebcamInitialized]
+planeScreenShareActive[Function: planeScreenShareActive]
+planeScreenShareInitialized[Function: planeScreenShareInitialized]
+planeIsBroadcasting[Function: planeIsBroadcasting]
+planeIsScreenSharing[Function: planeIsScreenSharing]
+planeIsViewingBroadcast[Function: planeIsViewingBroadcast]
+planeBroadcastInfo[Function: planeBroadcastInfo]
+planeShowUI[Function: planeShowUI]
+planeShowTextInput[Function: planeShowTextInput]
+planeShowTextStyleUI[Function: planeShowTextStyleUI]
+planeShowTransform[Function: planeShowTransform]
+planeIsResizing[Function: planeIsResizing]
+planeShowHeader[Function: planeShowHeader]
+planeShowHeaderStyleUI[Function: planeShowHeaderStyleUI]
+planeIsUploadingImage[Function: planeIsUploadingImage]
+planeIndicatorSelected[Function: planeIndicatorSelected]
+planeViewerCount[Function: planeViewerCount]
+planeCloseAllUIs[Function: planeCloseAllUIs]
+planeUpdateDatabase[Function: planeUpdateDatabase]
+planeHandleScale[Function: planeHandleScale]
+planeHandleResizeEnd[Function: planeHandleResizeEnd]
+planeHandleDrag[Function: planeHandleDrag]
+planeHandleTransformStart[Function: planeHandleTransformStart]
+planeHandleTransformEnd[Function: planeHandleTransformEnd]
+planeHandleClick[Function: planeHandleClick]
+planeHandleTextClick[Function: planeHandleTextClick]
+planeHandleTextSubmit[Function: planeHandleTextSubmit]
+planeHandleTextStyleChange[Function: planeHandleTextStyleChange]
+planeHandleTextSpriteClick[Function: planeHandleTextSpriteClick]
+planeHandleTransformToggle[Function: planeHandleTransformToggle]
+planeHandleResizeToggle[Function: planeHandleResizeToggle]
+planeHandleColorChange[Function: planeHandleColorChange]
+planeHandleHeaderToggle[Function: planeHandleHeaderToggle]
+planeHandleHeaderSubmit[Function: planeHandleHeaderSubmit]
+planeHandleHeaderTextClick[Function: planeHandleHeaderTextClick]
+planeHandleHeaderStyleChange[Function: planeHandleHeaderStyleChange]
+planeHandleBorderToggle[Function: planeHandleBorderToggle]
+planeHandleIndicatorClick[Function: planeHandleIndicatorClick]
+planeIsIndicatorConnected[Function: planeIsIndicatorConnected]
+planeShouldShowIndicator[Function: planeShouldShowIndicator]
+planeHandleBroadcastStopped[Function: planeHandleBroadcastStopped]
+planeHandleWebcamToggle[Function: planeHandleWebcamToggle]
+planeHandleScreenShareToggle[Function: planeHandleScreenShareToggle]
+planeHandleImageUpload[Function: planeHandleImageUpload]
+planeHandleBroadcastStarted[Function: planeHandleBroadcastStarted]
+planeHandleViewerCountChange[Function: planeHandleViewerCountChange]
+planeUiPositions[Function: planeUiPositions]
+planeIndicatorPosition[Function: planeIndicatorPosition]
+planeMeshMaterial[Function: planeMeshMaterial]
+planeLineMaterialProps[Function: planeLineMaterialProps]
+planePoints[Function: planePoints]
+
+%% Component Functions - Dodecahedron
+dodecahedronPosition[Function: dodecahedronPosition]
+dodecahedronScale[Function: dodecahedronScale]
+dodecahedronHeaderText[Function: dodecahedronHeaderText]
+dodecahedronLineColor[Function: dodecahedronLineColor]
+dodecahedronFaceColors[Function: dodecahedronFaceColors]
+dodecahedronFaceTexts[Function: dodecahedronFaceTexts]
+dodecahedronFaceTextStyles[Function: dodecahedronFaceTextStyles]
+dodecahedronHeaderStyle[Function: dodecahedronHeaderStyle]
+dodecahedronUpdateObjectAndStores[Function: dodecahedronUpdateObjectAndStores]
+dodecahedronUpdateFaceProperty[Function: dodecahedronUpdateFaceProperty]
+dodecahedronIsIndicatorConnected[Function: dodecahedronIsIndicatorConnected]
+dodecahedronOnClickOutside[Function: dodecahedronOnClickOutside]
+dodecahedronUpdateDatabase[Function: dodecahedronUpdateDatabase]
+dodecahedronHandleDrag[Function: dodecahedronHandleDrag]
+dodecahedronPhi[Function: dodecahedronPhi]
+dodecahedronHandleTransformToggle[Function: dodecahedronHandleTransformToggle]
+dodecahedronHandleHeaderToggle[Function: dodecahedronHandleHeaderToggle]
+dodecahedronHandleHeaderSubmit[Function: dodecahedronHandleHeaderSubmit]
+dodecahedronHandleResizeToggle[Function: dodecahedronHandleResizeToggle]
+dodecahedronHandleScale[Function: dodecahedronHandleScale]
+dodecahedronHandleFaceClick[Function: dodecahedronHandleFaceClick]
+dodecahedronHandleIndicatorClick[Function: dodecahedronHandleIndicatorClick]
+dodecahedronHandleHeaderClick[Function: dodecahedronHandleHeaderClick]
+dodecahedronHandleStyleChange[Function: dodecahedronHandleStyleChange]
+dodecahedronHandleLineColorChange[Function: dodecahedronHandleLineColorChange]
+dodecahedronHandleBackgroundClick[Function: dodecahedronHandleBackgroundClick]
+dodecahedronHandleFaceTextSubmit[Function: dodecahedronHandleFaceTextSubmit]
+dodecahedronHandleFaceTextButtonClick[Function: dodecahedronHandleFaceTextButtonClick]
+dodecahedronHandleFaceTextClick[Function: dodecahedronHandleFaceTextClick]
+dodecahedronHandleFaceTextStyleChange[Function: dodecahedronHandleFaceTextStyleChange]
+dodecahedronGetUIPosition[Function: dodecahedronGetUIPosition]
+dodecahedronGetHeaderPosition[Function: dodecahedronGetHeaderPosition]
+dodecahedronGetFaceUIPosition[Function: dodecahedronGetFaceUIPosition]
+
 ConnectionsRenderer --> connectionUtils : "uses"
 FaceIndicator --> faceIndicatorUtils : "uses"
 Cube --> facePositionUtils : "uses"
@@ -312,6 +520,210 @@ ConnectionsRenderer --> pathfindingUtils : "uses"
 Cube --> snappingUtils : "uses"
 App --> objectUpdateHandlers : "uses"
 Cube --> cubeHelpers : "uses"
+
+%% Component function relationships
+Cube --> cubePosition : "uses"
+Cube --> cubeScale : "uses"
+Cube --> cubeColor : "uses"
+Cube --> cubeFaceColors : "uses"
+Cube --> cubeFaceTexts : "uses"
+Cube --> cubeHeaderText : "uses"
+Cube --> cubeTextStyle : "uses"
+Cube --> cubeFaceTextStyles : "uses"
+Cube --> cubeIsIndicatorConnected : "uses"
+Cube --> cubeIsIndicatorActive : "uses"
+Cube --> cubeGetUIPositions : "uses"
+Cube --> cubeShouldShowIndicator : "uses"
+Cube --> cubeGetFaceTextOffset : "uses"
+Cube --> cubeGetFaceMaterial : "uses"
+Cube --> cubeHandleSceneClick : "uses"
+Cube --> cubeUpdateDatabase : "uses"
+Cube --> cubeOnClickOutside : "uses"
+Cube --> cubeHandleFaceClick : "uses"
+Cube --> cubeHandleColoredFaceClick : "uses"
+Cube --> cubeHandleIndicatorClick : "uses"
+Cube --> cubeHandleTransformToggle : "uses"
+Cube --> cubeHandleResizeToggle : "uses"
+Cube --> cubeHandleHeaderToggle : "uses"
+Cube --> cubeHandleHeaderSubmit : "uses"
+Cube --> cubeDebouncedUpdate : "uses"
+Cube --> cubeHandleLineColorChange : "uses"
+Cube --> cubeHandleFaceColorChange : "uses"
+Cube --> cubeHandleTextClick : "uses"
+Cube --> cubeHandleFaceTextClick : "uses"
+Cube --> cubeHandleFaceTextSubmit : "uses"
+Cube --> cubeHandleFaceTextStyleClick : "uses"
+Cube --> cubeHandleStyleChange : "uses"
+Cube --> cubeHandleScale : "uses"
+Cube --> cubeRenderFaces : "uses"
+Cube --> cubeRenderFaceTexts : "uses"
+Cube --> cubeHandleDrag : "uses"
+
+Tetrahedron --> tetrahedronTriangleFaces : "uses"
+Tetrahedron --> tetrahedronDebouncedUpdate : "uses"
+Tetrahedron --> tetrahedronIsIndicatorConnected : "uses"
+Tetrahedron --> tetrahedronIsIndicatorActive : "uses"
+Tetrahedron --> tetrahedronGetUIPositions : "uses"
+Tetrahedron --> tetrahedronShouldShowIndicator : "uses"
+Tetrahedron --> tetrahedronLinePoints : "uses"
+Tetrahedron --> tetrahedronGetFaceMaterial : "uses"
+Tetrahedron --> tetrahedronHandleSceneClick : "uses"
+Tetrahedron --> tetrahedronUpdateDatabase : "uses"
+Tetrahedron --> tetrahedronHandleFaceClick : "uses"
+Tetrahedron --> tetrahedronHandleColoredFaceClick : "uses"
+Tetrahedron --> tetrahedronHandleIndicatorClick : "uses"
+Tetrahedron --> tetrahedronHandleTransformToggle : "uses"
+Tetrahedron --> tetrahedronHandleResizeToggle : "uses"
+Tetrahedron --> tetrahedronHandleHeaderToggle : "uses"
+Tetrahedron --> tetrahedronHandleHeaderSubmit : "uses"
+Tetrahedron --> tetrahedronHandleLineColorChange : "uses"
+Tetrahedron --> tetrahedronHandleScale : "uses"
+Tetrahedron --> tetrahedronGetFaceTextOffset : "uses"
+Tetrahedron --> tetrahedronHandleFaceTextStyleClick : "uses"
+Tetrahedron --> tetrahedronHandleFaceTextStyleChange : "uses"
+Tetrahedron --> tetrahedronRenderFaceTexts : "uses"
+Tetrahedron --> tetrahedronRenderFaces : "uses"
+Tetrahedron --> tetrahedronGetFaceIndicatorProps : "uses"
+Tetrahedron --> tetrahedronCreateTriangleGeometry : "uses"
+Tetrahedron --> tetrahedronHandleDrag : "uses"
+
+TextObject --> textObjectText : "uses"
+TextObject --> textObjectTextStyle : "uses"
+TextObject --> textObjectScale : "uses"
+TextObject --> textObjectSetOrbitControlsEnabled : "uses"
+TextObject --> textObjectSetText : "uses"
+TextObject --> textObjectSetTextStyle : "uses"
+TextObject --> textObjectSetScale : "uses"
+TextObject --> textObjectSetIsEditing : "uses"
+TextObject --> textObjectSetIsActivelyEditing : "uses"
+TextObject --> textObjectSetIndicatorSelected : "uses"
+TextObject --> textObjectSetContentHeight : "uses"
+TextObject --> textObjectSetShowTransform : "uses"
+TextObject --> textObjectSetShowResizeControls : "uses"
+TextObject --> textObjectSetBulletPointMode : "uses"
+TextObject --> textObjectHandleTransformToggle : "uses"
+TextObject --> textObjectHandleResizeToggle : "uses"
+TextObject --> textObjectGetIndicatorOffset : "uses"
+TextObject --> textObjectIsIndicatorConnected : "uses"
+TextObject --> textObjectShouldShowIndicator : "uses"
+TextObject --> textObjectGetIndicatorPositions : "uses"
+TextObject --> textObjectUpdateWorldMatrix : "uses"
+TextObject --> textObjectCloseAllUIs : "uses"
+TextObject --> textObjectUpdateDatabase : "uses"
+TextObject --> textObjectAutoResizeTextAreaOnly : "uses"
+TextObject --> textObjectAutoResizeTextArea : "uses"
+TextObject --> textObjectHandleDrag : "uses"
+TextObject --> textObjectHandleStyleChange : "uses"
+TextObject --> textObjectGetEffectivePosition : "uses"
+TextObject --> textObjectHandleBlur : "uses"
+TextObject --> textObjectHandleDivClick : "uses"
+TextObject --> textObjectHandleTextClick : "uses"
+TextObject --> textObjectHandleIndicatorClick : "uses"
+TextObject --> textObjectHandleScale : "uses"
+TextObject --> textObjectHandleKeyDown : "uses"
+TextObject --> textObjectApplyStyleToSelectionInternal : "uses"
+TextObject --> textObjectHandleTextSelection : "uses"
+TextObject --> textObjectGetTextAreaStyle : "uses"
+TextObject --> textObjectGetContainerStyle : "uses"
+TextObject --> textObjectGetTransformControlSize : "uses"
+
+Plane --> planePosition : "uses"
+Plane --> planeScale : "uses"
+Plane --> planeColor : "uses"
+Plane --> planeHeaderText : "uses"
+Plane --> planeBorderStyle : "uses"
+Plane --> planeBorderColor : "uses"
+Plane --> planeLineThickness : "uses"
+Plane --> planeHeaderStyle : "uses"
+Plane --> planeFaceText : "uses"
+Plane --> planeFaceTextStyle : "uses"
+Plane --> planeImageUrl : "uses"
+Plane --> planeWebcamActive : "uses"
+Plane --> planeWebcamInitialized : "uses"
+Plane --> planeScreenShareActive : "uses"
+Plane --> planeScreenShareInitialized : "uses"
+Plane --> planeIsBroadcasting : "uses"
+Plane --> planeIsScreenSharing : "uses"
+Plane --> planeIsViewingBroadcast : "uses"
+Plane --> planeBroadcastInfo : "uses"
+Plane --> planeShowUI : "uses"
+Plane --> planeShowTextInput : "uses"
+Plane --> planeShowTextStyleUI : "uses"
+Plane --> planeShowTransform : "uses"
+Plane --> planeIsResizing : "uses"
+Plane --> planeShowHeader : "uses"
+Plane --> planeShowHeaderStyleUI : "uses"
+Plane --> planeIsUploadingImage : "uses"
+Plane --> planeIndicatorSelected : "uses"
+Plane --> planeViewerCount : "uses"
+Plane --> planeCloseAllUIs : "uses"
+Plane --> planeUpdateDatabase : "uses"
+Plane --> planeHandleScale : "uses"
+Plane --> planeHandleResizeEnd : "uses"
+Plane --> planeHandleDrag : "uses"
+Plane --> planeHandleTransformStart : "uses"
+Plane --> planeHandleTransformEnd : "uses"
+Plane --> planeHandleClick : "uses"
+Plane --> planeHandleTextClick : "uses"
+Plane --> planeHandleTextSubmit : "uses"
+Plane --> planeHandleTextStyleChange : "uses"
+Plane --> planeHandleTextSpriteClick : "uses"
+Plane --> planeHandleTransformToggle : "uses"
+Plane --> planeHandleResizeToggle : "uses"
+Plane --> planeHandleColorChange : "uses"
+Plane --> planeHandleHeaderToggle : "uses"
+Plane --> planeHandleHeaderSubmit : "uses"
+Plane --> planeHandleHeaderTextClick : "uses"
+Plane --> planeHandleHeaderStyleChange : "uses"
+Plane --> planeHandleBorderToggle : "uses"
+Plane --> planeHandleIndicatorClick : "uses"
+Plane --> planeIsIndicatorConnected : "uses"
+Plane --> planeShouldShowIndicator : "uses"
+Plane --> planeHandleBroadcastStopped : "uses"
+Plane --> planeHandleWebcamToggle : "uses"
+Plane --> planeHandleScreenShareToggle : "uses"
+Plane --> planeHandleImageUpload : "uses"
+Plane --> planeHandleBroadcastStarted : "uses"
+Plane --> planeHandleViewerCountChange : "uses"
+Plane --> planeUiPositions : "uses"
+Plane --> planeIndicatorPosition : "uses"
+Plane --> planeMeshMaterial : "uses"
+Plane --> planeLineMaterialProps : "uses"
+Plane --> planePoints : "uses"
+
+Dodecahedron --> dodecahedronPosition : "uses"
+Dodecahedron --> dodecahedronScale : "uses"
+Dodecahedron --> dodecahedronHeaderText : "uses"
+Dodecahedron --> dodecahedronLineColor : "uses"
+Dodecahedron --> dodecahedronFaceColors : "uses"
+Dodecahedron --> dodecahedronFaceTexts : "uses"
+Dodecahedron --> dodecahedronFaceTextStyles : "uses"
+Dodecahedron --> dodecahedronHeaderStyle : "uses"
+Dodecahedron --> dodecahedronUpdateObjectAndStores : "uses"
+Dodecahedron --> dodecahedronUpdateFaceProperty : "uses"
+Dodecahedron --> dodecahedronIsIndicatorConnected : "uses"
+Dodecahedron --> dodecahedronOnClickOutside : "uses"
+Dodecahedron --> dodecahedronUpdateDatabase : "uses"
+Dodecahedron --> dodecahedronHandleDrag : "uses"
+Dodecahedron --> dodecahedronPhi : "uses"
+Dodecahedron --> dodecahedronHandleTransformToggle : "uses"
+Dodecahedron --> dodecahedronHandleHeaderToggle : "uses"
+Dodecahedron --> dodecahedronHandleHeaderSubmit : "uses"
+Dodecahedron --> dodecahedronHandleResizeToggle : "uses"
+Dodecahedron --> dodecahedronHandleScale : "uses"
+Dodecahedron --> dodecahedronHandleFaceClick : "uses"
+Dodecahedron --> dodecahedronHandleIndicatorClick : "uses"
+Dodecahedron --> dodecahedronHandleHeaderClick : "uses"
+Dodecahedron --> dodecahedronHandleStyleChange : "uses"
+Dodecahedron --> dodecahedronHandleLineColorChange : "uses"
+Dodecahedron --> dodecahedronHandleBackgroundClick : "uses"
+Dodecahedron --> dodecahedronHandleFaceTextSubmit : "uses"
+Dodecahedron --> dodecahedronHandleFaceTextButtonClick : "uses"
+Dodecahedron --> dodecahedronHandleFaceTextClick : "uses"
+Dodecahedron --> dodecahedronHandleFaceTextStyleChange : "uses"
+Dodecahedron --> dodecahedronGetUIPosition : "uses"
+Dodecahedron --> dodecahedronGetHeaderPosition : "uses"
+Dodecahedron --> dodecahedronGetFaceUIPosition : "uses"
 
 connectionUtils --> unifiedMathUtils : "math operations"
 positionUtils --> unifiedMathUtils : "math operations"

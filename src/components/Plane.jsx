@@ -25,6 +25,7 @@ import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicat
 // Import unified utilities
 import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
 import { resourceCleanupService } from '../services/resourceCleanupService';
+import { frameCounter } from '../utils/frameCounter';
 
 // Mobile detection constant
 const isMobile =
@@ -409,15 +410,14 @@ const Plane = ({
   ]);
   useFrame(() => {
     if (groupRef.current) {
-      // Only update lookAt if the camera has moved significantly or plane is selected
+      // PERFORMANCE FIX: Reduce frequency of lookAt updates (10fps throttle)
+      // Only update lookAt if selected OR if significant time has passed
       if (
         selected ||
-        !groupRef.current._lastCameraUpdate ||
-        Date.now() - groupRef.current._lastCameraUpdate > 16
+        frameCounter.shouldUpdate(groupRef.current._lastCameraUpdate, 100)
       ) {
-        // ~60fps throttle
         groupRef.current.lookAt(camera.position);
-        groupRef.current._lastCameraUpdate = Date.now();
+        groupRef.current._lastCameraUpdate = frameCounter.getTime();
       }
     }
   });

@@ -3,6 +3,7 @@ import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useTextObjectStore } from '../stores';
+import { frameCounter } from '../utils/frameCounter';
 
 // Add this helper function for position smoothing
 const lerpVector = (current, target, factor = 0.1) => {
@@ -263,177 +264,227 @@ const TextSprite = React.memo(
 
     useFrame(({ camera }) => {
       if (textRef.current) {
-        // Apply smoothed position updates
-        if (calculatedPosition && smoothedPositionRef.current) {
-          // Create target vector from calculated position
-          const targetPosition = Array.isArray(calculatedPosition)
-            ? new THREE.Vector3(
-                calculatedPosition[0],
-                calculatedPosition[1],
-                calculatedPosition[2]
-              )
-            : calculatedPosition;
+        // PERFORMANCE FIX: Throttle updates to reduce frame calculations (30fps)
+        if (frameCounter.shouldUpdate(textRef.current._lastUpdate, 32)) {
+          textRef.current._lastUpdate = frameCounter.getTime();
 
-          // Determine smoothing factor based on context
-          // Much faster updates for connection texts - this is the key fix!
-          // Check if this is a connection line text by looking at style
-          const isConnectionText =
-            pathPoints &&
-            pathPoints.length > 0 &&
-            (lineStyle === 'curved' ||
-              lineStyle === 'straight' ||
-              lineStyle === 'dotted' ||
-              lineStyle === 'dashed');
+          // Apply smoothed position updates
+          if (calculatedPosition && smoothedPositionRef.current) {
+            // Create target vector from calculated position
+            const targetPosition = Array.isArray(calculatedPosition)
+              ? new THREE.Vector3(
+                  calculatedPosition[0],
+                  calculatedPosition[1],
+                  calculatedPosition[2]
+                )
+              : calculatedPosition;
 
-          // Use much faster smoothing for connection texts
-          const smoothingFactor = isConnectionText
-            ? 0.5 // 50% update per frame for connection texts
-            : isDragging
-            ? 0.2 // 20% update per frame during drag
-            : 0.3; // 30% update per frame for normal texts
+            // Determine smoothing factor based on context
+            // Much faster updates for connection texts - this is the key fix!
+            // Check if this is a connection line text by looking at style
+            const isConnectionText =
+              pathPoints &&
+              pathPoints.length > 0 &&
+              (lineStyle === 'curved' ||
+                lineStyle === 'straight' ||
+                lineStyle === 'dotted' ||
+                lineStyle === 'dashed');
 
-          // Calculate smoothed position with lerp
-          smoothedPositionRef.current = lerpVector(
-            smoothedPositionRef.current,
-            targetPosition,
-            smoothingFactor
-          );
+            // Use much faster smoothing for connection texts
+            const smoothingFactor = isConnectionText
+              ? 0.5 // 50% update per frame for connection texts
+              : isDragging
+              ? 0.2 // 20% update per frame during drag
+              : 0.3; // 30% update per frame for normal texts
 
-          // Apply the smoothed position
-          textRef.current.position.copy(smoothedPositionRef.current);
-        }
-
-        // Always ensure billboard is working
-        if (billboard && !style.isFaceText) {
-          textRef.current.quaternion.copy(camera.quaternion);
-        }
-
-        if (style.isFaceText && normal) {
-          // For face text, update visibility based on face orientation to camera
-          const worldNormal = new THREE.Vector3(...normal).normalize();
-          const textWorldPos = new THREE.Vector3();
-          textRef.current.getWorldPosition(textWorldPos);
-          const viewDir = textWorldPos.clone().sub(camera.position).normalize();
-
-          // Calculate dot product between normal and view direction
-          const dotProduct = worldNormal.dot(viewDir);
-
-          // Set visibility based on viewing angle
-          if (dotProduct < 0) {
-            // We're looking at the face from the front
-            textRef.current.visible = true;
-
-            // Build rotation matrix for text orientation
-            const matrix = new THREE.Matrix4();
-            matrix.lookAt(
-              new THREE.Vector3(0, 0, 0),
-              worldNormal,
-              new THREE.Vector3(0, 1, 0)
+            // Calculate smoothed position with lerp
+            smoothedPositionRef.current = lerpVector(
+              smoothedPositionRef.current,
+              targetPosition,
+              smoothingFactor
             );
 
-            // Flip text 180° to face viewer
-            const flipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
-            matrix.multiply(flipMatrix);
-
-            textRef.current.setRotationFromMatrix(matrix);
-          } else {
-            // We're looking at the face from behind
-            textRef.current.visible = false;
+            // Apply the smoothed position
+            textRef.current.position.copy(smoothedPositionRef.current);
           }
-        } else {
-          // Non-face text is always visible
-          textRef.current.visible = true;
 
-          if (followTarget?.current) {
-            const targetPos = followTarget.current.position;
-            const targetScale = followTarget.current.scale;
-
-            if (style.isDodecahedronHeader) {
-              // Use the calculated position from dodecahedron (it already accounts for scale and offset)
-              const calculatedPos = Array.isArray(position)
-                ? position
-                : [position?.x || 0, position?.y || 0, position?.z || 0];
-              const distanceToCamera = camera.position.distanceTo(
-                new THREE.Vector3(...calculatedPos)
-              );
-              const baseScale = Math.min(
-                Math.max(distanceToCamera * 0.01, 0.5),
-                1.5
-              );
-
-              textRef.current.position.set(
-                calculatedPos[0],
-                calculatedPos[1],
-                calculatedPos[2]
-              );
-              textRef.current.scale.set(baseScale, baseScale, baseScale);
+          // PERFORMANCE FIX: Only apply billboard when within 1000 units of camera
+          if (billboard && !style.isFaceText) {
+            const distanceToCamera = camera.position.distanceTo(
+              textRef.current.position
+            );
+            if (distanceToCamera < 1000) {
               textRef.current.quaternion.copy(camera.quaternion);
-            } else if (style.isHeaderText && style.isPlaneHeader) {
-              // If fixedPosition is true, do not override the provided position.
-              if (!style.fixedPosition) {
-                const [x, y, z] = position;
-                textRef.current.position.set(
-                  targetPos.x + x,
-                  targetPos.y + y,
-                  targetPos.z + z
+            }
+          }
+
+          if (style.isFaceText && normal) {
+            // For face text, update visibility based on face orientation to camera
+            const worldNormal = new THREE.Vector3(...normal).normalize();
+            const textWorldPos = new THREE.Vector3();
+            textRef.current.getWorldPosition(textWorldPos);
+            const viewDir = textWorldPos
+              .clone()
+              .sub(camera.position)
+              .normalize();
+
+            // Calculate dot product between normal and view direction
+            const dotProduct = worldNormal.dot(viewDir);
+
+            // Set visibility based on viewing angle
+            if (dotProduct < 0) {
+              // We're looking at the face from the front
+              textRef.current.visible = true;
+
+              // Build rotation matrix for text orientation
+              const matrix = new THREE.Matrix4();
+              matrix.lookAt(
+                new THREE.Vector3(0, 0, 0),
+                worldNormal,
+                new THREE.Vector3(0, 1, 0)
+              );
+
+              // Flip text 180° to face viewer
+              const flipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
+              matrix.multiply(flipMatrix);
+
+              textRef.current.setRotationFromMatrix(matrix);
+            } else {
+              // We're looking at the face from behind
+              textRef.current.visible = false;
+            }
+          } else {
+            // Non-face text is always visible
+            textRef.current.visible = true;
+
+            if (followTarget?.current) {
+              const targetPos = followTarget.current.position;
+              const targetScale = followTarget.current.scale;
+
+              if (style.isDodecahedronHeader) {
+                // Use the calculated position from dodecahedron (it already accounts for scale and offset)
+                const calculatedPos = Array.isArray(position)
+                  ? position
+                  : [position?.x || 0, position?.y || 0, position?.z || 0];
+                const distanceToCamera = camera.position.distanceTo(
+                  new THREE.Vector3(...calculatedPos)
                 );
-              }
-              // Always update rotation (billboard) and scale.
-              textRef.current.quaternion.copy(camera.quaternion);
-              const distanceToCamera = camera.position.distanceTo(
-                textRef.current.position
-              );
-              const scaleValue = Math.min(
-                Math.max(distanceToCamera * 0.01, 0.5),
-                2
-              );
-              textRef.current.scale.set(scaleValue, scaleValue, scaleValue);
-            } else if (style.isHeaderText) {
-              const cubeHeight = 10 * targetScale.y;
-              const distanceToCamera = camera.position.distanceTo(targetPos);
-              const targetY = targetPos.y + cubeHeight / 2 + TEXT_HEIGHT;
-              const scale = distanceToCamera * ZOOM_OFFSET_FACTOR;
-
-              const adjustedY = targetY + scale + MIN_CUBE_DISTANCE;
-
-              let baseScale = 1.0;
-              if (style.fixedSize) {
-                baseScale = style.fontSize || 1.0;
-              } else {
-                baseScale = Math.min(
+                const baseScale = Math.min(
                   Math.max(distanceToCamera * 0.01, 0.5),
                   1.5
                 );
-              }
 
-              textRef.current.position.set(targetPos.x, adjustedY, targetPos.z);
-              textRef.current.scale.set(baseScale, baseScale, baseScale);
-              textRef.current.quaternion.copy(camera.quaternion);
-            } else {
-              // For regular following text
-              const baseScale = style.fixedSize
-                ? style.fontSize || 1.0
-                : Math.min(
-                    Math.max(camera.position.distanceTo(targetPos) * 0.01, 0.5),
+                textRef.current.position.set(
+                  calculatedPos[0],
+                  calculatedPos[1],
+                  calculatedPos[2]
+                );
+                textRef.current.scale.set(baseScale, baseScale, baseScale);
+
+                // PERFORMANCE FIX: Disable billboard when far from camera (1000+ units)
+                if (distanceToCamera < 1000) {
+                  textRef.current.quaternion.copy(camera.quaternion);
+                }
+              } else if (style.isHeaderText && style.isPlaneHeader) {
+                // If fixedPosition is true, do not override the provided position.
+                if (!style.fixedPosition) {
+                  const [x, y, z] = position;
+                  textRef.current.position.set(
+                    targetPos.x + x,
+                    targetPos.y + y,
+                    targetPos.z + z
+                  );
+                }
+
+                // Calculate distance to camera
+                const distanceToCamera = camera.position.distanceTo(
+                  textRef.current.position
+                );
+
+                // PERFORMANCE FIX: Only update billboard when within 1000 units
+                if (distanceToCamera < 1000) {
+                  textRef.current.quaternion.copy(camera.quaternion);
+                }
+
+                // Always update scale
+                const scaleValue = Math.min(
+                  Math.max(distanceToCamera * 0.01, 0.5),
+                  2
+                );
+                textRef.current.scale.set(scaleValue, scaleValue, scaleValue);
+              } else if (style.isHeaderText) {
+                const cubeHeight = 10 * targetScale.y;
+                const distanceToCamera = camera.position.distanceTo(targetPos);
+                const targetY = targetPos.y + cubeHeight / 2 + TEXT_HEIGHT;
+                const scale = distanceToCamera * ZOOM_OFFSET_FACTOR;
+
+                const adjustedY = targetY + scale + MIN_CUBE_DISTANCE;
+
+                let baseScale = 1.0;
+                if (style.fixedSize) {
+                  baseScale = style.fontSize || 1.0;
+                } else {
+                  baseScale = Math.min(
+                    Math.max(distanceToCamera * 0.01, 0.5),
                     1.5
                   );
-              textRef.current.scale.set(baseScale, baseScale, baseScale);
-            }
-            if (billboard) {
-              textRef.current.quaternion.copy(camera.quaternion);
-            }
-          } else {
-            // Handle face text differently
-            if (style.isFaceText) {
-              textRef.current.scale.set(1, 1, 1); // Keep constant size
-              if (!style.fixedSize && billboard) {
-                textRef.current.quaternion.copy(camera.quaternion);
+                }
+
+                textRef.current.position.set(
+                  targetPos.x,
+                  adjustedY,
+                  targetPos.z
+                );
+                textRef.current.scale.set(baseScale, baseScale, baseScale);
+
+                // PERFORMANCE FIX: Only update billboard when within 1000 units
+                if (distanceToCamera < 1000) {
+                  textRef.current.quaternion.copy(camera.quaternion);
+                }
+              } else {
+                // For regular following text
+                const baseScale = style.fixedSize
+                  ? style.fontSize || 1.0
+                  : Math.min(
+                      Math.max(
+                        camera.position.distanceTo(targetPos) * 0.01,
+                        0.5
+                      ),
+                      1.5
+                    );
+                textRef.current.scale.set(baseScale, baseScale, baseScale);
               }
-            } else if (!style.fixedSize && billboard) {
-              textRef.current.quaternion.copy(camera.quaternion);
+              if (billboard) {
+                const distanceToCamera = camera.position.distanceTo(
+                  textRef.current.position
+                );
+                if (distanceToCamera < 1000) {
+                  textRef.current.quaternion.copy(camera.quaternion);
+                }
+              }
+            } else {
+              // Handle face text differently
+              if (style.isFaceText) {
+                textRef.current.scale.set(1, 1, 1); // Keep constant size
+                if (!style.fixedSize && billboard) {
+                  const distanceToCamera = camera.position.distanceTo(
+                    textRef.current.position
+                  );
+                  if (distanceToCamera < 1000) {
+                    textRef.current.quaternion.copy(camera.quaternion);
+                  }
+                }
+              } else if (!style.fixedSize && billboard) {
+                const distanceToCamera = camera.position.distanceTo(
+                  textRef.current.position
+                );
+                if (distanceToCamera < 1000) {
+                  textRef.current.quaternion.copy(camera.quaternion);
+                }
+              }
             }
           }
-        }
+        } // END throttle check
       }
     });
     // Modify the line style change effect to use smoothing as well

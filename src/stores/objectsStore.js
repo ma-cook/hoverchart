@@ -13,6 +13,7 @@ const useObjectsStore = create((set, get) => ({
   isInitialLoading: true,
   hasLoadedInitialObjects: false,
   _isUpdating: false, // Prevent rapid successive updates
+  _lastUpdateTime: 0, // Track last update timestamp
 
   // Internal tracking refs (stored as state for persistence)
   lastUpdate: {},
@@ -30,40 +31,84 @@ const useObjectsStore = create((set, get) => ({
   },
   setObjects: (objects) => {
     // Add debouncing to prevent rapid successive updates that cause infinite loops
-    if (get()._isUpdating) {
-      return; // Skip update if already updating
+    const now = Date.now();
+    const state = get();
+
+    // CRITICAL: Prevent updates that happen too quickly (throttle to max 1 per 16ms = 60fps)
+    if (state._isUpdating || now - state._lastUpdateTime < 16) {
+      return; // Skip update if already updating or too soon
     }
 
-    set({ _isUpdating: true });
+    set({ _isUpdating: true, _lastUpdateTime: now });
 
     try {
+      const currentObjects = Array.isArray(state.objects) ? state.objects : [];
+      let newObjects = null;
+
       // Validate that objects is an array or a function that returns an array
       if (typeof objects === 'function') {
         // If it's a function, call it with current state
-        const state = get();
-        const currentObjects = Array.isArray(state.objects)
-          ? state.objects
-          : [];
-        const newObjects = objects(currentObjects);
-        if (Array.isArray(newObjects)) {
-          // Filter out objects that belong to unloaded cells
-          const filteredObjects = newObjects.filter((obj) => {
-            const objId = obj.id?.toString();
-            return !window._unloadedObjects?.has(objId);
-          });
-          set({ objects: filteredObjects, _isUpdating: false });
-        } else {
+        newObjects = objects(currentObjects);
+        if (!Array.isArray(newObjects)) {
           set({ objects: [], _isUpdating: false }); // Fallback to empty array
+          return;
         }
       } else if (Array.isArray(objects)) {
-        // Filter out objects that belong to unloaded cells
-        const filteredObjects = objects.filter((obj) => {
-          const objId = obj.id?.toString();
-          return !window._unloadedObjects?.has(objId);
-        });
-        set({ objects: filteredObjects, _isUpdating: false });
+        newObjects = objects;
       } else {
         set({ objects: [], _isUpdating: false }); // Fallback to empty array
+        return;
+      }
+
+      // Filter out objects that belong to unloaded cells
+      const filteredObjects = newObjects.filter((obj) => {
+        const objId = obj.id?.toString();
+        return !window._unloadedObjects?.has(objId);
+      });
+
+      // PERFORMANCE FIX: Only update if the objects actually changed
+      // Compare both IDs and a hash of critical properties (position, scale)
+      if (filteredObjects.length !== currentObjects.length) {
+        set({ objects: filteredObjects, _isUpdating: false });
+        return;
+      }
+
+      // Quick ID-based comparison using Set for O(n) instead of O(n²)
+      const currentIds = new Set(
+        currentObjects.map((obj) => obj.id?.toString())
+      );
+      const newIds = new Set(filteredObjects.map((obj) => obj.id?.toString()));
+
+      // Check if IDs changed (objects added/removed)
+      const idsChanged =
+        currentIds.size !== newIds.size ||
+        filteredObjects.some((obj) => !currentIds.has(obj.id?.toString()));
+
+      if (idsChanged) {
+        set({ objects: filteredObjects, _isUpdating: false });
+        return;
+      }
+
+      // IDs are same, but check if any object data changed (position, scale, etc.)
+      // Create a lightweight hash of each object for comparison
+      const currentHash = currentObjects
+        .map(
+          (obj) =>
+            `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
+        )
+        .join('|');
+      const newHash = filteredObjects
+        .map(
+          (obj) =>
+            `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
+        )
+        .join('|');
+
+      if (currentHash !== newHash) {
+        set({ objects: filteredObjects, _isUpdating: false });
+      } else {
+        // Objects are truly the same, just reset the flag without triggering a render
+        set({ _isUpdating: false });
       }
     } catch (error) {
       set({ _isUpdating: false });

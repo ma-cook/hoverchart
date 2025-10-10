@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useFaceIndicatorStore } from '../stores';
+import { frameCounter } from '../utils/frameCounter';
 
 // Debug flag - set to false to disable console logs
 const DEBUG = false;
@@ -40,10 +41,10 @@ const FaceIndicator = ({
   // Only log when DEBUG is true
   useFrame(() => {
     if (meshRef.current && groupRef.current) {
-      // Throttle updates for performance - occlusion checks are expensive
+      // PERFORMANCE FIX: Disable expensive occlusion checks with many objects
+      // Only do basic scale updates every 500ms (was 250ms)
       if (
-        !meshRef.current._lastIndicatorUpdate ||
-        Date.now() - meshRef.current._lastIndicatorUpdate > 250 // Check occlusion every 250ms
+        frameCounter.shouldUpdate(meshRef.current._lastIndicatorUpdate, 500)
       ) {
         // Update scale for consistent size
         const worldScale = new THREE.Vector3();
@@ -54,7 +55,11 @@ const FaceIndicator = ({
           1 / Math.max(0.1, worldScale.z)
         );
 
+        meshRef.current._lastIndicatorUpdate = frameCounter.getTime();
+
+        // PERFORMANCE FIX: Disable raycasting occlusion checks - too expensive with 300+ objects
         // Check occlusion with raycasting (only if not active/connected and not in connection mode)
+        /* DISABLED FOR PERFORMANCE
         const inConnectionMode =
           showAllCubesIndicators || selectedIndicatorsLength > 0;
         if (!isActive && !isConnected && !inConnectionMode) {
@@ -107,8 +112,7 @@ const FaceIndicator = ({
             setIsOccluded(false);
           }
         }
-
-        meshRef.current._lastIndicatorUpdate = Date.now();
+        */
       }
     }
   }); // Determine color based on state
