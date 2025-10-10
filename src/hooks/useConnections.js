@@ -1,4 +1,10 @@
-import { useMemo, useEffect, useRef, useCallback } from 'react';
+import {
+  useMemo,
+  useEffect,
+  useRef,
+  useCallback,
+  startTransition,
+} from 'react';
 import useConnectionStore from '../stores/connectionStore';
 import {
   subscribeToConnections,
@@ -426,6 +432,11 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
   // Handler functions for connection interactions
   const handleLineStyleChange = useCallback(
     (connectionId, styleType) => {
+      console.log('🎨 [useConnections] handleLineStyleChange called:', {
+        connectionId,
+        styleType,
+      });
+
       // Parse the styleType to separate base style and direction
       let baseStyle = styleType;
       let direction = null;
@@ -436,19 +447,54 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
         direction = parts[1];
       }
 
-      // Update connection in store
-      updateConnection(connectionId, {
-        styleType: baseStyle,
-        dashDirection: direction,
+      console.log('🎨 [useConnections] Parsed style:', {
+        baseStyle,
+        direction,
       });
+
+      // PERFORMANCE: Mark start time
+      const startTime = performance.now();
+
+      // Update connection in store with React 18 startTransition for better performance
+      startTransition(() => {
+        updateConnection(connectionId, {
+          styleType: baseStyle,
+          dashDirection: direction,
+        });
+      });
+
+      const updateTime = performance.now();
+      console.log(
+        `💾 [useConnections] Updated connection in store (${(
+          updateTime - startTime
+        ).toFixed(2)}ms)`
+      );
 
       // Save to database
       const connection = getConnection(connectionId);
       if (connection && userId && spaceId) {
+        console.log('💾 [useConnections] Saving to database:', {
+          id: connection.id,
+          styleType: baseStyle,
+          dashDirection: direction,
+        });
         saveConnection(userId, spaceId, {
           ...connection,
           styleType: baseStyle,
           dashDirection: direction,
+        });
+
+        const saveTime = performance.now();
+        console.log(
+          `💾 [useConnections] Database save initiated (${(
+            saveTime - updateTime
+          ).toFixed(2)}ms)`
+        );
+      } else {
+        console.warn('⚠️ [useConnections] Cannot save - missing data:', {
+          hasConnection: !!connection,
+          userId,
+          spaceId,
         });
       }
     },

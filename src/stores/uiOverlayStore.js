@@ -16,6 +16,10 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
       templateShape: 'plane',
       orientation: 'horizontal',
     },
+    // Operation states
+    isUploadingModel: false,
+    isProcessingMarkdown: false,
+    isRecording: false,
   },
 
   // Get UI overlay state by ID (defaults to 'main' if no ID provided)
@@ -103,6 +107,23 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
       [field]: value,
     };
     state.updateUIOverlayProperty(overlayId, 'templateConfig', updatedConfig);
+  },
+
+  // Operation state setters
+  setIsUploadingModel: (overlayId = 'main', isUploading) => {
+    get().updateUIOverlayProperty(overlayId, 'isUploadingModel', isUploading);
+  },
+
+  setIsProcessingMarkdown: (overlayId = 'main', isProcessing) => {
+    get().updateUIOverlayProperty(
+      overlayId,
+      'isProcessingMarkdown',
+      isProcessing
+    );
+  },
+
+  setIsRecording: (overlayId = 'main', isRecording) => {
+    get().updateUIOverlayProperty(overlayId, 'isRecording', isRecording);
   },
 
   // Clear UI overlay state

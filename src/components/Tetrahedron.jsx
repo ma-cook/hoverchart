@@ -15,6 +15,7 @@ import {
   useTetrahedronStore,
   useObjectsStore,
   useConnectionStore,
+  useIndicatorsStore,
 } from '../stores';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
@@ -322,6 +323,12 @@ const Tetrahedron = ({
     (state) => state.updateTetrahedronFaceTextStyle
   );
 
+  // Get hover state from indicators store
+  const hoveredObjectId = useIndicatorsStore((state) => state.hoveredObjectId);
+  const setHoveredObjectId = useIndicatorsStore(
+    (state) => state.setHoveredObjectId
+  );
+
   // Initialize tetrahedron in store if it doesn't exist
   useEffect(() => {
     if (!tetrahedron) {
@@ -448,7 +455,8 @@ const Tetrahedron = ({
         case 'all':
           return true;
         case 'indicators':
-          return true;
+          // In indicators mode, ONLY show for the currently hovered object
+          return hoveredObjectId === id;
         case 'single':
           return (
             (activeIndicator?.cube?.id === id &&
@@ -456,6 +464,7 @@ const Tetrahedron = ({
             isIndicatorConnected(faceName)
           );
         default:
+          // In default mode, don't show indicators
           return false;
       }
     },
@@ -468,6 +477,7 @@ const Tetrahedron = ({
       indicatorMode,
       activeIndicator,
       id,
+      hoveredObjectId,
     ]
   );
 
@@ -1270,6 +1280,14 @@ const Tetrahedron = ({
         userData={{
           isTetrahedron: true,
           objectId: id.toString(),
+        }}
+        onPointerEnter={(e) => {
+          e.stopPropagation();
+          setHoveredObjectId(id);
+        }}
+        onPointerLeave={(e) => {
+          e.stopPropagation();
+          setHoveredObjectId(null);
         }}
       >
         {/* Invisible hit box - only active when not selected to avoid interfering with face clicks */}

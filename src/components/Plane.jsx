@@ -19,7 +19,12 @@ import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 import { uploadImageToStorage } from '../services/storageService';
 import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
-import { usePlaneStore, useObjectsStore, useConnectionStore } from '../stores';
+import {
+  usePlaneStore,
+  useObjectsStore,
+  useConnectionStore,
+  useIndicatorsStore,
+} from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 // Import unified utilities
@@ -116,6 +121,12 @@ const Plane = ({
   );
   const setPlaneIsUploadingImage = usePlaneStore(
     (state) => state.setPlaneIsUploadingImage
+  );
+
+  // Get hover state from indicators store
+  const hoveredObjectId = useIndicatorsStore((state) => state.hoveredObjectId);
+  const setHoveredObjectId = useIndicatorsStore(
+    (state) => state.setHoveredObjectId
   );
 
   // Memoize derived values to prevent unnecessary re-renders
@@ -947,11 +958,17 @@ const Plane = ({
   }, [connectionsFromStore]);
   const shouldShowIndicator = useMemo(() => {
     if (selectedIndicators?.length > 0) return true;
-    if (indicatorMode === 'indicators') return true;
     if (showAllIndicators || globalIndicatorSelected) return true;
     if (isIndicatorConnected) return true;
     if (plane?.indicatorSelected) return true;
     if (selected) return true;
+
+    // In indicators mode, ONLY show for the currently hovered object
+    if (indicatorMode === 'indicators') {
+      return hoveredObjectId === id;
+    }
+
+    // In default mode, don't show indicators
     return false;
   }, [
     selectedIndicators,
@@ -961,6 +978,8 @@ const Plane = ({
     isIndicatorConnected,
     plane?.indicatorSelected,
     selected,
+    hoveredObjectId,
+    id,
   ]);
   useEffect(() => {
     if (!currentSpaceId || !id || !user || !window.currentSpaceOwner) return;
@@ -1387,7 +1406,18 @@ const Plane = ({
           visible={plane.showSnapLine}
         />
       )}
-      <group ref={groupRef} position={position}>
+      <group
+        ref={groupRef}
+        position={position}
+        onPointerEnter={(e) => {
+          e.stopPropagation();
+          setHoveredObjectId(id);
+        }}
+        onPointerLeave={(e) => {
+          e.stopPropagation();
+          setHoveredObjectId(null);
+        }}
+      >
         {' '}
         <group ref={contentRef} scale={scale}>
           {' '}

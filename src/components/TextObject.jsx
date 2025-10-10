@@ -18,6 +18,7 @@ import {
   useTextObjectStore,
   useObjectsStore,
   useConnectionStore,
+  useIndicatorsStore,
 } from '../stores';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
@@ -152,6 +153,14 @@ const TextObject = React.memo(
     const setTextObject = useTextObjectStore((state) => state.setTextObject);
     const updateTextObjectProperty = useTextObjectStore(
       (state) => state.updateTextObjectProperty
+    );
+
+    // Get hover state from indicators store
+    const hoveredObjectId = useIndicatorsStore(
+      (state) => state.hoveredObjectId
+    );
+    const setHoveredObjectId = useIndicatorsStore(
+      (state) => state.setHoveredObjectId
     );
 
     // Get store state for this object - MOVED EARLIER
@@ -640,11 +649,17 @@ const TextObject = React.memo(
 
     const shouldShowIndicator = useMemo(() => {
       if (selectedIndicators?.length > 0) return true;
-      if (indicatorMode === 'indicators') return true;
       if (showAllIndicators || globalIndicatorSelected) return true;
       if (isIndicatorConnected()) return true;
       if (indicatorSelected) return true;
       if (selected) return true;
+
+      // In indicators mode, ONLY show for the currently hovered object
+      if (indicatorMode === 'indicators') {
+        return hoveredObjectId === id;
+      }
+
+      // In default mode, don't show indicators
       return false;
     }, [
       selectedIndicators,
@@ -654,6 +669,8 @@ const TextObject = React.memo(
       selected,
       isIndicatorConnected,
       indicatorSelected,
+      hoveredObjectId,
+      id,
     ]);
 
     // Improved getIndicatorPositions with memoization
@@ -2283,6 +2300,14 @@ const TextObject = React.memo(
             isMoving: isMoving,
             // Use the same pattern as in Cube - don't set _transformActive flag here
             initialPosition: position ? [...position] : null,
+          }}
+          onPointerEnter={(e) => {
+            e.stopPropagation();
+            setHoveredObjectId(id);
+          }}
+          onPointerLeave={(e) => {
+            e.stopPropagation();
+            setHoveredObjectId(null);
           }}
         >
           {/* Invisible mesh for resize controls - positioned same as text container */}

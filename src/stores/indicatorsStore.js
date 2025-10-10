@@ -10,10 +10,15 @@ const useIndicatorsStore = createWithEqualityFn((set, get) => ({
   isConnectMode: false,
   globalIndicatorSelected: false,
   selectedIndicatorsRef: { current: [] },
+  hoveredObjectId: null, // Track which object is being hovered for selective indicator display
 
   // Actions
   setShowAllCubesIndicators: (show) => {
     set({ showAllCubesIndicators: show });
+  },
+
+  setHoveredObjectId: (objectId) => {
+    set({ hoveredObjectId: objectId });
   },
 
   setActiveIndicator: (indicator) => {
@@ -104,6 +109,7 @@ const useIndicatorsStore = createWithEqualityFn((set, get) => ({
       selectedIndicators: [],
       isConnectMode: false,
       globalIndicatorSelected: false,
+      hoveredObjectId: null,
     });
     const state = get();
     state.selectedIndicatorsRef.current = [];

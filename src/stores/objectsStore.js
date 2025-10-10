@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import {
   saveObjectToCell,
@@ -6,7 +7,7 @@ import {
 } from '../services/spatialObjectsService';
 import useConnectionStore from './connectionStore';
 
-const useObjectsStore = create((set, get) => ({
+const useObjectsStore = createWithEqualityFn((set, get) => ({
   // State
   selectedId: null,
   objects: [],
@@ -945,6 +946,6 @@ const useObjectsStore = create((set, get) => ({
       positionHistory: new Map(),
     });
   },
-}));
+}), shallow);
 
 export default useObjectsStore;

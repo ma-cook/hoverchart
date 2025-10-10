@@ -1,7 +1,7 @@
 import { Html } from '@react-three/drei';
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import ColorPicker from './ColorPicker';
-import { useColorPickerStore } from '../stores';
+import { useColorPickerStore, useConnectionStore } from '../stores';
 
 const LineUI = ({
   position,
@@ -11,8 +11,25 @@ const LineUI = ({
   lineId,
   currentConnection,
 }) => {
-  const [showLineStyles, setShowLineStyles] = useState(false);
-  const [showArrowDropdown, setShowArrowDropdown] = useState(false); // <-- New state
+  // Use Zustand store for menu state instead of local useState
+  const menuState = useConnectionStore((state) =>
+    state.getLineUIMenuState(currentConnection?.id)
+  );
+  const toggleLineStylesMenu = useConnectionStore(
+    (state) => state.toggleLineStylesMenu
+  );
+  const toggleArrowDropdown = useConnectionStore(
+    (state) => state.toggleArrowDropdown
+  );
+  const closeAllLineUIMenus = useConnectionStore(
+    (state) => state.closeAllLineUIMenus
+  );
+  const setLineUIMenuState = useConnectionStore(
+    (state) => state.setLineUIMenuState
+  );
+
+  const { showLineStyles, showArrowDropdown, currentLineStyle } = menuState;
+
   // Extract the full style from the current connection, including direction
   const getFullStyle = (connection) => {
     if (!connection) return 'straight';
@@ -32,18 +49,22 @@ const LineUI = ({
     if (!connection) return 'straight';
     return connection.styleType || connection.lineStyle || 'straight';
   };
-  const [currentLineStyle, setCurrentLineStyle] = useState(() =>
-    getFullStyle(currentConnection)
-  );
-  // Update currentLineStyle when the connection changes or its style changes
+
+  // Sync currentLineStyle in store when connection changes
   useEffect(() => {
     const newFullStyle = getFullStyle(currentConnection);
-    setCurrentLineStyle(newFullStyle);
+    if (newFullStyle !== currentLineStyle && currentConnection?.id) {
+      setLineUIMenuState(currentConnection.id, {
+        currentLineStyle: newFullStyle,
+      });
+    }
   }, [
     currentConnection,
     currentConnection?.styleType,
     currentConnection?.lineStyle,
     currentConnection?.dashDirection,
+    currentLineStyle,
+    setLineUIMenuState,
   ]);
 
   // Use color picker store
@@ -77,49 +98,66 @@ const LineUI = ({
         if (onTextClick) {
           onTextClick();
           // Reset other UI states
-          setShowLineStyles(false);
-          setShowArrowDropdown(false);
+          closeAllLineUIMenus(currentConnection?.id);
           closeColorPicker(pickerId);
         }
         break;
       case 'paint':
         openColorPicker(pickerId, 'line-ui');
-        setShowLineStyles(false);
-        setShowArrowDropdown(false);
+        closeAllLineUIMenus(currentConnection?.id);
         break;
       case 'dotted':
-        setShowLineStyles(!showLineStyles);
+        toggleLineStylesMenu(currentConnection?.id);
         closeColorPicker(pickerId);
-        setShowArrowDropdown(false);
         break;
     }
   };
 
   const handleLineStyleClick = (style, e) => {
     e.stopPropagation();
-    setCurrentLineStyle(style.name);
+    console.log('🔘 [LineUI] Style button clicked:', style.name);
+
+    // Update store with new style
+    if (currentConnection?.id) {
+      setLineUIMenuState(currentConnection.id, {
+        currentLineStyle: style.name,
+      });
+    }
+
     onToggleDashed?.(style.name);
 
     if (style.name === 'dashed' || style.name === 'dotted') {
-      setShowArrowDropdown(true);
-    } else {
-      setShowLineStyles(false);
-      setShowArrowDropdown(false);
+      toggleArrowDropdown(currentConnection?.id);
+    } else if (currentConnection?.id) {
+      closeAllLineUIMenus(currentConnection.id);
     }
   };
-  const handleArrowClick = (direction, e) => {
-    e.stopPropagation(); // Get the current base style from the connection
-    const actualBaseStyle = getBaseStyle(currentConnection);
-    const fullStyleWithDirection = `${actualBaseStyle}-${direction}`;
 
-    // Use the actual base style from the connection, not the local state
+  const handleArrowClick = (direction, e) => {
+    e.stopPropagation();
+    console.log('➡️ [LineUI] Arrow button clicked:', direction);
+
+    // Use the current local state (which has the latest style from the button click)
+    // Extract base style from currentLineStyle (remove any existing direction suffix)
+    const baseStyle = currentLineStyle.split('-')[0];
+    const fullStyleWithDirection = `${baseStyle}-${direction}`;
+
+    console.log('➡️ [LineUI] Sending style with direction:', {
+      currentLineStyle,
+      baseStyle,
+      fullStyleWithDirection,
+    });
+
+    // Send the style with direction
     onToggleDashed?.(fullStyleWithDirection);
 
-    // Update local state to the full style with direction (not just base style)
-    setCurrentLineStyle(fullStyleWithDirection);
-
-    setShowArrowDropdown(false);
-    setShowLineStyles(false);
+    // Update store with the full style with direction
+    if (currentConnection?.id) {
+      setLineUIMenuState(currentConnection.id, {
+        currentLineStyle: fullStyleWithDirection,
+      });
+      closeAllLineUIMenus(currentConnection.id);
+    }
   };
 
   return (

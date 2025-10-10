@@ -41,6 +41,9 @@ const useConnectionStore = create((set, get) => ({
   showLineTextInput: null, // Connection ID that has text input open
   showLineTextStyleUI: null, // Connection ID that has style UI open
 
+  // LineUI menu state (per-connection)
+  lineUIMenuState: {}, // { [connectionId]: { showLineStyles: bool, showArrowDropdown: bool, currentLineStyle: string } }
+
   // Debug helper with performance throttling
   _logState: () => {
     const state = get();
@@ -304,8 +307,8 @@ const useConnectionStore = create((set, get) => ({
         connections: newConnections,
       };
     });
-    // Log state after update
-    get()._logState();
+    // PERFORMANCE: Disable logging during style updates to prevent any potential issues
+    // get()._logState();
   },
 
   // Batch update multiple connections in a single operation
@@ -470,6 +473,75 @@ const useConnectionStore = create((set, get) => ({
       showLineTextInput: null,
       showLineTextStyleUI: null,
     });
+  },
+
+  // LineUI menu state actions
+  setLineUIMenuState: (connectionId, menuState) => {
+    set((state) => ({
+      lineUIMenuState: {
+        ...state.lineUIMenuState,
+        [connectionId]: {
+          ...(state.lineUIMenuState[connectionId] || {}),
+          ...menuState,
+        },
+      },
+    }));
+  },
+
+  toggleLineStylesMenu: (connectionId) => {
+    set((state) => {
+      const current = state.lineUIMenuState[connectionId] || {};
+      return {
+        lineUIMenuState: {
+          ...state.lineUIMenuState,
+          [connectionId]: {
+            ...current,
+            showLineStyles: !current.showLineStyles,
+            showArrowDropdown: false, // Close arrow dropdown when opening line styles
+          },
+        },
+      };
+    });
+  },
+
+  toggleArrowDropdown: (connectionId) => {
+    set((state) => {
+      const current = state.lineUIMenuState[connectionId] || {};
+      return {
+        lineUIMenuState: {
+          ...state.lineUIMenuState,
+          [connectionId]: {
+            ...current,
+            showArrowDropdown: !current.showArrowDropdown,
+            showLineStyles: false, // Close line styles when opening arrow dropdown
+          },
+        },
+      };
+    });
+  },
+
+  closeAllLineUIMenus: (connectionId) => {
+    set((state) => ({
+      lineUIMenuState: {
+        ...state.lineUIMenuState,
+        [connectionId]: {
+          ...(state.lineUIMenuState[connectionId] || {}),
+          showLineStyles: false,
+          showArrowDropdown: false,
+        },
+      },
+    }));
+  },
+
+  getLineUIMenuState: (connectionId) => {
+    const state = get();
+    return (
+      state.lineUIMenuState[connectionId] || {
+        showLineStyles: false,
+        showArrowDropdown: false,
+        currentLineStyle: 'straight',
+      }
+    );
   },
 
   // Getters

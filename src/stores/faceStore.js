@@ -33,6 +33,9 @@ const useFaceStore = createWithEqualityFn((set, get) => ({
         showTextInput: false,
         showColorPicker: false,
         showTextStyleUI: false,
+        // FaceUI menu states
+        showBorderMenu: false,
+        isBorderColor: false,
         ...initialState,
       });
       return { faces: newFaces };
@@ -173,6 +176,22 @@ const useFaceStore = createWithEqualityFn((set, get) => ({
 
   setFaceShowTextStyleUI: (faceId, show) => {
     get().updateFace(faceId, { showTextStyleUI: show });
+  },
+
+  // FaceUI menu state actions
+  toggleBorderMenu: (faceId) => {
+    const face = get().getFace(faceId);
+    if (face) {
+      get().updateFace(faceId, { showBorderMenu: !face.showBorderMenu });
+    }
+  },
+
+  setShowBorderMenu: (faceId, show) => {
+    get().updateFace(faceId, { showBorderMenu: show });
+  },
+
+  setIsBorderColor: (faceId, isBorder) => {
+    get().updateFace(faceId, { isBorderColor: isBorder });
   },
 
   // Bulk operations by object

@@ -898,6 +898,9 @@ export class MarkdownDiagramService {
     const nodeEntries = Array.from(nodePositions);
     const OBJECT_BATCH_SIZE = 50; // Process objects in smaller batches
 
+    // Collect all objects for this diagram before adding to store
+    const allObjectsForDiagram = [];
+
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
       const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1;
@@ -1056,11 +1059,8 @@ export class MarkdownDiagramService {
             },
           };
 
-          // Add to local store for immediate rendering
-          const currentObjects = useObjectsStore.getState().objects;
-          useObjectsStore
-            .getState()
-            .setObjects([...currentObjects, objectData]);
+          // Collect object for batch addition to store
+          allObjectsForDiagram.push(objectData);
 
           // Prepare complete data for Cloud Function bulk save (including all type-specific fields)
           const objectForSave = {
@@ -1141,6 +1141,15 @@ export class MarkdownDiagramService {
           );
         }
       }
+    }
+
+    // Add all objects to store in one batch for this diagram
+    // This ensures all objects are available before connections are created
+    if (allObjectsForDiagram.length > 0) {
+      const currentObjects = useObjectsStore.getState().objects;
+      useObjectsStore
+        .getState()
+        .setObjects([...currentObjects, ...allObjectsForDiagram]);
     }
 
     return objectsCreated;

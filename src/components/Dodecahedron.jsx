@@ -9,6 +9,7 @@ import {
   useDodecahedronStore,
   useObjectsStore,
   useConnectionStore,
+  useIndicatorsStore,
 } from '../stores';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
@@ -177,6 +178,14 @@ const Sphere = React.memo(
     );
     const updateDodecahedronFaceTextStyle = useDodecahedronStore(
       (state) => state.updateDodecahedronFaceTextStyle
+    );
+
+    // Get hover state from indicators store
+    const hoveredObjectId = useIndicatorsStore(
+      (state) => state.hoveredObjectId
+    );
+    const setHoveredObjectId = useIndicatorsStore(
+      (state) => state.setHoveredObjectId
     );
 
     // Helper function to update both stores and database
@@ -1087,7 +1096,19 @@ const Sphere = React.memo(
           />
         )}
         {/* Remove the outer position group and apply position directly to content group */}{' '}
-        <group ref={contentRef} position={position} scale={scale}>
+        <group
+          ref={contentRef}
+          position={position}
+          scale={scale}
+          onPointerEnter={(e) => {
+            e.stopPropagation();
+            setHoveredObjectId(id);
+          }}
+          onPointerLeave={(e) => {
+            e.stopPropagation();
+            setHoveredObjectId(null);
+          }}
+        >
           {/* Add invisible helper mesh for better click detection - only when not selected */}
           {!selected && (
             <mesh

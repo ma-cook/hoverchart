@@ -1,5 +1,5 @@
 import { useUIOverlayStore } from '../stores';
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import { uploadModelToStorage } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
@@ -23,16 +23,30 @@ const UIOverlay = ({
   const updateTemplateConfig = useUIOverlayStore(
     (state) => state.updateTemplateConfig
   );
+
+  // Operation states from store
+  const isUploadingModel = useUIOverlayStore(
+    (state) => state.getUIOverlay('main').isUploadingModel
+  );
+  const isProcessingMarkdown = useUIOverlayStore(
+    (state) => state.getUIOverlay('main').isProcessingMarkdown
+  );
+  const isRecording = useUIOverlayStore(
+    (state) => state.getUIOverlay('main').isRecording
+  );
+  const setIsUploadingModel = useUIOverlayStore(
+    (state) => state.setIsUploadingModel
+  );
+  const setIsProcessingMarkdown = useUIOverlayStore(
+    (state) => state.setIsProcessingMarkdown
+  );
+  const setIsRecording = useUIOverlayStore((state) => state.setIsRecording);
+
   // Model upload functionality
   const modelFileInputRef = useRef(null);
-  const [isUploadingModel, setIsUploadingModel] = useState(false);
 
   // Markdown upload functionality
   const markdownFileInputRef = useRef(null);
-  const [isProcessingMarkdown, setIsProcessingMarkdown] = useState(false);
-
-  // Screen recording functionality
-  const [isRecording, setIsRecording] = useState(false);
 
   const handleRecordClick = useCallback(async () => {
     if (isRecording) {

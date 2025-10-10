@@ -18,7 +18,12 @@ import TextStyleUI from './TextStyleUI';
 import FaceTextInput from './FaceTextInput';
 import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps, faceMaterialProps } from './cubeHelpers';
-import { useCubeStore, useObjectsStore, useConnectionStore } from '../stores';
+import {
+  useCubeStore,
+  useObjectsStore,
+  useConnectionStore,
+  useIndicatorsStore,
+} from '../stores';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
 // Import snap line indicator
@@ -221,6 +226,12 @@ const Cube = ({
     (state) => state.updateCubeFaceTextStyle
   );
 
+  // Get hover state from indicators store
+  const hoveredObjectId = useIndicatorsStore((state) => state.hoveredObjectId);
+  const setHoveredObjectId = useIndicatorsStore(
+    (state) => state.setHoveredObjectId
+  );
+
   // Initialize cube in store if it doesn't exist
   useEffect(() => {
     if (!cube) {
@@ -343,12 +354,13 @@ const Cube = ({
         return true;
       }
 
-      // Show indicators based on mode - FIX THIS PART:
+      // Show indicators based on mode
       switch (indicatorMode) {
         case 'all':
           return true; // Show on all cubes always in 'all' mode
         case 'indicators':
-          return true; // Show on all cubes in 'indicators' mode as well
+          // In indicators mode, ONLY show for the currently hovered object
+          return hoveredObjectId === id;
         case 'single':
           return (
             (activeIndicator?.cube?.id === id &&
@@ -356,6 +368,7 @@ const Cube = ({
             (selected && faceName === cube?.selectedFace)
           );
         default:
+          // In default mode (no indicator clicked yet), don't show any indicators
           return false;
       }
     },
@@ -368,6 +381,7 @@ const Cube = ({
       indicatorMode,
       activeIndicator,
       id,
+      hoveredObjectId,
     ]
   );
 
@@ -1210,6 +1224,14 @@ const Cube = ({
           isCube: true,
           objectId: id.toString(),
         }}
+        onPointerEnter={(e) => {
+          e.stopPropagation();
+          setHoveredObjectId(id);
+        }}
+        onPointerLeave={(e) => {
+          e.stopPropagation();
+          setHoveredObjectId(null);
+        }}
       >
         {/* Invisible hit box */}
         <mesh
@@ -1230,7 +1252,7 @@ const Cube = ({
             key={idx}
             points={edgePoints}
             color={cube?.color || color}
-            lineWidth={isMobile ? 3 : 2}
+            lineWidth={isMobile ? 3 : 4}
             enablePooling={true}
           />
         ))}

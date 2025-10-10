@@ -1,9 +1,9 @@
 import React from 'react';
 import { Html } from '@react-three/drei';
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
-import { useColorPickerStore } from '../stores';
+import { useColorPickerStore, useFaceStore } from '../stores';
 import * as THREE from 'three';
 
 const FaceUI = React.memo(
@@ -27,8 +27,15 @@ const FaceUI = React.memo(
     isBroadcasting = false, // Add broadcasting state
     isScreenSharing = false, // Add screen sharing state
   }) => {
-    const [showBorderMenu, setShowBorderMenu] = useState(false); // Add this state
-    const [isBorderColor, setIsBorderColor] = useState(false); // Add this state
+    // Get menu state from store
+    const faceId = face?.id || 'default';
+    const faceState = useFaceStore((state) => state.getFace(faceId));
+    const showBorderMenu = faceState?.showBorderMenu || false;
+    const isBorderColor = faceState?.isBorderColor || false;
+    const setShowBorderMenu = useFaceStore((state) => state.setShowBorderMenu);
+    const toggleBorderMenu = useFaceStore((state) => state.toggleBorderMenu);
+    const setIsBorderColor = useFaceStore((state) => state.setIsBorderColor);
+
     const groupRef = useRef();
     const lastPosition = useRef(null);
     // Use color picker store
@@ -70,11 +77,11 @@ const FaceUI = React.memo(
 
     const handleBorderStyleClick = (style) => {
       onBorderToggle?.({ type: 'style', value: style });
-      setShowBorderMenu(false);
+      setShowBorderMenu(faceId, false);
     };
     const handleBorderColorClick = (e) => {
       e.stopPropagation();
-      setIsBorderColor(true);
+      setIsBorderColor(faceId, true);
       openColorPicker(pickerId, 'border-color');
     };
 
@@ -86,8 +93,8 @@ const FaceUI = React.memo(
       if (isBorderColor) {
         // Pass color directly to parent for border color change
         onBorderToggle?.({ type: 'color', value: color });
-        setIsBorderColor(false);
-        setShowBorderMenu(false);
+        setIsBorderColor(faceId, false);
+        setShowBorderMenu(faceId, false);
       } else {
         onColorChange?.(color, face);
       }
@@ -163,7 +170,7 @@ const FaceUI = React.memo(
           onResizeToggle?.();
           break;
         case 'border':
-          setShowBorderMenu((prev) => !prev);
+          toggleBorderMenu(faceId);
           closeColorPicker(pickerId);
           break;
         case 'image': {
@@ -325,8 +332,8 @@ const FaceUI = React.memo(
                 onColorSelect={handleColorSelect}
                 onClose={() => {
                   closeColorPicker(pickerId);
-                  setIsBorderColor(false);
-                  setShowBorderMenu(false);
+                  setIsBorderColor(faceId, false);
+                  setShowBorderMenu(faceId, false);
                 }}
               />
             </div>

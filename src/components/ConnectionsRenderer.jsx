@@ -15,6 +15,7 @@ import { calculateFacePosition } from '../utils/facePositionUtils';
 import useConnectionStore from '../stores/connectionStore';
 import { saveConnection } from '../services/connectionsService';
 import { useConnectionObjectPositions } from '../hooks/useConnectionObjects';
+import { useCallback } from 'react';
 
 // Separate connection rendering into a sub-component to fix the hooks issue
 const Connection = React.memo(
@@ -62,15 +63,32 @@ const Connection = React.memo(
       (state) => state.updateConnection
     );
 
-    // Handler functions using store actions
-    const handleConnectionClick = (e, connectionId) => {
-      if (onConnectionClick) {
-        onConnectionClick(e, connectionId);
-      } else {
+    // Consolidated line width calculation - consistent across all line types
+    const getLineWidth = useCallback(
+      (connectionId) => {
+        const isMobile =
+          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+            navigator.userAgent
+          );
+        const baseWidth = isMobile ? 2 : 1;
+        const selectedWidth = isMobile ? 3 : 2.5;
+        return selectedConnection === connectionId ? selectedWidth : baseWidth;
+      },
+      [selectedConnection]
+    );
+
+    // Handler function - always use passed onConnectionClick if available for consistency
+    const handleConnectionClick = useCallback(
+      (e, connectionId) => {
         e.stopPropagation();
-        selectConnection(connectionId);
-      }
-    };
+        if (onConnectionClick) {
+          onConnectionClick(e, connectionId);
+        } else {
+          selectConnection(connectionId);
+        }
+      },
+      [onConnectionClick, selectConnection]
+    );
 
     const handleLineTextClick = (e, connectionId) => {
       if (onLineTextClick) {
@@ -139,8 +157,18 @@ const Connection = React.memo(
       }
     };
     const handleLineStyleChange = (connectionId, styleType) => {
+      console.log('🎨 [ConnectionsRenderer] handleLineStyleChange called:', {
+        connectionId,
+        styleType,
+        hasOnLineStyleChange: !!onLineStyleChange,
+      });
+
       if (onLineStyleChange) {
+        console.log(
+          '🎨 [ConnectionsRenderer] Calling onLineStyleChange prop...'
+        );
         onLineStyleChange(connectionId, styleType);
+        console.log('🎨 [ConnectionsRenderer] onLineStyleChange prop called');
       } else {
         // Check if connection is being deleted before saving
         if (deletingConnections.has(connectionId)) {
@@ -157,20 +185,34 @@ const Connection = React.memo(
           direction = parts[1];
         }
 
-        // Update both styleType and dashDirection
+        console.log('🎨 Updating line style:', {
+          connectionId,
+          styleType,
+          baseStyle,
+          direction,
+        });
+
+        // Update both styleType and dashDirection with timestamp to force re-render
         updateConnection(connectionId, {
           styleType: baseStyle,
           dashDirection: direction,
+          _lastStyleUpdate: Date.now(),
         });
 
         const updatedConnection = connections.find(
           (conn) => conn.id === connectionId
         );
         if (updatedConnection) {
+          console.log('💾 Saving connection with style:', {
+            id: updatedConnection.id,
+            styleType: baseStyle,
+            dashDirection: direction,
+          });
           saveConnection(window.currentUser?.uid, window.currentSpaceId, {
             ...updatedConnection,
             styleType: baseStyle,
             dashDirection: direction,
+            _lastStyleUpdate: Date.now(),
           });
         }
       }
@@ -332,6 +374,12 @@ const Connection = React.memo(
     }, [allObjectsForPathfinding]);
     const stableLineStyle =
       connection?.styleType || connection?.lineStyle || 'straight';
+
+    // PERFORMANCE: Separate pathfinding style from visual style
+    // Only 'curved' matters for pathfinding - dashed/dotted don't affect the path
+    const pathfindingStyle =
+      stableLineStyle === 'curved' ? 'curved' : 'straight';
+
     const stableStartObjectId = connection?.start?.objectId;
     const stableEndObjectId = connection?.end?.objectId;
     const stablePathPoints = connection?._pathPoints;
@@ -354,7 +402,7 @@ const Connection = React.memo(
       const startObjectId = stableStartObjectId || '';
       const endObjectId = stableEndObjectId || '';
       const pathPoints = stablePathPoints;
-      const lineStyle = stableLineStyle;
+      const lineStyle = pathfindingStyle; // Use pathfinding style instead of stableLineStyle
 
       // PERFORMANCE OPTIMIZATION: Skip expensive pathfinding for connections that:
       // 1. Have pre-calculated pathPoints stored (from bulk imports)
@@ -392,8 +440,15 @@ const Connection = React.memo(
       const isCurvedPath =
         calculatedPathPoints &&
         calculatedPathPoints.length > 2 &&
-        (shouldCurve || (intersections && intersections.length > 0)); // Determine effective line style
-      const effectiveLineStyle = isCurvedPath ? 'curved' : lineStyle;
+        (shouldCurve || (intersections && intersections.length > 0));
+
+      // Determine effective line style - use 'curved' only for user-requested curved lines
+      // For dashed/dotted lines with intersections, keep the original style
+      const effectiveLineStyle =
+        isCurvedPath && stableLineStyle === 'straight'
+          ? 'curved'
+          : stableLineStyle; // Use actual line style for rendering
+
       const finalPathPoints = calculatedPathPoints || [
         startPosition,
         endPosition,
@@ -406,8 +461,9 @@ const Connection = React.memo(
       };
     }, [
       connection, // Include connection for completeness
-      // Style-related properties
-      stableLineStyle,
+      // CRITICAL: Only depend on pathfinding style, not visual style
+      // This prevents recalculation when changing dashed/dotted/straight
+      pathfindingStyle,
       stableStartObjectId,
       stableEndObjectId,
       stablePathPoints,
@@ -415,6 +471,8 @@ const Connection = React.memo(
       connectionData,
       // Only include filteredObjects when the connection actually needs pathfinding
       filteredObjects,
+      // Include actual style for effectiveLineStyle calculation
+      stableLineStyle,
     ]);
 
     // Fourth hook: Calculate text position
@@ -516,16 +574,7 @@ const Connection = React.memo(
               connection.color ||
               (selectedConnection === connection.id ? '#ffff00' : 'black')
             }
-            lineWidth={(() => {
-              const isMobile =
-                /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-                  navigator.userAgent
-                );
-              const baseWidth = isMobile ? 2 : 1;
-              return selectedConnection === connection.id
-                ? baseWidth * 1
-                : baseWidth;
-            })()}
+            lineWidth={getLineWidth(connection.id)}
             onClick={(e) => handleConnectionClick(e, connection.id)}
             onPointerOver={(e) => {
               e.stopPropagation();
@@ -535,8 +584,8 @@ const Connection = React.memo(
               e.stopPropagation();
               document.body.style.cursor = 'auto';
             }}
-            renderOrder={10} // Lower than header text (3000-5000) but higher than hitbox (5)
-            depthWrite={false} // Prevent connection lines from writing to depth buffer
+            renderOrder={10}
+            depthWrite={false}
             depthTest={true}
           />
         ) : effectiveLineStyle === 'curved' ? (
@@ -550,16 +599,7 @@ const Connection = React.memo(
               connection.color ||
               (selectedConnection === connection.id ? '#ffff00' : 'black')
             }
-            lineWidth={(() => {
-              const isMobile =
-                /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-                  navigator.userAgent
-                );
-              const baseWidth = isMobile ? 2 : 1;
-              return selectedConnection === connection.id
-                ? baseWidth * 1
-                : baseWidth;
-            })()}
+            lineWidth={getLineWidth(connection.id)}
             onClick={(e) => handleConnectionClick(e, connection.id)}
             onPointerOver={(e) => {
               e.stopPropagation();
@@ -569,7 +609,7 @@ const Connection = React.memo(
               e.stopPropagation();
               document.body.style.cursor = 'auto';
             }}
-            renderOrder={10} // Lower than header text (3000-5000) but higher than hitbox (5)
+            renderOrder={10}
             depthWrite={false}
             depthTest={true}
           />
@@ -585,16 +625,7 @@ const Connection = React.memo(
               connection.color ||
               (selectedConnection === connection.id ? '#ffff00' : 'black')
             }
-            lineWidth={(() => {
-              const isMobile =
-                /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-                  navigator.userAgent
-                );
-              const baseWidth = isMobile ? 1.5 : 1;
-              return selectedConnection === connection.id
-                ? baseWidth * 1
-                : baseWidth;
-            })()}
+            lineWidth={getLineWidth(connection.id)}
             lineStyle={effectiveLineStyle}
             dashDirection={connection.dashDirection || null}
             dashOffset={connection.dashOffset || 0}
@@ -665,7 +696,7 @@ const Connection = React.memo(
             }
             onTextClick={() => {
               setShowLineTextInput(connection.id);
-              selectConnection(null); // Close the LineUI menu by deselecting the connection
+              selectConnection(null);
             }}
             currentText={connectionText}
             hasText={!!connectionText && connectionText.trim() !== ''}
@@ -682,8 +713,14 @@ const Connection = React.memo(
       prevProps.connection._visualUpdate !==
         nextProps.connection._visualUpdate ||
       prevProps.connection._localUpdate !== nextProps.connection._localUpdate ||
+      prevProps.connection._lastStyleUpdate !==
+        nextProps.connection._lastStyleUpdate ||
       prevProps.connection.color !== nextProps.connection.color ||
       prevProps.connection.text !== nextProps.connection.text ||
+      prevProps.connection.styleType !== nextProps.connection.styleType ||
+      prevProps.connection.lineStyle !== nextProps.connection.lineStyle ||
+      prevProps.connection.dashDirection !==
+        nextProps.connection.dashDirection ||
       JSON.stringify(prevProps.connection.textStyle) !==
         JSON.stringify(nextProps.connection.textStyle) ||
       prevProps.connection.start?.position !==
