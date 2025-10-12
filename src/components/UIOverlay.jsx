@@ -1,4 +1,5 @@
 import { useUIOverlayStore } from '../stores';
+import useConnectionStore from '../stores/connectionStore';
 import { useRef, useCallback } from 'react';
 import { uploadModelToStorage } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
@@ -41,6 +42,14 @@ const UIOverlay = ({
     (state) => state.setIsProcessingMarkdown
   );
   const setIsRecording = useUIOverlayStore((state) => state.setIsRecording);
+
+  // Connection store for toggling connection visibility
+  const connectionsVisible = useConnectionStore(
+    (state) => state.connectionsVisible
+  );
+  const toggleConnectionsVisible = useConnectionStore(
+    (state) => state.toggleConnectionsVisible
+  );
 
   // Model upload functionality
   const modelFileInputRef = useRef(null);
@@ -227,7 +236,7 @@ const UIOverlay = ({
   };
 
   const handleArrowClick = () => {
-    onToggleIndicators('connection');
+    toggleConnectionsVisible();
   };
 
   const handleTemplateConfigChange = (field, value) => {
@@ -586,7 +595,11 @@ const UIOverlay = ({
             <button
               className={`shape-button ${isConnectMode ? 'active' : ''}`}
               onClick={handleArrowClick}
-              title="Connect Faces"
+              title="Toggle Connection Lines"
+              style={{
+                borderColor: connectionsVisible ? '' : 'orange',
+                borderWidth: connectionsVisible ? '' : '2px',
+              }}
             >
               ↗
             </button>

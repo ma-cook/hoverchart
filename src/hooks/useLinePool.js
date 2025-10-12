@@ -4,12 +4,18 @@ import { getLinePool } from '../utils/linePoolManager';
 /**
  * Hook for managing pooled line resources
  */
-export const useLinePool = (points, color = 'black', enabled = true) => {
+export const useLinePool = (
+  points,
+  color = 'black',
+  lineWidth = 1,
+  enabled = true
+) => {
   const geometryRef = useRef(null);
   const materialRef = useRef(null);
   const poolRef = useRef(getLinePool());
   const pointCountRef = useRef(0);
   const colorRef = useRef(color);
+  const lineWidthRef = useRef(lineWidth);
 
   // Initialize pooled resources synchronously on first render
   const initializeResources = () => {
@@ -29,12 +35,21 @@ export const useLinePool = (points, color = 'black', enabled = true) => {
     }
 
     // Get material if needed
-    if (!materialRef.current || colorRef.current !== color) {
+    if (
+      !materialRef.current ||
+      colorRef.current !== color ||
+      lineWidthRef.current !== lineWidth
+    ) {
       if (materialRef.current && colorRef.current) {
-        pool.releaseMaterial(materialRef.current, colorRef.current);
+        pool.releaseMaterial(
+          materialRef.current,
+          colorRef.current,
+          lineWidthRef.current
+        );
       }
-      materialRef.current = pool.getMaterial(color);
+      materialRef.current = pool.getMaterial(color, lineWidth);
       colorRef.current = color;
+      lineWidthRef.current = lineWidth;
     }
 
     // Update geometry with current points
@@ -60,7 +75,11 @@ export const useLinePool = (points, color = 'black', enabled = true) => {
         geometryRef.current = null;
       }
       if (materialRef.current && colorRef.current) {
-        pool.releaseMaterial(materialRef.current, colorRef.current);
+        pool.releaseMaterial(
+          materialRef.current,
+          colorRef.current,
+          lineWidthRef.current
+        );
         materialRef.current = null;
       }
       pointCountRef.current = 0;
@@ -69,7 +88,10 @@ export const useLinePool = (points, color = 'black', enabled = true) => {
 
     const needsNewGeometry =
       !geometryRef.current || pointCountRef.current !== points.length;
-    const needsNewMaterial = !materialRef.current || colorRef.current !== color;
+    const needsNewMaterial =
+      !materialRef.current ||
+      colorRef.current !== color ||
+      lineWidthRef.current !== lineWidth;
 
     // Handle geometry
     if (needsNewGeometry) {
@@ -87,12 +109,17 @@ export const useLinePool = (points, color = 'black', enabled = true) => {
     if (needsNewMaterial) {
       // Release old material
       if (materialRef.current && colorRef.current) {
-        pool.releaseMaterial(materialRef.current, colorRef.current);
+        pool.releaseMaterial(
+          materialRef.current,
+          colorRef.current,
+          lineWidthRef.current
+        );
       }
 
       // Get new material
-      materialRef.current = pool.getMaterial(color);
+      materialRef.current = pool.getMaterial(color, lineWidth);
       colorRef.current = color;
+      lineWidthRef.current = lineWidth;
     }
 
     // Update geometry with current points
@@ -107,12 +134,16 @@ export const useLinePool = (points, color = 'black', enabled = true) => {
         geometryRef.current = null;
       }
       if (materialRef.current && colorRef.current) {
-        pool.releaseMaterial(materialRef.current, colorRef.current);
+        pool.releaseMaterial(
+          materialRef.current,
+          colorRef.current,
+          lineWidthRef.current
+        );
         materialRef.current = null;
       }
       pointCountRef.current = 0;
     };
-  }, [points, color, enabled]);
+  }, [points, color, lineWidth, enabled]);
 
   return {
     geometry: enabled ? pooledResources.geometry : null,

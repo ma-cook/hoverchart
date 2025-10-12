@@ -9,6 +9,7 @@ const useConnectionStore = create((set, get) => ({
   connectionStartPoint: null,
   connectionEndPoint: null,
   connectionsLoaded: false,
+  connectionsVisible: true, // Toggle to show/hide all connection lines
 
   // Track connections being deleted to prevent re-addition during async deletion
   deletingConnections: new Set(), // Set of connection IDs being deleted
@@ -402,6 +403,10 @@ const useConnectionStore = create((set, get) => ({
 
   setActiveConnection: (connectionId) => {
     set({ activeConnection: connectionId });
+  },
+
+  toggleConnectionsVisible: () => {
+    set((state) => ({ connectionsVisible: !state.connectionsVisible }));
   },
 
   setIsCreatingConnection: (isCreating) => {

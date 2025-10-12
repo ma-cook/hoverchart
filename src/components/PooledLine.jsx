@@ -1,9 +1,10 @@
 import { useRef, useEffect, forwardRef } from 'react';
 import { Line } from '@react-three/drei';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { useLinePool } from '../hooks/useLinePool';
 
 /**
- * PooledLine - Uses object pooling for line geometries and materials
+ * PooledLine - Uses object pooling for Line2 geometries and materials
  * Falls back to regular Line for complex properties
  */
 const PooledLine = forwardRef(
@@ -46,10 +47,11 @@ const PooledLine = forwardRef(
 
     const usePooling = enablePooling && !hasComplexProps;
 
-    // Use pooled resources for simple lines
+    // Use pooled resources for simple lines (now with lineWidth support)
     const { geometry, material, isPooled } = useLinePool(
       points,
       color,
+      lineWidth,
       usePooling
     );
 
@@ -61,9 +63,11 @@ const PooledLine = forwardRef(
         material.transparent =
           opacity < 1 || (transparent !== undefined ? transparent : false);
         material.visible = visible;
+        material.linewidth = lineWidth; // Update linewidth
+        material.resolution.set(window.innerWidth, window.innerHeight);
         material.needsUpdate = true;
       }
-    }, [color, opacity, visible, transparent, material, isPooled]);
+    }, [color, opacity, visible, transparent, lineWidth, material, isPooled]);
 
     // Handle events
     const handleClick = (event) => {
@@ -97,20 +101,19 @@ const PooledLine = forwardRef(
       return null;
     }
 
-    // Use pooled rendering for simple lines
+    // Use pooled rendering for simple lines with Line2
     if (isPooled && geometry && material) {
       return (
-        <lineSegments
+        <primitive
           ref={meshRef}
-          geometry={geometry}
-          material={material}
+          object={new Line2(geometry, material)}
           onClick={handleClick}
           onPointerOver={handlePointerOver}
           onPointerOut={handlePointerOut}
           {...props}
         >
           {children}
-        </lineSegments>
+        </primitive>
       );
     }
 

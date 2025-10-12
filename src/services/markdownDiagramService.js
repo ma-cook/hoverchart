@@ -21,6 +21,7 @@ export class MarkdownDiagramService {
   constructor() {
     this.processor = null;
     this.scaleCache = new Map(); // Cache for dodecahedron scale calculations
+    this.boundingBoxCache = new Map(); // Cache for bounding box calculations
   }
 
   /**
@@ -118,6 +119,43 @@ export class MarkdownDiagramService {
     const childParentMap = new Map(); // child -> parent
     const rootNodes = new Set(); // nodes with no parents
 
+    console.log('🔗 Analyzing connections:', {
+      totalConnections: graph.connections?.size || 0,
+      totalNodes: graph.nodes?.size || 0,
+    });
+
+    // Check for connections involving UI components
+    if (graph.connections) {
+      let uiConnectionCount = 0;
+      const uiComponents = [
+        'HeaderInput',
+        'FaceTextInput',
+        'TextObjectUI',
+        'TextStyleUIContainer',
+      ];
+
+      for (const connection of graph.connections.values()) {
+        const sourceId = connection.source?.nodeId || connection.source;
+        const targetId = connection.target?.nodeId || connection.target;
+
+        if (
+          uiComponents.includes(sourceId) ||
+          uiComponents.includes(targetId)
+        ) {
+          uiConnectionCount++;
+          console.log(`🔗 Connection involving UI component:`, {
+            source: sourceId,
+            target: targetId,
+            connection: connection,
+          });
+        }
+      }
+
+      console.log(
+        `🔗 Found ${uiConnectionCount} connections involving UI components`
+      );
+    }
+
     // Analyze connections to build parent-child relationships
     if (graph.connections && graph.connections.size > 0) {
       Array.from(graph.connections.values()).forEach((connection) => {
@@ -126,6 +164,37 @@ export class MarkdownDiagramService {
 
         const sourceNode = graph.nodes.get(sourceId);
         const targetNode = graph.nodes.get(targetId);
+
+        // Debug logging for specific UI components
+        if (
+          targetId === 'HeaderInput' ||
+          targetId === 'FaceTextInput' ||
+          targetId === 'TextObjectUI' ||
+          targetId === 'TextStyleUIContainer' ||
+          sourceId === 'HeaderInput' ||
+          sourceId === 'FaceTextInput' ||
+          sourceId === 'TextObjectUI' ||
+          sourceId === 'TextStyleUIContainer'
+        ) {
+          console.log(`🔍 Found connection involving UI component:`, {
+            sourceId,
+            targetId,
+            sourceNode: sourceNode
+              ? {
+                  id: sourceNode.id,
+                  type: sourceNode.type,
+                  label: sourceNode.label,
+                }
+              : 'NOT FOUND',
+            targetNode: targetNode
+              ? {
+                  id: targetNode.id,
+                  type: targetNode.type,
+                  label: targetNode.label,
+                }
+              : 'NOT FOUND',
+          });
+        }
 
         // Determine parent-child relationship based on node types
         let parentId = null,
@@ -175,6 +244,64 @@ export class MarkdownDiagramService {
         rootNodes.add(nodeId);
       }
     });
+
+    console.log('🌳 buildHierarchicalRelationships - Summary:');
+    console.log(`  Total nodes: ${graph.nodes.size}`);
+    console.log(`  Root nodes: ${rootNodes.size}`);
+    console.log(`  Parents with children: ${parentChildMap.size}`);
+
+    // Check if specific UI components exist as nodes
+    const uiComponents = [
+      'HeaderInput',
+      'FaceTextInput',
+      'TextObjectUI',
+      'TextStyleUIContainer',
+    ];
+    console.log('🔍 Checking for UI components in graph.nodes:');
+    uiComponents.forEach((componentName) => {
+      const node = graph.nodes.get(componentName);
+      if (node) {
+        console.log(`  ✅ ${componentName} found:`, {
+          id: node.id,
+          type: node.type,
+          label: node.label,
+        });
+      } else {
+        console.log(`  ❌ ${componentName} NOT FOUND in graph.nodes`);
+        // Check if it exists with a different ID
+        let found = false;
+        for (const [nodeId, node] of graph.nodes.entries()) {
+          if (
+            node.label &&
+            node.label.toLowerCase().includes(componentName.toLowerCase())
+          ) {
+            console.log(`    🔎 Similar node found: ${nodeId}`, {
+              type: node.type,
+              label: node.label,
+            });
+            found = true;
+          }
+        }
+        if (!found) {
+          console.log(`    🔎 No similar nodes found`);
+        }
+      }
+    });
+
+    // Log all parent-child relationships
+    for (const [parentId, children] of parentChildMap.entries()) {
+      const parentNode = graph.nodes.get(parentId);
+      const childList = Array.from(children).map((childId) => {
+        const childNode = graph.nodes.get(childId);
+        return `${childNode?.label || childId} (${childNode?.type})`;
+      });
+      console.log(
+        `  ${parentNode?.label || parentId} (${parentNode?.type}) has ${
+          children.size
+        } children:`,
+        childList
+      );
+    }
 
     return { parentChildMap, childParentMap, rootNodes };
   }
@@ -423,6 +550,110 @@ export class MarkdownDiagramService {
   }
 
   /**
+   * Calculate the total bounding box size needed for a component and all its descendants
+   * This prevents cousin groups from overlapping by reserving enough space
+   * @param {string} nodeId - The node ID
+   * @param {Map} parentChildMap - Map of parent to children relationships
+   * @param {Map} graphNodes - Map of all nodes
+   * @param {number} level - Hierarchy level
+   * @returns {Object} - Object containing width and height of the bounding box
+   */
+  calculateSubtreeBoundingBox(nodeId, parentChildMap, graphNodes, level = 0) {
+    // Prevent excessive recursion depth to avoid stack overflow
+    const MAX_RECURSION_DEPTH = 15;
+    if (level > MAX_RECURSION_DEPTH) {
+      console.warn(
+        `⚠️ Max recursion depth reached for bounding box calculation of ${nodeId}`
+      );
+      return { width: 100, height: 100 }; // Reasonable fallback
+    }
+
+    // Use memoization to avoid recalculating the same node multiple times
+    const cacheKey = `${nodeId}-${level}`;
+    if (this.boundingBoxCache.has(cacheKey)) {
+      return this.boundingBoxCache.get(cacheKey);
+    }
+
+    const node = graphNodes.get(nodeId);
+    if (!node || node.type !== 'component') {
+      // Non-components have minimal size
+      const result = { width: 20, height: 20 };
+      this.boundingBoxCache.set(cacheKey, result);
+      return result;
+    }
+
+    const baseDodecahedronRadius = 10;
+    const spacingBetweenComponents = 200;
+
+    // Get this component's actual size
+    const componentScale = this.calculateDodecahedronScale(
+      nodeId,
+      parentChildMap,
+      graphNodes,
+      level
+    );
+    const actualComponentSize =
+      baseDodecahedronRadius * Math.max(...componentScale.nodeScale);
+
+    // Get component children (not function children, as those are contained within)
+    const children = parentChildMap.get(nodeId) || new Set();
+    const componentChildren = Array.from(children).filter((childId) => {
+      const childNode = graphNodes.get(childId);
+      return childNode && childNode.type === 'component';
+    });
+
+    if (componentChildren.length === 0) {
+      // Leaf component - just its own size
+      const result = {
+        width: actualComponentSize * 2,
+        height: actualComponentSize * 2,
+      };
+      this.boundingBoxCache.set(cacheKey, result);
+      return result;
+    }
+
+    // Calculate bounding boxes for all children recursively
+    const childBoundingBoxes = componentChildren.map((childId) =>
+      this.calculateSubtreeBoundingBox(
+        childId,
+        parentChildMap,
+        graphNodes,
+        level + 1
+      )
+    );
+
+    // Calculate grid dimensions for children
+    const gridSize = Math.ceil(Math.sqrt(componentChildren.length));
+
+    // Find max child dimensions to ensure grid cells are large enough
+    const maxChildWidth = Math.max(
+      ...childBoundingBoxes.map((bb) => bb.width),
+      0
+    );
+    const maxChildHeight = Math.max(
+      ...childBoundingBoxes.map((bb) => bb.height),
+      0
+    );
+
+    // Calculate total grid size
+    const gridWidth = gridSize * (maxChildWidth + spacingBetweenComponents);
+    const gridHeight = gridSize * (maxChildHeight + spacingBetweenComponents);
+
+    // The total bounding box is the larger of:
+    // 1. The grid containing all children
+    // 2. The component's own size
+    const totalWidth = Math.max(gridWidth, actualComponentSize * 2);
+    const totalHeight = Math.max(gridHeight, actualComponentSize * 2);
+
+    const result = {
+      width: totalWidth,
+      height: totalHeight,
+    };
+    this.boundingBoxCache.set(cacheKey, result);
+    return result;
+  }
+
+  /**
    * Calculate position for a node in the hierarchy
    * @param {string} nodeId - The node ID
    * @param {Array} basePosition - Base position for root level
@@ -432,8 +663,8 @@ export class MarkdownDiagramService {
    * @param {Array} parentPosition - Position of parent node
    * @param {number} containerSize - Size of parent container
    * @param {Set} rootNodes - Set of root node IDs
-   * @param {Map} parentChildMap - Map of parent to children relationships
    * @param {Map} graphNodes - Map of all nodes
+   * @param {Map} parentChildMap - Map of parent to children relationships
    * @returns {Array} - [x, y, z] position
    */
   calculateNodePosition(
@@ -445,7 +676,8 @@ export class MarkdownDiagramService {
     parentPosition,
     containerSize,
     rootNodes,
-    graphNodes // Added parameter for node type checking
+    graphNodes,
+    parentChildMap // Added parameter for calculating actual component sizes
   ) {
     // Get node type to determine positioning strategy
     const node = graphNodes.get(nodeId);
@@ -485,59 +717,95 @@ export class MarkdownDiagramService {
       // Nested level - different strategies for components vs functions
 
       if (nodeType === 'component') {
-        // COMPONENT POSITIONING: Horizontal circular arrangement around parent
-        // Dynamic radius calculation based on sibling count and spacing requirements
+        // COMPONENT POSITIONING: Dynamic square grid arrangement around parent
+        // Use actual component sizes (not subtrees) and 200 units spacing
 
-        const minSpacingBetweenComponents = 100; // Minimum distance between sibling components
-        const minLayerSpacing = 200; // Minimum distance between parent and child layer
-        const componentSize = 50; // Approximate size of a component (for spacing calculation)
+        const spacingBetweenComponents = 200; // Fixed spacing between sibling components
+        const baseDodecahedronRadius = 10; // Base dodecahedron size
 
-        // Calculate radius needed to maintain spacing between siblings
-        // Formula: circumference = radius * 2 * PI
-        // Required circumference = siblingCount * (minSpacing + componentSize)
-        // Therefore: radius = (siblingCount * (minSpacing + componentSize)) / (2 * PI)
-        let dynamicRadius;
+        // Calculate the actual size of this component (not its entire subtree)
+        const componentScale = this.calculateDodecahedronScale(
+          nodeId,
+          parentChildMap,
+          graphNodes,
+          level
+        );
+        const actualComponentSize =
+          baseDodecahedronRadius * Math.max(...componentScale.nodeScale);
 
-        if (siblingCount === 1) {
-          // Single child - use minimum layer spacing
-          dynamicRadius = minLayerSpacing;
-        } else {
-          // Multiple children - calculate based on sibling count
-          const requiredCircumference =
-            siblingCount * (minSpacingBetweenComponents + componentSize);
-          const calculatedRadius = requiredCircumference / (2 * Math.PI);
-
-          // Ensure minimum layer spacing is maintained
-          dynamicRadius = Math.max(calculatedRadius, minLayerSpacing);
-        }
-
-        // Add additional spacing per level to separate nested layers
-        const radiusPerLevel = dynamicRadius + (level - 1) * minLayerSpacing;
-        const depthOffset = level * 20; // Subtle depth variation for visual hierarchy
+        // Significant Y offset to ensure child components are well below parent containers
+        // This prevents child containers from intersecting with parent containers
+        const depthOffset = level * 100; // Increased from 20 to 300 for clear vertical separation
 
         if (siblingCount === 1) {
-          // Single child component - place at radius distance horizontally
+          // Single child component - place directly to the right of parent
+          const totalSpacing =
+            actualComponentSize * 2 + spacingBetweenComponents;
           return [
-            parentPosition[0] + radiusPerLevel,
-            parentPosition[1] - depthOffset, // Keep Y constant for horizontal plane
-            parentPosition[2], // Keep same Z position
+            parentPosition[0] + totalSpacing,
+            parentPosition[1] - depthOffset,
+            parentPosition[2],
           ];
         } else {
-          // Multiple child components - arrange in horizontal circle around parent with EVEN spacing
-          // Ensure perfectly even distribution by using exact angle calculation
-          const angleStep = (2 * Math.PI) / siblingCount;
-          const angle = siblingIndex * angleStep;
+          // Multiple child components - arrange in a square grid
+          const gridSize = Math.ceil(Math.sqrt(siblingCount));
+          const row = Math.floor(siblingIndex / gridSize);
+          const col = siblingIndex % gridSize;
 
-          // Start from angle 0 to ensure consistent positioning
-          const offsetX = Math.cos(angle) * radiusPerLevel;
-          const offsetZ = Math.sin(angle) * radiusPerLevel;
+          // Calculate max actual component size among all siblings (not subtrees)
+          let maxComponentSize = actualComponentSize;
 
-          // Debug logging
+          // Try to find siblings to get their actual sizes
+          try {
+            for (const [parentId, children] of parentChildMap.entries()) {
+              if (children.has(nodeId)) {
+                // Found our parent, get all sibling components
+                const siblings = Array.from(children).filter((sibId) => {
+                  const sibNode = graphNodes.get(sibId);
+                  return sibNode && sibNode.type === 'component';
+                });
+
+                // Calculate max component size across all siblings
+                siblings.forEach((sibId) => {
+                  const sibScale = this.calculateDodecahedronScale(
+                    sibId,
+                    parentChildMap,
+                    graphNodes,
+                    level
+                  );
+                  const sibSize =
+                    baseDodecahedronRadius * Math.max(...sibScale.nodeScale);
+                  maxComponentSize = Math.max(maxComponentSize, sibSize);
+                });
+                break;
+              }
+            }
+          } catch (error) {
+            console.warn(
+              `⚠️ Error calculating sibling sizes for ${nodeId}:`,
+              error
+            );
+          }
+
+          // Total spacing includes the max component size plus the gap
+          const cellWidth = maxComponentSize * 2 + spacingBetweenComponents;
+          const cellHeight = maxComponentSize * 2 + spacingBetweenComponents;
+
+          // Calculate grid dimensions to center it around the parent
+          const gridWidth = (gridSize - 1) * cellWidth;
+          const gridHeight = (gridSize - 1) * cellHeight;
+
+          // Offset to center the grid around parent position
+          const offsetX = col * cellWidth - gridWidth / 2;
+          const offsetZ = row * cellHeight - gridHeight / 2;
+
+          // Add level-based offset to separate nested layers from parent
+          const layerOffset = (level - 1) * cellWidth;
 
           return [
-            parentPosition[0] + offsetX,
-            parentPosition[1] - depthOffset, // Keep Y constant for horizontal plane, add depth offset
-            parentPosition[2] + offsetZ, // Use Z-axis for circle
+            parentPosition[0] + offsetX + layerOffset,
+            parentPosition[1] - depthOffset,
+            parentPosition[2] + offsetZ,
           ];
         }
       } else {
@@ -615,6 +883,7 @@ export class MarkdownDiagramService {
   ) {
     const {
       parentChildMap,
+      childParentMap,
       graphNodes,
       rootNodes,
       basePosition,
@@ -633,6 +902,19 @@ export class MarkdownDiagramService {
     // Skip datapath nodes
     if (node.type === 'datapath') {
       return;
+    }
+
+    // Skip top-level utility functions, services, and stores - they are positioned by positionGroupedNodes
+    // Top-level functions (utilities) have no parent and will be grouped separately
+    const nodeType = (node.type || '').toLowerCase().trim();
+    const isTopLevel = !childParentMap.has(nodeId);
+
+    if (nodeType === 'service' || nodeType === 'store') {
+      return; // Always skip services and stores for grouped positioning
+    }
+
+    if (nodeType === 'function' && isTopLevel) {
+      return; // Skip top-level functions (utility modules) for grouped positioning
     }
 
     // Determine object type
@@ -665,7 +947,8 @@ export class MarkdownDiagramService {
       parentPosition,
       parentContainerSize,
       rootNodes,
-      graphNodes
+      graphNodes,
+      parentChildMap
     );
 
     // Store position and scale
@@ -688,6 +971,303 @@ export class MarkdownDiagramService {
           containerSize
         );
       });
+    }
+  }
+
+  /**
+   * Position utility modules, services, and stores in grouped square grids
+   * @param {Object} context - Processing context containing all maps and data
+   */
+  positionGroupedNodes(context) {
+    const {
+      graphNodes,
+      parentChildMap,
+      childParentMap,
+      nodePositions,
+      nodeScales,
+      basePosition,
+    } = context;
+
+    // Collect top-level nodes by type (nodes without parents)
+    const utilityNodes = []; // Top-level function nodes (utility modules)
+    const serviceNodes = [];
+    const storeNodes = [];
+    const ungroupedComponents = []; // Top-level component nodes (not in hierarchy)
+
+    for (const [nodeId, node] of graphNodes.entries()) {
+      // Only include top-level nodes (nodes without parents)
+      if (childParentMap.has(nodeId)) {
+        continue; // Skip nodes that have parents
+      }
+
+      const nodeType = (node.type || '').toLowerCase().trim();
+
+      if (nodeType === 'function') {
+        // Top-level functions are utility modules
+        utilityNodes.push(nodeId);
+      } else if (nodeType === 'service') {
+        serviceNodes.push(nodeId);
+      } else if (nodeType === 'store') {
+        storeNodes.push(nodeId);
+      } else if (nodeType === 'component' && nodeId !== 'MainEntry') {
+        // Top-level components that aren't in the hierarchy
+        ungroupedComponents.push(nodeId);
+      }
+    }
+
+    console.log('🔍 positionGroupedNodes - Found nodes:', {
+      utilities: utilityNodes.length,
+      services: serviceNodes.length,
+      stores: storeNodes.length,
+      ungroupedComponents: ungroupedComponents.length,
+      utilityNodeIds: utilityNodes,
+      serviceNodeIds: serviceNodes,
+      storeNodeIds: storeNodes,
+      ungroupedComponentIds: ungroupedComponents,
+    });
+
+    // Position each group in a horizontal square grid
+    const nodeSpacing = 50; // Spacing between nodes in the grid
+
+    const positionGroup = (nodes, xOffset, yOffset, zOffset) => {
+      if (nodes.length === 0) return;
+
+      const gridSize = Math.ceil(Math.sqrt(nodes.length));
+
+      nodes.forEach((nodeId, index) => {
+        const row = Math.floor(index / gridSize);
+        const col = index % gridSize;
+
+        const position = [
+          basePosition[0] + xOffset + col * nodeSpacing,
+          basePosition[1] + yOffset,
+          basePosition[2] + zOffset + row * nodeSpacing,
+        ];
+
+        nodePositions.set(nodeId, position);
+        nodeScales.set(nodeId, [1, 1, 1]); // Default scale for grouped nodes
+      });
+    };
+
+    // Position groups at specific offsets from base position
+    // Utility Modules: left front, below (-800, -500, 0)
+    positionGroup(utilityNodes, -800, -500, 400);
+
+    // Services: left back, below (-800, -500, -600)
+    positionGroup(serviceNodes, -400, -0, 400);
+
+    // Stores: center, below (0, -500, 0)
+    positionGroup(storeNodes, 0, -500, 400);
+
+    // Ungrouped Components: center, above (0, +600, 0)
+    // Position 100 units above the top-level component grouping
+    positionGroup(ungroupedComponents, 0, 600, 200);
+  }
+
+  /**
+   * Create container cubes around grouped nodes (utilities, services, stores)
+   * @param {Object} context - Processing context
+   * @param {Array} allObjectsToSave - Array to collect containers for saving
+   * @param {string} currentSpaceId - Current space ID
+   * @param {Object} user - Current user
+   */
+  async createGroupContainers(context, allObjectsToSave, currentSpaceId, user) {
+    const { graphNodes, childParentMap, nodePositions } = context;
+
+    const { useObjectsStore } = await import('../stores');
+    const { getCellCoordinates, getCellId } = await import(
+      './spatialPartitioning'
+    );
+
+    // Collect top-level nodes by type
+    const utilityNodes = []; // Top-level function nodes (utility modules)
+    const serviceNodes = [];
+    const storeNodes = [];
+
+    for (const [nodeId, node] of graphNodes.entries()) {
+      // Only include top-level nodes (nodes without parents)
+      if (childParentMap.has(nodeId)) {
+        continue;
+      }
+
+      const nodeType = (node.type || '').toLowerCase().trim();
+
+      if (nodeType === 'function') {
+        // Top-level functions are utility modules
+        utilityNodes.push(nodeId);
+      } else if (nodeType === 'service') {
+        serviceNodes.push(nodeId);
+      } else if (nodeType === 'store') {
+        storeNodes.push(nodeId);
+      }
+    }
+
+    console.log('🎨 createGroupContainers - Found nodes:', {
+      utilities: utilityNodes.length,
+      services: serviceNodes.length,
+      stores: storeNodes.length,
+    });
+
+    const containerCubes = [];
+
+    // Helper function to create a container for a group
+    const createContainerForGroup = (nodes, groupName, color) => {
+      if (nodes.length === 0) {
+        console.log(`⚠️ No nodes for ${groupName} group - skipping container`);
+        return;
+      }
+
+      console.log(`📦 Creating container for ${groupName}:`, {
+        nodeCount: nodes.length,
+        color: color,
+      });
+
+      // Calculate bounding box
+      let minX = Infinity,
+        minY = Infinity,
+        minZ = Infinity;
+      let maxX = -Infinity,
+        maxY = -Infinity,
+        maxZ = -Infinity;
+
+      nodes.forEach((nodeId) => {
+        const pos = nodePositions.get(nodeId);
+        if (!pos) return;
+
+        const nodeSize = 5; // Default size for cubes/tetrahedrons
+
+        minX = Math.min(minX, pos[0] - nodeSize);
+        maxX = Math.max(maxX, pos[0] + nodeSize);
+        minY = Math.min(minY, pos[1] - nodeSize);
+        maxY = Math.max(maxY, pos[1] + nodeSize);
+        minZ = Math.min(minZ, pos[2] - nodeSize);
+        maxZ = Math.max(maxZ, pos[2] + nodeSize);
+      });
+
+      // Add padding
+      const padding = 15;
+      minX -= padding;
+      maxX += padding;
+      minY -= padding;
+      maxY += padding;
+      minZ -= padding;
+      maxZ += padding;
+
+      // Calculate center and dimensions
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+
+      const width = maxX - minX;
+      const height = maxY - minY;
+      const depth = maxZ - minZ;
+
+      const containerScale = [width / 10, height / 10, depth / 10];
+      const containerPosition = [centerX, centerY, centerZ];
+
+      // Generate unique ID
+      const containerId = `group-container-${groupName}-${Date.now()}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+
+      const cellCoords = getCellCoordinates(containerPosition);
+      const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+
+      // Create container cube
+      const containerCube = {
+        id: containerId,
+        type: 'cube',
+        position: containerPosition,
+        scale: containerScale,
+        color: color,
+        lineWidth: 2,
+        cellId: cellId,
+        createdAt: Date.now(),
+        headerText: `${groupName} Group`,
+        faceColors: {},
+        faceTexts: {
+          front: '',
+          back: '',
+          top: '',
+          bottom: '',
+          right: '',
+          left: '',
+        },
+        textStyle: {
+          fontSize: 1.0,
+          color: 'black',
+          underline: false,
+        },
+        merfolkData: {
+          isContainer: true,
+          groupType: groupName,
+          nodeCount: nodes.length,
+        },
+      };
+
+      containerCubes.push(containerCube);
+
+      // Prepare for Cloud Function bulk save
+      const containerForSave = {
+        id: containerId,
+        position: containerPosition,
+        size: containerScale,
+        scale: containerScale,
+        type: 'cube',
+        color: color,
+        lineWidth: 2,
+        content: `${groupName} Group`,
+        createdAt: Date.now(),
+        cellId: cellId,
+        headerText: `${groupName} Group`,
+        faceColors: {},
+        faceTexts: {
+          front: '',
+          back: '',
+          top: '',
+          bottom: '',
+          right: '',
+          left: '',
+        },
+        merfolkData: {
+          isContainer: true,
+          groupType: groupName,
+          nodeCount: nodes.length,
+        },
+      };
+
+      allObjectsToSave.push(containerForSave);
+    };
+
+    // Collect ungrouped component nodes for container
+    const ungroupedComponents = [];
+    for (const [nodeId, node] of graphNodes.entries()) {
+      if (childParentMap.has(nodeId)) continue;
+      const nodeType = (node.type || '').toLowerCase().trim();
+      if (nodeType === 'component' && nodeId !== 'MainEntry') {
+        const position = nodePositions.get(nodeId);
+        if (position) {
+          ungroupedComponents.push(nodeId);
+        }
+      }
+    }
+
+    // Create containers for each group with their specific colors
+    createContainerForGroup(utilityNodes, 'Utility Modules', '#4CAF50'); // Green
+    createContainerForGroup(serviceNodes, 'Services', '#FF9800'); // Orange
+    createContainerForGroup(storeNodes, 'Stores', '#9C27B0'); // Purple
+    createContainerForGroup(
+      ungroupedComponents,
+      'Ungrouped Components',
+      '#757575'
+    ); // Gray
+
+    // Add container cubes to store
+    if (containerCubes.length > 0) {
+      const currentObjects = useObjectsStore.getState().objects;
+      useObjectsStore
+        .getState()
+        .setObjects([...currentObjects, ...containerCubes]);
     }
   }
 
@@ -748,150 +1328,8 @@ export class MarkdownDiagramService {
       );
     });
 
-    // ========================================
-    // DYNAMIC CIRCULAR POSITIONING SYSTEM
-    // Maintains 50 units between objects within a group
-    // Maintains 100 units between groups
-    // ========================================
-
-    // Collect all circular groups
-    const serviceNodes = Array.from(graph.nodes.values()).filter(
-      (node) => node.type === 'service'
-    );
-
-    const storeNodes = Array.from(graph.nodes.values()).filter(
-      (node) => node.type === 'store'
-    );
-
-    const utilityNodes = Array.from(graph.nodes.values()).filter(
-      (node) => node.type === 'utility'
-    );
-
-    const standaloneFunctionNodes = Array.from(graph.nodes.values()).filter(
-      (node) => node.type === 'function' && !childParentMap.has(node.id)
-    );
-
-    // Calculate dynamic radii based on object count and spacing requirements
-    const objectSpacing = 50; // Distance between objects within a group
-    const groupSpacing = 50; // Distance between groups
-    const objectSize = 10; // Approximate size of each object (for spacing calculation)
-
-    /**
-     * Calculate the radius needed for a circle to maintain desired spacing between objects
-     * Formula: circumference = radius * 2 * PI
-     * Required circumference = objectCount * (objectSpacing + objectSize)
-     * Therefore: radius = (objectCount * (objectSpacing + objectSize)) / (2 * PI)
-     */
-    const calculateRadiusForGroup = (objectCount) => {
-      if (objectCount === 0) return 0;
-      const requiredCircumference = objectCount * (objectSpacing + objectSize);
-      return requiredCircumference / (2 * Math.PI);
-    };
-
-    // Calculate radii for each group
-    const serviceRadius = calculateRadiusForGroup(serviceNodes.length);
-    const storeRadius =
-      serviceRadius > 0
-        ? serviceRadius +
-          groupSpacing +
-          calculateRadiusForGroup(storeNodes.length)
-        : calculateRadiusForGroup(storeNodes.length);
-    const utilityRadius =
-      storeRadius > 0
-        ? storeRadius +
-          groupSpacing +
-          calculateRadiusForGroup(utilityNodes.length)
-        : calculateRadiusForGroup(utilityNodes.length);
-    const functionRadius =
-      utilityRadius > 0
-        ? utilityRadius +
-          groupSpacing +
-          calculateRadiusForGroup(standaloneFunctionNodes.length)
-        : calculateRadiusForGroup(standaloneFunctionNodes.length);
-
-    // Special handling: Position all service nodes in innermost circle
-    if (serviceNodes.length > 0) {
-      const angleIncrement = (Math.PI * 2) / serviceNodes.length;
-
-      serviceNodes.forEach((node, index) => {
-        const angle = index * angleIncrement;
-        const offsetX = Math.cos(angle) * serviceRadius;
-        const offsetZ = Math.sin(angle) * serviceRadius;
-
-        const servicePosition = [
-          basePosition[0] + offsetX,
-          basePosition[1],
-          basePosition[2] + offsetZ,
-        ];
-
-        nodePositions.set(node.id, servicePosition);
-        nodeScales.set(node.id, [1, 1, 1]);
-        processedNodes.add(node.id);
-      });
-    }
-
-    // Special handling: Position all store nodes in second circle
-    if (storeNodes.length > 0) {
-      const angleIncrement = (Math.PI * 2) / storeNodes.length;
-
-      storeNodes.forEach((node, index) => {
-        const angle = index * angleIncrement;
-        const offsetX = Math.cos(angle) * storeRadius;
-        const offsetZ = Math.sin(angle) * storeRadius;
-
-        const storePosition = [
-          basePosition[0] + offsetX,
-          basePosition[1],
-          basePosition[2] + offsetZ,
-        ];
-
-        nodePositions.set(node.id, storePosition);
-        nodeScales.set(node.id, [1, 1, 1]);
-        processedNodes.add(node.id);
-      });
-    }
-
-    // Special handling: Position all utility nodes in third circle
-    if (utilityNodes.length > 0) {
-      const angleIncrement = (Math.PI * 2) / utilityNodes.length;
-
-      utilityNodes.forEach((node, index) => {
-        const angle = index * angleIncrement;
-        const offsetX = Math.cos(angle) * utilityRadius;
-        const offsetZ = Math.sin(angle) * utilityRadius;
-
-        const utilityPosition = [
-          basePosition[0] + offsetX,
-          basePosition[1],
-          basePosition[2] + offsetZ,
-        ];
-
-        nodePositions.set(node.id, utilityPosition);
-        nodeScales.set(node.id, [1, 1, 1]);
-        processedNodes.add(node.id);
-      });
-    }
-
-    // Special handling: Position all standalone function nodes in outermost circle
-    if (standaloneFunctionNodes.length > 0) {
-      const angleIncrement = (Math.PI * 2) / standaloneFunctionNodes.length;
-
-      standaloneFunctionNodes.forEach((node, index) => {
-        const angle = index * angleIncrement;
-        const offsetX = Math.cos(angle) * functionRadius;
-        const offsetZ = Math.sin(angle) * functionRadius;
-
-        const functionPosition = [
-          basePosition[0] + offsetX,
-          basePosition[1], // Same level as other objects
-          basePosition[2] + offsetZ,
-        ];
-
-        nodePositions.set(node.id, functionPosition);
-        nodeScales.set(node.id, [1, 1, 1]); // Default scale for cubes
-        processedNodes.add(node.id);
-      });
-    }
+    // Position grouped nodes (utilities, services, stores) in square grids
+    this.positionGroupedNodes(context);
 
     // Create 3D objects with batch processing for better performance
     let objectsCreated = 0;
@@ -1152,7 +1590,514 @@ export class MarkdownDiagramService {
         .setObjects([...currentObjects, ...allObjectsForDiagram]);
     }
 
+    // Calculate container dimensions for component child groupings
+    const containerDimensions = this.calculateContainerDimensions(
+      parentChildMap,
+      graph.nodes,
+      nodePositions,
+      nodeScales
+    );
+
+    // Create containers around the component children
+    // Note: Not adjusting positions because the 300-unit depthOffset already provides
+    // sufficient vertical separation between parent and child components
+    await this.createContainerCubesAtPositions(
+      containerDimensions,
+      graph.nodes,
+      allObjectsToSave,
+      currentSpaceId,
+      user
+    );
+
+    // Create group containers for utilities, services, and stores
+    await this.createGroupContainers(
+      context,
+      allObjectsToSave,
+      currentSpaceId,
+      user
+    );
+
     return objectsCreated;
+  }
+
+  /**
+   * Adjust child component positions to be placed below their parent containers
+   * This ensures child containers are positioned outside and below parent containers,
+   * dynamically adjusting based on actual parent container size.
+   * @param {Map} parentChildMap - Map of parent to children relationships
+   * @param {Map} graphNodes - Map of all nodes
+   * @param {Map} nodePositions - Map of node positions (will be modified)
+   * @param {Map} containerDimensions - Map of parent node IDs to container dimensions (will be modified)
+   */
+  async adjustChildPositionsForContainers(
+    parentChildMap,
+    graphNodes,
+    nodePositions,
+    containerDimensions
+  ) {
+    const containerSpacing = 30; // Vertical spacing between parent container bottom and child container top
+
+    // Build a map of which nodes have their own containers (are parents of multiple components)
+    const nodesWithContainers = new Set(containerDimensions.keys());
+
+    // Iterate through each parent that has a container
+    for (const [
+      parentNodeId,
+      parentContainerInfo,
+    ] of containerDimensions.entries()) {
+      const children = parentChildMap.get(parentNodeId);
+      if (!children) continue;
+
+      // Find child nodes that ALSO have containers
+      const childrenWithContainers = Array.from(children).filter((childId) => {
+        return nodesWithContainers.has(childId);
+      });
+
+      if (childrenWithContainers.length === 0) continue;
+
+      // For each child that has its own container, we need to move that child's
+      // entire subtree (including its container) below the parent container
+      childrenWithContainers.forEach((childNodeId) => {
+        const childContainerInfo = containerDimensions.get(childNodeId);
+        if (!childContainerInfo) return;
+
+        // Calculate where the child container should be positioned:
+        // Parent container bottom + spacing - child container's current top edge
+        const parentBottomY = parentContainerInfo.bottomY;
+        const childContainerTopY =
+          childContainerInfo.position[1] + childContainerInfo.height / 2;
+        const targetChildTopY = parentBottomY - containerSpacing;
+        const yOffset = targetChildTopY - childContainerTopY;
+
+        console.log(`Adjusting child container for node ${childNodeId}:`, {
+          parentNodeId,
+          parentBottomY,
+          childContainerTopY,
+          targetChildTopY,
+          yOffset,
+        });
+
+        // Apply this offset to the child node and ALL its descendants
+        const visited = new Set();
+
+        const adjustNodeAndDescendants = (nodeId, offset) => {
+          // Prevent infinite recursion
+          if (visited.has(nodeId)) return;
+          visited.add(nodeId);
+
+          const pos = nodePositions.get(nodeId);
+          if (pos) {
+            nodePositions.set(nodeId, [pos[0], pos[1] + offset, pos[2]]);
+          }
+
+          // Also update the container info if this node has one
+          if (containerDimensions.has(nodeId)) {
+            const containerInfo = containerDimensions.get(nodeId);
+            containerInfo.position[1] += offset;
+            containerInfo.bottomY += offset;
+          }
+
+          // Recursively adjust descendants
+          const nodeChildren = parentChildMap.get(nodeId);
+          if (nodeChildren) {
+            nodeChildren.forEach((childId) => {
+              adjustNodeAndDescendants(childId, offset);
+            });
+          }
+        };
+
+        adjustNodeAndDescendants(childNodeId, yOffset);
+      });
+    }
+
+    // Update the actual objects in the store with adjusted positions
+    const { useObjectsStore } = await import('../stores');
+    const objectsStore = useObjectsStore.getState();
+    const updatedObjects = objectsStore.objects.map((obj) => {
+      // Update regular node objects
+      if (obj.merfolkData?.nodeId) {
+        const newPos = nodePositions.get(obj.merfolkData.nodeId);
+        if (newPos) {
+          return { ...obj, position: [...newPos] };
+        }
+      }
+      return obj;
+    });
+
+    objectsStore.setObjects(updatedObjects);
+  }
+
+  /**
+   * Calculate container dimensions for child component groupings
+   * This calculates where containers WOULD be without creating them yet
+   * @param {Map} parentChildMap - Map of parent to children relationships
+   * @param {Map} graphNodes - Map of all nodes
+   * @param {Map} nodePositions - Map of node positions
+   * @param {Map} nodeScales - Map of node scales
+   * @returns {Map} - Map of parent node IDs to their container dimensions
+   */
+  calculateContainerDimensions(
+    parentChildMap,
+    graphNodes,
+    nodePositions,
+    nodeScales
+  ) {
+    const baseDodecahedronRadius = 10;
+    const containerDimensions = new Map();
+
+    console.log('📐 calculateContainerDimensions - Starting...');
+
+    // Iterate through each parent that has component children
+    for (const [parentNodeId, children] of parentChildMap.entries()) {
+      const parentNode = graphNodes.get(parentNodeId);
+      if (!parentNode || parentNode.type !== 'component') continue;
+
+      // Get component children only (not functions)
+      const componentChildren = Array.from(children).filter((childId) => {
+        const childNode = graphNodes.get(childId);
+        return childNode && childNode.type === 'component';
+      });
+
+      // Only create container if there are 2 or more child components
+      if (componentChildren.length < 2) continue;
+
+      console.log(
+        `📦 Creating container for parent ${parentNode.label || parentNodeId}:`,
+        {
+          parentNodeId,
+          childCount: componentChildren.length,
+          children: componentChildren.map((id) => {
+            const child = graphNodes.get(id);
+            return {
+              id,
+              label: child?.label || id,
+              position: nodePositions.get(id),
+            };
+          }),
+        }
+      );
+
+      // Calculate bounding box for all child components
+      let minX = Infinity,
+        minY = Infinity,
+        minZ = Infinity;
+      let maxX = -Infinity,
+        maxY = -Infinity,
+        maxZ = -Infinity;
+
+      componentChildren.forEach((childId) => {
+        const childPos = nodePositions.get(childId);
+        const childScale = nodeScales.get(childId);
+
+        if (!childPos || !childScale) return;
+
+        // Calculate child's actual size
+        const childSize = baseDodecahedronRadius * Math.max(...childScale);
+
+        // Expand bounding box
+        minX = Math.min(minX, childPos[0] - childSize);
+        maxX = Math.max(maxX, childPos[0] + childSize);
+        minY = Math.min(minY, childPos[1] - childSize);
+        maxY = Math.max(maxY, childPos[1] + childSize);
+        minZ = Math.min(minZ, childPos[2] - childSize);
+        maxZ = Math.max(maxZ, childPos[2] + childSize);
+      });
+
+      // Add padding around the bounding box
+      const padding = 20;
+      minX -= padding;
+      maxX += padding;
+      minY -= padding;
+      maxY += padding;
+      minZ -= padding;
+      maxZ += padding;
+
+      // Calculate center and scale for container cube
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+
+      const width = maxX - minX;
+      const height = maxY - minY;
+      const depth = maxZ - minZ;
+
+      // Container cube scale (divide by 10 because default cube size is 10)
+      const containerScale = [width / 10, height / 10, depth / 10];
+      const containerPosition = [centerX, centerY, centerZ];
+
+      // Store container dimensions for this parent
+      containerDimensions.set(parentNodeId, {
+        position: containerPosition,
+        scale: containerScale,
+        width: width,
+        height: height,
+        depth: depth,
+        bottomY: minY, // Bottom edge Y coordinate
+        childCount: componentChildren.length,
+      });
+
+      console.log(
+        `✅ Container calculated for ${parentNode.label || parentNodeId}:`,
+        {
+          position: containerPosition,
+          scale: containerScale,
+          bounds: { minX, maxX, minY, maxY, minZ, maxZ },
+        }
+      );
+    }
+
+    console.log(
+      `📐 calculateContainerDimensions - Created ${containerDimensions.size} containers`
+    );
+
+    return containerDimensions;
+  }
+
+  /**
+   * Helper: Calculate bounding box for a set of nodes
+   * @param {Array} nodeIds - Array of node IDs
+   * @param {Map} nodePositions - Map of node positions
+   * @param {Map} nodeScales - Map of node scales (optional)
+   * @param {number} nodeSize - Base size for nodes
+   * @param {number} padding - Padding around bounding box
+   * @returns {Object} - Bounding box with min/max coordinates and center/dimensions
+   */
+  calculateBoundingBox(nodeIds, nodePositions, nodeScales, nodeSize, padding) {
+    let minX = Infinity,
+      minY = Infinity,
+      minZ = Infinity;
+    let maxX = -Infinity,
+      maxY = -Infinity,
+      maxZ = -Infinity;
+
+    nodeIds.forEach((nodeId) => {
+      const pos = nodePositions.get(nodeId);
+      if (!pos) return;
+
+      let size = nodeSize;
+
+      // If scales provided, calculate actual size
+      if (nodeScales) {
+        const scale = nodeScales.get(nodeId);
+        if (scale) {
+          size = nodeSize * Math.max(...scale);
+        }
+      }
+
+      minX = Math.min(minX, pos[0] - size);
+      maxX = Math.max(maxX, pos[0] + size);
+      minY = Math.min(minY, pos[1] - size);
+      maxY = Math.max(maxY, pos[1] + size);
+      minZ = Math.min(minZ, pos[2] - size);
+      maxZ = Math.max(maxZ, pos[2] + size);
+    });
+
+    // Add padding
+    minX -= padding;
+    maxX += padding;
+    minY -= padding;
+    maxY += padding;
+    minZ -= padding;
+    maxZ += padding;
+
+    // Calculate center and dimensions
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const depth = maxZ - minZ;
+
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      minZ,
+      maxZ,
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+      centerZ: (minZ + maxZ) / 2,
+      width,
+      height,
+      depth,
+      scale: [width / 10, height / 10, depth / 10],
+      position: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2],
+    };
+  }
+
+  /**
+   * Helper: Create a container cube object
+   * @param {string} containerId - Unique ID for container
+   * @param {Array} position - [x, y, z] position
+   * @param {Array} scale - [x, y, z] scale
+   * @param {string} color - Container color
+   * @param {string} headerText - Container header text
+   * @param {string} cellId - Spatial partitioning cell ID
+   * @param {Object} merfolkData - Additional merfolk metadata
+   * @returns {Object} - Container cube object
+   */
+  createContainerCubeObject(
+    containerId,
+    position,
+    scale,
+    color,
+    headerText,
+    cellId,
+    merfolkData
+  ) {
+    return {
+      id: containerId,
+      type: 'cube',
+      position: [...position],
+      scale: [...scale],
+      color: color,
+      lineWidth: 2,
+      cellId: cellId,
+      createdAt: Date.now(),
+      headerText: headerText,
+      faceColors: {},
+      faceTexts: {
+        front: '',
+        back: '',
+        top: '',
+        bottom: '',
+        right: '',
+        left: '',
+      },
+      textStyle: {
+        fontSize: 1.0,
+        color: 'black',
+        underline: false,
+      },
+      merfolkData: {
+        isContainer: true,
+        ...merfolkData,
+      },
+    };
+  }
+
+  /**
+   * Create container cube objects at their calculated positions
+   * @param {Map} containerDimensions - Map of parent node IDs to container dimensions
+   * @param {Map} graphNodes - Map of all nodes
+   * @param {Array} allObjectsToSave - Array to collect container cubes for saving
+   * @param {string} currentSpaceId - Current space ID
+   * @param {Object} user - Current user
+   */
+  async createContainerCubesAtPositions(
+    containerDimensions,
+    graphNodes,
+    allObjectsToSave,
+    currentSpaceId,
+    user
+  ) {
+    const { useObjectsStore } = await import('../stores');
+    const { getCellCoordinates, getCellId } = await import(
+      './spatialPartitioning'
+    );
+
+    const containerCubes = [];
+
+    console.log(
+      `🏗️ createContainerCubesAtPositions - Creating ${containerDimensions.size} containers`
+    );
+
+    // Create a container cube for each parent in the dimensions map
+    for (const [parentNodeId, containerInfo] of containerDimensions.entries()) {
+      const parentNode = graphNodes.get(parentNodeId);
+      if (!parentNode) continue;
+
+      const { position, scale, childCount } = containerInfo;
+
+      console.log(
+        `📦 Creating container cube for ${parentNode.label || parentNodeId}:`,
+        {
+          position,
+          scale,
+          childCount,
+        }
+      );
+
+      // Generate unique ID for container cube
+      const containerId = `container-${parentNodeId}-${Date.now()}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+
+      // Calculate cellId for spatial partitioning
+      const cellCoords = getCellCoordinates(position);
+      const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+
+      // Create container cube object
+      const containerCube = {
+        id: containerId,
+        type: 'cube',
+        position: [...position],
+        scale: [...scale],
+        color: '#e0e0e0', // Light gray for containers
+        lineWidth: 2, // Container cube outline thickness
+        cellId: cellId,
+        createdAt: Date.now(),
+        headerText: `${parentNode.label || parentNode.id} Group`,
+        faceColors: {},
+        faceTexts: {
+          front: '',
+          back: '',
+          top: '',
+          bottom: '',
+          right: '',
+          left: '',
+        },
+        textStyle: {
+          fontSize: 1.0,
+          color: 'black',
+          underline: false,
+        },
+        merfolkData: {
+          isContainer: true,
+          parentNodeId: parentNodeId,
+          childCount: childCount,
+        },
+      };
+
+      containerCubes.push(containerCube);
+
+      // Prepare for Cloud Function bulk save
+      const containerForSave = {
+        id: containerId,
+        position: [...position],
+        size: [...scale],
+        scale: [...scale],
+        type: 'cube',
+        color: '#e0e0e0',
+        lineWidth: 2,
+        content: `${parentNode.label || parentNode.id} Group`,
+        createdAt: Date.now(),
+        cellId: cellId,
+        headerText: `${parentNode.label || parentNode.id} Group`,
+        faceColors: {},
+        faceTexts: {
+          front: '',
+          back: '',
+          top: '',
+          bottom: '',
+          right: '',
+          left: '',
+        },
+        merfolkData: {
+          isContainer: true,
+          parentNodeId: parentNodeId,
+          childCount: childCount,
+        },
+      };
+
+      allObjectsToSave.push(containerForSave);
+    }
+
+    // Add container cubes to store
+    if (containerCubes.length > 0) {
+      const currentObjects = useObjectsStore.getState().objects;
+      useObjectsStore
+        .getState()
+        .setObjects([...currentObjects, ...containerCubes]);
+    }
   }
 
   /**
@@ -1853,8 +2798,9 @@ export class MarkdownDiagramService {
    * @returns {Promise<Object>} - Processing results
    */
   async processMarkdownFile(file, onCreateObject, currentSpaceId, user) {
-    // Clear cache for new processing session
+    // Clear caches for new processing session
     this.scaleCache.clear();
+    this.boundingBoxCache.clear();
 
     // Validate file type
     const validExtensions = ['.md', '.markdown'];

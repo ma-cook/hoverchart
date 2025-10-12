@@ -39,6 +39,7 @@ const Sphere = React.memo(
     onUpdate, // Add this prop
     onDelete, // Add new prop
     registerTransformingObject, // Add this prop
+    lineWidth, // Add lineWidth prop
   }) => {
     // Mobile detection for scaling
     const isMobile =
@@ -1196,7 +1197,7 @@ const Sphere = React.memo(
               key={idx}
               points={linePoints}
               color={lineColor}
-              lineWidth={isMobile ? 3 : 2}
+              lineWidth={lineWidth !== undefined ? lineWidth : isMobile ? 3 : 1}
               enablePooling={true}
             />
           ))}

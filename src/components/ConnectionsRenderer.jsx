@@ -750,6 +750,9 @@ const ConnectionsRenderer = ({
 }) => {
   // Get all connections from store
   const connections = useConnectionStore((state) => state.connections);
+  const connectionsVisible = useConnectionStore(
+    (state) => state.connectionsVisible
+  );
 
   // Create a stable set of available object IDs to avoid recalculating on every render
   const availableObjectIds = useMemo(() => {
@@ -831,19 +834,20 @@ const ConnectionsRenderer = ({
   // Render each visible connection
   return (
     <group>
-      {visibleConnections.map((connection) => (
-        <Connection
-          key={connection.id}
-          connection={connection}
-          allObjectsForPathfinding={stablePathfindingObjects}
-          onLineStyleChange={onLineStyleChange}
-          onLineColorChange={onLineColorChange}
-          onConnectionClick={onConnectionClick}
-          onLineTextClick={onLineTextClick}
-          onLineTextSubmit={onLineTextSubmit}
-          onLineTextStyleChange={onLineTextStyleChange}
-        />
-      ))}
+      {connectionsVisible &&
+        visibleConnections.map((connection) => (
+          <Connection
+            key={connection.id}
+            connection={connection}
+            allObjectsForPathfinding={stablePathfindingObjects}
+            onLineStyleChange={onLineStyleChange}
+            onLineColorChange={onLineColorChange}
+            onConnectionClick={onConnectionClick}
+            onLineTextClick={onLineTextClick}
+            onLineTextSubmit={onLineTextSubmit}
+            onLineTextStyleChange={onLineTextStyleChange}
+          />
+        ))}
     </group>
   );
 };

@@ -146,6 +146,7 @@ const Tetrahedron = ({
   onTransformStart,
   onTransformEnd,
   onMove,
+  lineWidth, // Add lineWidth prop
 }) => {
   // Create triangle geometries for each face (moved inside component to ensure proper disposal)
   const tetrahedronTriangleFaces = useMemo(() => {
@@ -1312,7 +1313,7 @@ const Tetrahedron = ({
         <PooledLine
           points={tetrahedronLinePoints}
           color={tetrahedron?.color || color}
-          lineWidth={2}
+          lineWidth={lineWidth !== undefined ? lineWidth : 1}
           dashed={false}
           enablePooling={true}
         />

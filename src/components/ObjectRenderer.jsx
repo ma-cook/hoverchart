@@ -5,6 +5,7 @@ import Sphere from './Dodecahedron';
 import Plane from './Plane';
 import TextObject from './TextObject';
 import ModelObject from './ModelObject';
+import ContainerOutline from './ContainerOutline';
 
 const ObjectRenderer = React.memo(
   ({
@@ -32,6 +33,19 @@ const ObjectRenderer = React.memo(
     user, // Add this prop
     currentSpaceId, // Add this prop
   }) => {
+    // Check if this is a container cube (just an outline, no interaction)
+    if (obj.type === 'cube' && obj.merfolkData?.isContainer) {
+      return (
+        <ContainerOutline
+          key={obj.id}
+          position={obj.position}
+          scale={obj.scale || [1, 1, 1]}
+          color={obj.color || '#e0e0e0'}
+          lineWidth={obj.lineWidth || 2}
+        />
+      );
+    }
+
     if (obj.type === 'cube') {
       return (
         <Cube
@@ -67,6 +81,7 @@ const ObjectRenderer = React.memo(
           onMove={(newPosition) =>
             handleObjectMove(obj.id, newPosition, false, false)
           }
+          lineWidth={obj.lineWidth} // Pass lineWidth from object data
         />
       );
     }
@@ -105,6 +120,7 @@ const ObjectRenderer = React.memo(
           onMove={(newPosition) =>
             handleObjectMove(obj.id, newPosition, false, false)
           }
+          lineWidth={obj.lineWidth} // Pass lineWidth from object data
         />
       );
     }
@@ -125,6 +141,7 @@ const ObjectRenderer = React.memo(
           onUpdate={handleObjectUpdate}
           onIndicatorDeselected={handleIndicatorDeselected}
           onDelete={() => handleObjectDelete(obj.id)}
+          lineWidth={obj.lineWidth} // Pass lineWidth from object data
         />
       );
     }

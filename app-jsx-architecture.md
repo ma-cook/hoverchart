@@ -64,8 +64,18 @@ TransformControls{Component: TransformControls}
 
 Cube --> ObjectUI : "displays"
 Cube --> FaceUI : "face controls"
+Cube --> HeaderInput : "header editing"
+Cube --> FaceTextInput : "face text editing"
 Cube --> TransformControls : "transform"
+Dodecahedron --> HeaderInput : "header editing"
+Dodecahedron --> FaceTextInput : "face text editing"
+Tetrahedron --> HeaderInput : "header editing"
+Tetrahedron --> FaceTextInput : "face text editing"
+Plane --> HeaderInput : "header editing"
+Plane --> FaceTextInput : "face text editing"
+TextObject --> TextObjectUI : "text controls"
 ConnectionsRenderer --> LineUI : "connection controls"
+ConnectionsRenderer --> HeaderInput : "connection header"
 UIOverlay --> ColorPicker : "color selection"
 
 %% ========================================
@@ -84,6 +94,10 @@ WhitePlane{Component: WhitePlane}
 
 Cube --> FaceIndicator : "face markers"
 Cube --> TextSprite : "text display"
+Dodecahedron --> FaceIndicator : "face markers"
+Tetrahedron --> FaceIndicator : "face markers"
+Plane --> FaceIndicator : "face marker"
+TextObject --> FaceIndicator : "face marker"
 ConnectionsRenderer --> AnimatedConnectionLine : "animated lines"
 ConnectionsRenderer --> PooledLine : "pooled rendering"
 Cube --> SnapIndicator : "snap feedback"

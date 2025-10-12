@@ -124,6 +124,7 @@ const Cube = ({
   onTransformEnd,
   // Add these new props for spatial routing
   onMove, // Add onMove prop like Sphere
+  lineWidth, // Line width for cube edges
 }) => {
   // Get object data from objects store
   const objects = useObjectsStore((state) => state.objects);
@@ -1252,7 +1253,7 @@ const Cube = ({
             key={idx}
             points={edgePoints}
             color={cube?.color || color}
-            lineWidth={isMobile ? 3 : 4}
+            lineWidth={lineWidth !== undefined ? lineWidth : 1}
             enablePooling={true}
           />
         ))}
