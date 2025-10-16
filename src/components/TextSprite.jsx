@@ -310,9 +310,10 @@ const TextSprite = React.memo(
 
           // PERFORMANCE FIX: Only apply billboard when within 1000 units of camera
           if (billboard && !style.isFaceText) {
-            const distanceToCamera = camera.position.distanceTo(
-              textRef.current.position
-            );
+            // Use world position for distance calculation
+            const worldPos = new THREE.Vector3();
+            textRef.current.getWorldPosition(worldPos);
+            const distanceToCamera = camera.position.distanceTo(worldPos);
             if (distanceToCamera < 1000) {
               textRef.current.quaternion.copy(camera.quaternion);
             }
@@ -396,10 +397,10 @@ const TextSprite = React.memo(
                   );
                 }
 
-                // Calculate distance to camera
-                const distanceToCamera = camera.position.distanceTo(
-                  textRef.current.position
-                );
+                // Calculate distance to camera using world position
+                const worldPos = new THREE.Vector3();
+                textRef.current.getWorldPosition(worldPos);
+                const distanceToCamera = camera.position.distanceTo(worldPos);
 
                 // PERFORMANCE FIX: Only update billboard when within 1000 units
                 if (distanceToCamera < 1000) {
@@ -455,9 +456,9 @@ const TextSprite = React.memo(
                 textRef.current.scale.set(baseScale, baseScale, baseScale);
               }
               if (billboard) {
-                const distanceToCamera = camera.position.distanceTo(
-                  textRef.current.position
-                );
+                const worldPos = new THREE.Vector3();
+                textRef.current.getWorldPosition(worldPos);
+                const distanceToCamera = camera.position.distanceTo(worldPos);
                 if (distanceToCamera < 1000) {
                   textRef.current.quaternion.copy(camera.quaternion);
                 }
@@ -467,17 +468,17 @@ const TextSprite = React.memo(
               if (style.isFaceText) {
                 textRef.current.scale.set(1, 1, 1); // Keep constant size
                 if (!style.fixedSize && billboard) {
-                  const distanceToCamera = camera.position.distanceTo(
-                    textRef.current.position
-                  );
+                  const worldPos = new THREE.Vector3();
+                  textRef.current.getWorldPosition(worldPos);
+                  const distanceToCamera = camera.position.distanceTo(worldPos);
                   if (distanceToCamera < 1000) {
                     textRef.current.quaternion.copy(camera.quaternion);
                   }
                 }
               } else if (!style.fixedSize && billboard) {
-                const distanceToCamera = camera.position.distanceTo(
-                  textRef.current.position
-                );
+                const worldPos = new THREE.Vector3();
+                textRef.current.getWorldPosition(worldPos);
+                const distanceToCamera = camera.position.distanceTo(worldPos);
                 if (distanceToCamera < 1000) {
                   textRef.current.quaternion.copy(camera.quaternion);
                 }

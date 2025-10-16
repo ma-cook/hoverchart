@@ -8,7 +8,7 @@ import * as THREE from 'three';
 
 const UIOverlay = ({
   onCreateObject,
-  onToggleIndicators,
+
   user,
   onLogin,
   isAuthReady,

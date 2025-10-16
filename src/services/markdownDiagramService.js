@@ -18,10 +18,91 @@ import { auth } from '../firebase';
  * and converting them to 3D objects and connections
  */
 export class MarkdownDiagramService {
+  // Node type constants
+  static NODE_TYPE_COMPONENT = 'component';
+  static NODE_TYPE_FUNCTION = 'function';
+  static NODE_TYPE_STORE = 'store';
+  static NODE_TYPE_SERVICE = 'service';
+  static NODE_TYPE_LIBRARY = 'library';
+  static NODE_TYPE_UTILITY = 'utility';
+  static NODE_TYPE_DATAPATH = 'datapath';
+  static NODE_TYPE_HANDLER = 'handler';
+  static NODE_TYPE_CONTROL = 'control';
+  static NODE_TYPE_STATE = 'state';
+  static NODE_TYPE_DATA = 'data';
+
+  // Object type constants
+  static OBJECT_TYPE_CUBE = 'cube';
+  static OBJECT_TYPE_DODECAHEDRON = 'dodecahedron';
+  static OBJECT_TYPE_TETRAHEDRON = 'tetrahedron';
+
+  // UI component identifiers
+  static UI_COMPONENTS = [
+    'HeaderInput',
+    'FaceTextInput',
+    'TextObjectUI',
+    'TextStyleUIContainer',
+  ];
+
+  // Magic number constants
+  static MAX_RECURSION_DEPTH = 15;
+  static BASE_DODECAHEDRON_SIZE = 10;
+  static BASE_DODECAHEDRON_RADIUS = 10;
+  static DEFAULT_CAMERA_DISTANCE = 15;
+  static SPACING_BETWEEN_COMPONENTS = 200;
+  static DEFAULT_CUBE_SIZE = 5;
+  static DEFAULT_SPHERE_SIZE = 4;
+  static DEFAULT_CONTAINER_SIZE = 50;
+  static MIN_SCALE_FACTOR = 1.0;
+  static DESIRED_GAP = 8;
+
   constructor() {
     this.processor = null;
     this.scaleCache = new Map(); // Cache for dodecahedron scale calculations
     this.boundingBoxCache = new Map(); // Cache for bounding box calculations
+  }
+
+  /**
+   * Check if a node ID belongs to a UI component
+   * @param {string} nodeId - The node ID to check
+   * @returns {boolean} - True if the node is a UI component
+   */
+  static isUIComponent(nodeId) {
+    return MarkdownDiagramService.UI_COMPONENTS.includes(nodeId);
+  }
+
+  /**
+   * Filter children by cube-type nodes (function, handler, control)
+   * @param {Set} children - Set of child node IDs
+   * @param {Map} graphNodes - Map of all nodes
+   * @returns {Array} - Array of cube-type child IDs
+   */
+  filterCubeChildren(children, graphNodes) {
+    return Array.from(children).filter((childId) => {
+      const childNode = graphNodes.get(childId);
+      return (
+        childNode &&
+        (childNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_HANDLER ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_CONTROL)
+      );
+    });
+  }
+
+  /**
+   * Filter children by component-type nodes
+   * @param {Set} children - Set of child node IDs
+   * @param {Map} graphNodes - Map of all nodes
+   * @returns {Array} - Array of component-type child IDs
+   */
+  filterComponentChildren(children, graphNodes) {
+    return Array.from(children).filter((childId) => {
+      const childNode = graphNodes.get(childId);
+      return (
+        childNode &&
+        childNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT
+      );
+    });
   }
 
   /**
@@ -52,61 +133,38 @@ export class MarkdownDiagramService {
    * @returns {Array} - [x, y, z] position
    */
   getCameraBasedPosition() {
-    let basePosition = [0, 0, -50]; // Default fallback position
+    const DEFAULT_POSITION = [0, 0, -50];
 
     try {
-      // Try multiple methods to get the camera
-      const cameraRef = window.cameraRef?.current?.camera;
-      const windowCamera = window.camera;
-      const orbitCamera = window.orbitControls?.object;
+      // Try multiple camera sources
+      const workingCamera =
+        window.cameraRef?.current?.camera ||
+        window.camera ||
+        window.orbitControls?.object;
 
-      // Safely get camera positions with null checks
-      const getCameraPosition = (cam) => {
-        if (!cam) return null;
-        try {
-          return cam.position && typeof cam.position.x === 'number'
-            ? [cam.position.x, cam.position.y, cam.position.z]
-            : null;
-        } catch {
-          return null;
-        }
-      };
-
-      // Find the first working camera with valid position
-      let workingCamera = null;
-
-      if (cameraRef && getCameraPosition(cameraRef)) {
-        workingCamera = cameraRef;
-      } else if (windowCamera && getCameraPosition(windowCamera)) {
-        workingCamera = windowCamera;
-      } else if (orbitCamera && getCameraPosition(orbitCamera)) {
-        workingCamera = orbitCamera;
+      if (!workingCamera?.position) {
+        return DEFAULT_POSITION;
       }
 
-      if (workingCamera) {
-        const cameraPosition = workingCamera.position;
-        const cameraDirection = new THREE.Vector3();
-
-        // Safely get world direction
-        try {
-          workingCamera.getWorldDirection(cameraDirection);
-        } catch {
-          cameraDirection.set(0, 0, -1); // Default forward direction
-        }
-
-        // Position diagrams exactly like manual objects - close to camera
-        const distance = 15; // Same distance as manual object creation
-        basePosition = [
-          cameraPosition.x + cameraDirection.x * distance,
-          cameraPosition.y + cameraDirection.y * distance,
-          cameraPosition.z + cameraDirection.z * distance,
-        ];
+      const cameraDirection = new THREE.Vector3();
+      try {
+        workingCamera.getWorldDirection(cameraDirection);
+      } catch {
+        cameraDirection.set(0, 0, -1); // Default forward direction
       }
+
+      // Position diagrams exactly like manual objects - close to camera
+      const distance = MarkdownDiagramService.DEFAULT_CAMERA_DISTANCE;
+      const cameraPos = workingCamera.position;
+
+      return [
+        cameraPos.x + cameraDirection.x * distance,
+        cameraPos.y + cameraDirection.y * distance,
+        cameraPos.z + cameraDirection.z * distance,
+      ];
     } catch {
-      // Use default position if camera access fails
+      return DEFAULT_POSITION;
     }
-
-    return basePosition;
   }
 
   /**
@@ -119,43 +177,6 @@ export class MarkdownDiagramService {
     const childParentMap = new Map(); // child -> parent
     const rootNodes = new Set(); // nodes with no parents
 
-    console.log('🔗 Analyzing connections:', {
-      totalConnections: graph.connections?.size || 0,
-      totalNodes: graph.nodes?.size || 0,
-    });
-
-    // Check for connections involving UI components
-    if (graph.connections) {
-      let uiConnectionCount = 0;
-      const uiComponents = [
-        'HeaderInput',
-        'FaceTextInput',
-        'TextObjectUI',
-        'TextStyleUIContainer',
-      ];
-
-      for (const connection of graph.connections.values()) {
-        const sourceId = connection.source?.nodeId || connection.source;
-        const targetId = connection.target?.nodeId || connection.target;
-
-        if (
-          uiComponents.includes(sourceId) ||
-          uiComponents.includes(targetId)
-        ) {
-          uiConnectionCount++;
-          console.log(`🔗 Connection involving UI component:`, {
-            source: sourceId,
-            target: targetId,
-            connection: connection,
-          });
-        }
-      }
-
-      console.log(
-        `🔗 Found ${uiConnectionCount} connections involving UI components`
-      );
-    }
-
     // Analyze connections to build parent-child relationships
     if (graph.connections && graph.connections.size > 0) {
       Array.from(graph.connections.values()).forEach((connection) => {
@@ -165,60 +186,29 @@ export class MarkdownDiagramService {
         const sourceNode = graph.nodes.get(sourceId);
         const targetNode = graph.nodes.get(targetId);
 
-        // Debug logging for specific UI components
-        if (
-          targetId === 'HeaderInput' ||
-          targetId === 'FaceTextInput' ||
-          targetId === 'TextObjectUI' ||
-          targetId === 'TextStyleUIContainer' ||
-          sourceId === 'HeaderInput' ||
-          sourceId === 'FaceTextInput' ||
-          sourceId === 'TextObjectUI' ||
-          sourceId === 'TextStyleUIContainer'
-        ) {
-          console.log(`🔍 Found connection involving UI component:`, {
-            sourceId,
-            targetId,
-            sourceNode: sourceNode
-              ? {
-                  id: sourceNode.id,
-                  type: sourceNode.type,
-                  label: sourceNode.label,
-                }
-              : 'NOT FOUND',
-            targetNode: targetNode
-              ? {
-                  id: targetNode.id,
-                  type: targetNode.type,
-                  label: targetNode.label,
-                }
-              : 'NOT FOUND',
-          });
-        }
-
         // Determine parent-child relationship based on node types
         let parentId = null,
           childId = null;
 
         if (sourceNode && targetNode) {
-          // CORRECTED LOGIC: Functions that connect TO services belong IN those services
+          // Functions that connect TO services belong IN those services
           if (
-            sourceNode.type === 'function' &&
-            targetNode.type === 'component'
+            sourceNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION &&
+            targetNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT
           ) {
             // Function connects TO component = function belongs IN component
             parentId = targetId; // Service is the parent
             childId = sourceId; // Function is the child
           } else if (
-            sourceNode.type === 'component' &&
-            targetNode.type === 'function'
+            sourceNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT &&
+            targetNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION
           ) {
             // Component connects TO function = function belongs IN component
             parentId = sourceId; // Service is the parent
             childId = targetId; // Function is the child
           } else if (
-            sourceNode.type === 'component' &&
-            targetNode.type === 'component'
+            sourceNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT &&
+            targetNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT
           ) {
             // Component connects TO component = child component belongs IN parent component
             // The source component is the parent, target component is the child
@@ -245,64 +235,6 @@ export class MarkdownDiagramService {
       }
     });
 
-    console.log('🌳 buildHierarchicalRelationships - Summary:');
-    console.log(`  Total nodes: ${graph.nodes.size}`);
-    console.log(`  Root nodes: ${rootNodes.size}`);
-    console.log(`  Parents with children: ${parentChildMap.size}`);
-
-    // Check if specific UI components exist as nodes
-    const uiComponents = [
-      'HeaderInput',
-      'FaceTextInput',
-      'TextObjectUI',
-      'TextStyleUIContainer',
-    ];
-    console.log('🔍 Checking for UI components in graph.nodes:');
-    uiComponents.forEach((componentName) => {
-      const node = graph.nodes.get(componentName);
-      if (node) {
-        console.log(`  ✅ ${componentName} found:`, {
-          id: node.id,
-          type: node.type,
-          label: node.label,
-        });
-      } else {
-        console.log(`  ❌ ${componentName} NOT FOUND in graph.nodes`);
-        // Check if it exists with a different ID
-        let found = false;
-        for (const [nodeId, node] of graph.nodes.entries()) {
-          if (
-            node.label &&
-            node.label.toLowerCase().includes(componentName.toLowerCase())
-          ) {
-            console.log(`    🔎 Similar node found: ${nodeId}`, {
-              type: node.type,
-              label: node.label,
-            });
-            found = true;
-          }
-        }
-        if (!found) {
-          console.log(`    🔎 No similar nodes found`);
-        }
-      }
-    });
-
-    // Log all parent-child relationships
-    for (const [parentId, children] of parentChildMap.entries()) {
-      const parentNode = graph.nodes.get(parentId);
-      const childList = Array.from(children).map((childId) => {
-        const childNode = graph.nodes.get(childId);
-        return `${childNode?.label || childId} (${childNode?.type})`;
-      });
-      console.log(
-        `  ${parentNode?.label || parentId} (${parentNode?.type}) has ${
-          children.size
-        } children:`,
-        childList
-      );
-    }
-
     return { parentChildMap, childParentMap, rootNodes };
   }
 
@@ -312,10 +244,6 @@ export class MarkdownDiagramService {
    * @returns {string} - The 3D object type
    */
   getObjectTypeForNode(node) {
-    let objectType = 'cube'; // Default
-
-    // Debug: Log node properties for troubleshooting
-
     // The 3d-ast-generator correctly sets node.type based on bracket syntax:
     // {Component: name} → type: 'component' → Dodecahedron
     // [Function: name] → type: 'function' → Cube
@@ -326,34 +254,31 @@ export class MarkdownDiagramService {
 
     const nodeType = (node.type || '').toLowerCase().trim();
 
-    if (nodeType === 'component') {
-      objectType = 'dodecahedron';
-    } else if (nodeType === 'function') {
-      objectType = 'cube';
-    } else if (nodeType === 'store') {
-      objectType = 'cube';
-    } else if (nodeType === 'service') {
-      objectType = 'tetrahedron';
-    } else if (nodeType === 'library') {
-      objectType = 'cube';
-    } else if (nodeType === 'utility') {
-      objectType = 'cube';
-    } else if (nodeType === 'datapath') {
-      return null;
-    } else {
-      console.warn(
-        `⚠️ UNKNOWN TYPE '${nodeType}' → defaulting to cube for '${node.id}'`
-      );
+    switch (nodeType) {
+      case MarkdownDiagramService.NODE_TYPE_COMPONENT:
+        return MarkdownDiagramService.OBJECT_TYPE_DODECAHEDRON;
+      case MarkdownDiagramService.NODE_TYPE_SERVICE:
+        return MarkdownDiagramService.OBJECT_TYPE_TETRAHEDRON;
+      case MarkdownDiagramService.NODE_TYPE_DATAPATH:
+        return null;
+      case MarkdownDiagramService.NODE_TYPE_FUNCTION:
+      case MarkdownDiagramService.NODE_TYPE_STORE:
+      case MarkdownDiagramService.NODE_TYPE_LIBRARY:
+      case MarkdownDiagramService.NODE_TYPE_UTILITY:
+        return MarkdownDiagramService.OBJECT_TYPE_CUBE;
+      default:
+        console.warn(
+          `⚠️ Unknown node type '${nodeType}' for '${node.id}' - defaulting to cube`
+        );
+        return MarkdownDiagramService.OBJECT_TYPE_CUBE;
     }
-
-    return objectType;
   }
 
   /**
    * Calculate scale for a dodecahedron based on its children
    * @param {string} nodeId - The node ID
    * @param {Map} parentChildMap - Map of parent to children relationships
-   * @param {Map} graph.nodes - Map of all nodes
+   * @param {Map} graphNodes - Map of all nodes
    * @param {number} level - Hierarchy level
    * @returns {Object} - Object containing nodeScale and containerSize
    */
@@ -371,8 +296,7 @@ export class MarkdownDiagramService {
     let containerSize = 25; // Increased base size for circular arrangements
 
     // Prevent excessive recursion depth to avoid infinite loops, but allow deep hierarchies
-    const MAX_RECURSION_DEPTH = 15; // Increased to allow deeper hierarchies
-    if (level > MAX_RECURSION_DEPTH) {
+    if (level > MarkdownDiagramService.MAX_RECURSION_DEPTH) {
       return { nodeScale: [1.2, 1.2, 1.2], containerSize: 30 }; // Reasonable fallback
     }
 
@@ -384,21 +308,11 @@ export class MarkdownDiagramService {
     }
 
     // Calculate children count and determine scale
-    const cubeChildren = Array.from(children).filter((childId) => {
-      const childNode = graphNodes.get(childId);
-      return (
-        childNode &&
-        (childNode.type === 'function' ||
-          childNode.type === 'handler' ||
-          childNode.type === 'control')
-      );
-    });
-
-    const componentChildren = Array.from(children).filter((childId) => {
-      const childNode = graphNodes.get(childId);
-      return childNode && childNode.type === 'component';
-    });
-
+    const cubeChildren = this.filterCubeChildren(children, graphNodes);
+    const componentChildren = this.filterComponentChildren(
+      children,
+      graphNodes
+    );
     const totalNestedChildren = cubeChildren.length + componentChildren.length;
 
     if (totalNestedChildren > 0) {
@@ -412,8 +326,10 @@ export class MarkdownDiagramService {
       );
 
       // Conservative scaling since child components are positioned outside parent
-      const desiredGap = 8;
-      const baseSiblingSpacing = Math.max(25, maxChildSize * 1.5 + desiredGap);
+      const baseSiblingSpacing = Math.max(
+        25,
+        maxChildSize * 1.5 + MarkdownDiagramService.DESIRED_GAP
+      );
 
       // Calculate required space - much more conservative for cone structure
       let requiredSpace;
@@ -445,9 +361,6 @@ export class MarkdownDiagramService {
         requiredSpace = maxChildSize * 1.2;
       }
 
-      // Base dodecahedron size is approximately 10 units radius
-      const baseDodecahedronSize = 10;
-
       // Conservative padding for cone structure
       const adaptivePadding =
         functionsOnly || cubeChildren.length > 0
@@ -457,14 +370,14 @@ export class MarkdownDiagramService {
       const requiredSize = requiredSpace + adaptivePadding;
 
       // Much more conservative scaling for cone structure
-      const minScaleFactor = 1.0;
       const scaleFactor = Math.max(
-        minScaleFactor,
-        requiredSize / baseDodecahedronSize
+        MarkdownDiagramService.MIN_SCALE_FACTOR,
+        requiredSize / MarkdownDiagramService.BASE_DODECAHEDRON_SIZE
       );
 
       nodeScale = [scaleFactor, scaleFactor, scaleFactor];
-      containerSize = baseDodecahedronSize * scaleFactor;
+      containerSize =
+        MarkdownDiagramService.BASE_DODECAHEDRON_SIZE * scaleFactor;
     }
 
     const result = { nodeScale, containerSize };
@@ -474,7 +387,7 @@ export class MarkdownDiagramService {
 
   /**
    * Calculate the maximum child size for spacing calculations
-   * FIXED: Now recursively calculates actual child sizes including all nested hierarchy
+   * Recursively calculates actual child sizes including all nested hierarchy
    * @param {Set} children - Set of child node IDs
    * @param {Map} parentChildMap - Map of parent to children relationships
    * @param {Map} graphNodes - Map of all nodes
@@ -484,16 +397,18 @@ export class MarkdownDiagramService {
   calculateMaxChildSize(children, parentChildMap, graphNodes, level = 0) {
     let maxChildSize = 0;
 
-    // Prevent excessive recursion depth to avoid infinite loops, but allow deep hierarchies
-    const MAX_RECURSION_DEPTH = 15; // Increased to allow deeper hierarchies
-    if (level > MAX_RECURSION_DEPTH) {
-      return 10; // Return reasonable default size
+    // Prevent excessive recursion depth to avoid infinite loops
+    if (level > MarkdownDiagramService.MAX_RECURSION_DEPTH) {
+      return MarkdownDiagramService.BASE_DODECAHEDRON_SIZE;
     }
 
     Array.from(children).forEach((childId) => {
       const childNode = graphNodes.get(childId);
 
-      if (childNode && childNode.type === 'component') {
+      if (
+        childNode &&
+        childNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT
+      ) {
         // For child components in cone structure, use conservative sizing
         // since they're positioned externally, we don't need their full recursive size
         const childScale = this.calculateDodecahedronScale(
@@ -504,26 +419,35 @@ export class MarkdownDiagramService {
         );
 
         // Use more conservative scaling for cone structure - child components are external
-        const baseDodecahedronRadius = 10;
         const childActualSize =
-          baseDodecahedronRadius *
+          MarkdownDiagramService.BASE_DODECAHEDRON_RADIUS *
           Math.min(2.0, Math.max(...childScale.nodeScale));
 
         maxChildSize = Math.max(maxChildSize, childActualSize);
       } else if (
         childNode &&
-        (childNode.type === 'function' ||
-          childNode.type === 'handler' ||
-          childNode.type === 'control')
+        (childNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_HANDLER ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_CONTROL)
       ) {
-        maxChildSize = Math.max(maxChildSize, 5); // Cube radius
+        maxChildSize = Math.max(
+          maxChildSize,
+          MarkdownDiagramService.DEFAULT_CUBE_SIZE
+        );
       } else if (
         childNode &&
-        (childNode.type === 'state' || childNode.type === 'data')
+        (childNode.type === MarkdownDiagramService.NODE_TYPE_STATE ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_DATA)
       ) {
-        maxChildSize = Math.max(maxChildSize, 4); // Sphere radius
+        maxChildSize = Math.max(
+          maxChildSize,
+          MarkdownDiagramService.DEFAULT_SPHERE_SIZE
+        );
       } else {
-        maxChildSize = Math.max(maxChildSize, 5); // Default size
+        maxChildSize = Math.max(
+          maxChildSize,
+          MarkdownDiagramService.DEFAULT_CUBE_SIZE
+        );
       }
     });
 
@@ -541,10 +465,10 @@ export class MarkdownDiagramService {
       const childNode = graphNodes.get(childId);
       return (
         childNode &&
-        (childNode.type === 'function' ||
-          childNode.type === 'handler' ||
-          childNode.type === 'control' ||
-          childNode.type === 'component')
+        (childNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_HANDLER ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_CONTROL ||
+          childNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT)
       );
     }).length;
   }
@@ -560,8 +484,7 @@ export class MarkdownDiagramService {
    */
   calculateSubtreeBoundingBox(nodeId, parentChildMap, graphNodes, level = 0) {
     // Prevent excessive recursion depth to avoid stack overflow
-    const MAX_RECURSION_DEPTH = 15;
-    if (level > MAX_RECURSION_DEPTH) {
+    if (level > MarkdownDiagramService.MAX_RECURSION_DEPTH) {
       console.warn(
         `⚠️ Max recursion depth reached for bounding box calculation of ${nodeId}`
       );
@@ -575,15 +498,12 @@ export class MarkdownDiagramService {
     }
 
     const node = graphNodes.get(nodeId);
-    if (!node || node.type !== 'component') {
+    if (!node || node.type !== MarkdownDiagramService.NODE_TYPE_COMPONENT) {
       // Non-components have minimal size
       const result = { width: 20, height: 20 };
       this.boundingBoxCache.set(cacheKey, result);
       return result;
     }
-
-    const baseDodecahedronRadius = 10;
-    const spacingBetweenComponents = 200;
 
     // Get this component's actual size
     const componentScale = this.calculateDodecahedronScale(
@@ -900,7 +820,7 @@ export class MarkdownDiagramService {
     processedNodes.add(nodeId);
 
     // Skip datapath nodes
-    if (node.type === 'datapath') {
+    if (node.type === MarkdownDiagramService.NODE_TYPE_DATAPATH) {
       return;
     }
 
@@ -909,11 +829,14 @@ export class MarkdownDiagramService {
     const nodeType = (node.type || '').toLowerCase().trim();
     const isTopLevel = !childParentMap.has(nodeId);
 
-    if (nodeType === 'service' || nodeType === 'store') {
+    if (
+      nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE ||
+      nodeType === MarkdownDiagramService.NODE_TYPE_STORE
+    ) {
       return; // Always skip services and stores for grouped positioning
     }
 
-    if (nodeType === 'function' && isTopLevel) {
+    if (nodeType === MarkdownDiagramService.NODE_TYPE_FUNCTION && isTopLevel) {
       return; // Skip top-level functions (utility modules) for grouped positioning
     }
 
@@ -923,9 +846,9 @@ export class MarkdownDiagramService {
 
     // Calculate scale and container size
     let nodeScale = [1, 1, 1];
-    let containerSize = 50;
+    let containerSize = MarkdownDiagramService.DEFAULT_CONTAINER_SIZE;
 
-    if (objectType === 'dodecahedron') {
+    if (objectType === MarkdownDiagramService.OBJECT_TYPE_DODECAHEDRON) {
       const scaleResult = this.calculateDodecahedronScale(
         nodeId,
         parentChildMap,
@@ -1002,29 +925,21 @@ export class MarkdownDiagramService {
 
       const nodeType = (node.type || '').toLowerCase().trim();
 
-      if (nodeType === 'function') {
+      if (nodeType === MarkdownDiagramService.NODE_TYPE_FUNCTION) {
         // Top-level functions are utility modules
         utilityNodes.push(nodeId);
-      } else if (nodeType === 'service') {
+      } else if (nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE) {
         serviceNodes.push(nodeId);
-      } else if (nodeType === 'store') {
+      } else if (nodeType === MarkdownDiagramService.NODE_TYPE_STORE) {
         storeNodes.push(nodeId);
-      } else if (nodeType === 'component' && nodeId !== 'MainEntry') {
+      } else if (
+        nodeType === MarkdownDiagramService.NODE_TYPE_COMPONENT &&
+        nodeId !== 'MainEntry'
+      ) {
         // Top-level components that aren't in the hierarchy
         ungroupedComponents.push(nodeId);
       }
     }
-
-    console.log('🔍 positionGroupedNodes - Found nodes:', {
-      utilities: utilityNodes.length,
-      services: serviceNodes.length,
-      stores: storeNodes.length,
-      ungroupedComponents: ungroupedComponents.length,
-      utilityNodeIds: utilityNodes,
-      serviceNodeIds: serviceNodes,
-      storeNodeIds: storeNodes,
-      ungroupedComponentIds: ungroupedComponents,
-    });
 
     // Position each group in a horizontal square grid
     const nodeSpacing = 50; // Spacing between nodes in the grid
@@ -1092,35 +1007,23 @@ export class MarkdownDiagramService {
 
       const nodeType = (node.type || '').toLowerCase().trim();
 
-      if (nodeType === 'function') {
+      if (nodeType === MarkdownDiagramService.NODE_TYPE_FUNCTION) {
         // Top-level functions are utility modules
         utilityNodes.push(nodeId);
-      } else if (nodeType === 'service') {
+      } else if (nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE) {
         serviceNodes.push(nodeId);
-      } else if (nodeType === 'store') {
+      } else if (nodeType === MarkdownDiagramService.NODE_TYPE_STORE) {
         storeNodes.push(nodeId);
       }
     }
-
-    console.log('🎨 createGroupContainers - Found nodes:', {
-      utilities: utilityNodes.length,
-      services: serviceNodes.length,
-      stores: storeNodes.length,
-    });
 
     const containerCubes = [];
 
     // Helper function to create a container for a group
     const createContainerForGroup = (nodes, groupName, color) => {
       if (nodes.length === 0) {
-        console.log(`⚠️ No nodes for ${groupName} group - skipping container`);
         return;
       }
-
-      console.log(`📦 Creating container for ${groupName}:`, {
-        nodeCount: nodes.length,
-        color: color,
-      });
 
       // Calculate bounding box
       let minX = Infinity,
@@ -1669,14 +1572,6 @@ export class MarkdownDiagramService {
         const targetChildTopY = parentBottomY - containerSpacing;
         const yOffset = targetChildTopY - childContainerTopY;
 
-        console.log(`Adjusting child container for node ${childNodeId}:`, {
-          parentNodeId,
-          parentBottomY,
-          childContainerTopY,
-          targetChildTopY,
-          yOffset,
-        });
-
         // Apply this offset to the child node and ALL its descendants
         const visited = new Set();
 
@@ -1742,40 +1637,25 @@ export class MarkdownDiagramService {
     nodePositions,
     nodeScales
   ) {
-    const baseDodecahedronRadius = 10;
     const containerDimensions = new Map();
-
-    console.log('📐 calculateContainerDimensions - Starting...');
 
     // Iterate through each parent that has component children
     for (const [parentNodeId, children] of parentChildMap.entries()) {
       const parentNode = graphNodes.get(parentNodeId);
-      if (!parentNode || parentNode.type !== 'component') continue;
+      if (
+        !parentNode ||
+        parentNode.type !== MarkdownDiagramService.NODE_TYPE_COMPONENT
+      )
+        continue;
 
       // Get component children only (not functions)
-      const componentChildren = Array.from(children).filter((childId) => {
-        const childNode = graphNodes.get(childId);
-        return childNode && childNode.type === 'component';
-      });
+      const componentChildren = this.filterComponentChildren(
+        children,
+        graphNodes
+      );
 
       // Only create container if there are 2 or more child components
       if (componentChildren.length < 2) continue;
-
-      console.log(
-        `📦 Creating container for parent ${parentNode.label || parentNodeId}:`,
-        {
-          parentNodeId,
-          childCount: componentChildren.length,
-          children: componentChildren.map((id) => {
-            const child = graphNodes.get(id);
-            return {
-              id,
-              label: child?.label || id,
-              position: nodePositions.get(id),
-            };
-          }),
-        }
-      );
 
       // Calculate bounding box for all child components
       let minX = Infinity,
@@ -1792,7 +1672,9 @@ export class MarkdownDiagramService {
         if (!childPos || !childScale) return;
 
         // Calculate child's actual size
-        const childSize = baseDodecahedronRadius * Math.max(...childScale);
+        const childSize =
+          MarkdownDiagramService.BASE_DODECAHEDRON_RADIUS *
+          Math.max(...childScale);
 
         // Expand bounding box
         minX = Math.min(minX, childPos[0] - childSize);
@@ -1835,20 +1717,7 @@ export class MarkdownDiagramService {
         bottomY: minY, // Bottom edge Y coordinate
         childCount: componentChildren.length,
       });
-
-      console.log(
-        `✅ Container calculated for ${parentNode.label || parentNodeId}:`,
-        {
-          position: containerPosition,
-          scale: containerScale,
-          bounds: { minX, maxX, minY, maxY, minZ, maxZ },
-        }
-      );
     }
-
-    console.log(
-      `📐 calculateContainerDimensions - Created ${containerDimensions.size} containers`
-    );
 
     return containerDimensions;
   }
@@ -1996,25 +1865,12 @@ export class MarkdownDiagramService {
 
     const containerCubes = [];
 
-    console.log(
-      `🏗️ createContainerCubesAtPositions - Creating ${containerDimensions.size} containers`
-    );
-
     // Create a container cube for each parent in the dimensions map
     for (const [parentNodeId, containerInfo] of containerDimensions.entries()) {
       const parentNode = graphNodes.get(parentNodeId);
       if (!parentNode) continue;
 
       const { position, scale, childCount } = containerInfo;
-
-      console.log(
-        `📦 Creating container cube for ${parentNode.label || parentNodeId}:`,
-        {
-          position,
-          scale,
-          childCount,
-        }
-      );
 
       // Generate unique ID for container cube
       const containerId = `container-${parentNodeId}-${Date.now()}-${Math.random()

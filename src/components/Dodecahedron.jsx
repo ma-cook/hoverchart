@@ -19,9 +19,131 @@ import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
 
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
-import FaceTextInput from './FaceTextInput';
-import FaceIndicator from './FaceIndicator'; // Add this import
 import isEqual from 'lodash/isEqual';
+import DodecahedronFace from './DodecahedronFace';
+
+// ============================================================================
+// OPTIMIZATION: Module-level constants for static geometry
+// These calculations are the same for all dodecahedrons, so compute them once
+// ============================================================================
+
+const createDodecahedronGeometry = () => {
+  const phi = (1 + Math.sqrt(5)) / 2;
+  const scale = 5;
+
+  // Vertices of a dodecahedron
+  const vertices = [
+    [-1, -1, -1],
+    [1, -1, -1],
+    [1, 1, -1],
+    [-1, 1, -1],
+    [-1, -1, 1],
+    [1, -1, 1],
+    [1, 1, 1],
+    [-1, 1, 1],
+    [0, -phi, -1 / phi],
+    [0, phi, -1 / phi],
+    [0, phi, 1 / phi],
+    [0, -phi, 1 / phi],
+    [-1 / phi, 0, -phi],
+    [1 / phi, 0, -phi],
+    [1 / phi, 0, phi],
+    [-1 / phi, 0, phi],
+    [-phi, -1 / phi, 0],
+    [-phi, 1 / phi, 0],
+    [phi, 1 / phi, 0],
+    [phi, -1 / phi, 0],
+  ].map((v) => v.map((coord) => coord * scale));
+
+  // Define edges
+  const edges = [
+    [0, 8],
+    [0, 12],
+    [0, 16],
+    [1, 8],
+    [1, 13],
+    [1, 19],
+    [2, 9],
+    [2, 13],
+    [2, 18],
+    [3, 9],
+    [3, 12],
+    [3, 17],
+    [4, 11],
+    [4, 15],
+    [4, 16],
+    [5, 11],
+    [5, 14],
+    [5, 19],
+    [6, 10],
+    [6, 14],
+    [6, 18],
+    [7, 10],
+    [7, 15],
+    [7, 17],
+    [8, 11],
+    [9, 10],
+    [12, 13],
+    [14, 15],
+    [16, 17],
+    [18, 19],
+  ];
+
+  // Define faces (pentagon vertex indices)
+  const faces = [
+    [0, 12, 13, 1, 8],
+    [0, 16, 17, 3, 12],
+    [0, 8, 11, 4, 16],
+    [1, 19, 5, 11, 8],
+    [1, 13, 2, 18, 19],
+    [2, 13, 12, 3, 9],
+    [2, 9, 10, 6, 18],
+    [3, 17, 7, 10, 9],
+    [4, 11, 5, 14, 15],
+    [4, 15, 7, 17, 16],
+    [5, 19, 18, 6, 14],
+    [6, 10, 7, 15, 14],
+  ];
+
+  // Convert edges to lines
+  const points = edges.map(([a, b]) => [vertices[a], vertices[b]]);
+
+  // Create geometries for each face
+  const faceGeometries = faces.map((faceIndices) => {
+    const faceGeometry = new THREE.BufferGeometry();
+    const faceVertices = faceIndices.map((index) => vertices[index]);
+
+    // Add center point of pentagon
+    const center = faceVertices.reduce(
+      (acc, v) => acc.map((coord, i) => coord + v[i] / 5),
+      [0, 0, 0]
+    );
+
+    // Create triangles from center to each edge
+    const triangleVertices = [];
+    for (let i = 0; i < 5; i++) {
+      triangleVertices.push(
+        ...center,
+        ...faceVertices[i],
+        ...faceVertices[(i + 1) % 5]
+      );
+    }
+
+    faceGeometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(triangleVertices, 3)
+    );
+    faceGeometry.computeVertexNormals();
+    return faceGeometry;
+  });
+
+  return { points, faceGeometries, vertices };
+};
+
+// Create geometry once at module load
+const DODECAHEDRON_GEOMETRY = createDodecahedronGeometry();
+
+// ============================================================================
 
 const Sphere = React.memo(
   ({
@@ -54,63 +176,69 @@ const Sphere = React.memo(
 
     // Get connections from connection store instead of props
     const connections = useConnectionStore((state) => state.connections);
-    // Debug: Watch for position changes
-    useEffect(() => {
-      if (objectData?.position) {
-        // Position tracking for debugging - removed for production
-      }
-    }, [objectData?.position, id]);
 
-    // Memoize derived values to prevent unnecessary re-renders
-    const position = useMemo(() => {
+    // Consolidate all derived dodecahedron data into single useMemo (like Cube optimization)
+    // This ensures all properties update together and dependencies are explicit
+    const dodecahedronData = useMemo(() => {
       const pos = objectData?.position;
-      // Ensure position has valid numbers, not undefined/null values
-      if (
+      const validPosition =
         Array.isArray(pos) &&
         pos.length === 3 &&
         pos.every((val) => typeof val === 'number' && !isNaN(val))
-      ) {
-        return pos;
-      }
-      return [0, 0, 0];
-    }, [objectData?.position]);
-    const scale = useMemo(
-      () => objectData?.scale || [1, 1, 1],
-      [objectData?.scale]
-    );
-    const headerText = useMemo(() => {
-      const headerTextValue = objectData?.headerText || '';
-      return headerTextValue;
-    }, [objectData?.headerText]);
-    const lineColor = useMemo(
-      () => objectData?.lineColor || 'black',
-      [objectData?.lineColor]
-    );
-    const faceColors = useMemo(
-      () => objectData?.faceColors || {},
-      [objectData?.faceColors]
-    );
-    const faceTexts = useMemo(
-      () => objectData?.faceTexts || {},
-      [objectData?.faceTexts]
-    );
-    const faceTextStyles = useMemo(
-      () => objectData?.faceTextStyles || {},
-      [objectData?.faceTextStyles]
-    );
-    const headerStyle = useMemo(
-      () =>
-        objectData?.headerStyle || {
+          ? pos
+          : [0, 0, 0];
+
+      const data = {
+        position: validPosition,
+        scale: objectData?.scale || [1, 1, 1],
+        headerText: objectData?.headerText || '',
+        lineColor: objectData?.lineColor || 'black',
+        faceColors: objectData?.faceColors || {},
+        faceTexts: objectData?.faceTexts || {},
+        faceTextStyles: objectData?.faceTextStyles || {},
+        headerStyle: objectData?.headerStyle || {
           fontSize: 'medium',
           color: 'black',
           underline: false,
         },
-      [objectData?.headerStyle]
-    );
+      };
+
+      return data;
+    }, [
+      objectData?.id,
+      objectData?.position,
+      objectData?.scale,
+      objectData?.headerText,
+      objectData?.lineColor,
+      objectData?.faceColors,
+      objectData?.faceTexts,
+      objectData?.faceTextStyles,
+      objectData?.headerStyle,
+    ]);
+
+    // Destructure for easier access
+    const {
+      position,
+      scale,
+      headerText,
+      lineColor,
+      faceColors,
+      faceTexts,
+      faceTextStyles,
+      headerStyle,
+    } = dodecahedronData;
+
     // Store state and actions
     const dodecahedron = useDodecahedronStore((state) =>
       state.getDodecahedron(id)
     );
+
+    // IMPORTANT: Use dodecahedron store values for rendering when available
+    // This ensures UI updates immediately when changes are made
+    const renderLineColor = dodecahedron?.lineColor || lineColor;
+    const renderHeaderText = dodecahedron?.headerText || headerText;
+    const renderHeaderStyle = dodecahedron?.headerStyle || headerStyle;
+
     const createDodecahedron = useDodecahedronStore(
       (state) => state.createDodecahedron
     );
@@ -182,24 +310,34 @@ const Sphere = React.memo(
     );
 
     // Get hover state from indicators store
-    const hoveredObjectId = useIndicatorsStore(
-      (state) => state.hoveredObjectId
-    );
-    const setHoveredObjectId = useIndicatorsStore(
-      (state) => state.setHoveredObjectId
+
+    const { hoveredObjectId, setHoveredObjectId } = useIndicatorsStore(
+      (state) => ({
+        hoveredObjectId: state.hoveredObjectId,
+        setHoveredObjectId: state.setHoveredObjectId,
+      })
     );
 
     // Helper function to update both stores and database
     const updateObjectAndStores = useCallback(
       (updates) => {
+        console.log('updateObjectAndStores called with updates:', updates);
+
         // Update UI store
         updateDodecahedron(id, updates);
 
         // Update objects store immediately for instant visual feedback
         setObjects((prevObjects) =>
-          prevObjects.map((obj) =>
-            obj.id === id ? { ...obj, ...updates } : obj
-          )
+          prevObjects.map((obj) => {
+            if (obj.id === id) {
+              console.log('Updating object in objects store:', {
+                ...obj,
+                ...updates,
+              });
+              return { ...obj, ...updates };
+            }
+            return obj;
+          })
         );
 
         // Save to database
@@ -265,6 +403,7 @@ const Sphere = React.memo(
     // Initialize dodecahedron UI state in store if it doesn't exist
     useEffect(() => {
       if (!dodecahedron) {
+        // Create new dodecahedron with data from objects store
         createDodecahedron(id, {
           // Initialize with object data from persistent storage
           position,
@@ -286,6 +425,9 @@ const Sphere = React.memo(
           activeTextFace: null,
         });
       }
+      // NOTE: We do NOT sync from objectData to dodecahedron store here!
+      // The dodecahedron store is updated directly when changes are made.
+      // This prevents circular update loops.
     }, [
       id,
       dodecahedron,
@@ -336,147 +478,10 @@ const Sphere = React.memo(
     // Initialize state with props instead of defaults
     const contentRef = useRef();
     const faceUIGroupRef = useRef(); // Add this new ref for FaceUI container
-    const points = React.useMemo(() => {
-      // Golden ratio for dodecahedron calculations
-      const phi = (1 + Math.sqrt(5)) / 2;
-      const scale = 5; // Scale factor to match previous size
 
-      // Vertices of a dodecahedron
-      const vertices = [
-        [-1, -1, -1],
-        [1, -1, -1],
-        [1, 1, -1],
-        [-1, 1, -1],
-        [-1, -1, 1],
-        [1, -1, 1],
-        [1, 1, 1],
-        [-1, 1, 1],
-        [0, -phi, -1 / phi],
-        [0, phi, -1 / phi],
-        [0, phi, 1 / phi],
-        [0, -phi, 1 / phi],
-        [-1 / phi, 0, -phi],
-        [1 / phi, 0, -phi],
-        [1 / phi, 0, phi],
-        [-1 / phi, 0, phi],
-        [-phi, -1 / phi, 0],
-        [-phi, 1 / phi, 0],
-        [phi, 1 / phi, 0],
-        [phi, -1 / phi, 0],
-      ].map((v) => v.map((coord) => coord * scale));
-
-      // Define edges of the dodecahedron
-      const edges = [
-        [0, 8],
-        [0, 12],
-        [0, 16],
-        [1, 8],
-        [1, 13],
-        [1, 19],
-        [2, 9],
-        [2, 13],
-        [2, 18],
-        [3, 9],
-        [3, 12],
-        [3, 17],
-        [4, 11],
-        [4, 15],
-        [4, 16],
-        [5, 11],
-        [5, 14],
-        [5, 19],
-        [6, 10],
-        [6, 14],
-        [6, 18],
-        [7, 10],
-        [7, 15],
-        [7, 17],
-        [8, 11],
-        [9, 10],
-        [12, 13],
-        [14, 15],
-        [16, 17],
-        [18, 19],
-      ];
-
-      // Convert edges to lines
-      return edges.map(([a, b]) => [vertices[a], vertices[b]]);
-    }, []);
-
-    const geometry = React.useMemo(() => {
-      const phi = (1 + Math.sqrt(5)) / 2;
-      const scale = 5;
-
-      // Vertices of a dodecahedron
-      const vertices = [
-        [-1, -1, -1],
-        [1, -1, -1],
-        [1, 1, -1],
-        [-1, 1, -1],
-        [-1, -1, 1],
-        [1, -1, 1],
-        [1, 1, 1],
-        [-1, 1, 1],
-        [0, -phi, -1 / phi],
-        [0, phi, -1 / phi],
-        [0, phi, 1 / phi],
-        [0, -phi, 1 / phi],
-        [-1 / phi, 0, -phi],
-        [1 / phi, 0, -phi],
-        [1 / phi, 0, phi],
-        [-1 / phi, 0, phi],
-        [-phi, -1 / phi, 0],
-        [-phi, 1 / phi, 0],
-        [phi, 1 / phi, 0],
-        [phi, -1 / phi, 0],
-      ].map((v) => v.map((coord) => coord * scale));
-
-      // Define faces of the dodecahedron (pentagon vertex indices)
-      // Reverse vertex order for faces 0, 6, and 11 to fix their orientation
-      const faces = [
-        [0, 12, 13, 1, 8], // Face 0 - reversed order
-        [0, 16, 17, 3, 12],
-        [0, 8, 11, 4, 16],
-        [1, 19, 5, 11, 8],
-        [1, 13, 2, 18, 19],
-        [2, 13, 12, 3, 9],
-        [2, 9, 10, 6, 18], // Face 6 - reversed order
-        [3, 17, 7, 10, 9],
-        [4, 11, 5, 14, 15],
-        [4, 15, 7, 17, 16],
-        [5, 19, 18, 6, 14],
-        [6, 10, 7, 15, 14], // Face 11 - reversed order
-      ];
-
-      // Create geometries for each face
-      return faces.map((faceIndices) => {
-        const faceGeometry = new THREE.BufferGeometry();
-        const faceVertices = faceIndices.map((index) => vertices[index]);
-
-        // Add center point of pentagon
-        const center = faceVertices.reduce(
-          (acc, v) => acc.map((coord, i) => coord + v[i] / 5),
-          [0, 0, 0]
-        );
-
-        // Create triangles from center to each edge
-        const triangleVertices = [];
-        for (let i = 0; i < 5; i++) {
-          triangleVertices.push(
-            ...center,
-            ...faceVertices[i],
-            ...faceVertices[(i + 1) % 5]
-          );
-        }
-
-        faceGeometry.setAttribute(
-          'position',
-          new THREE.Float32BufferAttribute(triangleVertices, 3)
-        );
-        faceGeometry.computeVertexNormals();
-        return faceGeometry;
-      });
-    }, []);
+    // OPTIMIZATION: Use pre-computed module-level geometry instead of recalculating
+    const points = DODECAHEDRON_GEOMETRY.points;
+    const geometry = DODECAHEDRON_GEOMETRY.faceGeometries;
 
     // Update isIndicatorConnected function to be more robust
     const isIndicatorConnected = useCallback(
@@ -848,10 +853,21 @@ const Sphere = React.memo(
       setDodecahedronShowObjectUI(id, false);
     };
     const handleStyleChange = (newStyle) => {
-      const newHeaderStyle = { ...(headerStyle || {}), ...newStyle };
+      // Use dodecahedron store value if available, fallback to objectData
+      const currentHeaderStyle = dodecahedron?.headerStyle || headerStyle || {};
+      const newHeaderStyle = { ...currentHeaderStyle, ...newStyle };
+      console.log('handleStyleChange - Header style update:', {
+        currentHeaderStyle,
+        newStyle,
+        newHeaderStyle,
+      });
       updateObjectAndStores({ headerStyle: newHeaderStyle });
     };
     const handleLineColorChange = (color) => {
+      console.log(
+        'Dodecahedron handleLineColorChange called with color:',
+        color
+      );
       updateObjectAndStores({ lineColor: color });
     };
     const handleBackgroundClick = (e) => {
@@ -892,8 +908,12 @@ const Sphere = React.memo(
     };
     const handleFaceTextStyleChange = (newStyle) => {
       if (dodecahedron?.activeFaceText !== null) {
-        // Get the current style for this face
-        const currentStyle = faceTextStyles[dodecahedron.activeFaceText] || {
+        // Use dodecahedron store value if available, fallback to objectData
+        const currentFaceTextStyles =
+          dodecahedron?.faceTextStyles || faceTextStyles || {};
+        const currentStyle = currentFaceTextStyles[
+          dodecahedron.activeFaceText
+        ] || {
           fontSize: 0.5,
           color: 'black',
           underline: false,
@@ -901,6 +921,13 @@ const Sphere = React.memo(
 
         // Merge the new style with the existing style
         const mergedStyle = { ...currentStyle, ...newStyle };
+
+        console.log('handleFaceTextStyleChange - Face text style update:', {
+          faceIndex: dodecahedron.activeFaceText,
+          currentStyle,
+          newStyle,
+          mergedStyle,
+        });
 
         updateFaceProperty(
           'faceTextStyles',
@@ -948,136 +975,159 @@ const Sphere = React.memo(
       ];
     };
 
-    // Modify getFaceTextPosition to include normal vector for orientation
-    const getFaceTextPosition = (faceIndex) => {
-      const faceGeometry = geometry[faceIndex];
-      const positions = faceGeometry.attributes.position.array;
-      const normals = faceGeometry.attributes.normal.array;
+    // OPTIMIZATION: Memoize getFaceTextPosition since it depends on static geometry
+    const getFaceTextPosition = useCallback(
+      (faceIndex) => {
+        const faceGeometry = geometry[faceIndex];
+        const positions = faceGeometry.attributes.position.array;
+        const normals = faceGeometry.attributes.normal.array;
 
-      // Calculate center of the face
-      let centerX = 0,
-        centerY = 0,
-        centerZ = 0;
-      for (let i = 0; i < positions.length; i += 3) {
-        centerX += positions[i];
-        centerY += positions[i + 1];
-        centerZ += positions[i + 2];
-      }
-      const vertexCount = positions.length / 3;
+        // Calculate center of the face
+        let centerX = 0,
+          centerY = 0,
+          centerZ = 0;
+        for (let i = 0; i < positions.length; i += 3) {
+          centerX += positions[i];
+          centerY += positions[i + 1];
+          centerZ += positions[i + 2];
+        }
+        const vertexCount = positions.length / 3;
 
-      // Get face normal (using first normal from geometry)
-      const normalX = normals[0];
-      const normalY = normals[1];
-      const normalZ = normals[2];
+        // Get face normal (using first normal from geometry)
+        const normalX = normals[0];
+        const normalY = normals[1];
+        const normalZ = normals[2];
 
-      // Create offset vector from normal
-      const OFFSET_DISTANCE = 0.2; // Adjust this value to control how far text floats
-      const offsetX = normalX * OFFSET_DISTANCE;
-      const offsetY = normalY * OFFSET_DISTANCE;
-      const offsetZ = normalZ * OFFSET_DISTANCE;
+        // Create offset vector from normal
+        const OFFSET_DISTANCE = 0.2; // Adjust this value to control how far text floats
+        const offsetX = normalX * OFFSET_DISTANCE;
+        const offsetY = normalY * OFFSET_DISTANCE;
+        const offsetZ = normalZ * OFFSET_DISTANCE;
 
-      return {
-        position: [
-          centerX / vertexCount + offsetX,
-          centerY / vertexCount + offsetY,
-          centerZ / vertexCount + offsetZ,
-        ],
-        normal: [normalX, normalY, normalZ],
-      };
-    };
+        return {
+          position: [
+            centerX / vertexCount + offsetX,
+            centerY / vertexCount + offsetY,
+            centerZ / vertexCount + offsetZ,
+          ],
+          normal: [normalX, normalY, normalZ],
+        };
+      },
+      [geometry]
+    ); // geometry is static
 
     // Add function to calculate face center and normal
-    const getFaceInfo = (faceIndex) => {
-      const faceGeometry = geometry[faceIndex];
-      const positions = faceGeometry.attributes.position.array;
-      const normals = faceGeometry.attributes.normal.array;
+    // OPTIMIZATION: Memoize face info calculations since geometry is static
+    // These are called frequently during rendering and for DodecahedronFace components
+    const getFaceInfo = useCallback(
+      (faceIndex) => {
+        const faceGeometry = geometry[faceIndex];
+        const positions = faceGeometry.attributes.position.array;
+        const normals = faceGeometry.attributes.normal.array;
 
-      let centerX = 0,
-        centerY = 0,
-        centerZ = 0;
-      for (let i = 0; i < positions.length; i += 3) {
-        centerX += positions[i];
-        centerY += positions[i + 1];
-        centerZ += positions[i + 2];
-      }
-      const vertexCount = positions.length / 3;
+        let centerX = 0,
+          centerY = 0,
+          centerZ = 0;
+        for (let i = 0; i < positions.length; i += 3) {
+          centerX += positions[i];
+          centerY += positions[i + 1];
+          centerZ += positions[i + 2];
+        }
+        const vertexCount = positions.length / 3;
 
-      return {
-        center: [
-          centerX / vertexCount,
-          centerY / vertexCount,
-          centerZ / vertexCount,
-        ],
-        normal: [normals[0], normals[1], normals[2]],
-      };
-    };
+        return {
+          center: [
+            centerX / vertexCount,
+            centerY / vertexCount,
+            centerZ / vertexCount,
+          ],
+          normal: [normals[0], normals[1], normals[2]],
+        };
+      },
+      [geometry]
+    ); // geometry is static, so this never changes
 
-    // Add getFaceRotation function
-    const getFaceRotation = (faceIndex) => {
-      const { normal } = getFaceInfo(faceIndex);
+    // Add getFaceRotation function - memoized since it depends on static geometry
+    const getFaceRotation = useCallback(
+      (faceIndex) => {
+        const { normal } = getFaceInfo(faceIndex);
 
-      // Create a normalized normal vector
-      const normalVector = new THREE.Vector3(...normal).normalize();
+        // Create a normalized normal vector
+        const normalVector = new THREE.Vector3(...normal).normalize();
 
-      // Create look-at matrix
-      const lookAtMatrix = new THREE.Matrix4();
+        // Create look-at matrix
+        const lookAtMatrix = new THREE.Matrix4();
 
-      // The "up" direction affects text orientation
-      // Use a consistent up vector (world Y) as a starting point
-      const upVector = new THREE.Vector3(0, 1, 0);
+        // The "up" direction affects text orientation
+        // Use a consistent up vector (world Y) as a starting point
+        const upVector = new THREE.Vector3(0, 1, 0);
 
-      // Calculate a right vector that's perpendicular to normal and up
-      const rightVector = new THREE.Vector3()
-        .crossVectors(upVector, normalVector)
-        .normalize();
+        // Calculate a right vector that's perpendicular to normal and up
+        const rightVector = new THREE.Vector3()
+          .crossVectors(upVector, normalVector)
+          .normalize();
 
-      // If right vector is too small (normal is parallel to up), use another axis
-      if (rightVector.length() < 0.1) {
-        upVector.set(0, 0, 1); // Use Z as up instead
-        rightVector.crossVectors(upVector, normalVector).normalize();
-      }
+        // If right vector is too small (normal is parallel to up), use another axis
+        if (rightVector.length() < 0.1) {
+          upVector.set(0, 0, 1); // Use Z as up instead
+          rightVector.crossVectors(upVector, normalVector).normalize();
+        }
 
-      // Calculate a corrected up vector perpendicular to both normal and right
-      const correctedUp = new THREE.Vector3()
-        .crossVectors(normalVector, rightVector)
-        .normalize();
+        // Calculate a corrected up vector perpendicular to both normal and right
+        const correctedUp = new THREE.Vector3()
+          .crossVectors(normalVector, rightVector)
+          .normalize();
 
-      // Set up the lookAt matrix
-      lookAtMatrix.makeBasis(rightVector, correctedUp, normalVector);
+        // Set up the lookAt matrix
+        lookAtMatrix.makeBasis(rightVector, correctedUp, normalVector);
 
-      // Create Euler rotation from matrix
-      const rotation = new THREE.Euler();
-      rotation.setFromRotationMatrix(lookAtMatrix);
+        // Create Euler rotation from matrix
+        const rotation = new THREE.Euler();
+        rotation.setFromRotationMatrix(lookAtMatrix);
 
-      return rotation;
-    };
+        return rotation;
+      },
+      [getFaceInfo]
+    ); // Only depends on getFaceInfo which is stable
     // Update shouldShowFaceIndicator logic to keep indicators visible when connected
     const shouldShowFaceIndicator = (faceIndex) => {
       // Always show indicators that are part of connections
       if (isIndicatorConnected(faceIndex)) return true;
 
-      // Show when any indicator is selected globally
+      // Show indicators during connection creation on ALL dodecahedrons
       if (selectedIndicators?.length > 0) return true;
 
-      // Show all indicators when in indicators mode
-      if (indicatorMode === 'indicators') return true;
+      // Show indicator for the active face when dodecahedron is selected
+      if (dodecahedron?.activeFace === faceIndex && selected) return true;
 
+      // Show all indicators when explicitly requested
       if (showAllIndicators || globalIndicatorSelected) return true;
-      if (dodecahedron?.connectedFaces?.has(faceIndex)) return true;
-      if (dodecahedron?.selectedIndicator === faceIndex) return true;
 
-      return false;
-    };
+      // Show ALL indicators when ANY indicator is selected on this dodecahedron
+      if (
+        dodecahedron?.selectedIndicator !== null &&
+        dodecahedron?.selectedIndicator !== undefined
+      ) {
+        return true;
+      }
 
-    // Update the position calculations to account for object's position and scale
-    const getFaceTextInputPosition = (faceIndex) => {
-      const { center, normal } = getFaceInfo(faceIndex);
-      const offset = 6; // Offset distance from face
-      return [
-        center[0] + normal[0] * offset,
-        center[1] + normal[1] * offset,
-        center[2] + normal[2] * offset,
-      ];
+      // Show indicators based on mode
+      switch (indicatorMode) {
+        case 'all':
+          return true; // Show on all dodecahedrons always in 'all' mode
+        case 'indicators':
+          // In indicators mode, ONLY show for the currently hovered object
+          return hoveredObjectId === id;
+        case 'single':
+          return (
+            dodecahedron?.selectedIndicator === faceIndex ||
+            (selected && faceIndex === dodecahedron?.activeFace)
+          );
+        default:
+          // In default mode (no indicator clicked yet), show for connected faces
+          if (dodecahedron?.connectedFaces?.has(faceIndex)) return true;
+          return false;
+      }
     };
 
     const getHeaderInputPosition = () => {
@@ -1143,145 +1193,49 @@ const Sphere = React.memo(
               />
             </mesh>
           )}
-          {/* Modified face rendering to handle colors correctly */}
-          {geometry.map((faceGeometry, idx) => (
-            <mesh
-              key={`face-${idx}`}
-              geometry={faceGeometry}
-              renderOrder={-3}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!selected) {
-                  handleBackgroundClick(e);
-                } else {
-                  handleFaceClick(idx, e);
-                }
-              }}
-              onPointerOver={() => {
-                document.body.style.cursor = 'pointer';
-              }}
-              onPointerOut={() => {
-                document.body.style.cursor = 'auto';
-              }}
-            >
-              {' '}
-              <meshBasicMaterial
-                color={
-                  faceColors[idx] || // Custom color if set
-                  (selected && dodecahedron?.highlightedFaces?.has(idx)
-                    ? '#0066ff'
-                    : 'black') // Only show highlight when selected
-                }
-                transparent
-                opacity={
-                  selected
-                    ? dodecahedron?.highlightedFaces?.has(idx)
-                      ? 0.3
-                      : 0.1
-                    : faceColors[idx]
-                    ? 1.0
-                    : 0 // Hide faces without custom colors when not selected
-                }
-                side={THREE.DoubleSide} // Changed to DoubleSide for better interaction when camera is inside
-                depthWrite={false} // Disable depth write to allow nested interactions
-                polygonOffset
-                polygonOffsetFactor={-1}
-                depthTest={true}
-                renderOrder={-3}
+          {/* Render faces using DodecahedronFace component (consistent with Cube architecture) */}
+          {geometry.map((faceGeometry, idx) => {
+            const faceInfo = getFaceInfo(idx);
+            const faceRotation = getFaceRotation(idx);
+            const faceData = {
+              center: faceInfo.center,
+              normal: faceInfo.normal,
+              rotation: faceRotation,
+            };
+
+            return (
+              <DodecahedronFace
+                key={`face-${idx}`}
+                dodecahedronId={id}
+                faceIndex={idx}
+                faceGeometry={faceGeometry}
+                faceData={faceData}
+                selected={selected}
+                scale={scale}
+                onFaceClick={handleFaceClick}
+                onIndicatorClick={handleIndicatorClick}
+                onFaceTextClick={handleFaceTextClick}
+                onBackgroundClick={handleBackgroundClick}
+                shouldShowIndicator={shouldShowFaceIndicator(idx)}
+                isIndicatorActive={dodecahedron?.selectedIndicator === idx}
+                isIndicatorConnected={isIndicatorConnected(idx)}
+                showAllIndicators={showAllIndicators}
+                selectedIndicatorsLength={selectedIndicators?.length || 0}
+                onFaceTextSubmit={handleFaceTextSubmit}
+                inputId={`dodecahedron-${id}-face-${idx}`}
               />
-            </mesh>
-          ))}{' '}
+            );
+          })}{' '}
           {/* Wireframe lines */}
           {points.map((linePoints, idx) => (
             <PooledLine
-              key={idx}
+              key={`${idx}-${renderLineColor}`}
               points={linePoints}
-              color={lineColor}
+              color={renderLineColor}
               lineWidth={lineWidth !== undefined ? lineWidth : isMobile ? 3 : 1}
               enablePooling={true}
             />
-          ))}
-          {/* Add face texts - modified for consistent scaling and rotation regardless of dodecahedron size */}
-          {Object.entries(faceTexts || {}).map(([faceIndex, text]) => {
-            if (!text) return null;
-            const faceIdx = Number(faceIndex);
-            const { position, normal } = getFaceTextPosition(faceIdx);
-            const textStyle = faceTextStyles[faceIndex] || {
-              fontSize: 0.5,
-              color: 'black',
-              underline: false,
-            };
-            const inverseScale = scale.map((s) => 1 / Math.max(0.0001, s));
-            const faceRotation = getFaceRotation(faceIdx);
-
-            // Adjust position slightly outward along the normal to prevent z-fighting
-            const adjustedPosition = [
-              position[0] + normal[0] * 0.01,
-              position[1] + normal[1] * 0.01,
-              position[2] + normal[2] * 0.01,
-            ];
-
-            return (
-              <group
-                key={`face-text-${faceIndex}`}
-                position={adjustedPosition}
-                rotation={faceRotation}
-                scale={inverseScale}
-              >
-                <TextSprite
-                  text={text}
-                  position={[0, 0, 0]}
-                  style={{
-                    ...textStyle,
-                    fixedSize: true,
-                    isFaceText: true,
-                    renderOrder: 2,
-                    depthTest: true,
-                    depthWrite: false,
-                  }}
-                  onClick={(e) => handleFaceTextClick(faceIdx, e)}
-                  billboard={false}
-                  side={THREE.FrontSide}
-                />
-              </group>
-            );
-          })}{' '}
-          {/* Main face indicator for active face */}
-          {selected && dodecahedron?.activeFace !== null && (
-            <FaceIndicator
-              key={`main-indicator-${dodecahedron.activeFace}`}
-              position={getFaceInfo(dodecahedron.activeFace).center}
-              rotation={getFaceRotation(dodecahedron.activeFace)}
-              onClick={(e) => handleIndicatorClick(dodecahedron.activeFace, e)}
-              isActive={
-                dodecahedron?.selectedIndicator === dodecahedron.activeFace
-              } // Now highlights only on indicator click
-            />
-          )}
-          {/* Update indicator cubes rendering */}
-          {geometry.map((_, idx) => {
-            const { center } = getFaceInfo(idx);
-            const rotation = getFaceRotation(idx);
-            const isConnected = isIndicatorConnected(idx);
-
-            // Only show indicator as selected (blue) if it was directly clicked
-            // and is not connected
-            const isSelected =
-              dodecahedron?.selectedIndicator === idx && !isConnected;
-
-            return shouldShowFaceIndicator(idx) ? (
-              <FaceIndicator
-                key={`indicator-${idx}`}
-                position={center}
-                rotation={rotation}
-                onClick={(e) => handleIndicatorClick(idx, e)}
-                isActive={isSelected}
-                isConnected={isConnected}
-                showAllCubesIndicators={showAllIndicators}
-                selectedIndicatorsLength={selectedIndicators?.length || 0}
-              />
-            ) : null;
-          })}
+          ))}{' '}
         </group>
         {/* Move UI elements outside main group but keep them following contentRef */}
         {selected &&
@@ -1333,22 +1287,25 @@ const Sphere = React.memo(
             </group>
           </group>
         )}{' '}
-        {headerText && (
+        {renderHeaderText && (
           <TextSprite
-            text={headerText}
+            key={`header-${renderHeaderText}-${JSON.stringify(
+              renderHeaderStyle
+            )}`}
+            text={renderHeaderText}
             position={getHeaderPosition()}
             // If followTarget is causing issues, we can modify how it's used
             followTarget={contentRef}
             onClick={handleHeaderClick}
             style={{
-              ...headerStyle,
+              ...renderHeaderStyle,
               isHeaderText: true,
               isDodecahedronHeader: true,
               fixedDistance: true, // Add this to ensure consistent distance if supported
             }}
           />
         )}
-        {dodecahedron?.showStyleMenu && headerText && (
+        {dodecahedron?.showStyleMenu && renderHeaderText && (
           <TextStyleUI
             position={getHeaderPosition()}
             followTarget={contentRef}
@@ -1403,17 +1360,6 @@ const Sphere = React.memo(
             matrixAutoUpdate={false} // Add this to prevent matrix recursion
           />
         )}{' '}
-        {selected &&
-          dodecahedron?.showFaceTextInput &&
-          dodecahedron?.activeFace !== null && (
-            <group position={position} scale={scale}>
-              <FaceTextInput
-                position={getFaceTextInputPosition(dodecahedron.activeFace)}
-                onTextSubmit={handleFaceTextSubmit}
-                inputId={`dodecahedron-${id}-face-${dodecahedron.activeFace}`}
-              />
-            </group>
-          )}
         {/* Add TextStyleUI for face text */}{' '}
         {dodecahedron?.showFaceTextStyleMenu &&
           dodecahedron?.activeFaceText !== null && (

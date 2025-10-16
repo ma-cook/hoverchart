@@ -63,8 +63,6 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
         makeDefault
         enableDamping={false}
         screenSpacePanning={true}
-        minPolarAngle={Math.PI / 4}
-        maxPolarAngle={Math.PI / 1.5}
         minDistance={10} // Increased minimum distance to help with precision at large distances
         maxDistance={1000000} // Increased max zoom distance to match far plane
       />

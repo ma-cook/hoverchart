@@ -245,133 +245,132 @@ const Connection = React.memo(
     // Declare all useMemo hooks unconditionally
     // First hook: Calculate basic connection data with real-time object positions
     const connectionData = useMemo(() => {
-      // Handle invalid connections gracefully inside the hook
-      if (!connection) {
-        return { isValid: false, midpoint: [0, 0, 0] };
+      // Early validation with minimal computation
+      if (!connection?.start?.objectId || !connection?.end?.objectId) {
+        return {
+          isValid: false,
+          midpoint: [0, 0, 0],
+          startPosition: [0, 0, 0],
+          endPosition: [0, 0, 0],
+        };
       }
 
-      // Calculate positions using current object positions first (for real-time updates)
-      // Priority: Current object position with face calculation > stored face positions > object centers
-      let startPosition;
-      if (startObject?.position && connection.start?.face) {
-        // First priority: Recalculate face position based on current object position
-        try {
-          const indicatorData = {
-            type: connection.start.type || startObject.type || 'cube',
-            face: connection.start.face,
-            objectId: connection.start.objectId,
-            faceCenter: connection.start.faceCenter,
-            cube: {
-              position: startObject.position,
-              scale: startObject.scale || [1, 1, 1],
-            },
-            plane:
-              startObject.type === 'plane'
-                ? {
-                    position: startObject.position,
-                    scale: startObject.scale || [1, 1, 1],
-                  }
-                : undefined,
-          };
+      // Cache object lookups to avoid repeated searches
+      const startObj = startObject;
+      const endObj = endObject;
 
-          startPosition = calculateFacePosition(
-            indicatorData,
-            allObjectsForPathfinding
-          );
-        } catch {
-          startPosition = startObject.position;
-        }
-      } else if (Array.isArray(connection.start?.position)) {
-        // Fallback: Use stored face position from connection creation
-        startPosition = connection.start.position;
-      } else if (Array.isArray(connection.start?.facePosition)) {
-        startPosition = connection.start.facePosition;
-      } else if (Array.isArray(connection.start?.worldPosition)) {
-        startPosition = connection.start.worldPosition;
-      } else if (startObject?.position) {
-        // Last resort: Use current object center position
-        startPosition = startObject.position;
-      } else {
-        // REMOVED: No fallback to [0, 0, 0] - this causes 5000+ unit distances
-        // If we can't find the object or position, skip this connection
-        // console.warn(
-        //   '⚠️ ConnectionsRenderer: No valid start position found for connection',
-        //   connection.id
-        // );
-        return { isValid: false, midpoint: [0, 0, 0] };
-      } // For end position - same priority order
-      let endPosition;
-      if (endObject?.position && connection.end?.face) {
-        // First priority: Recalculate face position based on current object position
-        try {
-          const indicatorData = {
-            type: connection.end.type || endObject.type || 'cube',
-            face: connection.end.face,
-            objectId: connection.end.objectId,
-            faceCenter: connection.end.faceCenter,
-            cube: {
-              position: endObject.position,
-              scale: endObject.scale || [1, 1, 1],
-            },
-            plane:
-              endObject.type === 'plane'
-                ? {
-                    position: endObject.position,
-                    scale: endObject.scale || [1, 1, 1],
-                  }
-                : undefined,
-          };
+      // Simplified position calculation with early returns
+      const startPosition =
+        startObj?.position && connection.start?.face
+          ? (() => {
+              try {
+                return calculateFacePosition(
+                  {
+                    type: connection.start.type || startObj.type || 'cube',
+                    face: connection.start.face,
+                    objectId: connection.start.objectId,
+                    faceCenter: connection.start.faceCenter,
+                    cube: {
+                      position: startObj.position,
+                      scale: startObj.scale || [1, 1, 1],
+                    },
+                    plane:
+                      startObj.type === 'plane'
+                        ? {
+                            position: startObj.position,
+                            scale: startObj.scale || [1, 1, 1],
+                          }
+                        : undefined,
+                  },
+                  allObjectsForPathfinding
+                );
+              } catch {
+                return startObj.position;
+              }
+            })()
+          : connection.start?.position ||
+            connection.start?.facePosition ||
+            connection.start?.worldPosition ||
+            startObj?.position || [0, 0, 0];
 
-          endPosition = calculateFacePosition(
-            indicatorData,
-            allObjectsForPathfinding
-          );
-        } catch {
-          endPosition = endObject.position;
-        }
-      } else if (Array.isArray(connection.end?.position)) {
-        // Fallback: Use stored face position from connection creation
-        endPosition = connection.end.position;
-      } else if (Array.isArray(connection.end?.facePosition)) {
-        endPosition = connection.end.facePosition;
-      } else if (Array.isArray(connection.end?.worldPosition)) {
-        endPosition = connection.end.worldPosition;
-      } else if (endObject?.position) {
-        // Last resort: Use current object center position
-        endPosition = endObject.position;
-      } else {
-        return { isValid: false, midpoint: [0, 0, 0] };
+      const endPosition =
+        endObj?.position && connection.end?.face
+          ? (() => {
+              try {
+                return calculateFacePosition(
+                  {
+                    type: connection.end.type || endObj.type || 'cube',
+                    face: connection.end.face,
+                    objectId: connection.end.objectId,
+                    faceCenter: connection.end.faceCenter,
+                    cube: {
+                      position: endObj.position,
+                      scale: endObj.scale || [1, 1, 1],
+                    },
+                    plane:
+                      endObj.type === 'plane'
+                        ? {
+                            position: endObj.position,
+                            scale: endObj.scale || [1, 1, 1],
+                          }
+                        : undefined,
+                  },
+                  allObjectsForPathfinding
+                );
+              } catch {
+                return endObj.position;
+              }
+            })()
+          : connection.end?.position ||
+            connection.end?.facePosition ||
+            connection.end?.worldPosition ||
+            endObj?.position || [0, 0, 0];
+
+      // Validate positions more efficiently
+      const isValid =
+        Array.isArray(startPosition) &&
+        Array.isArray(endPosition) &&
+        startPosition.length >= 3 &&
+        endPosition.length >= 3 &&
+        startPosition.every((val) => typeof val === 'number' && !isNaN(val)) &&
+        endPosition.every((val) => typeof val === 'number' && !isNaN(val));
+
+      if (!isValid) {
+        return {
+          isValid: false,
+          midpoint: [0, 0, 0],
+          startPosition,
+          endPosition,
+        };
       }
+
       return {
-        isValid: Boolean(
-          connection &&
-            connection.start &&
-            connection.end &&
-            startPosition &&
-            endPosition &&
-            Array.isArray(startPosition) &&
-            Array.isArray(endPosition) &&
-            startPosition.length >= 3 &&
-            endPosition.length >= 3 &&
-            startPosition.every(
-              (val) => typeof val === 'number' && !isNaN(val)
-            ) &&
-            endPosition.every((val) => typeof val === 'number' && !isNaN(val))
-        ),
+        isValid: true,
         midpoint: calculateMidpoint(startPosition, endPosition),
         startPosition,
         endPosition,
       };
-    }, [connection, startObject, endObject, allObjectsForPathfinding]);
+    }, [
+      connection?.start?.objectId, // More specific dependencies
+      connection?.end?.objectId,
+      connection?.start?.face,
+      connection?.end?.face,
+      connection?.start?.position,
+      connection?.end?.position,
+      startObject?.position,
+      startObject?.scale,
+      startObject?.type,
+      endObject?.position,
+      endObject?.scale,
+      endObject?.type,
+      // Remove allObjectsForPathfinding from dependencies - only needed for face calculations
+    ]);
 
     // Second hook: Filter relevant objects with stable dependencies
     // IMPORTANT: Include all objects for intersection testing, even endpoints,
     // Create a stable reference to filtered objects for pathfinding
     // This will only change when the allObjectsForPathfinding prop actually changes
-    const filteredObjects = useMemo(() => {
-      if (!allObjectsForPathfinding) return [];
-      return allObjectsForPathfinding.filter((obj) => obj && obj.id);
-    }, [allObjectsForPathfinding]);
+
     const stableLineStyle =
       connection?.styleType || connection?.lineStyle || 'straight';
 
@@ -387,7 +386,7 @@ const Connection = React.memo(
     // Third hook: Calculate path and intersections
     // Use a more selective dependency to minimize re-renders
     const pathData = useMemo(() => {
-      if (!connection || !connectionData.isValid) {
+      if (!connectionData.isValid) {
         return {
           calculatedPathPoints: [
             [0, 0, 0],
@@ -397,145 +396,86 @@ const Connection = React.memo(
           intersections: [],
         };
       }
-      const startPosition = connectionData.startPosition;
-      const endPosition = connectionData.endPosition;
-      const startObjectId = stableStartObjectId || '';
-      const endObjectId = stableEndObjectId || '';
-      const pathPoints = stablePathPoints;
-      const lineStyle = pathfindingStyle; // Use pathfinding style instead of stableLineStyle
 
-      // PERFORMANCE OPTIMIZATION: Skip expensive pathfinding for connections that:
-      // 1. Have pre-calculated pathPoints stored (from bulk imports)
-      // 2. Are straight lines and user hasn't requested curved
-      const hasStoredPath = pathPoints && pathPoints.length > 0;
-      const userRequestedCurved = lineStyle === 'curved';
+      const { startPosition, endPosition } = connectionData;
+      const lineStyle = pathfindingStyle;
+      const hasStoredPath = stablePathPoints && stablePathPoints.length > 0;
 
-      // Only do expensive intersection checking if:
-      // - User explicitly wants curved lines, OR
-      // - Connection doesn't have a pre-calculated path
-      const shouldCheckIntersections = userRequestedCurved || !hasStoredPath;
-
+      // Only check intersections when necessary
+      const shouldCheckIntersections = lineStyle === 'curved' || !hasStoredPath;
       const intersections = shouldCheckIntersections
-        ? checkLineIntersection(startPosition, endPosition, filteredObjects)
+        ? checkLineIntersection(
+            startPosition,
+            endPosition,
+            allObjectsForPathfinding
+          ) // <-- Use the prop name
         : null;
 
-      // Generate path (curved if needed)
-      // PATHFINDING FIX: Curve lines automatically when intersections are detected
+      // Determine if we need curved path
       const shouldCurve =
         lineStyle === 'curved' || (intersections && intersections.length > 0);
 
-      // Use stored path if available and no intersections detected, otherwise calculate
+      // Use stored path when possible
       const calculatedPathPoints = shouldCurve
         ? generateCurvedPath(
             startPosition,
             endPosition,
             intersections,
-            startObjectId,
-            endObjectId,
+            stableStartObjectId,
+            stableEndObjectId,
             true
           )
-        : pathPoints || [startPosition, endPosition]; // No intersections -> use stored path or straight line
+        : stablePathPoints || [startPosition, endPosition];
 
-      // Determine if path should be curved
       const isCurvedPath =
-        calculatedPathPoints &&
-        calculatedPathPoints.length > 2 &&
-        (shouldCurve || (intersections && intersections.length > 0));
-
-      // Determine effective line style - use 'curved' only for user-requested curved lines
-      // For dashed/dotted lines with intersections, keep the original style
+        calculatedPathPoints && calculatedPathPoints.length > 2 && shouldCurve;
       const effectiveLineStyle =
         isCurvedPath && stableLineStyle === 'straight'
           ? 'curved'
-          : stableLineStyle; // Use actual line style for rendering
-
-      const finalPathPoints = calculatedPathPoints || [
-        startPosition,
-        endPosition,
-      ];
+          : stableLineStyle;
 
       return {
-        calculatedPathPoints: finalPathPoints,
+        calculatedPathPoints: calculatedPathPoints || [
+          startPosition,
+          endPosition,
+        ],
         effectiveLineStyle,
         intersections,
       };
     }, [
-      connection, // Include connection for completeness
-      // CRITICAL: Only depend on pathfinding style, not visual style
-      // This prevents recalculation when changing dashed/dotted/straight
+      connectionData, // Only depends on connectionData changes
       pathfindingStyle,
+      stablePathPoints,
       stableStartObjectId,
       stableEndObjectId,
-      stablePathPoints,
-      // CRITICAL: Include connectionData to recalculate paths when positions change
-      connectionData,
-      // Only include filteredObjects when the connection actually needs pathfinding
-      filteredObjects,
-      // Include actual style for effectiveLineStyle calculation
       stableLineStyle,
+      allObjectsForPathfinding, // <-- Use the prop name in dependencies too
     ]);
 
     // Fourth hook: Calculate text position
     const textPositionData = useMemo(() => {
-      if (!connection || !connectionData.isValid) {
+      if (!connectionData.isValid) {
         return { textPosition: [0, 0, 0] };
       }
 
-      // Define default offsets
-      const defaultStraightLineOffset = 2;
-      const defaultCurvedLineOffset = 5;
       const { midpoint } = connectionData;
       const { calculatedPathPoints, effectiveLineStyle } = pathData;
+      const offset = effectiveLineStyle === 'curved' ? 5 : 2;
 
-      // Calculate text position based on line style
       let textPosition;
-      if (calculatedPathPoints && calculatedPathPoints.length > 0) {
-        if (effectiveLineStyle === 'curved') {
-          const midIdx = Math.floor(calculatedPathPoints.length / 2);
-          const midPoint = calculatedPathPoints[midIdx];
-
-          // Handle both Vector3 objects and arrays
-          if (midPoint && typeof midPoint === 'object' && 'x' in midPoint) {
-            // Vector3 object
-            textPosition = [
-              midPoint.x,
-              midPoint.y + defaultCurvedLineOffset,
-              midPoint.z,
-            ];
-          } else if (Array.isArray(midPoint) && midPoint.length >= 3) {
-            // Array format
-            textPosition = [
-              midPoint[0],
-              midPoint[1] + defaultCurvedLineOffset,
-              midPoint[2],
-            ];
-          } else {
-            // Fallback to midpoint
-            textPosition = [
-              midpoint[0],
-              midpoint[1] + defaultCurvedLineOffset,
-              midpoint[2],
-            ];
-          }
-        } else {
-          textPosition = [
-            midpoint[0],
-            midpoint[1] + defaultStraightLineOffset,
-            midpoint[2],
-          ];
-        }
+      if (calculatedPathPoints?.length > 2 && effectiveLineStyle === 'curved') {
+        const midIdx = Math.floor(calculatedPathPoints.length / 2);
+        const midPoint = calculatedPathPoints[midIdx];
+        const pos = Array.isArray(midPoint)
+          ? midPoint
+          : [midPoint.x, midPoint.y, midPoint.z];
+        textPosition = [pos[0], pos[1] + offset, pos[2]];
       } else {
-        textPosition = [
-          midpoint[0],
-          midpoint[1] + defaultStraightLineOffset,
-          midpoint[2],
-        ];
+        textPosition = [midpoint[0], midpoint[1] + offset, midpoint[2]];
       }
 
-      return {
-        textPosition,
-      };
-    }, [connection, connectionData, pathData]); // Early return after all hooks are declared
+      return { textPosition };
+    }, [connectionData, pathData]); // Early return after all hooks are declared
     if (!connection) {
       return null;
     }
@@ -762,71 +702,31 @@ const ConnectionsRenderer = ({
 
   // Create pathfinding objects for intersection calculations
   // Use a more stable reference that only changes when objects actually change
-  const allObjectsForPathfinding = useMemo(() => {
-    if (!objects || objects.length === 0) return [];
+  const pathfindingObjects = useMemo(() => {
+    if (!objects?.length) return [];
 
-    // Create a hash of relevant object properties to detect actual changes
-    const objectsHash = objects
-      .map(
-        (obj) =>
-          `${obj.id}:${obj.position?.join(',') || ''}:${
-            obj.scale?.join(',') || ''
-          }:${obj.type || ''}`
-      )
-      .join('|');
-
-    return {
-      objects: objects.map((obj) => ({
-        id: obj.id,
-        position: obj.position,
-        scale: obj.scale || [1, 1, 1],
-        type: obj.type,
-        faceSize: obj.faceSize,
-      })),
-      hash: objectsHash,
-    };
-  }, [objects]);
-
-  // Extract just the objects array but with a stable reference when hash doesn't change
-  const stablePathfindingObjects = useMemo(() => {
-    return allObjectsForPathfinding.objects;
-  }, [allObjectsForPathfinding.hash]);
+    // Create stable object references
+    return objects.map((obj) => ({
+      id: obj.id,
+      position: obj.position,
+      scale: obj.scale || [1, 1, 1],
+      type: obj.type,
+      faceSize: obj.faceSize,
+    }));
+  }, [objects]); // Only depends on objects array
 
   // Filter connections to only show those where both endpoint objects are visible
   const visibleConnections = useMemo(() => {
-    // ISSUE FIX: For anonymous users or when spatial system hasn't loaded,
-    // still show connections if we have objects and connections
-    if (!visibleObjectIds || visibleObjectIds.size === 0) {
-      // If we have objects but no visibleObjectIds, fall back to showing all connections
-      // where both endpoint objects exist in the objects array
-      if (availableObjectIds.size > 0 && connections.length > 0) {
-        return connections.filter((connection) => {
-          const startObjectId = connection.start?.objectId?.toString();
-          const endObjectId = connection.end?.objectId?.toString();
+    if (!connections?.length) return [];
 
-          return (
-            startObjectId &&
-            endObjectId &&
-            availableObjectIds.has(startObjectId) &&
-            availableObjectIds.has(endObjectId)
-          );
-        });
-      }
+    // Pre-create set for faster lookups
+    const visibleIds = visibleObjectIds || availableObjectIds;
 
-      return []; // Don't show any connections if no objects loaded
-    }
-
-    // Normal spatial filtering when visibleObjectIds is available
     return connections.filter((connection) => {
-      const startObjectId = connection.start?.objectId?.toString();
-      const endObjectId = connection.end?.objectId?.toString();
-
-      // Only show connection if both endpoint objects are currently loaded/visible
+      const startId = connection.start?.objectId?.toString();
+      const endId = connection.end?.objectId?.toString();
       return (
-        startObjectId &&
-        endObjectId &&
-        visibleObjectIds.has(startObjectId) &&
-        visibleObjectIds.has(endObjectId)
+        startId && endId && visibleIds.has(startId) && visibleIds.has(endId)
       );
     });
   }, [connections, visibleObjectIds, availableObjectIds]);
@@ -839,7 +739,7 @@ const ConnectionsRenderer = ({
           <Connection
             key={connection.id}
             connection={connection}
-            allObjectsForPathfinding={stablePathfindingObjects}
+            allObjectsForPathfinding={pathfindingObjects}
             onLineStyleChange={onLineStyleChange}
             onLineColorChange={onLineColorChange}
             onConnectionClick={onConnectionClick}
