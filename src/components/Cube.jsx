@@ -3,7 +3,7 @@ import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import PooledLine from './PooledLine';
 import * as THREE from 'three';
-
+import { useFaceIndicatorStore } from '../stores';
 import CubeFace from './CubeFace';
 import TextSprite from './TextSprite';
 import ObjectUI from './ObjectUI';
@@ -139,7 +139,12 @@ const Cube = ({
   // Get object data from objects store
   const objects = useObjectsStore((state) => state.objects);
   const objectData = objects.find((obj) => obj.id === id);
-
+  const setIndicatorActive = useFaceIndicatorStore(
+    (state) => state.setIndicatorActive
+  );
+  // const setIndicatorConnected = useFaceIndicatorStore(
+  //   (state) => state.setIndicatorConnected
+  // );
   // Get connections from connection store instead of props
   const connectionsFromStore = useConnectionStore((state) => state.connections);
 
@@ -313,6 +318,12 @@ const Cube = ({
       setActiveTextStyleUI(null);
       setCubeShowHeaderTextStyleUI(id, false);
       setCubeActiveTextFace(id, null);
+
+      // NEW: Clear all active indicators for this cube
+      const cubeIndicators = faces.map((face) => `${id}-${face.name}`);
+      cubeIndicators.forEach((indicatorId) =>
+        setIndicatorActive(indicatorId, false)
+      );
     }
   }, [
     selected,
@@ -323,6 +334,7 @@ const Cube = ({
     setActiveTextStyleUI,
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
+    setIndicatorActive, // Add setIndicatorActive
   ]);
   // Check if a face is connected via a connection
   const isIndicatorConnected = useCallback(
@@ -515,11 +527,19 @@ const Cube = ({
     (e, faceName) => {
       e.stopPropagation();
       const currentSelectedFace = cubeStateRef.current?.selectedFace;
-      setCubeSelectedFace(
-        id,
-        currentSelectedFace === faceName ? null : faceName
-      );
+      const newSelectedFace =
+        currentSelectedFace === faceName ? null : faceName;
+
+      setCubeSelectedFace(id, newSelectedFace);
       setCubeShowObjectUI(id, false);
+
+      // NEW: Update global faceIndicatorStore
+      const indicatorId = `${id}-${faceName}`;
+      if (newSelectedFace) {
+        setIndicatorActive(indicatorId, true);
+      } else {
+        setIndicatorActive(indicatorId, false);
+      }
 
       onFaceClickRef.current?.({
         cube: contentRef.current,
@@ -527,7 +547,7 @@ const Cube = ({
         id: id,
       });
     },
-    [id, setCubeSelectedFace, setCubeShowObjectUI]
+    [id, setCubeSelectedFace, setCubeShowObjectUI, setIndicatorActive] // Add setIndicatorActive
   );
 
   const handleColoredFaceClick = useCallback(
@@ -553,7 +573,7 @@ const Cube = ({
         currentSelectedIndicator === faceName ? null : faceName
       );
 
-      const { position: facePos } = getFaceIndicatorProps(faceName); // Create complete indicator data
+      const { position: facePos } = getFaceIndicatorProps(faceName);
       const indicatorData = {
         type: 'cube',
         face: faceName,
@@ -574,9 +594,20 @@ const Cube = ({
         indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
       }
 
+      // Call onFaceIndicatorClick first for connection logic
       onFaceIndicatorClickRef.current?.(indicatorData);
+
+      // NEW: Update global faceIndicatorStore to activate this indicator AFTER connection logic
+      const indicatorId = `${id}-${faceName}`;
+      setIndicatorActive(indicatorId, true); // Always activate globally
     },
-    [id, scale, setCubeSelectedIndicator, position]
+    [
+      id,
+      scale,
+      setCubeSelectedIndicator,
+      setIndicatorActive, // Add to deps
+      position,
+    ]
   );
   const handleTransformToggle = useCallback(() => {
     const newShowTransform = !cubeStateRef.current?.showTransform;
@@ -1038,6 +1069,8 @@ const Cube = ({
             shouldShowIndicator={displayIndicator}
             isIndicatorActive={isActive}
             isIndicatorConnected={isConnected}
+            selectedIndicatorsLength={selectedIndicators.length} // Add this
+            showAllCubesIndicators={showAllCubesIndicators}
           />
 
           {/* UI elements for selected face */}

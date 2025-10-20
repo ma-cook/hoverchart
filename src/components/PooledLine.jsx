@@ -2,6 +2,7 @@ import { useRef, useEffect, forwardRef } from 'react';
 import { Line } from '@react-three/drei';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { useLinePool } from '../hooks/useLinePool';
+// import InstancedLine from './InstancedLine';
 
 /**
  * PooledLine - Uses object pooling for Line2 geometries and materials

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Line } from '@react-three/drei';
+// import InstancedLine from './InstancedLine';
 import TextSprite from './TextSprite';
 import LineUI from './LineUI';
 import HeaderInput from './HeaderInput';

@@ -1,7 +1,9 @@
-import { onRequest } from 'firebase-functions/v2/https';
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { onRequest } from 'firebase-functions/v2/https';
+import * as functions from 'firebase-functions';
+import fetch from 'node-fetch';
 import express from 'express';
 import cors from 'cors';
 
@@ -295,4 +297,56 @@ export const bulkImport = onRequest(
     maxInstances: 5,
   },
   createBulkImportApp()
+);
+
+export const fetchGithubToken = onRequest(
+  {
+    memory: '256MiB',
+    region: 'us-central1',
+    cors: true,
+    maxInstances: 10,
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      return res.status(405).send('Method Not Allowed');
+    }
+
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ error: 'Authorization code is required' });
+    }
+
+    try {
+      // Fetch GitHub credentials from Firebase environment configuration
+      const clientId = functions.config().github.client_id;
+      const clientSecret = functions.config().github.client_secret;
+
+      // Exchange the authorization code for an access token
+      const response = await fetch(
+        'https://github.com/login/oauth/access_token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code,
+          }),
+        }
+      );
+
+      const data = await response.text();
+      const params = new URLSearchParams(data);
+
+      if (!params.get('access_token')) {
+        return res.status(400).json({ error: 'Failed to fetch access token' });
+      }
+
+      res.json({ access_token: params.get('access_token') });
+    } catch (error) {
+      console.error('Error fetching GitHub token:', error);
+      res.status(500).json({ error: 'Internal Server Error' });
+    }
+  }
 );

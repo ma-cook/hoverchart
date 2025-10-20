@@ -4,6 +4,7 @@ import { useRef, useCallback } from 'react';
 import { uploadModelToStorage } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
+import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import * as THREE from 'three';
 
 const UIOverlay = ({
@@ -56,6 +57,16 @@ const UIOverlay = ({
 
   // Markdown upload functionality
   const markdownFileInputRef = useRef(null);
+
+  const cellBoundariesVisible = useUIOverlayStore((state) => {
+    const overlay = state.overlays['main'];
+    return overlay ? overlay.cellBoundariesVisible : false;
+  });
+
+  // Add this handler function
+  const handleCellBoundariesToggle = useCallback(() => {
+    setCellBoundariesVisible('main', !cellBoundariesVisible);
+  }, [cellBoundariesVisible]);
 
   const handleRecordClick = useCallback(async () => {
     if (isRecording) {
@@ -550,7 +561,17 @@ const UIOverlay = ({
               onChange={handleMarkdownFileSelect}
             />
           </div>
-          {/* Menu content will go here */}
+          {/* GitHub repo section */}
+          <button
+            className="github-login-button"
+            onClick={() =>
+              (window.location.href = `https://github.com/login/oauth/authorize?client_id=YOUR_CLIENT_ID&scope=repo&redirect_uri=${encodeURIComponent(
+                'https://volscape.com/github-callback'
+              )}`)
+            }
+          >
+            Connect to GitHub
+          </button>
         </div>
       </div>
       <div className="ui-overlay" onClick={(e) => e.stopPropagation()}>
@@ -602,6 +623,19 @@ const UIOverlay = ({
               }}
             >
               ↗
+            </button>
+            <button
+              className={`shape-button ${
+                cellBoundariesVisible ? 'active' : ''
+              }`}
+              onClick={handleCellBoundariesToggle}
+              title="Toggle Cell Boundaries"
+              style={{
+                borderColor: cellBoundariesVisible ? '' : 'blue',
+                borderWidth: cellBoundariesVisible ? '' : '2px',
+              }}
+            >
+              ⬜
             </button>
             <button
               className="shape-button"

@@ -2,13 +2,14 @@ import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import * as THREE from 'three';
-import FaceIndicator from './FaceIndicator';
+import TetrahedronFace from './TetrahedronFace';
+import { useFaceIndicatorStore } from '../stores';
 import TextSprite from './TextSprite';
 import ObjectUI from './ObjectUI';
-import FaceUI from './FaceUI';
+
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
-import FaceTextInput from './FaceTextInput';
+
 import PooledLine from './PooledLine';
 import isEqual from 'lodash/isEqual';
 import {
@@ -25,43 +26,14 @@ import SnapLineIndicator from './SnapLineIndicator';
 import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
 import { debounce } from '../utils/unifiedPerformanceUtils';
 
-// Constants to avoid recreation
-const DEFAULT_COLOR = '#000000';
-const DEFAULT_OPACITY = 0.1;
-const SELECTED_OPACITY = 0.3;
 const TETRAHEDRON_SIZE = 5;
 
-// Tetrahedron face definitions (4 triangular faces)
-const tetrahedronFaces = [
-  { name: 'bottom', normal: [0, -1, 0] },
-  { name: 'front', normal: [0, 0.5, 0.866] },
-  { name: 'left', normal: [-0.866, 0.5, -0.433] },
-  { name: 'right', normal: [0.866, 0.5, -0.433] },
-];
-
-// Tetrahedron vertices (regular tetrahedron)
 const tetrahedronVertices = [
   [0, TETRAHEDRON_SIZE, 0], // top vertex
   [-TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE, TETRAHEDRON_SIZE], // bottom-left-front
   [TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE, TETRAHEDRON_SIZE], // bottom-right-front
   [0, -TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE * 1.5], // bottom-back
 ];
-
-// Create triangle geometries for each face
-// (This will be created inside the component)
-
-// Define the actual triangle faces using tetrahedron vertices
-// (This will be created inside the component)
-
-// Face material properties (base settings)
-const faceMaterialProps = {
-  transparent: true,
-  opacity: 0.1,
-  side: THREE.DoubleSide, // Use DoubleSide to prevent premature culling
-  polygonOffset: true,
-  polygonOffsetFactor: -1,
-  polygonOffsetUnits: -4,
-};
 
 // Get face indicator positions and rotations
 const getFaceIndicatorProps = (faceName) => {
@@ -137,7 +109,7 @@ const Tetrahedron = ({
   onFaceIndicatorClick,
   onFaceClick,
   showAllCubesIndicators,
-  activeIndicator,
+  globalIndicatorSelected,
   indicatorMode,
   selectedIndicators = [],
   setActiveTextStyleUI,
@@ -149,9 +121,29 @@ const Tetrahedron = ({
   lineWidth, // Add lineWidth prop
 }) => {
   // Create triangle geometries for each face (moved inside component to ensure proper disposal)
+
+  const DEFAULT_COLOR = '#000000';
+
+  const TETRAHEDRON_SIZE = 5;
+
+  const tetrahedronFaces = useMemo(
+    () => [
+      { name: 'bottom', normal: [0, -1, 0] },
+      { name: 'front', normal: [0, 0.5, 0.866] },
+      { name: 'left', normal: [-0.866, 0.5, -0.433] },
+      { name: 'right', normal: [0.866, 0.5, -0.433] },
+    ],
+    []
+  );
+  const setIndicatorActive = useFaceIndicatorStore(
+    (state) => state.setIndicatorActive
+  );
+  // Tetrahedron vertices (regular tetrahedron)
+
   const tetrahedronTriangleFaces = useMemo(() => {
     const createTriangleGeometry = (vertices) => {
       const geometry = new THREE.BufferGeometry();
+
       const positions = new Float32Array(vertices.flat());
       const normals = new Float32Array(9); // 3 vertices * 3 components
       const uvs = new Float32Array([
@@ -243,14 +235,32 @@ const Tetrahedron = ({
   const objectData = objects.find((obj) => obj.id === id);
 
   // Extract properties with defaults
-  const position = objectData?.position || [0, 0, 0];
-  const scale = objectData?.scale || [1, 1, 1];
+  const position = React.useMemo(
+    () => objectData?.position || [0, 0, 0],
+    [objectData?.position]
+  );
+  const scale = React.useMemo(
+    () => objectData?.scale || [1, 1, 1],
+    [objectData?.scale]
+  );
   const color = objectData?.color || DEFAULT_COLOR;
   const headerText = objectData?.headerText || '';
-  const textStyle = objectData?.textStyle || { fontSize: 1.5, color: 'black' };
-  const faceColors = objectData?.faceColors || {};
-  const faceTexts = objectData?.faceTexts || {};
-  const faceTextStyles = objectData?.faceTextStyles || {};
+  const textStyle = React.useMemo(
+    () => objectData?.textStyle || { fontSize: 1.5, color: 'black' },
+    [objectData?.textStyle]
+  );
+  const faceColors = React.useMemo(
+    () => objectData?.faceColors || {},
+    [objectData?.faceColors]
+  );
+  const faceTexts = React.useMemo(
+    () => objectData?.faceTexts || {},
+    [objectData?.faceTexts]
+  );
+  const faceTextStyles = React.useMemo(
+    () => objectData?.faceTextStyles || {},
+    [objectData?.faceTextStyles]
+  );
 
   // Get connections from store
   const connectionsFromStore = useConnectionStore((state) => state.connections);
@@ -270,59 +280,51 @@ const Tetrahedron = ({
     [onUpdate]
   );
 
-  // Store state and actions
-  const tetrahedron = useTetrahedronStore((state) => state.getTetrahedron(id));
-  const createTetrahedron = useTetrahedronStore(
-    (state) => state.createTetrahedron
-  );
-  const updateTetrahedron = useTetrahedronStore(
-    (state) => state.updateTetrahedron
-  );
-  const selectTetrahedron = useTetrahedronStore(
-    (state) => state.selectTetrahedron
-  );
-  const deselectTetrahedron = useTetrahedronStore(
-    (state) => state.deselectTetrahedron
-  );
-  const isTetrahedronSelected = useTetrahedronStore((state) =>
-    state.isTetrahedronSelected(id)
-  );
-  const setTetrahedronSelectedFace = useTetrahedronStore(
-    (state) => state.setTetrahedronSelectedFace
-  );
-  const setTetrahedronSelectedIndicator = useTetrahedronStore(
-    (state) => state.setTetrahedronSelectedIndicator
-  );
-  const setTetrahedronShowTransform = useTetrahedronStore(
-    (state) => state.setTetrahedronShowTransform
-  );
-  const setTetrahedronShowHeader = useTetrahedronStore(
-    (state) => state.setTetrahedronShowHeader
-  );
-  const setTetrahedronShowFaceTextInput = useTetrahedronStore(
-    (state) => state.setTetrahedronShowFaceTextInput
-  );
-  const setTetrahedronIsResizing = useTetrahedronStore(
-    (state) => state.setTetrahedronIsResizing
-  );
-  const setTetrahedronShowObjectUI = useTetrahedronStore(
-    (state) => state.setTetrahedronShowObjectUI
-  );
-  const setTetrahedronShowHeaderTextStyleUI = useTetrahedronStore(
-    (state) => state.setTetrahedronShowHeaderTextStyleUI
-  );
-  const setTetrahedronActiveTextFace = useTetrahedronStore(
-    (state) => state.setTetrahedronActiveTextFace
-  );
-  const updateTetrahedronFaceColor = useTetrahedronStore(
-    (state) => state.updateTetrahedronFaceColor
-  );
-  const updateTetrahedronFaceText = useTetrahedronStore(
-    (state) => state.updateTetrahedronFaceText
-  );
-  const updateTetrahedronFaceTextStyle = useTetrahedronStore(
-    (state) => state.updateTetrahedronFaceTextStyle
-  );
+  // Replace all individual selectors with a single consolidated selector
+  const tetrahedronState = useTetrahedronStore((state) => ({
+    tetrahedron: state.getTetrahedron(id),
+    isSelected: state.isTetrahedronSelected(id),
+    faceColors: state.getTetrahedron(id)?.faceColors,
+    faceTexts: state.getTetrahedron(id)?.faceTexts,
+    faceTextStyles: state.getTetrahedron(id)?.faceTextStyles,
+    selectedFace: state.getTetrahedron(id)?.selectedFace,
+    selectedIndicator: state.getTetrahedron(id)?.selectedIndicator,
+    showTransform: state.getTetrahedron(id)?.showTransform,
+    showHeader: state.getTetrahedron(id)?.showHeader,
+    showFaceTextInput: state.getTetrahedron(id)?.showFaceTextInput,
+    isResizing: state.getTetrahedron(id)?.isResizing,
+    showObjectUI: state.getTetrahedron(id)?.showObjectUI,
+    showHeaderTextStyleUI: state.getTetrahedron(id)?.showHeaderTextStyleUI,
+    activeTextFace: state.getTetrahedron(id)?.activeTextFace,
+    color: state.getTetrahedron(id)?.color,
+    headerText: state.getTetrahedron(id)?.headerText,
+    textStyle: state.getTetrahedron(id)?.textStyle,
+    scale: state.getTetrahedron(id)?.scale,
+    showSnapLine: state.getTetrahedron(id)?.showSnapLine,
+    snapLinePoints: state.getTetrahedron(id)?.snapLinePoints,
+    snapAxis: state.getTetrahedron(id)?.snapAxis,
+  }));
+
+  // Replace individual action selectors with a single actions object
+  const tetrahedronActions = useTetrahedronStore((state) => ({
+    createTetrahedron: state.createTetrahedron,
+    updateTetrahedron: state.updateTetrahedron,
+    selectTetrahedron: state.selectTetrahedron,
+    deselectTetrahedron: state.deselectTetrahedron,
+    setTetrahedronSelectedFace: state.setTetrahedronSelectedFace,
+    setTetrahedronSelectedIndicator: state.setTetrahedronSelectedIndicator,
+    setTetrahedronShowTransform: state.setTetrahedronShowTransform,
+    setTetrahedronShowHeader: state.setTetrahedronShowHeader,
+    setTetrahedronShowFaceTextInput: state.setTetrahedronShowFaceTextInput,
+    setTetrahedronIsResizing: state.setTetrahedronIsResizing,
+    setTetrahedronShowObjectUI: state.setTetrahedronShowObjectUI,
+    setTetrahedronShowHeaderTextStyleUI:
+      state.setTetrahedronShowHeaderTextStyleUI,
+    setTetrahedronActiveTextFace: state.setTetrahedronActiveTextFace,
+    updateTetrahedronFaceColor: state.updateTetrahedronFaceColor,
+    updateTetrahedronFaceText: state.updateTetrahedronFaceText,
+    updateTetrahedronFaceTextStyle: state.updateTetrahedronFaceTextStyle,
+  }));
 
   // Get hover state from indicators store
   const hoveredObjectId = useIndicatorsStore((state) => state.hoveredObjectId);
@@ -332,8 +334,8 @@ const Tetrahedron = ({
 
   // Initialize tetrahedron in store if it doesn't exist
   useEffect(() => {
-    if (!tetrahedron) {
-      createTetrahedron(id, {
+    if (!tetrahedronState.tetrahedron) {
+      tetrahedronActions.createTetrahedron(id, {
         position,
         scale,
         color,
@@ -346,8 +348,8 @@ const Tetrahedron = ({
     }
   }, [
     id,
-    tetrahedron,
-    createTetrahedron,
+    tetrahedronState.tetrahedron,
+    tetrahedronActions.createTetrahedron,
     position,
     scale,
     color,
@@ -360,38 +362,38 @@ const Tetrahedron = ({
 
   // Handle selection changes
   useEffect(() => {
-    if (selected && !isTetrahedronSelected) {
-      selectTetrahedron(id);
-    } else if (!selected && isTetrahedronSelected) {
-      deselectTetrahedron(id);
+    if (selected && !tetrahedronState.isSelected) {
+      tetrahedronActions.selectTetrahedron(id);
+    } else if (!selected && tetrahedronState.isSelected) {
+      tetrahedronActions.deselectTetrahedron(id);
     }
   }, [
     selected,
-    isTetrahedronSelected,
-    selectTetrahedron,
-    deselectTetrahedron,
+    tetrahedronState.isSelected,
+    tetrahedronActions.selectTetrahedron,
+    tetrahedronActions.deselectTetrahedron,
     id,
   ]);
 
   // Reset selection states when tetrahedron is deselected
   useEffect(() => {
     if (!selected) {
-      setTetrahedronSelectedFace(id, null);
-      setTetrahedronSelectedIndicator(id, null);
-      setTetrahedronShowTransform(id, false);
+      tetrahedronActions.setTetrahedronSelectedFace(id, null);
+      tetrahedronActions.setTetrahedronSelectedIndicator(id, null);
+      tetrahedronActions.setTetrahedronShowTransform(id, false);
       setActiveTextStyleUI(null);
-      setTetrahedronShowHeaderTextStyleUI(id, false);
-      setTetrahedronActiveTextFace(id, null);
+      tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(id, false);
+      tetrahedronActions.setTetrahedronActiveTextFace(id, null);
     }
   }, [
     selected,
     id,
-    setTetrahedronSelectedFace,
-    setTetrahedronSelectedIndicator,
-    setTetrahedronShowTransform,
+    tetrahedronActions.setTetrahedronSelectedFace,
+    tetrahedronActions.setTetrahedronSelectedIndicator,
+    tetrahedronActions.setTetrahedronShowTransform,
     setActiveTextStyleUI,
-    setTetrahedronShowHeaderTextStyleUI,
-    setTetrahedronActiveTextFace,
+    tetrahedronActions.setTetrahedronShowHeaderTextStyleUI,
+    tetrahedronActions.setTetrahedronActiveTextFace,
   ]);
 
   // Check if a face is connected via a connection
@@ -413,17 +415,17 @@ const Tetrahedron = ({
   const isIndicatorActive = useCallback(
     (faceName) => {
       return (
-        tetrahedron?.selectedIndicator === faceName &&
+        tetrahedronState.selectedIndicator === faceName &&
         !isIndicatorConnected(faceName)
       );
     },
-    [tetrahedron?.selectedIndicator, isIndicatorConnected]
+    [tetrahedronState.selectedIndicator, isIndicatorConnected]
   );
 
   // Calculate UI positions based on tetrahedron scale
   const getUIPositions = useMemo(() => {
     const uiOffset = 0.01;
-    const currentScale = tetrahedron?.scale || scale;
+    const currentScale = tetrahedronState.scale || scale;
 
     return {
       objectUI: [0, TETRAHEDRON_SIZE + 20 / currentScale[1], uiOffset],
@@ -431,54 +433,64 @@ const Tetrahedron = ({
       headerText: [0, TETRAHEDRON_SIZE + 5 / currentScale[1], uiOffset],
       textStyleUI: [0, TETRAHEDRON_SIZE + 7 / currentScale[1], uiOffset],
     };
-  }, [tetrahedron?.scale, scale]);
+  }, [tetrahedronState.scale, scale]);
 
   // Determine if an indicator should be shown
   const shouldShowIndicator = useCallback(
     (faceName) => {
+      // Always show indicators that are connected
       if (isIndicatorConnected(faceName)) {
         return true;
       }
-
+      // Show indicators during connection creation on ALL objects
       if (selectedIndicators.length > 0) {
         return true;
       }
-
-      if (tetrahedron?.selectedFace === faceName && selected) {
+      // Show indicator for the active face when tetrahedron is selected
+      if (tetrahedronState?.selectedFace === faceName && selected) {
         return true;
       }
-
-      if (showAllCubesIndicators) {
+      // Show all indicators when explicitly requested
+      if (showAllCubesIndicators || globalIndicatorSelected) {
         return true;
       }
-
+      // Show ALL indicators when ANY indicator is selected on this tetrahedron (exact same as Dodecahedron)
+      if (
+        tetrahedronState?.selectedIndicator !== null &&
+        tetrahedronState?.selectedIndicator !== undefined
+      ) {
+        return true;
+      }
+      // Show indicators based on mode (exact same as Dodecahedron)
       switch (indicatorMode) {
         case 'all':
-          return true;
+          return true; // Show on all tetrahedrons always in 'all' mode
         case 'indicators':
           // In indicators mode, ONLY show for the currently hovered object
           return hoveredObjectId === id;
         case 'single':
           return (
-            (activeIndicator?.cube?.id === id &&
-              activeIndicator?.face === faceName) ||
-            isIndicatorConnected(faceName)
+            tetrahedronState?.selectedIndicator === faceName ||
+            (selected && faceName === tetrahedronState?.selectedFace)
           );
         default:
-          // In default mode, don't show indicators
+          // In default mode (no indicator clicked yet), show for connected faces
+          if (tetrahedronState?.connectedFaces?.has(faceName)) return true;
           return false;
       }
     },
     [
       isIndicatorConnected,
       selectedIndicators.length,
-      tetrahedron?.selectedFace,
+      tetrahedronState?.selectedFace,
+      tetrahedronState?.selectedIndicator,
+      tetrahedronState?.connectedFaces,
       selected,
       showAllCubesIndicators,
+      globalIndicatorSelected,
       indicatorMode,
-      activeIndicator,
-      id,
       hoveredObjectId,
+      id,
     ]
   );
 
@@ -504,37 +516,21 @@ const Tetrahedron = ({
   );
 
   // Get material for a face
-  const getFaceMaterial = useCallback(
-    (faceName) => ({
-      ...faceMaterialProps,
-      color: tetrahedron?.faceColors?.[faceName]
-        ? new THREE.Color(tetrahedron.faceColors[faceName])
-        : tetrahedron?.selectedFace === faceName
-        ? new THREE.Color('#99ccff')
-        : new THREE.Color('#000000'),
-      opacity: tetrahedron?.faceColors?.[faceName]
-        ? 1.0
-        : tetrahedron?.selectedFace === faceName
-        ? SELECTED_OPACITY
-        : DEFAULT_OPACITY,
-    }),
-    [tetrahedron?.faceColors, tetrahedron?.selectedFace]
-  );
 
   // Event handlers
   const handleSceneClick = useCallback(() => {
-    setTetrahedronShowObjectUI(id, true);
-    setTetrahedronShowHeaderTextStyleUI(id, false);
-    setTetrahedronActiveTextFace(id, null);
+    tetrahedronActions.setTetrahedronShowObjectUI(id, true);
+    tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(id, false);
+    tetrahedronActions.setTetrahedronActiveTextFace(id, null);
     setActiveTextStyleUI(null);
     onClick();
   }, [
     onClick,
     setActiveTextStyleUI,
     id,
-    setTetrahedronShowObjectUI,
-    setTetrahedronShowHeaderTextStyleUI,
-    setTetrahedronActiveTextFace,
+    tetrahedronActions.setTetrahedronShowObjectUI,
+    tetrahedronActions.setTetrahedronShowHeaderTextStyleUI,
+    tetrahedronActions.setTetrahedronActiveTextFace,
   ]);
 
   // Add useCallback for updating database
@@ -546,7 +542,8 @@ const Tetrahedron = ({
       return;
     }
 
-    const currentScale = tetrahedron?.scale || objectData.scale || [1, 1, 1];
+    const currentScale = tetrahedronState.scale ||
+      objectData.scale || [1, 1, 1];
 
     const validPosition =
       Array.isArray(objectData.position) &&
@@ -576,7 +573,7 @@ const Tetrahedron = ({
       contentRef.current.lastUpdate = currentState;
       onUpdate(id, currentState);
     }
-  }, [id, objectData, onUpdate, tetrahedron]);
+  }, [id, objectData, onUpdate, tetrahedronState.scale]);
 
   // Use unified debounced update instead of duplicate pattern
   useDebouncedUpdate(updateDatabase, objectData);
@@ -585,9 +582,9 @@ const Tetrahedron = ({
     (e, faceName) => {
       e.stopPropagation();
       const newSelectedFace =
-        tetrahedron?.selectedFace === faceName ? null : faceName;
-      setTetrahedronSelectedFace(id, newSelectedFace);
-      setTetrahedronShowObjectUI(id, false);
+        tetrahedronState.selectedFace === faceName ? null : faceName;
+      tetrahedronActions.setTetrahedronSelectedFace(id, newSelectedFace);
+      tetrahedronActions.setTetrahedronShowObjectUI(id, false);
 
       onFaceClick?.({
         cube: contentRef.current, // Changed from 'tetrahedron' to 'cube' for compatibility
@@ -598,9 +595,9 @@ const Tetrahedron = ({
     [
       id,
       onFaceClick,
-      tetrahedron?.selectedFace,
-      setTetrahedronSelectedFace,
-      setTetrahedronShowObjectUI,
+      tetrahedronState.selectedFace,
+      tetrahedronActions.setTetrahedronSelectedFace,
+      tetrahedronActions.setTetrahedronShowObjectUI,
     ]
   );
 
@@ -619,182 +616,149 @@ const Tetrahedron = ({
   const handleIndicatorClick = useCallback(
     (e, faceName) => {
       e.stopPropagation();
-
-      setTetrahedronSelectedIndicator(
-        id,
-        tetrahedron?.selectedIndicator === faceName ? null : faceName
-      );
-
       const { position: facePos } = getFaceIndicatorProps(faceName);
-
-      // Create indicator data structure similar to cube
       const indicatorData = {
         type: 'tetrahedron',
         face: faceName,
         cube: {
           id,
-          position: position,
-          scale: tetrahedron?.scale || scale,
+          position: tetrahedronState.tetrahedron?.position || position,
+          scale: tetrahedronState.scale || scale,
           userData: { objectId: id.toString() },
         },
-        position: position, // This will be updated with world position
+        position: tetrahedronState.tetrahedron?.position || position,
         faceCenter: facePos,
       };
-
-      // Calculate world position with more robust error handling
-      let worldPosition = position; // Fallback to object center
-
-      try {
-        const worldPos = new THREE.Vector3(facePos[0], facePos[1], facePos[2]);
-
-        if (contentRef.current) {
-          // Force matrix update to ensure we have the latest transform
-          contentRef.current.updateMatrixWorld(true);
-
-          if (contentRef.current.matrixWorld) {
-            worldPos.applyMatrix4(contentRef.current.matrixWorld);
-            worldPosition = [worldPos.x, worldPos.y, worldPos.z];
-
-            console.log('🔺 Tetrahedron face click:', {
-              face: faceName,
-              localFacePos: facePos,
-              worldPosition: worldPosition,
-              objectPosition: position,
-              scale: tetrahedron?.scale || scale,
-            });
-          } else {
-            console.warn('⚠️ No matrixWorld available for tetrahedron:', id);
-          }
-        } else {
-          console.warn('⚠️ No contentRef available for tetrahedron:', id);
-        }
-      } catch (error) {
-        console.error(
-          '❌ Error calculating tetrahedron face world position:',
-          error
-        );
-      }
-
-      // Update the indicator data with the calculated world position
-      indicatorData.position = worldPosition;
-
-      console.log('🔺 Final tetrahedron indicator data:', indicatorData);
-
+      // ... world position calculation ...
+      tetrahedronActions.setTetrahedronSelectedIndicator(
+        id,
+        tetrahedronState.selectedIndicator === faceName ? null : faceName
+      );
+      // NEW: Update global faceIndicatorStore to activate this indicator (exact same as Dodecahedron)
+      const indicatorId = `${id}-${faceName}`;
+      setIndicatorActive(indicatorId, true); // Always activate globally
+      console.log(
+        'Tetrahedron handleIndicatorClick called for',
+        faceName,
+        'indicatorId:',
+        indicatorId
+      );
       onFaceIndicatorClick?.(indicatorData);
     },
     [
       id,
       onFaceIndicatorClick,
-      tetrahedron?.selectedIndicator,
-      tetrahedron?.scale,
-      scale,
-      setTetrahedronSelectedIndicator,
-      position,
+      tetrahedronState,
+      tetrahedronActions,
+      setIndicatorActive,
     ]
   );
 
   const handleTransformToggle = useCallback(() => {
-    const newShowTransform = !tetrahedron?.showTransform;
-    setTetrahedronShowTransform(id, newShowTransform);
+    const newShowTransform = !tetrahedronState.showTransform;
+    tetrahedronActions.setTetrahedronShowTransform(id, newShowTransform);
     if (newShowTransform) {
-      setTetrahedronIsResizing(id, false);
+      tetrahedronActions.setTetrahedronIsResizing(id, false);
     }
   }, [
-    tetrahedron?.showTransform,
+    tetrahedronState.showTransform,
     id,
-    setTetrahedronShowTransform,
-    setTetrahedronIsResizing,
+    tetrahedronActions.setTetrahedronShowTransform,
+    tetrahedronActions.setTetrahedronIsResizing,
   ]);
 
   const handleResizeToggle = useCallback(() => {
-    const newIsResizing = !tetrahedron?.isResizing;
-    setTetrahedronIsResizing(id, newIsResizing);
+    const newIsResizing = !tetrahedronState.isResizing;
+    tetrahedronActions.setTetrahedronIsResizing(id, newIsResizing);
     if (newIsResizing) {
-      setTetrahedronShowTransform(id, false);
+      tetrahedronActions.setTetrahedronShowTransform(id, false);
     }
   }, [
-    tetrahedron?.isResizing,
+    tetrahedronState.isResizing,
     id,
-    setTetrahedronIsResizing,
-    setTetrahedronShowTransform,
+    tetrahedronActions.setTetrahedronIsResizing,
+    tetrahedronActions.setTetrahedronShowTransform,
   ]);
 
   const handleHeaderToggle = useCallback(() => {
-    setTetrahedronShowHeader(id, !tetrahedron?.showHeader);
-    if (!tetrahedron?.showHeader) {
-      setTetrahedronShowObjectUI(id, false);
+    tetrahedronActions.setTetrahedronShowHeader(
+      id,
+      !tetrahedronState.showHeader
+    );
+    if (!tetrahedronState.showHeader) {
+      tetrahedronActions.setTetrahedronShowObjectUI(id, false);
     }
   }, [
-    tetrahedron?.showHeader,
+    tetrahedronState.showHeader,
     id,
-    setTetrahedronShowHeader,
-    setTetrahedronShowObjectUI,
+    tetrahedronActions.setTetrahedronShowHeader,
+    tetrahedronActions.setTetrahedronShowObjectUI,
   ]);
 
   const handleHeaderSubmit = useCallback(
     (text) => {
-      updateTetrahedron(id, { headerText: text });
+      tetrahedronActions.updateTetrahedron(id, { headerText: text });
       if (onUpdate) {
         onUpdate(id, {
-          color: tetrahedron?.color || color,
+          color: tetrahedronState.color || color,
           headerText: text,
-          scale: tetrahedron?.scale || scale,
+          scale: tetrahedronState.scale || scale,
           position: position,
-          faceColors: tetrahedron?.faceColors || faceColors,
-          faceTexts: tetrahedron?.faceTexts || faceTexts,
-          faceTextStyles: tetrahedron?.faceTextStyles || faceTextStyles,
-          textStyle: tetrahedron?.textStyle || textStyle,
+          faceColors: tetrahedronState.faceColors || faceColors,
+          faceTexts: tetrahedronState.faceTexts || faceTexts,
+          faceTextStyles: tetrahedronState.faceTextStyles || faceTextStyles,
+          textStyle: tetrahedronState.textStyle || textStyle,
           type: 'tetrahedron',
         });
       }
-      setTetrahedronShowHeader(id, false);
-      setTetrahedronShowObjectUI(id, false);
+      tetrahedronActions.setTetrahedronShowHeader(id, false);
+      tetrahedronActions.setTetrahedronShowObjectUI(id, false);
     },
     [
       id,
       onUpdate,
-      tetrahedron,
+      tetrahedronState,
       color,
       scale,
       faceColors,
       faceTexts,
       faceTextStyles,
       textStyle,
-      updateTetrahedron,
-      setTetrahedronShowHeader,
-      setTetrahedronShowObjectUI,
+      tetrahedronActions.updateTetrahedron,
+      tetrahedronActions.setTetrahedronShowHeader,
+      tetrahedronActions.setTetrahedronShowObjectUI,
       position,
     ]
   );
 
   const handleLineColorChange = useCallback(
     (newColor) => {
-      updateTetrahedron(id, { color: newColor });
+      tetrahedronActions.updateTetrahedron(id, { color: newColor });
 
       // Use unified debounced update
       debouncedUpdate(id, {
         color: newColor,
-        headerText: tetrahedron?.headerText || headerText,
-        scale: tetrahedron?.scale || scale,
+        headerText: tetrahedronState.headerText || headerText,
+        scale: tetrahedronState.scale || scale,
         position: position,
-        faceColors: tetrahedron?.faceColors || faceColors,
-        faceTexts: tetrahedron?.faceTexts || faceTexts,
-        faceTextStyles: tetrahedron?.faceTextStyles || faceTextStyles,
-        textStyle: tetrahedron?.textStyle || textStyle,
+        faceColors: tetrahedronState.faceColors || faceColors,
+        faceTexts: tetrahedronState.faceTexts || faceTexts,
+        faceTextStyles: tetrahedronState.faceTextStyles || faceTextStyles,
+        textStyle: tetrahedronState.textStyle || textStyle,
         type: 'tetrahedron',
       });
     },
     [
       id,
       debouncedUpdate,
-      tetrahedron,
+      tetrahedronState,
       headerText,
       scale,
       faceColors,
       faceTexts,
       faceTextStyles,
       textStyle,
-      updateTetrahedron,
+      tetrahedronActions.updateTetrahedron,
       position,
     ]
   );
@@ -833,17 +797,17 @@ const Tetrahedron = ({
           snapResult.position[2]
         );
 
-        updateTetrahedron(id, {
+        tetrahedronActions.updateTetrahedron(id, {
           showSnapLine: true,
           snapLinePoints: snapResult.linePoints,
           snapAxis: snapResult.snapAxis,
         });
 
         setTimeout(() => {
-          updateTetrahedron(id, { showSnapLine: false });
+          tetrahedronActions.updateTetrahedron(id, { showSnapLine: false });
         }, 2000);
       } else {
-        updateTetrahedron(id, { showSnapLine: false });
+        tetrahedronActions.updateTetrahedron(id, { showSnapLine: false });
       }
 
       const updatedObjects = currentObjects.map((obj) =>
@@ -855,7 +819,7 @@ const Tetrahedron = ({
         onMove(finalPosition);
       }
 
-      updateTetrahedron(id, { position: finalPosition });
+      tetrahedronActions.updateTetrahedron(id, { position: finalPosition });
     } catch (error) {
       console.error('Error in tetrahedron handleDrag:', error);
     }
@@ -872,7 +836,7 @@ const Tetrahedron = ({
       ];
 
       const epsilon = 0.0001;
-      const currentScale = tetrahedron?.scale || scale;
+      const currentScale = tetrahedronState.scale || scale;
       if (
         Math.abs(newScale[0] - currentScale[0]) < epsilon &&
         Math.abs(newScale[1] - currentScale[1]) < epsilon &&
@@ -880,9 +844,9 @@ const Tetrahedron = ({
       ) {
         return;
       }
-      updateTetrahedron(id, { scale: newScale });
+      tetrahedronActions.updateTetrahedron(id, { scale: newScale });
     },
-    [id, tetrahedron?.scale, scale, updateTetrahedron]
+    [id, tetrahedronState.scale, scale, tetrahedronActions.updateTetrahedron]
   );
 
   // Face text handling functions
@@ -906,41 +870,41 @@ const Tetrahedron = ({
       e.stopPropagation();
       e.nativeEvent?.stopPropagation?.();
 
-      setTetrahedronActiveTextFace(id, faceName);
+      tetrahedronActions.setTetrahedronActiveTextFace(id, faceName);
       setActiveTextStyleUI(contentRef.current);
-      setTetrahedronShowHeaderTextStyleUI(id, false);
-      setTetrahedronSelectedFace(id, null);
-      setTetrahedronShowObjectUI(id, false);
+      tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(id, false);
+      tetrahedronActions.setTetrahedronSelectedFace(id, null);
+      tetrahedronActions.setTetrahedronShowObjectUI(id, false);
 
       return false; // Prevent event bubbling
     },
     [
       id,
-      setTetrahedronActiveTextFace,
+      tetrahedronActions.setTetrahedronActiveTextFace,
       setActiveTextStyleUI,
-      setTetrahedronShowHeaderTextStyleUI,
-      setTetrahedronSelectedFace,
-      setTetrahedronShowObjectUI,
+      tetrahedronActions.setTetrahedronShowHeaderTextStyleUI,
+      tetrahedronActions.setTetrahedronSelectedFace,
+      tetrahedronActions.setTetrahedronShowObjectUI,
     ]
   );
 
   const handleFaceTextStyleChange = useCallback(
     (newStyle) => {
-      const activeFace = tetrahedron?.activeTextFace;
+      const activeFace = tetrahedronState.activeTextFace;
       if (!activeFace) return;
 
       const updatedFaceTextStyles = {
-        ...(tetrahedron?.faceTextStyles || faceTextStyles),
+        ...(tetrahedronState.faceTextStyles || faceTextStyles),
         [activeFace]: {
-          ...(tetrahedron?.faceTextStyles?.[activeFace] ||
+          ...(tetrahedronState.faceTextStyles?.[activeFace] ||
             faceTextStyles?.[activeFace] ||
             {}),
           ...newStyle,
         },
       };
 
-      updateTetrahedronFaceTextStyle(id, activeFace, {
-        ...(tetrahedron?.faceTextStyles?.[activeFace] ||
+      tetrahedronActions.updateTetrahedronFaceTextStyle(id, activeFace, {
+        ...(tetrahedronState.faceTextStyles?.[activeFace] ||
           faceTextStyles?.[activeFace] ||
           {}),
         ...newStyle,
@@ -949,14 +913,14 @@ const Tetrahedron = ({
       if (onUpdate) {
         // Use unified debounced update
         debouncedUpdate(id, {
-          color: tetrahedron?.color || color,
-          headerText: tetrahedron?.headerText || headerText,
-          scale: tetrahedron?.scale || scale,
+          color: tetrahedronState.color || color,
+          headerText: tetrahedronState.headerText || headerText,
+          scale: tetrahedronState.scale || scale,
           position: position,
-          faceColors: tetrahedron?.faceColors || faceColors,
-          faceTexts: tetrahedron?.faceTexts || faceTexts,
+          faceColors: tetrahedronState.faceColors || faceColors,
+          faceTexts: tetrahedronState.faceTexts || faceTexts,
           faceTextStyles: updatedFaceTextStyles,
-          textStyle: tetrahedron?.textStyle || textStyle,
+          textStyle: tetrahedronState.textStyle || textStyle,
           type: 'tetrahedron',
         });
       }
@@ -964,7 +928,7 @@ const Tetrahedron = ({
     [
       id,
       debouncedUpdate,
-      tetrahedron,
+      tetrahedronState,
       color,
       headerText,
       scale,
@@ -973,7 +937,7 @@ const Tetrahedron = ({
       faceTexts,
       faceTextStyles,
       textStyle,
-      updateTetrahedronFaceTextStyle,
+      tetrahedronActions.updateTetrahedronFaceTextStyle,
       onUpdate,
     ]
   );
@@ -981,11 +945,11 @@ const Tetrahedron = ({
   // Render face texts
   const renderFaceTexts = useMemo(() => {
     return tetrahedronFaces.map(({ name, normal }) => {
-      const faceText = tetrahedron?.faceTexts?.[name] || faceTexts?.[name];
+      const faceText = tetrahedronState.faceTexts?.[name] || faceTexts?.[name];
       if (!faceText) return null;
 
       const { position: facePos, rotation } = getFaceIndicatorProps(name);
-      const textStyle = tetrahedron?.faceTextStyles?.[name] ||
+      const textStyle = tetrahedronState.faceTextStyles?.[name] ||
         faceTextStyles?.[name] || {
           fontSize: 0.5,
           color: 'black',
@@ -997,7 +961,7 @@ const Tetrahedron = ({
       const offsetMultiplier =
         name === 'bottom'
           ? 0.2
-          : tetrahedron?.faceColors && tetrahedron.faceColors[name]
+          : tetrahedronState.faceColors && tetrahedronState.faceColors[name]
           ? 0.05
           : 0.03;
 
@@ -1009,7 +973,7 @@ const Tetrahedron = ({
       ];
 
       // Calculate inverse scale
-      const currentScale = tetrahedron?.scale || scale;
+      const currentScale = tetrahedronState.scale || scale;
       const inverseScale = currentScale.map((s) => 1 / Math.max(0.0001, s));
 
       // Use rotation as-is for tetrahedron faces
@@ -1046,17 +1010,20 @@ const Tetrahedron = ({
           />
 
           {/* Text style UI for the active face */}
-          {tetrahedron?.activeTextFace === name && (
+          {tetrahedronState.activeTextFace === name && (
             <TextStyleUI
               position={[0, 6, 0]}
               onStyleChange={handleFaceTextStyleChange}
               onClose={() => {
-                setTetrahedronActiveTextFace(id, null);
+                tetrahedronActions.setTetrahedronActiveTextFace(id, null);
                 setActiveTextStyleUI(null);
-                setTetrahedronShowHeaderTextStyleUI(id, false);
+                tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(
+                  id,
+                  false
+                );
               }}
               currentStyle={
-                tetrahedron?.faceTextStyles?.[name] ||
+                tetrahedronState.faceTextStyles?.[name] ||
                 faceTextStyles?.[name] ||
                 {}
               }
@@ -1066,11 +1033,7 @@ const Tetrahedron = ({
       );
     });
   }, [
-    tetrahedron?.faceTexts,
-    tetrahedron?.faceTextStyles,
-    tetrahedron?.faceColors,
-    tetrahedron?.activeTextFace,
-    tetrahedron?.scale,
+    tetrahedronState,
     faceTexts,
     faceTextStyles,
     scale,
@@ -1078,206 +1041,84 @@ const Tetrahedron = ({
     handleFaceTextStyleClick,
     handleFaceTextStyleChange,
     id,
-    setTetrahedronActiveTextFace,
+    tetrahedronActions,
     setActiveTextStyleUI,
-    setTetrahedronShowHeaderTextStyleUI,
   ]);
 
   // Render faces
   const renderFaces = useMemo(() => {
-    return tetrahedronFaces.map(({ name, normal }, index) => {
-      const isConnected = isIndicatorConnected(name);
-      const isActive = isIndicatorActive(name);
-
-      const displayIndicator = shouldShowIndicator(name);
-      const displayFace =
-        (tetrahedron?.faceColors && tetrahedron.faceColors[name]) ||
-        (selected && (tetrahedron?.selectedFace === name || isActive));
-
-      // Always make faces clickable when tetrahedron is selected
-      const isClickable = selected;
-
-      const shouldShowFaceUI =
-        selected &&
-        tetrahedron?.selectedFace === name &&
-        !tetrahedron?.showFaceTextInput;
-
-      // Calculate face-specific render order to prevent z-fighting
-      const faceRenderOrder = displayFace
-        ? 100 + index // Colored faces get higher priority
-        : isClickable
-        ? 50 + index
-        : 10 + index; // Transparent faces get lower priority
-
-      return (
-        <mesh
-          key={`face-${name}`}
-          position={[0, 0, 0]} // Position at origin since geometry already has correct vertices
-          onClick={(e) => handleColoredFaceClick(e, name)}
-          renderOrder={faceRenderOrder} // Use face-specific render order
-          frustumCulled={false} // Prevent premature frustum culling at edge angles
-        >
-          {/* Use custom triangle geometry for this face */}
-          <primitive object={tetrahedronTriangleFaces[name]} />
-          <meshBasicMaterial
-            {...getFaceMaterial(name)}
-            transparent={true}
-            depthWrite={displayFace ? true : false} // Only opaque faces write to depth buffer
-            depthTest={true} // Keep depth testing to maintain proper ordering
-            side={THREE.DoubleSide} // Ensure both sides are rendered to prevent culling
-            renderOrder={faceRenderOrder} // Use consistent render order
-            visible={displayFace || isClickable}
-            alphaTest={displayFace ? 0 : 0.005} // Very low alpha test for transparent faces
-            opacity={
-              displayFace
-                ? getFaceMaterial(name).opacity
-                : isClickable
-                ? 0.02 // Slightly higher opacity for better visibility
-                : 0.001
-            }
-          />
-
-          {shouldShowFaceUI && (
-            <FaceUI
-              position={[0, 1, 0]}
-              normal={normal}
-              onColorChange={(color) => {
-                console.log(
-                  '🔺 FaceUI onColorChange called for face:',
-                  name,
-                  'color:',
-                  color
-                );
-                const updatedFaceColors = {
-                  ...(tetrahedron?.faceColors || faceColors),
-                  [name]: color,
-                };
-
-                updateTetrahedronFaceColor(id, name, color);
-
-                if (onUpdate) {
-                  // Use unified debounced update
-                  debouncedUpdate(id, {
-                    color: tetrahedron?.color || color,
-                    headerText: tetrahedron?.headerText || headerText,
-                    scale: tetrahedron?.scale || scale,
-                    position: position,
-                    faceColors: updatedFaceColors,
-                    faceTexts: tetrahedron?.faceTexts || faceTexts,
-                    faceTextStyles:
-                      tetrahedron?.faceTextStyles || faceTextStyles,
-                    textStyle: tetrahedron?.textStyle || textStyle,
-                    type: 'tetrahedron',
-                  });
-                }
-              }}
-              face={name}
-              onTextClick={() => setTetrahedronShowFaceTextInput(id, true)}
-            />
-          )}
-
-          {tetrahedron?.showFaceTextInput &&
-            tetrahedron?.selectedFace === name && (
-              <FaceTextInput
-                position={[0, 6, 0]}
-                onTextSubmit={(text) => {
-                  const selectedFace = tetrahedron?.selectedFace;
-                  if (!selectedFace) return;
-
-                  const updatedTexts = {
-                    ...(tetrahedron?.faceTexts || faceTexts),
-                    [selectedFace]: text,
-                  };
-
-                  updateTetrahedronFaceText(id, selectedFace, text);
-
-                  if (onUpdate) {
-                    onUpdate(id, {
-                      color: tetrahedron?.color || color,
-                      headerText: tetrahedron?.headerText || headerText,
-                      scale: tetrahedron?.scale || scale,
-                      position: position,
-                      faceColors: tetrahedron?.faceColors || faceColors,
-                      faceTexts: updatedTexts,
-                      faceTextStyles:
-                        tetrahedron?.faceTextStyles || faceTextStyles,
-                      textStyle: tetrahedron?.textStyle || textStyle,
-                      type: 'tetrahedron',
-                    });
-                  }
-
-                  setTetrahedronShowFaceTextInput(id, false);
-                  setTetrahedronSelectedFace(id, null);
-                }}
-                inputId={`tetrahedron-${id}-face-${name}`}
-              />
-            )}
-
-          {displayIndicator && (
-            <FaceIndicator
-              position={getFaceIndicatorProps(name).position}
-              rotation={[0, 0, 0]}
-              onClick={(e) => handleIndicatorClick(e, name)}
-              isActive={isActive}
-              isConnected={isConnected}
-              objectId={id}
-              face={name}
-              showAllCubesIndicators={showAllCubesIndicators}
-              selectedIndicatorsLength={selectedIndicators?.length || 0}
-            />
-          )}
-        </mesh>
-      );
-    });
+    return tetrahedronFaces.map(({ name, normal }) => (
+      <TetrahedronFace
+        key={`face-${name}`}
+        id={id}
+        faceName={name}
+        faceData={{
+          geometry: tetrahedronTriangleFaces[name],
+          position: getFaceIndicatorProps(name).position,
+          rotation: [0, 0, 0],
+          normal,
+        }}
+        selected={selected}
+        onFaceClick={handleColoredFaceClick}
+        onIndicatorClick={handleIndicatorClick}
+        shouldShowIndicator={shouldShowIndicator}
+        isIndicatorConnected={isIndicatorConnected}
+        isIndicatorActive={isIndicatorActive}
+        debouncedUpdate={debouncedUpdate}
+        onUpdate={onUpdate}
+        position={position}
+        color={color}
+        headerText={headerText}
+        scale={scale}
+        faceColors={faceColors}
+        faceTexts={faceTexts}
+        faceTextStyles={faceTextStyles}
+        textStyle={textStyle}
+        selectedIndicatorsLength={selectedIndicators.length}
+        showAllCubesIndicators={showAllCubesIndicators}
+        globalIndicatorSelected={globalIndicatorSelected}
+      />
+    ));
   }, [
-    tetrahedron?.faceColors,
-    tetrahedron?.selectedFace,
-    tetrahedron?.showFaceTextInput,
+    id,
     selected,
+    handleColoredFaceClick,
+    handleIndicatorClick,
+    shouldShowIndicator,
     isIndicatorConnected,
     isIndicatorActive,
-    handleColoredFaceClick,
-    getFaceMaterial,
-    shouldShowIndicator,
-    handleIndicatorClick,
-    id,
-    tetrahedron?.faceTexts,
-    tetrahedron?.faceTextStyles,
-    tetrahedron?.scale,
-    tetrahedron?.color,
-    tetrahedron?.headerText,
-    tetrahedron?.textStyle,
-    faceColors,
-    faceTexts,
-    faceTextStyles,
+    debouncedUpdate,
+    onUpdate,
+    position,
     color,
     headerText,
     scale,
-    position,
+    faceColors,
+    faceTexts,
+    faceTextStyles,
     textStyle,
-    updateTetrahedronFaceColor,
-    updateTetrahedronFaceText,
-    setTetrahedronShowFaceTextInput,
-    setTetrahedronSelectedFace,
-    onUpdate,
     tetrahedronTriangleFaces,
+    tetrahedronFaces,
+    selectedIndicators.length,
+    showAllCubesIndicators,
+    globalIndicatorSelected,
   ]);
 
   return (
     <>
       {/* Snap line indicator */}
-      {tetrahedron?.showSnapLine && (
+      {tetrahedronState.showSnapLine && (
         <SnapLineIndicator
-          points={tetrahedron.snapLinePoints}
-          axis={tetrahedron.snapAxis}
-          visible={tetrahedron.showSnapLine}
+          points={tetrahedronState.snapLinePoints}
+          axis={tetrahedronState.snapAxis}
+          visible={tetrahedronState.showSnapLine}
         />
       )}
       {/* Main tetrahedron group */}
       <group
         ref={contentRef}
         position={position}
-        scale={tetrahedron?.scale || scale}
+        scale={tetrahedronState.scale || scale}
         userData={{
           isTetrahedron: true,
           objectId: id.toString(),
@@ -1312,7 +1153,7 @@ const Tetrahedron = ({
         {/* Tetrahedron edge lines */}
         <PooledLine
           points={tetrahedronLinePoints}
-          color={tetrahedron?.color || color}
+          color={tetrahedronState.color || color}
           lineWidth={lineWidth !== undefined ? lineWidth : 1}
           dashed={false}
           enablePooling={true}
@@ -1325,97 +1166,107 @@ const Tetrahedron = ({
         {renderFaceTexts}
 
         {/* Header text */}
-        {(tetrahedron?.headerText || headerText) && (
+        {(tetrahedronState.headerText || headerText) && (
           <group
-            scale={(tetrahedron?.scale || scale).map(
+            scale={(tetrahedronState.scale || scale).map(
               (s) => 1 / Math.max(0.0001, s)
             )}
             position={getUIPositions.headerText}
           >
             <TextSprite
-              text={tetrahedron?.headerText || headerText}
+              text={tetrahedronState.headerText || headerText}
               position={[0, 0, 0]}
               followTarget={null}
               onClick={(e) => {
                 e.stopPropagation();
                 e.nativeEvent?.stopPropagation?.();
-                setTetrahedronShowHeaderTextStyleUI(id, true);
-                setTetrahedronActiveTextFace(id, null);
+                tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(
+                  id,
+                  true
+                );
+                tetrahedronActions.setTetrahedronActiveTextFace(id, null);
                 setActiveTextStyleUI(contentRef.current);
-                setTetrahedronSelectedFace(id, null);
-                setTetrahedronShowObjectUI(id, false);
+                tetrahedronActions.setTetrahedronSelectedFace(id, null);
+                tetrahedronActions.setTetrahedronShowObjectUI(id, false);
               }}
               style={{
-                ...(tetrahedron?.textStyle || textStyle),
+                ...(tetrahedronState.textStyle || textStyle),
                 isHeaderText: true,
                 fixedSize: false,
               }}
             />
 
-            {tetrahedron?.showHeaderTextStyleUI && (
+            {tetrahedronState.showHeaderTextStyleUI && (
               <TextStyleUI
-                position={[0, 2 / (tetrahedron?.scale || scale)[1], 0]}
+                position={[0, 2 / (tetrahedronState.scale || scale)[1], 0]}
                 followTarget={null}
                 onStyleChange={(newStyle) => {
                   const updatedTextStyle = {
-                    ...(tetrahedron?.textStyle || textStyle),
+                    ...(tetrahedronState.textStyle || textStyle),
                     ...newStyle,
                   };
 
-                  updateTetrahedron(id, { textStyle: updatedTextStyle });
+                  tetrahedronActions.updateTetrahedron(id, {
+                    textStyle: updatedTextStyle,
+                  });
 
                   if (onUpdate) {
                     onUpdate(id, {
-                      color: tetrahedron?.color || color,
-                      headerText: tetrahedron?.headerText || headerText,
-                      scale: tetrahedron?.scale || scale,
+                      color: tetrahedronState.color || color,
+                      headerText: tetrahedronState.headerText || headerText,
+                      scale: tetrahedronState.scale || scale,
                       position: position,
-                      faceColors: tetrahedron?.faceColors || faceColors,
-                      faceTexts: tetrahedron?.faceTexts || faceTexts,
+                      faceColors: tetrahedronState.faceColors || faceColors,
+                      faceTexts: tetrahedronState.faceTexts || faceTexts,
                       faceTextStyles:
-                        tetrahedron?.faceTextStyles || faceTextStyles,
+                        tetrahedronState.faceTextStyles || faceTextStyles,
                       textStyle: updatedTextStyle,
                       type: 'tetrahedron',
                     });
                   }
                 }}
                 onClose={() => {
-                  setTetrahedronShowHeaderTextStyleUI(id, false);
+                  tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(
+                    id,
+                    false
+                  );
                   setActiveTextStyleUI(null);
                 }}
-                currentStyle={tetrahedron?.textStyle || textStyle}
+                currentStyle={tetrahedronState.textStyle || textStyle}
               />
             )}
           </group>
         )}
 
         {/* Header input */}
-        {selected && tetrahedron?.showHeader && (
+        {selected && tetrahedronState.showHeader && (
           <HeaderInput
             position={getUIPositions.headerInput}
             onTextSubmit={handleHeaderSubmit}
             inputId={`tetrahedron-${id}-header`}
             followTarget={null}
-            initialText={tetrahedron?.headerText || headerText}
+            initialText={tetrahedronState.headerText || headerText}
           />
         )}
       </group>
       {/* Object UI */}
-      {selected && !tetrahedron?.showHeader && tetrahedron?.showObjectUI && (
-        <ObjectUI
-          onTransformToggle={handleTransformToggle}
-          onHeaderToggle={handleHeaderToggle}
-          onResizeToggle={handleResizeToggle}
-          onLineColorChange={handleLineColorChange}
-          onDelete={() => onDelete?.(id)}
-          showTransform={tetrahedron?.showTransform}
-          showHeader={tetrahedron?.showHeader}
-          followTarget={contentRef}
-          objectId={id}
-        />
-      )}
+      {selected &&
+        !tetrahedronState.showHeader &&
+        tetrahedronState.showObjectUI && (
+          <ObjectUI
+            onTransformToggle={handleTransformToggle}
+            onHeaderToggle={handleHeaderToggle}
+            onResizeToggle={handleResizeToggle}
+            onLineColorChange={handleLineColorChange}
+            onDelete={() => onDelete?.(id)}
+            showTransform={tetrahedronState.showTransform}
+            showHeader={tetrahedronState.showHeader}
+            followTarget={contentRef}
+            objectId={id}
+          />
+        )}
       {/* Transform controls */}
-      {selected && tetrahedron?.showTransform && contentRef.current && (
+      {selected && tetrahedronState.showTransform && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
           onObjectChange={handleDrag}
@@ -1435,7 +1286,7 @@ const Tetrahedron = ({
         />
       )}
       {/* Scale transform controls */}
-      {selected && tetrahedron?.isResizing && contentRef.current && (
+      {selected && tetrahedronState.isResizing && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
           onChange={handleScale}
@@ -1454,13 +1305,14 @@ const Tetrahedron = ({
               onUpdate(id, {
                 type: 'tetrahedron',
                 position: position,
-                scale: tetrahedron?.scale || scale,
-                color: tetrahedron?.color || color,
-                headerText: tetrahedron?.headerText || headerText,
-                faceColors: tetrahedron?.faceColors || faceColors,
-                faceTexts: tetrahedron?.faceTexts || faceTexts,
-                faceTextStyles: tetrahedron?.faceTextStyles || faceTextStyles,
-                textStyle: tetrahedron?.textStyle || textStyle,
+                scale: tetrahedronState.scale || scale,
+                color: tetrahedronState.color || color,
+                headerText: tetrahedronState.headerText || headerText,
+                faceColors: tetrahedronState.faceColors || faceColors,
+                faceTexts: tetrahedronState.faceTexts || faceTexts,
+                faceTextStyles:
+                  tetrahedronState.faceTextStyles || faceTextStyles,
+                textStyle: tetrahedronState.textStyle || textStyle,
               });
             }
 
@@ -1484,23 +1336,31 @@ export default React.memo(Tetrahedron, (prevProps, nextProps) => {
     return false;
   if (prevProps.globalIndicatorSelected !== nextProps.globalIndicatorSelected)
     return false;
-
-  if (!isEqual(prevProps.position, nextProps.position)) return false;
-  if (!isEqual(prevProps.scale, nextProps.scale)) return false;
-  if (prevProps.color !== nextProps.color) return false;
-
-  if (prevProps.headerText !== nextProps.headerText) return false;
-  if (!isEqual(prevProps.textStyle, nextProps.textStyle)) return false;
-  if (!isEqual(prevProps.faceColors, nextProps.faceColors)) return false;
-  if (!isEqual(prevProps.faceTexts, nextProps.faceTexts)) return false;
-  if (!isEqual(prevProps.faceTextStyles, nextProps.faceTextStyles))
-    return false;
-
+  if (prevProps.indicatorMode !== nextProps.indicatorMode) return false;
   if (
-    prevProps.selectedIndicators?.length !==
-    nextProps.selectedIndicators?.length
+    JSON.stringify(prevProps.selectedIndicators) !==
+    JSON.stringify(nextProps.selectedIndicators)
   )
     return false;
-
+  if (JSON.stringify(prevProps.position) !== JSON.stringify(nextProps.position))
+    return false;
+  if (JSON.stringify(prevProps.scale) !== JSON.stringify(nextProps.scale))
+    return false;
+  if (
+    JSON.stringify(prevProps.faceColors) !==
+    JSON.stringify(nextProps.faceColors)
+  )
+    return false;
+  if (
+    JSON.stringify(prevProps.faceTexts) !== JSON.stringify(nextProps.faceTexts)
+  )
+    return false;
+  if (
+    JSON.stringify(prevProps.faceTextStyles) !==
+    JSON.stringify(nextProps.faceTextStyles)
+  )
+    return false;
+  if (prevProps.color !== nextProps.color) return false;
+  if (prevProps.headerText !== nextProps.headerText) return false;
   return true;
 });

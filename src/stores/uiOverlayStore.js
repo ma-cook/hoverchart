@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useUIOverlayStore = createWithEqualityFn((set, get) => ({
   // UI Overlay state - can have multiple overlay instances if needed
@@ -20,6 +19,7 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
     isUploadingModel: false,
     isProcessingMarkdown: false,
     isRecording: false,
+    cellBoundariesVisible: false, // Add this to default overlay
   },
 
   // Get UI overlay state by ID (defaults to 'main' if no ID provided)
@@ -40,6 +40,7 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
       },
     }));
   },
+
   // Update specific property of a UI overlay
   updateUIOverlayProperty: (overlayId = 'main', property, value) => {
     set((state) => {
@@ -59,6 +60,7 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
       };
     });
   },
+
   // Toggle menu open state
   toggleMenu: (overlayId = 'main') => {
     set((state) => {
@@ -78,6 +80,7 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
       };
     });
   },
+
   // Toggle template open state
   toggleTemplate: (overlayId = 'main') => {
     set((state) => {
@@ -126,6 +129,11 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
     get().updateUIOverlayProperty(overlayId, 'isRecording', isRecording);
   },
 
+  // Add the new setter for cell boundaries visibility
+  setCellBoundariesVisible: (overlayId = 'main', visible) => {
+    get().updateUIOverlayProperty(overlayId, 'cellBoundariesVisible', visible);
+  },
+
   // Clear UI overlay state
   clearUIOverlay: (overlayId = 'main') => {
     set((state) => {
@@ -150,3 +158,8 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
 }));
 
 export default useUIOverlayStore;
+
+// Export individual actions for external use
+export const setCellBoundariesVisible = (overlayId, visible) => {
+  useUIOverlayStore.getState().setCellBoundariesVisible(overlayId, visible);
+};

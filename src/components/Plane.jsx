@@ -156,7 +156,7 @@ const Plane = ({
   );
   const lineThickness = useMemo(() => {
     const baseThickness =
-      plane?.lineThickness || objectData?.lineThickness || 1;
+      plane?.lineThickness || objectData?.lineThickness || 2;
     return isMobile ? Math.max(baseThickness * 2, 3) : baseThickness;
   }, [plane?.lineThickness, objectData?.lineThickness]);
   const headerStyle = useMemo(
@@ -487,7 +487,7 @@ const Plane = ({
       headerStyle: plane?.headerStyle || objectData?.headerStyle || {},
       borderStyle: plane?.borderStyle || objectData?.borderStyle || 'solid',
       borderColor: plane?.borderColor || objectData?.borderColor || '#000000',
-      lineThickness: plane?.lineThickness || objectData?.lineThickness || 1,
+      lineThickness: plane?.lineThickness || objectData?.lineThickness || 2,
       faceText: plane?.faceText || objectData?.faceText || '',
       faceTextStyle: plane?.faceTextStyle || objectData?.faceTextStyle || {},
       webcamActive: plane?.webcamActive || objectData?.webcamActive || false,
@@ -1388,11 +1388,11 @@ const Plane = ({
   );
   const points = useMemo(
     () => [
-      new Vector3(-size, -size, 0),
-      new Vector3(size, -size, 0),
-      new Vector3(size, size, 0),
-      new Vector3(-size, size, 0),
-      new Vector3(-size, -size, 0),
+      new Vector3(-size, -size, 0.1),
+      new Vector3(size, -size, 0.1),
+      new Vector3(size, size, 0.1),
+      new Vector3(-size, size, 0.1),
+      new Vector3(-size, -size, 0.1),
     ],
     [size]
   );
@@ -1575,6 +1575,7 @@ const Plane = ({
             isBroadcasting={isBroadcasting}
             isScreenSharing={isScreenSharing}
             viewerCount={viewerCount}
+            face={{ id: `plane-${id}` }}
           />
         )}{' '}
         {showTextInput && (

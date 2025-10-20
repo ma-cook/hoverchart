@@ -249,7 +249,6 @@ export const handleFaceIndicatorClick = async ({
       }
 
       // Reset selection state regardless of outcome
-
       setSelectedIndicators([]);
       selectedIndicatorsRef.current = [];
       setIsConnectMode(false);
@@ -398,109 +397,34 @@ export const handleFaceIndicatorClick = async ({
       console.warn('⚠️ No user available, connection not saved to database');
     }
 
-    // Reset indicator selection states
-    setSelectedIndicators([]);
-    selectedIndicatorsRef.current = [];
-    setIsConnectMode(false);
-    setShowAllCubesIndicators(false);
-    setGlobalIndicatorSelected(false);
-    setIndicatorMode('none');
+    // Check if the indicator is already connected
+    const isAlreadyConnected = existingConnections.some(
+      (conn) =>
+        (conn.start?.objectId === startObjectId &&
+          conn.start?.face === startIndicator.face) ||
+        (conn.end?.objectId === startObjectId &&
+          conn.end?.face === startIndicator.face) ||
+        (conn.start?.objectId === endObjectId &&
+          conn.start?.face === indicator.face) ||
+        (conn.end?.objectId === endObjectId &&
+          conn.end?.face === indicator.face)
+    );
+
+    // Reset indicator selection states - conditionally clear for connected indicators
+    if (!isAlreadyConnected) {
+      setSelectedIndicators([]);
+      selectedIndicatorsRef.current = [];
+      setIsConnectMode(false);
+      setShowAllCubesIndicators(false);
+      setGlobalIndicatorSelected(false);
+      setIndicatorMode('none');
+    }
 
     return {
       success: true,
       complete: true,
       message: 'Connection created successfully',
       connection: newConnection,
-    };
-  }
-};
-
-export const processConnectionCreation = (
-  selectedIndicators,
-  selectedIndicatorsRef,
-  user,
-  currentSpaceId,
-  setConnections,
-  objects,
-  indicator
-) => {
-  // Sanity check the selected indicators
-  if (
-    !selectedIndicatorsRef.current ||
-    selectedIndicatorsRef.current.length === 0
-  ) {
-    console.warn('No indicators selected for connection');
-    return { success: false, message: 'No indicators selected' };
-  }
-
-  try {
-    const startIndicator = selectedIndicatorsRef.current[0];
-
-    // Validate both indicators have valid data
-    if (
-      !startIndicator ||
-      !indicator ||
-      !startIndicator.cube ||
-      !indicator.cube
-    ) {
-      console.error('Invalid indicator data for connection creation', {
-        startIndicator,
-        endIndicator: indicator,
-      });
-      selectedIndicatorsRef.current = [];
-      return {
-        success: false,
-        complete: true,
-        message: 'Invalid indicator data',
-      };
-    }
-
-    const startObjectId = startIndicator.cube.id.toString();
-    const endObjectId = indicator.cube.id.toString();
-
-    // Allow connections between different faces of the same object, but prevent face-to-itself connections
-    if (
-      startObjectId === endObjectId &&
-      startIndicator.face === indicator.face
-    ) {
-      console.warn('Cannot connect a face to itself');
-      selectedIndicatorsRef.current = [];
-      return {
-        success: false,
-        complete: true,
-        message: 'Cannot connect a face to itself',
-      };
-    }
-
-    // Get objects from the IDs with proper error checking
-    const startObj = objects.find(
-      (obj) => obj?.id?.toString() === startObjectId
-    );
-    const endObj = objects.find((obj) => obj?.id?.toString() === endObjectId);
-
-    if (!startObj || !endObj) {
-      console.error('Could not find objects for connection:', {
-        startId: startObjectId,
-        endId: endObjectId,
-        objectsFound: objects.length,
-      });
-      selectedIndicatorsRef.current = [];
-      return {
-        success: false,
-        complete: true,
-        message: 'Objects not found',
-      };
-    }
-
-    // ...rest of your existing code...
-  } catch (error) {
-    console.error('Error creating connection:', error);
-    // Reset selection state
-    selectedIndicatorsRef.current = [];
-    return {
-      success: false,
-      complete: true,
-      message: 'Connection creation error',
     };
   }
 };

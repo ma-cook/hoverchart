@@ -11,6 +11,7 @@ import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
 import ObjectRenderer from './components/ObjectRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
+import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
 
 // Hook imports
@@ -109,6 +110,10 @@ const App = () => {
     user,
     intentionalSpaceChangeRef,
   });
+  const cellBoundariesVisible = useUIOverlayStore((state) => {
+    const overlay = state.overlays['main'];
+    return overlay ? overlay.cellBoundariesVisible : false;
+  });
   // Calculate effective space ID early to avoid circular dependency
   // Initialize publicSpaceId and isLookingUpPublicSpace immediately from URL to prevent timing issues
   const { publicSpaceId, shouldLookupPublicSpace } = useMemo(() => {
@@ -179,6 +184,26 @@ const App = () => {
 
   // Memoize redirect decision to prevent unnecessary recalculations
   const shouldRedirect = useMemo(() => !canViewSpace, [canViewSpace]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+
+    if (code) {
+      // Exchange the code for an access token
+      fetch('https://volscape.com/api/github-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          localStorage.setItem('github_token', data.access_token);
+          alert('GitHub login successful!');
+        })
+        .catch((err) => console.error('GitHub login failed:', err));
+    }
+  }, []);
 
   // Debug redirect decision only when canViewSpace changes
   useEffect(() => {
@@ -1682,7 +1707,10 @@ const App = () => {
             {/* Render all objects */}
             {renderedObjects}
             {/* Render cell boundaries */}
-            <CellBoundaryRenderer loadedCells={loadedCells} visible={true} />
+            <CellBoundaryRenderer
+              loadedCells={loadedCells}
+              visible={cellBoundariesVisible}
+            />
           </group>
           <EffectComposer>
             <SMAA />

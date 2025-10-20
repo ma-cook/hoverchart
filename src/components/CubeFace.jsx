@@ -24,7 +24,8 @@ const CubeFace = React.memo(
     cubeId,
     faceName,
     faceData, // { position, rotation, normal }
-
+    selectedIndicatorsLength = 0,
+    showAllCubesIndicators = false,
     onFaceClick,
     onIndicatorClick,
     shouldShowIndicator,
@@ -117,6 +118,9 @@ const CubeFace = React.memo(
             onClick={(e) => onIndicatorClick(e, faceName)}
             isActive={isIndicatorActive}
             isConnected={isIndicatorConnected}
+            selectedIndicatorsLength={selectedIndicatorsLength}
+            showAllCubesIndicators={showAllCubesIndicators}
+            isFaceSelected={isSelected}
           />
         )}
       </>

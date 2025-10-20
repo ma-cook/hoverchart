@@ -98,6 +98,7 @@ const ObjectRenderer = React.memo(
           onFaceIndicatorClick={handleFaceIndicatorClick}
           onFaceClick={handleFaceClick}
           showAllCubesIndicators={showAllCubesIndicators}
+          globalIndicatorSelected={globalIndicatorSelected}
           activeIndicator={activeIndicator}
           indicatorMode={indicatorMode}
           selectedIndicators={selectedIndicators}
@@ -142,6 +143,8 @@ const ObjectRenderer = React.memo(
           onIndicatorDeselected={handleIndicatorDeselected}
           onDelete={() => handleObjectDelete(obj.id)}
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
+          selectedIndicators={selectedIndicators} // Add this prop
+          indicatorMode={indicatorMode}
         />
       );
     }

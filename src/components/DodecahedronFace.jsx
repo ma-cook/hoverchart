@@ -161,6 +161,7 @@ const DodecahedronFace = React.memo(
         {/* Face indicator (connection point) */}
         {shouldShowIndicator && (
           <FaceIndicator
+            id={`${dodecahedronId}-${faceIndex}`}
             position={faceData.center}
             rotation={faceData.rotation}
             onClick={(e) => onIndicatorClick(faceIndex, e)}
@@ -168,6 +169,7 @@ const DodecahedronFace = React.memo(
             isConnected={isIndicatorConnected}
             showAllCubesIndicators={showAllIndicators}
             selectedIndicatorsLength={selectedIndicatorsLength}
+            isFaceSelected={isHighlighted}
           />
         )}
 

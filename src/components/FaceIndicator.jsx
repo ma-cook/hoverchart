@@ -1,5 +1,5 @@
-import { useRef, useState, useEffect } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useRef, useEffect } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useFaceIndicatorStore } from '../stores';
@@ -15,13 +15,12 @@ const FaceIndicator = ({
   onClick,
   isActive = false,
   isConnected = false,
+  isFaceSelected = false,
   showAllCubesIndicators = false,
   selectedIndicatorsLength = 0,
 }) => {
   const meshRef = useRef();
   const groupRef = useRef();
-  const { scene, camera } = useThree();
-  const [isOccluded, setIsOccluded] = useState(false);
 
   // Use Zustand store for hover state
   const isHovered = useFaceIndicatorStore((state) =>
@@ -56,63 +55,6 @@ const FaceIndicator = ({
         );
 
         meshRef.current._lastIndicatorUpdate = frameCounter.getTime();
-
-        // PERFORMANCE FIX: Disable raycasting occlusion checks - too expensive with 300+ objects
-        // Check occlusion with raycasting (only if not active/connected and not in connection mode)
-        /* DISABLED FOR PERFORMANCE
-        const inConnectionMode =
-          showAllCubesIndicators || selectedIndicatorsLength > 0;
-        if (!isActive && !isConnected && !inConnectionMode) {
-          try {
-            const worldPosition = new THREE.Vector3();
-            meshRef.current.getWorldPosition(worldPosition);
-
-            // Only do occlusion checking if indicator is reasonably close to camera
-            const cameraDistance = camera.position.distanceTo(worldPosition);
-            if (cameraDistance < 500) {
-              // Reasonable view distance
-              const direction = new THREE.Vector3()
-                .subVectors(worldPosition, camera.position)
-                .normalize();
-
-              const raycaster = new THREE.Raycaster(camera.position, direction);
-              raycaster.camera = camera; // Fix LineSegments2 raycasting error
-              raycaster.far = cameraDistance - 0.1; // Only check up to indicator position
-
-              // Set global camera reference for LineSegments2
-              if (window.camera !== camera) {
-                window.camera = camera;
-              }
-
-              const intersects = raycaster.intersectObjects(
-                scene.children,
-                true
-              );
-
-              // Check if any solid object is between camera and indicator
-              let occluded = false;
-              for (const intersect of intersects) {
-                if (
-                  intersect.object !== meshRef.current &&
-                  !intersect.object.userData?.isFaceIndicator &&
-                  !intersect.object.userData?.isUI &&
-                  intersect.distance < cameraDistance - 0.5
-                ) {
-                  occluded = true;
-                  break;
-                }
-              }
-
-              setIsOccluded(occluded);
-            } else {
-              setIsOccluded(false); // Too far to be occluded
-            }
-          } catch {
-            // Fallback: don't hide indicator if raycasting fails
-            setIsOccluded(false);
-          }
-        }
-        */
       }
     }
   }); // Determine color based on state
@@ -120,14 +62,16 @@ const FaceIndicator = ({
     ? '#000000' // Black for connected indicators
     : isActive
     ? '#0088ff' // Blue for selected (not connected)
+    : isFaceSelected
+    ? '#ff8800' // Orange for face-selected (new state)
     : isHovered
-    ? '#009909' // Light gray for hover
-    : '#00000a'; // Darker gray for normal state
+    ? '#009909' // Green for hover
+    : '#666666'; // Gray for normal state
 
   // Don't render if occluded (except when active, connected, or in connection mode)
   const inConnectionMode =
     showAllCubesIndicators || selectedIndicatorsLength > 0;
-  if (isOccluded && !isActive && !isConnected && !inConnectionMode) {
+  if (!isActive && !isConnected && !isFaceSelected && !inConnectionMode) {
     return null;
   }
 
