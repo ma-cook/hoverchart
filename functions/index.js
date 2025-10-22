@@ -18,7 +18,15 @@ initializeApp({
       '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCMot/sJZk60o9U\ntsipkOuKH09A9LJvUlaeY0tsJqxjpe29oq0g7rm5o4uasHk+lIXgIH2xIOrAyIsR\n981zlGJBk/M5JHMoEJhFcZjpXLDBZ+Ig032wtkYROdt0Iyn17rXpYkK9PSyk7erG\nkwzjDMYbQOjceQtJMtKRCLO3BP8gDD6ghSop1vvosYcSMwoZMTuAYegBaL7WTv6M\nvCOOzI7ADiO8DO5KPdqsdvHTi8D9ZRkYBjot0LdhpKFb2wlMqPOqSaayTlDJY7/C\n7T/6YyHstsAVe8u4kwfG8P2wfs2XzJ36L8mcn6E7gDcSOncK2FTrVmAkmWi1mu3v\n3zUMirjZAgMBAAECggEAEOqKerIvEzc+jFcMHfFTk6Keeta0G9XQm26gJNsmAzpz\nNUs6/eoZJu44HZw6iT9+Nu5RkBvAgP3eVIP1D4D6rJ6qM+Zhf6E3X6sBVJiUnj7r\noT0vMjFKjkniTr7oDi/va6opEvAnzZLcmZQYibsAnUiaeeKJa/2T/GQKkeok8eq5\ne3dE1NwbRLsFPMYX1JxAST3WYFxKEP6uFc4H+X6zg64Fix/YyqVegrVofTqxuBqa\nYw3f3JpBHxc6LKb/otUUaeAG13MbQa48pRNTD0BnTLqDRZQyJXoVXCwXlgPfutRX\n4mTo3nhPxGHuJ42eBEP4yXfPwnvvZWVzP4JDuzyPzQKBgQC/1x1LUqw+rJmFilRu\nQRXyHgOrR8jF58Kn6pnVEnWlrAvPbzkOgLD5YETh7MCUTcDHcmViFcVQiWLuC3em\ni30CoFKJI7OQZiuyyvk8fzdD7CXGF5KLCiF1zyr6hww4lO+blEid9NfLIAknCJt/\nIAlpz4h2Adm1efnXIMgTH6wAQwKBgQC7q8vy10QyBRqz0ysRUNA1O9lMFE5ItqrD\nzGFQrUouEzZYzzOtkKYj91dWQQkbH6uDLrJRgJPe1Bapm6CG1vi4eBLTZroZcNen\nigbHnHFxbyZL27Moh9seeokQkhEiDzvgwzXQ+ReN/Yhzp68XCDLPQ2eDgVu2sm13\nKddYC3OuswKBgB7SD5nHWXbkQfHrbG8eM8lnOw2shbwN5P8XOMm7on0QbAFSjCch\nU81swwRNBg+NglhIr7MXblDnEabO3tU5+caPPVNdEf8z+vdJlss6YQWfjd4KcXe3\nE/Maanw/cB4zB1/Gbfg6muS+a9oCjwDYg8qlFfZni7OVOidu09YGs5qDAoGBAILc\n+ds9FlWWz5bjQh3R702fjReK9Ueo8IyVwKokHBzi0ru8yDlYKzHbMHB56yKZw9w2\nvKsucG4qEB924MoFruva9q2o7U3+LLKsAaxBP62sptSwv04c5cNsCJWgdQf9/W/u\nT2GHwFAHoZWcMPBrjBqQ0uaVVmGgK8qzR3EikykXAoGAL5Un7EuwTh0c++qX8h6q\nponYoQ9pt0LWPpZHZUofc9GUxUWDS6aspJCh9CP4RW7AjHrBBHAInwfyTk9+tcZ0\nHhDsMad4bFijOBhzerJ2N0VoCh6/m7UGG0Z4QJhWRw2gaoCj4Uscig7GI02vvYnT\nWKEIVKdcMM37dz9EcEHv5pQ=\n-----END PRIVATE KEY-----\n',
   }),
 });
-const corsHandler = cors({ origin: 'https://space.volscape.com' });
+const corsHandler = cors({
+  origin: [
+    'https://hoverchart.web.app',
+    'https://hoverchart.firebaseapp.com',
+    'http://localhost:5173',
+    'http://localhost:5000',
+    'https://space.volscape.com',
+  ],
+});
 const db = getFirestore();
 
 // ============= VERIFY AUTH TOKEN FUNCTION =============
@@ -31,6 +39,7 @@ function createVerifyAuthTokenApp() {
       'https://hoverchart.firebaseapp.com',
       'http://localhost:5173',
       'http://localhost:5000',
+      'https://space.volscape.com',
     ],
     optionsSuccessStatus: 200,
   };
@@ -38,7 +47,7 @@ function createVerifyAuthTokenApp() {
   app.use(cors(corsOptions));
   app.use(express.json());
 
-  app.post('/', async (req, res) => {
+  app.post('/verify-token', async (req, res) => {
     const idToken = req.body.token;
 
     if (!idToken) {

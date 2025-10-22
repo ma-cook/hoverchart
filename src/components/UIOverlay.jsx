@@ -632,7 +632,7 @@ const UIOverlay = ({
             className="github-login-button"
             onClick={() =>
               (window.location.href = `https://github.com/login/oauth/authorize?client_id=Ov23liLYzf9WoYPLBNat&scope=repo&redirect_uri=${encodeURIComponent(
-                'https://space.volscape.com/github-callback'
+                'https://space.volscape.com'
               )}`)
             }
           >
