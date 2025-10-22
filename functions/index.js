@@ -2,7 +2,7 @@ import { initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
-import * as functions from 'firebase-functions';
+
 import fetch from 'node-fetch';
 import express from 'express';
 import cors from 'cors';
@@ -18,7 +18,7 @@ initializeApp({
       '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCMot/sJZk60o9U\ntsipkOuKH09A9LJvUlaeY0tsJqxjpe29oq0g7rm5o4uasHk+lIXgIH2xIOrAyIsR\n981zlGJBk/M5JHMoEJhFcZjpXLDBZ+Ig032wtkYROdt0Iyn17rXpYkK9PSyk7erG\nkwzjDMYbQOjceQtJMtKRCLO3BP8gDD6ghSop1vvosYcSMwoZMTuAYegBaL7WTv6M\nvCOOzI7ADiO8DO5KPdqsdvHTi8D9ZRkYBjot0LdhpKFb2wlMqPOqSaayTlDJY7/C\n7T/6YyHstsAVe8u4kwfG8P2wfs2XzJ36L8mcn6E7gDcSOncK2FTrVmAkmWi1mu3v\n3zUMirjZAgMBAAECggEAEOqKerIvEzc+jFcMHfFTk6Keeta0G9XQm26gJNsmAzpz\nNUs6/eoZJu44HZw6iT9+Nu5RkBvAgP3eVIP1D4D6rJ6qM+Zhf6E3X6sBVJiUnj7r\noT0vMjFKjkniTr7oDi/va6opEvAnzZLcmZQYibsAnUiaeeKJa/2T/GQKkeok8eq5\ne3dE1NwbRLsFPMYX1JxAST3WYFxKEP6uFc4H+X6zg64Fix/YyqVegrVofTqxuBqa\nYw3f3JpBHxc6LKb/otUUaeAG13MbQa48pRNTD0BnTLqDRZQyJXoVXCwXlgPfutRX\n4mTo3nhPxGHuJ42eBEP4yXfPwnvvZWVzP4JDuzyPzQKBgQC/1x1LUqw+rJmFilRu\nQRXyHgOrR8jF58Kn6pnVEnWlrAvPbzkOgLD5YETh7MCUTcDHcmViFcVQiWLuC3em\ni30CoFKJI7OQZiuyyvk8fzdD7CXGF5KLCiF1zyr6hww4lO+blEid9NfLIAknCJt/\nIAlpz4h2Adm1efnXIMgTH6wAQwKBgQC7q8vy10QyBRqz0ysRUNA1O9lMFE5ItqrD\nzGFQrUouEzZYzzOtkKYj91dWQQkbH6uDLrJRgJPe1Bapm6CG1vi4eBLTZroZcNen\nigbHnHFxbyZL27Moh9seeokQkhEiDzvgwzXQ+ReN/Yhzp68XCDLPQ2eDgVu2sm13\nKddYC3OuswKBgB7SD5nHWXbkQfHrbG8eM8lnOw2shbwN5P8XOMm7on0QbAFSjCch\nU81swwRNBg+NglhIr7MXblDnEabO3tU5+caPPVNdEf8z+vdJlss6YQWfjd4KcXe3\nE/Maanw/cB4zB1/Gbfg6muS+a9oCjwDYg8qlFfZni7OVOidu09YGs5qDAoGBAILc\n+ds9FlWWz5bjQh3R702fjReK9Ueo8IyVwKokHBzi0ru8yDlYKzHbMHB56yKZw9w2\nvKsucG4qEB924MoFruva9q2o7U3+LLKsAaxBP62sptSwv04c5cNsCJWgdQf9/W/u\nT2GHwFAHoZWcMPBrjBqQ0uaVVmGgK8qzR3EikykXAoGAL5Un7EuwTh0c++qX8h6q\nponYoQ9pt0LWPpZHZUofc9GUxUWDS6aspJCh9CP4RW7AjHrBBHAInwfyTk9+tcZ0\nHhDsMad4bFijOBhzerJ2N0VoCh6/m7UGG0Z4QJhWRw2gaoCj4Uscig7GI02vvYnT\nWKEIVKdcMM37dz9EcEHv5pQ=\n-----END PRIVATE KEY-----\n',
   }),
 });
-
+const corsHandler = cors({ origin: 'https://space.volscape.com' });
 const db = getFirestore();
 
 // ============= VERIFY AUTH TOKEN FUNCTION =============
@@ -307,46 +307,56 @@ export const fetchGithubToken = onRequest(
     maxInstances: 10,
   },
   async (req, res) => {
-    if (req.method !== 'POST') {
-      return res.status(405).send('Method Not Allowed');
-    }
-
-    const { code } = req.body;
-
-    if (!code) {
-      return res.status(400).json({ error: 'Authorization code is required' });
-    }
-
-    try {
-      // Fetch GitHub credentials from Firebase environment configuration
-      const clientId = functions.config().github.client_id;
-      const clientSecret = functions.config().github.client_secret;
-
-      // Exchange the authorization code for an access token
-      const response = await fetch(
-        'https://github.com/login/oauth/access_token',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            client_id: clientId,
-            client_secret: clientSecret,
-            code,
-          }),
-        }
-      );
-
-      const data = await response.text();
-      const params = new URLSearchParams(data);
-
-      if (!params.get('access_token')) {
-        return res.status(400).json({ error: 'Failed to fetch access token' });
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        return res.status(405).send('Method Not Allowed');
       }
 
-      res.json({ access_token: params.get('access_token') });
-    } catch (error) {
-      console.error('Error fetching GitHub token:', error);
-      res.status(500).json({ error: 'Internal Server Error' });
-    }
+      const { code } = req.body;
+
+      if (!code) {
+        return res
+          .status(400)
+          .json({ error: 'Authorization code is required' });
+      }
+
+      try {
+        const clientId = process.env.GITHUB_CLIENT_ID;
+        const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+        if (!clientId || !clientSecret) {
+          return res
+            .status(500)
+            .json({ error: 'GitHub credentials not configured' });
+        }
+
+        const response = await fetch(
+          'https://github.com/login/oauth/access_token',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              client_id: clientId,
+              client_secret: clientSecret,
+              code,
+            }),
+          }
+        );
+
+        const data = await response.text();
+        const params = new URLSearchParams(data);
+
+        if (!params.get('access_token')) {
+          return res
+            .status(400)
+            .json({ error: 'Failed to fetch access token' });
+        }
+
+        res.json({ access_token: params.get('access_token') });
+      } catch (error) {
+        console.error('Error fetching GitHub token:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+      }
+    });
   }
 );

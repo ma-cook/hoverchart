@@ -37,4 +37,21 @@ export default [
       'react/no-unknown-property': 'off', // disable unknown-property checks
     },
   },
+  {
+    files: ['functions/**/*.{js,jsx}'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: {
+        ...globals.node, // Enable Node.js globals like `process`
+      },
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      // Add any function-specific rules here if needed
+    },
+  },
 ];
