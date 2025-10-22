@@ -185,26 +185,6 @@ const App = () => {
   // Memoize redirect decision to prevent unnecessary recalculations
   const shouldRedirect = useMemo(() => !canViewSpace, [canViewSpace]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-
-    if (code) {
-      // Exchange the code for an access token
-      fetch('https://fetchgithubtoken-qtk2xsi74a-uc.a.run.app', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          localStorage.setItem('github_token', data.access_token);
-          alert('GitHub login successful!');
-        })
-        .catch((err) => console.error('GitHub login failed:', err));
-    }
-  }, []);
-
   // Debug redirect decision only when canViewSpace changes
   useEffect(() => {
     if (canViewSpace) {

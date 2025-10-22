@@ -126,10 +126,19 @@ const UIOverlay = ({
       exchangeGithubCode(code)
         .then((token) => {
           localStorage.setItem('github_token', token); // Save token for future use
+          // Clean up the URL by removing the code parameter
+          const newUrl = new URL(window.location);
+          newUrl.searchParams.delete('code');
+          window.history.replaceState({}, '', newUrl);
           fetchRepositories();
+          alert('GitHub login successful!');
         })
         .catch((error) => {
           console.error('GitHub OAuth flow failed:', error);
+          // Clean up the URL even on failure
+          const newUrl = new URL(window.location);
+          newUrl.searchParams.delete('code');
+          window.history.replaceState({}, '', newUrl);
         });
     }
   }, []);
