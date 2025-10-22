@@ -1,6 +1,6 @@
 import { useUIOverlayStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { uploadModelToStorage } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
@@ -20,6 +20,7 @@ const UIOverlay = ({
   currentSpaceId, // Add currentSpaceId prop for model uploads
 }) => {
   // Use UI overlay store
+  const [repositories, setRepositories] = useState([]);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
   const updateTemplateConfig = useUIOverlayStore(
@@ -67,6 +68,71 @@ const UIOverlay = ({
   const handleCellBoundariesToggle = useCallback(() => {
     setCellBoundariesVisible('main', !cellBoundariesVisible);
   }, [cellBoundariesVisible]);
+
+  const exchangeGithubCode = async (code) => {
+    try {
+      const response = await fetch(
+        'https://fetchgithubtoken-qtk2xsi74a-uc.a.run.app',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch GitHub token');
+      }
+
+      const data = await response.json();
+      return data.access_token;
+    } catch (error) {
+      console.error('Error exchanging GitHub code:', error);
+      throw error;
+    }
+  };
+
+  // Function to fetch repositories
+  const fetchRepositories = async () => {
+    const token = localStorage.getItem('github_token');
+    if (!token) {
+      alert('Please log in to GitHub first.');
+      return;
+    }
+
+    try {
+      const response = await fetch('https://api.github.com/user/repos', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch repositories');
+      }
+
+      const repos = await response.json();
+      setRepositories(repos);
+    } catch (error) {
+      console.error('Error fetching repositories:', error);
+    }
+  };
+
+  // Handle GitHub OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+
+    if (code) {
+      // Exchange the code for a token and fetch repositories
+      exchangeGithubCode(code)
+        .then((token) => {
+          localStorage.setItem('github_token', token); // Save token for future use
+          fetchRepositories();
+        })
+        .catch((error) => {
+          console.error('GitHub OAuth flow failed:', error);
+        });
+    }
+  }, []);
 
   const handleRecordClick = useCallback(async () => {
     if (isRecording) {
@@ -572,6 +638,14 @@ const UIOverlay = ({
           >
             Connect to GitHub
           </button>
+        </div>
+        <div className="github-repos-dropdown">
+          <button onClick={fetchRepositories}>Show Repositories</button>
+          <ul>
+            {repositories.map((repo) => (
+              <li key={repo.id}>{repo.name}</li>
+            ))}
+          </ul>
         </div>
       </div>
       <div className="ui-overlay" onClick={(e) => e.stopPropagation()}>
