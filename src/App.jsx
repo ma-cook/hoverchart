@@ -191,7 +191,7 @@ const App = () => {
 
     if (code) {
       // Exchange the code for an access token
-      fetch('https://volscape.com/api/github-token', {
+      fetch('https://fetchgithubtoken-qtk2xsi74a-uc.a.run.app', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code }),

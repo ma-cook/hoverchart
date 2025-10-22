@@ -324,6 +324,7 @@ export const fetchGithubToken = onRequest(
       const { code } = req.body;
 
       if (!code) {
+        console.error('No code provided in request body:', req.body);
         return res
           .status(400)
           .json({ error: 'Authorization code is required' });
@@ -334,6 +335,10 @@ export const fetchGithubToken = onRequest(
         const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 
         if (!clientId || !clientSecret) {
+          console.error('Missing GitHub credentials:', {
+            clientId,
+            clientSecret,
+          });
           return res
             .status(500)
             .json({ error: 'GitHub credentials not configured' });
@@ -356,15 +361,18 @@ export const fetchGithubToken = onRequest(
         const params = new URLSearchParams(data);
 
         if (!params.get('access_token')) {
+          console.error('GitHub response did not contain access_token:', data);
           return res
             .status(400)
-            .json({ error: 'Failed to fetch access token' });
+            .json({ error: 'Failed to fetch access token', details: data });
         }
 
         res.json({ access_token: params.get('access_token') });
       } catch (error) {
-        console.error('Error fetching GitHub token:', error);
-        res.status(500).json({ error: 'Internal Server Error' });
+        console.error('Error fetching GitHub token:', error.stack || error);
+        res
+          .status(500)
+          .json({ error: 'Internal Server Error', details: error.message });
       }
     });
   }
