@@ -676,6 +676,7 @@ const UIOverlay = ({
           {isGithubAuthenticated ? (
             <div className="github-repos-dropdown">
               <button
+                className="repos-toggle-button"
                 onClick={() => {
                   if (!showRepos) {
                     fetchRepositories(); // Fetch repositories only when opening the dropdown

@@ -46,10 +46,12 @@ canvas {
   margin-top: 0.5rem; /* Optional: Add spacing from the button */
   background-color: #fff; /* Optional: Set background color */
   list-style: none; /* Remove default list styling */
+  border-radius: 4px;
 }
 .github-repos-list li {
   padding: 0.25rem 0; /* Optional: Add spacing between items */
   cursor: pointer; /* Optional: Add pointer cursor */
+  color: black;
 }
 .github-repos-list li:hover {
   background-color: #f0f0f0; /* Optional: Highlight on hover */
@@ -382,10 +384,36 @@ canvas {
   margin-bottom: 20px;
 }
 
+.repos-toggle-button {
+  width: 100%;
+  padding: 10px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  transition: background-color 0.2s;
+}
+
+.github-login-button {
+  width: 100%;
+  padding: 10px;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  transition: background-color 0.2s;
+}
+
 .template-toggle-button {
   width: 100%;
   padding: 10px;
-  background-color: rgba(76, 175, 80, 0.8);
+  background-color: rgba(255, 255, 255, 0.1);
   color: white;
   border: none;
   border-radius: 4px;
@@ -467,7 +495,7 @@ canvas {
 .markdown-upload-button {
   width: 100%;
   padding: 10px;
-  background-color: rgba(255, 152, 0, 0.8);
+  background-color: rgba(255, 255, 255, 0.1);
   color: white;
   border: none;
   border-radius: 4px;
