@@ -219,22 +219,22 @@ const UIOverlay = ({
 
       // Add components
       elements.components.forEach((comp) => {
-        markdown += `App{Component: ${comp}}\n`;
+        markdown += `Component_${comp}{Component: ${comp}}\n`;
       });
 
       // Add functions
       elements.functions.forEach((func) => {
-        markdown += `${func}[Function: ${func}]\n`;
+        markdown += `Function_${func}[Function: ${func}]\n`;
       });
 
       // Add hooks
       elements.hooks.forEach((hook) => {
-        markdown += `${hook}[Hook: ${hook}]\n`;
+        markdown += `Hook_${hook}[Hook: ${hook}]\n`;
       });
 
       // Add imports as Library nodes
       elements.imports.forEach((imp) => {
-        markdown += `${imp}<Library: ${imp}>\n`;
+        markdown += `Library_${imp}<Library: ${imp}>\n`;
       });
 
       // Add connections
@@ -242,7 +242,7 @@ const UIOverlay = ({
         markdown += '\n%% Component-Function relationships\n';
         elements.components.forEach((comp) => {
           elements.functions.forEach((func) => {
-            markdown += `${comp} --> ${func} : "uses"\n`;
+            markdown += `Component_${comp} --> Function_${func} : "uses"\n`;
           });
         });
       }
@@ -251,7 +251,7 @@ const UIOverlay = ({
         markdown += '\n%% Import-Component relationships\n';
         elements.imports.forEach((imp) => {
           elements.components.forEach((comp) => {
-            markdown += `${imp} --> ${comp} : "imported by"\n`;
+            markdown += `Library_${imp} --> Component_${comp} : "imported by"\n`;
           });
         });
       }
