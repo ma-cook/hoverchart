@@ -21,6 +21,8 @@ const UIOverlay = ({
 }) => {
   // Use UI overlay store
   const [repositories, setRepositories] = useState([]);
+  const [showRepos, setShowRepos] = useState(false);
+  const [isGithubAuthenticated, setIsGithubAuthenticated] = useState(false);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
   const updateTemplateConfig = useUIOverlayStore(
@@ -126,6 +128,40 @@ const UIOverlay = ({
       exchangeGithubCode(code)
         .then((token) => {
           localStorage.setItem('github_token', token); // Save token for future use
+          // Clean up the URL by removing the code parameter
+          const newUrl = new URL(window.location);
+          newUrl.searchParams.delete('code');
+          window.history.replaceState({}, '', newUrl);
+          fetchRepositories();
+          alert('GitHub login successful!');
+        })
+        .catch((error) => {
+          console.error('GitHub OAuth flow failed:', error);
+          // Clean up the URL even on failure
+          const newUrl = new URL(window.location);
+          newUrl.searchParams.delete('code');
+          window.history.replaceState({}, '', newUrl);
+        });
+    }
+  }, []);
+
+  // Add this useEffect to check for existing GitHub token on mount
+  useEffect(() => {
+    const token = localStorage.getItem('github_token');
+    setIsGithubAuthenticated(!!token);
+  }, []);
+
+  // Handle GitHub OAuth callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+
+    if (code) {
+      // Exchange the code for a token and fetch repositories
+      exchangeGithubCode(code)
+        .then((token) => {
+          localStorage.setItem('github_token', token); // Save token for future use
+          setIsGithubAuthenticated(true); // Update authentication state
           // Clean up the URL by removing the code parameter
           const newUrl = new URL(window.location);
           newUrl.searchParams.delete('code');
@@ -637,24 +673,38 @@ const UIOverlay = ({
             />
           </div>
           {/* GitHub repo section */}
-          <button
-            className="github-login-button"
-            onClick={() =>
-              (window.location.href = `https://github.com/login/oauth/authorize?client_id=Ov23liLYzf9WoYPLBNat&scope=repo&redirect_uri=${encodeURIComponent(
-                'https://space.volscape.com'
-              )}`)
-            }
-          >
-            Connect to GitHub
-          </button>
-        </div>
-        <div className="github-repos-dropdown">
-          <button onClick={fetchRepositories}>Show Repositories</button>
-          <ul>
-            {repositories.map((repo) => (
-              <li key={repo.id}>{repo.name}</li>
-            ))}
-          </ul>
+          {isGithubAuthenticated ? (
+            <div className="github-repos-dropdown">
+              <button
+                onClick={() => {
+                  if (!showRepos) {
+                    fetchRepositories(); // Fetch repositories only when opening the dropdown
+                  }
+                  setShowRepos((prev) => !prev); // Toggle visibility
+                }}
+              >
+                {showRepos ? 'Hide Repositories' : 'Show Repositories'}
+              </button>
+              {showRepos && (
+                <ul className="github-repos-list">
+                  {repositories.map((repo) => (
+                    <li key={repo.id}>{repo.name}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <button
+              className="github-login-button"
+              onClick={() =>
+                (window.location.href = `https://github.com/login/oauth/authorize?client_id=Ov23liLYzf9WoYPLBNat&scope=repo&redirect_uri=${encodeURIComponent(
+                  'https://space.volscape.com'
+                )}`)
+              }
+            >
+              Connect to GitHub
+            </button>
+          )}
         </div>
       </div>
       <div className="ui-overlay" onClick={(e) => e.stopPropagation()}>

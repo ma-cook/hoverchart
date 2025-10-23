@@ -38,6 +38,23 @@ canvas {
   z-index: 1000;
 }
 
+.github-repos-list {
+  max-height: 7rem; /* Set the height */
+  overflow-y: auto; /* Enable vertical scrolling */
+  border: 1px solid #ccc; /* Optional: Add a border */
+  padding: 0.5rem; /* Optional: Add padding */
+  margin-top: 0.5rem; /* Optional: Add spacing from the button */
+  background-color: #fff; /* Optional: Set background color */
+  list-style: none; /* Remove default list styling */
+}
+.github-repos-list li {
+  padding: 0.25rem 0; /* Optional: Add spacing between items */
+  cursor: pointer; /* Optional: Add pointer cursor */
+}
+.github-repos-list li:hover {
+  background-color: #f0f0f0; /* Optional: Highlight on hover */
+}
+
 /* Menu button styles */
 .menu-button-container {
   position: fixed;
