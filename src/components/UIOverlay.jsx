@@ -157,7 +157,12 @@ const UIOverlay = ({
 
         // Check for function declarations
         if (node.type === 'FunctionDeclaration' && node.id) {
-          elements.functions.push(node.id.name);
+          // Treat capitalized functions as components, not functions
+          if (node.id.name[0] === node.id.name[0].toUpperCase()) {
+            elements.components.push(node.id.name);
+          } else {
+            elements.functions.push(node.id.name);
+          }
         }
 
         // Check for arrow function expressions and variable declarations
@@ -170,16 +175,12 @@ const UIOverlay = ({
                 (decl.init.type === 'ArrowFunctionExpression' ||
                   decl.init.type === 'FunctionExpression')
               ) {
-                elements.functions.push(decl.id.name);
-              }
-
-              // Check if it's a React component (starts with capital letter)
-              if (
-                decl.init &&
-                decl.init.type === 'ArrowFunctionExpression' &&
-                decl.id.name[0] === decl.id.name[0].toUpperCase()
-              ) {
-                elements.components.push(decl.id.name);
+                // Treat capitalized arrow functions as components
+                if (decl.id.name[0] === decl.id.name[0].toUpperCase()) {
+                  elements.components.push(decl.id.name);
+                } else {
+                  elements.functions.push(decl.id.name);
+                }
               }
 
               // Check if it's a hook (starts with 'use')
@@ -229,6 +230,11 @@ const UIOverlay = ({
       // Add hooks
       elements.hooks.forEach((hook) => {
         markdown += `${hook}[Hook: ${hook}]\n`;
+      });
+
+      // Add imports as Library nodes
+      elements.imports.forEach((imp) => {
+        markdown += `${imp}<Library: ${imp}>\n`;
       });
 
       // Add connections
