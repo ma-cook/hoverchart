@@ -20,6 +20,7 @@ const UIOverlay = ({
   currentSpaceId, // Add currentSpaceId prop for model uploads
 }) => {
   // Use UI overlay store
+  const [selectedRepo, setSelectedRepo] = useState(null);
   const [repositories, setRepositories] = useState([]);
   const [showRepos, setShowRepos] = useState(false);
   const [isGithubAuthenticated, setIsGithubAuthenticated] = useState(false);
@@ -113,6 +114,7 @@ const UIOverlay = ({
 
       const repos = await response.json();
       setRepositories(repos);
+      console.log('repositories fetched:', repos);
     } catch (error) {
       console.error('Error fetching repositories:', error);
     }
@@ -689,7 +691,9 @@ const UIOverlay = ({
               {showRepos && (
                 <ul className="github-repos-list">
                   {repositories.map((repo) => (
-                    <li key={repo.id}>{repo.name}</li>
+                    <li key={repo.id} onClick={() => setSelectedRepo(repo)}>
+                      {repo.name}
+                    </li>
                   ))}
                 </ul>
               )}
@@ -705,6 +709,15 @@ const UIOverlay = ({
             >
               Connect to GitHub
             </button>
+          )}
+          {/* Popup for selected repository */}
+          {selectedRepo && (
+            <div className="popup-overlay">
+              <div className="popup-content">
+                <p>Create diagram for {selectedRepo.name}</p>
+                <button onClick={() => setSelectedRepo(null)}>Close</button>
+              </div>
+            </div>
           )}
         </div>
       </div>
