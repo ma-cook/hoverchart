@@ -1,7 +1,10 @@
 import { useUIOverlayStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { uploadModelToStorage } from '../services/storageService';
+import {
+  uploadModelToStorage,
+  uploadMarkdownToStorage,
+} from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
@@ -247,8 +250,11 @@ const UIOverlay = ({
         });
       }
 
-      console.log('Generated Merfolk markdown:', markdown);
-      return markdown;
+      // Wrap the entire diagram in Merfolk code blocks
+      const merfolkMarkdown = `\`\`\`merfolk\n${markdown}\`\`\`\n`;
+
+      console.log('Generated Merfolk markdown:', merfolkMarkdown);
+      return merfolkMarkdown;
     } catch (error) {
       console.error('Error parsing JSX:', error);
       // Return a basic markdown if parsing fails
@@ -290,35 +296,49 @@ const UIOverlay = ({
       );
 
       // Upload the generated markdown to Firebase Storage
+      let storageUrl = null;
       if (user?.uid && currentSpaceId) {
-        const markdownBlob = new Blob([merfolkMarkdown], {
-          type: 'text/markdown',
-        });
-        const markdownFile = new File(
-          [markdownBlob],
-          `${repo.name}-diagram.md`,
-          { type: 'text/markdown' }
-        );
-
-        // Use the markdown processing service to handle the upload and creation
-        const result = await markdownDiagramService.processMarkdownFile(
-          markdownFile,
-          onCreateObject,
-          currentSpaceId,
-          user
-        );
-
-        if (result.success) {
-          alert(
-            `Successfully created diagram for ${repo.name}! Generated ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections.`
+        try {
+          storageUrl = await uploadMarkdownToStorage(
+            merfolkMarkdown,
+            user.uid,
+            currentSpaceId,
+            `${repo.name}-diagram.md`
           );
-        } else {
-          alert(
-            'Diagram generated but no 3D objects were created. Check Merfolk syntax.'
-          );
+          console.log('Markdown uploaded to Firebase Storage:', storageUrl);
+        } catch (uploadError) {
+          console.error('Failed to upload markdown to storage:', uploadError);
+          // Continue with processing even if upload fails
         }
+      }
+
+      // Create a File from the markdown for processing
+      const markdownBlob = new Blob([merfolkMarkdown], {
+        type: 'text/markdown',
+      });
+      const markdownFile = new File([markdownBlob], `${repo.name}-diagram.md`, {
+        type: 'text/markdown',
+      });
+
+      // Use the markdown processing service to handle the upload and creation
+      const result = await markdownDiagramService.processMarkdownFile(
+        markdownFile,
+        onCreateObject,
+        currentSpaceId,
+        user
+      );
+
+      if (result.success) {
+        const uploadMessage = storageUrl
+          ? ` and saved to storage (${storageUrl})`
+          : '';
+        alert(
+          `Successfully created diagram for ${repo.name}! Generated ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections${uploadMessage}.`
+        );
       } else {
-        alert('You must be logged in to create diagrams');
+        alert(
+          'Diagram generated but no 3D objects were created. Check Merfolk syntax.'
+        );
       }
 
       return fileContent;
