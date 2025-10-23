@@ -133,3 +133,70 @@ export const uploadModelToStorage = async (file, userId, spaceId) => {
     );
   });
 };
+
+/**
+ * Uploads a markdown file (or string) to Firebase Storage and returns the download URL
+ * @param {File|string} markdown - The markdown File or string to upload
+ * @param {string} userId - The ID of the current user
+ * @param {string} spaceId - The ID of the current space
+ * @param {string} [fileName] - Optional filename to use
+ * @returns {Promise<string>} A promise that resolves to the download URL
+ */
+export const uploadMarkdownToStorage = async (
+  markdown,
+  userId,
+  spaceId,
+  fileName
+) => {
+  if (!markdown || !userId) {
+    throw new Error('Markdown content and userId are required for upload');
+  }
+
+  const storage = getStorage();
+
+  let file;
+
+  if (typeof markdown === 'string') {
+    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const name = fileName || `${uuidv4()}.md`;
+    file = new File([blob], name, { type: 'text/markdown' });
+  } else if (markdown instanceof File) {
+    file = markdown;
+  } else {
+    throw new Error('Markdown must be a string or File');
+  }
+
+  const fileExtension = file.name.split('.').pop();
+  const finalFileName = `${uuidv4()}.${fileExtension}`;
+  const filePath = `users/${userId}/spaces/${
+    spaceId || 'default'
+  }/markdown/${finalFileName}`;
+
+  const storageRef = ref(storage, filePath);
+  const uploadTask = uploadBytesResumable(storageRef, file);
+
+  return new Promise((resolve, reject) => {
+    uploadTask.on(
+      'state_changed',
+      (snapshot) => {
+        const progress =
+          (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        console.log('Markdown upload is ' + progress + '% done');
+      },
+      (error) => {
+        console.error('Error uploading markdown file:', error);
+        reject(error);
+      },
+      async () => {
+        try {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+          console.log('Markdown available at', downloadURL);
+          resolve(downloadURL);
+        } catch (error) {
+          console.error('Error getting markdown download URL:', error);
+          reject(error);
+        }
+      }
+    );
+  });
+};

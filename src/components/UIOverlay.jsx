@@ -115,7 +115,6 @@ const UIOverlay = ({
 
       const repos = await response.json();
       setRepositories(repos);
-      console.log('repositories fetched:', repos);
     } catch (error) {
       console.error('Error fetching repositories:', error);
     }
@@ -283,7 +282,6 @@ const UIOverlay = ({
       }
 
       const fileContent = await response.text();
-      console.log('Fetched App.jsx content:', fileContent);
 
       // Parse the JSX content and generate Merfolk markdown
       const merfolkMarkdown = await generateMerfolkFromJsx(
