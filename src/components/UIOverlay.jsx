@@ -120,6 +120,40 @@ const UIOverlay = ({
     }
   };
 
+  // Function to fetch App.jsx from selected GitHub repository
+  const fetchAppJsxFromRepo = async (repo) => {
+    const token = localStorage.getItem('github_token');
+    if (!token) {
+      throw new Error('No GitHub token found');
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${repo.owner.login}/${repo.name}/contents/src/App.jsx`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github.v3.raw', // Get raw file content
+          },
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('App.jsx file not found in this repository');
+        }
+        throw new Error(`Failed to fetch App.jsx: ${response.statusText}`);
+      }
+
+      const fileContent = await response.text();
+      console.log('Fetched App.jsx content:', fileContent);
+      return fileContent;
+    } catch (error) {
+      console.error('Error fetching App.jsx from repo:', error);
+      throw error;
+    }
+  };
+
   // Handle GitHub OAuth callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -715,7 +749,26 @@ const UIOverlay = ({
             <div className="popup-overlay">
               <div className="popup-content">
                 <p>Create diagram for {selectedRepo.name}</p>
-                <button onClick={() => setSelectedRepo(null)}>Close</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const appJsxContent = await fetchAppJsxFromRepo(
+                        selectedRepo
+                      );
+                      console.log('App.jsx content fetched:', appJsxContent);
+                      // TODO: Process the content to create Merfolk markdown
+                      alert(
+                        'App.jsx fetched successfully! Next: create Merfolk diagram'
+                      );
+                      setSelectedRepo(null);
+                    } catch (error) {
+                      alert(`Failed to fetch App.jsx: ${error.message}`);
+                    }
+                  }}
+                >
+                  Yes
+                </button>
+                <button onClick={() => setSelectedRepo(null)}>No</button>
               </div>
             </div>
           )}

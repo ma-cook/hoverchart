@@ -411,7 +411,7 @@ canvas {
 }
 
 .popup-content {
-  background-color: white;
+  background-color: rgb(151, 151, 151);
   padding: 2rem;
   border-radius: 8px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -425,8 +425,8 @@ canvas {
 
 .popup-content button {
   padding: 0.5rem 1rem;
-  background-color: #4caf50;
-  color: white;
+  background-color: #303030d8;
+  color: rgb(255, 255, 255);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -434,7 +434,7 @@ canvas {
 }
 
 .popup-content button:hover {
-  background-color: #45a049;
+  background-color: #383838;
 }
 
 .github-login-button {
