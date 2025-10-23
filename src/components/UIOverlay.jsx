@@ -6,6 +6,7 @@ import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import * as THREE from 'three';
+import { parse } from '@babel/parser';
 
 const UIOverlay = ({
   onCreateObject,
@@ -120,6 +121,142 @@ const UIOverlay = ({
     }
   };
 
+  // Function to generate Merfolk markdown from JSX content
+  const generateMerfolkFromJsx = async (jsxContent, repoName) => {
+    try {
+      // Parse the JSX using Babel parser
+      const ast = parse(jsxContent, {
+        sourceType: 'module',
+        plugins: ['jsx', 'typescript'], // Support both JS and TS
+        allowImportExportEverywhere: true,
+      });
+
+      const elements = {
+        components: [],
+        functions: [],
+        hooks: [],
+        imports: [],
+      };
+
+      // Traverse the AST to extract components, functions, hooks, and imports
+      const traverse = (node) => {
+        if (!node) return;
+
+        // Check for imports
+        if (node.type === 'ImportDeclaration') {
+          node.specifiers.forEach((spec) => {
+            if (spec.type === 'ImportSpecifier') {
+              elements.imports.push(spec.imported.name);
+            } else if (spec.type === 'ImportDefaultSpecifier') {
+              elements.imports.push(spec.local.name);
+            }
+          });
+        }
+
+        // Check for function declarations
+        if (node.type === 'FunctionDeclaration' && node.id) {
+          elements.functions.push(node.id.name);
+        }
+
+        // Check for arrow function expressions and variable declarations
+        if (node.type === 'VariableDeclaration') {
+          node.declarations.forEach((decl) => {
+            if (decl.id && decl.id.name) {
+              // Check if it's a function
+              if (
+                decl.init &&
+                (decl.init.type === 'ArrowFunctionExpression' ||
+                  decl.init.type === 'FunctionExpression')
+              ) {
+                elements.functions.push(decl.id.name);
+              }
+
+              // Check if it's a React component (starts with capital letter)
+              if (
+                decl.init &&
+                decl.init.type === 'ArrowFunctionExpression' &&
+                decl.id.name[0] === decl.id.name[0].toUpperCase()
+              ) {
+                elements.components.push(decl.id.name);
+              }
+
+              // Check if it's a hook (starts with 'use')
+              if (
+                decl.init &&
+                decl.init.type === 'CallExpression' &&
+                decl.init.callee.name &&
+                decl.init.callee.name.startsWith('use')
+              ) {
+                elements.hooks.push(decl.id.name);
+              }
+            }
+          });
+        }
+
+        // Check for class declarations (React components)
+        if (node.type === 'ClassDeclaration' && node.id) {
+          elements.components.push(node.id.name);
+        }
+
+        // Recursively traverse child nodes
+        Object.keys(node).forEach((key) => {
+          const child = node[key];
+          if (Array.isArray(child)) {
+            child.forEach(traverse);
+          } else if (child && typeof child === 'object' && child.type) {
+            traverse(child);
+          }
+        });
+      };
+
+      traverse(ast);
+
+      // Generate Merfolk markdown
+      let markdown = `%% ${repoName} App.jsx Analysis\n\n`;
+
+      // Add components
+      elements.components.forEach((comp) => {
+        markdown += `App{Component: ${comp}}\n`;
+      });
+
+      // Add functions
+      elements.functions.forEach((func) => {
+        markdown += `${func}[Function: ${func}]\n`;
+      });
+
+      // Add hooks
+      elements.hooks.forEach((hook) => {
+        markdown += `${hook}[Hook: ${hook}]\n`;
+      });
+
+      // Add connections
+      if (elements.components.length > 0 && elements.functions.length > 0) {
+        markdown += '\n%% Component-Function relationships\n';
+        elements.components.forEach((comp) => {
+          elements.functions.forEach((func) => {
+            markdown += `${comp} --> ${func} : "uses"\n`;
+          });
+        });
+      }
+
+      if (elements.imports.length > 0 && elements.components.length > 0) {
+        markdown += '\n%% Import-Component relationships\n';
+        elements.imports.forEach((imp) => {
+          elements.components.forEach((comp) => {
+            markdown += `${imp} --> ${comp} : "imported by"\n`;
+          });
+        });
+      }
+
+      console.log('Generated Merfolk markdown:', markdown);
+      return markdown;
+    } catch (error) {
+      console.error('Error parsing JSX:', error);
+      // Return a basic markdown if parsing fails
+      return `%% ${repoName} App.jsx Analysis\n\nApp{Component: App}\n\n%% Unable to parse JSX content\n`;
+    }
+  };
+
   // Function to fetch App.jsx from selected GitHub repository
   const fetchAppJsxFromRepo = async (repo) => {
     const token = localStorage.getItem('github_token');
@@ -147,6 +284,45 @@ const UIOverlay = ({
 
       const fileContent = await response.text();
       console.log('Fetched App.jsx content:', fileContent);
+
+      // Parse the JSX content and generate Merfolk markdown
+      const merfolkMarkdown = await generateMerfolkFromJsx(
+        fileContent,
+        repo.name
+      );
+
+      // Upload the generated markdown to Firebase Storage
+      if (user?.uid && currentSpaceId) {
+        const markdownBlob = new Blob([merfolkMarkdown], {
+          type: 'text/markdown',
+        });
+        const markdownFile = new File(
+          [markdownBlob],
+          `${repo.name}-diagram.md`,
+          { type: 'text/markdown' }
+        );
+
+        // Use the markdown processing service to handle the upload and creation
+        const result = await markdownDiagramService.processMarkdownFile(
+          markdownFile,
+          onCreateObject,
+          currentSpaceId,
+          user
+        );
+
+        if (result.success) {
+          alert(
+            `Successfully created diagram for ${repo.name}! Generated ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections.`
+          );
+        } else {
+          alert(
+            'Diagram generated but no 3D objects were created. Check Merfolk syntax.'
+          );
+        }
+      } else {
+        alert('You must be logged in to create diagrams');
+      }
+
       return fileContent;
     } catch (error) {
       console.error('Error fetching App.jsx from repo:', error);
@@ -240,7 +416,7 @@ const UIOverlay = ({
         }
       }
     }
-  }, [isRecording]);
+  }, [isRecording, setIsRecording]);
 
   const handleModelUpload = useCallback(() => {
     if (modelFileInputRef.current) {
@@ -317,7 +493,7 @@ const UIOverlay = ({
         }
       }
     },
-    [user, currentSpaceId, onCreateObject]
+    [user, currentSpaceId, onCreateObject, setIsUploadingModel]
   );
 
   const handleMarkdownUpload = useCallback(() => {
@@ -371,7 +547,7 @@ const UIOverlay = ({
         }
       }
     },
-    [onCreateObject, currentSpaceId, user]
+    [onCreateObject, currentSpaceId, user, setIsProcessingMarkdown]
   );
 
   // Get store state for main overlay - use direct selectors for better reactivity
@@ -752,17 +928,10 @@ const UIOverlay = ({
                 <button
                   onClick={async () => {
                     try {
-                      const appJsxContent = await fetchAppJsxFromRepo(
-                        selectedRepo
-                      );
-                      console.log('App.jsx content fetched:', appJsxContent);
-                      // TODO: Process the content to create Merfolk markdown
-                      alert(
-                        'App.jsx fetched successfully! Next: create Merfolk diagram'
-                      );
+                      await fetchAppJsxFromRepo(selectedRepo);
                       setSelectedRepo(null);
                     } catch (error) {
-                      alert(`Failed to fetch App.jsx: ${error.message}`);
+                      alert(`Failed to create diagram: ${error.message}`);
                     }
                   }}
                 >
