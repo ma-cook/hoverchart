@@ -30,6 +30,7 @@ export class MarkdownDiagramService {
   static NODE_TYPE_CONTROL = 'control';
   static NODE_TYPE_STATE = 'state';
   static NODE_TYPE_DATA = 'data';
+  static NODE_TYPE_HOOK = 'hook';
 
   // Object type constants
   static OBJECT_TYPE_CUBE = 'cube';
@@ -265,6 +266,7 @@ export class MarkdownDiagramService {
       case MarkdownDiagramService.NODE_TYPE_STORE:
       case MarkdownDiagramService.NODE_TYPE_LIBRARY:
       case MarkdownDiagramService.NODE_TYPE_UTILITY:
+      case MarkdownDiagramService.NODE_TYPE_HOOK:
         return MarkdownDiagramService.OBJECT_TYPE_CUBE;
       default:
         console.warn(
@@ -513,7 +515,8 @@ export class MarkdownDiagramService {
       level
     );
     const actualComponentSize =
-      baseDodecahedronRadius * Math.max(...componentScale.nodeScale);
+      MarkdownDiagramService.BASE_DODECAHEDRON_RADIUS *
+      Math.max(...componentScale.nodeScale);
 
     // Get component children (not function children, as those are contained within)
     const children = parentChildMap.get(nodeId) || new Set();
@@ -556,8 +559,12 @@ export class MarkdownDiagramService {
     );
 
     // Calculate total grid size
-    const gridWidth = gridSize * (maxChildWidth + spacingBetweenComponents);
-    const gridHeight = gridSize * (maxChildHeight + spacingBetweenComponents);
+    const gridWidth =
+      gridSize *
+      (maxChildWidth + MarkdownDiagramService.SPACING_BETWEEN_COMPONENTS);
+    const gridHeight =
+      gridSize *
+      (maxChildHeight + MarkdownDiagramService.SPACING_BETWEEN_COMPONENTS);
 
     // The total bounding box is the larger of:
     // 1. The grid containing all children
@@ -677,7 +684,7 @@ export class MarkdownDiagramService {
 
           // Try to find siblings to get their actual sizes
           try {
-            for (const [parentId, children] of parentChildMap.entries()) {
+            for (const [, children] of parentChildMap.entries()) {
               if (children.has(nodeId)) {
                 // Found our parent, get all sibling components
                 const siblings = Array.from(children).filter((sibId) => {
@@ -904,7 +911,6 @@ export class MarkdownDiagramService {
   positionGroupedNodes(context) {
     const {
       graphNodes,
-      parentChildMap,
       childParentMap,
       nodePositions,
       nodeScales,
@@ -986,7 +992,7 @@ export class MarkdownDiagramService {
    * @param {string} currentSpaceId - Current space ID
    * @param {Object} user - Current user
    */
-  async createGroupContainers(context, allObjectsToSave, currentSpaceId, user) {
+  async createGroupContainers(context, allObjectsToSave) {
     const { graphNodes, childParentMap, nodePositions } = context;
 
     const { useObjectsStore } = await import('../stores');
@@ -1244,8 +1250,8 @@ export class MarkdownDiagramService {
 
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
-      const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(nodeEntries.length / OBJECT_BATCH_SIZE);
+      const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1; // eslint-disable-line no-unused-vars
+      const totalBatches = Math.ceil(nodeEntries.length / OBJECT_BATCH_SIZE); // eslint-disable-line no-unused-vars
 
       // Add a small delay between batches to prevent React's "Maximum update depth exceeded" error
       if (i > 0) {
@@ -1303,7 +1309,6 @@ export class MarkdownDiagramService {
 
       // Instead of saving to Firebase immediately, collect objects for bulk import
       // AND add to local store for immediate rendering
-      const { useObjectsStore } = await import('../stores');
       const { getCellCoordinates, getCellId } = await import(
         './spatialPartitioning'
       );
@@ -1507,18 +1512,11 @@ export class MarkdownDiagramService {
     await this.createContainerCubesAtPositions(
       containerDimensions,
       graph.nodes,
-      allObjectsToSave,
-      currentSpaceId,
-      user
+      allObjectsToSave
     );
 
     // Create group containers for utilities, services, and stores
-    await this.createGroupContainers(
-      context,
-      allObjectsToSave,
-      currentSpaceId,
-      user
-    );
+    await this.createGroupContainers(context, allObjectsToSave);
 
     return objectsCreated;
   }
@@ -1854,9 +1852,7 @@ export class MarkdownDiagramService {
   async createContainerCubesAtPositions(
     containerDimensions,
     graphNodes,
-    allObjectsToSave,
-    currentSpaceId,
-    user
+    allObjectsToSave
   ) {
     const { useObjectsStore } = await import('../stores');
     const { getCellCoordinates, getCellId } = await import(
@@ -2479,7 +2475,7 @@ export class MarkdownDiagramService {
       }
 
       const result = await response.json();
-      const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+      const duration = ((performance.now() - startTime) / 1000).toFixed(2); // eslint-disable-line no-unused-vars
 
       return result;
     } catch (error) {
@@ -2503,8 +2499,6 @@ export class MarkdownDiagramService {
    */
   async _backgroundSaveConnections(allConnectionsToSave, currentSpaceId, user) {
     const BATCH_SIZE = 50; // Back to 50 - the issue is not batch size
-    let savedCount = 0;
-    let batchCount = 0;
     const startTime = performance.now();
 
     try {
@@ -2609,10 +2603,8 @@ export class MarkdownDiagramService {
                 }
               }
 
-              const batchDuration = (
-                (performance.now() - batchStart) /
-                1000
-              ).toFixed(2);
+              const batchDuration = // eslint-disable-line no-unused-vars
+              ((performance.now() - batchStart) / 1000).toFixed(2);
 
               return batchSavedCount;
             } catch (error) {
@@ -2627,10 +2619,10 @@ export class MarkdownDiagramService {
         // Wait for this group of batches to complete before starting next group
         const groupResults = await Promise.all(groupPromises);
         const groupSaved = groupResults.reduce((sum, count) => sum + count, 0);
-        savedCount += groupSaved;
+        savedCount += groupSaved; // eslint-disable-line no-unused-vars
       }
 
-      const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+      const duration = ((performance.now() - startTime) / 1000).toFixed(2); // eslint-disable-line no-unused-vars
 
       // RESUME listeners after bulk save completes
       await resumeConnectionListeners();
