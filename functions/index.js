@@ -145,45 +145,56 @@ function createBulkImportApp() {
           objectsByCellId.get(obj.cellId).push(obj);
         }
 
-        // Write objects to cells/{cellId} with objects.{id} map fields
+        // Write objects to cells/{cellId}/objects/{id} subcollection
+        // This avoids "too many index entries" error when many objects in one cell
         for (const [cellId, cellObjects] of objectsByCellId.entries()) {
-          const cellRef = db.doc(
-            `users/${userId}/spaces/${spaceId}/cells/${cellId}`
-          );
+          // Process in chunks of 500 (Firestore batch limit)
+          const BATCH_SIZE = 500;
 
-          // Build the objects map field
-          const objectsMap = {};
-          for (const obj of cellObjects) {
-            objectsMap[obj.id] = {
-              id: obj.id,
-              position: obj.position,
-              scale: obj.size || obj.scale || [1, 1, 1], // Use 'scale' to match client expectations
-              type: obj.type,
-              color: obj.color,
-              content: obj.content || '',
-              createdAt: obj.createdAt || Date.now(),
-              updatedAt: Date.now(),
-              cellId: obj.cellId,
-              ...(obj.rotation && { rotation: obj.rotation }),
-              ...(obj.textStyle && { textStyle: obj.textStyle }),
-              ...(obj.headerText !== undefined && {
-                headerText: obj.headerText,
-              }),
-              ...(obj.headerStyle && { headerStyle: obj.headerStyle }),
-              ...(obj.faceColors && { faceColors: obj.faceColors }),
-              ...(obj.faceTexts && { faceTexts: obj.faceTexts }),
-              ...(obj.faceTextStyles && { faceTextStyles: obj.faceTextStyles }),
-              ...(obj.merfolkData && { merfolkData: obj.merfolkData }),
-            };
+          for (let i = 0; i < cellObjects.length; i += BATCH_SIZE) {
+            const batch = db.batch();
+            const chunk = cellObjects.slice(i, i + BATCH_SIZE);
+
+            for (const obj of chunk) {
+              const objectRef = db.doc(
+                `users/${userId}/spaces/${spaceId}/cells/${cellId}/objects/${obj.id}`
+              );
+
+              const objectData = {
+                id: obj.id,
+                position: obj.position,
+                scale: obj.size || obj.scale || [1, 1, 1],
+                type: obj.type,
+                color: obj.color,
+                content: obj.content || '',
+                createdAt: obj.createdAt || Date.now(),
+                updatedAt: Date.now(),
+                cellId: obj.cellId,
+                ...(obj.rotation && { rotation: obj.rotation }),
+                ...(obj.textStyle && { textStyle: obj.textStyle }),
+                ...(obj.headerText !== undefined && {
+                  headerText: obj.headerText,
+                }),
+                ...(obj.headerStyle && { headerStyle: obj.headerStyle }),
+                ...(obj.faceColors && { faceColors: obj.faceColors }),
+                ...(obj.faceTexts && { faceTexts: obj.faceTexts }),
+                ...(obj.faceTextStyles && {
+                  faceTextStyles: obj.faceTextStyles,
+                }),
+                ...(obj.merfolkData && { merfolkData: obj.merfolkData }),
+              };
+
+              batch.set(objectRef, objectData);
+            }
+
+            await batch.commit();
+            objectsWritten += chunk.length;
+
+            const progress = Math.min(i + chunk.length, cellObjects.length);
+            console.log(
+              `   ✓ Progress: ${progress}/${cellObjects.length} objects in cell ${cellId}`
+            );
           }
-
-          // Update cell document with objects map (merge to preserve existing data)
-          await cellRef.set({ objects: objectsMap }, { merge: true });
-
-          objectsWritten += cellObjects.length;
-          console.log(
-            `   ✓ Wrote ${cellObjects.length} objects to cell ${cellId}`
-          );
         }
       }
 

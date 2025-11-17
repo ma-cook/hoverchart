@@ -1,5 +1,5 @@
 import { db } from '../firebase';
-import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, Timestamp } from 'firebase/firestore';
 import isEqual from 'lodash/isEqual';
 import { isSharedSpace } from './sharedSpacesService';
 import {
@@ -604,15 +604,16 @@ export const subscribeToSpatialObjects = (
           cellKey
         );
 
-        // Create cell reference
-        const cellRef = doc(
+        // NEW: Subscribe to objects subcollection instead of map field
+        const objectsCollectionRef = collection(
           db,
           'users',
           ownerUserId,
           'spaces',
           spaceId,
           'cells',
-          cellKey
+          cellKey,
+          'objects'
         );
 
         // Use global subscription manager and track by cell
@@ -628,139 +629,134 @@ export const subscribeToSpatialObjects = (
             }
             objectSubscriptionsByCell.get(cellKey).add(subscriptionKey);
 
+            // Subscribe to the objects subcollection
             return onSnapshot(
-              cellRef,
+              objectsCollectionRef,
               { includeMetadataChanges: true },
-              (snapshot) => {
-                if (!snapshot.exists()) {
-                  return;
-                }
+              (querySnapshot) => {
                 // Check if cell is unloaded
                 if (window._unloadedCells?.has(cellKey)) {
                   return;
                 }
 
-                const cellData = snapshot.data();
-                const cellObjects = cellData.objects || {}; // Process each object in the cell
+                // Process each object document in the subcollection
+                querySnapshot.forEach((doc) => {
+                  const objectData = doc.data();
+                  const objectId = doc.id;
 
-                // If the cell is loaded, make sure all its objects are marked as loaded
-                if (!window._unloadedCells?.has(cellKey)) {
-                  // Ensure all objects in this cell are marked as loaded
-                  Object.keys(cellObjects).forEach((objId) => {
-                    const objIdStr = objId.toString();
-                    if (window._unloadedObjects?.has(objIdStr)) {
-                      window._unloadedObjects.delete(objIdStr);
+                  // DATA MIGRATION: Sanitize fontSize values from old data
+                  // Old data might have string values like 'medium' instead of numbers
+                  if (
+                    objectData.textStyle?.fontSize &&
+                    typeof objectData.textStyle.fontSize === 'string'
+                  ) {
+                    const parsed = parseFloat(objectData.textStyle.fontSize);
+                    objectData.textStyle.fontSize = isNaN(parsed)
+                      ? 1.5
+                      : parsed;
+                  }
+                  if (
+                    objectData.headerStyle?.fontSize &&
+                    typeof objectData.headerStyle.fontSize === 'string'
+                  ) {
+                    const parsed = parseFloat(objectData.headerStyle.fontSize);
+                    objectData.headerStyle.fontSize = isNaN(parsed)
+                      ? 1.5
+                      : parsed;
+                  }
+                  // Face text styles
+                  if (objectData.faceTextStyles) {
+                    Object.keys(objectData.faceTextStyles).forEach((face) => {
+                      const style = objectData.faceTextStyles[face];
+                      if (
+                        style?.fontSize &&
+                        typeof style.fontSize === 'string'
+                      ) {
+                        const parsed = parseFloat(style.fontSize);
+                        style.fontSize = isNaN(parsed) ? 0.5 : parsed;
+                      }
+                    });
+                  }
+
+                  // Skip if object is marked as unloaded
+                  if (window._unloadedObjects?.has(objectId.toString())) {
+                    return;
+                  }
+
+                  const cacheKey = `${spaceId}_${objectId}`;
+
+                  // Check if object data has changed
+                  const cachedData = objectsCache.get(cacheKey);
+                  let hasChanged = false;
+                  if (cachedData) {
+                    const positionChanged = !positionsEqual(
+                      cachedData.position,
+                      objectData.position
+                    );
+                    const otherDataChanged = !isEqual(
+                      { ...cachedData, position: undefined },
+                      { ...objectData, position: undefined }
+                    );
+
+                    hasChanged = positionChanged || otherDataChanged;
+
+                    if (hasChanged) {
+                      // DUPLICATE PROTECTION: Compare timestamps to ensure we only accept newer versions
+                      if (cachedData.lastUpdated && objectData.lastUpdated) {
+                        // Handle both Firestore Timestamps and regular Date objects
+                        const cachedTime = cachedData.lastUpdated.toMillis
+                          ? cachedData.lastUpdated.toMillis()
+                          : new Date(cachedData.lastUpdated).getTime();
+                        const newTime = objectData.lastUpdated.toMillis
+                          ? objectData.lastUpdated.toMillis()
+                          : new Date(objectData.lastUpdated).getTime();
+
+                        if (newTime <= cachedTime) {
+                          return; // Skip this older version
+                        }
+                      }
                     }
-                  });
-                } else {
-                  return;
-                }
+                  } else {
+                    hasChanged = true;
+                  }
 
-                Object.entries(cellObjects).forEach(
-                  ([objectId, objectData]) => {
-                    // Skip if object is marked as unloaded
-                    if (window._unloadedObjects?.has(objectId.toString())) {
+                  if (hasChanged) {
+                    // Skip Firebase updates for objects currently being transformed
+                    if (
+                      window._currentTransformingObjects &&
+                      window._currentTransformingObjects.has(objectId)
+                    ) {
                       return;
                     }
 
-                    const cacheKey = `${spaceId}_${objectId}`;
-
-                    // Check if object data has changed
-                    const cachedData = objectsCache.get(cacheKey);
-                    let hasChanged = false;
-                    if (cachedData) {
-                      const positionChanged = !positionsEqual(
-                        cachedData.position,
-                        objectData.position
+                    try {
+                      objectsCache.set(
+                        cacheKey,
+                        JSON.parse(JSON.stringify(objectData))
                       );
-                      const otherDataChanged = !isEqual(
-                        { ...cachedData, position: undefined },
-                        { ...objectData, position: undefined }
+                    } catch (error) {
+                      console.warn(
+                        '⚠️ Failed to cache object in spatialObjectsService:',
+                        error,
+                        'objectData:',
+                        objectData
                       );
-
-                      hasChanged = positionChanged || otherDataChanged;
-
-                      // Object comparison debug logging removed
-
-                      if (hasChanged) {
-                        // DUPLICATE PROTECTION: Compare timestamps to ensure we only accept newer versions
-                        if (cachedData.lastUpdated && objectData.lastUpdated) {
-                          // Handle both Firestore Timestamps and regular Date objects
-                          const cachedTime = cachedData.lastUpdated.toMillis
-                            ? cachedData.lastUpdated.toMillis()
-                            : new Date(cachedData.lastUpdated).getTime();
-                          const newTime = objectData.lastUpdated.toMillis
-                            ? objectData.lastUpdated.toMillis()
-                            : new Date(objectData.lastUpdated).getTime();
-
-                          if (newTime <= cachedTime) {
-                            // Rejecting older version - debug logging removed
-                            return; // Skip this older version
-                          }
-
-                          // Accepting newer version - debug logging removed
-                        }
-
-                        // Change details debug logging removed
-                      }
-                    } else {
-                      hasChanged = true;
+                      objectsCache.set(cacheKey, { ...objectData }); // Fallback to shallow copy
                     }
-                    if (hasChanged) {
-                      // Skip Firebase updates for objects currently being transformed
-                      if (
-                        window._currentTransformingObjects &&
-                        window._currentTransformingObjects.has(objectId)
-                      ) {
-                        return;
-                      }
-
-                      // Accepting object debug logging removed
-
-                      try {
-                        objectsCache.set(
-                          cacheKey,
-                          JSON.parse(JSON.stringify(objectData))
-                        );
-                      } catch (error) {
-                        console.warn(
-                          '⚠️ Failed to cache object in spatialObjectsService:',
-                          error,
-                          'objectData:',
-                          objectData
-                        );
-                        objectsCache.set(cacheKey, { ...objectData }); // Fallback to shallow copy
-                      }
-                      lastReceivedObjects.set(cacheKey, objectData);
-                      callback({
-                        type: 'added',
-                        id: objectId,
-                        object: objectData,
-                        cellCoords: { x, y, z: z || 0 },
-                      });
-                    }
+                    lastReceivedObjects.set(cacheKey, objectData);
+                    callback({
+                      type: 'added',
+                      id: objectId,
+                      object: objectData,
+                      cellCoords: { x, y, z: z || 0 },
+                    });
                   }
-                );
+                });
 
-                // Handle removed objects (compare with cache)
-                const currentObjectIds = new Set(Object.keys(cellObjects));
-                const cachedObjectIds = new Set();
-
-                for (const cacheKey of objectsCache.keys()) {
-                  if (cacheKey.startsWith(`${spaceId}_`)) {
-                    const objectId = cacheKey.substring(`${spaceId}_`.length);
-                    const objectData = objectsCache.get(cacheKey);
-
-                    // Check if this object belongs to this cell
-                    if (objectData && objectData.cellId === cellKey) {
-                      cachedObjectIds.add(objectId);
-                    }
-                  }
-                }
-
-                // Find removed objects
-                for (const objectId of cachedObjectIds) {
-                  if (!currentObjectIds.has(objectId)) {
+                // Handle removed objects using docChanges
+                querySnapshot.docChanges().forEach((change) => {
+                  if (change.type === 'removed') {
+                    const objectId = change.doc.id;
                     const cacheKey = `${spaceId}_${objectId}`;
                     objectsCache.delete(cacheKey);
                     lastReceivedObjects.delete(cacheKey);
@@ -770,7 +766,7 @@ export const subscribeToSpatialObjects = (
                       cellCoords: { x, y, z: z || 0 },
                     });
                   }
-                }
+                });
               },
               (error) => {
                 console.error(`Subscription error for cell ${cellKey}:`, error);

@@ -1,11 +1,11 @@
 import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
-import PooledLine from './PooledLine';
+import InstancedLine from './InstancedLine';
 import * as THREE from 'three';
 import { useFaceIndicatorStore } from '../stores';
 import CubeFace from './CubeFace';
-import TextSprite from './TextSprite';
+import AtlasTextSprite from './AtlasTextSprite';
 import ObjectUI from './ObjectUI';
 import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
@@ -57,61 +57,87 @@ const DEFAULT_FACE_TEXT_STYLES = {
 
 const CUBE_SIZE = isMobile ? 8 : 5; // Larger cubes on mobile
 
-// Cube edges - following dodecahedron pattern for PooledLine
+// Cube edges - flattened array for InstancedLine
+// Format: [x1,y1,z1, x2,y2,z2, x3,y3,z3, ...] for edge pairs
+// 12 edges × 2 points × 3 coords = 72 values
 const cubeEdges = [
   // Bottom face edges (4 edges)
-  [
-    [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-    [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-  ],
-  [
-    [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-    [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-  ],
-  [
-    [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-    [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-  ],
-  [
-    [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-    [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-  ],
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
 
   // Top face edges (4 edges)
-  [
-    [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-    [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-  ],
-  [
-    [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-    [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-  ],
-  [
-    [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-    [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-  ],
-  [
-    [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-    [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-  ],
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
 
   // Vertical edges (4 edges)
-  [
-    [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-    [-CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-  ],
-  [
-    [CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
-    [CUBE_SIZE, CUBE_SIZE, -CUBE_SIZE],
-  ],
-  [
-    [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-    [-CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-  ],
-  [
-    [CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
-    [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
-  ],
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  -CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
+  CUBE_SIZE,
 ];
 
 /**
@@ -479,7 +505,7 @@ const Cube = ({
       color: objectData.color || '#000000',
       headerText: objectData.headerText || '',
       textStyle: objectData.textStyle || {
-        fontSize: 'medium',
+        fontSize: 1.5,
         color: 'black',
         underline: false,
       },
@@ -1114,6 +1140,8 @@ const Cube = ({
     handleFaceTextClick,
     handleFaceTextSubmit,
     id,
+    selectedIndicators.length,
+    showAllCubesIndicators,
   ]);
 
   // Render face texts
@@ -1187,10 +1215,9 @@ const Cube = ({
           rotation={adjustedRotation}
           scale={inverseScale}
         >
-          <TextSprite
+          <AtlasTextSprite
             text={faceText}
             position={[0, yOffset, 0]}
-            followTarget={null}
             onClick={(e) => {
               e.stopPropagation();
               e.nativeEvent?.stopPropagation?.();
@@ -1199,7 +1226,6 @@ const Cube = ({
             }}
             style={{
               ...textStyle,
-              fixedSize: true,
               isFaceText: true,
               renderOrder: 2,
               depthTest: true,
@@ -1208,6 +1234,7 @@ const Cube = ({
             normal={normal}
             billboard={false}
             side={THREE.FrontSide}
+            scale={1}
           />
 
           {/* Update condition to show TextStyleUI */}
@@ -1283,16 +1310,12 @@ const Cube = ({
           />
           <meshBasicMaterial visible={false} />
         </mesh>{' '}
-        {/* Cube edges using PooledLine - following dodecahedron pattern */}
-        {cubeEdges.map((edgePoints, idx) => (
-          <PooledLine
-            key={idx}
-            points={edgePoints}
-            color={cube?.color || color}
-            lineWidth={lineWidth !== undefined ? lineWidth : 1}
-            enablePooling={true}
-          />
-        ))}
+        {/* Cube edges using InstancedLine - single instanced mesh for all 12 edges */}
+        <InstancedLine
+          points={cubeEdges}
+          color={cube?.color || color}
+          lineWidth={lineWidth !== undefined ? lineWidth : 1}
+        />
         {/* Colored faces and indicators */}
         {renderFaces}
         {/* Face text elements */}
@@ -1303,10 +1326,10 @@ const Cube = ({
             scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
             position={getUIPositions.headerText}
           >
-            <TextSprite
+            <AtlasTextSprite
               text={cube?.headerText || headerText}
               position={[0, 0, 0]}
-              followTarget={null}
+              followTarget={meshRef}
               onClick={(e) => {
                 e.stopPropagation();
                 e.nativeEvent?.stopPropagation?.();
@@ -1316,8 +1339,9 @@ const Cube = ({
               style={{
                 ...(cube?.textStyle || textStyle),
                 isHeaderText: true,
-                fixedSize: false,
               }}
+              billboard={true}
+              scale={1}
             />
             {/* Remove the activeTextStyleUI condition */}
             {cube?.showHeaderTextStyleUI && (

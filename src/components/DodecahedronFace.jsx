@@ -2,7 +2,7 @@ import React, { useMemo, useCallback } from 'react';
 import * as THREE from 'three';
 import { useDodecahedronStore } from '../stores';
 import FaceIndicator from './FaceIndicator';
-import TextSprite from './TextSprite';
+import AtlasTextSprite from './AtlasTextSprite';
 import FaceTextInput from './FaceTextInput';
 
 /**
@@ -180,7 +180,7 @@ const DodecahedronFace = React.memo(
             rotation={faceData.rotation}
             scale={inverseScale}
           >
-            <TextSprite
+            <AtlasTextSprite
               text={faceText}
               position={[0, 0, 0]}
               style={{
@@ -189,7 +189,6 @@ const DodecahedronFace = React.memo(
                   color: 'black',
                   underline: false,
                 }),
-                fixedSize: true,
                 isFaceText: true,
                 renderOrder: 2,
                 depthTest: true,
@@ -198,6 +197,8 @@ const DodecahedronFace = React.memo(
               onClick={handleTextClick}
               billboard={false}
               side={THREE.FrontSide}
+              normal={faceData.normal}
+              scale={1}
             />
           </group>
         )}

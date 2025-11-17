@@ -1,9 +1,9 @@
 import React, { useRef, useEffect, useCallback, useMemo } from 'react';
-import PooledLine from './PooledLine';
+import InstancedLine from './InstancedLine';
 import * as THREE from 'three';
 import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import ObjectUI from './ObjectUI';
-import TextSprite from './TextSprite';
+import AtlasTextSprite from './AtlasTextSprite';
 import HeaderInput from './HeaderInput';
 import {
   useDodecahedronStore,
@@ -105,8 +105,12 @@ const createDodecahedronGeometry = () => {
     [6, 10, 7, 15, 14],
   ];
 
-  // Convert edges to lines
-  const points = edges.map(([a, b]) => [vertices[a], vertices[b]]);
+  // Convert edges to flat array for InstancedLine
+  // Format: [x1,y1,z1, x2,y2,z2, x3,y3,z3, ...] for edge pairs
+  const edgePoints = edges.flatMap(([a, b]) => [
+    ...vertices[a],
+    ...vertices[b],
+  ]);
 
   // Create geometries for each face
   const faceGeometries = faces.map((faceIndices) => {
@@ -137,7 +141,7 @@ const createDodecahedronGeometry = () => {
     return faceGeometry;
   });
 
-  return { points, faceGeometries, vertices };
+  return { edgePoints, faceGeometries, vertices };
 };
 
 // Create geometry once at module load
@@ -197,7 +201,7 @@ const Sphere = React.memo(
         faceTexts: objectData?.faceTexts || {},
         faceTextStyles: objectData?.faceTextStyles || {},
         headerStyle: objectData?.headerStyle || {
-          fontSize: 'medium',
+          fontSize: 1.5,
           color: 'black',
           underline: false,
         },
@@ -480,7 +484,7 @@ const Sphere = React.memo(
     const faceUIGroupRef = useRef(); // Add this new ref for FaceUI container
 
     // OPTIMIZATION: Use pre-computed module-level geometry instead of recalculating
-    const points = DODECAHEDRON_GEOMETRY.points;
+    const edgePoints = DODECAHEDRON_GEOMETRY.edgePoints;
     const geometry = DODECAHEDRON_GEOMETRY.faceGeometries;
 
     // Update isIndicatorConnected function to be more robust
@@ -607,7 +611,7 @@ const Sphere = React.memo(
         lineColor: objectData.lineColor || 'black',
         headerText: objectData.headerText || '',
         headerStyle: objectData.headerStyle || {
-          fontSize: 'medium',
+          fontSize: 1.5,
           color: 'black',
           underline: false,
         },
@@ -1226,16 +1230,12 @@ const Sphere = React.memo(
               />
             );
           })}{' '}
-          {/* Wireframe lines */}
-          {points.map((linePoints, idx) => (
-            <PooledLine
-              key={`${idx}-${renderLineColor}`}
-              points={linePoints}
-              color={renderLineColor}
-              lineWidth={lineWidth !== undefined ? lineWidth : isMobile ? 3 : 1}
-              enablePooling={true}
-            />
-          ))}{' '}
+          {/* Wireframe lines - batched into single InstancedLine */}
+          <InstancedLine
+            points={edgePoints}
+            color={renderLineColor}
+            lineWidth={lineWidth !== undefined ? lineWidth : isMobile ? 3 : 1}
+          />{' '}
         </group>
         {/* Move UI elements outside main group but keep them following contentRef */}
         {selected &&
@@ -1288,21 +1288,21 @@ const Sphere = React.memo(
           </group>
         )}{' '}
         {renderHeaderText && (
-          <TextSprite
+          <AtlasTextSprite
             key={`header-${renderHeaderText}-${JSON.stringify(
               renderHeaderStyle
             )}`}
             text={renderHeaderText}
             position={getHeaderPosition()}
-            // If followTarget is causing issues, we can modify how it's used
             followTarget={contentRef}
             onClick={handleHeaderClick}
             style={{
               ...renderHeaderStyle,
               isHeaderText: true,
               isDodecahedronHeader: true,
-              fixedDistance: true, // Add this to ensure consistent distance if supported
             }}
+            billboard={true}
+            scale={1}
           />
         )}
         {dodecahedron?.showStyleMenu && renderHeaderText && (
@@ -1341,7 +1341,7 @@ const Sphere = React.memo(
                   lineColor: objectData.lineColor || 'black',
                   headerText: objectData.headerText || '',
                   headerStyle: objectData.headerStyle || {
-                    fontSize: 'medium',
+                    fontSize: 1.5,
                     color: 'black',
                     underline: false,
                   },

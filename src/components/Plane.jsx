@@ -2,13 +2,12 @@ import {
   TransformControls as DreiTransformControls,
   Html,
 } from '@react-three/drei';
-import PooledLine from './PooledLine';
-import { Vector3 } from 'three';
+import InstancedLine from './InstancedLine';
 import { useRef, useEffect, useCallback, useMemo } from 'react';
 import React from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import FaceUI from './FaceUI';
-import TextSprite from './TextSprite';
+import AtlasTextSprite from './AtlasTextSprite';
 import FaceTextInput from './FaceTextInput';
 import TextStyleUI from './TextStyleUI';
 import HeaderInput from './HeaderInput';
@@ -1386,16 +1385,42 @@ const Plane = ({
     }),
     [selected, borderColor, lineThickness, borderStyle]
   );
-  const points = useMemo(
+
+  // Convert border points to flat array for InstancedLine (4 edges in a rectangle)
+  const borderEdgePoints = useMemo(
     () => [
-      new Vector3(-size, -size, 0.1),
-      new Vector3(size, -size, 0.1),
-      new Vector3(size, size, 0.1),
-      new Vector3(-size, size, 0.1),
-      new Vector3(-size, -size, 0.1),
+      // Bottom edge
+      -size,
+      -size,
+      0.1,
+      size,
+      -size,
+      0.1,
+      // Right edge
+      size,
+      -size,
+      0.1,
+      size,
+      size,
+      0.1,
+      // Top edge
+      size,
+      size,
+      0.1,
+      -size,
+      size,
+      0.1,
+      // Left edge
+      -size,
+      size,
+      0.1,
+      -size,
+      -size,
+      0.1,
     ],
     [size]
   );
+
   return (
     <>
       {/* Snap line indicator - only visible during snapping */}
@@ -1492,10 +1517,14 @@ const Plane = ({
               </div>
             </Html>
           )}
-          <PooledLine
-            points={points}
-            {...lineMaterialProps}
-            enablePooling={true}
+          <InstancedLine
+            points={borderEdgePoints}
+            color={lineMaterialProps.color}
+            lineWidth={lineMaterialProps.lineWidth}
+            dashed={lineMaterialProps.dashed}
+            dashScale={lineMaterialProps.dashScale}
+            dashSize={lineMaterialProps.dashSize}
+            gapSize={lineMaterialProps.gapSize}
           />
           {shouldShowIndicator && (
             <FaceIndicator
@@ -1511,12 +1540,13 @@ const Plane = ({
               scale={scale.map((s) => 1 / Math.max(0.0001, s))}
               position={uiPositions.textSprite}
             >
-              <TextSprite
+              <AtlasTextSprite
                 text={faceText}
                 position={[0, 0, 0]}
                 style={faceTextStyle}
                 onClick={handleTextSpriteClick}
                 billboard={false}
+                scale={1}
               />
             </group>
           )}
@@ -1527,17 +1557,18 @@ const Plane = ({
               position={uiPositions.headerText}
             >
               {' '}
-              <TextSprite
+              <AtlasTextSprite
                 text={headerText}
                 position={[0, 0, 0]}
-                followTarget={null}
+                followTarget={groupRef}
                 onClick={handleHeaderTextClick}
                 style={{
                   ...headerStyle,
                   isHeaderText: true,
-                  fixedSize: false,
+                  isPlaneHeader: true,
                 }}
-                billboard={false}
+                billboard={true}
+                scale={1}
               />
               {/* Header TextStyleUI inside the group like cube */}
               {showHeaderStyleUI && (

@@ -1,5 +1,6 @@
 import { useRef, useEffect, forwardRef } from 'react';
-import { Line } from '@react-three/drei';
+// import { Line } from '@react-three/drei';
+import InstancedLine from './InstancedLine';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { useLinePool } from '../hooks/useLinePool';
 // import InstancedLine from './InstancedLine';
@@ -123,29 +124,18 @@ const PooledLine = forwardRef(
       return null;
     }
 
-    // Fallback to regular Line component for complex properties
+    // Fallback to InstancedLine for complex properties
+    // Only pass props that InstancedLine supports
     return (
-      <Line
+      <InstancedLine
         ref={meshRef}
         points={points}
         color={color}
         lineWidth={lineWidth}
-        opacity={opacity}
-        transparent={transparent}
-        visible={visible}
         onClick={handleClick}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
-        dashed={dashed}
-        dashScale={dashScale}
-        dashSize={dashSize}
-        gapSize={gapSize}
-        dashOffset={dashOffset}
-        resolution={resolution}
-        {...props}
-      >
-        {children}
-      </Line>
+      />
     );
   }
 );

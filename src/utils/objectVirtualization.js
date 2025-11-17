@@ -31,16 +31,16 @@ export class ObjectVirtualizer {
       const getMaxObjects = () => {
         if (isMobile) {
           return canvasQuality === 'low'
-            ? 80 // Increased for spatial system
+            ? 200 // Increased for large diagrams
             : canvasQuality === 'medium'
-            ? 120
-            : 160;
+            ? 400
+            : 600;
         }
         return canvasQuality === 'low'
-          ? 100
+          ? 800
           : canvasQuality === 'medium'
-          ? 200
-          : 400; // Much higher limits when using spatial system
+          ? 1600
+          : 3600; // Much higher limits for large diagrams
       };
 
       const maxObjects = getMaxObjects();
@@ -74,16 +74,16 @@ export class ObjectVirtualizer {
     const getMaxObjects = () => {
       if (isMobile) {
         return canvasQuality === 'low'
-          ? 40
+          ? 100
           : canvasQuality === 'medium'
-          ? 60
-          : 80; // More objects visible on mobile
+          ? 200
+          : 400; // More objects visible on mobile for large diagrams
       }
       return canvasQuality === 'low'
-        ? 50
+        ? 200
         : canvasQuality === 'medium'
-        ? 100
-        : 200;
+        ? 400
+        : 800; // Doubled for large diagram support
     };
 
     const maxObjects = getMaxObjects();

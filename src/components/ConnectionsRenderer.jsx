@@ -1,12 +1,11 @@
 import React, { useMemo } from 'react';
-import { Line } from '@react-three/drei';
-// import InstancedLine from './InstancedLine';
-import TextSprite from './TextSprite';
+
+import InstancedLine from './InstancedLine';
+import AtlasTextSprite from './AtlasTextSprite';
 import LineUI from './LineUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 import AnimatedConnectionLine from './AnimatedConnectionLine';
-import PooledLine from './PooledLine';
 import {
   checkLineIntersection,
   generateCurvedPath,
@@ -17,6 +16,21 @@ import useConnectionStore from '../stores/connectionStore';
 import { saveConnection } from '../services/connectionsService';
 import { useConnectionObjectPositions } from '../hooks/useConnectionObjects';
 import { useCallback } from 'react';
+
+/**
+ * Convert a path of connected points into line segments for InstancedLine
+ * Path: [p0, p1, p2, p3] -> Segments: [p0, p1, p1, p2, p2, p3]
+ * This allows InstancedLine to render connected line segments
+ */
+function pathToLineSegments(path) {
+  if (!path || path.length < 2) return path;
+
+  const segments = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    segments.push(path[i], path[i + 1]);
+  }
+  return segments;
+}
 
 // Separate connection rendering into a sub-component to fix the hooks issue
 const Connection = React.memo(
@@ -384,6 +398,45 @@ const Connection = React.memo(
     const stableEndObjectId = connection?.end?.objectId;
     const stablePathPoints = connection?._pathPoints;
 
+    // Create a hash of nearby object positions to trigger path recalculation when they move
+    // This allows dynamic pathfinding without full array comparison
+    const nearbyObjectsHash = useMemo(() => {
+      if (!connectionData.isValid || !allObjectsForPathfinding) return '';
+
+      const { startPosition, endPosition } = connectionData;
+      const lineLength = Math.sqrt(
+        Math.pow(endPosition[0] - startPosition[0], 2) +
+          Math.pow(endPosition[1] - startPosition[1], 2) +
+          Math.pow(endPosition[2] - startPosition[2], 2)
+      );
+
+      // Track ALL objects that could affect this connection (within reasonable distance)
+      // IMPORTANT: Include attached objects - pathfinding logic handles them separately
+      const relevantObjects = allObjectsForPathfinding.filter((obj) => {
+        if (!obj?.position || !Array.isArray(obj.position)) return false;
+
+        // Quick distance check - only objects near the line
+        const distanceSquared = obj.position.reduce(
+          (sum, val, i) => sum + Math.pow(val - startPosition[i], 2),
+          0
+        );
+        return distanceSquared < lineLength * lineLength * 4; // 2x line length radius
+      });
+
+      // Create hash from positions rounded to 1 decimal place for stability
+      return relevantObjects
+        .map(
+          (obj) =>
+            `${obj.id}:${obj.position.map((p) => p.toFixed(1)).join(',')}`
+        )
+        .join('|');
+    }, [
+      allObjectsForPathfinding,
+      connectionData,
+      stableStartObjectId,
+      stableEndObjectId,
+    ]);
+
     // Third hook: Calculate path and intersections
     // Use a more selective dependency to minimize re-renders
     const pathData = useMemo(() => {
@@ -430,10 +483,11 @@ const Connection = React.memo(
 
       const isCurvedPath =
         calculatedPathPoints && calculatedPathPoints.length > 2 && shouldCurve;
-      const effectiveLineStyle =
-        isCurvedPath && stableLineStyle === 'straight'
-          ? 'curved'
-          : stableLineStyle;
+
+      // PATHFINDING FIX: Don't override user's line style when pathfinding creates curved path
+      // The path can be curved (multiple points) while the visual style stays straight/dashed/dotted
+      // Only use 'curved' as effective style if user explicitly chose 'curved'
+      const effectiveLineStyle = stableLineStyle;
 
       return {
         calculatedPathPoints: calculatedPathPoints || [
@@ -442,7 +496,9 @@ const Connection = React.memo(
         ],
         effectiveLineStyle,
         intersections,
+        isCurvedPath, // Add this so we know if pathfinding generated a curved path
       };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
       connectionData, // Only depends on connectionData changes
       pathfindingStyle,
@@ -450,7 +506,8 @@ const Connection = React.memo(
       stableStartObjectId,
       stableEndObjectId,
       stableLineStyle,
-      allObjectsForPathfinding, // <-- Use the prop name in dependencies too
+      allObjectsForPathfinding, // Keep for lint, but nearbyObjectsHash is what actually triggers
+      nearbyObjectsHash, // Dynamic hash triggers recalc when nearby objects move
     ]);
 
     // Fourth hook: Calculate text position
@@ -460,11 +517,13 @@ const Connection = React.memo(
       }
 
       const { midpoint } = connectionData;
-      const { calculatedPathPoints, effectiveLineStyle } = pathData;
-      const offset = effectiveLineStyle === 'curved' ? 5 : 2;
+      const { calculatedPathPoints } = pathData;
+      const offset = 2;
 
       let textPosition;
-      if (calculatedPathPoints?.length > 2 && effectiveLineStyle === 'curved') {
+      // Check if path is curved (has more than 2 points) regardless of line style
+      if (calculatedPathPoints?.length > 2) {
+        // Use the middle point of the curved path
         const midIdx = Math.floor(calculatedPathPoints.length / 2);
         const midPoint = calculatedPathPoints[midIdx];
         const pos = Array.isArray(midPoint)
@@ -472,6 +531,7 @@ const Connection = React.memo(
           : [midPoint.x, midPoint.y, midPoint.z];
         textPosition = [pos[0], pos[1] + offset, pos[2]];
       } else {
+        // Use straight line midpoint
         textPosition = [midpoint[0], midpoint[1] + offset, midpoint[2]];
       }
 
@@ -504,105 +564,84 @@ const Connection = React.memo(
         }`}
       >
         {/* Conditional line rendering based on line style */}
-        {effectiveLineStyle === 'straight' ? (
-          // Visible straight line using PooledLine (falls back to Line when clickable)
-          <PooledLine
-            key={`pooled-line-${connection.id}-${
-              connection._lastStyleUpdate || 0
-            }`}
-            points={calculatedPathPoints}
-            color={
-              connection.color ||
-              (selectedConnection === connection.id ? '#ffff00' : 'black')
-            }
-            lineWidth={getLineWidth(connection.id)}
-            onClick={(e) => handleConnectionClick(e, connection.id)}
-            onPointerOver={(e) => {
-              e.stopPropagation();
-              document.body.style.cursor = 'pointer';
-            }}
-            onPointerOut={(e) => {
-              e.stopPropagation();
-              document.body.style.cursor = 'auto';
-            }}
-            renderOrder={10}
-            depthWrite={false}
-            depthTest={true}
-          />
-        ) : effectiveLineStyle === 'curved' ? (
-          // Curved line using regular Line component for path support
-          <Line
-            key={`curved-line-${connection.id}-${
-              connection._lastStyleUpdate || 0
-            }`}
-            points={calculatedPathPoints}
-            color={
-              connection.color ||
-              (selectedConnection === connection.id ? '#ffff00' : 'black')
-            }
-            lineWidth={getLineWidth(connection.id)}
-            onClick={(e) => handleConnectionClick(e, connection.id)}
-            onPointerOver={(e) => {
-              e.stopPropagation();
-              document.body.style.cursor = 'pointer';
-            }}
-            onPointerOut={(e) => {
-              e.stopPropagation();
-              document.body.style.cursor = 'auto';
-            }}
-            renderOrder={10}
-            depthWrite={false}
-            depthTest={true}
-          />
-        ) : (
-          // Animated lines (dashed, dotted, etc.) use AnimatedConnectionLine
-          <AnimatedConnectionLine
-            key={`animated-line-${connection.id}-${effectiveLineStyle}-${
-              connection._lastStyleUpdate || 0
-            }`}
-            points={calculatedPathPoints}
-            connectionId={connection.id}
-            color={
-              connection.color ||
-              (selectedConnection === connection.id ? '#ffff00' : 'black')
-            }
-            lineWidth={getLineWidth(connection.id)}
-            lineStyle={effectiveLineStyle}
-            dashDirection={connection.dashDirection || null}
-            dashOffset={connection.dashOffset || 0}
-            isSelected={selectedConnection === connection.id}
-            onClick={(e) => handleConnectionClick(e, connection.id)}
-            onPointerOver={(e) => {
-              e.stopPropagation();
-              document.body.style.cursor = 'pointer';
-            }}
-            onPointerOut={(e) => {
-              e.stopPropagation();
-              document.body.style.cursor = 'auto';
-            }}
-          />
-        )}
-        {/* Connection text */}
-        <TextSprite
+        {/* Extract base style (without direction suffix like '-right', '-left') */}
+        {(() => {
+          const baseStyle = effectiveLineStyle.split('-')[0]; // 'dashed-right' -> 'dashed'
+
+          // Render solid lines (straight path or curved path) using InstancedLine
+          if (baseStyle === 'straight') {
+            return (
+              <InstancedLine
+                key={`line-${connection.id}-${
+                  connection._lastStyleUpdate || 0
+                }`}
+                points={pathToLineSegments(calculatedPathPoints)}
+                color={
+                  connection.color ||
+                  (selectedConnection === connection.id ? '#ffff00' : 'black')
+                }
+                lineWidth={getLineWidth(connection.id)}
+                onClick={(e) => handleConnectionClick(e, connection.id)}
+                onPointerOver={(e) => {
+                  e.stopPropagation();
+                  document.body.style.cursor = 'pointer';
+                }}
+                onPointerOut={(e) => {
+                  e.stopPropagation();
+                  document.body.style.cursor = 'auto';
+                }}
+              />
+            );
+          }
+
+          // Render dashed/dotted lines using AnimatedConnectionLine
+          // These support pathfinding multi-point paths
+          return (
+            <AnimatedConnectionLine
+              key={`animated-line-${connection.id}-${effectiveLineStyle}-${
+                connection._lastStyleUpdate || 0
+              }`}
+              points={calculatedPathPoints}
+              connectionId={connection.id}
+              color={
+                connection.color ||
+                (selectedConnection === connection.id ? '#ffff00' : 'black')
+              }
+              lineWidth={getLineWidth(connection.id)}
+              lineStyle={effectiveLineStyle}
+              dashDirection={connection.dashDirection || null}
+              dashOffset={connection.dashOffset || 0}
+              isSelected={selectedConnection === connection.id}
+              onClick={(e) => handleConnectionClick(e, connection.id)}
+              onPointerOver={(e) => {
+                e.stopPropagation();
+                document.body.style.cursor = 'pointer';
+              }}
+              onPointerOut={(e) => {
+                e.stopPropagation();
+                document.body.style.cursor = 'auto';
+              }}
+            />
+          );
+        })()}
+        {/* Connection text using AtlasTextSprite for better performance */}
+        <AtlasTextSprite
           key={`text-${connection.id}-${connection.text || 'no-text'}-${
             connection.textStyle?.fontSize || 1.5
           }-${connection.textStyle?.color || 'black'}`}
           text={connectionText}
           position={textPosition}
           style={{
-            fontSize: connection.textStyle?.fontSize || 1.5,
+            fontSize: (connection.textStyle?.fontSize || 1.5) * 10, // Convert to pixel size for atlas
             color: connection.textStyle?.color || 'black',
             underline: connection.textStyle?.underline || false,
-            fixedSize: true,
-            backgroundOpacity: 0.4,
-            backgroundColor: '#000000',
-            padding: 0.3,
           }}
           onClick={(e) => handleLineTextClick(e, connection.id)}
           billboard={true}
           renderOrder={20} // Higher than connection lines (10) but lower than header text (3000-5000)
-          lineStyle={effectiveLineStyle}
-          pathPoints={calculatedPathPoints}
+          scale={0.45} // 3x larger than previous 0.15 to match cube header text size
+          lineStyle={effectiveLineStyle} // Pass line style for dynamic positioning
+          pathPoints={calculatedPathPoints} // Pass path points for curved line positioning
         />{' '}
         {/* Text input UI */}
         {showLineTextInput === connection.id && (
@@ -648,6 +687,13 @@ const Connection = React.memo(
     );
   },
   (prevProps, nextProps) => {
+    // Re-render if the pathfinding objects changed (any object moved)
+    if (
+      prevProps.allObjectsForPathfinding !== nextProps.allObjectsForPathfinding
+    ) {
+      return false; // Props changed, need to re-render
+    }
+
     // Only re-render if the connection data actually changed
     const connectionChanged =
       prevProps.connection.id !== nextProps.connection.id ||
@@ -702,19 +748,20 @@ const ConnectionsRenderer = ({
   }, [objects]);
 
   // Create pathfinding objects for intersection calculations
-  // Use a more stable reference that only changes when objects actually change
+  // This will update whenever the objects array reference changes (which happens when positions update)
   const pathfindingObjects = useMemo(() => {
     if (!objects?.length) return [];
 
-    // Create stable object references
+    // Create object references with current positions
+    // The objects array ref changes when ANY object position/scale changes (via store's hash comparison)
     return objects.map((obj) => ({
       id: obj.id,
-      position: obj.position,
+      position: obj.position || [0, 0, 0],
       scale: obj.scale || [1, 1, 1],
       type: obj.type,
       faceSize: obj.faceSize,
     }));
-  }, [objects]); // Only depends on objects array
+  }, [objects]);
 
   // Filter connections to only show those where both endpoint objects are visible
   const visibleConnections = useMemo(() => {

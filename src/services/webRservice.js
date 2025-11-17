@@ -336,7 +336,7 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
       throw new Error(`Plane ${planeId} not found`);
     }
 
-    // Update the plane object in its cell
+    // Update the plane object in its cell using the objects subcollection
     const updatedPlane = {
       ...planeResult.object,
       broadcastId,
@@ -345,13 +345,9 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
       lastUpdated: new Date(),
     };
 
-    // Update the cell with the modified plane object
-    const cellRef = planeResult.cellRef;
-    const cellDoc = await getDoc(cellRef);
-    const cellData = cellDoc.data();
-
-    cellData.objects[planeId] = updatedPlane;
-    await setDoc(cellRef, cellData, { merge: true });
+    // Update the object in the subcollection
+    const objectRef = planeResult.objectRef;
+    await setDoc(objectRef, updatedPlane, { merge: true });
 
     console.log(
       `Plane ${planeId} updated with broadcastId ${broadcastId} in cell ${planeResult.cellId}`
@@ -416,7 +412,7 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
           );
 
           if (planeResult) {
-            // Update the plane object in its cell
+            // Update the plane object in the objects subcollection
             const updatedPlane = {
               ...planeResult.object,
               broadcastId: null,
@@ -425,11 +421,8 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
               lastUpdated: new Date(),
             };
 
-            // Update the cell with the modified plane object
-            const cellDoc = await getDoc(planeResult.cellRef);
-            const cellData = cellDoc.data();
-            cellData.objects[planeId] = updatedPlane;
-            await setDoc(planeResult.cellRef, cellData, { merge: true });
+            // Update the object in the subcollection
+            await setDoc(planeResult.objectRef, updatedPlane, { merge: true });
 
             console.log(
               `Plane ${planeId} updated to stop broadcasting in cell ${planeResult.cellId}.`

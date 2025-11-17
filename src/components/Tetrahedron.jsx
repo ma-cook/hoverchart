@@ -4,13 +4,13 @@ import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import TetrahedronFace from './TetrahedronFace';
 import { useFaceIndicatorStore } from '../stores';
-import TextSprite from './TextSprite';
+import AtlasTextSprite from './AtlasTextSprite';
 import ObjectUI from './ObjectUI';
 
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 
-import PooledLine from './PooledLine';
+import InstancedLine from './InstancedLine';
 import isEqual from 'lodash/isEqual';
 import {
   useTetrahedronStore,
@@ -494,23 +494,24 @@ const Tetrahedron = ({
     ]
   );
 
-  // Tetrahedron edge line points (wireframe)
-  const tetrahedronLinePoints = useMemo(
+  // Tetrahedron edge line points (wireframe) - flattened for InstancedLine
+  // Format: [x1,y1,z1, x2,y2,z2, x3,y3,z3, ...] for edge pairs
+  const tetrahedronEdgePoints = useMemo(
     () => [
-      // Bottom triangle
-      tetrahedronVertices[1],
-      tetrahedronVertices[2],
-      tetrahedronVertices[2],
-      tetrahedronVertices[3],
-      tetrahedronVertices[3],
-      tetrahedronVertices[1],
-      // Top edges
-      tetrahedronVertices[0],
-      tetrahedronVertices[1],
-      tetrahedronVertices[0],
-      tetrahedronVertices[2],
-      tetrahedronVertices[0],
-      tetrahedronVertices[3],
+      // Bottom triangle (3 edges)
+      ...tetrahedronVertices[1],
+      ...tetrahedronVertices[2],
+      ...tetrahedronVertices[2],
+      ...tetrahedronVertices[3],
+      ...tetrahedronVertices[3],
+      ...tetrahedronVertices[1],
+      // Top edges (3 edges)
+      ...tetrahedronVertices[0],
+      ...tetrahedronVertices[1],
+      ...tetrahedronVertices[0],
+      ...tetrahedronVertices[2],
+      ...tetrahedronVertices[0],
+      ...tetrahedronVertices[3],
     ],
     []
   );
@@ -559,7 +560,7 @@ const Tetrahedron = ({
       color: objectData.color || '#000000',
       headerText: objectData.headerText || '',
       textStyle: objectData.textStyle || {
-        fontSize: 'medium',
+        fontSize: 1.5,
         color: 'black',
         underline: false,
       },
@@ -986,10 +987,9 @@ const Tetrahedron = ({
           rotation={adjustedRotation}
           scale={inverseScale}
         >
-          <TextSprite
+          <AtlasTextSprite
             text={faceText}
             position={[0, yOffset, 0]}
-            followTarget={null}
             onClick={(e) => {
               e.stopPropagation();
               e.nativeEvent?.stopPropagation?.();
@@ -998,7 +998,6 @@ const Tetrahedron = ({
             }}
             style={{
               ...textStyle,
-              fixedSize: true,
               isFaceText: true,
               renderOrder: 2,
               depthTest: true,
@@ -1007,6 +1006,7 @@ const Tetrahedron = ({
             normal={normal}
             billboard={false}
             side={THREE.FrontSide}
+            scale={1}
           />
 
           {/* Text style UI for the active face */}
@@ -1150,13 +1150,11 @@ const Tetrahedron = ({
           </mesh>
         )}
 
-        {/* Tetrahedron edge lines */}
-        <PooledLine
-          points={tetrahedronLinePoints}
+        {/* Tetrahedron edge lines - batched into single InstancedLine */}
+        <InstancedLine
+          points={tetrahedronEdgePoints}
           color={tetrahedronState.color || color}
           lineWidth={lineWidth !== undefined ? lineWidth : 1}
-          dashed={false}
-          enablePooling={true}
         />
 
         {/* Render faces */}
@@ -1173,10 +1171,10 @@ const Tetrahedron = ({
             )}
             position={getUIPositions.headerText}
           >
-            <TextSprite
+            <AtlasTextSprite
               text={tetrahedronState.headerText || headerText}
               position={[0, 0, 0]}
-              followTarget={null}
+              followTarget={meshRef}
               onClick={(e) => {
                 e.stopPropagation();
                 e.nativeEvent?.stopPropagation?.();
@@ -1192,8 +1190,9 @@ const Tetrahedron = ({
               style={{
                 ...(tetrahedronState.textStyle || textStyle),
                 isHeaderText: true,
-                fixedSize: false,
               }}
+              billboard={true}
+              scale={1}
             />
 
             {tetrahedronState.showHeaderTextStyleUI && (

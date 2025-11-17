@@ -1,13 +1,36 @@
 import * as THREE from 'three';
 
 // Cache settings
-const CACHE_LIFETIME = 5000; // 5 seconds
+const CACHE_LIFETIME = 2000; // 2 seconds - shorter for responsive path updates when objects move
 const POSITION_PRECISION = 2; // Decimal places for position rounding
 const CLEAN_PROBABILITY = 0.01; // 1% chance to clean cache per call
 
 // Create cache for intersection and path results
 const intersectionCache = new Map();
 const pathCache = new Map();
+
+// Track object positions for cache invalidation
+const objectPositionCache = new Map(); // objectId -> rounded position string
+
+/**
+ * Check if an object has moved significantly and invalidate affected caches
+ */
+export function checkObjectMovement(objectId, position) {
+  if (!objectId || !position) return;
+
+  const roundedPos = roundForCache(position).join(',');
+  const cached = objectPositionCache.get(objectId);
+
+  if (cached && cached !== roundedPos) {
+    // Object moved - invalidate intersection and path caches
+    // This is a simple approach that clears all caches when any object moves
+    // For better performance, could track which paths use which objects
+    intersectionCache.clear();
+    pathCache.clear();
+  }
+
+  objectPositionCache.set(objectId, roundedPos);
+}
 
 // Clean old entries from caches periodically
 function cleanCaches() {
@@ -323,6 +346,10 @@ export function generateCurvedPath(
   const startVec = new THREE.Vector3(...startPos);
   const endVec = new THREE.Vector3(...endPos);
 
+  // Ensure consistent string comparison for object IDs
+  const startConnIdStr = startConnId?.toString();
+  const endConnIdStr = endConnId?.toString();
+
   if (intersections && intersections.length > 0) {
     for (const int of intersections) {
       if (int.boundingBox && int.objectId) {
@@ -336,7 +363,10 @@ export function generateCurvedPath(
 
           // CASE 1: Direct parent-child relationship
           // If this intersection object is one of the connected objects (parent contains child)
-          if (int.objectId === startConnId || int.objectId === endConnId) {
+          if (
+            int.objectId === startConnIdStr ||
+            int.objectId === endConnIdStr
+          ) {
             const straightPath = [startPos, endPos];
             pathCache.set(pathCacheKey, {
               path: straightPath,
@@ -369,7 +399,7 @@ export function generateCurvedPath(
     // First check: traditional parent-child where both endpoints are inside one object
     for (const int of intersections) {
       if (
-        (int.objectId === startConnId || int.objectId === endConnId) &&
+        (int.objectId === startConnIdStr || int.objectId === endConnIdStr) &&
         int.boundingBox
       ) {
         const startVec = new THREE.Vector3(...startPos);
@@ -473,12 +503,12 @@ export function generateCurvedPath(
 
   // Check for front-facing connections that might not need curves
   const attachmentIntersections = intersections.filter(
-    (int) => int.objectId === startConnId || int.objectId === endConnId
+    (int) => int.objectId === startConnIdStr || int.objectId === endConnIdStr
   );
 
   // Filter out intersections that are ONLY the attachment objects themselves
   const obstacleIntersections = intersections.filter(
-    (int) => int.objectId !== startConnId && int.objectId !== endConnId
+    (int) => int.objectId !== startConnIdStr && int.objectId !== endConnIdStr
   );
 
   // Check if this is a front face that doesn't intersect its own attachment object
@@ -524,6 +554,16 @@ export function generateCurvedPath(
 
   // If front face with no self-intersection, only curve if there are other obstacles
   if (isFrontFaceNoSelfIntersection && obstacleIntersections.length === 0) {
+    const straightPath = [startPos, endPos];
+    pathCache.set(pathCacheKey, {
+      path: straightPath,
+      timestamp: Date.now(),
+    });
+    return straightPath;
+  }
+
+  // IMPORTANT: If there are no obstacles (only attachment intersections), use straight line
+  if (obstacleIntersections.length === 0) {
     const straightPath = [startPos, endPos];
     pathCache.set(pathCacheKey, {
       path: straightPath,
@@ -635,9 +675,13 @@ function generateMultiSegmentPath(
     .normalize();
   const lineLength = startVec.distanceTo(endVec);
 
+  // Ensure consistent string comparison for object IDs
+  const startConnIdStr = startConnId?.toString();
+  const endConnIdStr = endConnId?.toString();
+
   // Find attachment object intersections
   const attachmentIntersections = intersections.filter(
-    (int) => int.objectId === startConnId || int.objectId === endConnId
+    (int) => int.objectId === startConnIdStr || int.objectId === endConnIdStr
   );
 
   // Use all intersections for avoidance if no attachment intersections

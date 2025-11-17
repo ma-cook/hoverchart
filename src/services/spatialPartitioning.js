@@ -632,68 +632,35 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
     }
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-    const cellRef = doc(
+
+    // NEW: Save to subcollection path instead of map field
+    // This matches the cloud function's save path
+    const objectRef = doc(
       db,
       'users',
       userId,
       'spaces',
       spaceId,
       'cells',
-      cellId
+      cellId,
+      'objects',
+      objectData.id
     );
 
-    // Get current cell data
-    const cellDoc = await getDoc(cellRef);
-    let cellData;
-
-    if (cellDoc.exists()) {
-      cellData = cellDoc.data();
-    } else {
-      // Create cell if it doesn't exist
-      await createCell(
-        userId,
-        spaceId,
-        cellCoords.x,
-        cellCoords.y,
-        cellCoords.z
-      );
-      cellData = {
-        id: cellId,
-        x: cellCoords.x,
-        y: cellCoords.y,
-        z: cellCoords.z,
-        bounds: getCellBounds(cellCoords.x, cellCoords.y, cellCoords.z),
-        createdAt: new Date(),
-        objects: {},
-        connections: {},
-      };
-    }
-
-    // Ensure objects is an object (for backward compatibility)
-    if (Array.isArray(cellData.objects)) {
-      cellData.objects = {};
-    }
-
-    // Check if object already exists in this cell
-    const objectExists = cellData.objects[objectData.id];
-    if (objectExists) {
-      // Object exists, will be updated
-    } else {
-      // Object doesn't exist, will be added
-    } // Add object data to cell with object ID as key
+    // Prepare object data
     const objectToAdd = {
       ...objectData,
       lastUpdated: new Date(),
       cellId: cellId,
+      updatedAt: new Date(),
     };
 
-    // Use updateDoc for atomic operation to prevent race conditions
-    await updateDoc(cellRef, {
-      [`objects.${objectData.id}`]: objectToAdd,
-    });
+    // Save to subcollection - this will create or update the document
+    await setDoc(objectRef, objectToAdd, { merge: true });
 
     return true;
-  } catch {
+  } catch (error) {
+    console.error('Error adding object to cell:', error);
     return false;
   }
 };
@@ -719,90 +686,26 @@ export const removeObjectFromCell = async (
   try {
     const cellCoords = getCellCoordinates(position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-    const cellRef = doc(
+
+    // NEW: Delete from subcollection instead of map field
+    const objectRef = doc(
       db,
       'users',
       userId,
       'spaces',
       spaceId,
       'cells',
-      cellId
+      cellId,
+      'objects',
+      objectId
     );
 
-    // First, check if the cell exists and the object is actually there
-    const cellDoc = await getDoc(cellRef);
-    if (!cellDoc.exists()) {
-      return true; // Cell doesn't exist, object not in any cell
-    }
+    // Delete the document
+    await deleteDoc(objectRef);
 
-    const cellData = cellDoc.data();
-
-    // Check if object exists in the cell before attempting deletion
-    let objectExists = false;
-    if (Array.isArray(cellData.objects)) {
-      // Legacy array format - convert to object format first
-      const objectsAsMap = {};
-      cellData.objects.forEach((obj) => {
-        if (typeof obj === 'string') {
-          objectsAsMap[obj] = { id: obj };
-        } else if (obj && obj.id) {
-          objectsAsMap[obj.id] = obj;
-        }
-      });
-
-      // Update the cell to use object format
-      await updateDoc(cellRef, {
-        objects: objectsAsMap,
-      });
-
-      objectExists = objectsAsMap[objectId] !== undefined;
-    } else if (cellData.objects && typeof cellData.objects === 'object') {
-      objectExists = cellData.objects[objectId] !== undefined;
-    }
-
-    if (!objectExists) {
-      return true; // Object doesn't exist, consider it "removed"
-    }
-
-    // Use atomic updateDoc with deleteField for safe removal
-    await updateDoc(cellRef, {
-      [`objects.${objectId}`]: deleteField(),
-    });
-
-    // Verify the removal with retries for eventual consistency
-    let verificationAttempts = 0;
-    const maxAttempts = 3;
-
-    while (verificationAttempts < maxAttempts) {
-      // Wait for Firestore to propagate changes
-      await new Promise((resolve) =>
-        setTimeout(resolve, 200 * (verificationAttempts + 1))
-      );
-
-      const verifyDoc = await getDoc(cellRef);
-      if (verifyDoc.exists()) {
-        const verifyData = verifyDoc.data();
-        if (verifyData.objects && verifyData.objects[objectId]) {
-          verificationAttempts++;
-
-          if (verificationAttempts < maxAttempts) {
-            // Retry the deletion
-            await updateDoc(cellRef, {
-              [`objects.${objectId}`]: deleteField(),
-            });
-          } else {
-            return false;
-          }
-        } else {
-          return true;
-        }
-      } else {
-        return true;
-      }
-    }
-
-    return false;
-  } catch {
+    return true;
+  } catch (error) {
+    console.error('Error removing object from cell:', error);
     return false;
   }
 };
@@ -965,40 +868,58 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
     for (const coords of cellCoords) {
       const cellId = getCellId(coords.x, coords.y, coords.z);
 
-      const cellRef = doc(
+      // NEW: Read from subcollection instead of map field
+      // This matches the cloud function's save path
+      const objectsCollectionRef = collection(
         db,
         'users',
         userId,
         'spaces',
         spaceId,
         'cells',
-        cellId
+        cellId,
+        'objects'
       );
 
-      const cellDoc = await getDoc(cellRef);
-      if (cellDoc.exists()) {
-        const cellData = cellDoc.data();
+      const querySnapshot = await getDocs(objectsCollectionRef);
 
-        // Handle both old array format and new object format
-        if (cellData.objects) {
-          if (Array.isArray(cellData.objects)) {
-            // Old format - we'll need to load objects from global collection
-            // This is for backward compatibility
-          } else if (typeof cellData.objects === 'object') {
-            // New format - objects stored directly in cell
-            const cellObjects = Object.values(cellData.objects);
-            allObjects.push(...cellObjects);
-          }
-        } else {
-          // No objects found in this cell
+      querySnapshot.forEach((doc) => {
+        const objectData = doc.data();
+
+        // DATA MIGRATION: Sanitize fontSize values from old data
+        // Old data might have string values like 'medium' instead of numbers
+        if (
+          objectData.textStyle?.fontSize &&
+          typeof objectData.textStyle.fontSize === 'string'
+        ) {
+          const parsed = parseFloat(objectData.textStyle.fontSize);
+          objectData.textStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
         }
-      } else {
-        // Cell doesn't exist - this is expected for empty areas
-      }
+        if (
+          objectData.headerStyle?.fontSize &&
+          typeof objectData.headerStyle.fontSize === 'string'
+        ) {
+          const parsed = parseFloat(objectData.headerStyle.fontSize);
+          objectData.headerStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
+        }
+        // Face text styles
+        if (objectData.faceTextStyles) {
+          Object.keys(objectData.faceTextStyles).forEach((face) => {
+            const style = objectData.faceTextStyles[face];
+            if (style?.fontSize && typeof style.fontSize === 'string') {
+              const parsed = parseFloat(style.fontSize);
+              style.fontSize = isNaN(parsed) ? 0.5 : parsed;
+            }
+          });
+        }
+
+        allObjects.push(objectData);
+      });
     }
 
     return allObjects;
-  } catch {
+  } catch (error) {
+    console.error('Error loading objects from cells:', error);
     return [];
   }
 };
@@ -1029,39 +950,32 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
-    const cellRef = doc(
+    // NEW: Update in subcollection instead of map field
+    const objectRef = doc(
       db,
       'users',
       userId,
       'spaces',
       spaceId,
       'cells',
-      cellId
+      cellId,
+      'objects',
+      objectData.id
     );
 
-    const cellDoc = await getDoc(cellRef);
-    if (!cellDoc.exists()) {
-      return await addObjectToCell(userId, spaceId, objectData);
-    }
-
-    const cellData = cellDoc.data();
-    if (Array.isArray(cellData.objects)) {
-      cellData.objects = {}; // Convert or handle appropriately
-    }
-
-    // Ensure cellData.objects is an object map
-    if (typeof cellData.objects !== 'object' || cellData.objects === null) {
-      cellData.objects = {};
-    }
-
-    cellData.objects[objectData.id] = {
+    const objectToUpdate = {
       ...objectData,
       lastUpdated: new Date(),
+      updatedAt: new Date(),
       cellId: cellId,
     };
-    await setDoc(cellRef, cellData, { merge: true });
+
+    // Use setDoc with merge to update or create
+    await setDoc(objectRef, objectToUpdate, { merge: true });
+
     return true;
-  } catch {
+  } catch (error) {
+    console.error('Error updating object in cell:', error);
     return false;
   }
 };
@@ -1085,73 +999,24 @@ export const deleteObjectFromCell = async (
   try {
     const cellCoords = getCellCoordinates(position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-    const cellRef = doc(
+
+    // NEW: Delete from subcollection
+    const objectRef = doc(
       db,
       'users',
       userId,
       'spaces',
       spaceId,
       'cells',
-      cellId
+      cellId,
+      'objects',
+      objectId
     );
 
-    // Check if cell exists first
-    const cellDoc = await getDoc(cellRef);
-    if (!cellDoc.exists()) {
-      return true; // Cell doesn't exist, object already not present
-    }
-
-    const cellData = cellDoc.data();
-
-    // Check if object exists before attempting deletion
-    let objectExists = false;
-    if (Array.isArray(cellData.objects)) {
-      // Legacy array format - check if object exists
-      objectExists =
-        cellData.objects.includes(objectId) ||
-        cellData.objects.some((obj) => obj && obj.id === objectId);
-    } else if (cellData.objects && typeof cellData.objects === 'object') {
-      objectExists = cellData.objects[objectId] !== undefined;
-    }
-
-    if (!objectExists) {
-      return true; // Object doesn't exist, consider it deleted
-    }
-
-    // Use atomic updateDoc with deleteField for safe deletion
-    await updateDoc(cellRef, {
-      [`objects.${objectId}`]: deleteField(),
-    });
-
-    // Verify deletion with retries
-    let attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, 150 * (attempts + 1)));
-
-      const verifyDoc = await getDoc(cellRef);
-      if (!verifyDoc.exists()) {
-        return true;
-      }
-
-      const verifyData = verifyDoc.data();
-      if (!verifyData.objects || !verifyData.objects[objectId]) {
-        return true;
-      }
-
-      attempts++;
-      if (attempts < maxAttempts) {
-        await updateDoc(cellRef, {
-          [`objects.${objectId}`]: deleteField(),
-        });
-      } else {
-        return false;
-      }
-    }
-
-    return false;
-  } catch {
+    await deleteDoc(objectRef);
+    return true;
+  } catch (error) {
+    console.error('Error deleting object from cell:', error);
     return false;
   }
 };
@@ -2097,32 +1962,94 @@ export const findObjectInCells = async (userId, spaceId, objectId) => {
     );
     const snapshot = await getDocs(cellsRef);
 
-    // Search through all cells for the object
+    // Search through all cells for the object in the objects subcollection
     for (const cellDoc of snapshot.docs) {
-      const cellData = cellDoc.data();
+      const objectRef = doc(
+        db,
+        'users',
+        userId,
+        'spaces',
+        spaceId,
+        'cells',
+        cellDoc.id,
+        'objects',
+        objectId
+      );
 
-      if (cellData.objects && typeof cellData.objects === 'object') {
-        if (cellData.objects[objectId]) {
-          return {
-            object: cellData.objects[objectId],
-            cellId: cellDoc.id,
-            cellRef: doc(
-              db,
-              'users',
-              userId,
-              'spaces',
-              spaceId,
-              'cells',
-              cellDoc.id
-            ),
-          };
-        }
+      const objectDoc = await getDoc(objectRef);
+
+      if (objectDoc.exists()) {
+        return {
+          object: objectDoc.data(),
+          cellId: cellDoc.id,
+          cellRef: doc(
+            db,
+            'users',
+            userId,
+            'spaces',
+            spaceId,
+            'cells',
+            cellDoc.id
+          ),
+          objectRef: objectRef, // Also return the object ref for direct updates
+        };
       }
     }
 
     return null;
-  } catch {
+  } catch (error) {
+    console.error('Error finding object in cells:', error);
     return null;
+  }
+};
+
+/**
+ * Get all objects in a space across all cells
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @returns {Promise<Object>} - Map of objectId -> object data
+ */
+export const getAllObjectsInSpace = async (userId, spaceId) => {
+  if (!userId || !spaceId) return {};
+
+  try {
+    const allObjects = {};
+
+    // Get all cells in the space
+    const cellsRef = collection(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells'
+    );
+    const cellsSnapshot = await getDocs(cellsRef);
+
+    // For each cell, get all objects from the objects subcollection
+    for (const cellDoc of cellsSnapshot.docs) {
+      const objectsRef = collection(
+        db,
+        'users',
+        userId,
+        'spaces',
+        spaceId,
+        'cells',
+        cellDoc.id,
+        'objects'
+      );
+
+      const objectsSnapshot = await getDocs(objectsRef);
+
+      objectsSnapshot.forEach((objectDoc) => {
+        allObjects[objectDoc.id] = objectDoc.data();
+      });
+    }
+
+    return allObjects;
+  } catch (error) {
+    console.error('Error getting all objects in space:', error);
+    return {};
   }
 };
 

@@ -198,22 +198,17 @@ const AnimatedConnectionLine = ({
         toneMapped={false}
         resolution={2} // Reduced for better performance
       />
-      {/* Invisible hitbox for interaction */}
+      {/* Invisible hitbox for interaction - won't block objects behind it */}
       <Line
         key={`hitbox-${connectionId}-${pointsKey}`}
         points={normalizedPoints}
         color="white"
-        lineWidth={14} // Reduced from 20 (0.3 reduction)
+        lineWidth={14}
         onClick={onClick}
         onPointerOver={onPointerOver}
         onPointerOut={onPointerOut}
-        transparent
-        opacity={0}
-        depthTest={true}
-        renderOrder={5} // Lower render order to ensure header text renders in front
-        polygonOffset={true}
-        polygonOffsetFactor={-0.9}
-        polygonOffsetUnits={-0.9}
+        visible={false}
+        renderOrder={-1}
       />
     </>
   );
