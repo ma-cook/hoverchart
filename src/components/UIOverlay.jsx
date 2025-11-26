@@ -246,18 +246,22 @@ const UIOverlay = ({
       // Track component-function relationships for "contains" connections
       const componentFunctions = new Map();
 
-      // Track nested components (internal helper components defined inside a parent component)
-      const nestedComponents = new Map();
-      
-      // Track which file each component was found in
-      const componentToFile = new Map(); // component name -> file path
-      const fileToComponents = new Map(); // file path -> Set of component names
-
       // Track component-to-component relationships (which components use which other components)
       const componentRelationships = new Map();
 
       // Track component-to-hook/service/store relationships
       const componentDependencies = new Map();
+
+      // Track internal helper components (components defined inside other components)
+      // Maps: parentComponentFileName -> { parent: mainComponentName, helpers: Set of internal component names }
+      const internalComponents = new Map();
+
+      // Track which components are exported as default from their files
+      const exportedComponents = new Map(); // Maps: fileName -> exported component name
+
+      // Track file-function relationships for hooks/services/utilities/stores
+      // Maps: fileName -> Set of function/hook/service names in that file
+      const fileFunctions = new Map(); // Track which file each function belongs to
 
       // Helper to determine file context
       const analyzeFile = (filePath) => {
@@ -302,6 +306,9 @@ const UIOverlay = ({
 
             const fileContext = analyzeFile(file.path);
 
+            // Extract file name without extension for file-level tracking
+            const fileName = file.path.split('/').pop().replace(/\.(jsx?|tsx?)$/, '');
+
             try {
               // Parse the file content into an AST with more lenient settings
               const ast = parse(fileContent, {
@@ -341,12 +348,33 @@ const UIOverlay = ({
                 services: [],
                 hooks: [],
                 utilities: [],
-                localFiles: [], // Track imports from other local files
               }; // Track imports per file
+              
+              // Track all components found in this file for internal component detection
+              const fileComponents = [];
 
               // Recursive function to traverse the AST
               const traverse = (node, parentIsComponent = false) => {
                 if (!node || typeof node !== 'object') return;
+                
+                // Track export default declarations to identify the main component
+                if (node.type === 'ExportDefaultDeclaration') {
+                  let exportedName = null;
+                  if (node.declaration?.type === 'Identifier') {
+                    exportedName = node.declaration.name;
+                  } else if (node.declaration?.type === 'FunctionDeclaration' && node.declaration.id) {
+                    exportedName = node.declaration.id.name;
+                  } else if (node.declaration?.type === 'CallExpression') {
+                    // Handle React.memo(Component) or similar
+                    if (node.declaration.arguments && node.declaration.arguments[0]?.type === 'Identifier') {
+                      exportedName = node.declaration.arguments[0].name;
+                    }
+                  }
+                  if (exportedName && fileContext.isComponent) {
+                    exportedComponents.set(fileName, exportedName);
+                    console.log(`📤 Exported component detected: ${exportedName} from ${fileName}`);
+                  }
+                }
 
                 // Check for import declarations to find external libraries
                 if (node.type === 'ImportDeclaration') {
@@ -357,43 +385,37 @@ const UIOverlay = ({
                       elements.imports.libraries.push(source);
                     }
                   }
-                  // Track ALL local file imports to build the file dependency graph
-                  else {
-                    // Record this import relationship
-                    fileImports.localFiles.push(source);
+                  // Track imports from stores, services, hooks, and utilities for later association
+                  else if (node.specifiers) {
+                    node.specifiers.forEach((spec) => {
+                      if (spec.imported || spec.local) {
+                        const importedName =
+                          spec.imported?.name || spec.local?.name;
 
-                    // Track imports from stores, services, hooks, and utilities for component associations
-                    if (node.specifiers) {
-                      node.specifiers.forEach((spec) => {
-                        if (spec.imported || spec.local) {
-                          const importedName =
-                            spec.imported?.name || spec.local?.name;
-
-                          // Check if it's from stores
-                          if (source.includes('/stores/')) {
-                            fileImports.stores.push(importedName);
-                          }
-                          // Check if it's from services
-                          else if (source.includes('/services/')) {
-                            fileImports.services.push(importedName);
-                          }
-                          // Check if it's from hooks
-                          else if (source.includes('/hooks/')) {
-                            fileImports.hooks.push(importedName);
-                          }
-                          // Check if it's from utils/helpers
-                          else if (
-                            source.includes('/utils/') ||
-                            source.includes('/helpers/')
-                          ) {
-                            if (!fileImports.utilities) {
-                              fileImports.utilities = [];
-                            }
-                            fileImports.utilities.push(importedName);
-                          }
+                        // Check if it's from stores
+                        if (source.includes('/stores/')) {
+                          fileImports.stores.push(importedName);
                         }
-                      });
-                    }
+                        // Check if it's from services
+                        else if (source.includes('/services/')) {
+                          fileImports.services.push(importedName);
+                        }
+                        // Check if it's from hooks
+                        else if (source.includes('/hooks/')) {
+                          fileImports.hooks.push(importedName);
+                        }
+                        // Check if it's from utils/helpers - NEW
+                        else if (
+                          source.includes('/utils/') ||
+                          source.includes('/helpers/')
+                        ) {
+                          if (!fileImports.utilities) {
+                            fileImports.utilities = [];
+                          }
+                          fileImports.utilities.push(importedName);
+                        }
+                      }
+                    });
                   }
                 }
 
@@ -495,20 +517,18 @@ const UIOverlay = ({
                     containsJSX(node.body)
                   ) {
                     // Only treat as component if it's in a component file AND returns JSX
-                    // AND we're not already inside another component (to exclude internal helper components)
-                    if (!foundItems.components.has(funcName) && !parentIsComponent) {
+                    if (!foundItems.components.has(funcName)) {
                       foundItems.components.add(funcName);
                       elements.components.push(funcName);
-                      currentComponent = funcName;
-                      componentFunctions.set(funcName, new Set());
-                      nestedComponents.set(funcName, new Set());
                       
-                      // Track which file this component is in
-                      componentToFile.set(funcName, file.path);
-                      if (!fileToComponents.has(file.path)) {
-                        fileToComponents.set(file.path, new Set());
+                      // Track all components found in this file
+                      fileComponents.push(funcName);
+                      
+                      // Set current component if not set
+                      if (!currentComponent) {
+                        currentComponent = funcName;
                       }
-                      fileToComponents.get(file.path).add(funcName);
+                      componentFunctions.set(funcName, new Set());
 
                       // Associate file imports with this component
                       if (!componentDependencies.has(funcName)) {
@@ -534,36 +554,41 @@ const UIOverlay = ({
                           .get(funcName)
                           .add({ name: utility, type: 'utility' })
                       );
-                      // Traverse function body with component context
-                      if (node.body) {
-                        traverse(node.body, true);
-                      }
-                    } else if (parentIsComponent && currentComponent) {
-                      // This is an internal helper component - add to nested components
-                      if (!foundItems.components.has(funcName)) {
-                        foundItems.components.add(funcName);
-                        elements.components.push(funcName);
-                        nestedComponents.get(currentComponent).add(funcName);
-                        // Also track its own nested components and functions
-                        componentFunctions.set(funcName, new Set());
-                        nestedComponents.set(funcName, new Set());
-                      }
+                    }
+                    // Traverse function body with component context
+                    if (node.body) {
+                      traverse(node.body, true);
                     }
                   } else if (funcName.startsWith('use') || fileContext.isHook) {
                     // Hooks: either start with 'use' OR are in /hooks/ folder
                     if (!foundItems.hooks.has(funcName)) {
                       foundItems.hooks.add(funcName);
                       elements.hooks.push(funcName);
+                      // Track file→function relationship
+                      if (!fileFunctions.has(fileName)) {
+                        fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                      }
+                      fileFunctions.get(fileName).functions.add(funcName);
                     }
                   } else if (fileContext.isService) {
                     if (!foundItems.services.has(funcName)) {
                       foundItems.services.add(funcName);
                       elements.services.push(funcName);
+                      // Track file→function relationship
+                      if (!fileFunctions.has(fileName)) {
+                        fileFunctions.set(fileName, { type: 'service', functions: new Set() });
+                      }
+                      fileFunctions.get(fileName).functions.add(funcName);
                     }
                   } else if (fileContext.isUtil) {
                     if (!foundItems.utilities.has(funcName)) {
                       foundItems.utilities.add(funcName);
                       elements.utilities.push(funcName);
+                      // Track file→function relationship
+                      if (!fileFunctions.has(fileName)) {
+                        fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                      }
+                      fileFunctions.get(fileName).functions.add(funcName);
                     }
                   } else {
                     // Default: treat as function
@@ -784,20 +809,19 @@ const UIOverlay = ({
                           containsJSX(actualInit.body || actualInit)
                         ) {
                           // Only treat as component if it's in a component file AND returns JSX
-                          // AND we're not already inside another component (to exclude internal helper components)
-                          if (!foundItems.components.has(varName) && !parentIsComponent) {
+                          if (!foundItems.components.has(varName)) {
                             foundItems.components.add(varName);
                             elements.components.push(varName);
-                            currentComponent = varName;
-                            componentFunctions.set(varName, new Set());
-                            nestedComponents.set(varName, new Set());
                             
-                            // Track which file this component is in
-                            componentToFile.set(varName, file.path);
-                            if (!fileToComponents.has(file.path)) {
-                              fileToComponents.set(file.path, new Set());
+                            // Track all components found in this file
+                            fileComponents.push(varName);
+                            
+                            // Set current component if not set (for function containment tracking)
+                            if (!currentComponent) {
+                              currentComponent = varName;
                             }
-                            fileToComponents.get(file.path).add(varName);
+                            
+                            componentFunctions.set(varName, new Set());
 
                             // Associate file imports with this component
                             if (!componentDependencies.has(varName)) {
@@ -823,20 +847,10 @@ const UIOverlay = ({
                                 .get(varName)
                                 .add({ name: utility, type: 'utility' })
                             );
-                            // Traverse function body with component context
-                            if (decl.init.body) {
-                              traverse(decl.init.body, true);
-                            }
-                          } else if (parentIsComponent && currentComponent) {
-                            // This is an internal helper component - add to nested components
-                            if (!foundItems.components.has(varName)) {
-                              foundItems.components.add(varName);
-                              elements.components.push(varName);
-                              nestedComponents.get(currentComponent).add(varName);
-                              // Also track its own nested components and functions
-                              componentFunctions.set(varName, new Set());
-                              nestedComponents.set(varName, new Set());
-                            }
+                          }
+                          // Traverse function body with component context
+                          if (decl.init.body) {
+                            traverse(decl.init.body, true);
                           }
                         } else if (
                           varName.startsWith('use') ||
@@ -846,21 +860,41 @@ const UIOverlay = ({
                           if (!foundItems.hooks.has(varName)) {
                             foundItems.hooks.add(varName);
                             elements.hooks.push(varName);
+                            // Track file→function relationship
+                            if (!fileFunctions.has(fileName)) {
+                              fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                            }
+                            fileFunctions.get(fileName).functions.add(varName);
                           }
                         } else if (fileContext.isService) {
                           if (!foundItems.services.has(varName)) {
                             foundItems.services.add(varName);
                             elements.services.push(varName);
+                            // Track file→function relationship
+                            if (!fileFunctions.has(fileName)) {
+                              fileFunctions.set(fileName, { type: 'service', functions: new Set() });
+                            }
+                            fileFunctions.get(fileName).functions.add(varName);
                           }
                         } else if (fileContext.isStore) {
                           if (!foundItems.stores.has(varName)) {
                             foundItems.stores.add(varName);
                             elements.stores.push(varName);
+                            // Track file→function relationship
+                            if (!fileFunctions.has(fileName)) {
+                              fileFunctions.set(fileName, { type: 'store', functions: new Set() });
+                            }
+                            fileFunctions.get(fileName).functions.add(varName);
                           }
                         } else if (fileContext.isUtil) {
                           if (!foundItems.utilities.has(varName)) {
                             foundItems.utilities.add(varName);
                             elements.utilities.push(varName);
+                            // Track file→function relationship
+                            if (!fileFunctions.has(fileName)) {
+                              fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                            }
+                            fileFunctions.get(fileName).functions.add(varName);
                           }
                         } else {
                           // Default: treat as function
@@ -896,6 +930,11 @@ const UIOverlay = ({
                             if (!foundItems.utilities.has(varName)) {
                               foundItems.utilities.add(varName);
                               elements.utilities.push(varName);
+                              // Track file→function relationship
+                              if (!fileFunctions.has(fileName)) {
+                                fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                              }
+                              fileFunctions.get(fileName).functions.add(varName);
                             }
                           } else if (isFunction) {
                             // Only add to general functions if NOT in a component or utility file
@@ -962,21 +1001,12 @@ const UIOverlay = ({
                   if (
                     fileContext.isComponent &&
                     extendsReactComponent &&
-                    !foundItems.components.has(className) &&
-                    !parentIsComponent
+                    !foundItems.components.has(className)
                   ) {
                     foundItems.components.add(className);
                     elements.components.push(className);
                     currentComponent = className;
                     componentFunctions.set(className, new Set());
-                    nestedComponents.set(className, new Set());
-                    
-                    // Track which file this component is in
-                    componentToFile.set(className, file.path);
-                    if (!fileToComponents.has(file.path)) {
-                      fileToComponents.set(file.path, new Set());
-                    }
-                    fileToComponents.get(file.path).add(className);
 
                     // Associate file imports with this component
                     if (!componentDependencies.has(className)) {
@@ -1003,26 +1033,17 @@ const UIOverlay = ({
                         .add({ name: utility, type: 'utility' })
                     );
                   } else if (
-                    fileContext.isComponent &&
-                    extendsReactComponent &&
-                    parentIsComponent &&
-                    currentComponent
-                  ) {
-                    // This is an internal helper class component
-                    if (!foundItems.components.has(className)) {
-                      foundItems.components.add(className);
-                      elements.components.push(className);
-                      nestedComponents.get(currentComponent).add(className);
-                      componentFunctions.set(className, new Set());
-                      nestedComponents.set(className, new Set());
-                    }
-                  } else if (
                     fileContext.isUtil &&
                     !foundItems.utilities.has(className)
                   ) {
                     // Classes in util files are utilities
                     foundItems.utilities.add(className);
                     elements.utilities.push(className);
+                    // Track file→function relationship
+                    if (!fileFunctions.has(fileName)) {
+                      fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                    }
+                    fileFunctions.get(fileName).functions.add(className);
                   } else if (
                     fileContext.isService &&
                     !foundItems.services.has(className)
@@ -1030,6 +1051,11 @@ const UIOverlay = ({
                     // Classes in service files are services
                     foundItems.services.add(className);
                     elements.services.push(className);
+                    // Track file→function relationship
+                    if (!fileFunctions.has(fileName)) {
+                      fileFunctions.set(fileName, { type: 'service', functions: new Set() });
+                    }
+                    fileFunctions.get(fileName).functions.add(className);
                   }
                 }
 
@@ -1088,6 +1114,36 @@ const UIOverlay = ({
               };
 
               traverse(ast, false);
+              
+              // After traversing the file, determine internal components based on exports
+              if (fileContext.isComponent && fileComponents.length > 1) {
+                const exportedComponent = exportedComponents.get(fileName);
+                
+                if (exportedComponent && fileComponents.includes(exportedComponent)) {
+                  // The exported component is the parent
+                  const helperComponents = fileComponents.filter(comp => comp !== exportedComponent);
+                  
+                  if (helperComponents.length > 0) {
+                    internalComponents.set(fileName, {
+                      parent: exportedComponent,
+                      helpers: new Set(helperComponents)
+                    });
+                    console.log(`🔷 File ${fileName}: parent=${exportedComponent}, internal helpers=`, helperComponents);
+                  }
+                } else {
+                  // No export found, use last component as parent (likely the main one)
+                  const parentComponent = fileComponents[fileComponents.length - 1];
+                  const helperComponents = fileComponents.slice(0, -1);
+                  
+                  if (helperComponents.length > 0) {
+                    internalComponents.set(fileName, {
+                      parent: parentComponent,
+                      helpers: new Set(helperComponents)
+                    });
+                    console.log(`🔷 File ${fileName} (no export detected): parent=${parentComponent}, internal helpers=`, helperComponents);
+                  }
+                }
+              }
             } catch {
               // Silently skip files that can't be parsed
               return; // Changed from 'continue' for Promise.all
@@ -1107,66 +1163,6 @@ const UIOverlay = ({
       elements.stores = [...new Set(elements.stores)];
       elements.utilities = [...new Set(elements.utilities)];
       elements.imports.libraries = [...new Set(elements.imports.libraries)];
-
-      // Analyze import/export relationships to identify root modules dynamically
-      // Root modules are files that:
-      // 1. Are in the root or src directory (not nested in subdirectories)
-      // 2. Are .js, .jsx, .ts, or .tsx files
-      // 3. Are likely entry points or config files (e.g., main, index, app, firebase, config)
-
-      const fileImportGraph = new Map(); // file path -> { imports: Set, importedBy: Set }
-      const fileToModuleName = new Map(); // file path -> module name (for entry points)
-
-      // Build import graph from component relationships and track all file-level imports
-      structure.forEach((file) => {
-        if (!fileImportGraph.has(file.path)) {
-          fileImportGraph.set(file.path, {
-            imports: new Set(),
-            importedBy: new Set(),
-          });
-        }
-      });
-
-      // Identify entry point files based on file location and naming patterns
-      // Entry points are files in the root or src directory (not in subdirectories like /components/, /hooks/, etc.)
-      const rootModules = [];
-      structure.forEach((file) => {
-        // Check if file is in root or src directory (not in subdirectories)
-        const isInRootOrSrc = /^(src\/)?[^/]+\.(jsx?|tsx?|js|ts)$/.test(
-          file.path
-        );
-
-        // Additional check: file should not be in component/hook/service/store/util directories
-        const isNotInSubdirectory =
-          !file.path.includes('/components/') &&
-          !file.path.includes('/hooks/') &&
-          !file.path.includes('/services/') &&
-          !file.path.includes('/stores/') &&
-          !file.path.includes('/utils/') &&
-          !file.path.includes('/helpers/') &&
-          !file.path.includes('/lib/');
-
-        if (isInRootOrSrc && isNotInSubdirectory) {
-          // Extract module name from filename (e.g., "main" from "src/main.jsx" or "firebase" from "firebase.js")
-          const moduleName = file.name.replace(/\.(jsx?|tsx?|js|ts)$/, '');
-
-          // Only add if it's not already detected as a component
-          // (e.g., App.jsx would be detected as a component, not a module)
-          const startsWithUppercase = /^[A-Z]/.test(moduleName);
-          if (!startsWithUppercase) {
-            rootModules.push(moduleName);
-            fileToModuleName.set(file.path, moduleName);
-            console.log(
-              `   📦 Detected entry point: ${file.path} → module name: ${moduleName}`
-            );
-          }
-        }
-      });
-
-      console.log(
-        '🔍 ROOT MODULES DETECTED (based on file structure):',
-        rootModules
-      );
 
       // Debug: Log all detected components with first character check
       console.log('🔍 DETECTED COMPONENTS:', elements.components);
@@ -1225,66 +1221,13 @@ const UIOverlay = ({
       // Filter component relationships to only include components that exist in our codebase
       const componentsSet = new Set(elements.components);
 
-      // Build set of all nested components (these should not appear in component relationships)
-      const allNestedComponents = new Set();
-      nestedComponents.forEach((nested) => {
-        nested.forEach((nestedComp) => allNestedComponents.add(nestedComp));
-      });
-      
-      // Identify file-level internal components (multiple components in same file)
-      // The primary/exported component is typically the first one or matches the filename
-      console.log('🔍 IDENTIFYING FILE-LEVEL INTERNAL COMPONENTS:');
-      fileToComponents.forEach((components, filePath) => {
-        if (components.size > 1) {
-          const componentsArray = Array.from(components);
-          console.log(`   File ${filePath} has ${components.size} components:`, componentsArray);
-          
-          // Determine which is the primary component (matches filename or is first)
-          const fileName = filePath.split('/').pop().replace(/\.(jsx?|tsx?)$/, '');
-          // Use case-insensitive matching to find component that matches filename
-          let primaryComponent = componentsArray.find(
-            comp => comp.toLowerCase() === fileName.toLowerCase()
-          );
-          if (!primaryComponent) {
-            primaryComponent = componentsArray[0]; // Default to first
-          }
-          
-          console.log(`   Primary component: ${primaryComponent}`);
-          
-          // All others are internal helpers
-          componentsArray.forEach(comp => {
-            if (comp !== primaryComponent) {
-              console.log(`   Internal helper: ${comp} (inside ${primaryComponent})`);
-              if (!nestedComponents.has(primaryComponent)) {
-                nestedComponents.set(primaryComponent, new Set());
-              }
-              nestedComponents.get(primaryComponent).add(comp);
-              allNestedComponents.add(comp);
-            }
-          });
-        }
-      });
-
       console.log('🔍 FILTERING COMPONENT RELATIONSHIPS:');
       console.log('   Valid components:', Array.from(componentsSet));
-      console.log('   Nested components:', Array.from(allNestedComponents));
-      console.log('   Component relationships map:', Array.from(componentRelationships.entries()));
-      
-      // DEBUG: Log nested components map details
-      console.log('🔍 NESTED COMPONENTS MAP:');
-      nestedComponents.forEach((nested, parent) => {
-        if (nested.size > 0) {
-          console.log(`   ${parent} contains:`, Array.from(nested));
-        }
-      });
 
       componentRelationships.forEach((usedComponents, component) => {
         const beforeFilter = Array.from(usedComponents);
-        // Filter to only include components that exist AND are not nested components
         const filtered = new Set(
-          [...usedComponents].filter(
-            (comp) => componentsSet.has(comp) && !allNestedComponents.has(comp)
-          )
+          [...usedComponents].filter((comp) => componentsSet.has(comp))
         );
         const afterFilter = Array.from(filtered);
 
@@ -1293,91 +1236,24 @@ const UIOverlay = ({
           console.log(
             `   ${component}: removed [${removed.join(
               ', '
-            )}] - not in components list or is nested component`
+            )}] - not in components list`
           );
         }
 
         componentRelationships.set(component, filtered);
       });
       // Remove entries with no valid relationships
-      // BUT: Keep components that have nested children (they get dashed arrows instead)
       for (const [
         component,
         usedComponents,
       ] of componentRelationships.entries()) {
         if (usedComponents.size === 0) {
-          // Check if this component has nested children
-          if (nestedComponents.has(component) && nestedComponents.get(component).size > 0) {
-            console.log(
-              `   ✓ Keeping ${component} despite no solid arrows (has ${nestedComponents.get(component).size} internal components)`
-            );
-          } else {
-            console.log(
-              `   ⚠️ Removing ${component} - no valid relationships after filtering`
-            );
-            componentRelationships.delete(component);
-          }
+          console.log(
+            `   ⚠️ Removing ${component} - no valid relationships after filtering`
+          );
+          componentRelationships.delete(component);
         }
       }
-
-      // Identify true root components based on structure analysis
-      // Root components are: App, firebase module, and main module
-      const rootComponents = new Set();
-      const childComponents = new Set();
-
-      // Build inverse relationship map (who uses this component?)
-      const usedByMap = new Map(); // component -> Set of components that use it
-      componentRelationships.forEach((usedComponents, component) => {
-        usedComponents.forEach((usedComp) => {
-          if (!usedByMap.has(usedComp)) {
-            usedByMap.set(usedComp, new Set());
-          }
-          usedByMap.get(usedComp).add(component);
-        });
-      });
-
-      console.log('🔍 IDENTIFYING ROOT COMPONENTS:');
-
-      // App is always a root if it exists
-      if (componentsSet.has('App')) {
-        rootComponents.add('App');
-        console.log('   ✅ App identified as root component');
-      }
-
-      // Identify components used by App - these are NOT root components
-      if (componentRelationships.has('App')) {
-        componentRelationships.get('App').forEach((comp) => {
-          childComponents.add(comp);
-        });
-      }
-
-      // Mark all components that are used by other components as children
-      usedByMap.forEach((usedBy, component) => {
-        if (usedBy.size > 0) {
-          childComponents.add(component);
-        }
-      });
-
-      // Any component not used by another component (except App) might be a root
-      // BUT we only want App as the true component root
-      elements.components.forEach((comp) => {
-        if (comp !== 'App' && !childComponents.has(comp)) {
-          // These are standalone components - they should be in a container group
-          console.log(`   ℹ️ Standalone component (will be grouped): ${comp}`);
-        }
-      });
-
-      console.log(
-        `   📊 Root components: ${Array.from(rootComponents).join(', ')}`
-      );
-      console.log(`   📊 Child components: ${childComponents.size}`);
-      console.log(
-        `   📊 Standalone components: ${
-          elements.components.length -
-          rootComponents.size -
-          childComponents.size
-        }`
-      );
 
       // Filter component dependencies to only include hooks/services/stores/utilities that exist in our codebase
       const hooksSet = new Set(elements.hooks);
@@ -1431,19 +1307,6 @@ const UIOverlay = ({
         elements.utilities
       );
 
-      // Add root modules first
-      if (rootModules.length > 0) {
-        markdown += `%% Root Modules\n`;
-        rootModules.forEach((module) => {
-          if (!nodeIds.has(module)) {
-            nodeIds.add(module);
-            markdown += `${module}{Component: ${module}}\n`;
-            console.log(`   📦 ROOT MODULE: ${module}`);
-          }
-        });
-        markdown += '\n';
-      }
-
       // Add components (no internal functions nested - they'll be connected via arrows)
       if (elements.components.length > 0) {
         markdown += `%% Components\n`;
@@ -1458,6 +1321,31 @@ const UIOverlay = ({
           }
           nodeIds.add(comp);
           markdown += `${comp}{Component: ${comp}}\n`;
+        });
+      }
+
+      // Add internal helper components with parent-child relationships
+      if (internalComponents.size > 0) {
+        console.log('🔷 INTERNAL HELPER COMPONENTS DETECTED:');
+        internalComponents.forEach((data, fileName) => {
+          console.log(`   ${fileName}: parent=${data.parent}, helpers=`, Array.from(data.helpers));
+        });
+
+        markdown += '\n%% Internal Helper Components\n';
+        internalComponents.forEach((data, fileName) => {
+          // Use the actual parent component (first component found in file)
+          const parentComponent = data.parent;
+          
+          data.helpers.forEach((helperComp) => {
+            // Prevent self-references
+            if (parentComponent === helperComp) {
+              console.warn(`⚠️  Skipping self-reference: ${parentComponent} -.-> ${helperComp}`);
+              return;
+            }
+            // Create dashed arrow connection: parent -.-> helper : "internal"
+            // This will make markdownDiagramService position the helper inside the parent
+            markdown += `${parentComponent} -.-> ${helperComp} : "internal"\n`;
+          });
         });
       }
 
@@ -1487,7 +1375,9 @@ const UIOverlay = ({
             console.warn(`⚠️ DUPLICATE NODE ID: ${hook} (Hook)`);
           }
           nodeIds.add(hook);
-          markdown += `${hook}[Hook: ${hook}]\n`;
+          // Hook functions are cubes with [Function: name]
+          // Only hook FILE CONTAINERS (created later) use [Hook: fileName]
+          markdown += `${hook}[Function: ${hook}]\n`;
         });
       }
 
@@ -1504,7 +1394,9 @@ const UIOverlay = ({
             console.warn(`⚠️ DUPLICATE NODE ID: ${service} (Service)`);
           }
           nodeIds.add(service);
-          markdown += `${service}((Service: ${service}))\n`;
+          // Service functions are cubes, not tetrahedrons
+          // Only service FILE CONTAINERS (created later) are tetrahedrons
+          markdown += `${service}[Function: ${service}]\n`;
         });
       }
 
@@ -1615,86 +1507,74 @@ const UIOverlay = ({
         });
       }
 
-      // Add nested component relationships (internal helper components)
-      if (nestedComponents.size > 0) {
-        // Check if there are any actual nested components
-        let hasNestedComponents = false;
-        nestedComponents.forEach((nested) => {
-          if (nested.size > 0) hasNestedComponents = true;
+      // Add file-function relationships for hooks/services/utilities/stores
+      // Files that contain multiple functions should have the file as a container
+      if (fileFunctions.size > 0) {
+        console.log('📦 FILE-FUNCTION RELATIONSHIPS DETECTED:');
+        fileFunctions.forEach((fileInfo, fileName) => {
+          console.log(`   ${fileName} (${fileInfo.type}) contains:`, Array.from(fileInfo.functions));
         });
 
-        if (hasNestedComponents) {
-          markdown += '\n%% Nested Components (Internal Helper Components)\n';
-          nestedComponents.forEach((nested, parentComponent) => {
-            nested.forEach((nestedComp) => {
-              // Nested components are already declared in the Components section
-              // Use DASHED arrow (-.->)for internal components to distinguish from regular usage (-->)
-              // Dashed arrows represent "control flow" / internal structure in Merfolk
-              const dashedArrowLine = `${parentComponent} -.-> ${nestedComp} : "internal component"`;
-              markdown += dashedArrowLine + '\n';
-              console.log(`   📦 NESTED COMPONENT MARKDOWN: ${dashedArrowLine}`);
-              console.log(`   📦 NESTED: ${nestedComp} inside ${parentComponent}`);
-            });
+        markdown += '\n%% File Container Nodes\n';
+        // Create file nodes for files that contain multiple functions
+        fileFunctions.forEach((fileInfo, fileName) => {
+          // Only create container if file has more than 1 function
+          if (fileInfo.functions.size > 1) {
+            // Use fileName__file to avoid conflicts when file name matches a contained function
+            const fileNodeId = fileInfo.functions.has(fileName) ? `${fileName}__file` : fileName;
+            
+            if (nodeIds.has(fileNodeId)) {
+              duplicates.push({
+                id: fileNodeId,
+                type: `${fileInfo.type} File`,
+                section: 'File Container Nodes',
+              });
+              console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (${fileInfo.type} File)`);
+            }
+            nodeIds.add(fileNodeId);
+            
+            // Use appropriate shape based on file type
+            if (fileInfo.type === 'service') {
+              markdown += `${fileNodeId}((Service: ${fileName}))\n`;
+            } else if (fileInfo.type === 'hook') {
+              markdown += `${fileNodeId}[Hook: ${fileName}]\n`;
+            } else if (fileInfo.type === 'store') {
+              markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
+            } else {
+              // utility
+              markdown += `${fileNodeId}[Function: ${fileName}]\n`;
+            }
+            
+            // Store the file node ID for later connection generation
+            fileInfo.nodeId = fileNodeId;
+          }
+        });
+
+        // Add file→function connections with dashed arrows (containment)
+        markdown += '\n%% File-Function Relationships\n';
+        fileFunctions.forEach((fileInfo, fileName) => {
+          // Use the stored file node ID (which may have __file suffix)
+          const fileNodeId = fileInfo.nodeId;
+          
+          fileInfo.functions.forEach((funcName) => {
+            // Create connection from file container to each function it contains
+            if (fileNodeId) {
+              markdown += `${fileNodeId} -.-> ${funcName} : "contains"\n`;
+            }
           });
-        }
+        });
       }
 
       // Add component-to-component relationships
-      if (componentRelationships.size > 0 || rootModules.length > 0) {
+      if (componentRelationships.size > 0) {
         console.log('🔗 COMPONENT RELATIONSHIPS DETECTED:');
         componentRelationships.forEach((usedComponents, component) => {
           console.log(`   ${component} uses:`, Array.from(usedComponents));
         });
 
         markdown += '\n%% Component Relationships\n';
-
-        // DEBUG: Check what's in allNestedComponents before filtering
-        console.log('🔍 ALL NESTED COMPONENTS SET BEFORE FILTERING:', Array.from(allNestedComponents));
-
-        // Build relationships dynamically based on which components exist in the codebase
-        // Root modules (entry points) connect to components they import/use
-        rootModules.forEach((module) => {
-          // Find components that are likely imported by this root module
-          // This is determined by:
-          // 1. App component is typically imported by main/index
-          // 2. Firebase config may be imported by App or other components
-
-          if (module === 'main' || module === 'index') {
-            // Entry points typically render the App component
-            if (nodeIds.has('App')) {
-              markdown += `${module} --> App : "entry point"\n`;
-              console.log(`   📝 ROOT: ${module} --> App`);
-            }
-          } else if (module === 'firebase') {
-            // Firebase is a configuration module that provides setup
-            // It's typically imported by components that need auth/database
-            // We'll connect it to App as that's the most common pattern
-            if (nodeIds.has('App')) {
-              markdown += `${module} --> App : "config"\n`;
-              console.log(`   📝 ROOT: ${module} --> App`);
-            }
-          } else {
-            // For other root modules, try to find what they export/connect to
-            // Look for components with similar names or common patterns
-            const moduleName = module.toLowerCase();
-            elements.components.forEach((comp) => {
-              const compName = comp.toLowerCase();
-              if (compName.includes(moduleName) || compName === 'app') {
-                markdown += `${module} --> ${comp} : "provides"\n`;
-                console.log(`   📝 ROOT: ${module} --> ${comp}`);
-              }
-            });
-          }
-        });
-
         componentRelationships.forEach((usedComponents, component) => {
           usedComponents.forEach((usedComp) => {
-            // Skip if this is a nested/internal component - it already has a dashed arrow
-            if (allNestedComponents.has(usedComp)) {
-              console.log(`   ⏭️  SKIPPING solid arrow for nested component: ${component} -> ${usedComp} (already has dashed arrow)`);
-              return;
-            }
-            
             // Generate descriptive labels based on component names
             let label = 'uses';
             if (usedComp.toLowerCase().includes('renderer')) {
