@@ -286,9 +286,7 @@ const UIOverlay = ({
         batches.push(structure.slice(i, i + BATCH_SIZE));
       }
 
-      console.log(
-        `📦 Processing ${structure.length} files in ${batches.length} batches...`
-      );
+    
 
       for (const batch of batches) {
         // Process all files in this batch in parallel
@@ -372,7 +370,7 @@ const UIOverlay = ({
                   }
                   if (exportedName && fileContext.isComponent) {
                     exportedComponents.set(fileName, exportedName);
-                    console.log(`📤 Exported component detected: ${exportedName} from ${fileName}`);
+                    
                   }
                 }
 
@@ -1128,7 +1126,7 @@ const UIOverlay = ({
                       parent: exportedComponent,
                       helpers: new Set(helperComponents)
                     });
-                    console.log(`🔷 File ${fileName}: parent=${exportedComponent}, internal helpers=`, helperComponents);
+                   
                   }
                 } else {
                   // No export found, use last component as parent (likely the main one)
@@ -1140,7 +1138,7 @@ const UIOverlay = ({
                       parent: parentComponent,
                       helpers: new Set(helperComponents)
                     });
-                    console.log(`🔷 File ${fileName} (no export detected): parent=${parentComponent}, internal helpers=`, helperComponents);
+                   
                   }
                 }
               }
@@ -1165,7 +1163,7 @@ const UIOverlay = ({
       elements.imports.libraries = [...new Set(elements.imports.libraries)];
 
       // Debug: Log all detected components with first character check
-      console.log('🔍 DETECTED COMPONENTS:', elements.components);
+     
       elements.components.forEach((comp) => {
         const startsWithUppercase = /^[A-Z]/.test(comp);
         if (!startsWithUppercase) {
@@ -1221,8 +1219,7 @@ const UIOverlay = ({
       // Filter component relationships to only include components that exist in our codebase
       const componentsSet = new Set(elements.components);
 
-      console.log('🔍 FILTERING COMPONENT RELATIONSHIPS:');
-      console.log('   Valid components:', Array.from(componentsSet));
+
 
       componentRelationships.forEach((usedComponents, component) => {
         const beforeFilter = Array.from(usedComponents);
@@ -1233,11 +1230,7 @@ const UIOverlay = ({
 
         if (beforeFilter.length !== afterFilter.length) {
           const removed = beforeFilter.filter((c) => !afterFilter.includes(c));
-          console.log(
-            `   ${component}: removed [${removed.join(
-              ', '
-            )}] - not in components list`
-          );
+        
         }
 
         componentRelationships.set(component, filtered);
@@ -1248,9 +1241,7 @@ const UIOverlay = ({
         usedComponents,
       ] of componentRelationships.entries()) {
         if (usedComponents.size === 0) {
-          console.log(
-            `   ⚠️ Removing ${component} - no valid relationships after filtering`
-          );
+     
           componentRelationships.delete(component);
         }
       }
@@ -1286,26 +1277,7 @@ const UIOverlay = ({
       const nodeIds = new Set();
       const duplicates = [];
 
-      // DEBUG: Log all element categories before markdown generation
-      console.log('📊 ELEMENT COUNTS BEFORE MARKDOWN GENERATION:');
-      console.log(
-        `   Components: ${elements.components.length}`,
-        elements.components
-      );
-      console.log(
-        `   Functions: ${elements.functions.length}`,
-        elements.functions
-      );
-      console.log(`   Hooks: ${elements.hooks.length}`, elements.hooks);
-      console.log(
-        `   Services: ${elements.services.length}`,
-        elements.services
-      );
-      console.log(`   Stores: ${elements.stores.length}`, elements.stores);
-      console.log(
-        `   Utilities: ${elements.utilities.length}`,
-        elements.utilities
-      );
+  
 
       // Add components (no internal functions nested - they'll be connected via arrows)
       if (elements.components.length > 0) {
@@ -1326,10 +1298,8 @@ const UIOverlay = ({
 
       // Add internal helper components with parent-child relationships
       if (internalComponents.size > 0) {
-        console.log('🔷 INTERNAL HELPER COMPONENTS DETECTED:');
-        internalComponents.forEach((data, fileName) => {
-          console.log(`   ${fileName}: parent=${data.parent}, helpers=`, Array.from(data.helpers));
-        });
+       
+      
 
         markdown += '\n%% Internal Helper Components\n';
         internalComponents.forEach((data, fileName) => {
@@ -1510,10 +1480,7 @@ const UIOverlay = ({
       // Add file-function relationships for hooks/services/utilities/stores
       // Files that contain multiple functions should have the file as a container
       if (fileFunctions.size > 0) {
-        console.log('📦 FILE-FUNCTION RELATIONSHIPS DETECTED:');
-        fileFunctions.forEach((fileInfo, fileName) => {
-          console.log(`   ${fileName} (${fileInfo.type}) contains:`, Array.from(fileInfo.functions));
-        });
+     
 
         markdown += '\n%% File Container Nodes\n';
         // Create file nodes for files that contain multiple functions
@@ -1567,10 +1534,8 @@ const UIOverlay = ({
 
       // Add component-to-component relationships
       if (componentRelationships.size > 0) {
-        console.log('🔗 COMPONENT RELATIONSHIPS DETECTED:');
-        componentRelationships.forEach((usedComponents, component) => {
-          console.log(`   ${component} uses:`, Array.from(usedComponents));
-        });
+     
+        
 
         markdown += '\n%% Component Relationships\n';
         componentRelationships.forEach((usedComponents, component) => {
@@ -1590,9 +1555,7 @@ const UIOverlay = ({
             } else if (usedComp.toLowerCase().includes('connection')) {
               label = 'connections';
             }
-            console.log(
-              `   📝 Markdown: ${component} --> ${usedComp} : "${label}"`
-            );
+        
             markdown += `${component} --> ${usedComp} : "${label}"\n`;
           });
         });
@@ -1642,7 +1605,7 @@ const UIOverlay = ({
             currentSpaceId,
             `${repo.name}-diagram.md`
           );
-          console.log('Markdown uploaded to Firebase Storage:', storageUrl);
+         
         } catch (uploadError) {
           console.error('Failed to upload markdown to storage:', uploadError);
           // Continue with processing even if upload fails
@@ -1878,7 +1841,7 @@ const UIOverlay = ({
           // Objects and connections are rendered immediately
           // But wait for database save to complete before showing completion message
           if (result.savePromise) {
-            console.log('⏳ Waiting for database save to complete...');
+         
             await result.savePromise;
           }
 

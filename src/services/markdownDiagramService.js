@@ -183,29 +183,23 @@ export class MarkdownDiagramService {
 
     // Analyze connections to build parent-child relationships
     if (graph.connections && graph.connections.size > 0) {
-      console.log(
-        '🔍 RELATIONSHIP DEBUGGING - Total connections:',
-        graph.connections.size
-      );
+    
 
       const addParentChildRelation = (parentId, childId) => {
         if (!parentId || !childId) return;
-        console.log(`🔗 ADDING PARENT-CHILD: ${parentId} -> ${childId}`);
+        if (parentId === childId) return; // Prevent self-referential parent-child relationships
+      
         if (!parentChildMap.has(parentId)) {
           parentChildMap.set(parentId, new Set());
         }
         parentChildMap.get(parentId).add(childId);
-        childParentMap.set(childId, parentId);
-        console.log(
-          `   ✅ Parent ${parentId} now has children: [${Array.from(
-            parentChildMap.get(parentId)
-          ).join(', ')}]`
-        );
-        console.log(
-          `   ✅ Child ${childId} now has parent: ${childParentMap.get(
-            childId
-          )}`
-        );
+        
+        // Only set hierarchical parent if not already set
+        // This prevents overwriting with a different parent when a component is used by multiple parents
+        if (!childParentMap.has(childId)) {
+          childParentMap.set(childId, parentId);
+        }
+  
       };
       Array.from(graph.connections.values()).forEach((connection) => {
         const sourceId = connection.source?.nodeId || connection.source;
@@ -275,13 +269,7 @@ export class MarkdownDiagramService {
             // Solid arrows (-->) indicate external usage/composition
 
             // DEBUG: Log the entire connection object
-            console.log(`🔍 CONNECTION DETECTED: ${sourceId} -> ${targetId}`);
-            console.log(
-              `   Connection object:`,
-              JSON.stringify(connection, null, 2)
-            );
-            console.log(`   Connection type:`, connection.type);
-            console.log(`   Connection label:`, connection.label);
+       
 
             // 3d-ast-generator sets connection.type based on arrow syntax:
             // '-->' = 'dataflow' (solid arrow for data flow/usage)
@@ -302,9 +290,7 @@ export class MarkdownDiagramService {
             componentConnectionTypes.get(connectionKey).add(connectionType);
 
             if (isInternalComponent) {
-              console.log(
-                `📦 INTERNAL COMPONENT DETECTED (controlflow/dashed arrow): ${childId} inside ${parentId}`
-              );
+        
               // Ensure the hierarchy knows this dashed arrow means containment
               addParentChildRelation(parentId, childId);
               internalComponentChildren.add(childId);
@@ -325,41 +311,30 @@ export class MarkdownDiagramService {
       });
 
       // After processing all connections, ensure components with ANY dashed connection are marked as internal
-      console.log('🔍 POST-PROCESSING: Checking for mixed connection types...');
+  
       componentConnectionTypes.forEach((types, key) => {
         const [parentId, childId] = key.split('->');
         const hasControlFlow = types.has('controlflow') || types.has('dotted');
         const hasDataFlow = types.has('dataflow');
 
         if (hasControlFlow && hasDataFlow) {
-          console.log(
-            `⚠️  MIXED CONNECTIONS: ${parentId} -> ${childId} has BOTH solid and dashed arrows`
-          );
-          console.log(`   Connection types:`, Array.from(types));
-          console.log(`   Treating as INTERNAL (dashed takes precedence)`);
+       
           internalComponentChildren.add(childId);
           if (!childParentMap.has(childId)) {
             addParentChildRelation(parentId, childId);
           }
         } else if (hasControlFlow) {
-          console.log(
-            `✓ Dashed only: ${parentId} -> ${childId} marked as INTERNAL`
-          );
+         
           internalComponentChildren.add(childId);
           if (!childParentMap.has(childId)) {
             addParentChildRelation(parentId, childId);
           }
         } else {
-          console.log(
-            `→ Solid only: ${parentId} -> ${childId} marked as EXTERNAL`
-          );
+        
         }
       });
 
-      console.log(
-        '🔍 FINAL INTERNAL COMPONENTS:',
-        Array.from(internalComponentChildren)
-      );
+     
     }
 
     // Identify root nodes (nodes with no parents)
@@ -369,22 +344,6 @@ export class MarkdownDiagramService {
       }
     });
 
-    // Add debug logging to verify the final state
-    console.log('🔍 FINAL PARENT-CHILD MAP:');
-    parentChildMap.forEach((children, parentId) => {
-      console.log(`   ${parentId} -> [${Array.from(children).join(', ')}]`);
-    });
-
-    console.log('🔍 FINAL CHILD-PARENT MAP:');
-    childParentMap.forEach((parentId, childId) => {
-      console.log(`   ${childId} <- ${parentId}`);
-    });
-
-    console.log(
-      '🔍 FINAL INTERNAL COMPONENTS SET:',
-      Array.from(internalComponentChildren)
-    );
-    console.log('🔍 FINAL ROOT NODES:', Array.from(rootNodes));
 
     return {
       parentChildMap,
@@ -488,13 +447,6 @@ export class MarkdownDiagramService {
     const totalNestedChildren =
       cubeChildren.length + internalComponentChildrenArray.length;
 
-    console.log(`🔍 Scale calculation for ${nodeId}:`);
-    console.log(`   Cube children (functions): ${cubeChildren.length}`);
-    console.log(`   All component children: ${componentChildren.length}`);
-    console.log(
-      `   Internal component children: ${internalComponentChildrenArray.length}`
-    );
-    console.log(`   Total nested (should fit inside): ${totalNestedChildren}`);
 
     if (totalNestedChildren > 0) {
       // For cone-based hierarchies, use more conservative scaling
@@ -512,51 +464,54 @@ export class MarkdownDiagramService {
         cubeChildren.length > 0 || internalComponentChildrenArray.length > 0;
       const hasInternalComponents = internalComponentChildrenArray.length > 0;
       
+      // IMPORTANT: This spacing MUST match the actual spacing used in calculateNodePosition
+      // for internal components/functions (currently 50 units)
+      const actualChildSpacing = 50; // Must match the 'spacing' value in calculateNodePosition
+      
       let requiredSpace;
 
       if (hasInternalComponents && cubeChildren.length === 0) {
         // Only internal helper components, no functions
         // Parent should be 2x the size of the internal component to contain it
-        console.log(`🔷 Parent ${nodeId} has ${internalComponentChildrenArray.length} internal component(s), no functions`);
+      
         requiredSpace = maxChildSize * 2; // Parent is 2x the internal component
       } else if (hasInternalComponents && cubeChildren.length > 0) {
         // Has both internal components AND functions
         // Need space for both
-        console.log(`🔷 Parent ${nodeId} has ${internalComponentChildrenArray.length} internal component(s) + ${cubeChildren.length} function(s)`);
+       
         const totalInternalChildren = cubeChildren.length + internalComponentChildrenArray.length;
         
-        // Use moderate spacing for mixed content
-        const baseSiblingSpacing = Math.max(30, maxChildSize * 0.8);
-        
+        // Use the actual spacing from positioning logic
         if (totalInternalChildren <= 2) {
           requiredSpace = maxChildSize * 2.5;
-        } else if (totalInternalChildren <= 8) {
-          requiredSpace = baseSiblingSpacing * 1.5 + maxChildSize;
         } else {
+          // Calculate 3D grid dimensions
           const gridSize3D = Math.ceil(Math.pow(totalInternalChildren, 1 / 3));
-          requiredSpace = (gridSize3D - 1) * baseSiblingSpacing + maxChildSize;
+          // Grid spans from -(gridSize-1)/2 to +(gridSize-1)/2 in each dimension
+          // So total span is (gridSize-1) * spacing, plus child size on each edge
+          requiredSpace = (gridSize3D - 1) * actualChildSpacing + maxChildSize * 2;
         }
       } else if (cubeChildren.length > 0) {
         // Only functions, no internal components
-        const baseSiblingSpacing = Math.max(25, maxChildSize * 1.2);
-        
         if (cubeChildren.length === 1) {
           requiredSpace = maxChildSize * 2;
-        } else if (cubeChildren.length <= 8) {
-          requiredSpace = baseSiblingSpacing + maxChildSize;
         } else {
+          // Calculate 3D grid dimensions
           const gridSize3D = Math.ceil(Math.pow(cubeChildren.length, 1 / 3));
-          requiredSpace = (gridSize3D - 1) * baseSiblingSpacing + maxChildSize;
+          // Grid spans from -(gridSize-1)/2 to +(gridSize-1)/2 in each dimension
+          // So total span is (gridSize-1) * spacing, plus child size on each edge
+          requiredSpace = (gridSize3D - 1) * actualChildSpacing + maxChildSize * 2;
         }
       } else {
         // No internal content (shouldn't happen if totalNestedChildren > 0)
         requiredSpace = maxChildSize * 1.2;
       }
 
-      // Conservative padding for cone structure
+      // Add generous padding to ensure children don't touch dodecahedron edges
+      // Dodecahedrons have irregular edges, so we need extra room
       const adaptivePadding = hasInternalContent
-        ? Math.max(15, maxChildSize * 0.3) // Moderate padding for internal content
-        : 5; // Minimal padding if no internal content
+        ? Math.max(30, requiredSpace * 0.3) // 30% padding or at least 30 units
+        : 10;
 
       const requiredSize = requiredSpace + adaptivePadding;
 
@@ -800,6 +755,7 @@ export class MarkdownDiagramService {
    * @param {Map} graphNodes - Map of all nodes
    * @param {Map} parentChildMap - Map of parent to children relationships
    * @param {Set} internalComponentChildren - Set of component IDs that are internal (nested) components
+   * @param {Array} siblingIds - Array of sibling node IDs for calculating max sibling size
    * @returns {Array} - [x, y, z] position
    */
   calculateNodePosition(
@@ -813,7 +769,8 @@ export class MarkdownDiagramService {
     rootNodes,
     graphNodes,
     parentChildMap, // Added parameter for calculating actual component sizes
-    internalComponentChildren // NEW: Set of internal component IDs
+    internalComponentChildren, // NEW: Set of internal component IDs
+    siblingIds = [] // NEW: Array of sibling node IDs
   ) {
     // Get node type to determine positioning strategy
     const node = graphNodes.get(nodeId);
@@ -859,12 +816,10 @@ export class MarkdownDiagramService {
       if (nodeType === 'component' && !isInternalComponent) {
         // EXTERNAL COMPONENT POSITIONING: Dynamic square grid arrangement around parent
         // These are regular child components that should be positioned OUTSIDE the parent
-        // Use actual component sizes (not subtrees) and 200 units spacing
 
-        const spacingBetweenComponents = 200; // Fixed spacing between sibling components
         const baseDodecahedronRadius = 10; // Base dodecahedron size
 
-        // Calculate the actual size of this component (not its entire subtree)
+        // Calculate the actual size of this component (for reference)
         const componentScale = this.calculateDodecahedronScale(
           nodeId,
           parentChildMap,
@@ -875,49 +830,89 @@ export class MarkdownDiagramService {
         const actualComponentSize =
           baseDodecahedronRadius * Math.max(...componentScale.nodeScale);
 
-        // Modest Y offset to ensure child components are slightly below parent
-        // Use a fixed offset instead of multiplying by level to avoid exponential growth
-        const depthOffset = 100; // Fixed offset for all levels
+        // Filter siblingIds to only EXTERNAL components for correct grid positioning
+        // This prevents sparse grids when there are mixed children (components + functions)
+        const externalComponentSiblings = siblingIds.filter((sibId) => {
+          const sibNode = graphNodes.get(sibId);
+          return sibNode && sibNode.type === 'component' && !internalComponentChildren.has(sibId);
+        });
+        
+        // Calculate this component's index among external component siblings only
+        const componentSiblingIndex = externalComponentSiblings.indexOf(nodeId);
+        const componentSiblingCount = externalComponentSiblings.length;
 
-        console.log(`🔵 External component positioning: ${nodeId}, level=${level}, siblingCount=${siblingCount}, siblingIndex=${siblingIndex}`);
-        console.log(`   Parent position: ${JSON.stringify(parentPosition)}, component scale: ${JSON.stringify(componentScale.nodeScale)}, actualSize: ${actualComponentSize.toFixed(1)}`);
+        // Calculate spacing based on the MAXIMUM sibling size
+        // This ensures all siblings in a grid use consistent spacing
+        let maxSiblingSize = actualComponentSize;
+        externalComponentSiblings.forEach((sibId) => {
+          const sibScale = this.calculateDodecahedronScale(
+            sibId,
+            parentChildMap,
+            graphNodes,
+            internalComponentChildren,
+            level
+          );
+          const sibSize = baseDodecahedronRadius * Math.max(...sibScale.nodeScale);
+          if (sibSize > maxSiblingSize) {
+            maxSiblingSize = sibSize;
+          }
+        });
+        
+        // Gap between edges - scale based on BOTH component size AND hierarchy level
+        // Higher levels (level 1, 2) need more spacing for large dodecahedrons
+        // Lower levels (level 3+) with small components need much less spacing
+        const levelFactor = level <= 2 ? 1.0 : 0.3;
+        const baseMinGap = level <= 2 ? 80 : 20;
+        const proportionalGap = maxSiblingSize * 0.5 * levelFactor;
+        const gapBetweenEdges = Math.max(baseMinGap, proportionalGap);
+        
+        // Spacing = diameter of largest + gap
+        // For deeper levels, reduce the diameter multiplier as well
+        const diameterMultiplier = level <= 2 ? 2.0 : 1.5;
+        const spacingBetweenComponents = (maxSiblingSize * diameterMultiplier) + gapBetweenEdges;
 
-        if (siblingCount === 1) {
-          // Single child component - place directly to the right of parent
-          // Use FIXED spacing to prevent compounding in deep hierarchies
-          const totalSpacing = spacingBetweenComponents; // Fixed 200 units
+        // Calculate depth offset based on parent's actual size to prevent overlap
+        let depthOffset = 150; // Base offset
+        if (containerSize && typeof containerSize === 'number') {
+          depthOffset = Math.max(150, containerSize * 2.5);
+        }
+
+        // Debug spacing for problematic components
+        if (nodeId === 'TextStyleUI' || nodeId === 'ObjectUI' || nodeId === 'TetrahedronFace' || nodeId === 'TextSprite') {
+          console.log(`📐 ${nodeId} spacing: maxSiblingSize=${maxSiblingSize.toFixed(1)}, level=${level}, spacing=${spacingBetweenComponents.toFixed(1)}, siblingCount=${componentSiblingCount}, siblingIndex=${componentSiblingIndex}, depthOffset=${depthOffset.toFixed(1)}`);
+        }
+
+        if (componentSiblingCount <= 1) {
+          // Single external component child - place directly to the right of parent
+          const totalSpacing = spacingBetweenComponents;
           const position = [
             parentPosition[0] + totalSpacing,
             parentPosition[1] - depthOffset,
             parentPosition[2],
           ];
-          console.log(`   Single child position: ${JSON.stringify(position)}, totalSpacing=${totalSpacing.toFixed(1)}`);
+         
           return position;
         } else {
-          // Multiple child components - arrange in a SIMPLE uniform grid
-          // Parents stay in fixed positions, collision detection happens for their children
-          const gridSize = Math.ceil(Math.sqrt(siblingCount));
-          const row = Math.floor(siblingIndex / gridSize);
-          const col = siblingIndex % gridSize;
+          // Multiple external component children - arrange in a grid using component-only indices
+          const gridSize = Math.ceil(Math.sqrt(componentSiblingCount));
+          const row = Math.floor(componentSiblingIndex / gridSize);
+          const col = componentSiblingIndex % gridSize;
 
-          // Use fixed spacing between parent components
-          const cellWidth = spacingBetweenComponents;
-          const cellHeight = spacingBetweenComponents;
-
-          // Calculate grid dimensions to center it around the parent
-          const gridWidth = (gridSize - 1) * cellWidth;
-          const gridHeight = (gridSize - 1) * cellHeight;
-
-          // Offset to center the grid around parent position
-          const offsetX = col * cellWidth - gridWidth / 2;
-          const offsetZ = row * cellHeight - gridHeight / 2;
+          // Position grid starting at parent + spacing for first element (col=0)
+          const offsetX = spacingBetweenComponents * (col + 1);
+          const offsetZ = (row * spacingBetweenComponents) - ((gridSize - 1) * spacingBetweenComponents / 2);
 
           const position = [
             parentPosition[0] + offsetX,
             parentPosition[1] - depthOffset,
             parentPosition[2] + offsetZ,
           ];
-          console.log(`   Grid position [${row},${col}]: ${JSON.stringify(position)}, offsetX=${offsetX.toFixed(1)}, offsetZ=${offsetZ.toFixed(1)}`);
+          
+          // Debug actual positions for problematic components
+          if (nodeId === 'TextStyleUI' || nodeId === 'ObjectUI' || nodeId === 'TetrahedronFace' || nodeId === 'TextSprite') {
+            console.log(`📍 ${nodeId} position: [${position.map(p => p.toFixed(1)).join(', ')}], parent: [${parentPosition.map(p => p.toFixed(1)).join(', ')}]`);
+          }
+          
           return position;
         }
       } else {
@@ -1025,11 +1020,7 @@ export class MarkdownDiagramService {
       return;
     }
 
-    console.log(
-      `🔧 positionNodeHierarchy: ${nodeId} (type: ${nodeType}, isTopLevel: ${isTopLevel}, hasParent: ${childParentMap.has(
-        nodeId
-      )})`
-    );
+   
 
     if (
       nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE ||
@@ -1043,7 +1034,7 @@ export class MarkdownDiagramService {
         nodeType === MarkdownDiagramService.NODE_TYPE_HOOK) &&
       isTopLevel
     ) {
-      console.log(`   ⚠️  SKIPPING top-level ${nodeType}: ${nodeId}`);
+    
       return; // Skip top-level functions (utility modules) and hooks for grouped positioning
     }
 
@@ -1072,6 +1063,32 @@ export class MarkdownDiagramService {
 
     // Calculate position
 
+    // Get sibling IDs from parent's children for consistent grid spacing
+    // IMPORTANT: Only include siblings that share the same HIERARCHICAL parent
+    // This prevents mixing components from different hierarchical groups
+    const parentId = context.childParentMap.get(nodeId);
+    let siblingIds = [];
+    if (parentId && parentId !== nodeId) {  // Prevent self-referential parent
+      const allParentChildren = Array.from(parentChildMap.get(parentId) || new Set());
+      // Filter to only include COMPONENT children whose hierarchical parent is the same as ours
+      // Functions should NOT be in this list - they use internal positioning
+      siblingIds = allParentChildren.filter((sibId) => {
+        const sibNode = graphNodes.get(sibId);
+        const isComponent = sibNode && sibNode.type === 'component';
+        const hasSameParent = context.childParentMap.get(sibId) === parentId;
+        return isComponent && hasSameParent;
+      }).sort();
+      
+      // Log sibling groups (only once per unique group)
+      const groupKey = siblingIds.join(',');
+      if (!this._loggedGroups) this._loggedGroups = new Set();
+      if (siblingIds.length > 0 && !this._loggedGroups.has(groupKey)) {
+        this._loggedGroups.add(groupKey);
+        console.log(`👥 Sibling group at level ${level}: [${siblingIds.join(', ')}]`);
+      }
+    }
+    
+  
     const nodePosition = this.calculateNodePosition(
       nodeId,
       basePosition,
@@ -1083,7 +1100,8 @@ export class MarkdownDiagramService {
       rootNodes,
       graphNodes,
       parentChildMap,
-      context?.internalComponentChildren || new Set()
+      context?.internalComponentChildren || new Set(),
+      siblingIds
     );
 
     // Store position and scale
@@ -1091,9 +1109,7 @@ export class MarkdownDiagramService {
     nodeScales.set(nodeId, nodeScale);
 
     // Debug log for tracking position accumulation
-    if (level > 0) {
-      console.log(`📍 Positioned ${nodeId} at level ${level}: position=${JSON.stringify(nodePosition)}, parentPos=${JSON.stringify(parentPosition)}`);
-    }
+  
 
     // Process children recursively
     const children = parentChildMap.get(nodeId) || new Set();
@@ -1208,20 +1224,14 @@ export class MarkdownDiagramService {
       // Only nodes with 2+ component children get containers
       if (componentChildren.length >= 2) {
         containerParents.push(nodeId);
-        console.log(
-          `   📦 Container parent: ${nodeId} has ${
-            componentChildren.length
-          } component children: ${componentChildren.join(', ')}`
-        );
+      
       }
     }
 
-    console.log(
-      `📦 Found ${containerParents.length} container parents (nodes with 2+ component children)`
-    );
+   
 
     if (containerParents.length < 2) {
-      console.log('⏭️  Not enough containers to check for collisions');
+      
       return; // Need at least 2 containers to have collisions
     }
 
@@ -1241,10 +1251,14 @@ export class MarkdownDiagramService {
         if (level > 20) break; // Safety limit
       }
 
-      if (!containersByLevel.has(level)) {
-        containersByLevel.set(level, []);
+      // ONLY include root-level containers (level 0) for collision detection
+      // Skip lower-level containers to preserve their internal spacing
+      if (level === 0) {
+        if (!containersByLevel.has(level)) {
+          containersByLevel.set(level, []);
+        }
+        containersByLevel.get(level).push(containerId);
       }
-      containersByLevel.get(level).push(containerId);
     }
 
     // Add virtual containers at level -1 (above/beside root)
@@ -1299,11 +1313,7 @@ export class MarkdownDiagramService {
       const containers = containersByLevel.get(level);
       if (containers.length < 2) continue;
 
-      console.log(
-        `🔍 Checking ${
-          containers.length
-        } containers at level ${level} for collisions: ${containers.join(', ')}`
-      );
+   
 
       // Calculate bounding boxes for each container
       const containerBBoxes = [];
@@ -1425,9 +1435,7 @@ export class MarkdownDiagramService {
           const bbox2 = containerBBoxes[j];
 
           if (checkOverlap(bbox1, bbox2)) {
-            console.log(
-              `⚠️  Container collision: ${bbox1.nodeId} ↔ ${bbox2.nodeId}`
-            );
+        
 
             // Calculate actual overlap distance
             const overlapX =
@@ -1439,7 +1447,7 @@ export class MarkdownDiagramService {
 
             // Only resolve if there's meaningful overlap (> 1 unit)
             if (overlapX < 1 && overlapZ < 1) {
-              console.log(`   ✓ Overlap negligible, skipping`);
+             
               continue;
             }
 
@@ -1502,11 +1510,7 @@ export class MarkdownDiagramService {
                 bbox2.minX += offsetX;
                 bbox2.maxX += offsetX;
 
-                console.log(
-                  `   ➡️  Pushed ${bbox2.nodeId} by ${offsetX.toFixed(
-                    1
-                  )} on X axis`
-                );
+           
               }
             } else {
               // Push apart depth-wise - move just enough to separate + small gap
@@ -1560,11 +1564,7 @@ export class MarkdownDiagramService {
                 bbox2.minZ += offsetZ;
                 bbox2.maxZ += offsetZ;
 
-                console.log(
-                  `   ⬇️  Pushed ${bbox2.nodeId} by ${offsetZ.toFixed(
-                    1
-                  )} on Z axis`
-                );
+               
               }
             }
           }
@@ -1572,7 +1572,7 @@ export class MarkdownDiagramService {
       }
     }
 
-    console.log('✅ Container collision resolution complete');
+  
   }
 
   /**
@@ -1590,10 +1590,7 @@ export class MarkdownDiagramService {
       internalComponentChildren,
     } = context;
 
-    console.log(
-      '🔍 positionGroupedNodes: internalComponentChildren =',
-      internalComponentChildren ? Array.from(internalComponentChildren) : []
-    );
+   
 
     // Collect top-level nodes by type (nodes without parents)
     const utilityNodes = []; // Top-level function nodes (utility modules)
@@ -1634,7 +1631,7 @@ export class MarkdownDiagramService {
       return rootModuleNames.includes(nodeId);
     });
 
-    console.log('🌳 Actual root modules (entry points):', actualRootModules);
+   
 
     // Traverse from root modules to mark all reachable components
     const markReachable = (nodeId) => {
@@ -1646,7 +1643,7 @@ export class MarkdownDiagramService {
       // Only track components (not functions/services/etc)
       if (node.type === MarkdownDiagramService.NODE_TYPE_COMPONENT) {
         reachableFromRootModules.add(nodeId);
-        console.log(`   ✅ ${nodeId} is reachable from root modules`);
+      
       }
 
       // Recursively mark children as reachable (hierarchical contains relationships)
@@ -1669,7 +1666,7 @@ export class MarkdownDiagramService {
 
     // Start traversal from each root module
     actualRootModules.forEach((rootModuleId) => {
-      console.log(`🔍 Traversing from root module: ${rootModuleId}`);
+     
       markReachable(rootModuleId);
     });
 
@@ -1688,9 +1685,7 @@ export class MarkdownDiagramService {
           context.internalComponentChildren &&
           context.internalComponentChildren.has(nodeId)
         ) {
-          console.log(
-            `   ⏭️ Skipping ${nodeId} (internal component - positioned inside parent)`
-          );
+         
           continue;
         }
 
@@ -1700,9 +1695,7 @@ export class MarkdownDiagramService {
         // - Unused component trees (has children but the whole tree is unused)
 
         if (!reachableFromRootModules.has(nodeId)) {
-          console.log(
-            `   ➡️ Adding ${nodeId} to ungroupedComponents (not reachable from root modules)`
-          );
+        
           ungroupedComponents.push(nodeId);
         } else {
           console.log(
@@ -1739,9 +1732,6 @@ export class MarkdownDiagramService {
       // Use adaptive spacing based on node sizes in this group
       const nodeSpacing = calculateGroupSpacing(nodes);
 
-      console.log(
-        `📏 Group spacing for ${nodes.length} nodes: ${nodeSpacing} (max scale detected)`
-      );
 
       const gridSize = Math.ceil(Math.sqrt(nodes.length));
 
@@ -1793,14 +1783,7 @@ export class MarkdownDiagramService {
 
         const scale = [scaleFactor, scaleFactor, scaleFactor];
 
-        console.log(`🔧 Utility file ${utilityId} scale calculation:`, {
-          childCount: children.size,
-          gridSize3D: gridSize3D,
-          requiredSpace: requiredSpace,
-          totalRequiredSize: totalRequiredSize,
-          scaleFactor: scaleFactor,
-          calculatedScale: scale,
-        });
+  
 
         nodeScales.set(utilityId, scale);
       } else {
@@ -1839,14 +1822,7 @@ export class MarkdownDiagramService {
 
         const scale = [scaleFactor, scaleFactor, scaleFactor];
 
-        console.log(`🔧 Service file ${serviceId} scale calculation:`, {
-          childCount: children.size,
-          gridSize3D: gridSize3D,
-          requiredSpace: requiredSpace,
-          totalRequiredSize: totalRequiredSize,
-          scaleFactor: scaleFactor,
-          calculatedScale: scale,
-        });
+     
 
         nodeScales.set(serviceId, scale);
       } else {
@@ -1884,14 +1860,7 @@ export class MarkdownDiagramService {
 
         const scale = [scaleFactor, scaleFactor, scaleFactor];
 
-        console.log(`🔧 Hook file ${hookId} scale calculation:`, {
-          childCount: children.size,
-          gridSize3D: gridSize3D,
-          requiredSpace: requiredSpace,
-          totalRequiredSize: totalRequiredSize,
-          scaleFactor: scaleFactor,
-          calculatedScale: scale,
-        });
+       
 
         nodeScales.set(hookId, scale);
       } else {
@@ -1913,44 +1882,24 @@ export class MarkdownDiagramService {
     const ungroupedYOffset = groupContainerYOffset + 200; // Ungrouped 200 above groups
     
     // Utility Modules: 100 units to the left of root, at group container Y level
-    console.log(
-      `📦 Positioning utilityNodes (${
-        utilityNodes.length
-      }): [${utilityNodes.join(', ')}]`
-    );
+
     positionGroup(utilityNodes, -600, groupContainerYOffset, 0);
 
     // Hooks: 100 units to the right of root, same Y level
-    console.log(
-      `📦 Positioning hookNodes (${hookNodes.length}): [${hookNodes.join(
-        ', '
-      )}]`
-    );
+  
     positionGroup(hookNodes, 600, groupContainerYOffset, 0);
 
     // Services: 100 units in front of root, same Y level
-    console.log(
-      `📦 Positioning serviceNodes (${
-        serviceNodes.length
-      }): [${serviceNodes.join(', ')}]`
-    );
+  
     positionGroup(serviceNodes, 0, groupContainerYOffset, 600);
 
     // Stores: 100 units behind root, same Y level
-    console.log(
-      `📦 Positioning storeNodes (${storeNodes.length}): [${storeNodes.join(
-        ', '
-      )}]`
-    );
+  
     positionGroup(storeNodes, 0, groupContainerYOffset, -600);
 
     // Ungrouped Components: center, above (0, +600, 0)
     // Position 100 units above the top-level component grouping
-    console.log(
-      `📦 Positioning ungroupedComponents (${
-        ungroupedComponents.length
-      }): [${ungroupedComponents.join(', ')}]`
-    );
+   
 
     // Calculate scales for ungrouped components BEFORE positioning
     // This ensures proper spacing based on actual dodecahedron sizes
@@ -2044,9 +1993,7 @@ export class MarkdownDiagramService {
               childType === MarkdownDiagramService.NODE_TYPE_FUNCTION
                 ? 'function'
                 : 'internal component';
-            console.log(
-              `   📍 Positioned ${childTypeLabel} ${childId} inside ungrouped component ${componentId}`
-            );
+       
           }
         });
       }
@@ -2088,9 +2035,7 @@ export class MarkdownDiagramService {
             nodeScales.set(childId, [1, 1, 1]);
             context.processedNodes.add(childId);
 
-            console.log(
-              `   📍 Positioned utility function ${childId} inside utility file ${utilityId}`
-            );
+        
           }
         });
       }
@@ -2132,9 +2077,7 @@ export class MarkdownDiagramService {
             nodeScales.set(childId, [1, 1, 1]);
             context.processedNodes.add(childId);
 
-            console.log(
-              `   📍 Positioned service function ${childId} inside service file ${serviceId}`
-            );
+         
           }
         });
       }
@@ -2179,9 +2122,7 @@ export class MarkdownDiagramService {
             nodeScales.set(childId, [1, 1, 1]);
             context.processedNodes.add(childId);
 
-            console.log(
-              `   📍 Positioned hook function ${childId} inside hook file ${hookId}`
-            );
+           
           }
         });
       }
@@ -2288,10 +2229,7 @@ export class MarkdownDiagramService {
         return;
       }
 
-      console.log(
-        `🔧 createContainerForGroup for "${groupName}": ${nodes.length} nodes`
-      );
-      console.log(`   Nodes: [${nodes.join(', ')}]`);
+   
 
       // Calculate bounding box
       let minX = Infinity,
@@ -2307,7 +2245,7 @@ export class MarkdownDiagramService {
           console.log(`   ⚠️  No position found for node: ${nodeId}`);
           return;
         }
-        console.log(`   Node ${nodeId} position: [${pos.join(', ')}]`);
+       
 
         // Get the actual scale of the node (important for dodecahedrons which can vary in size)
         const scale = nodeScales.get(nodeId) || [1, 1, 1];
@@ -2347,27 +2285,7 @@ export class MarkdownDiagramService {
       const height = maxY - minY;
       const depth = maxZ - minZ;
 
-      console.log(`   📦 Container bounds for "${groupName}":`);
-      console.log(
-        `      Min: [${minX.toFixed(1)}, ${minY.toFixed(1)}, ${minZ.toFixed(
-          1
-        )}]`
-      );
-      console.log(
-        `      Max: [${maxX.toFixed(1)}, ${maxY.toFixed(1)}, ${maxZ.toFixed(
-          1
-        )}]`
-      );
-      console.log(
-        `      Center: [${centerX.toFixed(1)}, ${centerY.toFixed(
-          1
-        )}, ${centerZ.toFixed(1)}]`
-      );
-      console.log(
-        `      Size: [${width.toFixed(1)}, ${height.toFixed(
-          1
-        )}, ${depth.toFixed(1)}]`
-      );
+     
 
       const containerScale = [width / 10, height / 10, depth / 10];
       const containerPosition = [centerX, centerY, centerZ];
@@ -2587,9 +2505,7 @@ export class MarkdownDiagramService {
       return;
     }
 
-    console.log(
-      `🔧 Creating root hierarchy container for ${hierarchyNodes.length} nodes`
-    );
+ 
 
     // Calculate bounding box
     let minX = Infinity,
@@ -2793,16 +2709,7 @@ export class MarkdownDiagramService {
     let objectsCreated = 0;
     const nodeEntries = Array.from(nodePositions);
 
-    // DEBUG: Check what's in nodePositions
-    console.log(
-      `🐛 DEBUG: Total nodes in nodePositions: ${nodePositions.size}`
-    );
-    console.log(
-      `🐛 DEBUG: Hook nodes in nodePositions:`,
-      Array.from(nodePositions.keys()).filter(
-        (id) => id.includes('__file') || id.startsWith('use')
-      )
-    );
+    
 
     const OBJECT_BATCH_SIZE = 50; // Process objects in smaller batches
 
@@ -3226,8 +3133,25 @@ export class MarkdownDiagramService {
         (childId) => !internalComponentChildren.has(childId)
       );
 
-      // Only create container if there are 2 or more external child components
-      if (externalComponentChildren.length < 2) continue;
+      // IMPORTANT: Only include children where THIS component is their hierarchical parent
+      // This prevents the same child from appearing in multiple containers when it's used by multiple parents
+      // When there's a conflict between import-based parent and hierarchical parent, we use hierarchical parent
+      const hierarchicalChildren = externalComponentChildren.filter((childId) => {
+        const hierarchicalParent = childParentMap.get(childId);
+        return hierarchicalParent === parentNodeId;
+      });
+
+      // Log grouped components for debugging
+      if (hierarchicalChildren.length > 0) {
+        const parentNode = graphNodes.get(parentNodeId);
+        const parentLabel = parentNode?.label || parentNodeId;
+        const childLabels = hierarchicalChildren.map(id => {
+          const node = graphNodes.get(id);
+          return node?.label || id;
+        });
+        console.log(`📦 Group under "${parentLabel}": [${childLabels.join(', ')}] (${hierarchicalChildren.length} children)`);
+      }
+
 
       // Calculate bounding box for all child components
       let minX = Infinity,
@@ -3237,7 +3161,7 @@ export class MarkdownDiagramService {
         maxY = -Infinity,
         maxZ = -Infinity;
 
-      externalComponentChildren.forEach((childId) => {
+      hierarchicalChildren.forEach((childId) => {
         const childPos = nodePositions.get(childId);
         const childScale = nodeScales.get(childId);
 
@@ -3250,7 +3174,7 @@ export class MarkdownDiagramService {
 
         const childNode = graphNodes.get(childId);
         const childLabel = childNode ? (childNode.label || childId) : childId;
-        console.log(`  📍 Child ${childLabel}: pos=${JSON.stringify(childPos)}, scale=${JSON.stringify(childScale)}, size=${childSize.toFixed(1)}`);
+       
 
         // Expand bounding box
         minX = Math.min(minX, childPos[0] - childSize);
@@ -3278,23 +3202,17 @@ export class MarkdownDiagramService {
       // Container cube scale (divide by 10 because default cube size is 10)
       const containerScale = [width / 10, height / 10, depth / 10];
       
-      // Position container relative to parent node, not at absolute center of bounding box
-      // This keeps containers near their parent even in deep hierarchies
-      const parentPos = nodePositions.get(parentNodeId);
-      if (!parentPos) continue;
-      
-      // Offset container slightly below parent (Y-100) to avoid overlap
+      // Position container at the CENTER of the bounding box of its children
+      // This ensures the container tightly wraps around the children regardless of parent position
       const containerPosition = [
-        parentPos[0],  // Same X as parent
-        parentPos[1] - 100,  // 100 units below parent
-        parentPos[2]   // Same Z as parent
+        (minX + maxX) / 2,  // Center X of bounding box
+        (minY + maxY) / 2,  // Center Y of bounding box
+        (minZ + maxZ) / 2   // Center Z of bounding box
       ];
 
       // Log container details for debugging
       const parentLabel = parentNode.label || parentNodeId;
-      console.log(`📦 Container for ${parentLabel}: position=${JSON.stringify(containerPosition)}, scale=${JSON.stringify(containerScale)}, children=${externalComponentChildren.length}`);
-      console.log(`   Parent position: ${JSON.stringify(parentPos)}`);
-      console.log(`   Bounding box: X[${minX.toFixed(1)} to ${maxX.toFixed(1)}] Y[${minY.toFixed(1)} to ${maxY.toFixed(1)}] Z[${minZ.toFixed(1)} to ${maxZ.toFixed(1)}]`);
+     
 
       // Store container dimensions for this parent
       containerDimensions.set(parentNodeId, {
@@ -3304,7 +3222,7 @@ export class MarkdownDiagramService {
         height: height,
         depth: depth,
         bottomY: minY, // Bottom edge Y coordinate
-        childCount: externalComponentChildren.length,
+        childCount: hierarchicalChildren.length,
       });
     }
 
@@ -4055,12 +3973,7 @@ export class MarkdownDiagramService {
 
       // Log payload size for debugging
       const payloadSize = JSON.stringify(payload).length;
-      console.log(
-        `📦 [CloudFunction] Payload size: ${(payloadSize / 1024).toFixed(2)} KB`
-      );
-      console.log(
-        `📦 [CloudFunction] Objects: ${objects.length}, Connections: ${connections.length}`
-      );
+     
 
       // Check if payload is too large (Cloud Functions have ~10MB limit)
       if (payloadSize > 9 * 1024 * 1024) {
