@@ -10,6 +10,7 @@ const useConnectionStore = create((set, get) => ({
   connectionEndPoint: null,
   connectionsLoaded: false,
   connectionsVisible: true, // Toggle to show/hide all connection lines
+  focusedObjectId: null, // Object ID to show connections for when globally hidden
 
   // Track connections being deleted to prevent re-addition during async deletion
   deletingConnections: new Set(), // Set of connection IDs being deleted
@@ -406,7 +407,53 @@ const useConnectionStore = create((set, get) => ({
   },
 
   toggleConnectionsVisible: () => {
-    set((state) => ({ connectionsVisible: !state.connectionsVisible }));
+    set((state) => ({ 
+      connectionsVisible: !state.connectionsVisible,
+      // Clear focused object when toggling visibility back on
+      focusedObjectId: !state.connectionsVisible ? null : state.focusedObjectId
+    }));
+  },
+
+  // Set the focused object ID (to show its connections when globally hidden)
+  setFocusedObjectId: (objectId) => {
+    set({ focusedObjectId: objectId });
+  },
+
+  // Clear the focused object
+  clearFocusedObject: () => {
+    set({ focusedObjectId: null });
+  },
+
+  // Get all object IDs connected to the focused object
+  getConnectedObjectIds: (objectId) => {
+    const connections = get().connections;
+    const connectedIds = new Set();
+    
+    connections.forEach((conn) => {
+      const startId = conn.start?.objectId?.toString();
+      const endId = conn.end?.objectId?.toString();
+      const objIdStr = objectId?.toString();
+      
+      if (startId === objIdStr) {
+        connectedIds.add(endId);
+      } else if (endId === objIdStr) {
+        connectedIds.add(startId);
+      }
+    });
+    
+    return connectedIds;
+  },
+
+  // Get connections for a specific object
+  getConnectionsForObject: (objectId) => {
+    const connections = get().connections;
+    const objIdStr = objectId?.toString();
+    
+    return connections.filter((conn) => {
+      const startId = conn.start?.objectId?.toString();
+      const endId = conn.end?.objectId?.toString();
+      return startId === objIdStr || endId === objIdStr;
+    });
   },
 
   setIsCreatingConnection: (isCreating) => {

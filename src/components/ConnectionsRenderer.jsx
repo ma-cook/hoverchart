@@ -740,6 +740,9 @@ const ConnectionsRenderer = ({
   const connectionsVisible = useConnectionStore(
     (state) => state.connectionsVisible
   );
+  const focusedObjectId = useConnectionStore(
+    (state) => state.focusedObjectId
+  );
 
   // Create a stable set of available object IDs to avoid recalculating on every render
   const availableObjectIds = useMemo(() => {
@@ -779,23 +782,46 @@ const ConnectionsRenderer = ({
     });
   }, [connections, visibleObjectIds, availableObjectIds]);
 
+  // Get connections for the focused object (when connections are globally hidden)
+  const focusedConnections = useMemo(() => {
+    if (!focusedObjectId || connectionsVisible || !connections?.length) return [];
+    
+    const focusedIdStr = focusedObjectId.toString();
+    const visibleIds = visibleObjectIds || availableObjectIds;
+    
+    return connections.filter((connection) => {
+      const startId = connection.start?.objectId?.toString();
+      const endId = connection.end?.objectId?.toString();
+      
+      // Connection must involve the focused object
+      const involvesFocused = startId === focusedIdStr || endId === focusedIdStr;
+      
+      // Both endpoints must be visible/loaded
+      const bothVisible = startId && endId && visibleIds.has(startId) && visibleIds.has(endId);
+      
+      return involvesFocused && bothVisible;
+    });
+  }, [focusedObjectId, connectionsVisible, connections, visibleObjectIds, availableObjectIds]);
+
+  // Determine which connections to render
+  const connectionsToRender = connectionsVisible ? visibleConnections : focusedConnections;
+
   // Render each visible connection
   return (
     <group>
-      {connectionsVisible &&
-        visibleConnections.map((connection) => (
-          <Connection
-            key={connection.id}
-            connection={connection}
-            allObjectsForPathfinding={pathfindingObjects}
-            onLineStyleChange={onLineStyleChange}
-            onLineColorChange={onLineColorChange}
-            onConnectionClick={onConnectionClick}
-            onLineTextClick={onLineTextClick}
-            onLineTextSubmit={onLineTextSubmit}
-            onLineTextStyleChange={onLineTextStyleChange}
-          />
-        ))}
+      {connectionsToRender.map((connection) => (
+        <Connection
+          key={connection.id}
+          connection={connection}
+          allObjectsForPathfinding={pathfindingObjects}
+          onLineStyleChange={onLineStyleChange}
+          onLineColorChange={onLineColorChange}
+          onConnectionClick={onConnectionClick}
+          onLineTextClick={onLineTextClick}
+          onLineTextSubmit={onLineTextSubmit}
+          onLineTextStyleChange={onLineTextStyleChange}
+        />
+      ))}
     </group>
   );
 };

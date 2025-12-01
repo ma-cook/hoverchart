@@ -157,18 +157,38 @@ export function checkLineIntersection(startPos, endPos, objects) {
     return result;
   }
 
+  // Calculate line midpoint for better distance filtering
+  const midPos = [
+    (startPos[0] + endPos[0]) / 2,
+    (startPos[1] + endPos[1]) / 2,
+    (startPos[2] + endPos[2]) / 2,
+  ];
+
   // Filter and process objects for intersection testing
   const objectsToTest = objects.filter((obj) => {
     if (!obj?.position || !Array.isArray(obj.position)) return false;
 
-    // Quick distance check to rule out far away objects
-    const distanceSquared = obj.position.reduce(
+    // Check distance from start, end, AND midpoint to catch objects along the entire line
+    const distFromStart = obj.position.reduce(
       (sum, val, i) => sum + Math.pow(val - startPos[i], 2),
       0
     );
+    const distFromEnd = obj.position.reduce(
+      (sum, val, i) => sum + Math.pow(val - endPos[i], 2),
+      0
+    );
+    const distFromMid = obj.position.reduce(
+      (sum, val, i) => sum + Math.pow(val - midPos[i], 2),
+      0
+    );
 
-    // Only check objects within reasonable distance
-    return distanceSquared < lineLength * lineLength * 1.5;
+    // Use the minimum distance - object is close to some part of the line
+    const minDistSquared = Math.min(distFromStart, distFromEnd, distFromMid);
+    
+    // Include objects within half the line length of any point on the line
+    // This ensures we catch objects that might be in the path
+    const threshold = (lineLength * lineLength) / 4 + 2500; // Half line length squared + 50 unit padding
+    return minDistSquared < threshold;
   });
   const direction = new THREE.Vector3(
     endPos[0] - startPos[0],

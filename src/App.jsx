@@ -272,6 +272,12 @@ const App = () => {
   );
   const setShowLineTextStyleUI = useConnectionStore(
     (state) => state.setShowLineTextStyleUI
+  );
+  const connectionsVisible = useConnectionStore(
+    (state) => state.connectionsVisible
+  );
+  const setFocusedObjectId = useConnectionStore(
+    (state) => state.setFocusedObjectId
   ); // Use the useConnections hook instead of implementing handlers directly
   // Debug: Log useConnections parameters
   const {
@@ -1123,8 +1129,14 @@ const App = () => {
       setSelectedId(id);
       setShowLineTextStyleUI(null);
       setSelectedConnection(null);
+      
+      // When connections are globally hidden, set this object as focused
+      // to show its connections temporarily
+      if (!connectionsVisible) {
+        setFocusedObjectId(id);
+      }
     },
-    [setSelectedId, setShowLineTextStyleUI, setSelectedConnection]
+    [setSelectedId, setShowLineTextStyleUI, setSelectedConnection, connectionsVisible, setFocusedObjectId]
   ); // Object move handler
   const handleObjectMoveCallback = useCallback(
     (id, newPosition, isDragStart = false, isDragEnd = false) => {
@@ -1290,6 +1302,9 @@ const App = () => {
     setSelectedConnection(null);
     setShowLineTextStyleUI(null);
     setSelectedId(null);
+    
+    // Clear focused object (hides its connections when globally hidden)
+    setFocusedObjectId(null);
 
     // Close line text input using connection store
     const setShowLineTextInput =
@@ -1325,6 +1340,7 @@ const App = () => {
     setSelectedConnection,
     setShowLineTextStyleUI,
     setSelectedId,
+    setFocusedObjectId,
     objects,
     setPlaneShowTextStyleUI,
     setPlaneShowHeaderStyleUI,
