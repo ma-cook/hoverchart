@@ -1,10 +1,11 @@
 import { useRef, useEffect, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import { useAnimatedConnectionLineStore } from '../stores';
+import { useAnimatedLine } from '../hooks/useConnectionAnimationManager';
 
 /**
  * AnimatedConnectionLine - Optimized line component for animated dashed/dotted connection lines
+ * PERFORMANCE: Now uses global animation manager instead of individual useFrame callbacks
  */
 const AnimatedConnectionLine = ({
   points,
@@ -20,6 +21,7 @@ const AnimatedConnectionLine = ({
   onPointerOut,
 }) => {
   const lineRef = useRef();
+  const materialRef = useRef(null);
 
   // Use store for global animation state only
   const globalAnimationEnabled = useAnimatedConnectionLineStore(
@@ -68,21 +70,12 @@ const AnimatedConnectionLine = ({
     (lineStyle === 'dashed' || lineStyle === 'dotted') &&
     (dashDirection === 'left' || dashDirection === 'right');
 
-  // Local animation state for smooth performance
-  const animationOffsetRef = useRef(0);
-  const animationSpeedRef = useRef(1);
-  // Initialize animation speed based on direction and reset offset on changes
-  useEffect(() => {
-    if (shouldAnimate) {
-      animationSpeedRef.current = dashDirection === 'right' ? 1 : -1;
-      // Reset animation offset when starting animation or changing direction
-      animationOffsetRef.current = 0;
-    }
-  }, [shouldAnimate, dashDirection]);
+  // Calculate animation speed based on direction
+  const animationSpeed = dashDirection === 'right' ? 1 : -1;
 
-  // Use frame-based animation for smooth dash movement without store updates
-  useFrame((state, delta) => {
-    if (!shouldAnimate || !lineRef.current) return;
+  // Extract material reference from the Line component when it mounts
+  useEffect(() => {
+    if (!lineRef.current) return;
 
     // Find the line material in the drei Line component
     const line = lineRef.current;
@@ -96,21 +89,21 @@ const AnimatedConnectionLine = ({
     }
 
     if (material && material.uniforms && material.uniforms.dashOffset) {
-      // Update animation offset locally for smooth animation
-      animationOffsetRef.current += delta * animationSpeedRef.current * 2; // Adjust speed as needed
-
-      // Keep offset in reasonable range to prevent floating point precision issues
-      if (animationOffsetRef.current > 100) animationOffsetRef.current -= 100;
-      if (animationOffsetRef.current < -100) animationOffsetRef.current += 100;
-
-      // Update the material's dash offset uniform directly
-      material.uniforms.dashOffset.value = animationOffsetRef.current;
-      // Only mark as needing update if the value actually changed significantly
-      if (Math.abs(delta) > 0.001) {
-        material.needsUpdate = true;
-      }
+      materialRef.current = { current: material };
     }
-  }); // Parameters for the line visual style
+  }, [pointsKey]); // Re-extract when points change
+
+  // PERFORMANCE: Register with global animation manager instead of individual useFrame
+  // This replaces 500+ useFrame callbacks with a single global one
+  useAnimatedLine(
+    connectionId, 
+    materialRef.current, 
+    shouldAnimate, 
+    1, // speed multiplier
+    animationSpeed // direction
+  );
+
+  // Parameters for the line visual style
   const isDashed = lineStyle === 'dashed' || lineStyle === 'dotted';
   const dashScale = lineStyle === 'dotted' ? 1 : 0.5;
   const dashSize = lineStyle === 'dotted' ? 0.5 : 4;

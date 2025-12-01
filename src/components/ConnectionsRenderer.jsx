@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback } from 'react';
 
 import InstancedLine from './InstancedLine';
 import AtlasTextSprite from './AtlasTextSprite';
@@ -12,10 +12,14 @@ import {
 } from '../utils/pathfindingUtils';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
-import useConnectionStore from '../stores/connectionStore';
 import { saveConnection } from '../services/connectionsService';
 import { useConnectionObjectPositions } from '../hooks/useConnectionObjects';
-import { useCallback } from 'react';
+import { 
+  useConnectionState, 
+  useConnectionActions,
+  useConnectionsRendererStore 
+} from '../hooks/useConnectionsRendererStore';
+import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
 
 /**
  * Convert a path of connected points into line segments for InstancedLine
@@ -43,53 +47,42 @@ const Connection = React.memo(
     onLineTextClick,
     onLineTextSubmit,
     onLineTextStyleChange,
+    // PERFORMANCE: Pass store state as props to avoid individual subscriptions
+    selectedConnection,
+    connections,
   }) => {
     // Get only the specific objects needed for this connection
     const { startObject, endObject } = useConnectionObjectPositions(
       connection?.start?.objectId,
       connection?.end?.objectId
     );
-    // Use connection store for state
-    const connections = useConnectionStore((state) => state.connections);
-    const selectedConnection = useConnectionStore(
-      (state) => state.selectedConnection
-    );
-    const deletingConnections = useConnectionStore(
-      (state) => state.deletingConnections
-    );
-    const lineTexts = useConnectionStore((state) => state.lineTexts);
-    const showLineTextInput = useConnectionStore(
-      (state) => state.showLineTextInput
-    );
-    const showLineTextStyleUI = useConnectionStore(
-      (state) => state.showLineTextStyleUI
-    );
-    const setShowLineTextStyleUI = useConnectionStore(
-      (state) => state.setShowLineTextStyleUI
-    );
-    const setShowLineTextInput = useConnectionStore(
-      (state) => state.setShowLineTextInput
-    );
-    const selectConnection = useConnectionStore(
-      (state) => state.selectConnection
-    );
-    const setLineText = useConnectionStore((state) => state.setLineText);
-    const updateConnection = useConnectionStore(
-      (state) => state.updateConnection
-    );
+    
+    // PERFORMANCE: Use batched state hook instead of 7+ individual subscriptions
+    const connectionState = useConnectionState(connection?.id);
+    const actions = useConnectionActions();
+    
+    // Destructure for easier access
+    const { isSelected, isDeleting, lineText, showTextInput, showStyleUI } = connectionState;
+    const { 
+      setShowLineTextStyleUI, 
+      setShowLineTextInput, 
+      selectConnection, 
+      setLineText, 
+      updateConnection 
+    } = actions;
 
     // Consolidated line width calculation - consistent across all line types
     const getLineWidth = useCallback(
-      (connectionId) => {
+      () => {
         const isMobile =
           /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
             navigator.userAgent
           );
         const baseWidth = isMobile ? 2 : 1;
         const selectedWidth = isMobile ? 3 : 2.5;
-        return selectedConnection === connectionId ? selectedWidth : baseWidth;
+        return isSelected ? selectedWidth : baseWidth;
       },
-      [selectedConnection]
+      [isSelected]
     );
 
     // Handler function - always use passed onConnectionClick if available for consistency
@@ -119,7 +112,7 @@ const Connection = React.memo(
         return onLineTextSubmit(connectionId, text);
       } else {
         // Check if connection is being deleted before saving
-        if (deletingConnections.has(connectionId)) {
+        if (isDeleting) {
           return false;
         }
 
@@ -145,7 +138,7 @@ const Connection = React.memo(
         onLineTextStyleChange(connectionId, style);
       } else {
         // Check if connection is being deleted before saving
-        if (deletingConnections.has(connectionId)) {
+        if (isDeleting) {
           return;
         }
 
@@ -186,7 +179,7 @@ const Connection = React.memo(
         console.log('🎨 [ConnectionsRenderer] onLineStyleChange prop called');
       } else {
         // Check if connection is being deleted before saving
-        if (deletingConnections.has(connectionId)) {
+        if (isDeleting) {
           return;
         }
 
@@ -238,7 +231,7 @@ const Connection = React.memo(
         onLineColorChange(connectionId, color);
       } else {
         // Check if connection is being deleted before saving
-        if (deletingConnections.has(connectionId)) {
+        if (isDeleting) {
           return;
         }
 
@@ -549,9 +542,8 @@ const Connection = React.memo(
     const { midpoint } = connectionData;
     const { calculatedPathPoints, effectiveLineStyle } = pathData;
     const { textPosition } = textPositionData;
-    // Determine connection text - prioritize lineTexts store over connection.text
-    const connectionText =
-      (lineTexts && lineTexts[connection.id]) || connection.text || '';
+    // Determine connection text - prioritize batched lineText over connection.text
+    const connectionText = lineText || connection.text || '';
 
     // DEBUG: Log connection text for markdown connections
     if (connection.merfolkData) {
@@ -578,9 +570,9 @@ const Connection = React.memo(
                 points={pathToLineSegments(calculatedPathPoints)}
                 color={
                   connection.color ||
-                  (selectedConnection === connection.id ? '#ffff00' : 'black')
+                  (isSelected ? '#ffff00' : 'black')
                 }
-                lineWidth={getLineWidth(connection.id)}
+                lineWidth={getLineWidth()}
                 onClick={(e) => handleConnectionClick(e, connection.id)}
                 onPointerOver={(e) => {
                   e.stopPropagation();
@@ -605,13 +597,13 @@ const Connection = React.memo(
               connectionId={connection.id}
               color={
                 connection.color ||
-                (selectedConnection === connection.id ? '#ffff00' : 'black')
+                (isSelected ? '#ffff00' : 'black')
               }
-              lineWidth={getLineWidth(connection.id)}
+              lineWidth={getLineWidth()}
               lineStyle={effectiveLineStyle}
               dashDirection={connection.dashDirection || null}
               dashOffset={connection.dashOffset || 0}
-              isSelected={selectedConnection === connection.id}
+              isSelected={isSelected}
               onClick={(e) => handleConnectionClick(e, connection.id)}
               onPointerOver={(e) => {
                 e.stopPropagation();
@@ -644,7 +636,7 @@ const Connection = React.memo(
           pathPoints={calculatedPathPoints} // Pass path points for curved line positioning
         />{' '}
         {/* Text input UI */}
-        {showLineTextInput === connection.id && (
+        {showTextInput && (
           <HeaderInput
             position={[midpoint[0], midpoint[1] + 5, midpoint[2]]}
             onTextSubmit={(text) => handleLineTextSubmit(connection.id, text)}
@@ -653,7 +645,7 @@ const Connection = React.memo(
           />
         )}
         {/* Text style UI */}
-        {showLineTextStyleUI === connection.id && (
+        {showStyleUI && (
           <TextStyleUI
             position={[midpoint[0], midpoint[1] + 8, midpoint[2]]}
             onStyleChange={(style) =>
@@ -665,7 +657,7 @@ const Connection = React.memo(
           />
         )}
         {/* Connection controls */}
-        {selectedConnection === connection.id && (
+        {isSelected && (
           <LineUI
             position={midpoint}
             onColorChange={(color) =>
@@ -724,6 +716,10 @@ Connection.displayName = 'Connection';
 
 /**
  * Component for rendering all connections
+ * PERFORMANCE OPTIMIZED:
+ * - Uses batched store subscriptions (useConnectionsRendererStore)
+ * - Implements frustum culling to only render visible connections
+ * - Global animation manager for dashed/dotted lines
  */
 const ConnectionsRenderer = ({
   objects,
@@ -735,14 +731,13 @@ const ConnectionsRenderer = ({
   onLineTextSubmit,
   onLineTextStyleChange,
 }) => {
-  // Get all connections from store
-  const connections = useConnectionStore((state) => state.connections);
-  const connectionsVisible = useConnectionStore(
-    (state) => state.connectionsVisible
-  );
-  const focusedObjectId = useConnectionStore(
-    (state) => state.focusedObjectId
-  );
+  // PERFORMANCE: Use batched store subscription instead of multiple individual ones
+  const {
+    connections,
+    connectionsVisible,
+    focusedObjectId,
+    selectedConnection,
+  } = useConnectionsRendererStore();
 
   // Create a stable set of available object IDs to avoid recalculating on every render
   const availableObjectIds = useMemo(() => {
@@ -767,7 +762,7 @@ const ConnectionsRenderer = ({
   }, [objects]);
 
   // Filter connections to only show those where both endpoint objects are visible
-  const visibleConnections = useMemo(() => {
+  const objectVisibleConnections = useMemo(() => {
     if (!connections?.length) return [];
 
     // Pre-create set for faster lookups
@@ -803,13 +798,20 @@ const ConnectionsRenderer = ({
     });
   }, [focusedObjectId, connectionsVisible, connections, visibleObjectIds, availableObjectIds]);
 
-  // Determine which connections to render
-  const connectionsToRender = connectionsVisible ? visibleConnections : focusedConnections;
+  // Determine which connections to consider for rendering
+  const connectionsForCulling = connectionsVisible ? objectVisibleConnections : focusedConnections;
+
+  // PERFORMANCE: Apply frustum culling to only render connections visible in camera
+  const { visibleConnections: frustumCulledConnections } = useFrustumCulledConnections(
+    connectionsForCulling,
+    objects,
+    true // Enable frustum culling
+  );
 
   // Render each visible connection
   return (
     <group>
-      {connectionsToRender.map((connection) => (
+      {frustumCulledConnections.map((connection) => (
         <Connection
           key={connection.id}
           connection={connection}
@@ -820,6 +822,8 @@ const ConnectionsRenderer = ({
           onLineTextClick={onLineTextClick}
           onLineTextSubmit={onLineTextSubmit}
           onLineTextStyleChange={onLineTextStyleChange}
+          selectedConnection={selectedConnection}
+          connections={connections}
         />
       ))}
     </group>

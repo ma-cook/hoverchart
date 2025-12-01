@@ -33,6 +33,9 @@ import {
   useDodecahedronStore,
 } from './stores';
 
+// PERFORMANCE: Global animation manager for connection lines
+import { ConnectionAnimationManager } from './hooks/useConnectionAnimationManager';
+
 // Utility imports
 import {
   handleObjectMove,
@@ -1684,6 +1687,8 @@ const App = () => {
           {' '}
           {/* Global frame counter - updates once per frame for all components */}
           <FrameTicker />
+          {/* PERFORMANCE: Global animation manager for all connection line animations */}
+          <ConnectionAnimationManager />
           <CustomCamera ref={cameraRef} />
           <group>
             {/* Real-time connection position updater - reactive to store changes */}

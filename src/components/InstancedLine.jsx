@@ -1,10 +1,13 @@
-import { useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
+import { useRef, useMemo, forwardRef, useImperativeHandle, useEffect } from 'react';
 import * as THREE from 'three';
-import { extend, useFrame } from '@react-three/fiber';
+import { extend } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import LineShaderMaterial from './LineShaderMaterial';
 
 extend({ LineShaderMaterial });
+
+// Reusable identity matrix for all instances - created once
+const IDENTITY_MATRIX = new THREE.Matrix4();
 
 const InstancedLine = forwardRef(
   (
@@ -19,6 +22,7 @@ const InstancedLine = forwardRef(
     ref
   ) => {
     const meshRef = useRef();
+    const matricesInitializedRef = useRef(false);
 
     // Expose the mesh ref via the forwarded ref
     useImperativeHandle(ref, () => meshRef.current, []);
@@ -142,17 +146,23 @@ const InstancedLine = forwardRef(
       }
     }, [material, lineWidth]);
 
-    useFrame(() => {
-      if (!meshRef.current || !geometry) return;
-
-      // Update instance matrices (identity for all instances since shader handles positioning)
-      const tempObject = new THREE.Object3D();
+    // PERFORMANCE: Initialize instance matrices ONCE instead of every frame
+    // This removes the useFrame loop that was running for every InstancedLine
+    useEffect(() => {
+      if (!meshRef.current || !geometry || matricesInitializedRef.current) return;
+      
+      // Set identity matrices once - the shader handles positioning via instance attributes
       for (let i = 0; i < count; i++) {
-        tempObject.updateMatrix();
-        meshRef.current.setMatrixAt(i, tempObject.matrix);
+        meshRef.current.setMatrixAt(i, IDENTITY_MATRIX);
       }
       meshRef.current.instanceMatrix.needsUpdate = true;
-    });
+      matricesInitializedRef.current = true;
+    }, [geometry, count]);
+
+    // Reset initialization flag when geometry changes
+    useEffect(() => {
+      matricesInitializedRef.current = false;
+    }, [flatPoints, color]);
 
     if (!geometry || count === 0) {
       return null;
