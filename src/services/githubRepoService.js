@@ -326,6 +326,22 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // Track which files need _file suffix due to name collision with internal hook
     const filesNeedingSuffix = new Set();
 
+    // NEW: Track detailed function call relationships
+    // Maps: componentName -> Set of { target: functionName, label: descriptive label, type: 'service'|'utility'|'hook' }
+    const functionCallRelationships = new Map();
+
+    // NEW: Track props being passed between components
+    // Maps: componentName -> Map of childComponentName -> Set of prop names
+    const componentPropsRelationships = new Map();
+
+    // NEW: Track store state/action usage
+    // Maps: componentName -> Set of { store: storeName, properties: Set of property names, actions: Set of action names }
+    const storeUsageRelationships = new Map();
+
+    // NEW: Track hook return value destructuring
+    // Maps: componentName -> Set of { hook: hookName, returnValues: Set of destructured variable names }
+    const hookReturnValueRelationships = new Map();
+
     // Process files in parallel batches for better performance
     const BATCH_SIZE = 10; // Process 10 files at a time
     const batches = [];
@@ -425,30 +441,39 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                     elements.imports.libraries.push(source);
                   }
                 }
-                // Track imports from stores, services, hooks, and utilities for later association
+                // Track imports from stores, services, hooks, utilities, and components for later association
                 else if (node.specifiers) {
                   node.specifiers.forEach((spec) => {
                     if (spec.imported || spec.local) {
                       const importedName = spec.imported?.name || spec.local?.name;
 
                       // Check if it's from stores
-                      if (source.includes('/stores/')) {
+                      if (source.includes('/stores/') || source.includes('/stores')) {
                         fileImports.stores.push(importedName);
                       }
                       // Check if it's from services
-                      else if (source.includes('/services/')) {
+                      else if (source.includes('/services/') || source.includes('/services')) {
                         fileImports.services.push(importedName);
                       }
                       // Check if it's from hooks
-                      else if (source.includes('/hooks/')) {
+                      else if (source.includes('/hooks/') || source.includes('/hooks')) {
                         fileImports.hooks.push(importedName);
                       }
                       // Check if it's from utils/helpers
-                      else if (source.includes('/utils/') || source.includes('/helpers/')) {
+                      else if (source.includes('/utils/') || source.includes('/utils') || 
+                               source.includes('/helpers/') || source.includes('/helpers')) {
                         if (!fileImports.utilities) {
                           fileImports.utilities = [];
                         }
                         fileImports.utilities.push(importedName);
+                      }
+                      // Track component imports (from components folder or uppercase name)
+                      else if (source.includes('/components/') || source.includes('/components') ||
+                               /^[A-Z]/.test(importedName)) {
+                        if (!fileImports.components) {
+                          fileImports.components = [];
+                        }
+                        fileImports.components.push(importedName);
                       }
                     }
                   });
@@ -610,6 +635,83 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
               // Check for variable declarations (arrow functions, etc.)
               if (node.type === 'VariableDeclaration') {
                 node.declarations.forEach((decl) => {
+                  // NEW: Track hook return value destructuring
+                  // e.g., const { objects, setObjects } = useObjectsStore()
+                  // e.g., const [state, setState] = useState()
+                  if (decl.init && decl.init.type === 'CallExpression' && currentComponent) {
+                    const calleeName = decl.init.callee?.name;
+                    
+                    // Check if it's a hook call (starts with 'use')
+                    if (calleeName && calleeName.startsWith('use')) {
+                      const destructuredValues = [];
+                      
+                      // Handle object destructuring: const { a, b } = useHook()
+                      if (decl.id && decl.id.type === 'ObjectPattern') {
+                        decl.id.properties.forEach((prop) => {
+                          if (prop.key && prop.key.name) {
+                            destructuredValues.push(prop.key.name);
+                          }
+                        });
+                      }
+                      // Handle array destructuring: const [a, b] = useState()
+                      else if (decl.id && decl.id.type === 'ArrayPattern') {
+                        decl.id.elements.forEach((elem) => {
+                          if (elem && elem.type === 'Identifier') {
+                            destructuredValues.push(elem.name);
+                          }
+                        });
+                      }
+                      
+                      if (destructuredValues.length > 0) {
+                        if (!hookReturnValueRelationships.has(currentComponent)) {
+                          hookReturnValueRelationships.set(currentComponent, new Set());
+                        }
+                        hookReturnValueRelationships.get(currentComponent).add({
+                          hook: calleeName,
+                          returnValues: destructuredValues
+                        });
+                      }
+                    }
+                    
+                    // NEW: Track store getState() calls
+                    // e.g., const { objects } = useObjectsStore.getState()
+                    if (decl.init.callee?.type === 'MemberExpression') {
+                      const objectName = decl.init.callee.object?.name;
+                      const methodName = decl.init.callee.property?.name;
+                      
+                      if (objectName && methodName === 'getState' && 
+                          (fileImports.stores.includes(objectName) || objectName.includes('Store'))) {
+                        const storeProperties = [];
+                        
+                        if (decl.id && decl.id.type === 'ObjectPattern') {
+                          decl.id.properties.forEach((prop) => {
+                            if (prop.key && prop.key.name) {
+                              storeProperties.push(prop.key.name);
+                            }
+                          });
+                        }
+                        
+                        if (storeProperties.length > 0) {
+                          if (!storeUsageRelationships.has(currentComponent)) {
+                            storeUsageRelationships.set(currentComponent, new Map());
+                          }
+                          const storeMap = storeUsageRelationships.get(currentComponent);
+                          if (!storeMap.has(objectName)) {
+                            storeMap.set(objectName, { properties: new Set(), actions: new Set() });
+                          }
+                          storeProperties.forEach((prop) => {
+                            // Actions typically start with 'set', 'add', 'remove', 'update', etc.
+                            if (/^(set|add|remove|update|delete|clear|reset|toggle)/.test(prop)) {
+                              storeMap.get(objectName).actions.add(prop);
+                            } else {
+                              storeMap.get(objectName).properties.add(prop);
+                            }
+                          });
+                        }
+                      }
+                    }
+                  }
+
                   if (decl.id && decl.id.name) {
                     const varName = decl.id.name;
 
@@ -949,6 +1051,37 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                       componentRelationships.set(currentComponent, new Set());
                     }
                     componentRelationships.get(currentComponent).add(jsxName);
+
+                    // NEW: Track props being passed to child components
+                    if (openingElement.attributes && openingElement.attributes.length > 0) {
+                      const propNames = [];
+                      openingElement.attributes.forEach((attr) => {
+                        if (attr.type === 'JSXAttribute' && attr.name) {
+                          const propName = attr.name.name;
+                          // Skip common React-specific props
+                          if (propName && !['key', 'ref', 'className', 'style', 'id'].includes(propName)) {
+                            propNames.push(propName);
+                          }
+                        }
+                        // Track spread props
+                        else if (attr.type === 'JSXSpreadAttribute' && attr.argument) {
+                          if (attr.argument.type === 'Identifier') {
+                            propNames.push(`...${attr.argument.name}`);
+                          }
+                        }
+                      });
+
+                      if (propNames.length > 0) {
+                        if (!componentPropsRelationships.has(currentComponent)) {
+                          componentPropsRelationships.set(currentComponent, new Map());
+                        }
+                        const propsMap = componentPropsRelationships.get(currentComponent);
+                        if (!propsMap.has(jsxName)) {
+                          propsMap.set(jsxName, new Set());
+                        }
+                        propNames.forEach((prop) => propsMap.get(jsxName).add(prop));
+                      }
+                    }
                   }
                 }
               }
@@ -963,6 +1096,40 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                       componentDependencies.set(currentComponent, new Set());
                     }
                     componentDependencies.get(currentComponent).add({ name: calleeName, type: 'hook' });
+                  }
+                  // NEW: Track service/utility function calls
+                  else if (fileImports.services.includes(calleeName) || 
+                           fileImports.utilities.includes(calleeName)) {
+                    const type = fileImports.services.includes(calleeName) ? 'service' : 'utility';
+                    if (!functionCallRelationships.has(currentComponent)) {
+                      functionCallRelationships.set(currentComponent, new Set());
+                    }
+                    functionCallRelationships.get(currentComponent).add({
+                      target: calleeName,
+                      label: `calls ${calleeName}`,
+                      type: type
+                    });
+                  }
+                }
+                // NEW: Track member expression calls (e.g., someService.someMethod())
+                else if (node.callee && node.callee.type === 'MemberExpression') {
+                  const objectName = node.callee.object?.name;
+                  const methodName = node.callee.property?.name;
+                  if (objectName && methodName) {
+                    // Check if object is an imported service/utility/store
+                    if (fileImports.services.includes(objectName) ||
+                        fileImports.utilities.includes(objectName) ||
+                        fileImports.stores.includes(objectName)) {
+                      if (!functionCallRelationships.has(currentComponent)) {
+                        functionCallRelationships.set(currentComponent, new Set());
+                      }
+                      functionCallRelationships.get(currentComponent).add({
+                        target: objectName,
+                        label: `.${methodName}()`,
+                        type: fileImports.stores.includes(objectName) ? 'store' : 
+                              fileImports.services.includes(objectName) ? 'service' : 'utility'
+                      });
+                    }
                   }
                 }
               }
@@ -1026,7 +1193,11 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
       internalComponents,
       fileFunctions,
       internalHooks,
-      filesNeedingSuffix
+      filesNeedingSuffix,
+      functionCallRelationships,
+      componentPropsRelationships,
+      storeUsageRelationships,
+      hookReturnValueRelationships
     );
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
@@ -1046,6 +1217,10 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
  * @param {Map} fileFunctions - File to function mappings
  * @param {Map} internalHooks - Internal hooks that share names with parent
  * @param {Set} filesNeedingSuffix - Files that need _file suffix
+ * @param {Map} functionCallRelationships - Component to function call relationships
+ * @param {Map} componentPropsRelationships - Component to child props relationships
+ * @param {Map} storeUsageRelationships - Component to store usage relationships
+ * @param {Map} hookReturnValueRelationships - Component to hook return value relationships
  * @returns {string} - Merfolk markdown content
  */
 const generateMerfolkMarkdown = (
@@ -1058,7 +1233,11 @@ const generateMerfolkMarkdown = (
   internalComponents,
   fileFunctions,
   internalHooks = new Map(),
-  filesNeedingSuffix = new Set()
+  filesNeedingSuffix = new Set(),
+  functionCallRelationships = new Map(),
+  componentPropsRelationships = new Map(),
+  storeUsageRelationships = new Map(),
+  hookReturnValueRelationships = new Map()
 ) => {
   let markdown = `%% ${repoName} Repository Analysis\n\n`;
 
@@ -1403,20 +1582,34 @@ const generateMerfolkMarkdown = (
         const usedCompNeedsSuffix = filesNeedingSuffix.has(usedComp);
         const usedCompNodeId = usedCompNeedsSuffix ? `${usedComp}_file` : usedComp;
         
-        // Generate descriptive labels based on component names
+        // Check if we have props being passed to this child component
+        const propsMap = componentPropsRelationships.get(component);
         let label = 'uses';
-        if (usedComp.toLowerCase().includes('renderer')) {
-          label = 'renders';
-        } else if (
-          usedComp.toLowerCase().includes('ui') ||
-          usedComp.toLowerCase().includes('input') ||
-          usedComp.toLowerCase().includes('picker')
-        ) {
-          label = 'displays UI';
-        } else if (usedComp.toLowerCase().includes('camera')) {
-          label = 'camera';
-        } else if (usedComp.toLowerCase().includes('connection')) {
-          label = 'connections';
+        
+        if (propsMap && propsMap.has(usedComp)) {
+          const props = Array.from(propsMap.get(usedComp));
+          // Limit to first 3 props to keep label readable
+          const displayProps = props.slice(0, 3);
+          if (props.length > 3) {
+            label = `${displayProps.join(', ')}...`;
+          } else {
+            label = displayProps.join(', ');
+          }
+        } else {
+          // Fallback to name-based labels
+          if (usedComp.toLowerCase().includes('renderer')) {
+            label = 'renders';
+          } else if (
+            usedComp.toLowerCase().includes('ui') ||
+            usedComp.toLowerCase().includes('input') ||
+            usedComp.toLowerCase().includes('picker')
+          ) {
+            label = 'displays UI';
+          } else if (usedComp.toLowerCase().includes('camera')) {
+            label = 'camera';
+          } else if (usedComp.toLowerCase().includes('connection')) {
+            label = 'connections';
+          }
         }
 
         markdown += `${componentNodeId} --> ${usedCompNodeId} : "${label}"\n`;
@@ -1424,7 +1617,7 @@ const generateMerfolkMarkdown = (
     });
   }
 
-  // Add component-to-hook/service/store relationships
+  // Add component-to-hook/service/store relationships with detailed labels
   if (componentDependencies.size > 0) {
     markdown += '\n%% Component Dependencies\n';
     componentDependencies.forEach((deps, component) => {
@@ -1433,7 +1626,74 @@ const generateMerfolkMarkdown = (
       const componentNodeId = componentNeedsSuffix ? `${component}_file` : component;
       
       deps.forEach((dep) => {
-        markdown += `${componentNodeId} --> ${dep.name} : "uses ${dep.type}"\n`;
+        // Check for detailed hook return values
+        let label = `uses ${dep.type}`;
+        
+        if (dep.type === 'hook') {
+          const hookReturns = hookReturnValueRelationships.get(component);
+          if (hookReturns) {
+            for (const hookInfo of hookReturns) {
+              if (hookInfo.hook === dep.name && hookInfo.returnValues.length > 0) {
+                // Limit to first 3 values for readability
+                const displayValues = hookInfo.returnValues.slice(0, 3);
+                if (hookInfo.returnValues.length > 3) {
+                  label = `{${displayValues.join(', ')}...}`;
+                } else {
+                  label = `{${displayValues.join(', ')}}`;
+                }
+                break;
+              }
+            }
+          }
+        }
+        
+        markdown += `${componentNodeId} --> ${dep.name} : "${label}"\n`;
+      });
+    });
+  }
+
+  // Add function call relationships (service/utility calls)
+  if (functionCallRelationships.size > 0) {
+    markdown += '\n%% Function Call Relationships\n';
+    functionCallRelationships.forEach((calls, component) => {
+      const componentNeedsSuffix = filesNeedingSuffix.has(component);
+      const componentNodeId = componentNeedsSuffix ? `${component}_file` : component;
+      
+      calls.forEach((callInfo) => {
+        markdown += `${componentNodeId} --> ${callInfo.target} : "${callInfo.label}"\n`;
+      });
+    });
+  }
+
+  // Add store usage relationships with state/action details
+  if (storeUsageRelationships.size > 0) {
+    markdown += '\n%% Store Usage Details\n';
+    storeUsageRelationships.forEach((storeMap, component) => {
+      const componentNeedsSuffix = filesNeedingSuffix.has(component);
+      const componentNodeId = componentNeedsSuffix ? `${component}_file` : component;
+      
+      storeMap.forEach((usage, storeName) => {
+        const allItems = [];
+        
+        // Add properties (state reads)
+        if (usage.properties.size > 0) {
+          allItems.push(...Array.from(usage.properties));
+        }
+        
+        // Add actions
+        if (usage.actions.size > 0) {
+          allItems.push(...Array.from(usage.actions).map(a => `${a}()`));
+        }
+        
+        if (allItems.length > 0) {
+          // Limit to first 4 items for readability
+          const displayItems = allItems.slice(0, 4);
+          let label = displayItems.join(', ');
+          if (allItems.length > 4) {
+            label += '...';
+          }
+          markdown += `${componentNodeId} --> ${storeName} : "${label}"\n`;
+        }
       });
     });
   }
