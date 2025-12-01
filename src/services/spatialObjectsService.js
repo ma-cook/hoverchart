@@ -10,8 +10,12 @@ import {
   getCellCoordinates,
   getCellId,
   moveObjectBetweenCells as moveObjectBetweenCellsSpatial,
+  deleteAllCellsInSpace,
 } from './spatialPartitioning';
 import { getIsInitialLoading } from '../utils/loadingState';
+
+// Re-export deleteAllCellsInSpace for convenience
+export { deleteAllCellsInSpace };
 
 // Cache and tracking for objects
 export const objectsCache = new Map();
@@ -23,6 +27,27 @@ export const objectCellMap = new Map(); // Track which cell each object belongs 
 
 // Track objects that are being deleted to prevent re-addition
 const deletingObjects = new Set(); // Set of objectId strings being deleted
+
+/**
+ * Clear all object caches - used when bulk deleting to prevent ghost objects
+ */
+export const clearAllObjectCaches = () => {
+  objectsCache.clear();
+  saveTimeouts.clear();
+  updateThrottles.clear();
+  lastReceivedObjects.clear();
+  movingObjects.clear();
+  objectCellMap.clear();
+  deletingObjects.clear();
+  // Also clear any window-level tracking
+  if (window._unloadedObjects) {
+    window._unloadedObjects.clear();
+  }
+  if (window._unloadedCells) {
+    window._unloadedCells.clear();
+  }
+  console.log('🧹 Cleared all object caches');
+};
 
 // Helper to remove object from caches
 const removeObjectFromCaches = (spaceId, objectId, cellId) => {
@@ -51,6 +76,11 @@ const positionsEqual = (posA, posB) => {
  * Save object to the appropriate cell based on its position
  */
 export const saveObjectToCell = async (userId, spaceId, object) => {
+  // CRITICAL: Block ALL saves during bulk delete operation
+  if (window._bulkDeleteInProgress) {
+    return;
+  }
+
   // Check if we're still in initial loading phase - no saves during app startup
   if (getIsInitialLoading()) {
     return;
@@ -721,6 +751,11 @@ export const subscribeToSpatialObjects = (
                   }
 
                   if (hasChanged) {
+                    // CRITICAL: Block adding objects during bulk delete
+                    if (window._bulkDeleteInProgress) {
+                      return;
+                    }
+
                     // Skip Firebase updates for objects currently being transformed
                     if (
                       window._currentTransformingObjects &&

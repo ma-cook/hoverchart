@@ -809,6 +809,20 @@ const useConnectionStore = create((set, get) => ({
     const state = get();
     return state.deletingConnections.has(connectionId);
   },
+
+  // Reset all connection state (used when bulk deleting)
+  resetConnections: () => {
+    set({
+      connections: [],
+      selectedConnection: null,
+      activeConnection: null,
+      isCreatingConnection: false,
+      connectionStartPoint: null,
+      connectionEndPoint: null,
+      connectionsLoaded: false,
+      deletingConnections: new Set(),
+    });
+  },
 }));
 
 export default useConnectionStore;

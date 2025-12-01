@@ -2290,6 +2290,14 @@ export class MarkdownDiagramService {
       const containerScale = [width / 10, height / 10, depth / 10];
       const containerPosition = [centerX, centerY, centerZ];
 
+      // Validate position data - skip containers with invalid positions
+      if (!Number.isFinite(containerPosition[0]) || 
+          !Number.isFinite(containerPosition[1]) || 
+          !Number.isFinite(containerPosition[2])) {
+        console.warn('⚠️ Skipping group container with invalid position:', groupName, containerPosition);
+        return; // Exit this helper function early
+      }
+
       // Generate unique ID
       const containerId = `group-container-${groupName}-${Date.now()}-${Math.random()
         .toString(36)
@@ -2560,6 +2568,14 @@ export class MarkdownDiagramService {
     const containerScale = [width / 10, height / 10, depth / 10];
     const containerPosition = [centerX, centerY, centerZ];
 
+    // Validate position data - skip if invalid
+    if (!Number.isFinite(containerPosition[0]) || 
+        !Number.isFinite(containerPosition[1]) || 
+        !Number.isFinite(containerPosition[2])) {
+      console.warn('⚠️ Skipping Component Hierarchy container with invalid position:', containerPosition);
+      return null;
+    }
+
     // Generate unique ID
     const containerId = `group-container-Component Hierarchy-${Date.now()}-${Math.random()
       .toString(36)
@@ -2783,6 +2799,15 @@ export class MarkdownDiagramService {
 
       for (const data of batchData) {
         try {
+          // Validate position data - skip objects with invalid positions
+          if (!Array.isArray(data.position) || data.position.length < 3 ||
+              !Number.isFinite(data.position[0]) || 
+              !Number.isFinite(data.position[1]) || 
+              !Number.isFinite(data.position[2])) {
+            console.warn('⚠️ Skipping object with invalid position:', data.nodeId, data.position);
+            continue;
+          }
+
           // Generate unique object ID
           const objectId = `merfolk-obj-${Date.now()}-${Math.random()
             .toString(36)
@@ -3376,6 +3401,15 @@ export class MarkdownDiagramService {
       if (!parentNode) continue;
 
       const { position, scale, childCount } = containerInfo;
+
+      // Validate position data - skip containers with invalid positions
+      if (!Array.isArray(position) || position.length < 3 ||
+          !Number.isFinite(position[0]) || 
+          !Number.isFinite(position[1]) || 
+          !Number.isFinite(position[2])) {
+        console.warn('⚠️ Skipping container with invalid position:', parentNodeId, position);
+        continue;
+      }
 
       // Generate unique ID for container cube
       const containerId = `container-${parentNodeId}-${Date.now()}-${Math.random()

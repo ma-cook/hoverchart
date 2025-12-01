@@ -3,7 +3,6 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 
-import fetch from 'node-fetch';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -388,4 +387,142 @@ export const fetchGithubToken = onRequest(
       }
     });
   }
+);
+
+// ============= BULK DELETE FUNCTION =============
+function createBulkDeleteApp() {
+  const app = express();
+
+  app.use(cors({ origin: true }));
+  app.use(express.json());
+
+  app.post('/', async (req, res) => {
+    try {
+      const { idToken, userId, spaceId } = req.body;
+
+      // Validate required fields
+      if (!idToken || !userId || !spaceId) {
+        return res.status(400).json({
+          error: 'Missing required fields: idToken, userId, spaceId',
+        });
+      }
+
+      // Verify authentication token
+      const decodedToken = await getAuth().verifyIdToken(idToken);
+      if (decodedToken.uid !== userId) {
+        return res.status(403).json({
+          error: 'Token user ID does not match provided userId',
+        });
+      }
+
+      console.log(`🗑️  Starting bulk delete for user ${userId}, space ${spaceId}`);
+
+      const startTime = Date.now();
+      let cellsDeleted = 0;
+      let objectsDeleted = 0;
+      let connectionsDeleted = 0;
+
+      const BATCH_SIZE = 500;
+
+      // PHASE 1: Use collectionGroup queries to find ALL objects and connections
+      // This catches orphaned subcollections where the parent cell document doesn't exist
+      console.log('   Phase 1: Deleting all objects via collectionGroup query...');
+      
+      // Query all objects in this space using collectionGroup
+      // We need to filter by the path pattern since collectionGroup returns ALL 'objects' collections
+      const allObjectsQuery = db.collectionGroup('objects');
+      const allObjectsSnapshot = await allObjectsQuery.get();
+      
+      // Filter to only objects in this user's space
+      const spacePrefix = `users/${userId}/spaces/${spaceId}/cells/`;
+      const objectsToDelete = allObjectsSnapshot.docs.filter(doc => 
+        doc.ref.path.startsWith(spacePrefix)
+      );
+      
+      console.log(`   Found ${objectsToDelete.length} objects to delete`);
+      
+      // Delete objects in batches
+      for (let i = 0; i < objectsToDelete.length; i += BATCH_SIZE) {
+        const batch = db.batch();
+        const chunk = objectsToDelete.slice(i, i + BATCH_SIZE);
+        for (const objDoc of chunk) {
+          batch.delete(objDoc.ref);
+        }
+        await batch.commit();
+        objectsDeleted += chunk.length;
+      }
+
+      // Query all connections in this space using collectionGroup
+      console.log('   Phase 1: Deleting all connections via collectionGroup query...');
+      const allConnectionsQuery = db.collectionGroup('connections');
+      const allConnectionsSnapshot = await allConnectionsQuery.get();
+      
+      // Filter to only connections in this user's space
+      const connectionsToDelete = allConnectionsSnapshot.docs.filter(doc => 
+        doc.ref.path.startsWith(spacePrefix)
+      );
+      
+      console.log(`   Found ${connectionsToDelete.length} connections to delete`);
+      
+      // Delete connections in batches
+      for (let i = 0; i < connectionsToDelete.length; i += BATCH_SIZE) {
+        const batch = db.batch();
+        const chunk = connectionsToDelete.slice(i, i + BATCH_SIZE);
+        for (const connDoc of chunk) {
+          batch.delete(connDoc.ref);
+        }
+        await batch.commit();
+        connectionsDeleted += chunk.length;
+      }
+
+      // PHASE 2: Delete all cell documents
+      console.log('   Phase 2: Deleting cell documents...');
+      const cellsRef = db.collection(`users/${userId}/spaces/${spaceId}/cells`);
+      const cellsSnapshot = await cellsRef.get();
+
+      if (!cellsSnapshot.empty) {
+        const cellDocs = cellsSnapshot.docs;
+        for (let i = 0; i < cellDocs.length; i += BATCH_SIZE) {
+          const batch = db.batch();
+          const chunk = cellDocs.slice(i, i + BATCH_SIZE);
+          for (const cellDoc of chunk) {
+            batch.delete(cellDoc.ref);
+          }
+          await batch.commit();
+          cellsDeleted += chunk.length;
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      console.log(`✅ Bulk delete completed in ${duration}ms (${(duration / 1000).toFixed(2)}s)`);
+      console.log(`   Cells: ${cellsDeleted}, Objects: ${objectsDeleted}, Connections: ${connectionsDeleted}`);
+
+      res.json({
+        success: true,
+        cellsDeleted,
+        objectsDeleted,
+        connectionsDeleted,
+        duration,
+      });
+    } catch (error) {
+      console.error('❌ Bulk delete error:', error);
+      res.status(500).json({
+        error: 'Bulk delete failed',
+        details: error.message,
+      });
+    }
+  });
+
+  return app;
+}
+
+export const bulkDelete = onRequest(
+  {
+    memory: '512MiB',
+    region: 'us-central1',
+    cors: true,
+    timeoutSeconds: 540, // 9 minutes max for large spaces
+    maxInstances: 5,
+  },
+  createBulkDeleteApp()
 );

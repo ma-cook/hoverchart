@@ -319,6 +319,13 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // Maps: fileName -> Set of function/hook/service names in that file
     const fileFunctions = new Map(); // Track which file each function belongs to
 
+    // Track internal hooks (hooks that share the same name as their parent component/hook file)
+    // Maps: hookName -> { parent: parentName, parentType: 'component' | 'hook' }
+    const internalHooks = new Map();
+
+    // Track which files need _file suffix due to name collision with internal hook
+    const filesNeedingSuffix = new Set();
+
     // Process files in parallel batches for better performance
     const BATCH_SIZE = 10; // Process 10 files at a time
     const batches = [];
@@ -497,36 +504,71 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                   if (node.body) {
                     traverse(node.body, true);
                   }
-                } else if (funcName.startsWith('use') || fileContext.isHook) {
-                  // Hooks: either start with 'use' OR are in /hooks/ folder
+                } else if (funcName.startsWith('use')) {
+                  // Hooks: must start with 'use' (React convention)
+                  // Functions in /hooks/ folder that don't start with 'use' are utilities, not hooks
                   if (!foundItems.hooks.has(funcName)) {
                     foundItems.hooks.add(funcName);
                     elements.hooks.push(funcName);
-                    // Track file→function relationship
-                    if (!fileFunctions.has(fileName)) {
-                      fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                    
+                    // Check if this hook has the same name as the current component (internal hook)
+                    if (fileContext.isComponent && currentComponent && funcName === currentComponent) {
+                      // This hook shares the name with the component - mark for internal nesting
+                      internalHooks.set(funcName, { parent: currentComponent, parentType: 'component' });
+                      filesNeedingSuffix.add(currentComponent);
                     }
-                    fileFunctions.get(fileName).functions.add(funcName);
+                    // Only track file→function relationships for hooks in actual hook files
+                    // (not for hooks defined inside component files)
+                    else if (fileContext.isHook) {
+                      // Check if this hook has the same name as the hook file (hook inside hook)
+                      if (funcName === fileName) {
+                        // Hook shares name with its file - will be handled as internal
+                        filesNeedingSuffix.add(fileName);
+                      }
+                      // Track file→function relationship
+                      if (!fileFunctions.has(fileName)) {
+                        fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                      }
+                      fileFunctions.get(fileName).functions.add(funcName);
+                    }
+                    // Hooks in component files are standalone - don't create file containers for them
                   }
                 } else if (fileContext.isService) {
-                  if (!foundItems.services.has(funcName)) {
-                    foundItems.services.add(funcName);
-                    elements.services.push(funcName);
+                  // Prefix with file name to avoid duplicates across files
+                  const prefixedFuncName = fileName.toLowerCase() + funcName.charAt(0).toUpperCase() + funcName.slice(1);
+                  if (!foundItems.services.has(prefixedFuncName)) {
+                    foundItems.services.add(prefixedFuncName);
+                    elements.services.push(prefixedFuncName);
                     // Track file→function relationship
                     if (!fileFunctions.has(fileName)) {
                       fileFunctions.set(fileName, { type: 'service', functions: new Set() });
                     }
-                    fileFunctions.get(fileName).functions.add(funcName);
+                    fileFunctions.get(fileName).functions.add(prefixedFuncName);
+                  }
+                } else if (fileContext.isHook) {
+                  // Non-hook functions in hook files should be treated as utilities inside the hook file
+                  // Prefix with file name to avoid duplicates across files
+                  const prefixedFuncName = fileName.toLowerCase() + funcName.charAt(0).toUpperCase() + funcName.slice(1);
+                  if (!foundItems.utilities.has(prefixedFuncName)) {
+                    foundItems.utilities.add(prefixedFuncName);
+                    elements.utilities.push(prefixedFuncName);
+                    // Track file→function relationship for nesting inside hook file
+                    if (!fileFunctions.has(fileName)) {
+                      fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                    }
+                    fileFunctions.get(fileName).functions.add(prefixedFuncName);
                   }
                 } else if (fileContext.isUtil) {
-                  if (!foundItems.utilities.has(funcName)) {
-                    foundItems.utilities.add(funcName);
-                    elements.utilities.push(funcName);
+                  // Prefix with file name to avoid duplicates across files
+                  const prefixedFuncName = fileName.toLowerCase() + funcName.charAt(0).toUpperCase() + funcName.slice(1);
+                  if (!foundItems.utilities.has(prefixedFuncName)) {
+                    foundItems.utilities.add(prefixedFuncName);
+                    elements.utilities.push(prefixedFuncName);
                     // Track file→function relationship
                     if (!fileFunctions.has(fileName)) {
                       fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
                     }
-                    fileFunctions.get(fileName).functions.add(funcName);
+                    fileFunctions.get(fileName).functions.add(prefixedFuncName);
                   }
                 } else {
                   // Default: treat as function
@@ -665,26 +707,46 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                         if (decl.init.body) {
                           traverse(decl.init.body, true);
                         }
-                      } else if (varName.startsWith('use') || fileContext.isHook) {
-                        // Hooks: either start with 'use' OR are in /hooks/ folder
+                      } else if (varName.startsWith('use')) {
+                        // Hooks: must start with 'use' (React convention)
+                        // Functions in /hooks/ folder that don't start with 'use' are utilities, not hooks
                         if (!foundItems.hooks.has(varName)) {
                           foundItems.hooks.add(varName);
                           elements.hooks.push(varName);
-                          // Track file→function relationship
-                          if (!fileFunctions.has(fileName)) {
-                            fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                          
+                          // Check if this hook has the same name as the current component (internal hook)
+                          if (fileContext.isComponent && currentComponent && varName === currentComponent) {
+                            // This hook shares the name with the component - mark for internal nesting
+                            internalHooks.set(varName, { parent: currentComponent, parentType: 'component' });
+                            filesNeedingSuffix.add(currentComponent);
                           }
-                          fileFunctions.get(fileName).functions.add(varName);
+                          // Only track file→function relationships for hooks in actual hook files
+                          // (not for hooks defined inside component files)
+                          else if (fileContext.isHook) {
+                            // Check if this hook has the same name as the hook file (hook inside hook)
+                            if (varName === fileName) {
+                              // Hook shares name with its file - will be handled as internal
+                              filesNeedingSuffix.add(fileName);
+                            }
+                            // Track file→function relationship
+                            if (!fileFunctions.has(fileName)) {
+                              fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                            }
+                            fileFunctions.get(fileName).functions.add(varName);
+                          }
+                          // Hooks in component files are standalone - don't create file containers for them
                         }
                       } else if (fileContext.isService) {
-                        if (!foundItems.services.has(varName)) {
-                          foundItems.services.add(varName);
-                          elements.services.push(varName);
+                        // Prefix with file name to avoid duplicates across files
+                        const prefixedVarName = fileName.toLowerCase() + varName.charAt(0).toUpperCase() + varName.slice(1);
+                        if (!foundItems.services.has(prefixedVarName)) {
+                          foundItems.services.add(prefixedVarName);
+                          elements.services.push(prefixedVarName);
                           // Track file→function relationship
                           if (!fileFunctions.has(fileName)) {
                             fileFunctions.set(fileName, { type: 'service', functions: new Set() });
                           }
-                          fileFunctions.get(fileName).functions.add(varName);
+                          fileFunctions.get(fileName).functions.add(prefixedVarName);
                         }
                       } else if (fileContext.isStore) {
                         if (!foundItems.stores.has(varName)) {
@@ -696,15 +758,30 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                           }
                           fileFunctions.get(fileName).functions.add(varName);
                         }
+                      } else if (fileContext.isHook) {
+                        // Non-hook functions in hook files should be treated as utilities inside the hook file
+                        // Prefix with file name to avoid duplicates across files
+                        const prefixedVarName = fileName.toLowerCase() + varName.charAt(0).toUpperCase() + varName.slice(1);
+                        if (!foundItems.utilities.has(prefixedVarName)) {
+                          foundItems.utilities.add(prefixedVarName);
+                          elements.utilities.push(prefixedVarName);
+                          // Track file→function relationship for nesting inside hook file
+                          if (!fileFunctions.has(fileName)) {
+                            fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                          }
+                          fileFunctions.get(fileName).functions.add(prefixedVarName);
+                        }
                       } else if (fileContext.isUtil) {
-                        if (!foundItems.utilities.has(varName)) {
-                          foundItems.utilities.add(varName);
-                          elements.utilities.push(varName);
+                        // Prefix with file name to avoid duplicates across files
+                        const prefixedVarName = fileName.toLowerCase() + varName.charAt(0).toUpperCase() + varName.slice(1);
+                        if (!foundItems.utilities.has(prefixedVarName)) {
+                          foundItems.utilities.add(prefixedVarName);
+                          elements.utilities.push(prefixedVarName);
                           // Track file→function relationship
                           if (!fileFunctions.has(fileName)) {
                             fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
                           }
-                          fileFunctions.get(fileName).functions.add(varName);
+                          fileFunctions.get(fileName).functions.add(prefixedVarName);
                         }
                       } else {
                         // Default: treat as function
@@ -947,7 +1024,9 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
       componentRelationships,
       componentDependencies,
       internalComponents,
-      fileFunctions
+      fileFunctions,
+      internalHooks,
+      filesNeedingSuffix
     );
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
@@ -965,6 +1044,8 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
  * @param {Map} componentDependencies - Component dependencies
  * @param {Map} internalComponents - Internal component mappings
  * @param {Map} fileFunctions - File to function mappings
+ * @param {Map} internalHooks - Internal hooks that share names with parent
+ * @param {Set} filesNeedingSuffix - Files that need _file suffix
  * @returns {string} - Merfolk markdown content
  */
 const generateMerfolkMarkdown = (
@@ -975,7 +1056,9 @@ const generateMerfolkMarkdown = (
   componentRelationships,
   componentDependencies,
   internalComponents,
-  fileFunctions
+  fileFunctions,
+  internalHooks = new Map(),
+  filesNeedingSuffix = new Set()
 ) => {
   let markdown = `%% ${repoName} Repository Analysis\n\n`;
 
@@ -1068,15 +1151,20 @@ const generateMerfolkMarkdown = (
   const duplicates = [];
 
   // Add components (no internal functions nested - they'll be connected via arrows)
+  // Components that have internal hooks with the same name get _file suffix
   if (elements.components.length > 0) {
     markdown += `%% Components\n`;
     elements.components.forEach((comp) => {
-      if (nodeIds.has(comp)) {
-        duplicates.push({ id: comp, type: 'Component', section: 'Components' });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${comp} (Component)`);
+      // Check if this component needs _file suffix due to internal hook with same name
+      const needsSuffix = filesNeedingSuffix.has(comp);
+      const nodeId = needsSuffix ? `${comp}_file` : comp;
+      
+      if (nodeIds.has(nodeId)) {
+        duplicates.push({ id: nodeId, type: 'Component', section: 'Components' });
+        console.warn(`⚠️ DUPLICATE NODE ID: ${nodeId} (Component)`);
       }
-      nodeIds.add(comp);
-      markdown += `${comp}{Component: ${comp}}\n`;
+      nodeIds.add(nodeId);
+      markdown += `${nodeId}{Component: ${comp}}\n`;
     });
   }
 
@@ -1086,6 +1174,9 @@ const generateMerfolkMarkdown = (
     internalComponents.forEach((data, fileName) => {
       // Use the actual parent component (first component found in file)
       const parentComponent = data.parent;
+      // Check if parent needs _file suffix
+      const parentNeedsSuffix = filesNeedingSuffix.has(parentComponent);
+      const parentNodeId = parentNeedsSuffix ? `${parentComponent}_file` : parentComponent;
 
       data.helpers.forEach((helperComp) => {
         // Prevent self-references
@@ -1095,7 +1186,7 @@ const generateMerfolkMarkdown = (
         }
         // Create dashed arrow connection: parent -.-> helper : "internal"
         // This will make markdownDiagramService position the helper inside the parent
-        markdown += `${parentComponent} -.-> ${helperComp} : "internal"\n`;
+        markdown += `${parentNodeId} -.-> ${helperComp} : "internal"\n`;
       });
     });
   }
@@ -1125,6 +1216,17 @@ const generateMerfolkMarkdown = (
       // Hook functions are cubes with [Function: name]
       // Only hook FILE CONTAINERS (created later) use [Hook: fileName]
       markdown += `${hook}[Function: ${hook}]\n`;
+    });
+  }
+
+  // Add internal hooks relationships (hooks inside components/hooks with same name)
+  if (internalHooks.size > 0) {
+    markdown += '\n%% Internal Hooks (same name as parent)\n';
+    internalHooks.forEach((data, hookName) => {
+      // The parent needs _file suffix since hook has same name
+      const parentNodeId = `${data.parent}_file`;
+      // Create dashed arrow for containment
+      markdown += `${parentNodeId} -.-> ${hookName} : "internal hook"\n`;
     });
   }
 
@@ -1202,6 +1304,10 @@ const generateMerfolkMarkdown = (
     // Then add arrow relationships with descriptive labels
     markdown += '\n%% Component-Function Relationships\n';
     componentFunctions.forEach((functions, component) => {
+      // Check if component needs _file suffix
+      const componentNeedsSuffix = filesNeedingSuffix.has(component);
+      const componentNodeId = componentNeedsSuffix ? `${component}_file` : component;
+      
       functions.forEach((func) => {
         // Generate descriptive relationship label based on function name patterns
         let label = 'internal function';
@@ -1225,7 +1331,7 @@ const generateMerfolkMarkdown = (
           label = 'debounced helper';
         }
 
-        markdown += `${component} --> ${func} : "${label}"\n`;
+        markdown += `${componentNodeId} --> ${func} : "${label}"\n`;
       });
     });
   }
@@ -1236,10 +1342,11 @@ const generateMerfolkMarkdown = (
     markdown += '\n%% File Container Nodes\n';
     // Create file nodes for files that contain multiple functions
     fileFunctions.forEach((fileInfo, fileName) => {
-      // Only create container if file has more than 1 function
-      if (fileInfo.functions.size > 1) {
-        // Use fileName__file to avoid conflicts when file name matches a contained function
-        const fileNodeId = fileInfo.functions.has(fileName) ? `${fileName}__file` : fileName;
+      // Only create container if file has more than 1 function OR file needs suffix
+      const needsSuffix = filesNeedingSuffix.has(fileName);
+      if (fileInfo.functions.size > 1 || needsSuffix) {
+        // Use fileName_file to avoid conflicts when file name matches a contained function
+        const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
 
         if (nodeIds.has(fileNodeId)) {
           duplicates.push({
@@ -1287,7 +1394,15 @@ const generateMerfolkMarkdown = (
   if (componentRelationships.size > 0) {
     markdown += '\n%% Component Relationships\n';
     componentRelationships.forEach((usedComponents, component) => {
+      // Check if component needs _file suffix
+      const componentNeedsSuffix = filesNeedingSuffix.has(component);
+      const componentNodeId = componentNeedsSuffix ? `${component}_file` : component;
+      
       usedComponents.forEach((usedComp) => {
+        // Check if used component needs _file suffix
+        const usedCompNeedsSuffix = filesNeedingSuffix.has(usedComp);
+        const usedCompNodeId = usedCompNeedsSuffix ? `${usedComp}_file` : usedComp;
+        
         // Generate descriptive labels based on component names
         let label = 'uses';
         if (usedComp.toLowerCase().includes('renderer')) {
@@ -1304,7 +1419,7 @@ const generateMerfolkMarkdown = (
           label = 'connections';
         }
 
-        markdown += `${component} --> ${usedComp} : "${label}"\n`;
+        markdown += `${componentNodeId} --> ${usedCompNodeId} : "${label}"\n`;
       });
     });
   }
@@ -1313,8 +1428,12 @@ const generateMerfolkMarkdown = (
   if (componentDependencies.size > 0) {
     markdown += '\n%% Component Dependencies\n';
     componentDependencies.forEach((deps, component) => {
+      // Check if component needs _file suffix
+      const componentNeedsSuffix = filesNeedingSuffix.has(component);
+      const componentNodeId = componentNeedsSuffix ? `${component}_file` : component;
+      
       deps.forEach((dep) => {
-        markdown += `${component} --> ${dep.name} : "uses ${dep.type}"\n`;
+        markdown += `${componentNodeId} --> ${dep.name} : "uses ${dep.type}"\n`;
       });
     });
   }
@@ -1398,7 +1517,8 @@ export const handleGithubCallback = async () => {
  * @param {string} currentSpaceId - Current space ID
  * @param {Function} uploadMarkdownToStorage - Function to upload markdown
  * @param {Object} markdownDiagramService - Markdown diagram service instance
- * @returns {Promise<string>} - Generated Merfolk markdown
+ * @param {Function} onProgress - Optional callback for progress updates (progress: 0-100, stage: string)
+ * @returns {Promise<Object>} - Result object with success, objectsCreated, connectionsCreated
  */
 export const scanRepositoryAndGenerateDiagram = async (
   repo,
@@ -1406,7 +1526,8 @@ export const scanRepositoryAndGenerateDiagram = async (
   user,
   currentSpaceId,
   uploadMarkdownToStorage,
-  markdownDiagramService
+  markdownDiagramService,
+  onProgress = null
 ) => {
   const token = getGithubToken();
   if (!token) {
@@ -1414,12 +1535,18 @@ export const scanRepositoryAndGenerateDiagram = async (
   }
 
   try {
+    // Report progress: Fetching repository structure
+    if (onProgress) onProgress(10, 'Fetching repository structure...');
+    
     // Generate Merfolk markdown from entire repository
     const merfolkMarkdown = await generateMerfolkFromRepository(repo.owner.login, repo.name);
+    
+    if (onProgress) onProgress(40, 'Analyzing code and generating diagram...');
 
     // Upload the generated markdown to Firebase Storage
     let storageUrl = null;
     if (user?.uid && currentSpaceId) {
+      if (onProgress) onProgress(50, 'Uploading diagram to storage...');
       try {
         storageUrl = await uploadMarkdownToStorage(
           merfolkMarkdown,
@@ -1432,6 +1559,8 @@ export const scanRepositoryAndGenerateDiagram = async (
         // Continue with processing even if upload fails
       }
     }
+    
+    if (onProgress) onProgress(60, 'Processing markdown...');
 
     // Create a File from the markdown for processing
     const markdownBlob = new Blob([merfolkMarkdown], {
@@ -1440,6 +1569,8 @@ export const scanRepositoryAndGenerateDiagram = async (
     const markdownFile = new File([markdownBlob], `${repo.name}-diagram.md`, {
       type: 'text/markdown',
     });
+    
+    if (onProgress) onProgress(70, 'Creating 3D objects...');
 
     // Use the markdown processing service to handle the upload and creation
     const result = await markdownDiagramService.processMarkdownFile(
@@ -1448,17 +1579,23 @@ export const scanRepositoryAndGenerateDiagram = async (
       currentSpaceId,
       user
     );
+    
+    if (onProgress) onProgress(90, 'Finalizing diagram...');
 
-    if (result.success) {
-      const uploadMessage = storageUrl ? ` and saved to storage (${storageUrl})` : '';
-      alert(
-        `Successfully created diagram for ${repo.name}! Generated ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections${uploadMessage}.`
-      );
-    } else {
-      alert('Diagram generated but no 3D objects were created. Check Merfolk syntax.');
+    if (!result.success) {
+      throw new Error('Diagram generated but no 3D objects were created. Check Merfolk syntax.');
     }
+    
+    if (onProgress) onProgress(100, 'Complete!');
 
-    return merfolkMarkdown;
+    // Return the result instead of showing alert
+    return {
+      success: true,
+      objectsCreated: result.objectsCreated,
+      connectionsCreated: result.connectionsCreated,
+      storageUrl,
+      markdown: merfolkMarkdown
+    };
   } catch (error) {
     console.error('Error generating diagram from repository:', error);
     throw error;

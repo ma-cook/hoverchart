@@ -238,33 +238,6 @@ const TextObject = React.memo(
       }
     }, [setOrbitControlsEnabled, hasTextSelection, isEditing]); // Now safe to include since useCallback is stable
 
-    // Unified click handler for text selection (first instance)
-    useGlobalClickHandler(
-      [], // No additional selectors needed
-      hasTextSelection
-        ? (event) => {
-            if (
-              textAreaRef.current &&
-              !textAreaRef.current.contains(event.target)
-            ) {
-              // Clicked outside textarea
-              if (hasTextSelection) {
-                console.log(
-                  '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
-                );
-                setHasTextSelection(false);
-                setSelectedText({ start: 0, end: 0 });
-                setTimeout(() => {
-                  setOrbitControlsEnabled(true);
-                }, 50);
-              }
-            }
-          }
-        : null, // Only active when hasTextSelection is true
-      'click',
-      [hasTextSelection, setOrbitControlsEnabled, textAreaRef]
-    );
-
     // Debug logging for transform control states
     console.log('🔧 TextObject transform states:', {
       id,

@@ -679,11 +679,7 @@ body {
   justify-content: center;
 }
 
-.record-button:hover {
-  background: linear-gradient(135deg, #ff3742, #ff2f3a);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(255, 71, 87, 0.4);
-}
+
 
 .record-button:active {
   transform: translateY(0);
@@ -763,4 +759,171 @@ body {
 
 .content-editable-placeholder:focus:empty:before {
   color: #ccc;
+}
+
+/* Visual tools container - horizontal bottom toolbar */
+.visual-tools-container {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: row;
+  gap: 5px;
+  background-color: rgba(0, 0, 0, 0.8);
+  padding: 5px;
+  border-radius: 8px;
+  z-index: 1000;
+  align-items: center;
+}
+
+.visual-tools-container .record-button {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  max-width: 40px;
+  max-height: 40px;
+  padding: 0;
+  background: linear-gradient(135deg, #ff4757, #ff3742);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(255, 71, 87, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.visual-tools-container .record-button:hover {
+  background: linear-gradient(135deg, #ff3742, #ff2f3a);
+  box-shadow: 0 4px 12px rgba(255, 71, 87, 0.4);
+}
+
+.visual-tools-container .record-button.recording {
+  background: linear-gradient(135deg, #ff6b7a, #ff4757);
+  animation: pulse 1.5s infinite;
+}
+
+/* Responsive design for visual tools container */
+@media (max-width: 768px) {
+  .visual-tools-container {
+    bottom: 10px;
+    padding: 4px;
+    gap: 4px;
+  }
+
+  .visual-tools-container .record-button {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    max-width: 40px;
+    max-height: 40px;
+  }
+}
+
+/* Scan Progress Loading Bar */
+.scan-progress-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.scan-progress-container {
+  background-color: rgba(0, 0, 0, 0.9);
+  padding: 24px 32px;
+  border-radius: 12px;
+  min-width: 300px;
+  max-width: 400px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.scan-progress-text {
+  color: white;
+  font-size: 14px;
+  margin-bottom: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scan-progress-bar {
+  width: 100%;
+  height: 8px;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.scan-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4caf50, #8bc34a);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.scan-progress-percentage {
+  color: #8bc34a;
+  font-size: 12px;
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+/* Notification Popup */
+.notification-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  cursor: pointer;
+}
+
+.notification-popup {
+  background-color: rgba(76, 175, 80, 0.95);
+  color: white;
+  padding: 20px 32px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  animation: notificationFadeIn 0.3s ease;
+}
+
+.notification-icon {
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.notification-message {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+@keyframes notificationFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }

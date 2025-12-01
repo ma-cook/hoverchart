@@ -1,5 +1,6 @@
 import { useUIOverlayStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
+import useObjectsStore from '../stores/objectsStore';
 import { useRef, useCallback, useEffect, useState } from 'react';
 import {
   uploadModelToStorage,
@@ -8,6 +9,8 @@ import {
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
+import { clearAllObjectCaches } from '../services/spatialObjectsService';
+import { getAuth } from 'firebase/auth';
 import * as THREE from 'three';
 import {
   handleGithubCallback,
@@ -34,6 +37,9 @@ const UIOverlay = ({
   const [repositories, setRepositories] = useState([]);
   const [showRepos, setShowRepos] = useState(false);
   const [isGithubAuthenticated, setIsGithubAuthenticated] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [scanProgress, setScanProgress] = useState({ isScanning: false, progress: 0, stage: '' });
+  const [notification, setNotification] = useState({ show: false, message: '' });
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
   const updateTemplateConfig = useUIOverlayStore(
@@ -64,6 +70,9 @@ const UIOverlay = ({
   );
   const toggleConnectionsVisible = useConnectionStore(
     (state) => state.toggleConnectionsVisible
+  );
+  const resetConnections = useConnectionStore(
+    (state) => state.resetConnections
   );
 
   // Model upload functionality
@@ -101,19 +110,47 @@ const UIOverlay = ({
   // Function to scan repository and generate Merfolk diagram
   const fetchAppJsxFromRepo = async (repo) => {
     try {
-      await scanRepositoryAndGenerateDiagram(
+      setScanProgress({ isScanning: true, progress: 0, stage: 'Starting...' });
+      
+      const result = await scanRepositoryAndGenerateDiagram(
         repo,
         onCreateObject,
         user,
         currentSpaceId,
         uploadMarkdownToStorage,
-        markdownDiagramService
+        markdownDiagramService,
+        (progress, stage) => {
+          setScanProgress({ isScanning: true, progress, stage });
+        }
       );
+      
+      setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
+      
+      // Show notification instead of alert
+      if (result.success) {
+        setNotification({
+          show: true,
+          message: `Diagram created! Generated: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`
+        });
+        
+        // Auto-hide after 2 seconds
+        setTimeout(() => {
+          setNotification({ show: false, message: '' });
+        }, 2000);
+      }
     } catch (error) {
       console.error('Error generating diagram from repository:', error);
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
       throw error;
     }
   };
+  
+  // Click handler to dismiss notification
+  const handleScreenClick = useCallback(() => {
+    if (notification.show) {
+      setNotification({ show: false, message: '' });
+    }
+  }, [notification.show]);
 
   // Handle GitHub OAuth callback
   useEffect(() => {
@@ -157,6 +194,88 @@ const UIOverlay = ({
       }
     }
   }, [isRecording, setIsRecording]);
+
+  // Get the resetObjects function from the objects store
+  const resetObjects = useObjectsStore((state) => state.resetObjects);
+
+  const handleDeleteAllCells = useCallback(async () => {
+    if (!user?.uid || !currentSpaceId) {
+      alert('You must be logged in to delete cells');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Are you sure you want to delete ALL objects in this space? This action cannot be undone.'
+    );
+
+    if (!confirmed) return;
+
+    // Double confirmation for safety
+    const doubleConfirmed = window.confirm(
+      'This will permanently delete all objects. Are you absolutely sure?'
+    );
+
+    if (!doubleConfirmed) return;
+
+    setIsDeleting(true);
+
+    try {
+      // CRITICAL: Set global flag to prevent ANY saves during deletion
+      window._bulkDeleteInProgress = true;
+      
+      // Clear ALL local state FIRST to prevent any saves during the delete operation
+      clearAllObjectCaches();
+      resetObjects();
+      resetConnections();
+      
+      // Get the current user's ID token for authentication
+      const auth = getAuth();
+      const idToken = await auth.currentUser?.getIdToken();
+
+      if (!idToken) {
+        throw new Error('Unable to get authentication token');
+      }
+
+      // Call the cloud function for bulk delete
+      const functionUrl = 'https://bulkdelete-qtk2xsi74a-uc.a.run.app';
+
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          idToken,
+          userId: user.uid,
+          spaceId: currentSpaceId,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Bulk delete failed');
+      }
+
+      if (result.success) {
+        alert(
+          `Successfully deleted ${result.cellsDeleted} cells, ${result.objectsDeleted} objects, and ${result.connectionsDeleted} connections.`
+        );
+      } else {
+        alert(`Failed to delete cells: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      alert(`Error deleting cells: ${error.message}`);
+    } finally {
+      // Release the delete lock after a longer delay to ensure all pending operations complete
+      // Keep the lock for 5 seconds to block any stragglers
+      setTimeout(() => {
+        window._bulkDeleteInProgress = false;
+      }, 5000);
+      setIsDeleting(false);
+    }
+  }, [user, currentSpaceId, resetObjects, resetConnections]);
 
   const handleModelUpload = useCallback(() => {
     if (modelFileInputRef.current) {
@@ -719,30 +838,6 @@ const UIOverlay = ({
               ▭
             </button>
             <button
-              className={`shape-button ${isConnectMode ? 'active' : ''}`}
-              onClick={handleArrowClick}
-              title="Toggle Connection Lines"
-              style={{
-                borderColor: connectionsVisible ? '' : 'orange',
-                borderWidth: connectionsVisible ? '' : '2px',
-              }}
-            >
-              ↗
-            </button>
-            <button
-              className={`shape-button ${
-                cellBoundariesVisible ? 'active' : ''
-              }`}
-              onClick={handleCellBoundariesToggle}
-              title="Toggle Cell Boundaries"
-              style={{
-                borderColor: cellBoundariesVisible ? '' : 'blue',
-                borderWidth: cellBoundariesVisible ? '' : '2px',
-              }}
-            >
-              ⬜
-            </button>
-            <button
               className="shape-button"
               onClick={() => onCreateObject('text')}
               title="Add Text"
@@ -768,29 +863,82 @@ const UIOverlay = ({
           </div>
         ) : null}
       </div>
-      {/* Record button positioned at bottom center */}
-      <div className="record-button-container">
-        <button
-          className={`record-button ${isRecording ? 'recording' : ''}`}
-          onClick={handleRecordClick}
-          title={isRecording ? 'Stop Recording' : 'Start Recording'}
-        >
-          {isRecording ? (
-            <>
-              <span className="record-icon recording">⏹️</span>
-              <span className="record-text">Stop Recording</span>
-            </>
-          ) : (
-            <>
-              <span className="record-icon">🎥</span>
-              <span className="record-text">Record</span>
-            </>
-          )}
-        </button>
-      </div>
+      {/* Visual tools container positioned at bottom center */}
+      {user && (
+        <div className="visual-tools-container" onClick={(e) => e.stopPropagation()}>
+          <button
+            className={`record-button ${isRecording ? 'recording' : ''}`}
+            onClick={handleRecordClick}
+            title={isRecording ? 'Stop Recording' : 'Start Recording'}
+          >
+          </button>
+          <button
+            className={`shape-button ${isConnectMode ? 'active' : ''}`}
+            onClick={handleArrowClick}
+            title="Toggle Connection Lines"
+            style={{
+              borderColor: connectionsVisible ? '' : 'orange',
+              borderWidth: connectionsVisible ? '' : '2px',
+            }}
+          >
+            ↗
+          </button>
+          <button
+            className={`shape-button ${cellBoundariesVisible ? 'active' : ''}`}
+            onClick={handleCellBoundariesToggle}
+            title="Toggle Cell Boundaries"
+            style={{
+              borderColor: cellBoundariesVisible ? '' : 'blue',
+              borderWidth: cellBoundariesVisible ? '' : '2px',
+            }}
+          >
+            ⬜
+          </button>
+          <button
+            className="shape-button delete-all-button"
+            onClick={handleDeleteAllCells}
+            disabled={isDeleting}
+            title="Delete All Objects in Space"
+            style={{
+              backgroundColor: isDeleting ? '#ccc' : '#ffebee',
+              borderColor: '#f44336',
+              color: '#f44336',
+            }}
+          >
+            {isDeleting ? '...' : '🗑️'}
+          </button>
+        </div>
+      )}
+      
+      {/* Loading bar for GitHub repo scanning */}
+      {scanProgress.isScanning && (
+        <div className="scan-progress-overlay">
+          <div className="scan-progress-container">
+            <div className="scan-progress-text">{scanProgress.stage}</div>
+            <div className="scan-progress-bar">
+              <div 
+                className="scan-progress-fill" 
+                style={{ width: `${scanProgress.progress}%` }}
+              />
+            </div>
+            <div className="scan-progress-percentage">{Math.round(scanProgress.progress)}%</div>
+          </div>
+        </div>
+      )}
+      
+      {/* Notification popup */}
+      {notification.show && (
+        <div className="notification-overlay" onClick={handleScreenClick}>
+          <div className="notification-popup">
+            <span className="notification-icon">✓</span>
+            <span className="notification-message">{notification.message}</span>
+          </div>
+        </div>
+      )}
     </>
   );
 };
 
 UIOverlay.displayName = 'UIOverlay';
 export default UIOverlay;
+

@@ -85,6 +85,12 @@ export const getCellCoordinates = (position) => {
 
   const [x, y, z] = position;
 
+  // Handle NaN, undefined, or non-finite values - default to origin cell
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    console.warn('⚠️ Invalid position detected, defaulting to origin cell:', position);
+    return { x: 0, y: 0, z: 0 };
+  }
+
   return {
     x: Math.floor(x / CELL_SIZE),
     y: Math.floor(y / CELL_SIZE),
@@ -608,6 +614,11 @@ export const getCell = async (userId, spaceId, cellX, cellY, cellZ) => {
  * @returns {Promise<boolean>} - Success status
  */
 export const addObjectToCell = async (userId, spaceId, objectData) => {
+  // CRITICAL: Block adding objects during bulk delete
+  if (window._bulkDeleteInProgress) {
+    return false;
+  }
+
   if (
     !userId ||
     !spaceId ||
@@ -2171,5 +2182,74 @@ export const purgeConnectionFromAllCells = async (
     return purgedCount;
   } catch {
     return 0;
+  }
+};
+
+/**
+ * Delete all cells in a space using batched writes to handle thousands of cells
+ * Firestore has a limit of 500 operations per batch, so we batch accordingly
+ * @param {string} userId - User ID (or space owner ID)
+ * @param {string} spaceId - Space ID
+ * @param {Function} onProgress - Optional callback for progress updates (deletedCount, totalCount)
+ * @returns {Promise<{success: boolean, deletedCount: number, error?: string}>}
+ */
+export const deleteAllCellsInSpace = async (userId, spaceId, onProgress) => {
+  if (!userId || !spaceId) {
+    return { success: false, deletedCount: 0, error: 'Missing userId or spaceId' };
+  }
+
+  try {
+    // Get all cells in the space
+    const cellsRef = collection(
+      db,
+      'users',
+      userId,
+      'spaces',
+      spaceId,
+      'cells'
+    );
+    const snapshot = await getDocs(cellsRef);
+
+    if (snapshot.empty) {
+      return { success: true, deletedCount: 0 };
+    }
+
+    const totalCells = snapshot.docs.length;
+    let deletedCount = 0;
+    const BATCH_SIZE = 500; // Firestore limit
+
+    // Process in batches
+    const cellDocs = snapshot.docs;
+    
+    for (let i = 0; i < cellDocs.length; i += BATCH_SIZE) {
+      const batch = writeBatch(db);
+      const batchDocs = cellDocs.slice(i, i + BATCH_SIZE);
+
+      for (const cellDoc of batchDocs) {
+        batch.delete(cellDoc.ref);
+      }
+
+      await batch.commit();
+      deletedCount += batchDocs.length;
+
+      // Report progress
+      if (onProgress) {
+        onProgress(deletedCount, totalCells);
+      }
+    }
+
+    // Clear the cell existence cache for this space
+    const cacheKeysToDelete = [];
+    for (const key of cellExistenceCache.keys()) {
+      if (key.startsWith(`${userId}_${spaceId}_`)) {
+        cacheKeysToDelete.push(key);
+      }
+    }
+    cacheKeysToDelete.forEach(key => cellExistenceCache.delete(key));
+
+    return { success: true, deletedCount };
+  } catch (error) {
+    console.error('Error deleting all cells in space:', error);
+    return { success: false, deletedCount: 0, error: error.message };
   }
 };
