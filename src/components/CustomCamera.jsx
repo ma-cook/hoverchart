@@ -45,7 +45,7 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
         makeDefault
         fov={75} // Increased FOV slightly to help with frustum culling at edges
         near={1} // Increased near plane slightly to help with precision at large distances
-        far={1000000} // Increased far plane to handle objects at very large distances
+        far={100000} // Increased far plane to handle objects at very large distances
         position={[5100, 5000, 5000]} // 100 units away from target [5000,5000,5000]
         aspect={window.innerWidth / window.innerHeight}
       />{' '}

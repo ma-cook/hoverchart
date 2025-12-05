@@ -82,6 +82,7 @@ const ObjectRenderer = React.memo(
             handleObjectMove(obj.id, newPosition, false, false)
           }
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
+          renderEdges={false} // Edges rendered by GlobalCubeEdgesRenderer for better performance
         />
       );
     }
@@ -122,6 +123,7 @@ const ObjectRenderer = React.memo(
             handleObjectMove(obj.id, newPosition, false, false)
           }
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
+          renderEdges={false} // Edges rendered by GlobalTetrahedronEdgesRenderer for better performance
         />
       );
     }
@@ -145,6 +147,7 @@ const ObjectRenderer = React.memo(
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
           selectedIndicators={selectedIndicators} // Add this prop
           indicatorMode={indicatorMode}
+          renderEdges={false} // Edges rendered by GlobalDodecahedronEdgesRenderer for better performance
         />
       );
     }

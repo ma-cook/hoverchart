@@ -1,6 +1,58 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 
+// Selector cache to avoid creating new selector functions on every render
+const selectorCache = new Map();
+
+// Get or create a cached selector for a specific cube
+export const getCubeSelector = (cubeId) => {
+  if (!selectorCache.has(cubeId)) {
+    selectorCache.set(cubeId, (state) => state.cubes.get(cubeId));
+  }
+  return selectorCache.get(cubeId);
+};
+
+// Get or create a cached selector for cube face color
+export const getCubeFaceColorSelector = (cubeId, faceName) => {
+  const key = `${cubeId}-${faceName}-color`;
+  if (!selectorCache.has(key)) {
+    selectorCache.set(
+      key,
+      (state) => state.cubes.get(cubeId)?.faceColors?.[faceName]
+    );
+  }
+  return selectorCache.get(key);
+};
+
+// Get or create a cached selector for cube selected face
+export const getCubeSelectedFaceSelector = (cubeId, faceName) => {
+  const key = `${cubeId}-${faceName}-selected`;
+  if (!selectorCache.has(key)) {
+    selectorCache.set(
+      key,
+      (state) => state.cubes.get(cubeId)?.selectedFace === faceName
+    );
+  }
+  return selectorCache.get(key);
+};
+
+// PERFORMANCE OPTIMIZATION: Combined selector for face state
+// Returns { faceColor, isSelected } in a single subscription instead of two
+// This reduces subscriptions from 12 per cube (6 faces × 2) to 6 per cube
+export const getCubeFaceStateSelector = (cubeId, faceName) => {
+  const key = `${cubeId}-${faceName}-state`;
+  if (!selectorCache.has(key)) {
+    selectorCache.set(key, (state) => {
+      const cube = state.cubes.get(cubeId);
+      return {
+        faceColor: cube?.faceColors?.[faceName],
+        isSelected: cube?.selectedFace === faceName,
+      };
+    });
+  }
+  return selectorCache.get(key);
+};
+
 const useCubeStore = createWithEqualityFn((set, get) => ({
   // State for all cubes
   cubes: new Map(), // Map of cubeId -> cube state

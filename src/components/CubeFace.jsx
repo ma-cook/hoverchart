@@ -1,7 +1,9 @@
 import React, { useMemo, useCallback } from 'react';
 import * as THREE from 'three';
 import { useCubeStore } from '../stores';
+import { getCubeFaceStateSelector } from '../stores/cubeStore';
 import FaceIndicator from './FaceIndicator';
+import { shallow } from 'zustand/shallow';
 
 // Mobile detection (same as in Cube.jsx)
 const isMobile =
@@ -14,6 +16,40 @@ const FACE_SIZE = isMobile ? 15.6 : 9.8;
 const SHARED_FACE_GEOMETRY = new THREE.BoxGeometry(FACE_SIZE, FACE_SIZE, 0.05);
 
 const SELECTED_OPACITY = 0.3;
+
+// Material cache for face materials - prevents recreating materials on every render
+const materialCache = {
+  invisible: new THREE.MeshBasicMaterial({
+    visible: false,
+    transparent: true,
+    side: THREE.DoubleSide,
+  }),
+  selected: new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#99ccff'),
+    opacity: SELECTED_OPACITY,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  }),
+  colored: new Map(), // Cache for colored materials by color string
+};
+
+// Get or create a colored material
+const getColoredMaterial = (color) => {
+  if (!materialCache.colored.has(color)) {
+    materialCache.colored.set(
+      color,
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color),
+        opacity: 1.0,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+      })
+    );
+  }
+  return materialCache.colored.get(color);
+};
 
 /**
  * CubeFace - Optimized component that only re-renders when its specific face changes
@@ -32,44 +68,30 @@ const CubeFace = React.memo(
     isIndicatorActive,
     isIndicatorConnected,
   }) => {
-    // Only subscribe to this specific face's data
-    const faceColor = useCubeStore(
-      (state) => state.cubes.get(cubeId)?.faceColors?.[faceName]
-    );
-    const isSelected = useCubeStore(
-      (state) => state.cubes.get(cubeId)?.selectedFace === faceName
+    // PERFORMANCE OPTIMIZATION: Single combined selector instead of two separate ones
+    // This reduces subscriptions from 12 per cube (6 faces × 2) to 6 per cube
+    const faceStateSelector = useMemo(
+      () => getCubeFaceStateSelector(cubeId, faceName),
+      [cubeId, faceName]
     );
 
-    // Create material based on face state (using shared geometry)
+    // Single subscription for both faceColor and isSelected
+    const { faceColor, isSelected } = useCubeStore(faceStateSelector, shallow);
+
+    // Get cached material based on face state (avoids creating new materials)
     const faceMaterial = useMemo(() => {
-      // If face has a custom color, use it with full opacity
+      // If face has a custom color, use cached colored material
       if (faceColor) {
-        return new THREE.MeshBasicMaterial({
-          color: new THREE.Color(faceColor),
-          opacity: 1.0,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: true,
-        });
+        return getColoredMaterial(faceColor);
       }
 
-      // If face is selected, show selection color
+      // If face is selected, use cached selection material
       if (isSelected) {
-        return new THREE.MeshBasicMaterial({
-          color: new THREE.Color('#99ccff'),
-          opacity: SELECTED_OPACITY,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        });
+        return materialCache.selected;
       }
 
-      // Default: completely invisible (for click handling only)
-      return new THREE.MeshBasicMaterial({
-        visible: false,
-        transparent: true,
-        side: THREE.DoubleSide,
-      });
+      // Default: use cached invisible material (for click handling only)
+      return materialCache.invisible;
     }, [faceColor, isSelected]);
 
     // Stable click handler - always handle clicks, parent decides what to do

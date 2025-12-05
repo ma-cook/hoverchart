@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { EffectComposer, SMAA } from '@react-three/postprocessing';
+import { Stats } from '@react-three/drei/core/Stats';
 
 import './App.css';
 
@@ -8,7 +9,7 @@ import './App.css';
 import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
 import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
-import ObjectRenderer from './components/ObjectRenderer';
+import ObjectsRenderer from './components/ObjectsRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 import useUIOverlayStore from './stores/uiOverlayStore';
@@ -1429,54 +1430,8 @@ const App = () => {
     return () => clearTimeout(timeoutId);
   }, [objects]);
 
-  // Memoize expensive object rendering operations with virtualization
-  const renderedObjects = useMemo(() => {
-    // Filter objects to only render visible ones
-    const visibleObjects = objects.filter((obj) =>
-      visibleObjectIds.has(obj.id)
-    );
-
-    // Determine LOD based on camera distance
-    const useLOD = cameraDistance > 100;
-
-    return visibleObjects.map((obj) => (
-      <ObjectRenderer
-        key={obj.id}
-        obj={obj}
-        selectedId={selectedId}
-        handleObjectClick={handleObjectClick}
-        handleObjectMove={handleObjectMoveCallback}
-        handleObjectUpdate={handleObjectUpdateCallback}
-        disableOrbitControls={disableOrbitControls}
-        enableOrbitControls={enableOrbitControls}
-        handleFaceIndicatorClick={handleFaceIndicatorClickCallback}
-        handleFaceClick={handleFaceClick}
-        showAllCubesIndicators={showAllCubesIndicators}
-        activeIndicator={activeIndicator}
-        indicatorMode={indicatorMode}
-        selectedIndicators={selectedIndicators}
-        activeTextStyleUI={activeTextStyleUI}
-        setActiveTextStyleUI={setActiveTextStyleUI}
-        handleIndicatorDeselected={handleIndicatorDeselected}
-        registerTransformingObject={registerTransformingObject}
-        getTransformStartPosition={getTransformStartPosition}
-        handleObjectMatrixChanged={handleObjectMatrixChanged}
-        handleIndicatorSelected={handleIndicatorSelected}
-        globalIndicatorSelected={globalIndicatorSelected}
-        handleObjectDelete={handleObjectDelete}
-        checkPositionJitter={checkPositionJitterWithHistory}
-        user={user}
-        currentSpaceId={effectiveSpaceId}
-        useLOD={useLOD}
-      />
-    ));
-  }, [
-    objects,
-    visibleObjectIds,
-    cameraDistance,
-    selectedId,
-    // Remove callback dependencies - they should be stable with useCallback
-  ]);
+  // Determine LOD based on camera distance
+  const useLOD = cameraDistance > 100;
 
   // Lazy load state for Canvas
   const [shouldRenderCanvas, setShouldRenderCanvas] = useState(false);
@@ -1687,6 +1642,7 @@ const App = () => {
           {' '}
           {/* Global frame counter - updates once per frame for all components */}
           <FrameTicker />
+          <Stats />
           {/* PERFORMANCE: Global animation manager for all connection line animations */}
           <ConnectionAnimationManager />
           <CustomCamera ref={cameraRef} />
@@ -1705,8 +1661,36 @@ const App = () => {
               onLineTextSubmit={handleLineTextSubmit}
               onLineTextStyleChange={handleLineTextStyleChange}
             />{' '}
-            {/* Render all objects */}
-            {renderedObjects}
+            {/* Render all objects with batched cube edges */}
+            <ObjectsRenderer
+              objects={objects}
+              visibleObjectIds={visibleObjectIds}
+              selectedId={selectedId}
+              handleObjectClick={handleObjectClick}
+              handleObjectMove={handleObjectMoveCallback}
+              handleObjectUpdate={handleObjectUpdateCallback}
+              disableOrbitControls={disableOrbitControls}
+              enableOrbitControls={enableOrbitControls}
+              handleFaceIndicatorClick={handleFaceIndicatorClickCallback}
+              handleFaceClick={handleFaceClick}
+              showAllCubesIndicators={showAllCubesIndicators}
+              activeIndicator={activeIndicator}
+              indicatorMode={indicatorMode}
+              selectedIndicators={selectedIndicators}
+              activeTextStyleUI={activeTextStyleUI}
+              setActiveTextStyleUI={setActiveTextStyleUI}
+              handleIndicatorDeselected={handleIndicatorDeselected}
+              registerTransformingObject={registerTransformingObject}
+              handleObjectMatrixChanged={handleObjectMatrixChanged}
+              handleIndicatorSelected={handleIndicatorSelected}
+              globalIndicatorSelected={globalIndicatorSelected}
+              handleObjectDelete={handleObjectDelete}
+              user={user}
+              currentSpaceId={effectiveSpaceId}
+              getTransformStartPosition={getTransformStartPosition}
+              checkPositionJitter={checkPositionJitterWithHistory}
+              useLOD={useLOD}
+            />
             {/* Render cell boundaries */}
             <CellBoundaryRenderer
               loadedCells={loadedCells}

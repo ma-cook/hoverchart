@@ -6,8 +6,8 @@
 }
 
 canvas {
-  width: 100vw !important;
-  height: 100vh !important;
+  width: 100vw;
+  height: 100vh;
 }
 
 .app-container {

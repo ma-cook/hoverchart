@@ -3,6 +3,22 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { getGlobalTextAtlas } from '../utils/textAtlas';
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Reusable THREE objects to avoid GC pressure
+// These are created once and reused across all AtlasTextSprite instances
+// =============================================================================
+const tempVec3A = new THREE.Vector3();
+const tempVec3B = new THREE.Vector3();
+const tempVec3C = new THREE.Vector3();
+const tempMatrix = new THREE.Matrix4();
+const tempFlipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
+
+// Throttle intervals by text type (ms) - less critical text updates less often
+const THROTTLE_FACE_TEXT = 66;      // 15fps - face visibility doesn't need high refresh
+const THROTTLE_HEADER_TEXT = 50;    // 20fps - headers follow objects
+const THROTTLE_CONNECTION_TEXT = 33; // 30fps - connection text needs smooth movement
+const THROTTLE_STANDARD = 50;       // 20fps - standard billboard text
+
 /**
  * Optimized text sprite using a shared texture atlas
  * Reduces texture binds and improves performance for diagrams with many text labels
@@ -214,43 +230,56 @@ const AtlasTextSprite = ({
   }, [geometry, material, atlas]);
 
   // Billboard and positioning effect using useFrame
+  // PERFORMANCE OPTIMIZED: Uses reusable THREE objects and smart throttling
   useFrame(({ camera }) => {
     if (!meshRef.current) return;
 
-    // Throttle updates to 30fps for better performance
+    // Determine throttle interval based on text type
     const now = Date.now();
-    if (now - lastUpdateTimeRef.current < 33) return; // ~30fps
+    let throttleInterval = THROTTLE_STANDARD;
+    
+    if (style.isFaceText) {
+      throttleInterval = THROTTLE_FACE_TEXT;
+    } else if (style.isHeaderText || followTarget?.current) {
+      throttleInterval = THROTTLE_HEADER_TEXT;
+    } else if (lineStyle && pathPoints) {
+      throttleInterval = THROTTLE_CONNECTION_TEXT;
+    }
+    
+    if (now - lastUpdateTimeRef.current < throttleInterval) return;
     lastUpdateTimeRef.current = now;
 
     // === FACE TEXT HANDLING ===
     // Face text uses normal-based billboarding and visibility
     if (style.isFaceText && normal) {
-      const worldNormal = new THREE.Vector3(...normal).normalize();
-      const textWorldPos = new THREE.Vector3();
-      meshRef.current.getWorldPosition(textWorldPos);
-      const viewDir = textWorldPos.clone().sub(camera.position).normalize();
+      // Reuse tempVec3A for world normal
+      tempVec3A.set(normal[0], normal[1], normal[2]).normalize();
+      
+      // Reuse tempVec3B for text world position
+      meshRef.current.getWorldPosition(tempVec3B);
+      
+      // Reuse tempVec3C for view direction
+      tempVec3C.copy(tempVec3B).sub(camera.position).normalize();
 
       // Calculate dot product between normal and view direction
-      const dotProduct = worldNormal.dot(viewDir);
+      const dotProduct = tempVec3A.dot(tempVec3C);
 
       // Set visibility based on viewing angle
       if (dotProduct < 0) {
         // We're looking at the face from the front
         meshRef.current.visible = true;
 
-        // Build rotation matrix for text orientation
-        const matrix = new THREE.Matrix4();
-        matrix.lookAt(
-          new THREE.Vector3(0, 0, 0),
-          worldNormal,
-          new THREE.Vector3(0, 1, 0)
+        // Build rotation matrix for text orientation using reusable matrix
+        tempMatrix.lookAt(
+          tempVec3C.set(0, 0, 0), // origin
+          tempVec3A,              // look at normal direction
+          tempVec3B.set(0, 1, 0)  // up vector
         );
 
-        // Flip text 180° to face viewer
-        const flipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
-        matrix.multiply(flipMatrix);
+        // Flip text 180° to face viewer using pre-computed flip matrix
+        tempMatrix.multiply(tempFlipMatrix);
 
-        meshRef.current.setRotationFromMatrix(matrix);
+        meshRef.current.setRotationFromMatrix(tempMatrix);
       } else {
         // We're looking at the face from behind
         meshRef.current.visible = false;
@@ -269,24 +298,17 @@ const AtlasTextSprite = ({
 
       if (style.isDodecahedronHeader) {
         // Dodecahedron headers use calculated position with distance-based scaling
-        const calculatedPos = Array.isArray(position)
-          ? position
-          : [position?.x || 0, position?.y || 0, position?.z || 0];
-        const distanceToCamera = camera.position.distanceTo(
-          new THREE.Vector3(...calculatedPos)
-        );
+        const posX = Array.isArray(position) ? position[0] : (position?.x || 0);
+        const posY = Array.isArray(position) ? position[1] : (position?.y || 0);
+        const posZ = Array.isArray(position) ? position[2] : (position?.z || 0);
+        
+        // Reuse tempVec3A for distance calculation
+        tempVec3A.set(posX, posY, posZ);
+        const distanceToCamera = camera.position.distanceTo(tempVec3A);
         const baseScale = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 1.5);
 
-        meshRef.current.position.set(
-          calculatedPos[0],
-          calculatedPos[1],
-          calculatedPos[2]
-        );
-        meshRef.current.scale.set(
-          baseScale * scale,
-          baseScale * scale,
-          baseScale * scale
-        );
+        meshRef.current.position.set(posX, posY, posZ);
+        meshRef.current.scale.setScalar(baseScale * scale);
 
         // Billboard orientation
         if (distanceToCamera < 1000) {
@@ -303,23 +325,16 @@ const AtlasTextSprite = ({
           );
         }
 
-        const worldPos = new THREE.Vector3();
-        meshRef.current.getWorldPosition(worldPos);
-        const distanceToCamera = camera.position.distanceTo(worldPos);
+        // Reuse tempVec3A for world position
+        meshRef.current.getWorldPosition(tempVec3A);
+        const distanceToCamera = camera.position.distanceTo(tempVec3A);
 
         if (distanceToCamera < 1000) {
           meshRef.current.quaternion.copy(camera.quaternion);
         }
 
-        const scaleValue = Math.min(
-          Math.max(distanceToCamera * 0.01, 0.5),
-          2.0
-        );
-        meshRef.current.scale.set(
-          scaleValue * scale,
-          scaleValue * scale,
-          scaleValue * scale
-        );
+        const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
+        meshRef.current.scale.setScalar(scaleValue * scale);
       } else if (style.isHeaderText) {
         // General header text (cubes, tetrahedrons)
         const [x, y, z] = position;
@@ -331,23 +346,16 @@ const AtlasTextSprite = ({
           targetPos.z + z * avgScale
         );
 
-        const worldPos = new THREE.Vector3();
-        meshRef.current.getWorldPosition(worldPos);
-        const distanceToCamera = camera.position.distanceTo(worldPos);
+        // Reuse tempVec3A for world position
+        meshRef.current.getWorldPosition(tempVec3A);
+        const distanceToCamera = camera.position.distanceTo(tempVec3A);
 
         if (distanceToCamera < 1000) {
           meshRef.current.quaternion.copy(camera.quaternion);
         }
 
-        const scaleValue = Math.min(
-          Math.max(distanceToCamera * 0.01, 0.5),
-          2.0
-        );
-        meshRef.current.scale.set(
-          scaleValue * scale * avgScale,
-          scaleValue * scale * avgScale,
-          scaleValue * scale * avgScale
-        );
+        const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
+        meshRef.current.scale.setScalar(scaleValue * scale * avgScale);
       }
       return; // Header text handling complete
     }
@@ -355,24 +363,19 @@ const AtlasTextSprite = ({
     // === CONNECTION TEXT HANDLING ===
     // Update position with smoothing for connection lines
     if (calculatedPosition && smoothedPositionRef.current) {
-      const targetPosition = Array.isArray(calculatedPosition)
-        ? new THREE.Vector3(
-            calculatedPosition[0],
-            calculatedPosition[1],
-            calculatedPosition[2]
-          )
-        : new THREE.Vector3(
-            calculatedPosition.x,
-            calculatedPosition.y,
-            calculatedPosition.z
-          );
+      // Reuse tempVec3A for target position
+      if (Array.isArray(calculatedPosition)) {
+        tempVec3A.set(calculatedPosition[0], calculatedPosition[1], calculatedPosition[2]);
+      } else {
+        tempVec3A.set(calculatedPosition.x, calculatedPosition.y, calculatedPosition.z);
+      }
 
       // Smooth position updates (faster for connection texts)
       const isConnectionText = lineStyle && pathPoints && pathPoints.length > 0;
       const smoothingFactor = isConnectionText ? 0.5 : 0.3;
 
       // Lerp toward target position
-      smoothedPositionRef.current.lerp(targetPosition, smoothingFactor);
+      smoothedPositionRef.current.lerp(tempVec3A, smoothingFactor);
 
       // Apply smoothed position
       meshRef.current.position.copy(smoothedPositionRef.current);
@@ -381,9 +384,9 @@ const AtlasTextSprite = ({
     // === STANDARD BILLBOARD ===
     // Standard billboard behavior for non-face, non-header text
     if (billboard) {
-      const worldPos = new THREE.Vector3();
-      meshRef.current.getWorldPosition(worldPos);
-      const distance = camera.position.distanceTo(worldPos);
+      // Reuse tempVec3A for world position
+      meshRef.current.getWorldPosition(tempVec3A);
+      const distance = camera.position.distanceTo(tempVec3A);
 
       if (distance < 1000) {
         meshRef.current.quaternion.copy(camera.quaternion);

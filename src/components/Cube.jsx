@@ -28,6 +28,8 @@ import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
 import { debounce } from '../utils/unifiedPerformanceUtils';
 import { shallow } from 'zustand/shallow';
+// Import cube transform map for real-time edge sync
+import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -161,10 +163,12 @@ const Cube = ({
   // Add these new props for spatial routing
   onMove, // Add onMove prop like Sphere
   lineWidth, // Line width for cube edges
+  renderEdges = false, // When false, edges are rendered by GlobalCubeEdgesRenderer for better performance
 }) => {
-  // Get object data from objects store
-  const objects = useObjectsStore((state) => state.objects);
-  const objectData = objects.find((obj) => obj.id === id);
+  // Get object data from objects store - use selector to avoid subscribing to all objects
+  const objectData = useObjectsStore(
+    useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+  );
   const setIndicatorActive = useFaceIndicatorStore(
     (state) => state.setIndicatorActive
   );
@@ -992,6 +996,13 @@ const Cube = ({
         updateCube(id, { showSnapLine: false });
       }
 
+      // Update cubeTransformMap for real-time edge sync with GlobalCubeEdgesRenderer
+      const currentScale = cube?.scale || scale;
+      cubeTransformMap.set(id.toString(), {
+        position: finalPosition,
+        scale: currentScale,
+      });
+
       // Update the objects store position immediately for real-time connection updates
       const updatedObjects = currentObjects.map((obj) =>
         obj.id === id ? { ...obj, position: finalPosition } : obj
@@ -1031,6 +1042,12 @@ const Cube = ({
         return;
       }
 
+      // Update cubeTransformMap for real-time edge sync with GlobalCubeEdgesRenderer
+      cubeTransformMap.set(id.toString(), {
+        position: position,
+        scale: newScale,
+      });
+
       // Update the objects store scale immediately for real-time connection updates
       const objectsStore = useObjectsStore.getState();
       const currentObjects = Array.isArray(objectsStore.objects)
@@ -1058,6 +1075,7 @@ const Cube = ({
       id,
       cube?.scale,
       scale,
+      position,
       updateCube,
       setCubeIsScaleModified,
       onUpdate,
@@ -1310,12 +1328,14 @@ const Cube = ({
           />
           <meshBasicMaterial visible={false} />
         </mesh>{' '}
-        {/* Cube edges using InstancedLine - single instanced mesh for all 12 edges */}
-        <InstancedLine
-          points={cubeEdges}
-          color={cube?.color || color}
-          lineWidth={lineWidth !== undefined ? lineWidth : 1}
-        />
+        {/* Cube edges - only render per-cube if renderEdges=true, otherwise GlobalCubeEdgesRenderer handles all cubes */}
+        {renderEdges && (
+          <InstancedLine
+            points={cubeEdges}
+            color={cube?.color || color}
+            lineWidth={lineWidth !== undefined ? lineWidth : 1}
+          />
+        )}
         {/* Colored faces and indicators */}
         {renderFaces}
         {/* Face text elements */}
@@ -1398,6 +1418,8 @@ const Cube = ({
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
+            // Clear real-time transform data - position is now in store
+            cubeTransformMap.delete(id);
             // No immediate save - let the debounced effect handle it like Dodecahedron
           }}
           mode="translate"
@@ -1421,6 +1443,8 @@ const Cube = ({
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
+            // Clear real-time transform data - position/scale is now in store
+            cubeTransformMap.delete(id);
             // Don't use registerTransformingObject - let it work like dodecahedron
 
             // Save scale changes immediately on mouse up as backup

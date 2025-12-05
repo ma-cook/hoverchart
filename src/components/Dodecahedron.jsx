@@ -16,6 +16,8 @@ import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicat
 // Import unified utilities
 import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
+// Import transform map for real-time edge sync
+import { dodecahedronTransformMap } from './GlobalDodecahedronEdgesRenderer';
 
 import TextStyleUI from './TextStyleUI';
 import FaceUI from './FaceUI';
@@ -166,6 +168,7 @@ const Sphere = React.memo(
     onDelete, // Add new prop
     registerTransformingObject, // Add this prop
     lineWidth, // Add lineWidth prop
+    renderEdges = true, // When false, edges are rendered by GlobalDodecahedronEdgesRenderer
   }) => {
     // Mobile detection for scaling
     const isMobile =
@@ -744,6 +747,12 @@ const Sphere = React.memo(
             updateDodecahedron(id, { showSnapLine: false });
           }
 
+          // Update real-time transform map for GlobalDodecahedronEdgesRenderer
+          dodecahedronTransformMap.set(id, { 
+            position: finalPosition, 
+            scale: dodecahedron?.scale || scale 
+          });
+
           // Update the objects store position immediately for real-time connection updates
           const updatedObjects = currentObjects.map((obj) =>
             obj.id === id ? { ...obj, position: finalPosition } : obj
@@ -758,7 +767,7 @@ const Sphere = React.memo(
           // Error handling without logging
         }
       },
-      [id, onMove, updateDodecahedron]
+      [id, onMove, updateDodecahedron, dodecahedron?.scale, scale]
     ); // Add handler for scale changes from TransformControls
     const handleScale = (e) => {
       if (!e.target || !e.target.object) return;
@@ -780,6 +789,12 @@ const Sphere = React.memo(
       ) {
         return;
       }
+
+      // Update real-time transform map for GlobalDodecahedronEdgesRenderer
+      dodecahedronTransformMap.set(id, { 
+        position: dodecahedron?.position || position, 
+        scale: newScale 
+      });
 
       // Update objects store for instant visual feedback and persistence
       setObjects((prevObjects) =>
@@ -1230,12 +1245,14 @@ const Sphere = React.memo(
               />
             );
           })}{' '}
-          {/* Wireframe lines - batched into single InstancedLine */}
-          <InstancedLine
-            points={edgePoints}
-            color={renderLineColor}
-            lineWidth={lineWidth !== undefined ? lineWidth : isMobile ? 3 : 1}
-          />{' '}
+          {/* Wireframe lines - conditionally rendered when not using global renderer */}
+          {renderEdges && (
+            <InstancedLine
+              points={edgePoints}
+              color={renderLineColor}
+              lineWidth={lineWidth !== undefined ? lineWidth : isMobile ? 3 : 1}
+            />
+          )}{' '}
         </group>
         {/* Move UI elements outside main group but keep them following contentRef */}
         {selected &&
@@ -1328,6 +1345,8 @@ const Sphere = React.memo(
                 contentRef.current.orbitControls.enabled = true;
               }
               registerTransformingObject?.(id, false);
+              // Clear real-time transform data - scale is now in store
+              dodecahedronTransformMap.delete(id);
 
               // Save scale changes immediately on mouse up
               if (dodecahedron?.isScaleModified && onUpdate && objectData) {
@@ -1397,6 +1416,8 @@ const Sphere = React.memo(
                 contentRef.current.orbitControls.enabled = true;
               }
               registerTransformingObject?.(id, false);
+              // Clear real-time transform data - position is now in store
+              dodecahedronTransformMap.delete(id);
             }}
             mode="translate"
             space="world"

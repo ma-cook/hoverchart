@@ -11,6 +11,7 @@ import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 
 import InstancedLine from './InstancedLine';
+import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
 import isEqual from 'lodash/isEqual';
 import {
   useTetrahedronStore,
@@ -119,6 +120,7 @@ const Tetrahedron = ({
   onTransformEnd,
   onMove,
   lineWidth, // Add lineWidth prop
+  renderEdges = true, // Add renderEdges prop - default true for backwards compatibility
 }) => {
   // Create triangle geometries for each face (moved inside component to ensure proper disposal)
 
@@ -782,6 +784,12 @@ const Tetrahedron = ({
 
     const currentPosition = [newPos.x, newPos.y, newPos.z];
 
+    // Update transform map for real-time edge sync
+    tetrahedronTransformMap.set(id, {
+      position: currentPosition,
+      scale: tetrahedronState.scale || scale,
+    });
+
     try {
       const objectsStore = useObjectsStore.getState();
       const currentObjects = Array.isArray(objectsStore.objects)
@@ -797,6 +805,12 @@ const Tetrahedron = ({
           snapResult.position[1],
           snapResult.position[2]
         );
+
+        // Update transform map with snapped position
+        tetrahedronTransformMap.set(id, {
+          position: finalPosition,
+          scale: tetrahedronState.scale || scale,
+        });
 
         tetrahedronActions.updateTetrahedron(id, {
           showSnapLine: true,
@@ -845,9 +859,16 @@ const Tetrahedron = ({
       ) {
         return;
       }
+
+      // Update transform map for real-time edge sync during scaling
+      tetrahedronTransformMap.set(id, {
+        position: position,
+        scale: newScale,
+      });
+
       tetrahedronActions.updateTetrahedron(id, { scale: newScale });
     },
-    [id, tetrahedronState.scale, scale, tetrahedronActions.updateTetrahedron]
+    [id, tetrahedronState.scale, scale, position, tetrahedronActions.updateTetrahedron]
   );
 
   // Face text handling functions
@@ -1151,11 +1172,14 @@ const Tetrahedron = ({
         )}
 
         {/* Tetrahedron edge lines - batched into single InstancedLine */}
-        <InstancedLine
-          points={tetrahedronEdgePoints}
-          color={tetrahedronState.color || color}
-          lineWidth={lineWidth !== undefined ? lineWidth : 1}
-        />
+        {/* Only render if renderEdges is true (when not using GlobalTetrahedronEdgesRenderer) */}
+        {renderEdges && (
+          <InstancedLine
+            points={tetrahedronEdgePoints}
+            color={tetrahedronState.color || color}
+            lineWidth={lineWidth !== undefined ? lineWidth : 1}
+          />
+        )}
 
         {/* Render faces */}
         {renderFaces}
@@ -1278,6 +1302,8 @@ const Tetrahedron = ({
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
+            // Clear transform map - state is now authoritative
+            tetrahedronTransformMap.delete(id);
           }}
           mode="translate"
           space="world"
@@ -1299,6 +1325,9 @@ const Tetrahedron = ({
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
+
+            // Clear transform map - state is now authoritative
+            tetrahedronTransformMap.delete(id);
 
             if (onUpdate) {
               onUpdate(id, {
