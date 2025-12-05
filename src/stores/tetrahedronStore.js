@@ -196,6 +196,21 @@ const useTetrahedronStore = createWithEqualityFn((set, get) => ({
     });
   },
 
+  // Batch close all style menus - more efficient than iterating from App
+  closeAllStyleMenus: () => {
+    set((state) => {
+      const newTetrahedrons = new Map(state.tetrahedrons);
+      let hasChanges = false;
+      newTetrahedrons.forEach((tet, id) => {
+        if (tet.showHeaderTextStyleUI) {
+          newTetrahedrons.set(id, { ...tet, showHeaderTextStyleUI: false });
+          hasChanges = true;
+        }
+      });
+      return hasChanges ? { tetrahedrons: newTetrahedrons } : state;
+    });
+  },
+
   setTetrahedronActiveTextFace: (tetrahedronId, face) => {
     set((state) => {
       const newTetrahedrons = new Map(state.tetrahedrons);

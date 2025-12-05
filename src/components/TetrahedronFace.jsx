@@ -11,6 +11,45 @@ import TextStyleUI from './TextStyleUI';
 const SELECTED_OPACITY = 0.3;
 const DEFAULT_OPACITY = 0.1;
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Material cache for tetrahedron faces
+// Prevents creating new materials on every render - same pattern as CubeFace.jsx
+// =============================================================================
+const tetrahedronFaceMaterialCache = {
+  // Default state - black, very low opacity
+  default: {
+    color: new THREE.Color('#000000'),
+    opacity: DEFAULT_OPACITY,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  },
+  // Selected face state - light blue
+  selected: {
+    color: new THREE.Color('#99ccff'),
+    opacity: SELECTED_OPACITY,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  },
+  // Colored materials cache by color string
+  colored: new Map(),
+};
+
+// Get or create a colored material config for tetrahedron faces
+const getTetrahedronColoredMaterial = (color) => {
+  if (!tetrahedronFaceMaterialCache.colored.has(color)) {
+    tetrahedronFaceMaterialCache.colored.set(color, {
+      color: new THREE.Color(color),
+      opacity: 1.0,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+    });
+  }
+  return tetrahedronFaceMaterialCache.colored.get(color);
+};
+
 /**
  * TetrahedronFace - Optimized component that only re-renders when its specific face changes
  * This reduces re-renders by isolating face-specific logic
@@ -77,35 +116,17 @@ const TetrahedronFace = React.memo(
       (state) => state.setTetrahedronActiveTextFace
     );
 
-    // Create material based on face state
+    // Get cached material config based on face state (avoids creating new THREE.Color on every render)
     const faceMaterial = useMemo(() => {
       if (faceColor) {
-        return {
-          color: new THREE.Color(faceColor),
-          opacity: 1.0,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: true,
-        };
+        return getTetrahedronColoredMaterial(faceColor);
       }
 
       if (isSelectedFace) {
-        return {
-          color: new THREE.Color('#99ccff'),
-          opacity: SELECTED_OPACITY,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        };
+        return tetrahedronFaceMaterialCache.selected;
       }
 
-      return {
-        color: new THREE.Color('#000000'),
-        opacity: DEFAULT_OPACITY,
-        transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      };
+      return tetrahedronFaceMaterialCache.default;
     }, [faceColor, isSelectedFace]);
 
     // Stable click handler

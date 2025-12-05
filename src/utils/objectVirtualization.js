@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 
+// Module-level reusable THREE objects to reduce GC pressure
+const _tempVec = new THREE.Vector3();
+const _cameraPos = new THREE.Vector3();
+const _sphereCenter = new THREE.Vector3();
+const _tempSphere = new THREE.Sphere();
+
 /**
  * Frustum culling for objects to only render what's visible
  * Modified to be less aggressive about culling to prevent object disappearing bug
@@ -44,20 +50,23 @@ export class ObjectVirtualizer {
       };
 
       const maxObjects = getMaxObjects();
-      const cameraPosition = camera.position.clone();
+      // Use reusable vector instead of creating new one
+      _cameraPos.copy(camera.position);
 
       // Filter objects by distance but use much larger distances
       const objectsWithDistance = objects
-        .map((obj) => ({
-          id: obj.id,
-          distance: cameraPosition.distanceTo(
-            new THREE.Vector3(
-              obj.position?.x || obj.position?.[0] || 0,
-              obj.position?.y || obj.position?.[1] || 0,
-              obj.position?.z || obj.position?.[2] || 0
-            )
-          ),
-        }))
+        .map((obj) => {
+          // Use reusable vector for position
+          _tempVec.set(
+            obj.position?.x || obj.position?.[0] || 0,
+            obj.position?.y || obj.position?.[1] || 0,
+            obj.position?.z || obj.position?.[2] || 0
+          );
+          return {
+            id: obj.id,
+            distance: _cameraPos.distanceTo(_tempVec),
+          };
+        })
         .sort((a, b) => a.distance - b.distance)
         .slice(0, maxObjects); // Only limit by count, not distance
 
@@ -87,20 +96,23 @@ export class ObjectVirtualizer {
     };
 
     const maxObjects = getMaxObjects();
-    const cameraPosition = camera.position.clone();
+    // Use reusable vector instead of creating new one
+    _cameraPos.copy(camera.position);
 
     // Filter objects by distance and sort by distance
     const objectsWithDistance = objects
-      .map((obj) => ({
-        id: obj.id,
-        distance: cameraPosition.distanceTo(
-          new THREE.Vector3(
-            obj.position?.x || obj.position?.[0] || 0,
-            obj.position?.y || obj.position?.[1] || 0,
-            obj.position?.z || obj.position?.[2] || 0
-          )
-        ),
-      }))
+      .map((obj) => {
+        // Use reusable vector for position
+        _tempVec.set(
+          obj.position?.x || obj.position?.[0] || 0,
+          obj.position?.y || obj.position?.[1] || 0,
+          obj.position?.z || obj.position?.[2] || 0
+        );
+        return {
+          id: obj.id,
+          distance: _cameraPos.distanceTo(_tempVec),
+        };
+      })
       .filter((obj) => obj.distance <= maxObjectDistance)
       .sort((a, b) => a.distance - b.distance)
       .slice(0, maxObjects);
@@ -113,12 +125,12 @@ export class ObjectVirtualizer {
   isObjectVisible(obj) {
     if (!obj.position || !Array.isArray(obj.position)) return true;
 
-    const sphere = new THREE.Sphere(
-      new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2]),
-      this.getObjectRadius(obj)
-    );
+    // Use reusable sphere instead of creating new objects
+    _sphereCenter.set(obj.position[0], obj.position[1], obj.position[2]);
+    _tempSphere.center.copy(_sphereCenter);
+    _tempSphere.radius = this.getObjectRadius(obj);
 
-    return this.frustum.intersectsSphere(sphere);
+    return this.frustum.intersectsSphere(_tempSphere);
   }
   getObjectRadius(obj) {
     // Estimate object radius based on type and scale

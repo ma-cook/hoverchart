@@ -4,9 +4,13 @@
  * Replaces scattered disposal logic across Plane, WebcamStream, ScreenShareStream
  */
 
+// WeakSet for disposed resources - allows garbage collection of disposed items
+// while still tracking them efficiently
+const _disposedWeakSet = new WeakSet();
+
 class ResourceCleanupService {
   constructor() {
-    this.disposedResources = new Set();
+    // Use WeakMap for active resources to allow GC of unreferenced resources
     this.activeResources = new Map();
     this.stats = {
       texturesDisposed: 0,
@@ -14,6 +18,26 @@ class ResourceCleanupService {
       geometriesDisposed: 0,
       errors: 0,
     };
+    
+    // Batch disposal queue for performance
+    this._disposalQueue = [];
+    this._batchDisposalScheduled = false;
+  }
+
+  /**
+   * Check if a resource has been disposed
+   * @private
+   */
+  _isDisposed(resource) {
+    return _disposedWeakSet.has(resource);
+  }
+
+  /**
+   * Mark a resource as disposed
+   * @private
+   */
+  _markDisposed(resource) {
+    _disposedWeakSet.add(resource);
   }
 
   /**
@@ -22,19 +46,11 @@ class ResourceCleanupService {
    * @param {string} id - Optional identifier for tracking
    */
   disposeTexture(texture, id = null) {
-    if (!texture) return false;
+    if (!texture || this._isDisposed(texture)) return false;
 
     try {
-      // Check if already disposed
-      if (this.disposedResources.has(texture)) {
-        return false;
-      }
-
-      // Dispose the texture
       texture.dispose();
-
-      // Track disposal
-      this.disposedResources.add(texture);
+      this._markDisposed(texture);
       this.stats.texturesDisposed++;
 
       if (id) {
@@ -55,25 +71,17 @@ class ResourceCleanupService {
    * @param {string} id - Optional identifier for tracking
    */
   disposeMaterial(material, id = null) {
-    if (!material) return false;
+    if (!material || this._isDisposed(material)) return false;
 
     try {
-      // Check if already disposed
-      if (this.disposedResources.has(material)) {
-        return false;
-      }
-
       // Dispose any textures in the material first
       if (material.map) this.disposeTexture(material.map);
       if (material.normalMap) this.disposeTexture(material.normalMap);
       if (material.envMap) this.disposeTexture(material.envMap);
       if (material.emissiveMap) this.disposeTexture(material.emissiveMap);
 
-      // Dispose the material
       material.dispose();
-
-      // Track disposal
-      this.disposedResources.add(material);
+      this._markDisposed(material);
       this.stats.materialsDisposed++;
 
       if (id) {
@@ -94,19 +102,11 @@ class ResourceCleanupService {
    * @param {string} id - Optional identifier for tracking
    */
   disposeGeometry(geometry, id = null) {
-    if (!geometry) return false;
+    if (!geometry || this._isDisposed(geometry)) return false;
 
     try {
-      // Check if already disposed
-      if (this.disposedResources.has(geometry)) {
-        return false;
-      }
-
-      // Dispose the geometry
       geometry.dispose();
-
-      // Track disposal
-      this.disposedResources.add(geometry);
+      this._markDisposed(geometry);
       this.stats.geometriesDisposed++;
 
       if (id) {
@@ -131,9 +131,15 @@ class ResourceCleanupService {
 
     let success = true;
 
-    // Dispose material
+    // Dispose material (handles arrays of materials too)
     if (mesh.material) {
-      success = this.disposeMaterial(mesh.material, id) && success;
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(mat => {
+          success = this.disposeMaterial(mat) && success;
+        });
+      } else {
+        success = this.disposeMaterial(mesh.material, id) && success;
+      }
     }
 
     // Dispose geometry
@@ -142,6 +148,50 @@ class ResourceCleanupService {
     }
 
     return success;
+  }
+
+  /**
+   * Queue a resource for batch disposal (more efficient for multiple resources)
+   * @param {Object} resource - Resource to dispose
+   * @param {string} type - Resource type
+   * @param {string} id - Optional identifier
+   */
+  queueDisposal(resource, type, id = null) {
+    this._disposalQueue.push({ resource, type, id });
+    
+    if (!this._batchDisposalScheduled) {
+      this._batchDisposalScheduled = true;
+      // Use requestIdleCallback for non-urgent disposal, fallback to setTimeout
+      const scheduleDisposal = window.requestIdleCallback || ((cb) => setTimeout(cb, 0));
+      scheduleDisposal(() => this._processBatchDisposal());
+    }
+  }
+
+  /**
+   * Process queued disposals in batch
+   * @private
+   */
+  _processBatchDisposal() {
+    const queue = this._disposalQueue;
+    this._disposalQueue = [];
+    this._batchDisposalScheduled = false;
+
+    for (const { resource, type, id } of queue) {
+      switch (type) {
+        case 'texture':
+          this.disposeTexture(resource, id);
+          break;
+        case 'material':
+          this.disposeMaterial(resource, id);
+          break;
+        case 'geometry':
+          this.disposeGeometry(resource, id);
+          break;
+        case 'mesh':
+          this.disposeMesh(resource, id);
+          break;
+      }
+    }
   }
 
   /**
@@ -159,20 +209,20 @@ class ResourceCleanupService {
    * @param {string} id - Component or resource identifier
    */
   disposeResourcesById(id) {
-    const resource = this.activeResources.get(id);
-    if (!resource) return false;
+    const resourceInfo = this.activeResources.get(id);
+    if (!resourceInfo) return false;
 
-    const { resource: res, type } = resource;
+    const { resource, type } = resourceInfo;
 
     switch (type) {
       case 'texture':
-        return this.disposeTexture(res, id);
+        return this.disposeTexture(resource, id);
       case 'material':
-        return this.disposeMaterial(res, id);
+        return this.disposeMaterial(resource, id);
       case 'geometry':
-        return this.disposeGeometry(res, id);
+        return this.disposeGeometry(resource, id);
       case 'mesh':
-        return this.disposeMesh(res, id);
+        return this.disposeMesh(resource, id);
       default:
         console.warn('Unknown resource type:', type);
         return false;
@@ -186,17 +236,8 @@ class ResourceCleanupService {
     return {
       ...this.stats,
       activeResources: this.activeResources.size,
-      totalDisposed: this.disposedResources.size,
+      pendingDisposals: this._disposalQueue.length,
     };
-  }
-
-  /**
-   * Clean up old disposed resource references (for memory management)
-   */
-  cleanupOldReferences() {
-    if (this.disposedResources.size > 1000) {
-      this.disposedResources.clear();
-    }
   }
 }
 

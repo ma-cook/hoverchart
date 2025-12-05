@@ -257,6 +257,16 @@ const useDodecahedronStore = createWithEqualityFn((set, get) => ({
     get().updateDodecahedron(dodecahedronId, { showFaceTextStyleMenu: show });
   },
 
+  // Batch close all style menus - more efficient than iterating from App
+  closeAllStyleMenus: () => {
+    const { dodecahedrons, updateDodecahedron } = get();
+    dodecahedrons.forEach((dod, id) => {
+      if (dod.showStyleMenu || dod.showFaceTextStyleMenu) {
+        updateDodecahedron(id, { showStyleMenu: false, showFaceTextStyleMenu: false });
+      }
+    });
+  },
+
   setDodecahedronSelectedIndicator: (dodecahedronId, indicator) => {
     get().updateDodecahedron(dodecahedronId, { selectedIndicator: indicator });
   },

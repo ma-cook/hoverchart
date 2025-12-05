@@ -25,6 +25,17 @@ import isEqual from 'lodash/isEqual';
 import DodecahedronFace from './DodecahedronFace';
 
 // ============================================================================
+// OPTIMIZATION: Module-level reusable THREE objects for face rotation calculations
+// Avoids GC pressure by reusing these instead of creating new objects each call
+// ============================================================================
+const tempNormalVec = new THREE.Vector3();
+const tempLookAtMatrix = new THREE.Matrix4();
+const tempUpVec = new THREE.Vector3();
+const tempRightVec = new THREE.Vector3();
+const tempCorrectedUpVec = new THREE.Vector3();
+const tempEuler = new THREE.Euler();
+
+// ============================================================================
 // OPTIMIZATION: Module-level constants for static geometry
 // These calculations are the same for all dodecahedrons, so compute them once
 // ============================================================================
@@ -1067,44 +1078,39 @@ const Sphere = React.memo(
     ); // geometry is static, so this never changes
 
     // Add getFaceRotation function - memoized since it depends on static geometry
+    // OPTIMIZATION: Uses module-level reusable THREE objects to avoid GC pressure
     const getFaceRotation = useCallback(
       (faceIndex) => {
         const { normal } = getFaceInfo(faceIndex);
 
-        // Create a normalized normal vector
-        const normalVector = new THREE.Vector3(...normal).normalize();
+        // Use reusable normal vector
+        tempNormalVec.set(normal[0], normal[1], normal[2]).normalize();
 
-        // Create look-at matrix
-        const lookAtMatrix = new THREE.Matrix4();
+        // Reset look-at matrix
+        tempLookAtMatrix.identity();
 
         // The "up" direction affects text orientation
         // Use a consistent up vector (world Y) as a starting point
-        const upVector = new THREE.Vector3(0, 1, 0);
+        tempUpVec.set(0, 1, 0);
 
         // Calculate a right vector that's perpendicular to normal and up
-        const rightVector = new THREE.Vector3()
-          .crossVectors(upVector, normalVector)
-          .normalize();
+        tempRightVec.crossVectors(tempUpVec, tempNormalVec).normalize();
 
         // If right vector is too small (normal is parallel to up), use another axis
-        if (rightVector.length() < 0.1) {
-          upVector.set(0, 0, 1); // Use Z as up instead
-          rightVector.crossVectors(upVector, normalVector).normalize();
+        if (tempRightVec.length() < 0.1) {
+          tempUpVec.set(0, 0, 1); // Use Z as up instead
+          tempRightVec.crossVectors(tempUpVec, tempNormalVec).normalize();
         }
 
         // Calculate a corrected up vector perpendicular to both normal and right
-        const correctedUp = new THREE.Vector3()
-          .crossVectors(normalVector, rightVector)
-          .normalize();
+        tempCorrectedUpVec.crossVectors(tempNormalVec, tempRightVec).normalize();
 
         // Set up the lookAt matrix
-        lookAtMatrix.makeBasis(rightVector, correctedUp, normalVector);
+        tempLookAtMatrix.makeBasis(tempRightVec, tempCorrectedUpVec, tempNormalVec);
 
-        // Create Euler rotation from matrix
-        const rotation = new THREE.Euler();
-        rotation.setFromRotationMatrix(lookAtMatrix);
-
-        return rotation;
+        // Get Euler rotation from matrix - return a copy since caller may store it
+        tempEuler.setFromRotationMatrix(tempLookAtMatrix);
+        return new THREE.Euler(tempEuler.x, tempEuler.y, tempEuler.z, tempEuler.order);
       },
       [getFaceInfo]
     ); // Only depends on getFaceInfo which is stable

@@ -237,6 +237,16 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
     get().updateCube(cubeId, { showHeaderTextStyleUI: show });
   },
 
+  // Batch close all style menus - more efficient than iterating from App
+  closeAllStyleMenus: () => {
+    const { cubes, updateCube } = get();
+    cubes.forEach((cube, id) => {
+      if (cube.showHeaderTextStyleUI) {
+        updateCube(id, { showHeaderTextStyleUI: false });
+      }
+    });
+  },
+
   setCubeActiveTextFace: (cubeId, face) => {
     get().updateCube(cubeId, { activeTextFace: face });
   },

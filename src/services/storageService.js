@@ -6,6 +6,67 @@ import {
 } from 'firebase/storage';
 import { v4 as uuidv4 } from 'uuid';
 
+// Memoize storage instance to avoid repeated getStorage() calls
+let _storageInstance = null;
+const getStorageInstance = () => {
+  if (!_storageInstance) {
+    _storageInstance = getStorage();
+  }
+  return _storageInstance;
+};
+
+// Pre-defined allowed image types as a Set for O(1) lookup
+const ALLOWED_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+]);
+
+// Constants for file validation
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_MODEL_SIZE = 50 * 1024 * 1024; // 50MB for 3D models
+
+/**
+ * Generic upload function to reduce code duplication
+ * @param {File|Blob} file - The file to upload
+ * @param {string} userId - The ID of the current user
+ * @param {string} spaceId - The ID of the current space
+ * @param {string} folder - The subfolder to upload to (images, models, markdown)
+ * @param {Function} progressCallback - Optional progress callback
+ * @returns {Promise<string>} A promise that resolves to the download URL
+ */
+const uploadFileGeneric = (file, userId, spaceId, folder, progressCallback = null) => {
+  const storage = getStorageInstance();
+  const fileExtension = file.name?.split('.').pop() || 'bin';
+  const fileName = `${uuidv4()}.${fileExtension}`;
+  const filePath = `users/${userId}/spaces/${spaceId || 'default'}/${folder}/${fileName}`;
+
+  const storageRef = ref(storage, filePath);
+  const uploadTask = uploadBytesResumable(storageRef, file);
+
+  return new Promise((resolve, reject) => {
+    uploadTask.on(
+      'state_changed',
+      progressCallback || (() => {}), // Use no-op if no callback
+      (error) => {
+        console.error(`Error uploading ${folder} file:`, error);
+        reject(error);
+      },
+      async () => {
+        try {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+          resolve(downloadURL);
+        } catch (error) {
+          console.error('Error getting download URL:', error);
+          reject(error);
+        }
+      }
+    );
+  });
+};
+
 /**
  * Uploads an image file to Firebase Storage and returns the download URL
  * @param {File} file - The image file to upload
@@ -18,64 +79,19 @@ export const uploadImageToStorage = async (file, userId, spaceId) => {
     throw new Error('File and userId are required for upload');
   }
 
-  // Validate file type
-  const allowedTypes = [
-    'image/jpeg',
-    'image/jpg',
-    'image/png',
-    'image/gif',
-    'image/webp',
-  ];
-  if (!allowedTypes.includes(file.type)) {
+  // Validate file type using Set for O(1) lookup
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
     throw new Error('Only image files (JPEG, PNG, GIF, WebP) are allowed');
   }
 
-  // Validate file size (max 10MB)
-  const maxSize = 10 * 1024 * 1024; // 10MB
-  if (file.size > maxSize) {
+  // Validate file size
+  if (file.size > MAX_IMAGE_SIZE) {
     throw new Error('File size must be less than 10MB');
   }
 
-  const storage = getStorage();
-  const fileExtension = file.name.split('.').pop();
-  const fileName = `${uuidv4()}.${fileExtension}`;
-  const filePath = `users/${userId}/spaces/${
-    spaceId || 'default'
-  }/images/${fileName}`;
-
-  const storageRef = ref(storage, filePath);
-
-  // Create the upload task
-  const uploadTask = uploadBytesResumable(storageRef, file);
-
-  // Return a promise that resolves with the download URL
-  return new Promise((resolve, reject) => {
-    uploadTask.on(
-      'state_changed',
-      // Progress function
-      (snapshot) => {
-        const progress =
-          (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        console.log('Image upload is ' + progress + '% done');
-      },
-      // Error function
-      (error) => {
-        console.error('Error uploading image:', error);
-        reject(error);
-      },
-      // Complete function
-      async () => {
-        try {
-          // Get the download URL
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          console.log('Image available at', downloadURL);
-          resolve(downloadURL);
-        } catch (error) {
-          console.error('Error getting download URL:', error);
-          reject(error);
-        }
-      }
-    );
+  return uploadFileGeneric(file, userId, spaceId, 'images', (snapshot) => {
+    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+    console.log('Image upload is ' + progress + '% done');
   });
 };
 
@@ -91,46 +107,9 @@ export const uploadModelToStorage = async (file, userId, spaceId) => {
     throw new Error('File and userId are required for upload');
   }
 
-  const storage = getStorage();
-  const fileExtension = file.name.split('.').pop();
-  const fileName = `${uuidv4()}.${fileExtension}`;
-  const filePath = `users/${userId}/spaces/${
-    spaceId || 'default'
-  }/models/${fileName}`;
-
-  const storageRef = ref(storage, filePath);
-
-  // Create the upload task
-  const uploadTask = uploadBytesResumable(storageRef, file);
-
-  // Return a promise that resolves with the download URL
-  return new Promise((resolve, reject) => {
-    uploadTask.on(
-      'state_changed',
-      // Progress function
-      (snapshot) => {
-        const progress =
-          (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        console.log('Upload is ' + progress + '% done');
-      },
-      // Error function
-      (error) => {
-        console.error('Error uploading file:', error);
-        reject(error);
-      },
-      // Complete function
-      async () => {
-        try {
-          // Get the download URL
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          console.log('File available at', downloadURL);
-          resolve(downloadURL);
-        } catch (error) {
-          console.error('Error getting download URL:', error);
-          reject(error);
-        }
-      }
-    );
+  return uploadFileGeneric(file, userId, spaceId, 'models', (snapshot) => {
+    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+    console.log('Model upload is ' + progress + '% done');
   });
 };
 
@@ -152,8 +131,6 @@ export const uploadMarkdownToStorage = async (
     throw new Error('Markdown content and userId are required for upload');
   }
 
-  const storage = getStorage();
-
   let file;
 
   if (typeof markdown === 'string') {
@@ -166,37 +143,8 @@ export const uploadMarkdownToStorage = async (
     throw new Error('Markdown must be a string or File');
   }
 
-  const fileExtension = file.name.split('.').pop();
-  const finalFileName = `${uuidv4()}.${fileExtension}`;
-  const filePath = `users/${userId}/spaces/${
-    spaceId || 'default'
-  }/markdown/${finalFileName}`;
-
-  const storageRef = ref(storage, filePath);
-  const uploadTask = uploadBytesResumable(storageRef, file);
-
-  return new Promise((resolve, reject) => {
-    uploadTask.on(
-      'state_changed',
-      (snapshot) => {
-        const progress =
-          (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        console.log('Markdown upload is ' + progress + '% done');
-      },
-      (error) => {
-        console.error('Error uploading markdown file:', error);
-        reject(error);
-      },
-      async () => {
-        try {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          console.log('Markdown available at', downloadURL);
-          resolve(downloadURL);
-        } catch (error) {
-          console.error('Error getting markdown download URL:', error);
-          reject(error);
-        }
-      }
-    );
+  return uploadFileGeneric(file, userId, spaceId, 'markdown', (snapshot) => {
+    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+    console.log('Markdown upload is ' + progress + '% done');
   });
 };

@@ -18,6 +18,7 @@ import {
   findConnectionInCells,
 } from './spatialPartitioning';
 import useConnectionStore from '../stores/connectionStore';
+import { cleanObject } from '../utils/unifiedValidationUtils';
 
 // Import global subscription manager
 import {
@@ -123,33 +124,52 @@ const clearConnectionCache = (spaceId, connectionId) => {
   }
 };
 
-// Serialize connection for storage
+/**
+ * Fast shallow comparison for connection data
+ * More efficient than JSON.stringify for change detection
+ */
+const connectionDataChanged = (cached, incoming) => {
+  if (!cached || !incoming) return true;
+  
+  // Compare primitive fields first (fast path)
+  if (cached.lineStyle !== incoming.lineStyle) return true;
+  if (cached.styleType !== incoming.styleType) return true;
+  if (cached.color !== incoming.color) return true;
+  if (cached.text !== incoming.text) return true;
+  if (cached.dashDirection !== incoming.dashDirection) return true;
+  if (cached.dashOffset !== incoming.dashOffset) return true;
+  
+  // Compare start endpoint
+  if (cached.start?.objectId !== incoming.start?.objectId) return true;
+  if (cached.start?.faceIndex !== incoming.start?.faceIndex) return true;
+  const cachedStartPos = cached.start?.position;
+  const incomingStartPos = incoming.start?.position;
+  if (cachedStartPos && incomingStartPos) {
+    if (Array.isArray(cachedStartPos) && Array.isArray(incomingStartPos)) {
+      if (cachedStartPos[0] !== incomingStartPos[0] ||
+          cachedStartPos[1] !== incomingStartPos[1] ||
+          cachedStartPos[2] !== incomingStartPos[2]) return true;
+    } else if (cachedStartPos !== incomingStartPos) return true;
+  } else if (cachedStartPos !== incomingStartPos) return true;
+  
+  // Compare end endpoint
+  if (cached.end?.objectId !== incoming.end?.objectId) return true;
+  if (cached.end?.faceIndex !== incoming.end?.faceIndex) return true;
+  const cachedEndPos = cached.end?.position;
+  const incomingEndPos = incoming.end?.position;
+  if (cachedEndPos && incomingEndPos) {
+    if (Array.isArray(cachedEndPos) && Array.isArray(incomingEndPos)) {
+      if (cachedEndPos[0] !== incomingEndPos[0] ||
+          cachedEndPos[1] !== incomingEndPos[1] ||
+          cachedEndPos[2] !== incomingEndPos[2]) return true;
+    } else if (cachedEndPos !== incomingEndPos) return true;
+  } else if (cachedEndPos !== incomingEndPos) return true;
+  
+  return false;
+};
+
+// Serialize connection for storage - uses cleanObject from unified validation utils
 const serializeConnection = (connection) => {
-  // Helper function to clean undefined values from objects
-  const cleanObject = (obj) => {
-    if (!obj) return null;
-
-    const cleaned = {};
-    Object.keys(obj).forEach((key) => {
-      if (obj[key] !== undefined) {
-        if (
-          typeof obj[key] === 'object' &&
-          obj[key] !== null &&
-          !Array.isArray(obj[key])
-        ) {
-          // Recursively clean nested objects
-          const cleanedNested = cleanObject(obj[key]);
-          if (cleanedNested && Object.keys(cleanedNested).length > 0) {
-            cleaned[key] = cleanedNested;
-          }
-        } else {
-          cleaned[key] = obj[key];
-        }
-      }
-    });
-
-    return Object.keys(cleaned).length > 0 ? cleaned : null;
-  };
 
   return {
     id: connection.id,
@@ -483,23 +503,19 @@ const subscribeToCellConnections = (
                   const cacheKey = `${spaceId}_${connectionId}`;
 
                   if (change.type === 'added' || change.type === 'modified') {
-                    // Check if connection data has changed
+                    // Check if connection data has changed using fast comparison
                     const cachedData = connectionCache.get(cacheKey);
-                    let hasChanged = false;
-
-                    if (cachedData) {
-                      hasChanged =
-                        JSON.stringify(cachedData) !==
-                        JSON.stringify(connectionData);
-                    } else {
-                      hasChanged = true;
-                    }
+                    const hasChanged = connectionDataChanged(cachedData, connectionData);
 
                     if (hasChanged) {
-                      connectionCache.set(
-                        cacheKey,
-                        JSON.parse(JSON.stringify(connectionData))
-                      );
+                      // Store a shallow copy of the connection data for caching
+                      // Avoid deep clone with JSON.parse/stringify for performance
+                      connectionCache.set(cacheKey, {
+                        ...connectionData,
+                        start: connectionData.start ? { ...connectionData.start } : null,
+                        end: connectionData.end ? { ...connectionData.end } : null,
+                        textStyle: connectionData.textStyle ? { ...connectionData.textStyle } : {},
+                      });
 
                       callback({
                         type: change.type === 'added' ? 'added' : 'modified',

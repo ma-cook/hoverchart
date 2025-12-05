@@ -1,5 +1,14 @@
 import * as THREE from 'three';
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Module-level reusable THREE objects
+// Avoids GC pressure by reusing these instead of creating new objects each call
+// =============================================================================
+const tempWorldPos = new THREE.Vector3();
+const tempWorldScale = new THREE.Vector3();
+const tempOffsetVec = new THREE.Vector3();
+const tempMatrix = new THREE.Matrix4();
+
 /**
  * Calculates the position of a face indicator in world space
  * @param {Object} indicator - The face indicator object
@@ -63,16 +72,15 @@ export const calculateFacePosition = (indicator, objects) => {
         // Fifth priority: Try to get position from the plane reference
         if (indicator.plane) {
           try {
-            // Extract world position from the group reference
-            const worldPos = new THREE.Vector3();
+            // Extract world position from the group reference - using reusable vector
             indicator.plane.updateWorldMatrix(true, false);
-            indicator.plane.getWorldPosition(worldPos);
+            indicator.plane.getWorldPosition(tempWorldPos);
 
             // Get scale from indicator or use defaults
             const scale = indicator.scale || [15, 10, 1];
 
             // Apply offset based on scale
-            return [worldPos.x, worldPos.y - 5 * scale[1], worldPos.z];
+            return [tempWorldPos.x, tempWorldPos.y - 5 * scale[1], tempWorldPos.z];
           } catch {
             // Error getting position from text plane
           }
@@ -130,46 +138,47 @@ export const calculateFacePosition = (indicator, objects) => {
           const { position, scale, worldMatrixArray } = indicator.planeData;
 
           if (Array.isArray(position) && Array.isArray(scale)) {
-            // If we have worldMatrixArray elements, use them
+            // If we have worldMatrixArray elements, use them - using reusable objects
             if (
               worldMatrixArray &&
               Array.isArray(worldMatrixArray) &&
               worldMatrixArray.length === 16
             ) {
-              const worldPos = new THREE.Vector3(0, -5 * scale[1], 0);
-              const matrix = new THREE.Matrix4().fromArray(worldMatrixArray);
-              worldPos.applyMatrix4(matrix);
-              return [worldPos.x, worldPos.y, worldPos.z];
+              tempWorldPos.set(0, -5 * scale[1], 0);
+              tempMatrix.fromArray(worldMatrixArray);
+              tempWorldPos.applyMatrix4(tempMatrix);
+              return [tempWorldPos.x, tempWorldPos.y, tempWorldPos.z];
             }
 
-            // Fallback: calculate estimated position from components
-            const worldPos = new THREE.Vector3();
-            worldPos.x = position[0];
-            worldPos.y = position[1] - 5 * scale[1]; // Apply offset directly
-            worldPos.z = position[2];
-            return [worldPos.x, worldPos.y, worldPos.z];
+            // Fallback: calculate estimated position from components - using reusable vector
+            tempWorldPos.set(
+              position[0],
+              position[1] - 5 * scale[1], // Apply offset directly
+              position[2]
+            );
+            return [tempWorldPos.x, tempWorldPos.y, tempWorldPos.z];
           }
         }
 
-        // Fourth, try to calculate from plane reference (live object)
+        // Fourth, try to calculate from plane reference (live object) - using reusable vectors
         if (
           indicator.plane &&
           typeof indicator.plane.getWorldPosition === 'function'
         ) {
           try {
-            const worldPos = new THREE.Vector3();
             indicator.plane.updateWorldMatrix(true, false);
-            indicator.plane.getWorldPosition(worldPos);
+            indicator.plane.getWorldPosition(tempWorldPos);
 
-            // Apply offset
+            // Apply offset using reusable vector
             const offset = indicator.offset || [
               0,
               -5 * (indicator.scale?.[1] || 1),
               0,
             ];
-            worldPos.add(new THREE.Vector3(...offset));
+            tempOffsetVec.set(offset[0], offset[1], offset[2]);
+            tempWorldPos.add(tempOffsetVec);
 
-            return [worldPos.x, worldPos.y, worldPos.z];
+            return [tempWorldPos.x, tempWorldPos.y, tempWorldPos.z];
           } catch {
             // Error getting position from plane reference
           }
@@ -247,15 +256,15 @@ export const calculateFacePosition = (indicator, objects) => {
           return [0, 0, 0];
         }
 
-        // Convert to Vector3 if it's an array
+        // Convert to Vector3 if it's an array - using reusable vector
         if (Array.isArray(position)) {
-          worldPos = new THREE.Vector3(
+          tempWorldPos.set(
             Number(position[0]) || 0,
             Number(position[1]) || 0,
             Number(position[2]) || 0
           );
         } else {
-          worldPos = new THREE.Vector3(
+          tempWorldPos.set(
             Number(position.x) || 0,
             Number(position.y) || 0,
             Number(position.z) || 0
@@ -264,18 +273,17 @@ export const calculateFacePosition = (indicator, objects) => {
 
         // Removed excessive logging for performance
 
-        // Get scale safely
+        // Get scale safely - using reusable vector
         const scale = indicator.cube?.scale || [1, 1, 1];
-        let worldScale;
 
         if (Array.isArray(scale)) {
-          worldScale = new THREE.Vector3(
+          tempWorldScale.set(
             Math.max(0.1, Number(scale[0]) || 1),
             Math.max(0.1, Number(scale[1]) || 1),
             Math.max(0.1, Number(scale[2]) || 1)
           );
         } else {
-          worldScale = new THREE.Vector3(
+          tempWorldScale.set(
             Math.max(0.1, Number(scale.x) || 1),
             Math.max(0.1, Number(scale.y) || 1),
             Math.max(0.1, Number(scale.z) || 1)
@@ -380,9 +388,9 @@ export const calculateFacePosition = (indicator, objects) => {
 
           // Apply scaling to face center
           faceOffset = new THREE.Vector3(
-            faceCenter[0] * worldScale.x,
-            faceCenter[1] * worldScale.y,
-            faceCenter[2] * worldScale.z
+            faceCenter[0] * tempWorldScale.x,
+            faceCenter[1] * tempWorldScale.y,
+            faceCenter[2] * tempWorldScale.z
           );
         } else if (indicator.type === 'dodecahedron') {
           // Dodecahedron face positioning - USE EXACT SAME LOGIC AS Dodecahedron component FaceIndicator
@@ -551,22 +559,22 @@ export const calculateFacePosition = (indicator, objects) => {
 
           switch (cubeFace) {
             case 'top':
-              faceOffset = new THREE.Vector3(0, objectSize * worldScale.y, 0);
+              faceOffset = new THREE.Vector3(0, objectSize * tempWorldScale.y, 0);
               break;
             case 'bottom':
-              faceOffset = new THREE.Vector3(0, -objectSize * worldScale.y, 0);
+              faceOffset = new THREE.Vector3(0, -objectSize * tempWorldScale.y, 0);
               break;
             case 'front':
-              faceOffset = new THREE.Vector3(0, 0, objectSize * worldScale.z);
+              faceOffset = new THREE.Vector3(0, 0, objectSize * tempWorldScale.z);
               break;
             case 'back':
-              faceOffset = new THREE.Vector3(0, 0, -objectSize * worldScale.z);
+              faceOffset = new THREE.Vector3(0, 0, -objectSize * tempWorldScale.z);
               break;
             case 'right':
-              faceOffset = new THREE.Vector3(objectSize * worldScale.x, 0, 0);
+              faceOffset = new THREE.Vector3(objectSize * tempWorldScale.x, 0, 0);
               break;
             case 'left':
-              faceOffset = new THREE.Vector3(-objectSize * worldScale.x, 0, 0);
+              faceOffset = new THREE.Vector3(-objectSize * tempWorldScale.x, 0, 0);
               break;
             default:
               console.warn(
@@ -584,9 +592,9 @@ export const calculateFacePosition = (indicator, objects) => {
         }
 
         // Add the offset to the world position
-        worldPos.add(faceOffset);
+        tempWorldPos.add(faceOffset);
 
-        const finalResult = [worldPos.x, worldPos.y, worldPos.z];
+        const finalResult = [tempWorldPos.x, tempWorldPos.y, tempWorldPos.z];
 
         // Debug final result for corrected dodecahedrons
         if (

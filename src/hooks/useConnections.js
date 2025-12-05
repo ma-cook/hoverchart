@@ -17,16 +17,24 @@ import { getIsInitialLoading } from '../utils/loadingState';
  * Now includes spatial partitioning support for connection unloading
  */
 export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
-  // Get connection store state and actions
-  const connections = useConnectionStore((state) => state.connections);
-  const addConnection = useConnectionStore((state) => state.addConnection);
-  const updateConnection = useConnectionStore(
-    (state) => state.updateConnection
-  );
-  const removeConnection = useConnectionStore(
-    (state) => state.removeConnection
-  );
-  const getConnection = useConnectionStore((state) => state.getConnection);
+  // PERFORMANCE OPTIMIZATION: Single batched subscription instead of 5 separate ones
+  const { connections, addConnection, updateConnection, removeConnection, getConnection } = 
+    useConnectionStore(
+      (state) => ({
+        connections: state.connections,
+        addConnection: state.addConnection,
+        updateConnection: state.updateConnection,
+        removeConnection: state.removeConnection,
+        getConnection: state.getConnection,
+      }),
+      // Use shallow comparison for the object
+      (a, b) => 
+        a.connections === b.connections &&
+        a.addConnection === b.addConnection &&
+        a.updateConnection === b.updateConnection &&
+        a.removeConnection === b.removeConnection &&
+        a.getConnection === b.getConnection
+    );
 
   // Track subscription cleanup and debouncing
   const subscriptionCleanupRef = useRef(null);

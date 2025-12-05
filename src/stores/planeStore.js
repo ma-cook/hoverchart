@@ -234,6 +234,16 @@ const usePlaneStore = createWithEqualityFn((set, get) => ({
     return Array.from(get().planes.values());
   },
 
+  // Batch close all style menus - more efficient than iterating from App
+  closeAllStyleMenus: () => {
+    const { planes, updatePlane } = get();
+    planes.forEach((plane, id) => {
+      if (plane.showTextStyleUI || plane.showHeaderStyleUI) {
+        updatePlane(id, { showTextStyleUI: false, showHeaderStyleUI: false });
+      }
+    });
+  },
+
   getSelectedPlanes: () => {
     const { planes, selectedPlanes } = get();
     return Array.from(selectedPlanes)

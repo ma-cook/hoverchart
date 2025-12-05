@@ -4,6 +4,18 @@
 
 import * as THREE from 'three';
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Module-level reusable THREE objects
+// Avoids GC pressure by reusing these instead of creating new objects each call
+// =============================================================================
+const tempCurrentPos = new THREE.Vector3();
+const tempObjPos = new THREE.Vector3();
+const tempAxisDir = new THREE.Vector3();
+const tempToPoint = new THREE.Vector3();
+const tempProjection = new THREE.Vector3();
+const tempPerpendicular = new THREE.Vector3();
+const tempProjectedPoint = new THREE.Vector3();
+
 /**
  * Threshold distance for snapping to an axis (in scene units)
  */
@@ -45,12 +57,8 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
       return null;
     }
 
-    // Convert position to THREE.Vector3 for easier calculations
-    const currentPosition = new THREE.Vector3(
-      position[0],
-      position[1],
-      position[2]
-    );
+    // Convert position to THREE.Vector3 for easier calculations - using reusable vector
+    tempCurrentPos.set(position[0], position[1], position[2]);
 
     // Keep track of the closest axis and its distance
     let closestAxis = null;
@@ -63,36 +71,33 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
       // Skip the current object itself and objects without position
       if (obj.id === currentObjectId || !obj.position) continue;
 
-      const objPosition = new THREE.Vector3(
-        obj.position[0],
-        obj.position[1],
-        obj.position[2]
-      );
+      // Use reusable vector for object position
+      tempObjPos.set(obj.position[0], obj.position[1], obj.position[2]);
 
       // Check snapping to X-axis of this object
-      const distanceToXAxis = distanceToAxis(currentPosition, objPosition, 'x');
+      const distanceToXAxis = distanceToAxis(tempCurrentPos, tempObjPos, 'x');
       if (distanceToXAxis < closestDistance) {
         closestDistance = distanceToXAxis;
         closestAxis = 'x';
-        closestAxisOrigin = objPosition.clone();
+        closestAxisOrigin = tempObjPos.clone(); // Clone only when we find a closer axis
         snapToObjectId = obj.id;
       }
 
       // Check snapping to Y-axis of this object
-      const distanceToYAxis = distanceToAxis(currentPosition, objPosition, 'y');
+      const distanceToYAxis = distanceToAxis(tempCurrentPos, tempObjPos, 'y');
       if (distanceToYAxis < closestDistance) {
         closestDistance = distanceToYAxis;
         closestAxis = 'y';
-        closestAxisOrigin = objPosition.clone();
+        closestAxisOrigin = tempObjPos.clone();
         snapToObjectId = obj.id;
       }
 
       // Check snapping to Z-axis of this object
-      const distanceToZAxis = distanceToAxis(currentPosition, objPosition, 'z');
+      const distanceToZAxis = distanceToAxis(tempCurrentPos, tempObjPos, 'z');
       if (distanceToZAxis < closestDistance) {
         closestDistance = distanceToZAxis;
         closestAxis = 'z';
-        closestAxisOrigin = objPosition.clone();
+        closestAxisOrigin = tempObjPos.clone();
         snapToObjectId = obj.id;
       }
     }
@@ -101,7 +106,7 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
     if (closestAxis) {
       // Create a projection of the current position onto the closest axis
       const snappedPosition = projectPointOntoAxis(
-        currentPosition,
+        tempCurrentPos,
         closestAxisOrigin,
         closestAxis
       );
@@ -136,69 +141,66 @@ export const calculateAxisSnap = (position, objects, currentObjectId) => {
 
 /**
  * Calculate the distance from a point to an axis
+ * OPTIMIZATION: Uses module-level reusable vectors to avoid GC pressure
  * @param {THREE.Vector3} point - The point to check
  * @param {THREE.Vector3} axisOrigin - Origin point of the axis
  * @param {string} axisName - Which axis to check ('x', 'y', or 'z')
  * @returns {number} - Distance from point to axis
  */
 function distanceToAxis(point, axisOrigin, axisName) {
-  // Calculate the distance from the point to the specified axis
-
-  // Create a vector representing the axis direction
-  const axisDirection = new THREE.Vector3();
+  // Set axis direction using reusable vector
   if (axisName === 'x') {
-    axisDirection.set(1, 0, 0);
+    tempAxisDir.set(1, 0, 0);
   } else if (axisName === 'y') {
-    axisDirection.set(0, 1, 0);
+    tempAxisDir.set(0, 1, 0);
   } else if (axisName === 'z') {
-    axisDirection.set(0, 0, 1);
+    tempAxisDir.set(0, 0, 1);
   }
 
-  // Calculate the vector from axisOrigin to the point
-  const toPoint = point.clone().sub(axisOrigin);
+  // Calculate the vector from axisOrigin to the point using reusable vector
+  tempToPoint.copy(point).sub(axisOrigin);
 
   // Project this vector onto the axis direction to get the parallel component
-  const projectionLength = toPoint.dot(axisDirection);
-  const projectionVector = axisDirection
-    .clone()
-    .multiplyScalar(projectionLength);
+  const projectionLength = tempToPoint.dot(tempAxisDir);
+  tempProjection.copy(tempAxisDir).multiplyScalar(projectionLength);
 
   // The perpendicular component is the difference between the original vector and its projection
-  const perpendicularVector = toPoint.clone().sub(projectionVector);
+  tempPerpendicular.copy(tempToPoint).sub(tempProjection);
 
   // The length of this perpendicular component is the distance to the axis
-  return perpendicularVector.length();
+  return tempPerpendicular.length();
 }
 
 /**
  * Projects a point onto an axis, maintaining the position along that axis
+ * OPTIMIZATION: Uses module-level reusable vector for calculation
  * @param {THREE.Vector3} point - The point to project
  * @param {THREE.Vector3} axisOrigin - Origin point of the axis
  * @param {string} axisName - Which axis to project onto ('x', 'y', or 'z')
  * @returns {THREE.Vector3} - The projected point on the axis
  */
 function projectPointOntoAxis(point, axisOrigin, axisName) {
-  // Create a copy of the original point
-  const projectedPoint = point.clone();
+  // Use reusable vector for the projected point
+  tempProjectedPoint.copy(point);
 
   // Replace the coordinates perpendicular to the specified axis with the axis origin's coordinates
   switch (axisName) {
     case 'x':
       // Maintain x-coordinate, replace y and z with the axis origin's values
-      projectedPoint.y = axisOrigin.y;
-      projectedPoint.z = axisOrigin.z;
+      tempProjectedPoint.y = axisOrigin.y;
+      tempProjectedPoint.z = axisOrigin.z;
       break;
     case 'y':
       // Maintain y-coordinate, replace x and z with the axis origin's values
-      projectedPoint.x = axisOrigin.x;
-      projectedPoint.z = axisOrigin.z;
+      tempProjectedPoint.x = axisOrigin.x;
+      tempProjectedPoint.z = axisOrigin.z;
       break;
     case 'z':
       // Maintain z-coordinate, replace x and y with the axis origin's values
-      projectedPoint.x = axisOrigin.x;
-      projectedPoint.y = axisOrigin.y;
+      tempProjectedPoint.x = axisOrigin.x;
+      tempProjectedPoint.y = axisOrigin.y;
       break;
   }
 
-  return projectedPoint;
+  return tempProjectedPoint;
 }

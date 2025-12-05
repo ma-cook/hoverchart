@@ -46,24 +46,32 @@ class StreamlinedSpatialManager {
       updateTime: 0,
       startTime: Date.now(),
     };
+    
+    // OPTIMIZATION: Reusable Point3D to avoid allocations in hot paths
+    this._tempPoint = new Point3D();
   }
 
   /**
    * Add or update an object - optimized for speed
+   * OPTIMIZATION: Reuses Point3D when possible, avoids unnecessary allocations
    */
   updateObject(objectId, position, bounds = null, metadata = {}) {
     const startTime = performance.now();
 
-    // Convert position to Point3D if needed
-    const point3D = Array.isArray(position)
-      ? new Point3D(position[0], position[1], position[2])
-      : position;
+    // Convert position to Point3D - reuse temp object for array conversion
+    let point3D;
+    if (Array.isArray(position)) {
+      this._tempPoint.set(position[0], position[1], position[2]);
+      point3D = this._tempPoint;
+    } else {
+      point3D = position;
+    }
 
     // Create minimal bounding box if not provided
     const bbox =
       bounds || BoundingBox.fromCenterAndSize(point3D, metadata.size || 5);
 
-    // Update spatial index
+    // Update spatial index - note: insert() makes its own copy of position
     this.spatialIndex.insert(objectId, point3D, bbox);
 
     // Update Firebase-compatible cell tracking if enabled
@@ -109,11 +117,13 @@ class StreamlinedSpatialManager {
 
   /**
    * Fast bounds query
+   * OPTIMIZATION: Uses reusable BoundingBox
    */
   queryObjectsInBounds(minPosition, maxPosition) {
     const startTime = performance.now();
 
-    const bounds = new BoundingBox(
+    // Reuse the spatial index's query bounds
+    const bounds = this.spatialIndex._queryBounds.set(
       minPosition[0],
       minPosition[1],
       minPosition[2],
@@ -142,22 +152,32 @@ class StreamlinedSpatialManager {
 
   /**
    * Fast radius query
+   * OPTIMIZATION: Reuses Point3D for array conversion
    */
   queryObjectsInRadius(centerPosition, radius) {
     const startTime = performance.now();
 
-    const center = Array.isArray(centerPosition)
-      ? new Point3D(centerPosition[0], centerPosition[1], centerPosition[2])
-      : centerPosition;
+    // Reuse temp point for array conversion
+    let center;
+    if (Array.isArray(centerPosition)) {
+      this._tempPoint.set(centerPosition[0], centerPosition[1], centerPosition[2]);
+      center = this._tempPoint;
+    } else {
+      center = centerPosition;
+    }
 
     const objectIds = this.spatialIndex.queryRadius(center, radius);
     const results = objectIds.map((id) => {
       const objData = this.spatialIndex.getObject(id);
+      // Inline distance calculation
+      const dx = center.x - objData.position.x;
+      const dy = center.y - objData.position.y;
+      const dz = center.z - objData.position.z;
       return {
         id,
         position: objData.position,
         bounds: objData.bounds,
-        distance: center.distanceTo(objData.position),
+        distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
         metadata: objData.metadata || {},
       };
     });
@@ -171,20 +191,30 @@ class StreamlinedSpatialManager {
 
   /**
    * Find nearest objects
+   * OPTIMIZATION: Reuses Point3D for array conversion
    */
   queryNearestObjects(centerPosition, maxResults = 5) {
-    const center = Array.isArray(centerPosition)
-      ? new Point3D(centerPosition[0], centerPosition[1], centerPosition[2])
-      : centerPosition;
+    // Reuse temp point for array conversion
+    let center;
+    if (Array.isArray(centerPosition)) {
+      this._tempPoint.set(centerPosition[0], centerPosition[1], centerPosition[2]);
+      center = this._tempPoint;
+    } else {
+      center = centerPosition;
+    }
 
     const objectIds = this.spatialIndex.queryNearest(center, maxResults);
     return objectIds.map((id) => {
       const objData = this.spatialIndex.getObject(id);
+      // Inline distance calculation
+      const dx = center.x - objData.position.x;
+      const dy = center.y - objData.position.y;
+      const dz = center.z - objData.position.z;
       return {
         id,
         position: objData.position,
         bounds: objData.bounds,
-        distance: center.distanceTo(objData.position),
+        distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
         metadata: objData.metadata || {},
       };
     });

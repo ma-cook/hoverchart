@@ -84,29 +84,6 @@ const App = () => {
   const setObjects = useObjectsStore((state) => state.setObjects);
   const setIsInitialLoading = useObjectsStore(
     (state) => state.setIsInitialLoading
-  ); // Plane store
-  const setPlaneShowTextStyleUI = usePlaneStore(
-    (state) => state.setPlaneShowTextStyleUI
-  );
-  const setPlaneShowHeaderStyleUI = usePlaneStore(
-    (state) => state.setPlaneShowHeaderStyleUI
-  );
-  // Cube store
-  const setCubeShowHeaderTextStyleUI = useCubeStore(
-    (state) => state.setCubeShowHeaderTextStyleUI
-  );
-
-  // Tetrahedron store
-  const setTetrahedronShowHeaderTextStyleUI = useTetrahedronStore(
-    (state) => state.setTetrahedronShowHeaderTextStyleUI
-  );
-
-  // Dodecahedron store
-  const setDodecahedronShowStyleMenu = useDodecahedronStore(
-    (state) => state.setDodecahedronShowStyleMenu
-  );
-  const setDodecahedronShowFaceTextStyleMenu = useDodecahedronStore(
-    (state) => state.setDodecahedronShowFaceTextStyleMenu
   );
   // Auth and space hooks
   const { user, isAuthReady, isCheckingUrlAuth } = useAuthState();
@@ -188,21 +165,6 @@ const App = () => {
 
   // Memoize redirect decision to prevent unnecessary recalculations
   const shouldRedirect = useMemo(() => !canViewSpace, [canViewSpace]);
-
-  // Debug redirect decision only when canViewSpace changes
-  useEffect(() => {
-    if (canViewSpace) {
-      console.log('🔄 [App] Redirect cancelled - canViewSpace is now true');
-    }
-  }, [
-    canViewSpace,
-    user,
-    publicSpaceId,
-    currentSpaceOwner,
-    publicSpaceReady,
-    isLookingUpPublicSpace,
-    shouldRedirect,
-  ]);
 
   // Spatial partitioning hook with object change handler
   const handleSpatialObjectChange = useCallback(
@@ -575,108 +537,9 @@ const App = () => {
     }
     return Array.from(loadedCells).sort().join(',');
   }, [loadedCells]);
-  // Display read-only indicator for public spaces
-  useEffect(() => {
-    if (isReadOnly) {
-      // Optionally show a UI indicator
-    }
-  }, [isReadOnly]);
-  // Load connections when space changes (replacing useConnections hook)
-  useEffect(() => {
-    if (!user?.uid || !currentSpaceId) return; // Simple connection loading - now fully handled by useConnections hook
-    // DISABLED: Old connection subscription replaced by useConnections hook
-    /*
-    const loadConnections = async () => {
-      try {
-        const { subscribeToConnections } = await import(
-          './services/connectionsService'
-        );
 
-        const unsubscribe = subscribeToConnections(
-          user.uid,
-          currentSpaceId,          (connectionUpdate) => {
-            // Skip connection updates if object deletion is in progress
-            if (window._connectionUpdateSkip) {
-              return;
-            }
-
-            // Only update if we're not currently transforming objects
-            if (
-              !window._currentTransformingObjects ||
-              window._currentTransformingObjects.size === 0
-            ) {
-              // Handle different types of connection updates
-              if (Array.isArray(connectionUpdate)) {
-                // Filter out connections that reference deleted objects
-                const validConnections = connectionUpdate.filter((conn) => {
-                  const startObjectExists = objectsFromStore.some(
-                    (obj) => obj.id.toString() === conn.start?.objectId
-                  );
-                  const endObjectExists = objectsFromStore.some(
-                    (obj) => obj.id.toString() === conn.end?.objectId
-                  );
-                  const isValid = startObjectExists && endObjectExists;
-                  if (!isValid) {
-                    // Connection references non-existent objects, filter it out
-                  }
-
-                  return isValid;
-                });                // Full array update - now handled by useConnections hook
-                // setConnections(validConnections);
-              } else if (
-                connectionUpdate &&
-                typeof connectionUpdate === 'object'
-              ) {
-                // Incremental update (added, modified, removed)
-                const { type, connection, id } = connectionUpdate;                if (type === 'added' && connection) {
-                  // Add new connection - now handled by useConnections hook
-                  // setConnections((current) => {
-                  //   const exists = current.some(
-                  //     (conn) => conn.id === connection.id
-                  //   );
-                  //   return exists ? current : [...current, connection];
-                  // });
-                } else if (type === 'modified' && connection) {
-                  // Update existing connection - now handled by useConnections hook
-                  // setConnections((current) =>
-                  //   current.map((conn) =>
-                  //     conn.id === connection.id ? connection : conn
-                  //   )
-                  // );
-                } else if (type === 'removed' && id) {
-                  // Remove connection - now handled by useConnections hook
-                  // setConnections((current) =>
-                  //   current.filter((conn) => conn.id !== id)
-                  // );
-                }
-              }
-            }
-          },
-          loadedCells
-        );
-
-        return unsubscribe;
-      } catch {
-        // Failed to load connections
-      }
-    };
-
-    const cleanupRef = { current: null };
-
-    loadConnections().then((unsubscribe) => {
-      cleanupRef.current = unsubscribe;
-    });
-
-    return () => {
-      if (cleanupRef.current) {
-        cleanupRef.current();
-      }
-    };
-    */
-
-    // Connections are now fully handled by useConnections hook - no cleanup needed here
-    return () => {};
-  }, [user?.uid, currentSpaceId, loadedCells]);
+  // Note: Connections are now fully handled by useConnections hook
+  
   // Subscribe to spatial objects changes - supports anonymous access to public spaces
   useEffect(() => {
     if (!canViewSpace) {
@@ -1311,47 +1174,27 @@ const App = () => {
     setFocusedObjectId(null);
 
     // Close line text input using connection store
-    const setShowLineTextInput =
-      useConnectionStore.getState().setShowLineTextInput;
-    setShowLineTextInput(null);
+    useConnectionStore.getState().setShowLineTextInput(null);
 
-    // Batch DOM updates for better performance
-    requestAnimationFrame(() => {
-      // Close TextStyleUI for all objects
-      objects.forEach((obj) => {
-        if (obj.type === 'plane') {
-          setPlaneShowTextStyleUI(obj.id, false);
-          setPlaneShowHeaderStyleUI(obj.id, false);
-        } else if (obj.type === 'cube') {
-          setCubeShowHeaderTextStyleUI(obj.id, false);
-        } else if (obj.type === 'tetrahedron') {
-          setTetrahedronShowHeaderTextStyleUI(obj.id, false);
-        } else if (obj.type === 'dodecahedron' || obj.type === 'sphere') {
-          setDodecahedronShowStyleMenu(obj.id, false);
-          setDodecahedronShowFaceTextStyleMenu(obj.id, false);
-        }
-      });
+    // Use store batch methods to close all style UIs at once
+    // This is more efficient than iterating and calling individual setters
+    usePlaneStore.getState().closeAllStyleMenus?.();
+    useCubeStore.getState().closeAllStyleMenus?.();
+    useTetrahedronStore.getState().closeAllStyleMenus?.();
+    useDodecahedronStore.getState().closeAllStyleMenus?.();
 
-      // If they were trying to create a connection but clicked empty space,
-      // cancel the connection creation process
-      if (isConnectMode && selectedIndicators.length > 0) {
-        setSelectedIndicators([]);
-        selectedIndicatorsRef.current = [];
-      }
-    });
+    // If they were trying to create a connection but clicked empty space,
+    // cancel the connection creation process
+    if (isConnectMode && selectedIndicators.length > 0) {
+      setSelectedIndicators([]);
+      selectedIndicatorsRef.current = [];
+    }
   }, [
     setActiveTextStyleUI,
     setSelectedConnection,
     setShowLineTextStyleUI,
     setSelectedId,
     setFocusedObjectId,
-    objects,
-    setPlaneShowTextStyleUI,
-    setPlaneShowHeaderStyleUI,
-    setCubeShowHeaderTextStyleUI,
-    setTetrahedronShowHeaderTextStyleUI,
-    setDodecahedronShowStyleMenu,
-    setDodecahedronShowFaceTextStyleMenu,
     isConnectMode,
     selectedIndicators,
     setSelectedIndicators,
@@ -1436,32 +1279,39 @@ const App = () => {
   // Lazy load state for Canvas
   const [shouldRenderCanvas, setShouldRenderCanvas] = useState(false);
 
+  // Memoize device detection to avoid recalculating on every render
+  const deviceInfo = useMemo(() => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+    const isLowEnd = navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
+    return { isMobile, isLowEnd };
+  }, []);
+
   // Progressive canvas quality enhancement
   const [canvasQuality, setCanvasQuality] = useState('low');
+  
+  // Single effect for quality management
   useEffect(() => {
-    if (shouldRenderCanvas) {
-      // Upgrade canvas quality after initial render
-      const upgradeQuality = () => {
-        setCanvasQuality('high');
-        localStorage.setItem('canvasQuality', 'high');
-      };
-
-      // Wait for initial render to complete, then upgrade
-      const timeoutId = setTimeout(upgradeQuality, 1000);
-      return () => clearTimeout(timeoutId);
+    if (deviceInfo.isMobile || deviceInfo.isLowEnd) {
+      setCanvasQuality('low');
+      return;
     }
-  }, [shouldRenderCanvas]);
+    
+    // Desktop high-end: upgrade quality after initial render
+    if (shouldRenderCanvas) {
+      const upgradeTimer = setTimeout(() => {
+        setCanvasQuality('high');
+      }, 1000);
+      return () => clearTimeout(upgradeTimer);
+    }
+  }, [shouldRenderCanvas, deviceInfo.isMobile, deviceInfo.isLowEnd]);
 
-  // Get canvas settings based on quality level
-  const getCanvasSettings = () => {
-    const isMobile =
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent
-      );
-    const isLowEnd =
-      navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
-
-    // Force mobile devices to use mobile-optimized settings regardless of canvasQuality
+  // Memoize canvas settings to avoid recalculating on every render
+  const canvasSettings = useMemo(() => {
+    const { isMobile, isLowEnd } = deviceInfo;
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    
     if (isMobile) {
       return {
         gl: {
@@ -1472,18 +1322,15 @@ const App = () => {
           depth: true,
           logarithmicDepthBuffer: false,
           powerPreference: 'default',
-          precision: 'mediump', // Use mediump for mobile
+          precision: 'mediump',
         },
-        dpr: Math.min(window.devicePixelRatio, 2),
+        dpr,
         frameloop: 'always',
-        camera: {
-          fov: 70, // Wider FOV on mobile for better object visibility
-          near: 0.01, // Closer near plane on mobile
-          far: 10000,
-          position: [0, 0, 30], // Closer starting position on mobile
-        },
+        camera: { fov: 70, near: 0.01, far: 10000, position: [0, 0, 30] },
       };
-    } else if (canvasQuality === 'low' || isLowEnd) {
+    }
+    
+    if (canvasQuality === 'low' || isLowEnd) {
       return {
         gl: {
           antialias: false,
@@ -1493,64 +1340,30 @@ const App = () => {
           depth: true,
           logarithmicDepthBuffer: false,
           powerPreference: 'high-performance',
-          precision: 'highp', // Use highp for desktop low-end
+          precision: 'highp',
         },
-        dpr: Math.min(window.devicePixelRatio, 2),
+        dpr,
         frameloop: 'always',
-        camera: {
-          fov: 50,
-          near: 0.1,
-          far: 10000,
-          position: [0, 0, 50],
-        },
-      };
-    } else {
-      return {
-        gl: {
-          antialias: true,
-          samples: 4,
-          alpha: true,
-          stencil: false,
-          depth: true,
-          logarithmicDepthBuffer: false,
-          powerPreference: 'high-performance',
-          precision: 'highp', // Use highp for high-quality rendering
-        },
-        dpr: Math.min(window.devicePixelRatio, 2),
-        frameloop: 'always',
-        camera: {
-          fov: 50,
-          near: 0.1,
-          far: 2000,
-        },
+        camera: { fov: 50, near: 0.1, far: 10000, position: [0, 0, 50] },
       };
     }
-  };
-  // Mobile performance optimization
-  useEffect(() => {
-    const isMobile =
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent
-      );
-    const isLowEnd =
-      navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
-
-    if (isMobile || isLowEnd) {
-      // Keep mobile devices on low quality to ensure proper rendering
-      setCanvasQuality('low');
-      localStorage.setItem('canvasQuality', 'low');
-    } else {
-      // Only allow quality upgrades on desktop/high-end devices
-      const upgradeTimer = setTimeout(() => {
-        setCanvasQuality('high');
-        localStorage.setItem('canvasQuality', 'high');
-      }, 1000);
-
-      return () => clearTimeout(upgradeTimer);
-    }
-  }, []);
-
-  const canvasSettings = getCanvasSettings();
+    
+    return {
+      gl: {
+        antialias: true,
+        samples: 4,
+        alpha: true,
+        stencil: false,
+        depth: true,
+        logarithmicDepthBuffer: false,
+        powerPreference: 'high-performance',
+        precision: 'highp',
+      },
+      dpr,
+      frameloop: 'always',
+      camera: { fov: 50, near: 0.1, far: 2000 },
+    };
+  }, [deviceInfo, canvasQuality]);
 
   // Initialize Canvas rendering after initial auth/space setup
   useEffect(() => {

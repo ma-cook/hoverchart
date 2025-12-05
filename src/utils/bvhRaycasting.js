@@ -8,6 +8,27 @@ import * as THREE from 'three';
  * be intersected by the ray.
  */
 
+// Reusable THREE objects to avoid GC pressure
+const _tempBox3 = new THREE.Box3();
+const _tempVec3A = new THREE.Vector3();
+const _tempVec3B = new THREE.Vector3();
+const _tempVec3C = new THREE.Vector3();
+const _tempVec3D = new THREE.Vector3();
+const _tempSize = new THREE.Vector3();
+const _tempCenter = new THREE.Vector3();
+const _tempMin = new THREE.Vector3();
+const _tempMax = new THREE.Vector3();
+
+// For intersectConnectionLine - hot path
+const _segmentDir = new THREE.Vector3();
+const _rayToStart = new THREE.Vector3();
+const _pointOnRay = new THREE.Vector3();
+const _pointOnSegment = new THREE.Vector3();
+const _intersectionPoint = new THREE.Vector3();
+
+// For traverseNode
+const _cameraPos = new THREE.Vector3();
+
 // BVH Node structure
 class BVHNode {
   constructor() {
@@ -116,36 +137,36 @@ class BVHAcceleratedRaycaster {
     node.bounds.makeEmpty();
 
     for (const object of node.objects) {
-      const objectBounds = new THREE.Box3();
+      // Reuse temp box instead of allocating new one
+      _tempBox3.makeEmpty();
 
       // Handle connection lines specially
       if (object._isConnectionLine && object.points) {
-        this.calculateLineBounds(object, objectBounds);
+        this.calculateLineBounds(object, _tempBox3);
       }
       // Handle different 3D object types
       else if (object.geometry) {
         if (!object.geometry.boundingBox) {
           object.geometry.computeBoundingBox();
         }
-        objectBounds.copy(object.geometry.boundingBox);
-        objectBounds.applyMatrix4(object.matrixWorld);
+        _tempBox3.copy(object.geometry.boundingBox);
+        _tempBox3.applyMatrix4(object.matrixWorld);
       } else if (object.position) {
         // Fallback for objects without geometry (like groups)
         const pos = object.position;
         const size = object.scale
           ? Math.max(...Object.values(object.scale)) * 5
           : 5;
-        objectBounds.setFromCenterAndSize(
-          new THREE.Vector3(
-            pos[0] || pos.x || 0,
-            pos[1] || pos.y || 0,
-            pos[2] || pos.z || 0
-          ),
-          new THREE.Vector3(size, size, size)
+        _tempVec3A.set(
+          pos[0] || pos.x || 0,
+          pos[1] || pos.y || 0,
+          pos[2] || pos.z || 0
         );
+        _tempVec3B.set(size, size, size);
+        _tempBox3.setFromCenterAndSize(_tempVec3A, _tempVec3B);
       }
 
-      node.bounds.union(objectBounds);
+      node.bounds.union(_tempBox3);
     }
   }
 
@@ -171,7 +192,9 @@ class BVHAcceleratedRaycaster {
         continue; // Skip invalid points
       }
 
-      bounds.expandByPoint(new THREE.Vector3(x, y, z));
+      // Reuse temp vector instead of allocating new one
+      _tempVec3C.set(x, y, z);
+      bounds.expandByPoint(_tempVec3C);
     }
 
     // Add some padding for line width
@@ -194,20 +217,18 @@ class BVHAcceleratedRaycaster {
       return;
     }
 
-    const size = node.bounds.getSize(new THREE.Vector3());
+    // Reuse temp vector for size calculation
+    node.bounds.getSize(_tempSize);
 
     // Find the longest axis to split on
     let splitAxis = 0;
-    if (size.y > size.x) splitAxis = 1;
-    if (size.z > size[splitAxis === 0 ? 'x' : splitAxis === 1 ? 'y' : 'z'])
+    if (_tempSize.y > _tempSize.x) splitAxis = 1;
+    if (_tempSize.z > _tempSize[splitAxis === 0 ? 'x' : splitAxis === 1 ? 'y' : 'z'])
       splitAxis = 2;
 
-    // Calculate split position (middle of bounds)
-    const splitPos = node.bounds.min
-      .clone()
-      .add(node.bounds.max)
-      .multiplyScalar(0.5);
-    const splitValue = splitPos.getComponent(splitAxis);
+    // Calculate split position (middle of bounds) - reuse temp vector
+    _tempCenter.copy(node.bounds.min).add(node.bounds.max).multiplyScalar(0.5);
+    const splitValue = _tempCenter.getComponent(splitAxis);
 
     // Split objects into two groups
     const leftObjects = [];
@@ -235,11 +256,10 @@ class BVHAcceleratedRaycaster {
           objectCenter = 0;
         }
       } else if (object.geometry?.boundingBox) {
-        const bounds = object.geometry.boundingBox.clone();
-        bounds.applyMatrix4(object.matrixWorld);
-        objectCenter = bounds
-          .getCenter(new THREE.Vector3())
-          .getComponent(splitAxis);
+        // Reuse temp box and vector for bounds calculation
+        _tempBox3.copy(object.geometry.boundingBox);
+        _tempBox3.applyMatrix4(object.matrixWorld);
+        objectCenter = _tempBox3.getCenter(_tempVec3D).getComponent(splitAxis);
       } else {
         objectCenter = 0;
       }
@@ -378,15 +398,12 @@ class BVHAcceleratedRaycaster {
                 (object.geometry?.boundingBox || object.children?.length > 0)
               ) {
                 try {
-                  const objectBounds = new THREE.Box3().setFromObject(object);
-                  const cameraPosition = raycaster.ray.origin;
+                  _tempBox3.setFromObject(object);
 
-                  if (objectBounds.containsPoint(cameraPosition)) {
+                  if (_tempBox3.containsPoint(raycaster.ray.origin)) {
                     // Camera is inside - mark for special handling
                     intersection._cameraInside = true;
-                    intersection._objectSize = objectBounds
-                      .getSize(new THREE.Vector3())
-                      .length();
+                    intersection._objectSize = _tempBox3.getSize(_tempSize).length();
                   }
                 } catch (error) {
                   // Skip bounds checking for objects that don't support it
@@ -410,10 +427,11 @@ class BVHAcceleratedRaycaster {
       }
     } else {
       // Traverse child nodes - use distance-based ordering for better early exit
-      const cameraPos = raycaster.ray.origin;
+      // Reuse temp vector for camera position reference
+      _cameraPos.copy(raycaster.ray.origin);
       const childDistances = node.children.map((child) => ({
         child,
-        distance: child.bounds.distanceToPoint(cameraPos),
+        distance: child.bounds.distanceToPoint(_cameraPos),
       }));
 
       // Sort by distance to prioritize closer nodes
@@ -441,47 +459,45 @@ class BVHAcceleratedRaycaster {
 
     // Test each line segment
     for (let i = 0; i < line.points.length - 1; i++) {
-      const start = this.pointToVector3(line.points[i]);
-      const end = this.pointToVector3(line.points[i + 1]);
+      // Use temp vectors instead of creating new ones
+      if (!this.pointToVector3Into(line.points[i], _tempVec3A)) continue;
+      if (!this.pointToVector3Into(line.points[i + 1], _tempVec3B)) continue;
 
-      if (!start || !end) continue;
-
-      // Calculate closest point on line segment to ray
-      const segmentDir = new THREE.Vector3().subVectors(end, start);
-      const segmentLength = segmentDir.length();
+      // Calculate closest point on line segment to ray - reuse vectors
+      _segmentDir.subVectors(_tempVec3B, _tempVec3A);
+      const segmentLength = _segmentDir.length();
 
       if (segmentLength === 0) continue;
 
-      segmentDir.normalize();
+      _segmentDir.normalize();
 
-      // Vector from ray origin to segment start
-      const rayToStart = new THREE.Vector3().subVectors(start, ray.origin);
+      // Vector from ray origin to segment start - reuse vector
+      _rayToStart.subVectors(_tempVec3A, ray.origin);
 
       // Project ray direction and segment direction
-      const rayDotSeg = ray.direction.dot(segmentDir);
-      const rayDotRayToStart = ray.direction.dot(rayToStart);
-      const segDotRayToStart = segmentDir.dot(rayToStart);
+      const rayDotSeg = ray.direction.dot(_segmentDir);
+      const rayDotRayToStart = ray.direction.dot(_rayToStart);
+      const segDotRayToStart = _segmentDir.dot(_rayToStart);
 
       const denom = 1 - rayDotSeg * rayDotSeg;
 
       if (Math.abs(denom) < 0.0001) {
         // Lines are parallel - check distance
-        const distance = rayToStart.cross(ray.direction).length();
+        // Note: cross modifies _rayToStart in place, but we don't need it after this
+        const distance = _tempVec3C.copy(_rayToStart).cross(ray.direction).length();
         if (distance <= lineWidth) {
           const t = -rayDotRayToStart;
           if (t >= 0) {
-            const pointOnRay = new THREE.Vector3().addVectors(
-              ray.origin,
-              ray.direction.clone().multiplyScalar(t)
-            );
-            const projOnSegment = segmentDir.dot(
-              new THREE.Vector3().subVectors(pointOnRay, start)
+            _pointOnRay.copy(ray.direction).multiplyScalar(t).add(ray.origin);
+            const projOnSegment = _segmentDir.dot(
+              _tempVec3D.subVectors(_pointOnRay, _tempVec3A)
             );
 
             if (projOnSegment >= 0 && projOnSegment <= segmentLength) {
               if (t < closestDistance) {
                 closestDistance = t;
-                closestPoint = pointOnRay;
+                // Clone here since we need to keep the result
+                closestPoint = _pointOnRay.clone();
                 segmentIndex = i;
               }
             }
@@ -493,19 +509,14 @@ class BVHAcceleratedRaycaster {
         const s = (rayDotRayToStart - rayDotSeg * segDotRayToStart) / denom;
 
         if (t >= 0 && s >= 0 && s <= segmentLength) {
-          const pointOnRay = new THREE.Vector3().addVectors(
-            ray.origin,
-            ray.direction.clone().multiplyScalar(t)
-          );
-          const pointOnSegment = new THREE.Vector3().addVectors(
-            start,
-            segmentDir.clone().multiplyScalar(s)
-          );
-          const distance = pointOnRay.distanceTo(pointOnSegment);
+          _pointOnRay.copy(ray.direction).multiplyScalar(t).add(ray.origin);
+          _pointOnSegment.copy(_segmentDir).multiplyScalar(s).add(_tempVec3A);
+          const distance = _pointOnRay.distanceTo(_pointOnSegment);
 
           if (distance <= lineWidth && t < closestDistance) {
             closestDistance = t;
-            closestPoint = pointOnRay;
+            // Clone here since we need to keep the result
+            closestPoint = _pointOnRay.clone();
             segmentIndex = i;
           }
         }
@@ -528,7 +539,25 @@ class BVHAcceleratedRaycaster {
   }
 
   /**
+   * Convert point to Vector3 into a target vector (no allocation)
+   */
+  pointToVector3Into(point, target) {
+    if (!point) return false;
+
+    if (point && typeof point === 'object' && 'x' in point) {
+      target.set(point.x, point.y, point.z);
+      return true;
+    } else if (Array.isArray(point) && point.length >= 3) {
+      target.set(point[0], point[1], point[2]);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Convert point to Vector3 (handles both arrays and Vector3 objects)
+   * @deprecated Use pointToVector3Into for better performance
    */
   pointToVector3(point) {
     if (!point) return null;
@@ -556,18 +585,21 @@ class BVHAcceleratedRaycaster {
 
     // Always create a large, easy-to-hit bounding box for debugging
     const size = 10; // Large size to ensure we can hit it
-    const box = new THREE.Box3(
-      new THREE.Vector3(
-        position.x - size,
-        position.y - size,
-        position.z - size
-      ),
-      new THREE.Vector3(position.x + size, position.y + size, position.z + size)
+    // Reuse temp vectors instead of allocating new ones
+    _tempMin.set(
+      position.x - size,
+      position.y - size,
+      position.z - size
     );
+    _tempMax.set(
+      position.x + size,
+      position.y + size,
+      position.z + size
+    );
+    _tempBox3.set(_tempMin, _tempMax);
 
-    // Test basic ray-box intersection first
-
-    const intersectionResult = ray.intersectBox(box, new THREE.Vector3());
+    // Test basic ray-box intersection first - reuse intersection point vector
+    const intersectionResult = ray.intersectBox(_tempBox3, _intersectionPoint);
 
     // Debug every test for the first 3 virtual objects
 

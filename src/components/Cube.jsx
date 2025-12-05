@@ -34,6 +34,9 @@ import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
 
+// Reusable Vector3 for world position calculations (avoids GC pressure)
+const tempWorldPosVec = new THREE.Vector3();
+
 // Mobile-aware sizing - must be defined before SHARED_FACE_GEOMETRY
 const isMobile =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -617,11 +620,11 @@ const Cube = ({
         faceCenter: facePos,
       };
 
-      // Calculate world position
-      const worldPos = new THREE.Vector3(facePos[0], facePos[1], facePos[2]);
+      // Calculate world position using reusable vector
+      tempWorldPosVec.set(facePos[0], facePos[1], facePos[2]);
       if (contentRef.current?.matrixWorld) {
-        worldPos.applyMatrix4(contentRef.current.matrixWorld);
-        indicatorData.position = [worldPos.x, worldPos.y, worldPos.z];
+        tempWorldPosVec.applyMatrix4(contentRef.current.matrixWorld);
+        indicatorData.position = [tempWorldPosVec.x, tempWorldPosVec.y, tempWorldPosVec.z];
       }
 
       // Call onFaceIndicatorClick first for connection logic

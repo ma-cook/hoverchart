@@ -391,10 +391,10 @@ const Connection = React.memo(
     const stableEndObjectId = connection?.end?.objectId;
     const stablePathPoints = connection?._pathPoints;
 
-    // Create a hash of nearby object positions to trigger path recalculation when they move
-    // This allows dynamic pathfinding without full array comparison
+    // PERFORMANCE OPTIMIZATION: Create a numeric hash of nearby object positions
+    // Uses fast integer operations instead of expensive string concatenation
     const nearbyObjectsHash = useMemo(() => {
-      if (!connectionData.isValid || !allObjectsForPathfinding) return '';
+      if (!connectionData.isValid || !allObjectsForPathfinding) return 0;
 
       const { startPosition, endPosition } = connectionData;
       const lineLength = Math.sqrt(
@@ -403,26 +403,34 @@ const Connection = React.memo(
           Math.pow(endPosition[2] - startPosition[2], 2)
       );
 
-      // Track ALL objects that could affect this connection (within reasonable distance)
-      // IMPORTANT: Include attached objects - pathfinding logic handles them separately
-      const relevantObjects = allObjectsForPathfinding.filter((obj) => {
-        if (!obj?.position || !Array.isArray(obj.position)) return false;
+      const thresholdSquared = lineLength * lineLength * 4; // 2x line length radius
+      let hash = 0;
+      let count = 0;
+
+      // Use simple numeric hashing instead of string concatenation
+      for (let i = 0; i < allObjectsForPathfinding.length; i++) {
+        const obj = allObjectsForPathfinding[i];
+        if (!obj?.position || !Array.isArray(obj.position)) continue;
 
         // Quick distance check - only objects near the line
-        const distanceSquared = obj.position.reduce(
-          (sum, val, i) => sum + Math.pow(val - startPosition[i], 2),
-          0
-        );
-        return distanceSquared < lineLength * lineLength * 4; // 2x line length radius
-      });
+        const dx = obj.position[0] - startPosition[0];
+        const dy = obj.position[1] - startPosition[1];
+        const dz = obj.position[2] - startPosition[2];
+        const distanceSquared = dx * dx + dy * dy + dz * dz;
+        
+        if (distanceSquared < thresholdSquared) {
+          // Fast integer hash combining position values (rounded to 1 decimal)
+          const px = Math.round(obj.position[0] * 10);
+          const py = Math.round(obj.position[1] * 10);
+          const pz = Math.round(obj.position[2] * 10);
+          // Use bitwise XOR and multiplication for fast hashing
+          hash = ((hash * 31) ^ (px + py * 1000 + pz * 1000000)) >>> 0;
+          count++;
+        }
+      }
 
-      // Create hash from positions rounded to 1 decimal place for stability
-      return relevantObjects
-        .map(
-          (obj) =>
-            `${obj.id}:${obj.position.map((p) => p.toFixed(1)).join(',')}`
-        )
-        .join('|');
+      // Include count in hash to detect added/removed objects
+      return (hash ^ (count * 17)) >>> 0;
     }, [
       allObjectsForPathfinding,
       connectionData,

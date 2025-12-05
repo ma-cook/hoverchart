@@ -5,6 +5,63 @@ import FaceIndicator from './FaceIndicator';
 import AtlasTextSprite from './AtlasTextSprite';
 import FaceTextInput from './FaceTextInput';
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Material cache for dodecahedron faces
+// Prevents creating new materials on every render - same pattern as CubeFace.jsx
+// =============================================================================
+const dodecahedronFaceMaterialCache = {
+  // Default invisible material (for click handling only)
+  invisible: new THREE.MeshBasicMaterial({
+    visible: false,
+    transparent: true,
+    opacity: 0,
+  }),
+  // Selected only - subtle overlay
+  selected: new THREE.MeshBasicMaterial({
+    color: new THREE.Color('black'),
+    opacity: 0.1,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    depthTest: true,
+  }),
+  // Selected + highlighted - selection overlay
+  selectedHighlighted: new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#0066ff'),
+    opacity: 0.3,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    depthTest: true,
+  }),
+  // Colored materials cache by color string
+  colored: new Map(),
+};
+
+// Get or create a colored material for dodecahedron faces
+const getDodecahedronColoredMaterial = (color) => {
+  if (!dodecahedronFaceMaterialCache.colored.has(color)) {
+    dodecahedronFaceMaterialCache.colored.set(
+      color,
+      new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color),
+        opacity: 1.0,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        depthTest: true,
+      })
+    );
+  }
+  return dodecahedronFaceMaterialCache.colored.get(color);
+};
+
 /**
  * DodecahedronFace - Optimized component that only re-renders when its specific face changes
  * This reduces re-renders by ~90% compared to rendering all faces together
@@ -51,56 +108,25 @@ const DodecahedronFace = React.memo(
       };
     });
 
-    // Create material based on face state (memoized for performance)
+    // Get cached material based on face state (avoids creating new materials)
     const faceMaterial = useMemo(() => {
-      // If face has a custom color, use it with full opacity
+      // If face has a custom color, use cached colored material
       if (faceColor) {
-        return new THREE.MeshBasicMaterial({
-          color: new THREE.Color(faceColor),
-          opacity: 1.0,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          depthTest: true,
-        });
+        return getDodecahedronColoredMaterial(faceColor);
       }
 
-      // If selected and highlighted, show selection overlay
+      // If selected and highlighted, use cached selection overlay
       if (selected && isHighlighted) {
-        return new THREE.MeshBasicMaterial({
-          color: '#0066ff',
-          opacity: 0.3,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          depthTest: true,
-        });
+        return dodecahedronFaceMaterialCache.selectedHighlighted;
       }
 
-      // If just selected, show subtle overlay
+      // If just selected, use cached subtle overlay
       if (selected) {
-        return new THREE.MeshBasicMaterial({
-          color: 'black',
-          opacity: 0.1,
-          transparent: true,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          depthTest: true,
-        });
+        return dodecahedronFaceMaterialCache.selected;
       }
 
-      // Default: invisible (for click handling only)
-      return new THREE.MeshBasicMaterial({
-        visible: false,
-        transparent: true,
-        opacity: 0,
-      });
+      // Default: use cached invisible material (for click handling only)
+      return dodecahedronFaceMaterialCache.invisible;
     }, [faceColor, selected, isHighlighted]);
 
     // Stable click handler

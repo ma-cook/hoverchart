@@ -1,5 +1,12 @@
 import * as THREE from 'three';
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Module-level reusable THREE objects
+// Avoids GC pressure by reusing these instead of creating new objects each call
+// =============================================================================
+const tempVec1 = new THREE.Vector3();
+const tempVec2 = new THREE.Vector3();
+
 // Calculate the midpoint between two positions
 export function calculateMidpoint(pos1, pos2) {
   // Handle vector objects with x,y,z properties
@@ -25,17 +32,23 @@ export function calculateMidpoint(pos1, pos2) {
 }
 
 // More precise midpoint calculation that can be used with THREE.Vector3 objects
+// OPTIMIZATION: Uses module-level reusable vectors internally, returns new Vector3 for caller
 export function calculateMidpointVector(pos1, pos2) {
-  // Convert to Vector3 if they're arrays
-  const v1 = Array.isArray(pos1)
-    ? new THREE.Vector3(...pos1)
-    : new THREE.Vector3(pos1.x, pos1.y, pos1.z);
-  const v2 = Array.isArray(pos2)
-    ? new THREE.Vector3(...pos2)
-    : new THREE.Vector3(pos2.x, pos2.y, pos2.z);
+  // Convert to Vector3 if they're arrays - using reusable temp vectors
+  if (Array.isArray(pos1)) {
+    tempVec1.set(pos1[0], pos1[1], pos1[2]);
+  } else {
+    tempVec1.set(pos1.x, pos1.y, pos1.z);
+  }
+  
+  if (Array.isArray(pos2)) {
+    tempVec2.set(pos2[0], pos2[1], pos2[2]);
+  } else {
+    tempVec2.set(pos2.x, pos2.y, pos2.z);
+  }
 
-  // Calculate midpoint
-  return new THREE.Vector3().addVectors(v1, v2).multiplyScalar(0.5);
+  // Calculate midpoint - return new Vector3 since caller may store it
+  return new THREE.Vector3().addVectors(tempVec1, tempVec2).multiplyScalar(0.5);
 }
 
 // Additional utility for calculating a point along a line at a given fraction (0-1)

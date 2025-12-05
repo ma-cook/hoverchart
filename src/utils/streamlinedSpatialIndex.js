@@ -3,8 +3,16 @@
  * Single system approach to maximize processing power efficiency
  */
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Module-level reusable objects
+// Avoids GC pressure by reusing these instead of creating new objects each call
+// =============================================================================
+const tempPoint = { x: 0, y: 0, z: 0 };
+const tempBounds = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
+
 /**
  * 3D Point class with minimal overhead
+ * OPTIMIZATION: Uses inline math instead of method calls where possible
  */
 class Point3D {
   constructor(x = 0, y = 0, z = 0) {
@@ -23,10 +31,19 @@ class Point3D {
   distanceTo(other) {
     return Math.sqrt(this.distanceToSquared(other));
   }
+  
+  // Fast in-place set to avoid creating new objects
+  set(x, y, z) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+    return this;
+  }
 }
 
 /**
  * 3D Bounding Box with fast operations
+ * OPTIMIZATION: Added in-place methods to avoid allocations
  */
 class BoundingBox {
   constructor(minX = 0, minY = 0, minZ = 0, maxX = 0, maxY = 0, maxZ = 0) {
@@ -48,6 +65,28 @@ class BoundingBox {
       center.y + halfSize,
       center.z + halfSize
     );
+  }
+  
+  // Fast in-place set to avoid creating new objects
+  set(minX, minY, minZ, maxX, maxY, maxZ) {
+    this.minX = minX;
+    this.minY = minY;
+    this.minZ = minZ;
+    this.maxX = maxX;
+    this.maxY = maxY;
+    this.maxZ = maxZ;
+    return this;
+  }
+  
+  // Set from center and radius (for radius queries)
+  setFromCenterRadius(cx, cy, cz, radius) {
+    this.minX = cx - radius;
+    this.minY = cy - radius;
+    this.minZ = cz - radius;
+    this.maxX = cx + radius;
+    this.maxY = cy + radius;
+    this.maxZ = cz + radius;
+    return this;
   }
 
   intersects(other) {
@@ -75,7 +114,11 @@ class BoundingBox {
 
 /**
  * Optimized Spatial Hash Grid - Best for 100+ objects
- * Minimal overhead, maximum performance
+ * PERFORMANCE OPTIMIZATIONS:
+ * - Numeric cell keys instead of string concatenation
+ * - Reusable BoundingBox for queries
+ * - Inline distance calculations
+ * - Reduced array allocations
  */
 class OptimizedSpatialGrid {
   constructor(cellSize = 50) {
@@ -89,17 +132,28 @@ class OptimizedSpatialGrid {
     // Pre-allocate arrays to reduce GC pressure
     this.tempResults = [];
     this.tempCells = [];
+    
+    // Reusable BoundingBox for queries (avoids allocation in hot paths)
+    this._queryBounds = new BoundingBox();
   }
 
-  // Fast cell key generation using bitwise operations
+  // OPTIMIZATION: Use numeric key instead of string for faster Map operations
+  // Uses bit packing: assumes cell coords fit in ~20 bits each (±500k cells)
+  _getCellKeyNumeric(cx, cy, cz) {
+    // Offset to handle negative values (shift to positive range)
+    const offset = 0x100000; // 2^20
+    return ((cx + offset) * 0x200000 + (cy + offset)) * 0x200000 + (cz + offset);
+  }
+
+  // Fast cell key generation - still need string version for _getCellKeysForBounds
   _getCellKey(x, y, z) {
     const cx = Math.floor(x * this.invCellSize);
     const cy = Math.floor(y * this.invCellSize);
     const cz = Math.floor(z * this.invCellSize);
-    return `${cx}:${cy}:${cz}`; // Faster than comma separator
+    return this._getCellKeyNumeric(cx, cy, cz);
   }
 
-  // Get all cell keys that bounds intersect
+  // Get all cell keys that bounds intersect - OPTIMIZED with numeric keys
   _getCellKeysForBounds(bounds) {
     this.tempCells.length = 0; // Clear reused array
 
@@ -113,7 +167,7 @@ class OptimizedSpatialGrid {
     for (let cx = minCx; cx <= maxCx; cx++) {
       for (let cy = minCy; cy <= maxCy; cy++) {
         for (let cz = minCz; cz <= maxCz; cz++) {
-          this.tempCells.push(`${cx}:${cy}:${cz}`);
+          this.tempCells.push(this._getCellKeyNumeric(cx, cy, cz));
         }
       }
     }
@@ -201,31 +255,29 @@ class OptimizedSpatialGrid {
     return [...this.tempResults]; // Return copy to avoid mutation
   }
 
-  // Optimized radius query
+  // OPTIMIZED radius query - uses reusable bounds and inline distance
   queryRadius(center, radius) {
     this.tempResults.length = 0;
     const radiusSquared = radius * radius;
     const seenObjects = new Set();
 
-    // Create bounding box for radius
-    const bounds = new BoundingBox(
-      center.x - radius,
-      center.y - radius,
-      center.z - radius,
-      center.x + radius,
-      center.y + radius,
-      center.z + radius
-    );
+    // Use reusable bounding box instead of creating new one
+    this._queryBounds.setFromCenterRadius(center.x, center.y, center.z, radius);
 
-    const cellKeys = this._getCellKeysForBounds(bounds);
+    const cellKeys = this._getCellKeysForBounds(this._queryBounds);
 
-    for (const cellKey of cellKeys) {
-      const cell = this.grid.get(cellKey);
+    for (let i = 0; i < cellKeys.length; i++) {
+      const cell = this.grid.get(cellKeys[i]);
       if (cell) {
-        for (const objData of cell) {
+        for (let j = 0; j < cell.length; j++) {
+          const objData = cell[j];
           if (!seenObjects.has(objData.id)) {
-            const distanceSquared = center.distanceToSquared(objData.position);
-            if (distanceSquared <= radiusSquared) {
+            // Inline distance squared calculation for speed
+            const dx = center.x - objData.position.x;
+            const dy = center.y - objData.position.y;
+            const dz = center.z - objData.position.z;
+            const distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq <= radiusSquared) {
               seenObjects.add(objData.id);
               this.tempResults.push(objData.id);
             }
@@ -237,7 +289,7 @@ class OptimizedSpatialGrid {
     return [...this.tempResults];
   }
 
-  // Find nearest objects efficiently
+  // OPTIMIZED nearest query - uses reusable bounds
   queryNearest(center, maxResults = 1) {
     const candidates = [];
 
@@ -246,27 +298,26 @@ class OptimizedSpatialGrid {
     const maxSearchRadius = this.cellSize * 10;
 
     while (candidates.length < maxResults && searchRadius <= maxSearchRadius) {
-      const bounds = new BoundingBox(
-        center.x - searchRadius,
-        center.y - searchRadius,
-        center.z - searchRadius,
-        center.x + searchRadius,
-        center.y + searchRadius,
-        center.z + searchRadius
-      );
+      // Use reusable bounds
+      this._queryBounds.setFromCenterRadius(center.x, center.y, center.z, searchRadius);
 
-      const cellKeys = this._getCellKeysForBounds(bounds);
+      const cellKeys = this._getCellKeysForBounds(this._queryBounds);
       const seenObjects = new Set();
 
-      for (const cellKey of cellKeys) {
-        const cell = this.grid.get(cellKey);
+      for (let i = 0; i < cellKeys.length; i++) {
+        const cell = this.grid.get(cellKeys[i]);
         if (cell) {
-          for (const objData of cell) {
+          for (let j = 0; j < cell.length; j++) {
+            const objData = cell[j];
             if (!seenObjects.has(objData.id)) {
               seenObjects.add(objData.id);
+              // Inline distance calculation
+              const dx = center.x - objData.position.x;
+              const dy = center.y - objData.position.y;
+              const dz = center.z - objData.position.z;
               candidates.push({
                 id: objData.id,
-                distance: center.distanceTo(objData.position),
+                distance: Math.sqrt(dx * dx + dy * dy + dz * dz),
               });
             }
           }
