@@ -13,12 +13,21 @@ import { useObjectsStore } from '../stores';
 export const useDebouncedUpdate = (updateFn, objectData, delay = 100) => {
   const debouncedUpdateTimeoutRef = useRef(null);
   const isInitialRenderRef = useRef(true);
+  const lastObjectDataRef = useRef(null);
 
   useEffect(() => {
     // Skip updates during initial render to prevent thousands of simultaneous calls
     // when camera moves between cells and loads many objects at once
     if (isInitialRenderRef.current) {
       isInitialRenderRef.current = false;
+      // Store initial objectData for comparison
+      if (objectData) {
+        try {
+          lastObjectDataRef.current = JSON.stringify(objectData);
+        } catch {
+          lastObjectDataRef.current = null;
+        }
+      }
       return;
     }
 
@@ -31,6 +40,20 @@ export const useDebouncedUpdate = (updateFn, objectData, delay = 100) => {
     const { isInitialLoading } = useObjectsStore.getState();
     if (isInitialLoading) {
       return;
+    }
+
+    // PERFORMANCE FIX: Skip if objectData content hasn't actually changed
+    // This prevents unnecessary saves when component re-renders without data changes
+    // (e.g., when clicking an object to show connections)
+    try {
+      const currentDataStr = JSON.stringify(objectData);
+      if (currentDataStr === lastObjectDataRef.current) {
+        // Data hasn't changed, skip the update
+        return;
+      }
+      lastObjectDataRef.current = currentDataStr;
+    } catch {
+      // If serialization fails, proceed with the update
     }
 
     // Clear any pending update

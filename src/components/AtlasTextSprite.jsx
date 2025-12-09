@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { getGlobalTextAtlas } from '../utils/textAtlas';
 
 // =============================================================================
@@ -48,6 +48,8 @@ const AtlasTextSprite = ({
   // Face text support
   normal, // Face normal for orientation and visibility
   side = THREE.DoubleSide, // Material side
+  // PERFORMANCE: Skip continuous billboard updates for static text
+  skipBillboardUpdates = false,
 }) => {
   const meshRef = useRef();
   const lastUpdateTimeRef = useRef(0);
@@ -229,6 +231,131 @@ const AtlasTextSprite = ({
     };
   }, [geometry, material, atlas]);
 
+  // PERFORMANCE: For static billboard text, we render StaticBillboardMesh which has NO useFrame
+  // For dynamic text (headers, face text), we render DynamicBillboardMesh which has useFrame
+  // This completely eliminates the per-frame callback overhead for 100+ connection labels
+  
+  if (!geometry || !material) {
+    return null;
+  }
+
+  // Static text - no useFrame overhead at all
+  if (skipBillboardUpdates) {
+    return (
+      <StaticBillboardMesh
+        meshRef={meshRef}
+        position={position}
+        geometry={geometry}
+        material={material}
+        onClick={onClick}
+        onPointerOver={onPointerOver}
+        onPointerOut={onPointerOut}
+        visible={visible}
+        renderOrder={renderOrder}
+        scale={scale}
+        billboard={billboard}
+      />
+    );
+  }
+
+  // Dynamic text - needs useFrame for continuous updates
+  return (
+    <DynamicBillboardMesh
+      meshRef={meshRef}
+      position={position}
+      calculatedPosition={calculatedPosition}
+      smoothedPositionRef={smoothedPositionRef}
+      geometry={geometry}
+      material={material}
+      onClick={onClick}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      visible={visible}
+      renderOrder={renderOrder}
+      scale={scale}
+      billboard={billboard}
+      style={style}
+      normal={normal}
+      followTarget={followTarget}
+      lineStyle={lineStyle}
+      pathPoints={pathPoints}
+      lastUpdateTimeRef={lastUpdateTimeRef}
+    />
+  );
+};
+
+/**
+ * Static billboard mesh - NO useFrame, sets orientation once on mount
+ * Used for connection text labels that don't need continuous updates
+ */
+const StaticBillboardMesh = React.memo(({
+  meshRef,
+  position,
+  geometry,
+  material,
+  onClick,
+  onPointerOver,
+  onPointerOut,
+  visible,
+  renderOrder,
+  scale,
+  billboard,
+}) => {
+  const { camera } = useThree();
+  const initializedRef = useRef(false);
+  
+  // Set billboard orientation once on mount
+  useEffect(() => {
+    if (meshRef.current && billboard && !initializedRef.current) {
+      meshRef.current.quaternion.copy(camera.quaternion);
+      initializedRef.current = true;
+    }
+  }, [billboard, camera, meshRef]);
+
+  return (
+    <mesh
+      ref={meshRef}
+      position={position}
+      geometry={geometry}
+      material={material}
+      onClick={onClick}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      visible={visible}
+      renderOrder={renderOrder}
+      scale={[scale, scale, scale]}
+      frustumCulled={false}
+    />
+  );
+});
+
+StaticBillboardMesh.displayName = 'StaticBillboardMesh';
+
+/**
+ * Dynamic billboard mesh - HAS useFrame for continuous position/orientation updates
+ * Used for headers, face text, and other text that needs to follow objects or billboard
+ */
+const DynamicBillboardMesh = React.memo(({
+  meshRef,
+  position,
+  calculatedPosition,
+  smoothedPositionRef,
+  geometry,
+  material,
+  onClick,
+  onPointerOver,
+  onPointerOut,
+  visible,
+  renderOrder,
+  scale,
+  billboard,
+  style,
+  normal,
+  followTarget,
+  lineStyle,
+  pathPoints,
+  lastUpdateTimeRef,
+}) => {
   // Billboard and positioning effect using useFrame
   // PERFORMANCE OPTIMIZED: Uses reusable THREE objects and smart throttling
   useFrame(({ camera }) => {
@@ -413,7 +540,9 @@ const AtlasTextSprite = ({
       frustumCulled={false}
     />
   );
-};
+});
+
+DynamicBillboardMesh.displayName = 'DynamicBillboardMesh';
 
 export default React.memo(AtlasTextSprite, (prevProps, nextProps) => {
   return (

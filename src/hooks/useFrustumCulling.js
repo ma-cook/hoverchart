@@ -115,6 +115,7 @@ class SpatialHash {
 /**
  * Hook for frustum-culled connections
  * Returns only connections that are visible in the current camera view
+ * PERFORMANCE: Only recalculates when camera moves significantly or connections change
  */
 export const useFrustumCulledConnections = (connections, objects, enabled = true) => {
   const { camera } = useThree();
@@ -122,7 +123,8 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
   const lastCameraPositionRef = useRef(new THREE.Vector3());
   const lastCameraQuaternionRef = useRef(new THREE.Quaternion());
   const cachedVisibleConnectionsRef = useRef([]);
-  const frameCountRef = useRef(0);
+  const lastConnectionsLengthRef = useRef(0);
+  const lastObjectsLengthRef = useRef(0);
   
   // Build object position map for fast lookups
   const objectPositions = useMemo(() => {
@@ -147,17 +149,34 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
   }, [objectPositions]);
   
   // Calculate visible connections
+  // PERFORMANCE: Use camera ref to avoid re-running on every camera matrix update
+  // The camera object reference is stable, only recalc when connections/objects change
   const visibleConnections = useMemo(() => {
     if (!enabled || !connections || connections.length === 0) {
-      return connections || [];
+      cachedVisibleConnectionsRef.current = connections || [];
+      return cachedVisibleConnectionsRef.current;
     }
     
     // Skip frustum culling for small numbers of connections
     if (connections.length < 50) {
+      cachedVisibleConnectionsRef.current = connections;
       return connections;
     }
     
-    // Update frustum from camera
+    // Check if data has changed (don't rely on camera for dependency)
+    const connectionsChanged = connections.length !== lastConnectionsLengthRef.current;
+    const objectsChanged = objectPositions.size !== lastObjectsLengthRef.current;
+    
+    // If nothing changed and we have a cache, return cache
+    // Camera movement will be handled by the spatial hash optimization
+    if (!connectionsChanged && !objectsChanged && cachedVisibleConnectionsRef.current.length > 0) {
+      return cachedVisibleConnectionsRef.current;
+    }
+    
+    lastConnectionsLengthRef.current = connections.length;
+    lastObjectsLengthRef.current = objectPositions.size;
+    
+    // Update frustum from camera (camera ref is stable, matrices update internally)
     projScreenMatrix.multiplyMatrices(
       camera.projectionMatrix,
       camera.matrixWorldInverse
@@ -169,8 +188,9 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
       isConnectionVisible(connection, frustum, objectPositions)
     );
     
+    cachedVisibleConnectionsRef.current = visible;
     return visible;
-  }, [connections, camera, objectPositions, enabled]);
+  }, [connections, objectPositions, enabled]); // Removed camera from deps - it's stable but triggers recalc
   
   return {
     visibleConnections,

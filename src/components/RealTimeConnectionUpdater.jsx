@@ -7,8 +7,10 @@ import {
 import { calculateFacePosition } from '../utils/facePositionUtils';
 
 /**
- * Simplified component that updates connection positions in real-time as objects move
- * No unnecessary throttling or bulk operations for single object movements
+ * PERFORMANCE OPTIMIZED: Updates connection positions as objects move
+ * - Uses throttled updates (100ms) to reduce store update frequency
+ * - Batches all connection updates into single store call
+ * - Only updates connections whose objects actually moved
  */
 const RealTimeConnectionUpdater = () => {
   const updateConnections = useConnectionStore(
@@ -24,8 +26,10 @@ const RealTimeConnectionUpdater = () => {
   // Map of object -> connections for quick lookup
   const objectConnectionsRef = useRef(new Map());
 
-  // Add throttling to prevent excessive updates
+  // PERFORMANCE: Increased throttle to 100ms (10fps for position updates)
+  // Visual updates happen via objectPositions map in renderer
   const lastUpdateTimeRef = useRef(0);
+  const pendingUpdateRef = useRef(null);
   const isUpdatingRef = useRef(false);
 
   // Store current connections in a ref to avoid infinite loops
@@ -67,7 +71,9 @@ const RealTimeConnectionUpdater = () => {
     previousPositionsRef.current.clear();
   }, [connections, isInitialized]);
 
-  // React to object position changes - update connections with debouncing
+  // React to object position changes - update connections with heavy throttling
+  // PERFORMANCE: Visual rendering uses objectPositions map directly for smooth updates
+  // This store update is only needed for persistence/sync and can be infrequent
   useEffect(() => {
     if (!isInitialized || window._connectionUpdateSkip) return;
     const currentConnections = connectionsRef.current;
@@ -81,9 +87,20 @@ const RealTimeConnectionUpdater = () => {
     // Prevent multiple updates running simultaneously
     if (isUpdatingRef.current) return;
 
-    // Simple debouncing - limit to 60fps max
+    // PERFORMANCE: Throttle store updates to 100ms (10fps)
+    // Visual updates happen at 60fps via objectPositions map in BatchedConnectionLines
     const now = Date.now();
-    if (now - lastUpdateTimeRef.current < 16) {
+    const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+    
+    if (timeSinceLastUpdate < 100) {
+      // Schedule a deferred update if not already scheduled
+      if (!pendingUpdateRef.current) {
+        pendingUpdateRef.current = setTimeout(() => {
+          pendingUpdateRef.current = null;
+          // Trigger re-check
+          lastUpdateTimeRef.current = 0;
+        }, 100 - timeSinceLastUpdate);
+      }
       return;
     }
     lastUpdateTimeRef.current = now;

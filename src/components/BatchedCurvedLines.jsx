@@ -1,0 +1,420 @@
+import { useRef, useMemo, useEffect, useCallback, memo } from 'react';
+import * as THREE from 'three';
+import { extend, useThree } from '@react-three/fiber';
+import LineShaderMaterial from './LineShaderMaterial';
+import {
+  checkLineIntersection,
+  generateCurvedPath,
+} from '../utils/pathfindingUtils';
+
+extend({ LineShaderMaterial });
+
+// Reusable identity matrix - created once
+const IDENTITY_MATRIX = new THREE.Matrix4();
+
+// Reusable vectors for raycasting - allocated once at module level
+const _start = new THREE.Vector3();
+const _end = new THREE.Vector3();
+const _closestPoint = new THREE.Vector3();
+const _w0 = new THREE.Vector3();
+const _rayPoint = new THREE.Vector3();
+const _lineDir = new THREE.Vector3();
+
+// Reusable color object  
+const _color = new THREE.Color();
+
+// Base quad geometry positions - shared across all instances
+const BASE_POSITIONS = new Float32Array([
+  0, -1, 0, 1, -1, 0, 0, 1, 0,
+  1, -1, 0, 1, 1, 0, 0, 1, 0,
+]);
+
+/**
+ * Convert a path of connected points into line segments
+ * Path: [p0, p1, p2, p3] -> Segments: [[p0, p1], [p1, p2], [p2, p3]]
+ * Each segment is a pair of [start, end] points
+ */
+function pathToSegments(path) {
+  if (!path || path.length < 2) return [];
+  
+  const segments = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    const start = Array.isArray(path[i]) ? path[i] : [path[i].x, path[i].y, path[i].z];
+    const end = Array.isArray(path[i + 1]) ? path[i + 1] : [path[i + 1].x, path[i + 1].y, path[i + 1].z];
+    segments.push({ start, end });
+  }
+  return segments;
+}
+
+/**
+ * BatchedCurvedLines - Optimized renderer for curved/pathfinding connection lines
+ * 
+ * PERFORMANCE OPTIMIZATIONS:
+ * - Single draw call for ALL curved connections (vs 100+ individual components)
+ * - In-place buffer updates when positions change
+ * - Pre-allocated oversized buffers to avoid reallocation
+ * - Zero object allocation during updates (reuses module-level vectors)
+ * - Efficient connection-to-index mapping for raycasting
+ * 
+ * This component handles connections that need pathfinding around objects.
+ * Each curved connection may have 20+ segments from the Catmull-Rom spline.
+ */
+const BatchedCurvedLines = memo(({
+  connections,
+  objectPositions, // Map<objectId, [x,y,z]>
+  pathfindingObjects, // Array of objects for intersection testing
+  selectedConnectionId,
+  onConnectionClick,
+  lineWidth = 1,
+}) => {
+  const meshRef = useRef();
+  const geometryRef = useRef(null);
+  const materialRef = useRef(null);
+  const connectionIndexMapRef = useRef(new Map()); // Maps instance index -> connectionId
+  const segmentToConnectionRef = useRef(new Map()); // Maps segment index -> connectionId
+  const bufferCapacityRef = useRef(0);
+  const currentCountRef = useRef(0);
+  // PERFORMANCE: Track previous buffer state to avoid unnecessary GPU uploads
+  const prevBufferHashRef = useRef('');
+  const pathCacheRef = useRef(new Map()); // Cache computed paths
+  
+  const { camera } = useThree();
+  
+  // PERFORMANCE: Calculate paths for all connections with intersections
+  // Cache paths to avoid recalculation when nothing changed
+  const pathsData = useMemo(() => {
+    if (!connections?.length) return { segments: [], connectionMap: new Map() };
+    
+    const allSegments = [];
+    const segmentConnectionMap = new Map(); // Maps segment index -> connectionId
+    const pathCache = pathCacheRef.current;
+    
+    connections.forEach(conn => {
+      if (!conn?.start?.objectId || !conn?.end?.objectId) return;
+      
+      // Get connection positions
+      let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
+      let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
+      
+      // Fallback to object positions if needed
+      if (!startPos && conn.start?.objectId) {
+        startPos = objectPositions?.get(conn.start.objectId.toString());
+      }
+      if (!endPos && conn.end?.objectId) {
+        endPos = objectPositions?.get(conn.end.objectId.toString());
+      }
+      
+      if (!startPos || !endPos) return;
+      
+      // Normalize positions to arrays
+      const start = Array.isArray(startPos) ? startPos : [startPos.x, startPos.y, startPos.z];
+      const end = Array.isArray(endPos) ? endPos : [endPos.x, endPos.y, endPos.z];
+      
+      // Skip invalid positions
+      if (isNaN(start[0]) || isNaN(start[1]) || isNaN(start[2]) ||
+          isNaN(end[0]) || isNaN(end[1]) || isNaN(end[2])) return;
+      
+      // Create cache key from positions
+      const cacheKey = `${conn.id}:${start[0].toFixed(1)},${start[1].toFixed(1)},${start[2].toFixed(1)}-${end[0].toFixed(1)},${end[1].toFixed(1)},${end[2].toFixed(1)}`;
+      
+      let pathPoints;
+      
+      // Check cache first
+      const cached = pathCache.get(cacheKey);
+      if (cached) {
+        pathPoints = cached;
+      } else {
+        // Check for intersections
+        const intersections = pathfindingObjects?.length > 0 
+          ? checkLineIntersection(start, end, pathfindingObjects)
+          : [];
+        
+        // Generate curved path if there are intersections
+        if (intersections && intersections.length > 0) {
+          pathPoints = generateCurvedPath(
+            start,
+            end,
+            intersections,
+            conn.start.objectId,
+            conn.end.objectId,
+            true
+          );
+        } else {
+          // Straight line
+          pathPoints = [start, end];
+        }
+        
+        // Cache the result
+        pathCache.set(cacheKey, pathPoints);
+      }
+      
+      // Convert path to line segments
+      const segments = pathToSegments(pathPoints);
+      
+      // Track which connection each segment belongs to
+      const startIndex = allSegments.length;
+      segments.forEach((_, i) => {
+        segmentConnectionMap.set(startIndex + i, conn.id);
+      });
+      
+      // Add color to each segment
+      const isSelected = conn.id === selectedConnectionId;
+      const colorHex = conn.color || (isSelected ? '#ffff00' : '#000000');
+      
+      segments.forEach(seg => {
+        allSegments.push({
+          ...seg,
+          color: colorHex,
+          connectionId: conn.id,
+        });
+      });
+    });
+    
+    // Clean up old cache entries (keep only recent 1000)
+    if (pathCache.size > 1000) {
+      const entries = Array.from(pathCache.entries());
+      entries.slice(0, entries.length - 500).forEach(([key]) => pathCache.delete(key));
+    }
+    
+    return { segments: allSegments, connectionMap: segmentConnectionMap };
+  }, [connections, objectPositions, pathfindingObjects, selectedConnectionId]);
+  
+  const { segments: allSegments, connectionMap: segmentConnectionMap } = pathsData;
+  
+  // PERFORMANCE: Create/resize geometry only when needed
+  useEffect(() => {
+    const count = allSegments.length;
+    const neededCapacity = Math.max(count, 100); // Minimum 100 for curved lines
+    
+    // Only recreate if we need more capacity or first time
+    if (!geometryRef.current || bufferCapacityRef.current < neededCapacity) {
+      // Allocate with 2x headroom to reduce future reallocations
+      const newCapacity = Math.max(neededCapacity * 2, 500);
+      
+      // Dispose old geometry
+      if (geometryRef.current) {
+        geometryRef.current.dispose();
+      }
+      
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(BASE_POSITIONS, 3));
+      
+      // Pre-allocate oversized buffers
+      const instanceStart = new THREE.InstancedBufferAttribute(
+        new Float32Array(newCapacity * 3), 3
+      );
+      const instanceEnd = new THREE.InstancedBufferAttribute(
+        new Float32Array(newCapacity * 3), 3
+      );
+      const instanceColor = new THREE.InstancedBufferAttribute(
+        new Float32Array(newCapacity * 3), 3
+      );
+      
+      // Mark as dynamic for efficient updates
+      instanceStart.setUsage(THREE.DynamicDrawUsage);
+      instanceEnd.setUsage(THREE.DynamicDrawUsage);
+      instanceColor.setUsage(THREE.DynamicDrawUsage);
+      
+      geo.setAttribute('instanceStart', instanceStart);
+      geo.setAttribute('instanceEnd', instanceEnd);
+      geo.setAttribute('instanceColor', instanceColor);
+      
+      geometryRef.current = geo;
+      bufferCapacityRef.current = newCapacity;
+    }
+  }, [allSegments.length]);
+  
+  // PERFORMANCE: Update buffers in-place
+  useEffect(() => {
+    const geo = geometryRef.current;
+    if (!geo || !allSegments.length) {
+      currentCountRef.current = 0;
+      prevBufferHashRef.current = '';
+      return;
+    }
+    
+    const instanceStart = geo.getAttribute('instanceStart');
+    const instanceEnd = geo.getAttribute('instanceEnd');
+    const instanceColor = geo.getAttribute('instanceColor');
+    
+    if (!instanceStart || !instanceEnd || !instanceColor) return;
+    
+    // Build hash while updating
+    let hashParts = [];
+    
+    // Update buffers in-place
+    for (let i = 0; i < allSegments.length; i++) {
+      const seg = allSegments[i];
+      
+      const sx = seg.start[0];
+      const sy = seg.start[1];
+      const sz = seg.start[2];
+      const ex = seg.end[0];
+      const ey = seg.end[1];
+      const ez = seg.end[2];
+      
+      // Add to hash
+      hashParts.push(`${sx.toFixed(1)},${sy.toFixed(1)}-${ex.toFixed(1)},${ey.toFixed(1)}-${seg.color}`);
+      
+      // Update positions
+      instanceStart.setXYZ(i, sx, sy, sz);
+      instanceEnd.setXYZ(i, ex, ey, ez);
+      
+      // Update color
+      _color.set(seg.color);
+      instanceColor.setXYZ(i, _color.r, _color.g, _color.b);
+    }
+    
+    // Check if anything changed
+    const newHash = `${allSegments.length}:${hashParts.join('|')}`;
+    if (newHash === prevBufferHashRef.current) {
+      return;
+    }
+    prevBufferHashRef.current = newHash;
+    
+    // Mark buffers as needing update
+    instanceStart.needsUpdate = true;
+    instanceEnd.needsUpdate = true;
+    instanceColor.needsUpdate = true;
+    
+    // Update draw range
+    geo.instanceCount = allSegments.length;
+    
+    segmentToConnectionRef.current = segmentConnectionMap;
+    currentCountRef.current = allSegments.length;
+    
+    // Update instance matrices
+    if (meshRef.current && allSegments.length > 0) {
+      for (let i = 0; i < allSegments.length; i++) {
+        meshRef.current.setMatrixAt(i, IDENTITY_MATRIX);
+      }
+      meshRef.current.instanceMatrix.needsUpdate = true;
+      meshRef.current.count = allSegments.length;
+    }
+  }, [allSegments, segmentConnectionMap]);
+  
+  // Create material once
+  useEffect(() => {
+    if (!materialRef.current) {
+      materialRef.current = LineShaderMaterial.clone();
+    }
+    materialRef.current.uniforms.linewidth.value = lineWidth;
+  }, [lineWidth]);
+  
+  // Custom raycast - optimized with early exits
+  const customRaycast = useCallback((raycaster, intersects) => {
+    const geo = geometryRef.current;
+    const count = currentCountRef.current;
+    if (!geo || count === 0) return;
+    
+    const instanceStart = geo.getAttribute('instanceStart');
+    const instanceEnd = geo.getAttribute('instanceEnd');
+    if (!instanceStart || !instanceEnd) return;
+    
+    const ray = raycaster.ray;
+    const threshold = Math.max(lineWidth * 0.2, 1.0);
+    const segToConn = segmentToConnectionRef.current;
+    
+    // Track which connections we've already added to avoid duplicates
+    const addedConnections = new Set();
+    
+    for (let i = 0; i < count; i++) {
+      _start.set(instanceStart.getX(i), instanceStart.getY(i), instanceStart.getZ(i));
+      _end.set(instanceEnd.getX(i), instanceEnd.getY(i), instanceEnd.getZ(i));
+      
+      _lineDir.subVectors(_end, _start);
+      const lineLength = _lineDir.length();
+      if (lineLength === 0) continue;
+      _lineDir.normalize();
+      
+      _w0.subVectors(ray.origin, _start);
+      const a = ray.direction.dot(ray.direction);
+      const b = ray.direction.dot(_lineDir);
+      const c = _lineDir.dot(_lineDir);
+      const d = ray.direction.dot(_w0);
+      const e = _lineDir.dot(_w0);
+      
+      const denom = a * c - b * b;
+      let sc, tc;
+      
+      if (Math.abs(denom) < 0.00001) {
+        sc = 0;
+        tc = b > c ? d / b : e / c;
+      } else {
+        sc = (b * e - c * d) / denom;
+        tc = (a * e - b * d) / denom;
+      }
+      
+      tc = Math.max(0, Math.min(lineLength, tc));
+      _closestPoint.copy(_start).addScaledVector(_lineDir, tc);
+      _rayPoint.copy(ray.origin).addScaledVector(ray.direction, Math.max(0, sc));
+      
+      const distance = _rayPoint.distanceTo(_closestPoint);
+      const camDist = _closestPoint.distanceTo(camera.position);
+      const adjustedThreshold = threshold * (1 + camDist * 0.01);
+      
+      if (distance < adjustedThreshold && sc > 0) {
+        const connectionId = segToConn.get(i);
+        
+        // Only add first hit per connection
+        if (connectionId && !addedConnections.has(connectionId)) {
+          addedConnections.add(connectionId);
+          intersects.push({
+            distance: sc,
+            point: _closestPoint.clone(),
+            object: meshRef.current,
+            instanceId: i,
+            connectionId,
+          });
+        }
+      }
+    }
+  }, [lineWidth, camera]);
+  
+  // Attach raycast to mesh
+  useEffect(() => {
+    if (meshRef.current) {
+      meshRef.current.raycast = customRaycast;
+    }
+  }, [customRaycast]);
+  
+  // Handle clicks
+  const handleClick = useCallback((e) => {
+    e.stopPropagation();
+    const hit = e.intersections?.find(i => i.object === meshRef.current);
+    if (hit?.connectionId && onConnectionClick) {
+      onConnectionClick(e, hit.connectionId);
+    }
+  }, [onConnectionClick]);
+  
+  const handlePointerOver = useCallback((e) => {
+    e.stopPropagation();
+    document.body.style.cursor = 'pointer';
+  }, []);
+  
+  const handlePointerOut = useCallback((e) => {
+    e.stopPropagation();
+    document.body.style.cursor = 'auto';
+  }, []);
+  
+  // Don't render if no geometry or no segments
+  if (!geometryRef.current || currentCountRef.current === 0) {
+    return null;
+  }
+  
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometryRef.current, materialRef.current, bufferCapacityRef.current]}
+      frustumCulled={false}
+      renderOrder={10}
+      onClick={handleClick}
+      onPointerOver={handlePointerOver}
+      onPointerOut={handlePointerOut}
+    />
+  );
+});
+
+BatchedCurvedLines.displayName = 'BatchedCurvedLines';
+
+export default BatchedCurvedLines;

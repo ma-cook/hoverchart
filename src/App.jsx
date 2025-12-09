@@ -999,11 +999,13 @@ const App = () => {
       
       // When connections are globally hidden, set this object as focused
       // to show its connections temporarily
-      if (!connectionsVisible) {
+      // Get current value from store to avoid stale closure issues
+      const currentConnectionsVisible = useConnectionStore.getState().connectionsVisible;
+      if (!currentConnectionsVisible) {
         setFocusedObjectId(id);
       }
     },
-    [setSelectedId, setShowLineTextStyleUI, setSelectedConnection, connectionsVisible, setFocusedObjectId]
+    [setSelectedId, setShowLineTextStyleUI, setSelectedConnection, setFocusedObjectId]
   ); // Object move handler
   const handleObjectMoveCallback = useCallback(
     (id, newPosition, isDragStart = false, isDragEnd = false) => {

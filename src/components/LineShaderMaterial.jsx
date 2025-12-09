@@ -10,7 +10,11 @@ const LineShaderMaterial = new ShaderMaterial({
     resolution: { value: { x: window.innerWidth, y: window.innerHeight } },
     opacity: { value: 1.0 },
   },
-  transparent: true,
+  // PERFORMANCE: Disable transparency since lines are fully opaque
+  // This avoids expensive depth sorting for transparent objects
+  transparent: false,
+  depthTest: true,
+  depthWrite: true,
 });
 
 export default LineShaderMaterial;

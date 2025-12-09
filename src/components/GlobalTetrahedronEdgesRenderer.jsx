@@ -124,11 +124,14 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
   }, [totalEdges, defaultLineWidth]);
 
   // Mark for full update when tetrahedrons array changes
+  // Track IDs to detect actual changes, not just length
+  const tetrahedronIds = useMemo(() => tetrahedrons.map(t => t.id).join(','), [tetrahedrons]);
+  
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
     visibilityRef.current.clear();
-  }, [tetrahedrons.length]);
+  }, [tetrahedronIds]);
 
   // Function to check if a tetrahedron is visible in the camera frustum
   const isTetrahedronVisible = useCallback((position, scale) => {
@@ -173,8 +176,18 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
   }, []);
 
   // Use useFrame for real-time position sync during transforms
+  // PERFORMANCE: Skip frame processing when nothing is being transformed
   useFrame(() => {
     if (!geometry || !meshRef.current || tetrahedrons.length === 0) return;
+
+    // PERFORMANCE: Early exit when no transforms are active AND we've done initial setup
+    // tetrahedronTransformMap only has entries when tetrahedrons are being actively transformed
+    const hasActiveTransforms = tetrahedronTransformMap.size > 0;
+    const needsInitialSetup = needsFullUpdateRef.current;
+    
+    if (!hasActiveTransforms && !needsInitialSetup) {
+      return; // Nothing moving and initial setup done, skip all per-frame work
+    }
 
     const instanceStart = geometry.getAttribute('instanceStart');
     const instanceEnd = geometry.getAttribute('instanceEnd');
@@ -281,6 +294,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
 
   return (
     <instancedMesh
+      key={totalEdges}
       ref={meshRef}
       args={[geometry, material, totalEdges]}
       frustumCulled={false}

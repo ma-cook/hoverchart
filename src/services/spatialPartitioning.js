@@ -630,17 +630,7 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
   }
 
   try {
-    // Validate that the space exists before adding objects to it
-    const spaceRef = doc(db, 'users', userId, 'spaces', spaceId);
-    const spaceDoc = await getDoc(spaceRef);
 
-    if (!spaceDoc.exists()) {
-      console.error(`❌ Cannot add object to non-existent space: ${spaceId}`);
-      console.error(
-        '❌ Spaces must be created through the landing page (volscape.com)'
-      );
-      return false;
-    }
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 

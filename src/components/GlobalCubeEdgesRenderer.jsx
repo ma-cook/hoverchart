@@ -93,6 +93,9 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
 
   // Calculate total number of line instances needed
   const totalEdges = cubes.length * EDGES_PER_CUBE;
+  
+  // Track cube IDs to detect actual changes, not just length
+  const cubeIds = useMemo(() => cubes.map(c => c.id).join(','), [cubes]);
 
   // Create geometry with all cube edges
   const { geometry, material } = useMemo(() => {
@@ -129,14 +132,14 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     mat.uniforms.linewidth.value = defaultLineWidth;
 
     return { geometry: geo, material: mat };
-  }, [totalEdges, defaultLineWidth]);
+  }, [totalEdges, defaultLineWidth, cubeIds]);
 
   // Mark for full update when cubes array changes
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
     visibilityRef.current.clear();
-  }, [cubes.length]);
+  }, [cubeIds]);
 
   // Function to check if a cube is visible in the camera frustum
   const isCubeVisible = useCallback((position, scale) => {
@@ -182,8 +185,18 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   }, []);
 
   // Use useFrame for real-time position sync during transforms
+  // PERFORMANCE: Skip frame processing when nothing is being transformed
   useFrame(() => {
     if (!geometry || !meshRef.current || cubes.length === 0) return;
+
+    // PERFORMANCE: Early exit when no transforms are active AND we've done initial setup
+    // cubeTransformMap only has entries when cubes are being actively dragged/transformed
+    const hasActiveTransforms = cubeTransformMap.size > 0;
+    const needsInitialSetup = needsFullUpdateRef.current;
+    
+    if (!hasActiveTransforms && !needsInitialSetup) {
+      return; // Nothing moving and initial setup done, skip all per-frame work
+    }
 
     const instanceStart = geometry.getAttribute('instanceStart');
     const instanceEnd = geometry.getAttribute('instanceEnd');
@@ -301,6 +314,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
 
   return (
     <instancedMesh
+      key={totalEdges} // Force remount when instance count changes
       ref={meshRef}
       args={[geometry, material, totalEdges]}
       frustumCulled={false}

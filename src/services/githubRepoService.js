@@ -230,6 +230,23 @@ const containsJSX = (node, fileContext = {}) => {
     ) {
       return containsJSX(node.arguments[0], fileContext);
     }
+    // forwardRef wrapping (both forwardRef() and React.forwardRef())
+    if (
+      (node.callee?.name === 'forwardRef' ||
+        (node.callee?.object?.name === 'React' && node.callee?.property?.name === 'forwardRef')) &&
+      node.arguments &&
+      node.arguments[0]
+    ) {
+      return containsJSX(node.arguments[0], fileContext);
+    }
+    // memo wrapping (standalone memo())
+    if (
+      node.callee?.name === 'memo' &&
+      node.arguments &&
+      node.arguments[0]
+    ) {
+      return containsJSX(node.arguments[0], fileContext);
+    }
   }
 
   // Arrow function expressions
@@ -726,13 +743,15 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                       ) {
                         isFunction = true;
                       }
-                      // Wrapped in useCallback, useMemo, etc.
+                      // Wrapped in useCallback, useMemo, forwardRef, memo, etc.
                       else if (
                         decl.init.type === 'CallExpression' &&
                         decl.init.callee &&
                         decl.init.callee.type === 'Identifier' &&
                         (decl.init.callee.name === 'useCallback' ||
-                          decl.init.callee.name === 'useMemo') &&
+                          decl.init.callee.name === 'useMemo' ||
+                          decl.init.callee.name === 'forwardRef' ||
+                          decl.init.callee.name === 'memo') &&
                         decl.init.arguments &&
                         decl.init.arguments.length > 0 &&
                         (decl.init.arguments[0].type === 'ArrowFunctionExpression' ||
@@ -741,13 +760,14 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                         isFunction = true;
                         actualInit = decl.init.arguments[0]; // Get the inner function
                       }
-                      // Wrapped in React.memo
+                      // Wrapped in React.memo or React.forwardRef
                       else if (
                         decl.init.type === 'CallExpression' &&
                         decl.init.callee &&
                         decl.init.callee.type === 'MemberExpression' &&
                         decl.init.callee.object?.name === 'React' &&
-                        decl.init.callee.property?.name === 'memo' &&
+                        (decl.init.callee.property?.name === 'memo' ||
+                          decl.init.callee.property?.name === 'forwardRef') &&
                         decl.init.arguments &&
                         decl.init.arguments.length > 0
                       ) {

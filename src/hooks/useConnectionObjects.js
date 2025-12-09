@@ -75,36 +75,50 @@ export const usePathfindingObjects = () => {
  */
 export const useConnectionObjectPositions = (startObjectId, endObjectId) => {
   // Select ONLY the start object with shallow equality checking
+  // PERFORMANCE: Return the object directly instead of creating a new object
+  // The shallow comparison will compare the object's properties
   const startObject = useObjectsStore((state) => {
     if (!startObjectId || !state.objects) return null;
-    const obj = state.objects.find(
+    return state.objects.find(
       (obj) => obj.id?.toString() === startObjectId.toString()
+    ) || null;
+  }, (a, b) => {
+    // Custom equality check - only compare position-critical properties
+    if (a === b) return true;
+    if (!a || !b) return a === b;
+    return (
+      a.id === b.id &&
+      a.position?.[0] === b.position?.[0] &&
+      a.position?.[1] === b.position?.[1] &&
+      a.position?.[2] === b.position?.[2] &&
+      a.scale?.[0] === b.scale?.[0] &&
+      a.scale?.[1] === b.scale?.[1] &&
+      a.scale?.[2] === b.scale?.[2] &&
+      a.type === b.type
     );
-    if (!obj) return null;
-    // Return only position-critical properties
-    return {
-      id: obj.id,
-      position: obj.position,
-      scale: obj.scale,
-      type: obj.type,
-    };
-  }, shallow);
+  });
 
-  // Select ONLY the end object with shallow equality checking
+  // Select ONLY the end object with custom equality checking
   const endObject = useObjectsStore((state) => {
     if (!endObjectId || !state.objects) return null;
-    const obj = state.objects.find(
+    return state.objects.find(
       (obj) => obj.id?.toString() === endObjectId.toString()
+    ) || null;
+  }, (a, b) => {
+    // Custom equality check - only compare position-critical properties
+    if (a === b) return true;
+    if (!a || !b) return a === b;
+    return (
+      a.id === b.id &&
+      a.position?.[0] === b.position?.[0] &&
+      a.position?.[1] === b.position?.[1] &&
+      a.position?.[2] === b.position?.[2] &&
+      a.scale?.[0] === b.scale?.[0] &&
+      a.scale?.[1] === b.scale?.[1] &&
+      a.scale?.[2] === b.scale?.[2] &&
+      a.type === b.type
     );
-    if (!obj) return null;
-    // Return only position-critical properties
-    return {
-      id: obj.id,
-      position: obj.position,
-      scale: obj.scale,
-      type: obj.type,
-    };
-  }, shallow);
+  });
 
   return {
     startObject,

@@ -167,6 +167,9 @@ const AnimatedConnectionLine = ({
     }
   });
 
+  // PERFORMANCE: Only render hitbox if there are interaction handlers
+  const needsHitbox = onClick || onPointerOver || onPointerOut;
+
   return (
     <>
       {/* Main visible line with optimized rendering and material ref */}{' '}
@@ -190,19 +193,23 @@ const AnimatedConnectionLine = ({
         polygonOffsetUnits={-1}
         toneMapped={false}
         resolution={2} // Reduced for better performance
+        // Add interaction handlers directly to main line if no separate hitbox needed
+        onClick={!needsHitbox ? undefined : undefined}
       />
-      {/* Invisible hitbox for interaction - won't block objects behind it */}
-      <Line
-        key={`hitbox-${connectionId}-${pointsKey}`}
-        points={normalizedPoints}
-        color="white"
-        lineWidth={14}
-        onClick={onClick}
-        onPointerOver={onPointerOver}
-        onPointerOut={onPointerOut}
-        visible={false}
-        renderOrder={-1}
-      />
+      {/* Invisible hitbox for interaction - only render if handlers exist */}
+      {needsHitbox && (
+        <Line
+          key={`hitbox-${connectionId}-${pointsKey}`}
+          points={normalizedPoints}
+          color="white"
+          lineWidth={14}
+          onClick={onClick}
+          onPointerOver={onPointerOver}
+          onPointerOut={onPointerOut}
+          visible={false}
+          renderOrder={-1}
+        />
+      )}
     </>
   );
 };

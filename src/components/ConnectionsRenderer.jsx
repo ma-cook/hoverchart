@@ -1,6 +1,8 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 
 import InstancedLine from './InstancedLine';
+import BatchedConnectionLines from './BatchedConnectionLines';
+import BatchedCurvedLines from './BatchedCurvedLines';
 import AtlasTextSprite from './AtlasTextSprite';
 import LineUI from './LineUI';
 import HeaderInput from './HeaderInput';
@@ -20,6 +22,7 @@ import {
   useConnectionsRendererStore 
 } from '../hooks/useConnectionsRendererStore';
 import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
+import useConnectionStore from '../stores/connectionStore';
 
 /**
  * Convert a path of connected points into line segments for InstancedLine
@@ -773,8 +776,8 @@ const ConnectionsRenderer = ({
   const objectVisibleConnections = useMemo(() => {
     if (!connections?.length) return [];
 
-    // Pre-create set for faster lookups
-    const visibleIds = visibleObjectIds || availableObjectIds;
+    // Use visibleObjectIds if it has items, otherwise fall back to availableObjectIds
+    const visibleIds = (visibleObjectIds && visibleObjectIds.size > 0) ? visibleObjectIds : availableObjectIds;
 
     return connections.filter((connection) => {
       const startId = connection.start?.objectId?.toString();
@@ -790,7 +793,8 @@ const ConnectionsRenderer = ({
     if (!focusedObjectId || connectionsVisible || !connections?.length) return [];
     
     const focusedIdStr = focusedObjectId.toString();
-    const visibleIds = visibleObjectIds || availableObjectIds;
+    // Use visibleObjectIds if it has items, otherwise fall back to availableObjectIds
+    const visibleIds = (visibleObjectIds && visibleObjectIds.size > 0) ? visibleObjectIds : availableObjectIds;
     
     return connections.filter((connection) => {
       const startId = connection.start?.objectId?.toString();
@@ -816,10 +820,283 @@ const ConnectionsRenderer = ({
     true // Enable frustum culling
   );
 
-  // Render each visible connection
+  // PERFORMANCE: Build object positions map for batched rendering
+  // NOTE: This uses object CENTER positions - connections store their face positions
+  // BatchedConnectionLines uses connection.start/end.position for accurate face positions
+  const objectPositions = useMemo(() => {
+    const map = new Map();
+    if (!objects?.length) return map;
+    
+    objects.forEach(obj => {
+      if (obj?.id && obj?.position) {
+        map.set(obj.id.toString(), obj.position);
+      }
+    });
+    return map;
+  }, [objects]);
+
+  // PERFORMANCE: Cache intersection results to avoid running pathfinding every frame
+  // Only recalculate when objects finish moving (not during drag)
+  const intersectionCacheRef = useRef(new Map()); // connectionId -> { hasIntersection, timestamp }
+  const lastPathfindingHashRef = useRef('');
+  const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
+  const lastCategorizationInputsRef = useRef({ connectionsLength: 0, selectedConnection: null, pathfindingHash: '' });
+  
+  // Create a stable hash of object positions for pathfinding invalidation
+  // Only changes when objects actually move significantly
+  const pathfindingHash = useMemo(() => {
+    if (!objects?.length) return '';
+    // Create a coarse hash - round positions to reduce sensitivity
+    return objects.map(obj => {
+      const p = obj.position || [0, 0, 0];
+      // Round to nearest 0.5 to avoid micro-changes triggering recalc
+      return `${obj.id}:${Math.round(p[0] * 2) / 2},${Math.round(p[1] * 2) / 2},${Math.round(p[2] * 2) / 2}`;
+    }).join('|');
+  }, [objects]);
+  
+  // Check if any object is currently being transformed
+  const isTransformingRef = useRef(false);
+  
+  // Effect to detect when transforms complete and invalidate cache
+  useEffect(() => {
+    // Only invalidate cache when hash changes AND no transform is active
+    if (pathfindingHash !== lastPathfindingHashRef.current) {
+      // Debounce the cache invalidation to wait for transform to complete
+      const timeoutId = setTimeout(() => {
+        if (!isTransformingRef.current) {
+          intersectionCacheRef.current.clear();
+          lastPathfindingHashRef.current = pathfindingHash;
+        }
+      }, 100); // Wait 100ms after last position change
+      return () => clearTimeout(timeoutId);
+    }
+  }, [pathfindingHash]);
+
+  // PERFORMANCE: Separate connections into categories for optimal rendering
+  // - batchedConnections: straight lines without text/selection that don't intersect objects (single draw call)
+  // - textConnections: straight lines with text only (batch lines + individual text sprites)
+  // - curvedConnections: straight-style connections that need curved paths due to intersections (batched curved rendering)
+  // - individualConnections: selected, non-straight styles (dashed/dotted), or those needing full UI
+  const { batchedConnections, textConnections, curvedConnections, individualConnections } = useMemo(() => {
+    // PERFORMANCE: Quick check if we can return cached result
+    // Only re-categorize if connections, selection, or pathfinding actually changed
+    const inputsRef = lastCategorizationInputsRef.current;
+    const cacheRef = lastCategorizationRef.current;
+    
+    if (
+      frustumCulledConnections.length === inputsRef.connectionsLength &&
+      selectedConnection === inputsRef.selectedConnection &&
+      pathfindingHash === inputsRef.pathfindingHash &&
+      cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
+    ) {
+      // Inputs haven't changed meaningfully, return cached result
+      return cacheRef;
+    }
+    
+    const batched = [];
+    const withText = [];
+    const curved = [];
+    const individual = [];
+    const cache = intersectionCacheRef.current;
+    
+    frustumCulledConnections.forEach(conn => {
+      const style = conn.styleType || conn.lineStyle || 'straight';
+      const baseStyle = style.split('-')[0];
+      const isSelected = conn.id === selectedConnection;
+      const hasText = conn.text && conn.text.trim() !== '';
+      
+      // Selected connections need full UI (LineUI, etc)
+      if (isSelected) {
+        individual.push(conn);
+        return;
+      }
+      
+      // Non-straight styles (dashed, dotted) need AnimatedConnectionLine
+      if (baseStyle !== 'straight') {
+        individual.push(conn);
+        return;
+      }
+      
+      // PERFORMANCE: Check cached intersection result first
+      const cached = cache.get(conn.id);
+      if (cached !== undefined) {
+        if (cached.hasIntersection) {
+          // Connections with intersections but no text go to curved batch
+          if (hasText) {
+            // Has text AND intersection - needs individual for text positioning on curve
+            individual.push(conn);
+          } else {
+            // No text - can be batched in curved renderer
+            curved.push(conn);
+          }
+        } else if (hasText) {
+          withText.push(conn);
+        } else {
+          batched.push(conn);
+        }
+        return;
+      }
+      
+      // For straight-style connections, check if they need pathfinding
+      // Get connection positions
+      let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
+      let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
+      
+      // Fallback to object positions if needed
+      if (!startPos && conn.start?.objectId) {
+        startPos = objectPositions.get(conn.start.objectId.toString());
+      }
+      if (!endPos && conn.end?.objectId) {
+        endPos = objectPositions.get(conn.end.objectId.toString());
+      }
+      
+      // Check for intersections if we have valid positions and objects to check against
+      let hasIntersection = false;
+      if (startPos && endPos && pathfindingObjects && pathfindingObjects.length > 0) {
+        const intersections = checkLineIntersection(startPos, endPos, pathfindingObjects);
+        hasIntersection = intersections && intersections.length > 0;
+      }
+      
+      // Cache the result
+      cache.set(conn.id, { hasIntersection, timestamp: Date.now() });
+      
+      if (hasIntersection) {
+        // Connections with intersections but no text go to curved batch
+        if (hasText) {
+          // Has text AND intersection - needs individual for text positioning on curve
+          individual.push(conn);
+        } else {
+          // No text - can be batched in curved renderer
+          curved.push(conn);
+        }
+      } else if (hasText) {
+        withText.push(conn);
+      } else {
+        batched.push(conn);
+      }
+    });
+    
+    // Cache the result and inputs for next comparison
+    const result = { 
+      batchedConnections: batched, 
+      textConnections: withText,
+      curvedConnections: curved,
+      individualConnections: individual 
+    };
+    lastCategorizationRef.current = result;
+    lastCategorizationInputsRef.current = {
+      connectionsLength: frustumCulledConnections.length,
+      selectedConnection,
+      pathfindingHash,
+    };
+    
+    return result;
+  }, [frustumCulledConnections, selectedConnection, objectPositions, pathfindingObjects, pathfindingHash]);
+
+  // Combine all straight connections for batched line rendering
+  const allStraightConnections = useMemo(() => {
+    return [...batchedConnections, ...textConnections];
+  }, [batchedConnections, textConnections]);
+
+  // PERFORMANCE: Pre-calculate text positions for connections with text
+  const textLabels = useMemo(() => {
+    return textConnections.map(conn => {
+      // Get connection positions
+      let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
+      let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
+      
+      // Fallback to object positions if connection positions not available
+      if (!startPos && conn.start?.objectId) {
+        startPos = objectPositions.get(conn.start.objectId.toString());
+      }
+      if (!endPos && conn.end?.objectId) {
+        endPos = objectPositions.get(conn.end.objectId.toString());
+      }
+      
+      if (!startPos || !endPos) return null;
+      
+      // Calculate midpoint
+      const midpoint = [
+        (startPos[0] + endPos[0]) / 2,
+        (startPos[1] + endPos[1]) / 2 + 2, // Offset above line
+        (startPos[2] + endPos[2]) / 2,
+      ];
+      
+      return {
+        id: conn.id,
+        text: conn.text,
+        position: midpoint,
+        textStyle: conn.textStyle,
+      };
+    }).filter(Boolean);
+  }, [textConnections, objectPositions]);
+
+  // Handle connection click from batched renderer
+  const handleBatchedConnectionClick = useCallback((e, connectionId) => {
+    e.stopPropagation();
+    if (onConnectionClick) {
+      onConnectionClick(e, connectionId);
+    } else {
+      // Use store directly to select connection
+      const selectConnection = useConnectionStore.getState().selectConnection;
+      if (selectConnection) {
+        selectConnection(connectionId);
+      }
+    }
+  }, [onConnectionClick]);
+
+  // Render connections with batched optimization
   return (
     <group>
-      {frustumCulledConnections.map((connection) => (
+      {/* PERFORMANCE: Render ALL straight connections (with or without text) in ONE draw call */}
+      {allStraightConnections.length > 0 && (
+        <BatchedConnectionLines
+          connections={allStraightConnections}
+          objectPositions={objectPositions}
+          selectedConnectionId={selectedConnection}
+          onConnectionClick={handleBatchedConnectionClick}
+          lineWidth={1}
+        />
+      )}
+      
+      {/* PERFORMANCE: Render curved connections (intersecting objects) in ONE draw call */}
+      {curvedConnections.length > 0 && (
+        <BatchedCurvedLines
+          connections={curvedConnections}
+          objectPositions={objectPositions}
+          pathfindingObjects={pathfindingObjects}
+          selectedConnectionId={selectedConnection}
+          onConnectionClick={handleBatchedConnectionClick}
+          lineWidth={1}
+        />
+      )}
+      
+      {/* PERFORMANCE: Render text labels separately - no Connection component overhead */}
+      {textLabels.map(label => (
+        <AtlasTextSprite
+          key={`text-${label.id}`}
+          text={label.text}
+          position={label.position}
+          style={{
+            fontSize: (label.textStyle?.fontSize || 1.5) * 10,
+            color: label.textStyle?.color || 'black',
+            underline: label.textStyle?.underline || false,
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onLineTextClick) {
+              onLineTextClick(e, label.id);
+            }
+          }}
+          billboard={true}
+          skipBillboardUpdates={true}  // PERFORMANCE: Static text doesn't need continuous billboard updates
+          renderOrder={20}
+          scale={0.45}
+        />
+      ))}
+      
+      {/* Render individual connections that need special handling (selected, dashed/dotted, with text on curves) */}
+      {individualConnections.map((connection) => (
         <Connection
           key={connection.id}
           connection={connection}
