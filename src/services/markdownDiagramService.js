@@ -1576,6 +1576,203 @@ export class MarkdownDiagramService {
   }
 
   /**
+   * Calculate the bounding box and dimensions of the root hierarchy container
+   * This must match the logic in createRootHierarchyContainer to ensure alignment
+   * @param {Object} context - Processing context
+   * @param {Map} graphNodes - All graph nodes
+   * @param {Map} childParentMap - Child to parent mapping
+   * @param {Map} nodePositions - Node positions
+   * @param {Map} nodeScales - Node scales
+   * @param {Set} rootNodes - Root nodes
+   * @returns {Object} Container bounds {centerX, centerY, centerZ, width, height, depth}
+   */
+  calculateRootHierarchyContainerBounds(
+    context,
+    graphNodes,
+    childParentMap,
+    nodePositions,
+    nodeScales,
+    rootNodes
+  ) {
+    // Collect all hierarchy nodes (components reachable from root modules + their children)
+    const hierarchyNodes = [];
+
+    // Build set of components reachable from actual root modules
+    const reachableFromRootModules = new Set();
+    const rootModuleNames = ['main', 'index', 'firebase', 'App'];
+    const actualRootModules = Array.from(rootNodes).filter((nodeId) => {
+      return rootModuleNames.includes(nodeId);
+    });
+
+    // Traverse from root modules to mark all reachable components
+    const markReachable = (nodeId) => {
+      if (reachableFromRootModules.has(nodeId)) return;
+      const node = graphNodes.get(nodeId);
+      if (!node) return;
+      if (node.type === MarkdownDiagramService.NODE_TYPE_COMPONENT) {
+        reachableFromRootModules.add(nodeId);
+      }
+      const children = context.parentChildMap.get(nodeId) || new Set();
+      children.forEach((childId) => markReachable(childId));
+    };
+
+    actualRootModules.forEach((rootModuleId) => {
+      markReachable(rootModuleId);
+    });
+
+    // Build a set of components that have their own child containers
+    const componentsWithChildContainers = new Set();
+    for (const [parentNodeId, children] of context.parentChildMap.entries()) {
+      const parentNode = graphNodes.get(parentNodeId);
+      if (
+        !parentNode ||
+        parentNode.type !== MarkdownDiagramService.NODE_TYPE_COMPONENT
+      ) {
+        continue;
+      }
+
+      // Get component children only
+      const componentChildren = Array.from(children).filter((childId) => {
+        const childNode = graphNodes.get(childId);
+        return (
+          childNode &&
+          childNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT
+        );
+      });
+
+      // If has 2+ component children, it gets its own container
+      if (componentChildren.length >= 2) {
+        componentsWithChildContainers.add(parentNodeId);
+      }
+    }
+
+    // Build a set of all nodes that are inside child containers
+    const nodesInChildContainers = new Set();
+    const markDescendantsInChildContainers = (nodeId) => {
+      if (nodesInChildContainers.has(nodeId)) return;
+      nodesInChildContainers.add(nodeId);
+
+      const children = context.parentChildMap.get(nodeId) || new Set();
+      children.forEach((childId) => {
+        markDescendantsInChildContainers(childId);
+      });
+    };
+
+    // Mark all descendants of components with child containers
+    componentsWithChildContainers.forEach((componentId) => {
+      const children = context.parentChildMap.get(componentId) || new Set();
+      children.forEach((childId) => {
+        markDescendantsInChildContainers(childId);
+      });
+    });
+
+    // Collect all hierarchy nodes (EXCLUDE nodes in child containers)
+    for (const [nodeId, position] of nodePositions.entries()) {
+      if (!position) continue;
+
+      // Skip if this node is in a child container
+      if (nodesInChildContainers.has(nodeId)) continue;
+
+      const node = graphNodes.get(nodeId);
+      if (!node) continue;
+
+      const nodeType = (node.type || '').toLowerCase().trim();
+
+      // Include components that are reachable from root modules
+      if (nodeType === MarkdownDiagramService.NODE_TYPE_COMPONENT) {
+        if (reachableFromRootModules.has(nodeId)) {
+          hierarchyNodes.push(nodeId);
+        }
+      }
+      // Include functions that are children of hierarchy components
+      else if (nodeType === MarkdownDiagramService.NODE_TYPE_FUNCTION) {
+        const parentId = childParentMap.get(nodeId);
+        if (parentId && reachableFromRootModules.has(parentId)) {
+          hierarchyNodes.push(nodeId);
+        }
+      }
+    }
+
+    if (hierarchyNodes.length === 0) {
+      console.log('⚠️ No hierarchy nodes found for container bounds calculation');
+      // Return a fallback bounds
+      const firstRootId = Array.from(rootNodes)[0];
+      const firstRootPos = nodePositions.get(firstRootId);
+      const fallbackY = firstRootPos ? firstRootPos[1] : context.basePosition[1];
+      return {
+        centerX: 0,
+        centerY: fallbackY,
+        centerZ: 0,
+        width: 100,
+        height: 100,
+        depth: 100,
+        minX: -50,
+        maxX: 50,
+        minY: fallbackY - 50,
+        maxY: fallbackY + 50,
+        minZ: -50,
+        maxZ: 50
+      };
+    }
+
+    // Calculate bounding box (matching createRootHierarchyContainer logic)
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+
+    hierarchyNodes.forEach((nodeId) => {
+      const pos = nodePositions.get(nodeId);
+      if (!pos) return;
+
+      // Get the actual scale of the node
+      const scale = nodeScales.get(nodeId) || [1, 1, 1];
+      const node = graphNodes.get(nodeId);
+      const nodeType = node ? (node.type || '').toLowerCase().trim() : '';
+
+      // Calculate node size based on type and scale
+      let nodeSize = 5; // Default size for cubes/tetrahedrons
+      if (nodeType === MarkdownDiagramService.NODE_TYPE_COMPONENT) {
+        nodeSize = Math.max(...scale) * 10; // Scale factor times base size
+      }
+
+      minX = Math.min(minX, pos[0] - nodeSize);
+      maxX = Math.max(maxX, pos[0] + nodeSize);
+      minY = Math.min(minY, pos[1] - nodeSize);
+      maxY = Math.max(maxY, pos[1] + nodeSize);
+      minZ = Math.min(minZ, pos[2] - nodeSize);
+      maxZ = Math.max(maxZ, pos[2] + nodeSize);
+    });
+
+    // Add padding (matching createRootHierarchyContainer)
+    const padding = 15;
+    minX -= padding;
+    maxX += padding;
+    minY -= padding;
+    maxY += padding;
+    minZ -= padding;
+    maxZ += padding;
+
+    // Return full bounds
+    return {
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+      centerZ: (minZ + maxZ) / 2,
+      width: maxX - minX,
+      height: maxY - minY,
+      depth: maxZ - minZ,
+      minX,
+      maxX,
+      minY,
+      maxY,
+      minZ,
+      maxZ
+    };
+  }
+
+  /**
    * Position utility modules, services, and stores in grouped square grids
    * @param {Object} context - Processing context containing all maps and data
    */
@@ -1726,12 +1923,60 @@ export class MarkdownDiagramService {
       return Math.max(baseSpacing, adjustedSpacing);
     };
 
+    // Helper to calculate group bounds without actually positioning nodes
+    // Grid starts at corner (0,0) and extends in positive X and Z directions
+    const calculateGroupBounds = (nodes) => {
+      if (nodes.length === 0) {
+        return { width: 0, height: 0, depth: 0 };
+      }
+
+      const nodeSpacing = calculateGroupSpacing(nodes);
+      const gridSize = Math.ceil(Math.sqrt(nodes.length));
+
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+
+      nodes.forEach((nodeId, index) => {
+        const row = Math.floor(index / gridSize);
+        const col = index % gridSize;
+
+        // Calculate position in local grid (corner-based, matching positionGroup)
+        const x = col * nodeSpacing;
+        const z = row * nodeSpacing;
+
+        // Get node scale for size calculation
+        const scale = nodeScales.get(nodeId) || [1, 1, 1];
+        const node = graphNodes.get(nodeId);
+        const nodeType = node ? (node.type || '').toLowerCase().trim() : '';
+        
+        let nodeSize = 5; // Default size
+        if (nodeType === MarkdownDiagramService.NODE_TYPE_COMPONENT) {
+          nodeSize = Math.max(...scale) * 10;
+        }
+
+        minX = Math.min(minX, x - nodeSize);
+        maxX = Math.max(maxX, x + nodeSize);
+        minY = Math.min(minY, -nodeSize);
+        maxY = Math.max(maxY, nodeSize);
+        minZ = Math.min(minZ, z - nodeSize);
+        maxZ = Math.max(maxZ, z + nodeSize);
+      });
+
+      // Add padding
+      const padding = 15;
+      return {
+        width: (maxX - minX) + padding * 2,
+        height: (maxY - minY) + padding * 2,
+        depth: (maxZ - minZ) + padding * 2
+      };
+    };
+
     const positionGroup = (nodes, xOffset, yOffset, zOffset) => {
       if (nodes.length === 0) return;
 
       // Use adaptive spacing based on node sizes in this group
       const nodeSpacing = calculateGroupSpacing(nodes);
-
 
       const gridSize = Math.ceil(Math.sqrt(nodes.length));
 
@@ -1871,31 +2116,60 @@ export class MarkdownDiagramService {
 
   
     // Position group containers and ungrouped components
-    // Get the Y position from an actual root component
-    const firstRootId = Array.from(rootNodes)[0];
-    const firstRootPos = nodePositions.get(firstRootId);
-    const rootComponentY = firstRootPos ? firstRootPos[1] : basePosition[1];
+    // Calculate the actual bounding box of the root hierarchy container
+    // This ensures proper edge-to-edge spacing between containers
+    const rootHierarchyBounds = this.calculateRootHierarchyContainerBounds(
+      context,
+      graphNodes,
+      childParentMap,
+      nodePositions,
+      nodeScales,
+      rootNodes
+    );
     
-    // Use the root component's Y position directly (it's already at the correct height)
+    // Use the root hierarchy container's center Y position for alignment
     // Don't calculate as offset since positionGroup adds to basePosition
-    const groupContainerYOffset = rootComponentY - basePosition[1]; // This will be ~1300
+    const groupContainerYOffset = rootHierarchyBounds.centerY - basePosition[1];
     const ungroupedYOffset = groupContainerYOffset + 200; // Ungrouped 200 above groups
     
-    // Utility Modules: 100 units to the left of root, at group container Y level
+    // Define edge-to-edge spacing between containers
+    const edgeSpacing = 100;
+    
+    // Calculate bounds for each group to ensure proper spacing
+    const utilityBounds = calculateGroupBounds(utilityNodes);
+    const hookBounds = calculateGroupBounds(hookNodes);
+    const serviceBounds = calculateGroupBounds(serviceNodes);
+    const storeBounds = calculateGroupBounds(storeNodes);
+    
+    // Root hierarchy container edges (absolute positions)
+    const rootLeftEdge = rootHierarchyBounds.minX;
+    const rootRightEdge = rootHierarchyBounds.maxX;
+    const rootFrontEdge = rootHierarchyBounds.maxZ;
+    const rootBackEdge = rootHierarchyBounds.minZ;
+    
+    // Utility Modules: positioned to the left with edge-to-edge spacing
+    // Grid extends in positive X from xOffset, so place xOffset so right edge of utility is 100 units from root's left edge
+    // Utility right edge = basePosition[0] + xOffset + utilityBounds.width
+    // We want: utilityRightEdge = rootLeftEdge - edgeSpacing
+    // So: basePosition[0] + xOffset + utilityBounds.width = rootLeftEdge - edgeSpacing
+    // xOffset = rootLeftEdge - edgeSpacing - utilityBounds.width - basePosition[0]
+    const utilityXOffset = rootLeftEdge - edgeSpacing - utilityBounds.width - basePosition[0];
+    positionGroup(utilityNodes, utilityXOffset, groupContainerYOffset, 0);
 
-    positionGroup(utilityNodes, -600, groupContainerYOffset, 0);
+    // Hooks: positioned to the right with edge-to-edge spacing
+    // Grid extends in positive X from xOffset, so place xOffset at root's right edge + spacing
+    const hookXOffset = rootRightEdge + edgeSpacing - basePosition[0];
+    positionGroup(hookNodes, hookXOffset, groupContainerYOffset, 0);
 
-    // Hooks: 100 units to the right of root, same Y level
-  
-    positionGroup(hookNodes, 600, groupContainerYOffset, 0);
+    // Services: positioned to the front with edge-to-edge spacing
+    // Grid extends in positive Z from zOffset, so place zOffset at root's front edge + spacing
+    const serviceZOffset = rootFrontEdge + edgeSpacing - basePosition[2];
+    positionGroup(serviceNodes, 0, groupContainerYOffset, serviceZOffset);
 
-    // Services: 100 units in front of root, same Y level
-  
-    positionGroup(serviceNodes, 0, groupContainerYOffset, 600);
-
-    // Stores: 100 units behind root, same Y level
-  
-    positionGroup(storeNodes, 0, groupContainerYOffset, -600);
+    // Stores: positioned to the back with edge-to-edge spacing
+    // Grid extends in positive Z from zOffset, so place zOffset so front edge of stores is 100 units from root's back edge
+    const storeZOffset = rootBackEdge - edgeSpacing - storeBounds.depth - basePosition[2];
+    positionGroup(storeNodes, 0, groupContainerYOffset, storeZOffset);
 
     // Ungrouped Components: center, above (0, +600, 0)
     // Position 100 units above the top-level component grouping
@@ -3569,137 +3843,6 @@ export class MarkdownDiagramService {
           window.dodecahedronFaceCounters.set(key, currentCount + 1);
           return faceIndex;
         };
-
-        // Calculate dodecahedron face position (same logic as original code) - UNUSED
-        /* const calculateDodecahedronFacePosition = (
-          objectType,
-          faceIndex,
-          objectPosition,
-          objectScale = [1, 1, 1]
-        ) => {
-          if (objectType !== 'dodecahedron') {
-            return objectPosition;
-          }
-
-          // Same calculation as Dodecahedron component's face indicator positioning
-          const phi = (1 + Math.sqrt(5)) / 2;
-          const scale = 5;
-
-          // Vertices of a dodecahedron (matching Dodecahedron component)
-          const vertices = [
-            [-1, -1, -1],
-            [1, -1, -1],
-            [1, 1, -1],
-            [-1, 1, -1],
-            [-1, -1, 1],
-            [1, -1, 1],
-            [1, 1, 1],
-            [-1, 1, 1],
-            [0, -phi, -1 / phi],
-            [0, phi, -1 / phi],
-            [0, phi, 1 / phi],
-            [0, -phi, 1 / phi],
-            [-1 / phi, 0, -phi],
-            [1 / phi, 0, -phi],
-            [1 / phi, 0, phi],
-            [-1 / phi, 0, phi],
-            [-phi, -1 / phi, 0],
-            [-phi, 1 / phi, 0],
-            [phi, 1 / phi, 0],
-            [phi, -1 / phi, 0],
-          ].map((v) => v.map((coord) => coord * scale));
-
-          // Faces of the dodecahedron (matching Dodecahedron component)
-          const faces = [
-            [0, 12, 13, 1, 8],
-            [0, 16, 17, 3, 12],
-            [0, 8, 11, 4, 16],
-            [1, 19, 5, 11, 8],
-            [1, 13, 2, 18, 19],
-            [2, 13, 12, 3, 9],
-            [2, 9, 10, 6, 18],
-            [3, 17, 7, 10, 9],
-            [4, 11, 5, 14, 15],
-            [4, 15, 7, 17, 16],
-            [5, 19, 18, 6, 14],
-            [6, 10, 7, 15, 14],
-          ];
-
-          if (faceIndex < 0 || faceIndex >= faces.length) {
-            return objectPosition;
-          }
-
-          // Calculate face center using same geometry as Dodecahedron component
-          const faceIndices = faces[faceIndex];
-          const faceVertices = faceIndices.map((index) => vertices[index]);
-
-          // Pentagon center
-          const center = faceVertices.reduce(
-            (acc, v) => acc.map((coord, i) => coord + v[i] / 5),
-            [0, 0, 0]
-          );
-
-          // Create triangles from center to each edge
-          const triangleVertices = [];
-          for (let i = 0; i < 5; i++) {
-            triangleVertices.push(
-              ...center,
-              ...faceVertices[i],
-              ...faceVertices[(i + 1) % 5]
-            );
-          }
-
-          // Calculate face center exactly like getFaceInfo() does
-          let centerX = 0,
-            centerY = 0,
-            centerZ = 0;
-          const vertexCount = triangleVertices.length / 3;
-
-          for (let i = 0; i < triangleVertices.length; i += 3) {
-            centerX += triangleVertices[i];
-            centerY += triangleVertices[i + 1];
-            centerZ += triangleVertices[i + 2];
-          }
-
-          const geometryFaceCenter = [
-            centerX / vertexCount,
-            centerY / vertexCount,
-            centerZ / vertexCount,
-          ];
-
-          // Apply object scale to match the actual rendered dodecahedron
-          const scaledFaceCenter = [
-            geometryFaceCenter[0] * objectScale[0],
-            geometryFaceCenter[1] * objectScale[1],
-            geometryFaceCenter[2] * objectScale[2],
-          ];
-
-          // Calculate face normal for indicator offset
-          const normalLength = Math.sqrt(
-            scaledFaceCenter.reduce((sum, v) => sum + v * v, 0)
-          );
-          const faceNormal = [
-            scaledFaceCenter[0] / normalLength,
-            scaledFaceCenter[1] / normalLength,
-            scaledFaceCenter[2] / normalLength,
-          ];
-
-          // Calculate EXACT face indicator cube position (same as FaceIndicator component)
-          const indicatorOffset = 1.0 * objectScale[0];
-          const indicatorPosition = [
-            objectPosition[0] +
-              scaledFaceCenter[0] +
-              faceNormal[0] * indicatorOffset,
-            objectPosition[1] +
-              scaledFaceCenter[1] +
-              faceNormal[1] * indicatorOffset,
-            objectPosition[2] +
-              scaledFaceCenter[2] +
-              faceNormal[2] * indicatorOffset,
-          ];
-
-          return indicatorPosition;
-        }; */
 
         // Calculate face positions for both objects
         let sourceFaceIndex, targetFaceIndex;
