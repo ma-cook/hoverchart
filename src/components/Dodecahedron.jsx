@@ -11,6 +11,7 @@ import {
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 // Import unified utilities
@@ -245,6 +246,17 @@ const Sphere = React.memo(
       faceTextStyles,
       headerStyle,
     } = dodecahedronData;
+
+    // Get LOD level for this dodecahedron
+    const lodLevel = useLODStore(
+      useCallback((state) => state.getLODLevel(id), [id])
+    );
+    const isChildOfContainer = useLODStore(
+      useCallback((state) => state.isChildOfContainer(id), [id])
+    );
+    const isParentObject = useLODStore(
+      useCallback((state) => state.isParent(id), [id])
+    );
 
     // Store state and actions
     const dodecahedron = useDodecahedronStore((state) =>
@@ -1161,6 +1173,20 @@ const Sphere = React.memo(
       return [0, 5 + 5, 0]; // 5 (radius) + 5 (fixed offset) units up
     };
 
+    // LOD-based rendering decisions
+    // Grouping containers are excluded from LOD system - always render at full detail
+    const isGroupingContainer = objectData?.merfolkData?.isContainer === true;
+    
+    // If LOD level is LOW (2), don't render for children or parents (but not grouping containers)
+    if (!isGroupingContainer && (isChildOfContainer || isParentObject) && lodLevel === LOD_LEVELS.LOW) {
+      return null;
+    }
+    
+    // Determine what to render based on LOD level
+    // Grouping containers always render at full detail
+    const isLODRestricted = !isGroupingContainer && (isChildOfContainer || isParentObject);
+    const shouldRenderFullDetail = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
+
     return (
       <>
         {/* Snap line indicator - only visible during snapping */}
@@ -1218,8 +1244,23 @@ const Sphere = React.memo(
               />
             </mesh>
           )}
+          {/* LOD MEDIUM: Render simple grey sphere mesh for parent objects */}
+          {/* Using sphere with radius ~8 to match edge renderer bounds (PHI * 5) */}
+          {isParentObject && lodLevel === LOD_LEVELS.MEDIUM && (
+            <mesh>
+              <sphereGeometry args={[8, 8, 6]} />
+              <meshBasicMaterial color="#d0d0d0" transparent opacity={0.6} />
+            </mesh>
+          )}
+          {/* LOD MEDIUM: Render simple colored sphere mesh for child objects */}
+          {isChildOfContainer && lodLevel === LOD_LEVELS.MEDIUM && (
+            <mesh>
+              <sphereGeometry args={[8, 8, 6]} />
+              <meshBasicMaterial color={renderLineColor || '#808080'} transparent opacity={0.8} />
+            </mesh>
+          )}
           {/* Render faces using DodecahedronFace component (consistent with Cube architecture) */}
-          {geometry.map((faceGeometry, idx) => {
+          {shouldRenderFullDetail && geometry.map((faceGeometry, idx) => {
             const faceInfo = getFaceInfo(idx);
             const faceRotation = getFaceRotation(idx);
             const faceData = {
@@ -1250,9 +1291,9 @@ const Sphere = React.memo(
                 inputId={`dodecahedron-${id}-face-${idx}`}
               />
             );
-          })}{' '}
-          {/* Wireframe lines - conditionally rendered when not using global renderer */}
-          {renderEdges && (
+          })}
+          {/* Wireframe lines - conditionally rendered when not using global renderer and at full detail */}
+          {shouldRenderFullDetail && renderEdges && (
             <InstancedLine
               points={edgePoints}
               color={renderLineColor}
@@ -1275,7 +1316,7 @@ const Sphere = React.memo(
               followTarget={contentRef}
             />
           )}{' '}
-        {selected &&
+        {shouldRenderFullDetail && selected &&
           dodecahedron?.showFaceUI &&
           dodecahedron?.activeFace !== null && (
             <group ref={faceUIGroupRef} position={position} scale={scale}>
@@ -1294,7 +1335,7 @@ const Sphere = React.memo(
               />
             </group>
           )}{' '}
-        {selected && dodecahedron?.showHeader && (
+        {shouldRenderFullDetail && selected && dodecahedron?.showHeader && (
           <group position={position}>
             {' '}
             <group scale={scale}>
@@ -1310,7 +1351,7 @@ const Sphere = React.memo(
             </group>
           </group>
         )}{' '}
-        {renderHeaderText && (
+        {shouldRenderFullDetail && renderHeaderText && (
           <AtlasTextSprite
             key={`header-${renderHeaderText}-${JSON.stringify(
               renderHeaderStyle

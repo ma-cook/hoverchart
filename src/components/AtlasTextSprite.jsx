@@ -13,6 +13,31 @@ const tempVec3C = new THREE.Vector3();
 const tempMatrix = new THREE.Matrix4();
 const tempFlipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
 
+// =============================================================================
+// PERFORMANCE OPTIMIZATION: Shared material cache
+// Instead of creating a new material per instance, share materials with same settings
+// This dramatically reduces draw calls when many text labels have the same style
+// =============================================================================
+const materialCache = new Map();
+
+function getSharedMaterial(atlas, side, depthWrite, depthTest, opacity) {
+  const key = `${side}-${depthWrite}-${depthTest}-${opacity}`;
+  
+  if (!materialCache.has(key)) {
+    const mat = new THREE.MeshBasicMaterial({
+      map: atlas.getTexture(),
+      transparent: true,
+      side: side,
+      depthWrite: depthWrite,
+      depthTest: depthTest,
+      opacity: opacity,
+    });
+    materialCache.set(key, mat);
+  }
+  
+  return materialCache.get(key);
+}
+
 // Throttle intervals by text type (ms) - less critical text updates less often
 const THROTTLE_FACE_TEXT = 66;      // 15fps - face visibility doesn't need high refresh
 const THROTTLE_HEADER_TEXT = 50;    // 20fps - headers follow objects
@@ -28,6 +53,7 @@ const THROTTLE_STANDARD = 50;       // 20fps - standard billboard text
  * - Reduced texture binding operations (major GPU bottleneck)
  * - Lower memory usage compared to individual textures per text
  * - Efficient UV mapping instead of separate materials
+ * - Shared material cache reduces draw calls
  */
 const AtlasTextSprite = ({
   text,
@@ -94,14 +120,8 @@ const AtlasTextSprite = ({
     return position;
   }, [position, lineStyle, pathPoints]);
 
-  // Initialize smoothedPositionRef with calculated position
-  const smoothedPositionRef = useRef(
-    new THREE.Vector3(
-      calculatedPosition[0] || 0,
-      calculatedPosition[1] || 0,
-      calculatedPosition[2] || 0
-    )
-  );
+  // PERFORMANCE: Lazy-initialize smoothedPositionRef to avoid creating Vector3 until actually needed
+  const smoothedPositionRef = useRef(null);
 
   // Create geometry and material using the atlas
   const { geometry, material } = useMemo(() => {
@@ -157,8 +177,7 @@ const AtlasTextSprite = ({
       return { geometry: null, material: null };
     }
 
-    // Force texture update immediately
-    atlas.updateTexture();
+    // NOTE: Don't call atlas.updateTexture() here - it's batched in the effect below
 
     // Create plane geometry sized to match the text
     const aspectRatio = entry.width / entry.height;
@@ -182,15 +201,11 @@ const AtlasTextSprite = ({
     uvAttr.setXY(3, u + uWidth, 1 - (v + vHeight)); // Top-right (flip V)
     uvAttr.needsUpdate = true;
 
-    // Create material using the shared atlas texture
-    const mat = new THREE.MeshBasicMaterial({
-      map: atlas.getTexture(),
-      transparent: true,
-      side: side, // Use passed side parameter
-      depthWrite: style.depthWrite !== undefined ? style.depthWrite : false,
-      depthTest: style.depthTest !== undefined ? style.depthTest : true,
-      opacity: style.opacity !== undefined ? style.opacity : 1,
-    });
+    // PERFORMANCE: Use shared material from cache instead of creating new one per instance
+    const depthWriteValue = style.depthWrite !== undefined ? style.depthWrite : false;
+    const depthTestValue = style.depthTest !== undefined ? style.depthTest : true;
+    const opacityValue = style.opacity !== undefined ? style.opacity : 1;
+    const mat = getSharedMaterial(atlas, side, depthWriteValue, depthTestValue, opacityValue);
 
     return {
       geometry: geo,
@@ -211,25 +226,26 @@ const AtlasTextSprite = ({
     atlas,
   ]);
 
-  // Update atlas texture when text changes
+  // Update atlas texture once when geometry is created
+  // This batches all text additions and updates the texture once
   useEffect(() => {
-    if (geometry && material) {
-      atlas.updateTexture();
+    if (geometry) {
+      // Use requestAnimationFrame to batch multiple atlas updates into one
+      const frameId = requestAnimationFrame(() => {
+        atlas.updateTexture();
+      });
+      return () => cancelAnimationFrame(frameId);
     }
-  }, [atlas, geometry, material]);
+  }, [atlas, geometry]);
 
-  // Cleanup geometry and material on unmount
+  // Cleanup geometry on unmount
+  // NOTE: Material is shared via cache, so we don't dispose it here
   useEffect(() => {
     return () => {
       if (geometry) geometry.dispose();
-      if (material) {
-        if (material.map && material.map !== atlas.getTexture()) {
-          material.map.dispose();
-        }
-        material.dispose();
-      }
+      // Don't dispose shared material - it's managed by the cache
     };
-  }, [geometry, material, atlas]);
+  }, [geometry]);
 
   // PERFORMANCE: For static billboard text, we render StaticBillboardMesh which has NO useFrame
   // For dynamic text (headers, face text), we render DynamicBillboardMesh which has useFrame
@@ -489,7 +505,20 @@ const DynamicBillboardMesh = React.memo(({
 
     // === CONNECTION TEXT HANDLING ===
     // Update position with smoothing for connection lines
-    if (calculatedPosition && smoothedPositionRef.current) {
+    if (calculatedPosition) {
+      // Lazy-initialize smoothedPositionRef
+      if (!smoothedPositionRef.current) {
+        if (Array.isArray(calculatedPosition)) {
+          smoothedPositionRef.current = new THREE.Vector3(
+            calculatedPosition[0], calculatedPosition[1], calculatedPosition[2]
+          );
+        } else {
+          smoothedPositionRef.current = new THREE.Vector3(
+            calculatedPosition.x, calculatedPosition.y, calculatedPosition.z
+          );
+        }
+      }
+      
       // Reuse tempVec3A for target position
       if (Array.isArray(calculatedPosition)) {
         tempVec3A.set(calculatedPosition[0], calculatedPosition[1], calculatedPosition[2]);

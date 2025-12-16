@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 extend({ LineShaderMaterial });
 
@@ -101,12 +102,44 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
   const visibilityRef = useRef(new Map());
   
   const { camera } = useThree();
+  
+  // Get LOD data from store
+  const { lodLevels, childParentMap, parentIds, lodEnabled } = useLODStore();
+  
+  // Filter dodecahedrons based on LOD level - only render edges for FULL LOD
+  // Grouping containers are excluded from LOD and always render
+  const filteredDodecahedrons = useMemo(() => {
+    if (!lodEnabled) return dodecahedrons;
+    
+    return dodecahedrons.filter(dodeca => {
+      // Grouping containers are excluded from LOD - always render
+      const isGroupingContainer = dodeca.merfolkData?.isContainer === true;
+      if (isGroupingContainer) {
+        return true;
+      }
+      
+      const isParent = parentIds.has(dodeca.id);
+      const isChild = childParentMap.has(dodeca.id);
+      
+      // If dodecahedron is neither parent nor child, always render (no LOD applied)
+      if (!isParent && !isChild) {
+        return true;
+      }
+      
+      // Both parents and children use LOD levels with their respective thresholds
+      const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.FULL;
+      return lodLevel === LOD_LEVELS.FULL;
+    });
+  }, [dodecahedrons, lodLevels, childParentMap, parentIds, lodEnabled]);
 
-  const totalEdges = dodecahedrons.length * EDGES_PER_DODECAHEDRON;
+  const totalEdges = filteredDodecahedrons.length * EDGES_PER_DODECAHEDRON;
+  
+  // Track IDs to detect actual changes, not just length
+  const dodecahedronIds = useMemo(() => filteredDodecahedrons.map(d => d.id).join(','), [filteredDodecahedrons]);
 
   // Create geometry with all dodecahedron edges
   const { geometry, material } = useMemo(() => {
-    if (dodecahedrons.length === 0) return { geometry: null, material: null };
+    if (filteredDodecahedrons.length === 0) return { geometry: null, material: null };
 
     const geo = new THREE.InstancedBufferGeometry();
 
@@ -141,10 +174,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
     return { geometry: geo, material: mat };
   }, [totalEdges, defaultLineWidth]);
 
-  // Mark for full update when dodecahedrons array changes
-  // Track IDs to detect actual changes, not just length
-  const dodecahedronIds = useMemo(() => dodecahedrons.map(d => d.id).join(','), [dodecahedrons]);
-  
+  // Mark for full update when filtered dodecahedrons array changes
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
@@ -196,7 +226,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
   // Use useFrame for real-time position sync during transforms
   // PERFORMANCE: Skip frame processing when nothing is being transformed
   useFrame(() => {
-    if (!geometry || !meshRef.current || dodecahedrons.length === 0) return;
+    if (!geometry || !meshRef.current || filteredDodecahedrons.length === 0) return;
 
     // PERFORMANCE: Early exit when no transforms are active AND we've done initial setup
     // dodecahedronTransformMap only has entries when dodecahedrons are being actively transformed
@@ -213,7 +243,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
 
     let needsUpdate = needsFullUpdateRef.current;
     
-    const enableCulling = dodecahedrons.length > cullingThreshold;
+    const enableCulling = filteredDodecahedrons.length > cullingThreshold;
     
     if (enableCulling) {
       camera.updateMatrixWorld();
@@ -226,7 +256,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
     
     let visibleCount = 0;
 
-    dodecahedrons.forEach((dodeca, dodecaIndex) => {
+    filteredDodecahedrons.forEach((dodeca, dodecaIndex) => {
       const dodecaId = dodeca.id?.toString();
       
       // Check if there's a real-time transform position
@@ -288,7 +318,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
     
     // Debug log (remove after testing)
     if (enableCulling && needsFullUpdateRef.current) {
-      console.log(`[Dodecahedron Frustum Culling] Visible: ${visibleCount}/${dodecahedrons.length}`);
+      console.log(`[Dodecahedron Frustum Culling] Visible: ${visibleCount}/${filteredDodecahedrons.length}`);
     }
 
     if (needsUpdate) {

@@ -9,7 +9,7 @@ const useConnectionStore = create((set, get) => ({
   connectionStartPoint: null,
   connectionEndPoint: null,
   connectionsLoaded: false,
-  connectionsVisible: true, // Toggle to show/hide all connection lines
+  connectionsVisible: false, // Toggle to show/hide all connection lines - default OFF on startup
   focusedObjectId: null, // Object ID to show connections for when globally hidden
 
   // Track connections being deleted to prevent re-addition during async deletion

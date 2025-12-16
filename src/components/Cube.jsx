@@ -30,6 +30,8 @@ import { debounce } from '../utils/unifiedPerformanceUtils';
 import { shallow } from 'zustand/shallow';
 // Import cube transform map for real-time edge sync
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
+// Import LOD store for level of detail rendering
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
@@ -147,6 +149,11 @@ const cubeEdges = [
 
 /**
  * Optimized Cube component - Gets object data from store
+ * 
+ * Supports LOD (Level of Detail) rendering for cubes inside parent containers:
+ * - LOD 0 (FULL): Full detail - edges, faces, text, indicators
+ * - LOD 1 (MEDIUM): Medium detail - colored box only, no edges
+ * - LOD 2 (LOW): Low detail - don't render (handled by parent)
  */
 const Cube = ({
   id,
@@ -168,6 +175,17 @@ const Cube = ({
   lineWidth, // Line width for cube edges
   renderEdges = false, // When false, edges are rendered by GlobalCubeEdgesRenderer for better performance
 }) => {
+  // Get LOD level for this cube from LOD store
+  const lodLevel = useLODStore(
+    useCallback((state) => state.getLODLevel(id), [id])
+  );
+  const isChildOfContainer = useLODStore(
+    useCallback((state) => state.isChildOfContainer(id), [id])
+  );
+  const isParentObject = useLODStore(
+    useCallback((state) => state.isParent(id), [id])
+  );
+  
   // Get object data from objects store - use selector to avoid subscribing to all objects
   const objectData = useObjectsStore(
     useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
@@ -1290,6 +1308,31 @@ const Cube = ({
     setCubeShowHeaderTextStyleUI,
   ]);
 
+  // LOD-based rendering decisions
+  // Grouping containers are excluded from LOD system - always render at full detail
+  const isGroupingContainer = objectData?.merfolkData?.isContainer === true;
+  
+  // If this cube is a child of a container and LOD level is LOW (2), don't render
+  if (!isGroupingContainer && isChildOfContainer && lodLevel === LOD_LEVELS.LOW) {
+    return null; // Don't render - parent outline only
+  }
+  
+  // If this cube is a parent object and LOD level is LOW (2), don't render
+  if (!isGroupingContainer && isParentObject && lodLevel === LOD_LEVELS.LOW) {
+    return null; // Don't render at long distance
+  }
+
+  // Determine what to render based on LOD level
+  // Grouping containers always render at full detail
+  // For child cubes: full detail at FULL LOD, basic mesh at MEDIUM
+  // For parent cubes: full detail at FULL LOD, basic grey mesh at MEDIUM
+  const isLODRestricted = !isGroupingContainer && (isChildOfContainer || isParentObject);
+  const shouldRenderEdges = renderEdges && (!isLODRestricted || lodLevel === LOD_LEVELS.FULL);
+  const shouldRenderFaces = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
+  const shouldRenderText = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
+  const shouldRenderIndicators = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
+  const shouldRenderUI = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
+
   return (
     <>
       {/* Snap line indicator - only visible during snapping */}
@@ -1308,6 +1351,7 @@ const Cube = ({
         userData={{
           isCube: true,
           objectId: id.toString(),
+          lodLevel: lodLevel, // Add LOD level to userData for debugging
         }}
         onPointerEnter={(e) => {
           e.stopPropagation();
@@ -1318,7 +1362,7 @@ const Cube = ({
           setHoveredObjectId(null);
         }}
       >
-        {/* Invisible hit box */}
+        {/* Invisible hit box - always render for interaction */}
         <mesh
           ref={meshRef}
           onClick={(e) => {
@@ -1330,21 +1374,40 @@ const Cube = ({
             args={[isMobile ? 16 : 10, isMobile ? 16 : 10, isMobile ? 16 : 10]}
           />
           <meshBasicMaterial visible={false} />
-        </mesh>{' '}
-        {/* Cube edges - only render per-cube if renderEdges=true, otherwise GlobalCubeEdgesRenderer handles all cubes */}
-        {renderEdges && (
+        </mesh>
+        
+        {/* LOD MEDIUM: Render simple colored box for distant cubes in containers */}
+        {isChildOfContainer && lodLevel === LOD_LEVELS.MEDIUM && (
+          <mesh>
+            <boxGeometry args={[CUBE_SIZE * 2, CUBE_SIZE * 2, CUBE_SIZE * 2]} />
+            <meshBasicMaterial color={cube?.color || color} transparent opacity={0.8} />
+          </mesh>
+        )}
+        
+        {/* LOD MEDIUM: Render simple grey box for parent objects at medium distance */}
+        {isParentObject && lodLevel === LOD_LEVELS.MEDIUM && (
+          <mesh>
+            <boxGeometry args={[CUBE_SIZE * 2, CUBE_SIZE * 2, CUBE_SIZE * 2]} />
+            <meshBasicMaterial color="#d0d0d0" transparent opacity={0.6} />
+          </mesh>
+        )}
+        
+        {/* Cube edges - only render per-cube if renderEdges=true and LOD allows, otherwise GlobalCubeEdgesRenderer handles all cubes */}
+        {shouldRenderEdges && (
           <InstancedLine
             points={cubeEdges}
             color={cube?.color || color}
             lineWidth={lineWidth !== undefined ? lineWidth : 1}
           />
         )}
-        {/* Colored faces and indicators */}
-        {renderFaces}
-        {/* Face text elements */}
-        {renderFaceTexts}
-        {/* Header text - use cube store value if available, fallback to initial value */}
-        {(cube?.headerText || headerText) && (
+        {/* Colored faces and indicators - only at full LOD */}
+        {shouldRenderFaces && renderFaces}
+        
+        {/* Face text elements - only at full LOD */}
+        {shouldRenderText && renderFaceTexts}
+        
+        {/* Header text - only at full LOD */}
+        {shouldRenderText && (cube?.headerText || headerText) && (
           <group
             scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
             position={getUIPositions.headerText}
@@ -1381,8 +1444,8 @@ const Cube = ({
             )}
           </group>
         )}{' '}
-        {/* Header input */}
-        {selected && cube?.showHeader && (
+        {/* Header input - only at full LOD */}
+        {shouldRenderUI && selected && cube?.showHeader && (
           <HeaderInput
             position={getUIPositions.headerInput}
             onTextSubmit={handleHeaderSubmit}
@@ -1392,8 +1455,8 @@ const Cube = ({
           />
         )}
       </group>{' '}
-      {/* Object UI - moved outside the cube group to avoid scale transformation */}
-      {selected && !cube?.showHeader && cube?.showObjectUI && (
+      {/* Object UI - moved outside the cube group to avoid scale transformation - only at full LOD */}
+      {shouldRenderUI && selected && !cube?.showHeader && cube?.showObjectUI && (
         <ObjectUI
           onTransformToggle={handleTransformToggle}
           onHeaderToggle={handleHeaderToggle}
@@ -1406,8 +1469,8 @@ const Cube = ({
           objectId={id}
         />
       )}{' '}
-      {/* Transform controls */}{' '}
-      {selected && cube?.showTransform && contentRef.current && (
+      {/* Transform controls - only at full LOD */}{' '}
+      {shouldRenderUI && selected && cube?.showTransform && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
           onObjectChange={handleDrag}
@@ -1430,8 +1493,8 @@ const Cube = ({
           size={0.5}
         />
       )}
-      {/* Scale transform controls */}{' '}
-      {selected && cube?.isResizing && contentRef.current && (
+      {/* Scale transform controls - only at full LOD */}{' '}
+      {shouldRenderUI && selected && cube?.isResizing && contentRef.current && (
         <DreiTransformControls
           object={contentRef.current}
           onChange={handleScale}

@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 extend({ LineShaderMaterial });
 
@@ -83,12 +84,44 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
   const visibilityRef = useRef(new Map());
   
   const { camera } = useThree();
+  
+  // Get LOD data from store
+  const { lodLevels, childParentMap, parentIds, lodEnabled } = useLODStore();
+  
+  // Filter tetrahedrons based on LOD level - only render edges for FULL LOD
+  // Grouping containers are excluded from LOD and always render
+  const filteredTetrahedrons = useMemo(() => {
+    if (!lodEnabled) return tetrahedrons;
+    
+    return tetrahedrons.filter(tetra => {
+      // Grouping containers are excluded from LOD - always render
+      const isGroupingContainer = tetra.merfolkData?.isContainer === true;
+      if (isGroupingContainer) {
+        return true;
+      }
+      
+      const isParent = parentIds.has(tetra.id);
+      const isChild = childParentMap.has(tetra.id);
+      
+      // If tetrahedron is neither parent nor child, always render (no LOD applied)
+      if (!isParent && !isChild) {
+        return true;
+      }
+      
+      // Both parents and children use LOD levels with their respective thresholds
+      const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.FULL;
+      return lodLevel === LOD_LEVELS.FULL;
+    });
+  }, [tetrahedrons, lodLevels, childParentMap, parentIds, lodEnabled]);
 
-  const totalEdges = tetrahedrons.length * EDGES_PER_TETRAHEDRON;
+  const totalEdges = filteredTetrahedrons.length * EDGES_PER_TETRAHEDRON;
+  
+  // Track IDs to detect actual changes, not just length
+  const tetrahedronIds = useMemo(() => filteredTetrahedrons.map(t => t.id).join(','), [filteredTetrahedrons]);
 
   // Create geometry with all tetrahedron edges
   const { geometry, material } = useMemo(() => {
-    if (tetrahedrons.length === 0) return { geometry: null, material: null };
+    if (filteredTetrahedrons.length === 0) return { geometry: null, material: null };
 
     const geo = new THREE.InstancedBufferGeometry();
 
@@ -121,12 +154,9 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     mat.uniforms.linewidth.value = isMobile ? 3 : defaultLineWidth;
 
     return { geometry: geo, material: mat };
-  }, [totalEdges, defaultLineWidth]);
+  }, [totalEdges, defaultLineWidth, tetrahedronIds]);
 
   // Mark for full update when tetrahedrons array changes
-  // Track IDs to detect actual changes, not just length
-  const tetrahedronIds = useMemo(() => tetrahedrons.map(t => t.id).join(','), [tetrahedrons]);
-  
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
@@ -178,7 +208,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
   // Use useFrame for real-time position sync during transforms
   // PERFORMANCE: Skip frame processing when nothing is being transformed
   useFrame(() => {
-    if (!geometry || !meshRef.current || tetrahedrons.length === 0) return;
+    if (!geometry || !meshRef.current || filteredTetrahedrons.length === 0) return;
 
     // PERFORMANCE: Early exit when no transforms are active AND we've done initial setup
     // tetrahedronTransformMap only has entries when tetrahedrons are being actively transformed
@@ -195,7 +225,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
 
     let needsUpdate = needsFullUpdateRef.current;
     
-    const enableCulling = tetrahedrons.length > cullingThreshold;
+    const enableCulling = filteredTetrahedrons.length > cullingThreshold;
     
     if (enableCulling) {
       camera.updateMatrixWorld();
@@ -208,7 +238,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     
     let visibleCount = 0;
 
-    tetrahedrons.forEach((tetra, tetraIndex) => {
+    filteredTetrahedrons.forEach((tetra, tetraIndex) => {
       const tetraId = tetra.id?.toString();
       
       // Check if there's a real-time transform position
@@ -270,7 +300,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     
     // Debug log (remove after testing)
     if (enableCulling && needsFullUpdateRef.current) {
-      console.log(`[Tetrahedron Frustum Culling] Visible: ${visibleCount}/${tetrahedrons.length}`);
+      console.log(`[Tetrahedron Frustum Culling] Visible: ${visibleCount}/${filteredTetrahedrons.length}`);
     }
 
     if (needsUpdate) {

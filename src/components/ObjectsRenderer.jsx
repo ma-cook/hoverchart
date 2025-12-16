@@ -50,11 +50,9 @@ const ObjectsRenderer = React.memo(({
     return objects.filter((obj) => visibleObjectIds.has(obj.id));
   }, [objects, visibleObjectIds]);
 
-  // Extract cube objects for batched edge rendering
+  // Extract cube objects for batched edge rendering (includes containers)
   const cubeObjects = useMemo(() => {
-    return visibleObjects.filter(
-      (obj) => obj.type === 'cube' && !obj.merfolkData?.isContainer
-    );
+    return visibleObjects.filter((obj) => obj.type === 'cube');
   }, [visibleObjects]);
 
   // Extract dodecahedron objects for batched edge rendering

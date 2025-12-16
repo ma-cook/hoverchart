@@ -19,6 +19,7 @@ import {
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
 // Import snap line indicator
@@ -280,6 +281,17 @@ const Tetrahedron = ({
         }
       }, 300),
     [onUpdate]
+  );
+
+  // Get LOD level for this tetrahedron
+  const lodLevel = useLODStore(
+    useCallback((state) => state.getLODLevel(id), [id])
+  );
+  const isChildOfContainer = useLODStore(
+    useCallback((state) => state.isChildOfContainer(id), [id])
+  );
+  const isParentObject = useLODStore(
+    useCallback((state) => state.isParent(id), [id])
   );
 
   // Replace all individual selectors with a single consolidated selector
@@ -1125,6 +1137,20 @@ const Tetrahedron = ({
     globalIndicatorSelected,
   ]);
 
+  // LOD-based rendering decisions
+  // Grouping containers are excluded from LOD system - always render at full detail
+  const isGroupingContainer = objectData?.merfolkData?.isContainer === true;
+  
+  // If LOD level is LOW (2), don't render for children or parents (but not grouping containers)
+  if (!isGroupingContainer && (isChildOfContainer || isParentObject) && lodLevel === LOD_LEVELS.LOW) {
+    return null;
+  }
+  
+  // Determine what to render based on LOD level
+  // Grouping containers always render at full detail
+  const isLODRestricted = !isGroupingContainer && (isChildOfContainer || isParentObject);
+  const shouldRenderFullDetail = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
+
   return (
     <>
       {/* Snap line indicator */}
@@ -1171,9 +1197,25 @@ const Tetrahedron = ({
           </mesh>
         )}
 
+        {/* LOD MEDIUM: Render simple grey box mesh for parent objects */}
+        {/* Using box to approximate tetrahedron bounds (extends ~7.5 units from center) */}
+        {isParentObject && lodLevel === LOD_LEVELS.MEDIUM && (
+          <mesh>
+            <boxGeometry args={[12, 12, 12]} />
+            <meshBasicMaterial color="#d0d0d0" transparent opacity={0.6} />
+          </mesh>
+        )}
+        {/* LOD MEDIUM: Render simple colored box mesh for child objects */}
+        {isChildOfContainer && lodLevel === LOD_LEVELS.MEDIUM && (
+          <mesh>
+            <boxGeometry args={[12, 12, 12]} />
+            <meshBasicMaterial color={color || '#808080'} transparent opacity={0.8} />
+          </mesh>
+        )}
+
         {/* Tetrahedron edge lines - batched into single InstancedLine */}
         {/* Only render if renderEdges is true (when not using GlobalTetrahedronEdgesRenderer) */}
-        {renderEdges && (
+        {shouldRenderFullDetail && renderEdges && (
           <InstancedLine
             points={tetrahedronEdgePoints}
             color={tetrahedronState.color || color}
@@ -1181,14 +1223,14 @@ const Tetrahedron = ({
           />
         )}
 
-        {/* Render faces */}
-        {renderFaces}
+        {/* Render faces - only at full detail */}
+        {shouldRenderFullDetail && renderFaces}
 
-        {/* Face text elements */}
-        {renderFaceTexts}
+        {/* Face text elements - only at full detail */}
+        {shouldRenderFullDetail && renderFaceTexts}
 
-        {/* Header text */}
-        {(tetrahedronState.headerText || headerText) && (
+        {/* Header text - only at full detail */}
+        {shouldRenderFullDetail && (tetrahedronState.headerText || headerText) && (
           <group
             scale={(tetrahedronState.scale || scale).map(
               (s) => 1 / Math.max(0.0001, s)
@@ -1261,8 +1303,8 @@ const Tetrahedron = ({
           </group>
         )}
 
-        {/* Header input */}
-        {selected && tetrahedronState.showHeader && (
+        {/* Header input - only at full detail */}
+        {shouldRenderFullDetail && selected && tetrahedronState.showHeader && (
           <HeaderInput
             position={getUIPositions.headerInput}
             onTextSubmit={handleHeaderSubmit}

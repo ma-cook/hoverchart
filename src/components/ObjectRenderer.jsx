@@ -33,17 +33,10 @@ const ObjectRenderer = React.memo(
     user, // Add this prop
     currentSpaceId, // Add this prop
   }) => {
-    // Check if this is a container cube (just an outline, no interaction)
+    // Container cubes now have their edges rendered by GlobalCubeEdgesRenderer
+    // They don't need any other rendering (no faces, no interaction)
     if (obj.type === 'cube' && obj.merfolkData?.isContainer) {
-      return (
-        <ContainerOutline
-          key={obj.id}
-          position={obj.position}
-          scale={obj.scale || [1, 1, 1]}
-          color={obj.color || '#e0e0e0'}
-          lineWidth={obj.lineWidth || 2}
-        />
-      );
+      return null;
     }
 
     if (obj.type === 'cube') {

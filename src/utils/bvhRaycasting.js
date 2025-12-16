@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import useLODStore, { calculateLODLevel, LOD_THRESHOLDS } from '../stores/lodStore';
 
 /**
  * BVH (Bounding Volume Hierarchy) Accelerated Raycasting System
@@ -6,6 +7,8 @@ import * as THREE from 'three';
  * This system creates a spatial hierarchy to dramatically improve raycasting performance
  * by allowing the raycaster to quickly skip large groups of objects that can't possibly
  * be intersected by the ray.
+ * 
+ * Also handles LOD (Level of Detail) calculations for objects inside parent containers.
  */
 
 // Reusable THREE objects to avoid GC pressure
@@ -18,6 +21,10 @@ const _tempSize = new THREE.Vector3();
 const _tempCenter = new THREE.Vector3();
 const _tempMin = new THREE.Vector3();
 const _tempMax = new THREE.Vector3();
+
+// For LOD calculations
+const _lodCameraPos = new THREE.Vector3();
+const _lodObjectPos = new THREE.Vector3();
 
 // For intersectConnectionLine - hot path
 const _segmentDir = new THREE.Vector3();
@@ -715,10 +722,151 @@ export const getBVHStats = () => {
   return bvh.getStats();
 };
 
+/**
+ * Calculate LOD levels for all objects based on camera position
+ * This should be called from useFrame in a component with camera access
+ * 
+ * @param {THREE.Camera} camera - The active camera
+ * @param {Array} objects - Array of objects with position data (from objectsStore)
+ * @param {number} throttleMs - Minimum time between LOD updates (default: 100ms)
+ */
+let lastLODUpdateTime = 0;
+export const updateLODLevels = (camera, objects, throttleMs = 100) => {
+  const now = Date.now();
+  if (now - lastLODUpdateTime < throttleMs) {
+    return; // Throttle updates
+  }
+  lastLODUpdateTime = now;
+  
+  if (!camera || !objects || objects.length === 0) {
+    return;
+  }
+  
+  const lodStore = useLODStore.getState();
+  const { childParentMap, lodEnabled } = lodStore;
+  
+  if (!lodEnabled) {
+    return;
+  }
+  
+  // Get camera world position
+  _lodCameraPos.setFromMatrixPosition(camera.matrixWorld);
+  
+  // Calculate LOD updates for children of containers
+  const lodUpdates = [];
+  
+  for (const obj of objects) {
+    // Only calculate LOD for objects that are children of containers
+    if (!childParentMap.has(obj.id)) {
+      continue;
+    }
+    
+    // Get object position
+    const pos = obj.position;
+    if (!pos) continue;
+    
+    if (Array.isArray(pos)) {
+      _lodObjectPos.set(pos[0] || 0, pos[1] || 0, pos[2] || 0);
+    } else if (pos.x !== undefined) {
+      _lodObjectPos.set(pos.x, pos.y, pos.z);
+    } else {
+      continue;
+    }
+    
+    // Calculate distance to camera
+    const distance = _lodCameraPos.distanceTo(_lodObjectPos);
+    
+    // Calculate LOD level
+    const lodLevel = calculateLODLevel(distance);
+    
+    // Only update if changed
+    const currentLevel = lodStore.lodLevels.get(obj.id);
+    if (currentLevel !== lodLevel) {
+      lodUpdates.push([obj.id, lodLevel]);
+    }
+  }
+  
+  // Batch update LOD levels
+  if (lodUpdates.length > 0) {
+    lodStore.batchSetLODLevels(lodUpdates);
+  }
+};
+
+/**
+ * Register parent-child relationships from objects array
+ * Call this when objects are loaded/updated
+ * 
+ * @param {Array} objects - Array of objects from objectsStore
+ */
+export const registerObjectRelationships = (objects) => {
+  if (!objects || objects.length === 0) return;
+  
+  const lodStore = useLODStore.getState();
+  const relationships = [];
+  
+  // Find all container objects and their children
+  const containers = objects.filter(obj => obj.merfolkData?.isContainer);
+  
+  for (const container of containers) {
+    // Find children by checking if they reference this container as parent
+    // or by spatial containment (objects positioned inside container bounds)
+    const containerId = container.id;
+    const containerPos = container.position || [0, 0, 0];
+    const containerScale = container.scale || [1, 1, 1];
+    
+    // Calculate container bounds (approximate)
+    const halfSize = [
+      (containerScale[0] || 1) * 5, // CUBE_SIZE is typically 5
+      (containerScale[1] || 1) * 5,
+      (containerScale[2] || 1) * 5,
+    ];
+    
+    for (const obj of objects) {
+      // Skip containers themselves and self-reference
+      if (obj.merfolkData?.isContainer || obj.id === containerId) {
+        continue;
+      }
+      
+      // Check if object has explicit parent reference
+      if (obj.merfolkData?.parentId === containerId) {
+        relationships.push({ parentId: containerId, childId: obj.id });
+        continue;
+      }
+      
+      // Check spatial containment
+      const objPos = obj.position;
+      if (!objPos) continue;
+      
+      const ox = objPos[0] || 0;
+      const oy = objPos[1] || 0;
+      const oz = objPos[2] || 0;
+      const cx = containerPos[0] || 0;
+      const cy = containerPos[1] || 0;
+      const cz = containerPos[2] || 0;
+      
+      // Check if object is inside container bounds
+      if (
+        Math.abs(ox - cx) < halfSize[0] &&
+        Math.abs(oy - cy) < halfSize[1] &&
+        Math.abs(oz - cz) < halfSize[2]
+      ) {
+        relationships.push({ parentId: containerId, childId: obj.id });
+      }
+    }
+  }
+  
+  // Batch register relationships
+  if (relationships.length > 0) {
+    lodStore.batchRegisterParentChild(relationships);
+  }
+};
+
 export default {
   initBVHRaycasting,
   getBVH,
   updateBVHObjects,
   bvhIntersectObjects,
   getBVHStats,
+  updateLODLevels,
+  registerObjectRelationships,
 };

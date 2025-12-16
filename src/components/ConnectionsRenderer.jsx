@@ -1,9 +1,11 @@
-import React, { useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useMemo, useCallback, useRef, useEffect, useState } from 'react';
+import { useFrame } from '@react-three/fiber';
 
 import InstancedLine from './InstancedLine';
 import BatchedConnectionLines from './BatchedConnectionLines';
 import BatchedCurvedLines from './BatchedCurvedLines';
 import AtlasTextSprite from './AtlasTextSprite';
+import DistanceFilteredTextLabels from './DistanceFilteredTextLabels';
 import LineUI from './LineUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
@@ -23,6 +25,46 @@ import {
 } from '../hooks/useConnectionsRendererStore';
 import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
 import useConnectionStore from '../stores/connectionStore';
+
+/**
+ * PERFORMANCE: Distance-filtered text for individual Connection components
+ * Only renders text when camera is within maxDistance units
+ */
+const DistanceFilteredConnectionText = React.memo(({ 
+  position, 
+  maxDistance = 500,
+  children 
+}) => {
+  const [isVisible, setIsVisible] = useState(true);
+  const lastCheckRef = useRef(0);
+  const maxDistanceSquared = maxDistance * maxDistance;
+  
+  useFrame(({ camera }) => {
+    // Throttle checks to every 100ms
+    const now = Date.now();
+    if (now - lastCheckRef.current < 100) return;
+    lastCheckRef.current = now;
+    
+    if (!position) {
+      setIsVisible(false);
+      return;
+    }
+    
+    const dx = camera.position.x - position[0];
+    const dy = camera.position.y - position[1];
+    const dz = camera.position.z - position[2];
+    const distanceSquared = dx * dx + dy * dy + dz * dz;
+    
+    const shouldBeVisible = distanceSquared <= maxDistanceSquared;
+    if (shouldBeVisible !== isVisible) {
+      setIsVisible(shouldBeVisible);
+    }
+  });
+  
+  return isVisible ? children : null;
+});
+
+DistanceFilteredConnectionText.displayName = 'DistanceFilteredConnectionText';
 
 /**
  * Convert a path of connected points into line segments for InstancedLine
@@ -627,25 +669,27 @@ const Connection = React.memo(
             />
           );
         })()}
-        {/* Connection text using AtlasTextSprite for better performance */}
-        <AtlasTextSprite
-          key={`text-${connection.id}-${connection.text || 'no-text'}-${
-            connection.textStyle?.fontSize || 1.5
-          }-${connection.textStyle?.color || 'black'}`}
-          text={connectionText}
-          position={textPosition}
-          style={{
-            fontSize: (connection.textStyle?.fontSize || 1.5) * 10, // Convert to pixel size for atlas
-            color: connection.textStyle?.color || 'black',
-            underline: connection.textStyle?.underline || false,
-          }}
-          onClick={(e) => handleLineTextClick(e, connection.id)}
-          billboard={true}
-          renderOrder={20} // Higher than connection lines (10) but lower than header text (3000-5000)
-          scale={0.45} // 3x larger than previous 0.15 to match cube header text size
-          lineStyle={effectiveLineStyle} // Pass line style for dynamic positioning
-          pathPoints={calculatedPathPoints} // Pass path points for curved line positioning
-        />{' '}
+        {/* Connection text using AtlasTextSprite with distance filtering */}
+        <DistanceFilteredConnectionText position={textPosition} maxDistance={500}>
+          <AtlasTextSprite
+            key={`text-${connection.id}-${connection.text || 'no-text'}-${
+              connection.textStyle?.fontSize || 1.5
+            }-${connection.textStyle?.color || 'black'}`}
+            text={connectionText}
+            position={textPosition}
+            style={{
+              fontSize: (connection.textStyle?.fontSize || 1.5) * 10, // Convert to pixel size for atlas
+              color: connection.textStyle?.color || 'black',
+              underline: connection.textStyle?.underline || false,
+            }}
+            onClick={(e) => handleLineTextClick(e, connection.id)}
+            billboard={true}
+            renderOrder={20} // Higher than connection lines (10) but lower than header text (3000-5000)
+            scale={0.45} // 3x larger than previous 0.15 to match cube header text size
+            lineStyle={effectiveLineStyle} // Pass line style for dynamic positioning
+            pathPoints={calculatedPathPoints} // Pass path points for curved line positioning
+          />
+        </DistanceFilteredConnectionText>
         {/* Text input UI */}
         {showTextInput && (
           <HeaderInput
@@ -1071,29 +1115,12 @@ const ConnectionsRenderer = ({
         />
       )}
       
-      {/* PERFORMANCE: Render text labels separately - no Connection component overhead */}
-      {textLabels.map(label => (
-        <AtlasTextSprite
-          key={`text-${label.id}`}
-          text={label.text}
-          position={label.position}
-          style={{
-            fontSize: (label.textStyle?.fontSize || 1.5) * 10,
-            color: label.textStyle?.color || 'black',
-            underline: label.textStyle?.underline || false,
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (onLineTextClick) {
-              onLineTextClick(e, label.id);
-            }
-          }}
-          billboard={true}
-          skipBillboardUpdates={true}  // PERFORMANCE: Static text doesn't need continuous billboard updates
-          renderOrder={20}
-          scale={0.45}
-        />
-      ))}
+      {/* PERFORMANCE: Render text labels with distance filtering - only visible within 500 units */}
+      <DistanceFilteredTextLabels
+        labels={textLabels}
+        maxDistance={500}
+        onLabelClick={onLineTextClick}
+      />
       
       {/* Render individual connections that need special handling (selected, dashed/dotted, with text on curves) */}
       {individualConnections.map((connection) => (

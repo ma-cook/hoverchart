@@ -5,7 +5,7 @@ import { useTetrahedronStore } from '../stores';
 import FaceIndicator from './FaceIndicator';
 import FaceUI from './FaceUI';
 import FaceTextInput from './FaceTextInput';
-import TextSprite from './TextSprite';
+import AtlasTextSprite from './AtlasTextSprite';
 import TextStyleUI from './TextStyleUI';
 
 const SELECTED_OPACITY = 0.3;
@@ -260,22 +260,21 @@ const TetrahedronFace = React.memo(
           rotation={faceData.rotation}
           scale={inverseScale}
         >
-          <TextSprite
+          <AtlasTextSprite
             text={faceText}
             position={[0, yOffset, 0]}
             followTarget={null}
             onClick={(e) => handleFaceTextStyleClick(e, faceName)}
             style={{
               ...textStyleCombined,
-              fixedSize: true,
               isFaceText: true,
-              renderOrder: 2,
               depthTest: true,
               depthWrite: true,
             }}
             normal={faceData.normal}
             billboard={false}
             side={THREE.FrontSide}
+            renderOrder={2}
           />
 
           {activeTextFace === faceName && (

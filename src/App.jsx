@@ -12,6 +12,7 @@ import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
 import ObjectsRenderer from './components/ObjectsRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
+import LODManager from './components/LODManager';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
 
@@ -1458,6 +1459,8 @@ const App = () => {
           {/* Global frame counter - updates once per frame for all components */}
           <FrameTicker />
           <Stats />
+          {/* PERFORMANCE: LOD Manager for distance-based level of detail */}
+          <LODManager enabled={useLOD} />
           {/* PERFORMANCE: Global animation manager for all connection line animations */}
           <ConnectionAnimationManager />
           <CustomCamera ref={cameraRef} />

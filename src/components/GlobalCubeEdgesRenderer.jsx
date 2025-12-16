@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 extend({ LineShaderMaterial });
 
@@ -90,12 +91,42 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   
   // Get camera for frustum culling
   const { camera } = useThree();
+  
+  // Get LOD data from store
+  const { lodLevels, childParentMap, parentIds, lodEnabled } = useLODStore();
+  
+  // Filter cubes based on LOD level - only render edges for FULL LOD cubes
+  // Grouping containers are excluded from LOD and always render
+  const filteredCubes = useMemo(() => {
+    if (!lodEnabled) return cubes;
+    
+    return cubes.filter(cube => {
+      // Grouping containers are excluded from LOD - always render
+      const isGroupingContainer = cube.merfolkData?.isContainer === true;
+      if (isGroupingContainer) {
+        return true;
+      }
+      
+      const isParent = parentIds.has(cube.id);
+      const isChild = childParentMap.has(cube.id);
+      
+      // If cube is neither parent nor child, always render (no LOD applied)
+      if (!isParent && !isChild) {
+        return true;
+      }
+      
+      // Both parents and children use LOD levels, just with different distance thresholds
+      // LODManager calculates the appropriate level based on object type
+      const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
+      return lodLevel === LOD_LEVELS.FULL;
+    });
+  }, [cubes, lodLevels, childParentMap, parentIds, lodEnabled]);
 
   // Calculate total number of line instances needed
-  const totalEdges = cubes.length * EDGES_PER_CUBE;
+  const totalEdges = filteredCubes.length * EDGES_PER_CUBE;
   
   // Track cube IDs to detect actual changes, not just length
-  const cubeIds = useMemo(() => cubes.map(c => c.id).join(','), [cubes]);
+  const cubeIds = useMemo(() => filteredCubes.map(c => c.id).join(','), [filteredCubes]);
 
   // Create geometry with all cube edges
   const { geometry, material } = useMemo(() => {
@@ -187,7 +218,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   // Use useFrame for real-time position sync during transforms
   // PERFORMANCE: Skip frame processing when nothing is being transformed
   useFrame(() => {
-    if (!geometry || !meshRef.current || cubes.length === 0) return;
+    if (!geometry || !meshRef.current || filteredCubes.length === 0) return;
 
     // PERFORMANCE: Early exit when no transforms are active AND we've done initial setup
     // cubeTransformMap only has entries when cubes are being actively dragged/transformed
@@ -205,7 +236,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     let needsUpdate = needsFullUpdateRef.current;
     
     // Only perform frustum culling when cube count exceeds threshold
-    const enableCulling = cubes.length > cullingThreshold;
+    const enableCulling = filteredCubes.length > cullingThreshold;
     
     // Update frustum from camera (only if culling is enabled)
     if (enableCulling) {
@@ -220,7 +251,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     // Debug: track visible count
     let visibleCount = 0;
 
-    cubes.forEach((cube, cubeIndex) => {
+    filteredCubes.forEach((cube, cubeIndex) => {
       const cubeId = cube.id?.toString();
       
       // Check if there's a real-time transform position from the Cube component
