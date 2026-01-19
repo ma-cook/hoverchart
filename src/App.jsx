@@ -1458,7 +1458,7 @@ const App = () => {
           {' '}
           {/* Global frame counter - updates once per frame for all components */}
           <FrameTicker />
-          <Stats />
+          
           {/* PERFORMANCE: LOD Manager for distance-based level of detail */}
           <LODManager enabled={useLOD} />
           {/* PERFORMANCE: Global animation manager for all connection line animations */}
