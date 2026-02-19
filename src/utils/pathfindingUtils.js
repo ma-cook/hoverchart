@@ -13,6 +13,16 @@ const pathCache = new Map();
 const objectPositionCache = new Map(); // objectId -> rounded position string
 
 /**
+ * Completely clear all path-finding caches.
+ * Call this whenever objects move so that intersection checks use fresh geometry.
+ */
+export function invalidatePathfindingCaches() {
+  intersectionCache.clear();
+  pathCache.clear();
+  // Note: objectPositionCache is intentionally kept so checkObjectMovement keeps working.
+}
+
+/**
  * Check if an object has moved significantly and invalidate affected caches
  */
 export function checkObjectMovement(objectId, position) {
@@ -147,47 +157,42 @@ export function checkLineIntersection(startPos, endPos, objects) {
       Math.pow(endPos[2] - startPos[2], 2)
   );
 
-  // Skip long lines and cache empty result
-  if (lineLength > 1000) {
-    const result = [];
-    intersectionCache.set(cacheKey, {
-      intersections: result,
-      timestamp: Date.now(),
-    });
-    return result;
-  }
+  // NOTE: No hard line-length cutoff here. Very long connections (cross-diagram external
+  // connections from merfolk diagrams) must also be checked. The distance filter below
+  // handles performance by excluding objects far from the line.
 
-  // Calculate line midpoint for better distance filtering
+  // Calculate sample points along the line for distance filtering.
+  // Five points (start, 1/4, mid, 3/4, end) guarantees any object within 1/4 of the
+  // line length from the line is included, regardless of total line length.
+  const q1Pos = [
+    startPos[0] + (endPos[0] - startPos[0]) * 0.25,
+    startPos[1] + (endPos[1] - startPos[1]) * 0.25,
+    startPos[2] + (endPos[2] - startPos[2]) * 0.25,
+  ];
   const midPos = [
     (startPos[0] + endPos[0]) / 2,
     (startPos[1] + endPos[1]) / 2,
     (startPos[2] + endPos[2]) / 2,
+  ];
+  const q3Pos = [
+    startPos[0] + (endPos[0] - startPos[0]) * 0.75,
+    startPos[1] + (endPos[1] - startPos[1]) * 0.75,
+    startPos[2] + (endPos[2] - startPos[2]) * 0.75,
   ];
 
   // Filter and process objects for intersection testing
   const objectsToTest = objects.filter((obj) => {
     if (!obj?.position || !Array.isArray(obj.position)) return false;
 
-    // Check distance from start, end, AND midpoint to catch objects along the entire line
-    const distFromStart = obj.position.reduce(
-      (sum, val, i) => sum + Math.pow(val - startPos[i], 2),
-      0
-    );
-    const distFromEnd = obj.position.reduce(
-      (sum, val, i) => sum + Math.pow(val - endPos[i], 2),
-      0
-    );
-    const distFromMid = obj.position.reduce(
-      (sum, val, i) => sum + Math.pow(val - midPos[i], 2),
-      0
-    );
-
-    // Use the minimum distance - object is close to some part of the line
-    const minDistSquared = Math.min(distFromStart, distFromEnd, distFromMid);
+    // Check distance from all five sample points to catch objects anywhere along the line
+    const p = obj.position;
+    const d = (sp) => Math.pow(p[0]-sp[0],2) + Math.pow(p[1]-sp[1],2) + Math.pow(p[2]-sp[2],2);
+    const minDistSquared = Math.min(d(startPos), d(q1Pos), d(midPos), d(q3Pos), d(endPos));
     
-    // Include objects within half the line length of any point on the line
-    // This ensures we catch objects that might be in the path
-    const threshold = (lineLength * lineLength) / 4 + 2500; // Half line length squared + 50 unit padding
+    // Threshold: any object within (lineLength/4 + 50 units) of a sample point is tested.
+    // Covers the entire line since sample points are spaced every lineLength/4.
+    const segLen = lineLength / 4;
+    const threshold = (segLen + 50) * (segLen + 50);
     return minDistSquared < threshold;
   });
   const direction = new THREE.Vector3(

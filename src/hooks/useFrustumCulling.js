@@ -125,6 +125,8 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
   const cachedVisibleConnectionsRef = useRef([]);
   const lastConnectionsLengthRef = useRef(0);
   const lastObjectsLengthRef = useRef(0);
+  // Track the objects array reference to detect position changes (size alone is not enough)
+  const lastObjectsRef = useRef(null);
   
   // Build object position map for fast lookups
   const objectPositions = useMemo(() => {
@@ -165,7 +167,9 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     
     // Check if data has changed (don't rely on camera for dependency)
     const connectionsChanged = connections.length !== lastConnectionsLengthRef.current;
-    const objectsChanged = objectPositions.size !== lastObjectsLengthRef.current;
+    // Detect object position changes by checking the objects array reference (it gets a new
+    // reference whenever any position/scale changes via the store's hash guard), not just size.
+    const objectsChanged = objects !== lastObjectsRef.current || objectPositions.size !== lastObjectsLengthRef.current;
     
     // If nothing changed and we have a cache, return cache
     // Camera movement will be handled by the spatial hash optimization
@@ -175,6 +179,7 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     
     lastConnectionsLengthRef.current = connections.length;
     lastObjectsLengthRef.current = objectPositions.size;
+    lastObjectsRef.current = objects;
     
     // Update frustum from camera (camera ref is stable, matrices update internally)
     projScreenMatrix.multiplyMatrices(
@@ -190,7 +195,7 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     
     cachedVisibleConnectionsRef.current = visible;
     return visible;
-  }, [connections, objectPositions, enabled]); // Removed camera from deps - it's stable but triggers recalc
+  }, [connections, objectPositions, objects, enabled]); // objects included to detect position changes
   
   return {
     visibleConnections,

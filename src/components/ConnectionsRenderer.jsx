@@ -13,6 +13,7 @@ import AnimatedConnectionLine from './AnimatedConnectionLine';
 import {
   checkLineIntersection,
   generateCurvedPath,
+  invalidatePathfindingCaches,
 } from '../utils/pathfindingUtils';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
@@ -807,13 +808,17 @@ const ConnectionsRenderer = ({
 
     // Create object references with current positions
     // The objects array ref changes when ANY object position/scale changes (via store's hash comparison)
-    return objects.map((obj) => ({
+    const result = objects.map((obj) => ({
       id: obj.id,
       position: obj.position || [0, 0, 0],
       scale: obj.scale || [1, 1, 1],
       type: obj.type,
       faceSize: obj.faceSize,
     }));
+    if (window._debugPathfinding) {
+      console.log(`[PathDebug] pathfindingObjects rebuilt: ${result.length} objects`);
+    }
+    return result;
   }, [objects]);
 
   // Filter connections to only show those where both endpoint objects are visible
@@ -880,41 +885,16 @@ const ConnectionsRenderer = ({
   }, [objects]);
 
   // PERFORMANCE: Cache intersection results to avoid running pathfinding every frame
-  // Only recalculate when objects finish moving (not during drag)
-  const intersectionCacheRef = useRef(new Map()); // connectionId -> { hasIntersection, timestamp }
-  const lastPathfindingHashRef = useRef('');
+  // Tracks previous pathfindingObjects reference to detect when any object position changed.
+  // pathfindingObjects only gets a new reference when real positions change (the objectsStore
+  // setObjects function guards against spurious updates via its own position hash check).
+  const prevPathfindingObjectsRef = useRef(null);
   const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
-  const lastCategorizationInputsRef = useRef({ connectionsLength: 0, selectedConnection: null, pathfindingHash: '' });
-  
-  // Create a stable hash of object positions for pathfinding invalidation
-  // Only changes when objects actually move significantly
-  const pathfindingHash = useMemo(() => {
-    if (!objects?.length) return '';
-    // Create a coarse hash - round positions to reduce sensitivity
-    return objects.map(obj => {
-      const p = obj.position || [0, 0, 0];
-      // Round to nearest 0.5 to avoid micro-changes triggering recalc
-      return `${obj.id}:${Math.round(p[0] * 2) / 2},${Math.round(p[1] * 2) / 2},${Math.round(p[2] * 2) / 2}`;
-    }).join('|');
-  }, [objects]);
-  
-  // Check if any object is currently being transformed
-  const isTransformingRef = useRef(false);
-  
-  // Effect to detect when transforms complete and invalidate cache
-  useEffect(() => {
-    // Only invalidate cache when hash changes AND no transform is active
-    if (pathfindingHash !== lastPathfindingHashRef.current) {
-      // Debounce the cache invalidation to wait for transform to complete
-      const timeoutId = setTimeout(() => {
-        if (!isTransformingRef.current) {
-          intersectionCacheRef.current.clear();
-          lastPathfindingHashRef.current = pathfindingHash;
-        }
-      }, 100); // Wait 100ms after last position change
-      return () => clearTimeout(timeoutId);
-    }
-  }, [pathfindingHash]);
+  const lastCategorizationInputsRef = useRef({ connectionsLength: 0, selectedConnection: null, pathfindingObjectsRef: null });
+
+  // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
+  // smaller than 0.5 units would never trigger cache invalidation. Since pathfindingObjects
+  // already only changes when actual positions change (store hash guard), use it directly.
 
   // PERFORMANCE: Separate connections into categories for optimal rendering
   // - batchedConnections: straight lines without text/selection that don't intersect objects (single draw call)
@@ -922,26 +902,39 @@ const ConnectionsRenderer = ({
   // - curvedConnections: straight-style connections that need curved paths due to intersections (batched curved rendering)
   // - individualConnections: selected, non-straight styles (dashed/dotted), or those needing full UI
   const { batchedConnections, textConnections, curvedConnections, individualConnections } = useMemo(() => {
-    // PERFORMANCE: Quick check if we can return cached result
-    // Only re-categorize if connections, selection, or pathfinding actually changed
     const inputsRef = lastCategorizationInputsRef.current;
     const cacheRef = lastCategorizationRef.current;
+
+    const objectsChanged = pathfindingObjects !== prevPathfindingObjectsRef.current;
     
+    // True early exit: nothing at all changed
+    // IMPORTANT: never skip when objects changed — a moved object may now intersect lines
+    // that are not connected to it, requiring those lines to switch to curved.
     if (
+      !objectsChanged &&
       frustumCulledConnections.length === inputsRef.connectionsLength &&
       selectedConnection === inputsRef.selectedConnection &&
-      pathfindingHash === inputsRef.pathfindingHash &&
       cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
     ) {
-      // Inputs haven't changed meaningfully, return cached result
       return cacheRef;
     }
-    
+
+    // When any object position changed, clear all intersection caches so that
+    // checkLineIntersection uses fresh geometry for the new object layout.
+    // Both the module-level intersectionCache (keyed on start+end only, NOT blocking object
+    // positions) and any cached path data must be wiped.
+    if (objectsChanged) {
+      invalidatePathfindingCaches();
+      prevPathfindingObjectsRef.current = pathfindingObjects;
+      if (window._debugPathfinding) {
+        console.log(`[PathDebug] pathfindingObjects changed: ${pathfindingObjects.length} objects, ${frustumCulledConnections.length} connections to categorize`);
+      }
+    }
+
     const batched = [];
     const withText = [];
     const curved = [];
     const individual = [];
-    const cache = intersectionCacheRef.current;
     
     frustumCulledConnections.forEach(conn => {
       const style = conn.styleType || conn.lineStyle || 'straight';
@@ -961,27 +954,7 @@ const ConnectionsRenderer = ({
         return;
       }
       
-      // PERFORMANCE: Check cached intersection result first
-      const cached = cache.get(conn.id);
-      if (cached !== undefined) {
-        if (cached.hasIntersection) {
-          // Connections with intersections but no text go to curved batch
-          if (hasText) {
-            // Has text AND intersection - needs individual for text positioning on curve
-            individual.push(conn);
-          } else {
-            // No text - can be batched in curved renderer
-            curved.push(conn);
-          }
-        } else if (hasText) {
-          withText.push(conn);
-        } else {
-          batched.push(conn);
-        }
-        return;
-      }
-      
-      // For straight-style connections, check if they need pathfinding
+      // For straight-style connections, check if they need pathfinding (curve around obstacles)
       // Get connection positions
       let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
       let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
@@ -994,23 +967,33 @@ const ConnectionsRenderer = ({
         endPos = objectPositions.get(conn.end.objectId.toString());
       }
       
-      // Check for intersections if we have valid positions and objects to check against
+      // Check for intersections if we have valid positions and objects to check against.
+      // checkLineIntersection has its own internal TTL cache (2s) keyed on start+end positions.
+      // Because we called invalidatePathfindingCaches() above when objects moved, those caches
+      // are already cleared and the fresh blocking-object positions are used.
       let hasIntersection = false;
       if (startPos && endPos && pathfindingObjects && pathfindingObjects.length > 0) {
         const intersections = checkLineIntersection(startPos, endPos, pathfindingObjects);
         hasIntersection = intersections && intersections.length > 0;
+        // DEBUG: Log intersection results for all connections when objects change
+        if (objectsChanged && window._debugPathfinding) {
+          console.log(`[PathDebug] conn ${conn.id} (${conn.start?.objectId}->${conn.end?.objectId}):`, {
+            startPos: startPos?.map(v => v.toFixed(2)),
+            endPos: endPos?.map(v => v.toFixed(2)),
+            startPosSource: conn.start?.position ? 'position' : conn.start?.facePosition ? 'facePosition' : conn.start?.worldPosition ? 'worldPosition' : 'objectCenter',
+            intersections: intersections?.map(i => ({ id: i.objectId, type: i.objectType })),
+            hasIntersection,
+            bucket: hasIntersection ? (hasText ? 'individual' : 'curved') : (hasText ? 'withText' : 'batched'),
+          });
+        }
+      } else if (objectsChanged && window._debugPathfinding) {
+        console.log(`[PathDebug] conn ${conn.id} SKIPPED: startPos=${JSON.stringify(startPos)}, endPos=${JSON.stringify(endPos)}, pathfindingObjects.length=${pathfindingObjects?.length}`);
       }
       
-      // Cache the result
-      cache.set(conn.id, { hasIntersection, timestamp: Date.now() });
-      
       if (hasIntersection) {
-        // Connections with intersections but no text go to curved batch
         if (hasText) {
-          // Has text AND intersection - needs individual for text positioning on curve
           individual.push(conn);
         } else {
-          // No text - can be batched in curved renderer
           curved.push(conn);
         }
       } else if (hasText) {
@@ -1020,22 +1003,24 @@ const ConnectionsRenderer = ({
       }
     });
     
-    // Cache the result and inputs for next comparison
     const result = { 
       batchedConnections: batched, 
       textConnections: withText,
       curvedConnections: curved,
       individualConnections: individual 
     };
+    if (objectsChanged && window._debugPathfinding) {
+      console.log(`[PathDebug] Categorization result: batched=${batched.length}, curved=${curved.length}, withText=${withText.length}, individual=${individual.length}`);
+    }
     lastCategorizationRef.current = result;
     lastCategorizationInputsRef.current = {
       connectionsLength: frustumCulledConnections.length,
       selectedConnection,
-      pathfindingHash,
+      pathfindingObjectsRef: pathfindingObjects,
     };
     
     return result;
-  }, [frustumCulledConnections, selectedConnection, objectPositions, pathfindingObjects, pathfindingHash]);
+  }, [frustumCulledConnections, selectedConnection, objectPositions, pathfindingObjects]);
 
   // Combine all straight connections for batched line rendering
   const allStraightConnections = useMemo(() => {

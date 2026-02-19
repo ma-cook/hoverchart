@@ -77,6 +77,10 @@ const BatchedCurvedLines = memo(({
   // PERFORMANCE: Track previous buffer state to avoid unnecessary GPU uploads
   const prevBufferHashRef = useRef('');
   const pathCacheRef = useRef(new Map()); // Cache computed paths
+  // Track previous pathfindingObjects reference so we can detect changes
+  // and invalidate the path cache (which is keyed only on start+end positions,
+  // not on the positions of blocking objects).
+  const prevPathfindingObjectsRef = useRef(null);
   
   const { camera, size } = useThree();
   
@@ -88,6 +92,14 @@ const BatchedCurvedLines = memo(({
     const allSegments = [];
     const segmentConnectionMap = new Map(); // Maps segment index -> connectionId
     const pathCache = pathCacheRef.current;
+    
+    // When the set of blocking objects changes, previously-cached straight paths
+    // may now need to curve (or vice-versa).  Clear internal cache so fresh
+    // intersection checks are performed against the updated object layout.
+    if (pathfindingObjects !== prevPathfindingObjectsRef.current) {
+      pathCache.clear();
+      prevPathfindingObjectsRef.current = pathfindingObjects;
+    }
     
     connections.forEach(conn => {
       if (!conn?.start?.objectId || !conn?.end?.objectId) return;
@@ -139,9 +151,15 @@ const BatchedCurvedLines = memo(({
             conn.end.objectId,
             true
           );
+          if (window._debugPathfinding) {
+            console.log(`[BatchedCurved] conn ${conn.id}: intersections=${intersections.length}, pathPoints=${pathPoints?.length}, isCurved=${pathPoints?.length > 2}`);
+          }
         } else {
           // Straight line
           pathPoints = [start, end];
+          if (window._debugPathfinding) {
+            console.log(`[BatchedCurved] conn ${conn.id}: NO intersections → straight (startPos was: ${start?.map(v=>v.toFixed(2))})`);
+          }
         }
         
         // Cache the result
