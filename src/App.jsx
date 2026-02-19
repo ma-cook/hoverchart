@@ -33,6 +33,7 @@ import {
   useCubeStore,
   useTetrahedronStore,
   useDodecahedronStore,
+  useSpatialManagerStore,
 } from './stores';
 
 // PERFORMANCE: Global animation manager for connection lines
@@ -83,6 +84,12 @@ const App = () => {
     return Array.isArray(objectsFromStore) ? objectsFromStore : [];
   }, [objectsFromStore]);
   const setObjects = useObjectsStore((state) => state.setObjects);
+  const isInitialLoading = useObjectsStore(
+    (state) => state.isInitialLoading
+  );
+  const isCellsLoading = useSpatialManagerStore(
+    (state) => state.loadingCells.size > 0
+  );
   const setIsInitialLoading = useObjectsStore(
     (state) => state.setIsInitialLoading
   );
@@ -607,7 +614,9 @@ const App = () => {
 
     connectionSubscriptionTimeoutId = setTimeout(() => {
       setGlobalInitialLoading(false);
-      // Objects might finish loading before connections, so keep object loading state
+      // Safety fallback: clear object loading state for empty spaces or when
+      // the Firebase subscription didn't trigger scheduleLoadingComplete
+      setIsInitialLoading(false);
     }, connectionTimeout);
 
     // Separate shorter timeout for object loading
@@ -1414,7 +1423,7 @@ const App = () => {
   clearRedirectTimeout();
   return (
     <>
-      {/* Show a minimal loading UI while Canvas is being prepared */}
+      {/* Full-screen loader: only while the Canvas hasn't mounted yet */}
       {!shouldRenderCanvas && canViewSpace && (
         <div
           style={{
@@ -1425,13 +1434,32 @@ const App = () => {
             height: '100vh',
             background: backgroundColor,
             display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
+            gap: '16px',
             fontSize: '18px',
             color: '#666',
+            zIndex: 9999,
           }}
         >
           Initializing 3D space...
+          <div className="initial-loading-spinner" />
+        </div>
+      )}{' '}
+      {/* Corner spinner: Canvas is up but objects are still streaming in (initial load or camera movement) */}
+      {shouldRenderCanvas && (isInitialLoading || isCellsLoading) && (
+        <div className="objects-loading-corner">
+          <div className="objects-loading-spinner" />
+          <span className="objects-loading-label">
+            {isInitialLoading
+              ? objects.length > 0
+                ? `Loading ${objects.length} object${
+                    objects.length !== 1 ? 's' : ''
+                  }…`
+                : 'Loading…'
+              : 'Loading objects…'}
+          </span>
         </div>
       )}{' '}
       {shouldRenderCanvas && (

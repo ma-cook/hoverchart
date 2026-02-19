@@ -3057,7 +3057,7 @@ export class MarkdownDiagramService {
             position,
             extraData: {
               scale,
-              headerText: node.label || node.id || 'Node',
+              headerText: node.name || node.id || 'Node',
               headerStyle: headerStyle,
               ...(node.properties || {}),
             },
@@ -3443,10 +3443,10 @@ export class MarkdownDiagramService {
       // Log grouped components for debugging
       if (hierarchicalChildren.length > 0) {
         const parentNode = graphNodes.get(parentNodeId);
-        const parentLabel = parentNode?.label || parentNodeId;
+        const parentLabel = parentNode?.name || parentNodeId;
         const childLabels = hierarchicalChildren.map(id => {
           const node = graphNodes.get(id);
-          return node?.label || id;
+          return node?.name || id;
         });
         console.log(`📦 Group under "${parentLabel}": [${childLabels.join(', ')}] (${hierarchicalChildren.length} children)`);
       }
@@ -3472,7 +3472,7 @@ export class MarkdownDiagramService {
           Math.max(...childScale);
 
         const childNode = graphNodes.get(childId);
-        const childLabel = childNode ? (childNode.label || childId) : childId;
+        const childLabel = childNode ? (childNode.name || childId) : childId;
        
 
         // Expand bounding box
@@ -3510,7 +3510,7 @@ export class MarkdownDiagramService {
       ];
 
       // Log container details for debugging
-      const parentLabel = parentNode.label || parentNodeId;
+      const parentLabel = parentNode.name || parentNodeId;
      
 
       // Store container dimensions for this parent
@@ -3704,7 +3704,7 @@ export class MarkdownDiagramService {
         lineWidth: 2, // Container cube outline thickness
         cellId: cellId,
         createdAt: Date.now(),
-        headerText: `${parentNode.label || parentNode.id} Group`,
+        headerText: `${parentNode.name || parentNode.id} Group`,
         faceColors: {},
         faceTexts: {
           front: '',
@@ -3737,10 +3737,10 @@ export class MarkdownDiagramService {
         type: 'cube',
         color: '#e0e0e0',
         lineWidth: 2,
-        content: `${parentNode.label || parentNode.id} Group`,
+        content: `${parentNode.name || parentNode.id} Group`,
         createdAt: Date.now(),
         cellId: cellId,
-        headerText: `${parentNode.label || parentNode.id} Group`,
+        headerText: `${parentNode.name || parentNode.id} Group`,
         faceColors: {},
         faceTexts: {
           front: '',

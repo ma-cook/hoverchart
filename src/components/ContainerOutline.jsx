@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import PooledLine from './PooledLine';
 
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
 /**
  * Simple container outline component - just renders edges without any interaction
  * Used for visualizing bounding boxes around component groups
@@ -11,6 +13,7 @@ const ContainerOutline = ({
   color = '#e0e0e0',
   lineWidth = 2,
 }) => {
+  const effectiveLineWidth = isMobile ? Math.max(lineWidth * 2, 3) : lineWidth;
   // Calculate cube edges based on position and scale
   const cubeEdges = useMemo(() => {
     const [x, y, z] = position;
@@ -60,7 +63,7 @@ const ContainerOutline = ({
           key={idx}
           points={edgePoints}
           color={color}
-          lineWidth={lineWidth}
+          lineWidth={effectiveLineWidth}
           enablePooling={true}
         />
       ))}

@@ -181,14 +181,14 @@ const BatchedCurvedLines = memo(({
   
   const { segments: allSegments, connectionMap: segmentConnectionMap } = pathsData;
   
-  // PERFORMANCE: Create/resize geometry only when needed
+  // PERFORMANCE: Create/resize geometry only when capacity needs to grow
+  // Initial geometry is created inline below (lazy init) so the mesh mounts on the first render.
   useEffect(() => {
     const count = allSegments.length;
-    const neededCapacity = Math.max(count, 100); // Minimum 100 for curved lines
+    const neededCapacity = Math.max(count, 100);
     
-    // Only recreate if we need more capacity or first time
-    if (!geometryRef.current || bufferCapacityRef.current < neededCapacity) {
-      // Allocate with 2x headroom to reduce future reallocations
+    // Only resize when we need MORE capacity than currently allocated
+    if (bufferCapacityRef.current < neededCapacity) {
       const newCapacity = Math.max(neededCapacity * 2, 500);
       
       // Dispose old geometry
@@ -199,18 +199,10 @@ const BatchedCurvedLines = memo(({
       const geo = new THREE.InstancedBufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(BASE_POSITIONS, 3));
       
-      // Pre-allocate oversized buffers
-      const instanceStart = new THREE.InstancedBufferAttribute(
-        new Float32Array(newCapacity * 3), 3
-      );
-      const instanceEnd = new THREE.InstancedBufferAttribute(
-        new Float32Array(newCapacity * 3), 3
-      );
-      const instanceColor = new THREE.InstancedBufferAttribute(
-        new Float32Array(newCapacity * 3), 3
-      );
+      const instanceStart = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity * 3), 3);
+      const instanceEnd = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity * 3), 3);
+      const instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity * 3), 3);
       
-      // Mark as dynamic for efficient updates
       instanceStart.setUsage(THREE.DynamicDrawUsage);
       instanceEnd.setUsage(THREE.DynamicDrawUsage);
       instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -218,9 +210,15 @@ const BatchedCurvedLines = memo(({
       geo.setAttribute('instanceStart', instanceStart);
       geo.setAttribute('instanceEnd', instanceEnd);
       geo.setAttribute('instanceColor', instanceColor);
+      geo.instanceCount = 0;
       
       geometryRef.current = geo;
       bufferCapacityRef.current = newCapacity;
+      
+      // Apply new geometry to the mounted mesh directly (args won't auto-update)
+      if (meshRef.current) {
+        meshRef.current.geometry = geo;
+      }
     }
   }, [allSegments.length]);
   
@@ -397,9 +395,29 @@ const BatchedCurvedLines = memo(({
     document.body.style.cursor = 'auto';
   }, []);
   
-  // Don't render if no geometry or no segments
-  if (!geometryRef.current || currentCountRef.current === 0) {
-    return null;
+  // Lazy-initialize geometry on first render so the mesh mounts immediately.
+  // The buffer-fill effect populates instanceCount; Three.js picks it up on the next frame.
+  if (!geometryRef.current) {
+    const initialCapacity = 500;
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(BASE_POSITIONS, 3));
+    const instanceStart = new THREE.InstancedBufferAttribute(new Float32Array(initialCapacity * 3), 3);
+    const instanceEnd = new THREE.InstancedBufferAttribute(new Float32Array(initialCapacity * 3), 3);
+    const instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(initialCapacity * 3), 3);
+    instanceStart.setUsage(THREE.DynamicDrawUsage);
+    instanceEnd.setUsage(THREE.DynamicDrawUsage);
+    instanceColor.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('instanceStart', instanceStart);
+    geo.setAttribute('instanceEnd', instanceEnd);
+    geo.setAttribute('instanceColor', instanceColor);
+    geo.instanceCount = 0;
+    geometryRef.current = geo;
+    bufferCapacityRef.current = initialCapacity;
+  }
+  // Lazy-initialize material on first render
+  if (!materialRef.current) {
+    materialRef.current = LineShaderMaterial.clone();
+    materialRef.current.uniforms.linewidth.value = lineWidth;
   }
   
   return (

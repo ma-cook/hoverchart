@@ -1099,7 +1099,7 @@ const ConnectionsRenderer = ({
           objectPositions={objectPositions}
           selectedConnectionId={selectedConnection}
           onConnectionClick={handleBatchedConnectionClick}
-          lineWidth={1}
+          lineWidth={/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 3 : 1}
         />
       )}
       
@@ -1111,7 +1111,7 @@ const ConnectionsRenderer = ({
           pathfindingObjects={pathfindingObjects}
           selectedConnectionId={selectedConnection}
           onConnectionClick={handleBatchedConnectionClick}
-          lineWidth={1}
+          lineWidth={/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 3 : 1}
         />
       )}
       

@@ -74,6 +74,12 @@ const UIOverlay = ({
   const resetConnections = useConnectionStore(
     (state) => state.resetConnections
   );
+  const connectionCount = useConnectionStore(
+    (state) => state.connections.length
+  );
+  const CONNECTION_RENDER_THRESHOLD = 100;
+  const showConnectionsHint =
+    connectionCount > CONNECTION_RENDER_THRESHOLD && !connectionsVisible;
 
   // Model upload functionality
   const modelFileInputRef = useRef(null);
@@ -428,9 +434,22 @@ const UIOverlay = ({
     toggleMenu('main');
   };
 
+  // Track whether the user has explicitly toggled visibility so auto-show doesn't override them
+  const userHasManuallyToggled = useRef(false);
+
   const handleArrowClick = () => {
+    userHasManuallyToggled.current = true;
     toggleConnectionsVisible();
   };
+
+  // Auto-show connections when there are 100 or fewer (on startup or after a GitHub scan)
+  useEffect(() => {
+    if (userHasManuallyToggled.current) return;
+    if (connectionCount > 0 && connectionCount <= CONNECTION_RENDER_THRESHOLD && !connectionsVisible) {
+      toggleConnectionsVisible();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionCount]);
 
   const handleTemplateConfigChange = (field, value) => {
     updateTemplateConfig('main', field, value);
@@ -872,17 +891,50 @@ const UIOverlay = ({
             title={isRecording ? 'Stop Recording' : 'Start Recording'}
           >
           </button>
-          <button
-            className={`shape-button ${isConnectMode ? 'active' : ''}`}
-            onClick={handleArrowClick}
-            title="Toggle Connection Lines"
-            style={{
-              borderColor: connectionsVisible ? '' : 'orange',
-              borderWidth: connectionsVisible ? '' : '2px',
-            }}
-          >
-            ↗
-          </button>
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            {showConnectionsHint && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '110%',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: 'rgba(0,0,0,0.75)',
+                  color: '#fff',
+                  fontSize: '11px',
+                  whiteSpace: 'nowrap',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  pointerEvents: 'none',
+                  zIndex: 9999,
+                }}
+              >
+                Show connections
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    borderWidth: '4px',
+                    borderStyle: 'solid',
+                    borderColor: 'rgba(0,0,0,0.75) transparent transparent transparent',
+                  }}
+                />
+              </div>
+            )}
+            <button
+              className={`shape-button ${isConnectMode ? 'active' : ''}`}
+              onClick={handleArrowClick}
+              title="Toggle Connection Lines"
+              style={{
+                borderColor: connectionsVisible ? '' : 'orange',
+                borderWidth: connectionsVisible ? '' : '2px',
+              }}
+            >
+              ↗
+            </button>
+          </div>
           <button
             className={`shape-button ${cellBoundariesVisible ? 'active' : ''}`}
             onClick={handleCellBoundariesToggle}

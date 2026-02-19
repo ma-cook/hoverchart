@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import PooledLine from './PooledLine';
 
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
 /**
  * Visual indicator showing a dotted line between objects when snapping
  * @param {Object} props - Component properties
@@ -42,7 +44,7 @@ const SnapLineIndicator = ({ points, axis, visible }) => {
     <PooledLine
       points={points}
       color={color}
-      lineWidth={2}
+      lineWidth={isMobile ? 4 : 2}
       dashed={true}
       dashSize={0.5}
       dashScale={1}

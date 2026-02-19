@@ -160,7 +160,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     );
 
     const mat = LineShaderMaterial.clone();
-    mat.uniforms.linewidth.value = defaultLineWidth;
+    mat.uniforms.linewidth.value = isMobile ? 3 : defaultLineWidth;
 
     return { geometry: geo, material: mat };
   }, [totalEdges, defaultLineWidth, cubeIds]);
