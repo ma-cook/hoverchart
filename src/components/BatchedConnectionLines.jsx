@@ -53,7 +53,7 @@ const BatchedConnectionLines = memo(({
   const prevConnectionsKeyRef = useRef('');
   const prevQuickHashRef = useRef('');
   
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   
   // PERFORMANCE: Filter straight connections once
   const straightConnections = useMemo(() => {
@@ -238,6 +238,16 @@ const BatchedConnectionLines = memo(({
     }
     materialRef.current.uniforms.linewidth.value = lineWidth;
   }, [lineWidth]);
+
+  // Keep resolution uniform in sync with the actual viewport size.
+  // Without this, line widths silently break after orientation changes or window resizes
+  // because the singleton material captures window dimensions only at module init time.
+  useEffect(() => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.resolution.value.x = size.width;
+      materialRef.current.uniforms.resolution.value.y = size.height;
+    }
+  }, [size.width, size.height]);
   
   // Custom raycast - optimized with early exits
   const customRaycast = useCallback((raycaster, intersects) => {

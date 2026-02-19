@@ -78,7 +78,7 @@ const BatchedCurvedLines = memo(({
   const prevBufferHashRef = useRef('');
   const pathCacheRef = useRef(new Map()); // Cache computed paths
   
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   
   // PERFORMANCE: Calculate paths for all connections with intersections
   // Cache paths to avoid recalculation when nothing changed
@@ -298,6 +298,14 @@ const BatchedCurvedLines = memo(({
     }
     materialRef.current.uniforms.linewidth.value = lineWidth;
   }, [lineWidth]);
+
+  // Keep resolution uniform in sync with the actual viewport size.
+  useEffect(() => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.resolution.value.x = size.width;
+      materialRef.current.uniforms.resolution.value.y = size.height;
+    }
+  }, [size.width, size.height]);
   
   // Custom raycast - optimized with early exits
   const customRaycast = useCallback((raycaster, intersects) => {

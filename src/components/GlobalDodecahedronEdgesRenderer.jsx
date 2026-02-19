@@ -101,7 +101,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
   const lastPositionsRef = useRef(new Map());
   const visibilityRef = useRef(new Map());
   
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   
   // Get LOD data from store
   const { lodLevels, childParentMap, parentIds, lodEnabled } = useLODStore();
@@ -173,6 +173,14 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
 
     return { geometry: geo, material: mat };
   }, [totalEdges, defaultLineWidth]);
+
+  // Keep resolution uniform in sync with the actual viewport size.
+  useEffect(() => {
+    if (material) {
+      material.uniforms.resolution.value.x = size.width;
+      material.uniforms.resolution.value.y = size.height;
+    }
+  }, [material, size.width, size.height]);
 
   // Mark for full update when filtered dodecahedrons array changes
   useEffect(() => {

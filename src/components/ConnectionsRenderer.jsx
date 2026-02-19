@@ -314,7 +314,7 @@ const Connection = React.memo(
 
       // Simplified position calculation with early returns
       const startPosition =
-        startObj?.position && connection.start?.face
+        startObj?.position && connection.start?.face !== undefined
           ? (() => {
               try {
                 return calculateFacePosition(
@@ -347,7 +347,7 @@ const Connection = React.memo(
             startObj?.position || [0, 0, 0];
 
       const endPosition =
-        endObj?.position && connection.end?.face
+        endObj?.position && connection.end?.face !== undefined
           ? (() => {
               try {
                 return calculateFacePosition(

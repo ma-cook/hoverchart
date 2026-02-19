@@ -90,7 +90,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   const visibilityRef = useRef(new Map()); // Track visibility state per cube
   
   // Get camera for frustum culling
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   
   // Get LOD data from store
   const { lodLevels, childParentMap, parentIds, lodEnabled } = useLODStore();
@@ -164,6 +164,15 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
 
     return { geometry: geo, material: mat };
   }, [totalEdges, defaultLineWidth, cubeIds]);
+
+  // Keep resolution uniform in sync with the actual viewport size.
+  // Material is created in useMemo so we update it via a separate effect.
+  useEffect(() => {
+    if (material) {
+      material.uniforms.resolution.value.x = size.width;
+      material.uniforms.resolution.value.y = size.height;
+    }
+  }, [material, size.width, size.height]);
 
   // Mark for full update when cubes array changes
   useEffect(() => {

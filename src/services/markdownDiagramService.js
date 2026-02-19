@@ -3949,6 +3949,26 @@ export class MarkdownDiagramService {
           ];
         };
 
+        // Now that calculateDodecahedronFaceCenter is defined, compute accurate face world positions
+        if (sourceObject.type === 'dodecahedron') {
+          const fc = calculateDodecahedronFaceCenter(sourceFaceIndex);
+          const s = sourceObject.scale || [1, 1, 1];
+          sourceWorldPosition = [
+            sourceObject.position[0] + fc[0] * s[0],
+            sourceObject.position[1] + fc[1] * s[1],
+            sourceObject.position[2] + fc[2] * s[2],
+          ];
+        }
+        if (targetObject.type === 'dodecahedron') {
+          const fc = calculateDodecahedronFaceCenter(targetFaceIndex);
+          const s = targetObject.scale || [1, 1, 1];
+          targetWorldPosition = [
+            targetObject.position[0] + fc[0] * s[0],
+            targetObject.position[1] + fc[1] * s[1],
+            targetObject.position[2] + fc[2] * s[2],
+          ];
+        }
+
         const connectionData = {
           id: connectionId,
           start: {
