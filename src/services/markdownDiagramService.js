@@ -185,9 +185,35 @@ export class MarkdownDiagramService {
     if (graph.connections && graph.connections.size > 0) {
     
 
+      // Check if targetNodeId is already reachable from startNodeId through parentChildMap.
+      // Used to prevent cycles before they are added.
+      const wouldCreateCycle = (startNodeId, targetNodeId) => {
+        const visited = new Set();
+        const dfs = (nodeId) => {
+          if (nodeId === targetNodeId) return true;
+          if (visited.has(nodeId)) return false;
+          visited.add(nodeId);
+          const children = parentChildMap.get(nodeId);
+          if (!children) return false;
+          for (const child of children) {
+            if (dfs(child)) return true;
+          }
+          return false;
+        };
+        return dfs(startNodeId);
+      };
+
       const addParentChildRelation = (parentId, childId) => {
         if (!parentId || !childId) return;
         if (parentId === childId) return; // Prevent self-referential parent-child relationships
+
+        // Cycle detection: if parentId is already reachable FROM childId,
+        // adding parentId→childId would create a cycle and make both nodes
+        // unreachable as roots. Skip the cycle-creating edge.
+        if (wouldCreateCycle(childId, parentId)) {
+          console.warn(`⚠️ Skipping cycle-creating relationship: ${parentId} → ${childId} (would orphan both from root)`);
+          return;
+        }
       
         if (!parentChildMap.has(parentId)) {
           parentChildMap.set(parentId, new Set());
@@ -199,7 +225,6 @@ export class MarkdownDiagramService {
         if (!childParentMap.has(childId)) {
           childParentMap.set(childId, parentId);
         }
-  
       };
       Array.from(graph.connections.values()).forEach((connection) => {
         const sourceId = connection.source?.nodeId || connection.source;
@@ -795,15 +820,14 @@ export class MarkdownDiagramService {
         const row = Math.floor(rootIndex / gridSize);
         const col = rootIndex % gridSize;
 
-        // Increased spacing to accommodate circular child arrangements
-        const spacing = 200; // Increased spacing to prevent overlap of circular arrangements
+        // Spread roots in X and Z only — Y is flat so that hierarchy levels
+        // are clearly separated by depth (children are always below their parent)
+        const spacing = 200;
 
         return [
           basePosition[0] + (col - (gridSize - 1) / 2) * spacing,
-          basePosition[1] +
-            (row - (gridSize - 1) / 2) * spacing +
-            componentYOffset,
-          basePosition[2],
+          basePosition[1] + componentYOffset,  // All roots at same Y
+          basePosition[2] + (row - (gridSize - 1) / 2) * spacing,  // row → Z
         ];
       }
     } else {
@@ -872,9 +896,10 @@ export class MarkdownDiagramService {
         const spacingBetweenComponents = (maxSiblingSize * diameterMultiplier) + gapBetweenEdges;
 
         // Calculate depth offset based on parent's actual size to prevent overlap
-        let depthOffset = 150; // Base offset
+        // Each hierarchy level should be clearly below the previous one
+        let depthOffset = 300; // Base offset — large enough to separate levels visually
         if (containerSize && typeof containerSize === 'number') {
-          depthOffset = Math.max(150, containerSize * 2.5);
+          depthOffset = Math.max(300, containerSize * 2.5);
         }
 
         // Debug spacing for problematic components
@@ -1886,18 +1911,11 @@ export class MarkdownDiagramService {
           continue;
         }
 
-        // A component is ungrouped if it's NOT reachable from actual root modules
-        // This handles both:
-        // - Standalone unused components (no children)
-        // - Unused component trees (has children but the whole tree is unused)
-
-        if (!reachableFromRootModules.has(nodeId)) {
-        
+        // A component is ungrouped only if positionNodeHierarchy hasn't already placed it.
+        // Using nodePositions membership is reliable regardless of what the root module is named
+        // (avoids the fragile hardcoded ['main','index','firebase','App'] name check).
+        if (!nodePositions.has(nodeId)) {
           ungroupedComponents.push(nodeId);
-        } else {
-          console.log(
-            `   ⏭️ Skipping ${nodeId} (reachable from root modules - in active hierarchy)`
-          );
         }
       }
     }
@@ -2488,8 +2506,8 @@ export class MarkdownDiagramService {
           continue;
         }
 
-        // Check if component is reachable from root modules
-        if (!reachableFromRootModules.has(nodeId)) {
+        // Only treat as ungrouped if not already positioned by positionNodeHierarchy
+        if (!nodePositions.has(nodeId)) {
           ungroupedComponents.push(nodeId);
         }
       }

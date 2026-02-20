@@ -24,8 +24,8 @@ const CAMERA_MOVE_THRESHOLD = 10; // Only recalculate if camera moved more than 
  * - 2 (LOW): Low detail (don't render)
  * 
  * Distance Thresholds:
- * - Child objects (inside containers): FULL < 200, MEDIUM 200-500, LOW > 500
- * - Parent containers: FULL < 600, MEDIUM 600-1500, LOW > 1500 (3x child distances)
+ * - Child objects (inside containers): FULL < 10000, MEDIUM 10000-15000, LOW > 15000
+ * - Parent containers: FULL < 10000, MEDIUM 10000-11000, LOW > 11000
  */
 const LODManager = ({ enabled = true }) => {
   const { camera } = useThree();

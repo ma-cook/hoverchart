@@ -15,21 +15,21 @@ import { create } from 'zustand';
  * - 2: Low detail (don't render)
  * 
  * Distance Thresholds:
- * - Child objects: FULL < 200, MEDIUM 200-500, LOW > 500
- * - Parent objects: FULL < 1000, MEDIUM 1000-2500, LOW > 2500 (5x child distances)
+ * - Child objects: FULL < 2000, MEDIUM 2000-6000, LOW > 6000
+ * - Parent objects: FULL < 3500, MEDIUM 3500-11000, LOW > 11000
  */
 
 // LOD distance thresholds for CHILD objects (inside containers)
 export const LOD_THRESHOLDS = {
-  FULL_DETAIL: 1500,    // Below this: full detail (LOD 0)
-  MEDIUM_DETAIL: 5000,  // Below this: medium detail (LOD 1), above: low detail (LOD 2)
+  FULL_DETAIL: 5000,   // Below this: full detail (LOD 0)
+  MEDIUM_DETAIL: 20000, // Below this: medium detail (LOD 1), above: low detail (LOD 2)
 };
 
-// LOD distance thresholds for PARENT objects (5x child distances)
+// LOD distance thresholds for PARENT objects
 // Note: Grouping containers (isContainer) are excluded from LOD system entirely
 export const LOD_THRESHOLDS_PARENT = {
-  FULL_DETAIL: 3000,   // Full detail below this distance
-  MEDIUM_DETAIL: 10000, // Basic mesh renders from FULL_DETAIL to this distance, then LOW (hidden)
+  FULL_DETAIL: 5000,  // Full detail below this distance
+  MEDIUM_DETAIL: 20000, // Basic mesh renders from FULL_DETAIL to this distance, then LOW (hidden)
 };
 
 // LOD level constants

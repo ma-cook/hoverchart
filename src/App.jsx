@@ -1301,23 +1301,20 @@ const App = () => {
   }, []);
 
   // Progressive canvas quality enhancement
-  const [canvasQuality, setCanvasQuality] = useState('low');
+  // Initialize directly to the correct quality level to avoid a 1-second delayed
+  // quality upgrade that triggers WebGL reinitialization and corrupts LOD state.
+  const [canvasQuality, setCanvasQuality] = useState(() => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const isLowEnd = navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
+    return (isMobile || isLowEnd) ? 'low' : 'high';
+  });
   
-  // Single effect for quality management
+  // Single effect for quality management (keep setCanvasQuality stable for mobile/low-end)
   useEffect(() => {
     if (deviceInfo.isMobile || deviceInfo.isLowEnd) {
       setCanvasQuality('low');
-      return;
     }
-    
-    // Desktop high-end: upgrade quality after initial render
-    if (shouldRenderCanvas) {
-      const upgradeTimer = setTimeout(() => {
-        setCanvasQuality('high');
-      }, 1000);
-      return () => clearTimeout(upgradeTimer);
-    }
-  }, [shouldRenderCanvas, deviceInfo.isMobile, deviceInfo.isLowEnd]);
+  }, [deviceInfo.isMobile, deviceInfo.isLowEnd]);
 
   // Memoize canvas settings to avoid recalculating on every render
   const canvasSettings = useMemo(() => {

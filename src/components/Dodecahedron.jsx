@@ -1249,14 +1249,14 @@ const Sphere = React.memo(
           {isParentObject && lodLevel === LOD_LEVELS.MEDIUM && (
             <mesh>
               <sphereGeometry args={[8, 8, 6]} />
-              <meshBasicMaterial color="#d0d0d0" transparent opacity={0.6} />
+              <meshBasicMaterial color="#888888" transparent opacity={0.6} />
             </mesh>
           )}
           {/* LOD MEDIUM: Render simple colored sphere mesh for child objects */}
           {isChildOfContainer && lodLevel === LOD_LEVELS.MEDIUM && (
             <mesh>
               <sphereGeometry args={[8, 8, 6]} />
-              <meshBasicMaterial color={renderLineColor || '#808080'} transparent opacity={0.8} />
+              <meshBasicMaterial color="#888888" transparent opacity={0.8} />
             </mesh>
           )}
           {/* Render faces using DodecahedronFace component (consistent with Cube architecture) */}
@@ -1463,8 +1463,21 @@ const Sphere = React.memo(
                 contentRef.current.orbitControls.enabled = true;
               }
               registerTransformingObject?.(id, false);
-              // Clear real-time transform data - position is now in store
-              dodecahedronTransformMap.delete(id);
+              // Sync objectsStore with the exact final position from TransformControls
+              // before removing from the transform map, so both the hit mesh (via R3F
+              // reconciliation from objectsStore) and the edges (via the buffered draw)
+              // converge on the same position.
+              if (contentRef.current) {
+                const p = contentRef.current.position;
+                const finalPos = [p.x, p.y, p.z];
+                const store = useObjectsStore.getState();
+                const objs = Array.isArray(store.objects) ? store.objects : [];
+                store.setObjects(objs.map((o) => o.id === id ? { ...o, position: finalPos } : o));
+              }
+              // Delay the map deletion by one animation frame so React can flush
+              // the final position reconciliation before the global renderer falls
+              // back to reading from the store.
+              requestAnimationFrame(() => dodecahedronTransformMap.delete(id));
             }}
             mode="translate"
             space="world"

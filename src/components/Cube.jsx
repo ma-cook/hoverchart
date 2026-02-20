@@ -1035,8 +1035,11 @@ const Cube = ({
         onMove(finalPosition);
       }
 
-      // Update cube state with the final position
-      updateCube(id, { position: finalPosition });
+      // NOTE: Do NOT call updateCube({ position }) here.
+      // Doing so triggers a React re-render that causes R3F to reconcile
+      // contentRef.current.position from the prop, fighting TransformControls
+      // and potentially snapping the hit mesh to a stale position on mouse-up.
+      // The final position is committed to the store in onMouseUp instead.
     } catch (error) {
       console.error('Error in cube handleDrag:', error);
     }
@@ -1484,9 +1487,21 @@ const Cube = ({
             if (window.orbitControls) {
               window.orbitControls.enabled = true;
             }
-            // Clear real-time transform data - position is now in store
+            // Commit the final drag position to the cube store NOW, reading directly
+            // from the Three.js object so we get exactly where TransformControls left it.
+            // This must happen BEFORE deleting from cubeTransformMap so the GlobalCubeEdgesRenderer
+            // and R3F reconciliation both converge on the same position.
+            if (contentRef.current) {
+              const p = contentRef.current.position;
+              const finalPos = [p.x, p.y, p.z];
+              updateCube(id, { position: finalPos });
+              // Also sync objectsStore so connection lines are up to date
+              const store = useObjectsStore.getState();
+              const objs = Array.isArray(store.objects) ? store.objects : [];
+              store.setObjects(objs.map((o) => o.id === id ? { ...o, position: finalPos } : o));
+            }
+            // Clear real-time transform data - position is now committed to the store
             cubeTransformMap.delete(id);
-            // No immediate save - let the debounced effect handle it like Dodecahedron
           }}
           mode="translate"
           space="world"
