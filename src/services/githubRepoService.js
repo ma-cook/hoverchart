@@ -1849,7 +1849,7 @@ export const isGithubAuthenticated = () => {
  * @param {string} redirectUri - Redirect URI after OAuth
  * @returns {string} - GitHub OAuth URL
  */
-export const getGithubOAuthUrl = (redirectUri = 'https://space.volscape.com') => {
+export const getGithubOAuthUrl = (redirectUri = 'https://space.volscape.com/') => {
   const clientId = 'Ov23liLYzf9WoYPLBNat';
   return `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&redirect_uri=${encodeURIComponent(redirectUri)}`;
 };
