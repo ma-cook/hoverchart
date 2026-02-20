@@ -152,15 +152,16 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
  * @returns {Object} - Object with boolean flags for file type
  */
 const analyzeFile = (filePath) => {
-  // Only treat files in /components/ or App.jsx as component files
+  // Use regex to match folder names at any level, including repo root (no leading slash)
+  // e.g. matches both 'utils/foo.js' and 'src/utils/foo.js'
   const isComponent =
-    filePath.includes('/components/') ||
+    /(?:^|\/)components\//.test(filePath) ||
     filePath.endsWith('/App.jsx') ||
     filePath === 'App.jsx';
-  const isHook = filePath.includes('/hooks/');
-  const isService = filePath.includes('/services/');
-  const isStore = filePath.includes('/stores/');
-  const isUtil = filePath.includes('/utils/') || filePath.includes('/helpers/');
+  const isHook    = /(?:^|\/)hooks\//.test(filePath);
+  const isService = /(?:^|\/)services\//.test(filePath);
+  const isStore   = /(?:^|\/)stores\//.test(filePath);
+  const isUtil    = /(?:^|\/)utils\//.test(filePath) || /(?:^|\/)helpers\//.test(filePath);
 
   return { isComponent, isHook, isService, isStore, isUtil };
 };
@@ -637,6 +638,11 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                     if (!foundItems.utilities.has(funcName)) {
                       foundItems.utilities.add(funcName);
                       elements.utilities.push(funcName);
+                      // Track file→function relationship so the file container is always created
+                      if (!fileFunctions.has(fileName)) {
+                        fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                      }
+                      fileFunctions.get(fileName).functions.add(funcName);
                     }
                   } else {
                     // Only add to general functions if NOT in a component or utility file
@@ -1374,15 +1380,13 @@ const generateMerfolkMarkdown = (
   });
   
   // Map file container children to their parent file container
+  // Every file in fileFunctions now gets a container, so always map all children.
   fileFunctions.forEach((fileInfo, fileName) => {
-    // Only if file has a container (more than 1 function or needs suffix)
     const needsSuffix = filesNeedingSuffix.has(fileName);
-    if (fileInfo.functions.size > 1 || needsSuffix) {
-      const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
-      fileInfo.functions.forEach((funcName) => {
-        childToParentMap.set(funcName, { parentId: fileNodeId, parentName: fileName, type: fileInfo.type });
-      });
-    }
+    const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
+    fileInfo.functions.forEach((funcName) => {
+      childToParentMap.set(funcName, { parentId: fileNodeId, parentName: fileName, type: fileInfo.type });
+    });
   });
   
   // Map internal helper components to their parent
@@ -1628,48 +1632,46 @@ const generateMerfolkMarkdown = (
           label = 'debounced helper';
         }
 
-        markdown += `${componentNodeId} --> ${func} : "${label}"\n`;
+        markdown += `${componentNodeId} -.-> ${func} : "${label}"\n`;
       });
     });
   }
 
   // Add file-function relationships for hooks/services/utilities/stores
-  // Files that contain multiple functions should have the file as a container
+  // Always create a container node for every file (even single-function utility files)
+  // so each .js utility file appears as a parent cube with its functions as children.
   if (fileFunctions.size > 0) {
     markdown += '\n%% File Container Nodes\n';
-    // Create file nodes for files that contain multiple functions
     fileFunctions.forEach((fileInfo, fileName) => {
-      // Only create container if file has more than 1 function OR file needs suffix
       const needsSuffix = filesNeedingSuffix.has(fileName);
-      if (fileInfo.functions.size > 1 || needsSuffix) {
-        // Use fileName_file to avoid conflicts when file name matches a contained function
-        const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
+      // Always create a container — use _file suffix when file name matches one of its contained
+      // functions (to avoid duplicate node IDs) or when a suffix is otherwise required.
+      const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
 
-        if (nodeIds.has(fileNodeId)) {
-          duplicates.push({
-            id: fileNodeId,
-            type: `${fileInfo.type} File`,
-            section: 'File Container Nodes',
-          });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (${fileInfo.type} File)`);
-        }
-        nodeIds.add(fileNodeId);
-
-        // Use appropriate shape based on file type
-        if (fileInfo.type === 'service') {
-          markdown += `${fileNodeId}((Service: ${fileName}))\n`;
-        } else if (fileInfo.type === 'hook') {
-          markdown += `${fileNodeId}[Hook: ${fileName}]\n`;
-        } else if (fileInfo.type === 'store') {
-          markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
-        } else {
-          // utility
-          markdown += `${fileNodeId}[Function: ${fileName}]\n`;
-        }
-
-        // Store the file node ID for later connection generation
-        fileInfo.nodeId = fileNodeId;
+      if (nodeIds.has(fileNodeId)) {
+        duplicates.push({
+          id: fileNodeId,
+          type: `${fileInfo.type} File`,
+          section: 'File Container Nodes',
+        });
+        console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (${fileInfo.type} File)`);
       }
+      nodeIds.add(fileNodeId);
+
+      // Use appropriate shape based on file type
+      if (fileInfo.type === 'service') {
+        markdown += `${fileNodeId}((Service: ${fileName}))\n`;
+      } else if (fileInfo.type === 'hook') {
+        markdown += `${fileNodeId}[Hook: ${fileName}]\n`;
+      } else if (fileInfo.type === 'store') {
+        markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
+      } else {
+        // utility
+        markdown += `${fileNodeId}[Function: ${fileName}]\n`;
+      }
+
+      // Store the file node ID for later connection generation
+      fileInfo.nodeId = fileNodeId;
     });
 
     // Add file→function connections with dashed arrows (containment)

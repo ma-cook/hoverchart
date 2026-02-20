@@ -244,21 +244,32 @@ export class MarkdownDiagramService {
           //       while standalone hooks/services/stores use [Hook:]/((Service:))/[[Store:]]
 
           // Functions that connect TO components belong IN those components
+          // IMPORTANT: Only dashed (controlflow) arrows create containment. Solid arrows are usage/calls.
           if (
             sourceNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION &&
             targetNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT
           ) {
-            // Function connects TO component = function belongs IN component
-            parentId = targetId; // Component is the parent
-            childId = sourceId; // Function is the child
+            // Function -.-> Component (dashed) = function belongs IN component
+            // Function -->  Component (solid) = function USES/CALLS component — no containment
+            const connectionType = connection.type || 'dataflow';
+            const isDashed = connectionType === 'controlflow' || connectionType === 'dotted';
+            if (isDashed) {
+              parentId = targetId; // Component is the parent
+              childId = sourceId; // Function is the child
+            }
           } else if (
             sourceNode.type === MarkdownDiagramService.NODE_TYPE_COMPONENT &&
             targetNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION
           ) {
-            // Component connects TO function = function belongs IN component
-            // (Functions inside components are always declared as [Function:])
-            parentId = sourceId; // Component is the parent
-            childId = targetId; // Function is the child
+            // Component -.-> Function (dashed) = function belongs IN component (explicit containment)
+            // Component -->  Function (solid) = component USES/CALLS the function — no containment
+            // This prevents utility file containers from being stolen into components when a component calls them.
+            const connectionType = connection.type || 'dataflow';
+            const isDashed = connectionType === 'controlflow' || connectionType === 'dotted';
+            if (isDashed) {
+              parentId = sourceId; // Component is the parent
+              childId = targetId; // Function is the child
+            }
           } else if (
             sourceNode.type === MarkdownDiagramService.NODE_TYPE_SERVICE &&
             targetNode.type === MarkdownDiagramService.NODE_TYPE_FUNCTION
