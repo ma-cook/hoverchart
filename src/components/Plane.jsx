@@ -56,12 +56,20 @@ const Plane = ({
   user,
   currentSpaceId,
 }) => {
-  // Get object data from objects store
-  const objects = useObjectsStore((state) => state.objects);
-  const objectData = objects.find((obj) => obj.id === id);
+  // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
+  const objectData = useObjectsStore(
+    useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+  );
 
-  // Get connections from connection store instead of props
-  const connectionsFromStore = useConnectionStore((state) => state.connections);
+  // PERFORMANCE: Subscribe only to connections involving THIS plane.
+  const connectionsFromStore = useConnectionStore(
+    useCallback(
+      (state) => state.connections.filter(
+        (c) => c.start?.objectId === id?.toString() || c.end?.objectId === id?.toString()
+      ),
+      [id]
+    )
+  );
 
   // Store state and actions - moved before memoized values to avoid initialization order issues
   const plane = usePlaneStore((state) => state.getPlane(id));

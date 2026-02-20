@@ -207,18 +207,8 @@ const Connection = React.memo(
       }
     };
     const handleLineStyleChange = (connectionId, styleType) => {
-      console.log('🎨 [ConnectionsRenderer] handleLineStyleChange called:', {
-        connectionId,
-        styleType,
-        hasOnLineStyleChange: !!onLineStyleChange,
-      });
-
       if (onLineStyleChange) {
-        console.log(
-          '🎨 [ConnectionsRenderer] Calling onLineStyleChange prop...'
-        );
         onLineStyleChange(connectionId, styleType);
-        console.log('🎨 [ConnectionsRenderer] onLineStyleChange prop called');
       } else {
         // Check if connection is being deleted before saving
         if (isDeleting) {
@@ -235,13 +225,6 @@ const Connection = React.memo(
           direction = parts[1];
         }
 
-        console.log('🎨 Updating line style:', {
-          connectionId,
-          styleType,
-          baseStyle,
-          direction,
-        });
-
         // Update both styleType and dashDirection with timestamp to force re-render
         updateConnection(connectionId, {
           styleType: baseStyle,
@@ -253,11 +236,6 @@ const Connection = React.memo(
           (conn) => conn.id === connectionId
         );
         if (updatedConnection) {
-          console.log('💾 Saving connection with style:', {
-            id: updatedConnection.id,
-            styleType: baseStyle,
-            dashDirection: direction,
-          });
           saveConnection(window.currentUser?.uid, window.currentSpaceId, {
             ...updatedConnection,
             styleType: baseStyle,

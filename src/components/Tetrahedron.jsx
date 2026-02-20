@@ -233,9 +233,10 @@ const Tetrahedron = ({
     };
   }, []);
 
-  // Get object data from objects store
-  const objects = useObjectsStore((state) => state.objects);
-  const objectData = objects.find((obj) => obj.id === id);
+  // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
+  const objectData = useObjectsStore(
+    useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+  );
 
   // Extract properties with defaults
   const position = React.useMemo(
@@ -265,8 +266,19 @@ const Tetrahedron = ({
     [objectData?.faceTextStyles]
   );
 
-  // Get connections from store
-  const connectionsFromStore = useConnectionStore((state) => state.connections);
+  // PERFORMANCE: Subscribe only to connections involving THIS tetrahedron.
+  const connectionsFromStore = useConnectionStore(
+    useCallback(
+      (state) => state.connections.filter(
+        (c) => {
+          const sid = c.start?.objectId || c.start?.cube?.id;
+          const eid = c.end?.objectId || c.end?.cube?.id;
+          return sid === id || eid === id;
+        }
+      ),
+      [id]
+    )
+  );
 
   // Refs
   const contentRef = useRef();

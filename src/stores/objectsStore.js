@@ -97,18 +97,31 @@ const useObjectsStore = createWithEqualityFn(
 
         // IDs are same, but check if any object data changed (position, scale, etc.)
         // Create a lightweight hash of each object for comparison
-        const currentHash = currentObjects
-          .map(
-            (obj) =>
-              `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
-          )
-          .join('|');
-        const newHash = filteredObjects
-          .map(
-            (obj) =>
-              `${obj.id}:${obj.position?.join(',')}:${obj.scale?.join(',')}`
-          )
-          .join('|');
+        // PERFORMANCE FIX: Use fast numeric hash instead of large string concatenation.
+        // The old approach built one giant string per object then joined them all —
+        // O(N) string allocations that are immediately GC'd on every update.
+        // This rolling XOR hash avoids any string allocation.
+        const numericHash = (arr) => {
+          if (!arr) return 0;
+          let h = 0;
+          for (let i = 0; i < arr.length; i++) {
+            // Round to 3 decimal places to match floating-point precision noise
+            h = (Math.imul(h, 31) ^ Math.round(arr[i] * 1000)) | 0;
+          }
+          return h;
+        };
+
+        let currentHash = 0;
+        let newHash = 0;
+        for (let i = 0; i < currentObjects.length; i++) {
+          const co = currentObjects[i];
+          const no = filteredObjects[i];
+          // Mix in id, position hash, and scale hash
+          const idVal = typeof co.id === 'number' ? co.id : (co.id ? co.id.length : 0);
+          currentHash = (Math.imul(currentHash, 1000003) ^ idVal ^ numericHash(co.position) ^ (numericHash(co.scale) * 7)) | 0;
+          const idVal2 = typeof no.id === 'number' ? no.id : (no.id ? no.id.length : 0);
+          newHash = (Math.imul(newHash, 1000003) ^ idVal2 ^ numericHash(no.position) ^ (numericHash(no.scale) * 7)) | 0;
+        }
 
         if (currentHash !== newHash) {
           set({ objects: filteredObjects, _isUpdating: false });

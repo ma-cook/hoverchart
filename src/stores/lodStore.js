@@ -68,6 +68,11 @@ const useLODStore = create((set, get) => ({
   // Map of objectId -> LOD level
   lodLevels: new Map(),
   
+  // Version counter incremented when lodLevels Map is mutated in-place.
+  // Subscribers that depend on this counter will re-run when LOD levels change
+  // without requiring an O(N) Map copy on every update.
+  _lodVersion: 0,
+  
   // Set of parent/container object IDs
   parentIds: new Set(),
   
@@ -85,26 +90,31 @@ const useLODStore = create((set, get) => ({
   
   /**
    * Set LOD level for a specific object
+   * PERFORMANCE: Mutates the Map in-place and bumps _lodVersion to avoid O(N) copy.
    */
   setLODLevel: (objectId, level) => {
-    set((state) => {
-      const newLevels = new Map(state.lodLevels);
-      newLevels.set(objectId, level);
-      return { lodLevels: newLevels };
-    });
+    const state = get();
+    if (state.lodLevels.get(objectId) === level) return; // No change
+    state.lodLevels.set(objectId, level); // Mutate in-place
+    set({ _lodVersion: state._lodVersion + 1 });
   },
   
   /**
    * Batch update LOD levels for multiple objects
+   * PERFORMANCE: Mutates the Map in-place and bumps _lodVersion once per batch.
    */
   batchSetLODLevels: (updates) => {
-    set((state) => {
-      const newLevels = new Map(state.lodLevels);
-      for (const [objectId, level] of updates) {
-        newLevels.set(objectId, level);
+    const state = get();
+    let changed = false;
+    for (const [objectId, level] of updates) {
+      if (state.lodLevels.get(objectId) !== level) {
+        state.lodLevels.set(objectId, level);
+        changed = true;
       }
-      return { lodLevels: newLevels };
-    });
+    }
+    if (changed) {
+      set({ _lodVersion: state._lodVersion + 1 });
+    }
   },
   
   /**
@@ -235,6 +245,7 @@ const useLODStore = create((set, get) => ({
   clearLODData: () => {
     set({
       lodLevels: new Map(),
+      _lodVersion: 0,
       parentIds: new Set(),
       parentChildMap: new Map(),
       childParentMap: new Map(),
@@ -246,7 +257,7 @@ const useLODStore = create((set, get) => ({
    * Clear LOD levels only (keep relationships)
    */
   clearLODLevels: () => {
-    set({ lodLevels: new Map() });
+    set({ lodLevels: new Map(), _lodVersion: 0 });
   },
 }));
 

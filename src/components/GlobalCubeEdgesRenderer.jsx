@@ -87,7 +87,8 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   const { camera, size } = useThree();
   
   // Get LOD data from store
-  const { lodLevels, childParentMap, parentIds, lodEnabled } = useLODStore();
+  // _lodVersion is a counter incremented when lodLevels Map is mutated in-place (avoids O(N) Map copy)
+  const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } = useLODStore();
   
   // Filter cubes based on LOD level - only render edges for FULL LOD cubes
   // Grouping containers are excluded from LOD and always render
@@ -114,7 +115,8 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.FULL;
     });
-  }, [cubes, lodLevels, childParentMap, parentIds, lodEnabled]);
+  // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)
+  }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
   // Calculate total number of line instances needed
   const totalEdges = filteredCubes.length * EDGES_PER_CUBE;
@@ -158,6 +160,14 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
 
     return { geometry: geo, material: mat };
   }, [totalEdges, defaultLineWidth, cubeIds]);
+
+  // Dispose GPU resources when geometry/material change or on unmount
+  useEffect(() => {
+    return () => {
+      geometry?.dispose();
+      material?.dispose();
+    };
+  }, [geometry, material]);
 
   // Keep resolution uniform in sync with the actual viewport size.
   // Material is created in useMemo so we update it via a separate effect.
@@ -320,11 +330,6 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
         visibleCount++;
       }
     });
-    
-    // Debug log (remove after testing)
-    if (enableCulling && needsFullUpdateRef.current) {
-      console.log(`[Frustum Culling] Visible: ${visibleCount}/${cubes.length} cubes`);
-    }
 
     if (needsUpdate) {
       instanceStart.needsUpdate = true;

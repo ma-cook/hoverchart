@@ -98,7 +98,8 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
   const { camera, size } = useThree();
   
   // Get LOD data from store
-  const { lodLevels, childParentMap, parentIds, lodEnabled } = useLODStore();
+  // _lodVersion is a counter incremented when lodLevels Map is mutated in-place (avoids O(N) Map copy)
+  const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } = useLODStore();
   
   // Filter dodecahedrons based on LOD level - only render edges for FULL LOD
   // Grouping containers are excluded from LOD and always render
@@ -124,7 +125,8 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
       const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.FULL;
     });
-  }, [dodecahedrons, lodLevels, childParentMap, parentIds, lodEnabled]);
+  // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)
+  }, [dodecahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
   const totalEdges = filteredDodecahedrons.length * EDGES_PER_DODECAHEDRON;
   
@@ -167,6 +169,14 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
 
     return { geometry: geo, material: mat };
   }, [totalEdges, defaultLineWidth]);
+
+  // Dispose GPU resources when geometry/material change or on unmount
+  useEffect(() => {
+    return () => {
+      geometry?.dispose();
+      material?.dispose();
+    };
+  }, [geometry, material]);
 
   // Keep resolution uniform in sync with the actual viewport size.
   useEffect(() => {
@@ -317,11 +327,6 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
         visibleCount++;
       }
     });
-    
-    // Debug log (remove after testing)
-    if (enableCulling && needsFullUpdateRef.current) {
-      console.log(`[Dodecahedron Frustum Culling] Visible: ${visibleCount}/${filteredDodecahedrons.length}`);
-    }
 
     if (needsUpdate) {
       instanceStart.needsUpdate = true;

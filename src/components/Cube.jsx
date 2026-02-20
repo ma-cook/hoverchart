@@ -190,8 +190,16 @@ const Cube = ({
   // const setIndicatorConnected = useFaceIndicatorStore(
   //   (state) => state.setIndicatorConnected
   // );
-  // Get connections from connection store instead of props
-  const connectionsFromStore = useConnectionStore((state) => state.connections);
+  // PERFORMANCE: Subscribe only to connections involving THIS cube.
+  // Returns a filtered array; avoids O(N*C) re-renders when unrelated connections change.
+  const connectionsFromStore = useConnectionStore(
+    useCallback(
+      (state) => state.connections.filter(
+        (c) => c.start?.objectId === id?.toString() || c.end?.objectId === id?.toString()
+      ),
+      [id]
+    )
+  );
 
   // Refs - declare early so they can be used in memoized values
   const meshRef = useRef();
@@ -1554,6 +1562,23 @@ const Cube = ({
 };
 
 // Apply memo with custom comparison to optimize renders
+// Fast array equality for position/scale [x,y,z]
+const arraysEqual = (a, b) =>
+  a === b || (a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2]);
+
+// Fast shallow object equality (one level deep, handles null/undefined)
+const shallowObjEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+};
+
 export default React.memo(Cube, (prevProps, nextProps) => {
   // Always re-render when selection changes
   if (prevProps.selected !== nextProps.selected) return false;
@@ -1566,16 +1591,16 @@ export default React.memo(Cube, (prevProps, nextProps) => {
     return false;
 
   // Re-render when position, scale, or color changes
-  if (!isEqual(prevProps.position, nextProps.position)) return false;
-  if (!isEqual(prevProps.scale, nextProps.scale)) return false;
+  if (!arraysEqual(prevProps.position, nextProps.position)) return false;
+  if (!arraysEqual(prevProps.scale, nextProps.scale)) return false;
   if (prevProps.color !== nextProps.color) return false;
 
   // Re-render when text or styles change
   if (prevProps.headerText !== nextProps.headerText) return false;
-  if (!isEqual(prevProps.textStyle, nextProps.textStyle)) return false;
-  if (!isEqual(prevProps.faceColors, nextProps.faceColors)) return false;
-  if (!isEqual(prevProps.faceTexts, nextProps.faceTexts)) return false;
-  if (!isEqual(prevProps.faceTextStyles, nextProps.faceTextStyles))
+  if (!shallowObjEqual(prevProps.textStyle, nextProps.textStyle)) return false;
+  if (!shallowObjEqual(prevProps.faceColors, nextProps.faceColors)) return false;
+  if (!shallowObjEqual(prevProps.faceTexts, nextProps.faceTexts)) return false;
+  if (!shallowObjEqual(prevProps.faceTextStyles, nextProps.faceTextStyles))
     return false;
   // Re-render when selected indicators change
   if (

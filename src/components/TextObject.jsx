@@ -46,27 +46,28 @@ const TextObject = React.memo(
     // Access Three.js scene and camera for orbit controls and distance calculation
     const { scene, camera } = useThree();
 
-    // Get object data from objects store
-    const objects = useObjectsStore((state) => state.objects);
-    const objectData = objects.find((obj) => obj.id === id);
+    // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
+    const objectData = useObjectsStore(
+      useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+    );
 
-    // Get connections from connection store instead of props
+    // PERFORMANCE: Subscribe only to connections involving THIS text object.
     const connectionsFromStore = useConnectionStore(
-      (state) => state.connections
+      useCallback(
+        (state) => state.connections.filter(
+          (c) => {
+            const sid = String(c.start?.objectId || c.start?.id || '');
+            const eid = String(c.end?.objectId || c.end?.id || '');
+            const thisId = id?.toString() || '';
+            return sid === thisId || eid === thisId;
+          }
+        ),
+        [id]
+      )
     );
 
     // Memoize derived values to prevent unnecessary re-renders
     const text = useMemo(() => objectData?.text || '', [objectData?.text]);
-    // Debug: Log position data sources
-    console.log('🔍 TextObject position debugging:', {
-      id,
-      positionProp: position,
-      objectDataPosition: objectData?.position,
-      positionsMatch:
-        position && objectData?.position
-          ? JSON.stringify(position) === JSON.stringify(objectData.position)
-          : 'N/A',
-    });
     // Mobile-aware text style with larger default font size
     const isMobile =
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -166,9 +167,6 @@ const TextObject = React.memo(
     // Get store state for this object - MOVED EARLIER
     const textObject = getTextObject(id);
 
-    // Debug: Log the actual textObject from store
-    console.log('🔧 Raw textObject from store:', { id, textObject });
-
     // Use local state as backup and sync with store - like Cube component does
     const [localShowTransform, setLocalShowTransform] = useState(false);
     const [localShowResizeControls, setLocalShowResizeControls] =
@@ -205,19 +203,6 @@ const TextObject = React.memo(
       localShowResizeControls,
     ]);
 
-    // Debug: Log the final values being used
-    console.log('🔧 Final state values:', {
-      id,
-      localShowTransform,
-      storeShowTransform,
-      finalShowTransform: showTransform,
-      localShowResizeControls,
-      storeShowResizeControls,
-      finalShowResizeControls: showResizeControls,
-      selected,
-      textObject: textObject ? 'exists' : 'null',
-    });
-
     // Effect to manage orbit controls based on text selection state
     useEffect(() => {
       if (isSelectingTextRef.current) {
@@ -225,9 +210,6 @@ const TextObject = React.memo(
         setOrbitControlsEnabled(false);
       } else if (hasTextSelection) {
         // Keep orbit controls disabled when there's an active text selection
-        console.log(
-          '📝 Keeping orbit controls disabled due to active text selection'
-        );
         setOrbitControlsEnabled(false);
       } else if (isEditing) {
         // Keep orbit controls disabled when editing
@@ -238,27 +220,6 @@ const TextObject = React.memo(
       }
     }, [setOrbitControlsEnabled, hasTextSelection, isEditing]); // Now safe to include since useCallback is stable
 
-    // Debug logging for transform control states
-    console.log('🔧 TextObject transform states:', {
-      id,
-      selected,
-      textObject,
-      showTransform,
-      showResizeControls,
-      showTransformAndSelected: showTransform && selected,
-      showResizeControlsAndSelected: showResizeControls && selected,
-    });
-
-    // Additional debug for state changes
-    useEffect(() => {
-      console.log('🔧 State change detected:', {
-        id,
-        showTransform,
-        showResizeControls,
-        selected,
-        textObjectFromStore: textObject,
-      });
-    }, [showTransform, showResizeControls, selected, textObject, id]);
     // Initialize text object UI state in store if it doesn't exist
     useEffect(() => {
       if (!textObject) {
@@ -355,12 +316,6 @@ const TextObject = React.memo(
 
     // Transform and resize handlers - matching Cube pattern with immediate local state updates
     const handleTransformToggle = useCallback(() => {
-      console.log('🔧 Transform toggle - before:', {
-        showTransform,
-        showResizeControls,
-        localShowTransform,
-        localShowResizeControls,
-      });
       const newShowTransform = !showTransform;
 
       // Update local state immediately for instant UI response
@@ -372,11 +327,6 @@ const TextObject = React.memo(
       if (newShowTransform) {
         setShowResizeControls(false);
       }
-
-      console.log('🔧 Transform toggle - after:', {
-        newShowTransform,
-        willDisableResize: newShowTransform,
-      });
     }, [
       showTransform,
       showResizeControls,
@@ -387,12 +337,6 @@ const TextObject = React.memo(
     ]);
 
     const handleResizeToggle = useCallback(() => {
-      console.log('🔧 Resize toggle - before:', {
-        showTransform,
-        showResizeControls,
-        localShowTransform,
-        localShowResizeControls,
-      });
       const newShowResizeControls = !showResizeControls;
 
       // Update local state immediately for instant UI response
@@ -404,11 +348,6 @@ const TextObject = React.memo(
       if (newShowResizeControls) {
         setShowTransform(false);
       }
-
-      console.log('🔧 Resize toggle - after:', {
-        newShowResizeControls,
-        willDisableTransform: newShowResizeControls,
-      });
     }, [
       showResizeControls,
       showTransform,
@@ -444,9 +383,6 @@ const TextObject = React.memo(
             ) {
               // Clicked outside textarea
               if (hasTextSelection) {
-                console.log(
-                  '📝 Clicked outside textarea - clearing selection and re-enabling orbit controls'
-                );
                 setHasTextSelection(false);
                 setSelectedText({ start: 0, end: 0 });
                 setTimeout(() => {
@@ -490,10 +426,6 @@ const TextObject = React.memo(
 
       // Only initialize if we don't have local text but we have store text
       if (!localText && text && text !== 'Click to edit text...') {
-        console.log('🟦 TextObject initializing with store text:', {
-          id,
-          text,
-        });
         setLocalText(text);
         textContentRef.current = text;
       }
@@ -504,16 +436,12 @@ const TextObject = React.memo(
       ) {
         const placeholder = 'Click to edit text...';
         if (localText !== placeholder) {
-          console.log('🟦 TextObject initializing with placeholder:', { id });
           setLocalText(placeholder);
           textContentRef.current = ''; // Keep ref empty for new objects
         }
       }
       // Handle case where store has placeholder text - this should not happen in new system
       else if (text === 'Click to edit text...' && !textContentRef.current) {
-        console.log('🟦 TextObject initializing placeholder from store:', {
-          id,
-        });
         setLocalText(text);
         textContentRef.current = ''; // Ref stays empty
       }
@@ -526,13 +454,6 @@ const TextObject = React.memo(
         justFinishedEditingRef.current ||
         isActivelyEditing
       ) {
-        console.log('🔴 TextObject sync blocked - editing state:', {
-          id,
-          isLocallyEditing,
-          isEditing,
-          justFinishedEditing: justFinishedEditingRef.current,
-          isActivelyEditing,
-        });
         return;
       }
 
@@ -543,12 +464,6 @@ const TextObject = React.memo(
         if (textContentRef.current && textContentRef.current !== text) {
           // If our ref has different content than store, it means we're ahead of the store
           // Don't sync from store to avoid overriding our more recent changes
-          console.log('🟡 TextObject sync blocked - ref ahead of store:', {
-            id,
-            storeText: text,
-            refText: textContentRef.current,
-            localText,
-          });
           return;
         }
 
@@ -558,14 +473,6 @@ const TextObject = React.memo(
           localText !== 'Click to edit text...' &&
           (!text || text === 'Click to edit text...')
         ) {
-          console.log(
-            '🟡 TextObject sync blocked - localText has content, store has placeholder:',
-            {
-              id,
-              localText,
-              storeText: text,
-            }
-          );
           return;
         }
 
@@ -578,24 +485,9 @@ const TextObject = React.memo(
             textContentRef.current === text ||
             textContentRef.current === 'Click to edit text...')
         ) {
-          console.log('🟢 TextObject syncing from store:', {
-            id,
-            fromStore: text,
-            previousLocal: localText,
-            previousRef: textContentRef.current,
-          });
           setLocalText(text);
           textContentRef.current = text;
         } else {
-          console.log(
-            '🟡 TextObject sync skipped - preserving local content:',
-            {
-              id,
-              storeText: text,
-              localText,
-              refText: textContentRef.current,
-            }
-          );
         }
       }
     }, [text, isLocallyEditing, isEditing, isActivelyEditing, localText, id]);
@@ -656,11 +548,6 @@ const TextObject = React.memo(
 
       // Validate connections is an array
       if (!Array.isArray(connectionsFromStore)) {
-        console.error(
-          '❌ connectionsFromStore is not an array in TextObject useEffect:',
-          typeof connectionsFromStore,
-          connectionsFromStore
-        );
         return;
       }
       const connectedIds = new Set();
@@ -739,7 +626,6 @@ const TextObject = React.memo(
     useEffect(() => {
       // CRITICAL: Don't update if we're actively transforming to prevent position conflicts
       if (groupRef.current && groupRef.current.userData._transformActive) {
-        console.log('⚠️ Skipping position update during active transform:', id);
         return;
       }
 
@@ -752,13 +638,6 @@ const TextObject = React.memo(
         Date.now() - groupRef.current.userData.positionUpdated < 2000
       ) {
         const finalPos = groupRef.current.userData.finalPosition;
-        console.log('🛡️ Using recent final position instead of prop:', {
-          id,
-          propPosition: position,
-          finalPosition: finalPos,
-          timeSinceUpdate:
-            Date.now() - groupRef.current.userData.positionUpdated,
-        });
 
         // Use the final position instead of prop position
         groupRef.current.position.set(finalPos[0], finalPos[1], finalPos[2]);
@@ -803,15 +682,7 @@ const TextObject = React.memo(
 
         // If we have a recent final position but current position doesn't match it
         if (timeSinceUpdate < 5000 && !isEqual(finalPos, currentPosArray)) {
-          console.log(
-            '🔄 Position inconsistency detected - restoring final position:',
-            {
-              id,
-              currentPos: currentPosArray,
-              finalPos,
-              timeSinceUpdate,
-            }
-          );
+
 
           // Restore final position
           groupRef.current.position.set(finalPos[0], finalPos[1], finalPos[2]);
@@ -909,23 +780,9 @@ const TextObject = React.memo(
           };
         }
 
-        console.log('💾 Updating database with state:', {
-          id,
-          text: currentState.text,
-          textStyle: currentState.textStyle,
-          hasChanged:
-            !lastUpdateRef.current ||
-            !isEqual(lastUpdateRef.current, currentState),
-        });
-
         lastUpdateRef.current = currentState;
         onUpdate(id, currentState);
       } else {
-        console.log('⏭️ Skipping database update - no changes detected:', {
-          id,
-          currentText: currentState.text,
-          lastText: lastUpdateRef.current?.text,
-        });
       }
     }, [
       id,
@@ -1032,15 +889,6 @@ const TextObject = React.memo(
         hasExistingContent !== 'Click to edit text...'
       ) {
         // Race condition detected - contentEditable was cleared but we have existing content
-        console.log(
-          '🟡 TextObject: Detected race condition - preserving existing content over empty contentEditable:',
-          {
-            id,
-            contentEditableValue,
-            textContentRef: textContentRef.current,
-            localText,
-          }
-        );
         finalText = textContentRef.current || localText;
       } else if (isActivelyEditing || isEditing) {
         // If we were actually editing, use the contentEditable value as primary source
@@ -1064,19 +912,6 @@ const TextObject = React.memo(
           finalText = textContentRef.current || localText || '';
         }
       }
-
-      // Debug logging to track text saving
-      console.log('🔵 TextObject handleBlur:', {
-        id,
-        contentEditableValue,
-        textContentRef: textContentRef.current,
-        localText,
-        finalText,
-        storeText: text,
-      });
-
-      // Set flag to prevent sync effect from overriding our changes - set early and keep longer
-      justFinishedEditingRef.current = true;
 
       // Update refs and local state immediately
       textContentRef.current = finalText; // This is critical - update ref FIRST
@@ -1124,7 +959,6 @@ const TextObject = React.memo(
           lastEditTime: Date.now(),
         };
 
-        console.log('🟢 TextObject saving to database:', updatePayload);
         onUpdate(id, updatePayload);
       }
 
@@ -1144,11 +978,9 @@ const TextObject = React.memo(
       // Clear the flag after an even longer delay to ensure complete store propagation
       setTimeout(() => {
         justFinishedEditingRef.current = false;
-        console.log('🟡 TextObject: Cleared justFinishedEditingRef for', id);
       }, 3000); // Much longer delay to ensure complete propagation
 
       // Re-enable orbit controls when textarea loses focus
-      console.log('📝 Textarea lost focus - enabling orbit controls');
       setOrbitControlsEnabled(true);
       isSelectingTextRef.current = false;
     }; // Improved click handler to set focus flags only during initial activation
@@ -1156,23 +988,11 @@ const TextObject = React.memo(
       e.stopPropagation();
       e.preventDefault();
 
-      console.log('🔵 TextObject handleDivClick - starting edit:', {
-        id,
-        currentLocalText: localText,
-        storeText: text,
-        refText: textContentRef.current,
-        isCurrentlyEditing: isEditing,
-        eventDetail: e.detail, // Track click count to detect double-clicks
-      });
-
       onClick();
 
       // CRITICAL FIX: Prevent double-click from accidentally clearing text
       // If this is a double-click and we're not currently editing, be extra careful
       if (e.detail >= 2 && !isEditing) {
-        console.log(
-          '🟡 TextObject: Double-click detected on non-editing text, preserving content'
-        );
         // Ensure we preserve existing content on double-click
         if (
           textContentRef.current &&
@@ -1201,16 +1021,6 @@ const TextObject = React.memo(
         ) {
           editingText = '';
         }
-
-        console.log('🟢 TextObject initializing edit with text:', {
-          id,
-          editingText,
-          sources: {
-            ref: textContentRef.current,
-            local: localText,
-            store: text,
-          },
-        });
 
         setLocalText(editingText);
         textContentRef.current = editingText;
@@ -1416,12 +1226,6 @@ const TextObject = React.memo(
     const handleScale = (e) => {
       if (!e.target || !e.target.object) return;
 
-      console.log('📏 TextObject handleScale called:', {
-        id,
-        currentVisualScale: visualScale,
-        meshScale: e.target.object.scale.toArray(),
-      });
-
       // Get scale values from the invisible mesh
       const newWidth = e.target.object.scale.x;
       const newHeight = e.target.object.scale.y;
@@ -1435,28 +1239,8 @@ const TextObject = React.memo(
         visualScale[2], // Keep Z scale unchanged
       ];
 
-      console.log('📏 Scale calculation:', {
-        id,
-        newWidth,
-        newHeight,
-        oldWidth: visualScale[0],
-        oldHeight: visualScale[1],
-        widthChanged,
-        finalScale,
-      });
-
       // If width changed, recalculate height based on text content
       if (widthChanged && textAreaRef.current) {
-        console.log(
-          '📏 Width changed, recalculating height for text wrapping:',
-          {
-            id,
-            oldWidth: visualScale[0],
-            newWidth,
-            oldHeight: visualScale[1],
-          }
-        );
-
         // Temporarily update the container width to measure text height
         const tempContainer = document.createElement('div');
         tempContainer.style.position = 'absolute';
@@ -1487,24 +1271,10 @@ const TextObject = React.memo(
         const minHeight = 2; // Minimum height
         const dynamicHeight = Math.max(minHeight, calculatedHeight);
 
-        console.log('📏 Calculated new height:', {
-          id,
-          measuredPixelHeight: measuredHeight,
-          calculatedHeight,
-          dynamicHeight,
-          minHeight,
-        });
-
         finalScale = [newWidth, dynamicHeight, visualScale[2]];
       }
 
       // Update local visual scale immediately for real-time feedback
-      console.log('📏 Updating visualScale:', {
-        id,
-        oldVisualScale: visualScale,
-        newVisualScale: finalScale,
-      });
-
       setVisualScale(finalScale);
       setScale(finalScale); // Also update store (triggers DB update)
 
@@ -1547,20 +1317,8 @@ const TextObject = React.memo(
           lastResizeTime: Date.now(),
         };
 
-        console.log('📏 Saving resized text object to database:', {
-          id,
-          newScale: finalScale,
-          text: currentText.substring(0, 50) + '...',
-          widthChanged,
-        });
-
         // Throttle database updates during resize - update after 300ms of no changes
         resizeUpdateTimeoutRef.current = setTimeout(() => {
-          console.log('📏 Executing deferred scale update to database:', {
-            id,
-            scale: finalScale,
-          });
-
           // Force scale update to local store
           const objectsStore = useObjectsStore.getState();
           const updatedObjects = objectsStore.objects.map((obj) =>
@@ -1708,19 +1466,9 @@ const TextObject = React.memo(
     };
     const handleStyleChange = useCallback(
       (newStyle) => {
-        console.log('🎨 TextObject handleStyleChange called:', {
-          id,
-          newStyle,
-          hasTextSelection,
-          selectedText,
-        });
-
         // Define applyStyleToSelection function inside useCallback
         const applyStyleToSelectionInternal = (style, start, end) => {
-          console.log('🎨 Applying style to selection:', { style, start, end });
-
           if (!textAreaRef.current) {
-            console.log('❌ No contentEditable ref available');
             return;
           }
 
@@ -1731,7 +1479,6 @@ const TextObject = React.memo(
             !currentSelection.range ||
             !currentSelection.selection
           ) {
-            console.log('❌ No stored selection available');
             return;
           }
 
@@ -1742,9 +1489,7 @@ const TextObject = React.memo(
           try {
             currentSelection.selection.removeAllRanges();
             currentSelection.selection.addRange(currentSelection.range);
-            console.log('✅ Restored selection focus');
           } catch (error) {
-            console.log('❌ Could not restore selection:', error);
             return;
           }
 
@@ -1840,21 +1585,12 @@ const TextObject = React.memo(
           const end = selectedText.end;
 
           if (start !== end) {
-            console.log('🎨 Applying style to selected text:', {
-              start,
-              end,
-              style: actualStyleChanges,
-            });
             // Apply style to selected portion only
             applyStyleToSelectionInternal(actualStyleChanges, start, end);
             return;
           }
         }
 
-        console.log(
-          '🎨 Applying style to entire text object:',
-          actualStyleChanges
-        );
         // Apply style changes to the entire text object (existing behavior)
         setTextStyle((prev) => ({ ...prev, ...actualStyleChanges }));
 
@@ -1885,21 +1621,16 @@ const TextObject = React.memo(
     // Text selection handlers
     const handleTextSelection = () => {
       if (!textAreaRef.current) {
-        console.log('📝 No contentEditable ref available for text selection');
         return;
       }
 
       // Only process if contentEditable is focused
       if (document.activeElement !== textAreaRef.current) {
-        console.log(
-          '📝 ContentEditable not focused, skipping selection handling'
-        );
         return;
       }
 
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) {
-        console.log('📝 No text selection available');
         setSelectedText({ start: 0, end: 0 });
         setHasTextSelection(false);
         return;
@@ -1918,22 +1649,11 @@ const TextObject = React.memo(
       });
       setHasTextSelection(hasSelection);
 
-      console.log('📝 Text selection changed:', {
-        id,
-        selectedText,
-        hasSelection,
-        rangeStartOffset: range.startOffset,
-        rangeEndOffset: range.endOffset,
-        contentEditableFocused: document.activeElement === textAreaRef.current,
-      });
-
       // If there's a selection, keep orbit controls disabled a bit longer
       if (hasSelection) {
-        console.log('📝 Text selected - keeping orbit controls disabled');
         setOrbitControlsEnabled(false);
       } else if (!isSelectingTextRef.current && !isEditing) {
         // If no selection and not actively selecting, can re-enable orbit controls
-        console.log('📝 No text selection - can re-enable orbit controls');
         setTimeout(() => {
           setOrbitControlsEnabled(true);
         }, 50);
@@ -1985,11 +1705,6 @@ const TextObject = React.memo(
     // Effect to synchronize invisible mesh scale with visualScale
     useEffect(() => {
       if (resizeMeshRef.current) {
-        console.log('🔧 Syncing resize mesh scale:', {
-          id,
-          visualScale,
-          oldMeshScale: resizeMeshRef.current.scale.toArray(),
-        });
         resizeMeshRef.current.scale.set(
           visualScale[0],
           visualScale[1],
@@ -2004,10 +1719,6 @@ const TextObject = React.memo(
     // Initialize resize mesh on mount
     useEffect(() => {
       if (resizeMeshRef.current) {
-        console.log('🔧 Initializing resize mesh:', {
-          id,
-          initialScale: visualScale,
-        });
         resizeMeshRef.current.scale.set(
           visualScale[0],
           visualScale[1],
@@ -2131,14 +1842,6 @@ const TextObject = React.memo(
 
         // Save final state if there are unsaved changes or position changed
         if (onUpdate) {
-          console.log('🔄 Component unmounting - saving final state:', {
-            id,
-            text: textContentRef.current || text,
-            finalPosition,
-            propPosition: position,
-            positionChanged: !isEqual(finalPosition, position),
-          });
-
           onUpdate(id, {
             type: 'text',
             id,
@@ -2177,12 +1880,6 @@ const TextObject = React.memo(
         Date.now() - groupRef.current.userData.positionUpdated < 5000
       ) {
         const finalPos = groupRef.current.userData.finalPosition;
-        console.log('🎯 Using finalPosition for group:', {
-          id,
-          finalPos,
-          propPos: position,
-          timeSince: Date.now() - groupRef.current.userData.positionUpdated,
-        });
         return finalPos;
       }
 
@@ -2195,12 +1892,6 @@ const TextObject = React.memo(
         storeObject._lastPositionUpdate &&
         Date.now() - storeObject._lastPositionUpdate < 5000
       ) {
-        console.log('🎯 Using store position for group:', {
-          id,
-          storePos: storeObject.position,
-          propPos: position,
-          timeSince: Date.now() - storeObject._lastPositionUpdate,
-        });
         return storeObject.position;
       }
 
@@ -2217,10 +1908,6 @@ const TextObject = React.memo(
     useEffect(() => {
       // Skip position updates if transform is active to prevent snap-back
       if (groupRef.current?.userData?._transformActive) {
-        console.log(
-          '⚠️ Skipping effectivePosition update during active transform:',
-          id
-        );
         return;
       }
 
@@ -2228,17 +1915,6 @@ const TextObject = React.memo(
 
       // Only update if the position actually changed
       if (!isEqual(effectivePosition, newPos)) {
-        console.log('🔄 Updating effective position:', {
-          id,
-          oldPos: effectivePosition,
-          newPos,
-          reason: groupRef.current?.userData?.finalPosition
-            ? 'finalPosition'
-            : groupRef.current?.userData?.position
-            ? 'userData'
-            : 'propPosition',
-        });
-
         // Force directly setting the THREE.js object position to ensure consistency
         if (groupRef.current) {
           groupRef.current.position.set(newPos[0], newPos[1], newPos[2]);
@@ -2323,19 +1999,6 @@ const TextObject = React.memo(
                         value = '';
                       }
 
-                      console.log(
-                        '📝 Setting initial contentEditable innerHTML:',
-                        {
-                          id,
-                          value,
-                          sources: {
-                            ref: textContentRef.current,
-                            local: localText,
-                            store: text,
-                          },
-                        }
-                      );
-
                       el.innerHTML = value;
                       setContentEditableInitialized(true);
                     }
@@ -2352,13 +2015,6 @@ const TextObject = React.memo(
                         savedContent &&
                         savedContent !== 'Click to edit text...'
                       ) {
-                        console.log(
-                          '🔧 Restoring accidentally cleared contentEditable:',
-                          {
-                            id,
-                            savedContent: savedContent.substring(0, 50) + '...',
-                          }
-                        );
                         el.innerHTML = savedContent;
                       }
                     }
@@ -2369,12 +2025,6 @@ const TextObject = React.memo(
                   onInput={(e) => {
                     // Handle input changes for contentEditable
                     const newText = e.target.innerHTML;
-                    console.log('📝 ContentEditable input changed:', {
-                      id,
-                      newText,
-                      previousLocal: localText,
-                      ref: textContentRef.current,
-                    });
 
                     // Update local state and ref
                     setLocalText(newText);
@@ -2387,9 +2037,6 @@ const TextObject = React.memo(
 
                     // Debounced save to database (save after 1 second of no typing)
                     textUpdateTimeoutRef.current = setTimeout(() => {
-                      console.log(
-                        '💾 Auto-saving contentEditable changes to database'
-                      );
                       updateDatabase();
                     }, 1000);
 
@@ -2409,7 +2056,6 @@ const TextObject = React.memo(
                     // Ensure contentEditable is focused for text selection
                     if (textAreaRef.current) {
                       textAreaRef.current.focus();
-                      console.log('📝 ContentEditable clicked and focused');
 
                       // Check selection after a brief delay to see if it changed
                       setTimeout(() => {
@@ -2420,9 +2066,6 @@ const TextObject = React.memo(
                   onDoubleClick={() => {
                     // Test if double-click selection works
                     if (textAreaRef.current) {
-                      console.log(
-                        '📝 Double-click detected, attempting word selection'
-                      );
                       // Let browser handle double-click word selection naturally
                       setTimeout(() => {
                         handleTextSelection();
@@ -2439,9 +2082,6 @@ const TextObject = React.memo(
 
                     // Set selection flag and disable orbit controls
                     isSelectingTextRef.current = true;
-                    console.log(
-                      '🔴 Starting text selection - disabling orbit controls'
-                    );
 
                     // Use helper function to safely disable orbit controls
                     setOrbitControlsEnabled(false);
@@ -2452,9 +2092,6 @@ const TextObject = React.memo(
                     // Clear selection flag but delay re-enabling orbit controls
                     // to allow text selection to complete
                     isSelectingTextRef.current = false;
-                    console.log(
-                      '🟢 Ending text selection - delaying orbit controls re-enable'
-                    );
 
                     // Check for text selection immediately
                     handleTextSelection();
@@ -2462,39 +2099,19 @@ const TextObject = React.memo(
                     // Delay re-enabling orbit controls to allow text selection to finalize
                     setTimeout(() => {
                       setOrbitControlsEnabled(true);
-                      console.log(
-                        '✅ Orbit controls re-enabled after text selection'
-                      );
                     }, 100); // 100ms delay to allow selection to complete
                   }}
                   onMouseMove={() => {
-                    // Log mouse movement during text selection
-                    if (
-                      textAreaRef.current &&
-                      document.activeElement === textAreaRef.current
-                    ) {
-                      const selection = window.getSelection();
-                      if (selection && selection.rangeCount > 0) {
-                        const range = selection.getRangeAt(0);
-                        if (!range.collapsed) {
-                          console.log('📝 Text selection during mouse move:', {
-                            selectedText: selection.toString(),
-                          });
-                        }
-                      }
-                    }
+                    // Track mouse movement during text selection
+                    // (no-op in production)
                   }}
                   onSelect={() => {
-                    console.log('📝 onSelect event fired');
                     // Give a small delay to ensure selection is stable
                     setTimeout(() => {
                       handleTextSelection();
                     }, 10);
                   }}
                   onFocus={() => {
-                    console.log(
-                      '📝 ContentEditable focused - pausing orbit controls'
-                    );
                     setOrbitControlsEnabled(false);
                   }}
                   onKeyUp={() => {
@@ -2610,23 +2227,6 @@ const TextObject = React.memo(
           return (
             <>
               {/* Transform controls - Fixed to match Cube pattern */}
-              {console.log('🔧 Transform Controls Render Check:', {
-                selected,
-                showTransform,
-                hasGroupRef: !!groupRef.current,
-                shouldRender: selected && showTransform && groupRef.current,
-                cameraDistance:
-                  groupRef.current && camera
-                    ? camera.position.distanceTo(
-                        (() => {
-                          const pos = new THREE.Vector3();
-                          groupRef.current.getWorldPosition(pos);
-                          return pos;
-                        })()
-                      )
-                    : 'N/A',
-                transformControlSize,
-              })}
               {selected && showTransform && groupRef.current && (
                 <DreiTransformControls
                   object={groupRef.current}
@@ -2649,20 +2249,6 @@ const TextObject = React.memo(
                 />
               )}
               {/* Resize transform controls - using invisible mesh for scale operations */}
-              {console.log('🔧 Resize Controls Render Check:', {
-                id,
-                selected,
-                showResizeControls,
-                hasGroupRef: !!groupRef.current,
-                hasResizeMeshRef: !!resizeMeshRef.current,
-                resizeMeshScale: resizeMeshRef.current
-                  ? resizeMeshRef.current.scale.toArray()
-                  : null,
-                visualScale,
-                shouldRender:
-                  selected && showResizeControls && resizeMeshRef.current,
-                transformControlSize,
-              })}
               {selected && showResizeControls && resizeMeshRef.current && (
                 <DreiTransformControls
                   object={resizeMeshRef.current}

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
@@ -53,8 +53,29 @@ const LODManager = ({ enabled = true }) => {
     setLODEnabled(enabled);
   }, [enabled, setLODEnabled]);
   
-  // Initialize parent-child relationships when objects change
+  // Keep a ref to the latest objects so effects can read it without being triggered by position changes
+  const objectsRef = useRef(objects);
   useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
+
+  // Stable key that only changes when container STRUCTURE changes (not positions/scales).
+  // This prevents the O(N²) spatial containment scan from re-running on every object move.
+  const containersKey = useMemo(() => {
+    if (!objects || objects.length === 0) return '';
+    return objects
+      .filter(obj => obj.merfolkData?.isContainer || obj.merfolkData?.isParent || obj.merfolkData?.parentId)
+      .map(obj => `${obj.id}:${obj.merfolkData?.parentId || 'root'}`)
+      .sort()
+      .join('|');
+  }, [objects]);
+
+  // Initialize parent-child relationships when container STRUCTURE changes.
+  // We read objectsRef.current inside so we always use the latest positions for
+  // spatial containment without making objects itself a dependency (which would
+  // re-run on every position update).
+  useEffect(() => {
+    const objects = objectsRef.current;
     if (!objects || objects.length === 0) {
       return;
     }
@@ -143,7 +164,9 @@ const LODManager = ({ enabled = true }) => {
     }
     
     initializedRef.current = true;
-  }, [objects, batchRegisterParentChild, batchRegisterParents]);
+  // containersKey changes only when container structure changes, not on position updates
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containersKey, batchRegisterParentChild, batchRegisterParents]);
   
   // Update LOD levels in useFrame
   useFrame(() => {

@@ -75,7 +75,7 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
         target={memoizedTarget} // Use memoized prop value for look-at target
         makeDefault
         enableDamping={true} // Enable damping for smoother camera movement
-        dampingFactor={0.1} // Moderate damping for responsive feel
+        dampingFactor={0.9} 
         screenSpacePanning={true}
         minDistance={10} // Increased minimum distance to help with precision at large distances
         maxDistance={1000000} // Increased max zoom distance to match far plane

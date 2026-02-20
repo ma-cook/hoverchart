@@ -7,6 +7,13 @@ import TextObject from './TextObject';
 import ModelObject from './ModelObject';
 import ContainerOutline from './ContainerOutline';
 
+// Module-level constant to avoid creating new object on every render
+const TRANSFORM_CONTROLS_CONFIG = {
+  matrixAutoUpdate: false,
+  coordinateSystem: 'local',
+  stackBehavior: 'detach_on_modify',
+};
+
 const ObjectRenderer = React.memo(
   ({
     obj,
@@ -64,11 +71,7 @@ const ObjectRenderer = React.memo(
           onMatrixChanged={(matrixWorld) =>
             handleObjectMatrixChanged(obj.id, matrixWorld)
           }
-          transformControls={{
-            matrixAutoUpdate: false,
-            coordinateSystem: 'local',
-            stackBehavior: 'detach_on_modify',
-          }}
+          transformControls={TRANSFORM_CONTROLS_CONFIG}
           onDelete={() => handleObjectDelete(obj.id)}
           handleObjectMove={handleObjectMove}
           onMove={(newPosition) =>
@@ -105,11 +108,7 @@ const ObjectRenderer = React.memo(
           onMatrixChanged={(matrixWorld) =>
             handleObjectMatrixChanged(obj.id, matrixWorld)
           }
-          transformControls={{
-            matrixAutoUpdate: false,
-            coordinateSystem: 'local',
-            stackBehavior: 'detach_on_modify',
-          }}
+          transformControls={TRANSFORM_CONTROLS_CONFIG}
           onDelete={() => handleObjectDelete(obj.id)}
           handleObjectMove={handleObjectMove}
           onMove={(newPosition) =>

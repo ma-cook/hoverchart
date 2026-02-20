@@ -123,9 +123,14 @@ const AtlasTextSprite = ({
   // PERFORMANCE: Lazy-initialize smoothedPositionRef to avoid creating Vector3 until actually needed
   const smoothedPositionRef = useRef(null);
 
+  // Track atlas version at geometry creation to detect resizes
+  const atlasVersionRef = useRef(0);
+  const atlasEntryKeyRef = useRef(null);
+
   // Create geometry and material using the atlas
   const { geometry, material } = useMemo(() => {
     if (!text || text.trim() === '') {
+      atlasEntryKeyRef.current = null;
       return { geometry: null, material: null };
     }
 
@@ -174,8 +179,20 @@ const AtlasTextSprite = ({
 
     if (!entry) {
       console.warn('Failed to add text to atlas:', text);
+      atlasEntryKeyRef.current = null;
       return { geometry: null, material: null };
     }
+
+    // Store atlas version and entry key for post-resize UV fixup
+    atlasVersionRef.current = atlas.version;
+    atlasEntryKeyRef.current = atlas._getKey(text, {
+      fontSize: fontSizeInPixels,
+      color: style.color || '#000000',
+      fontFamily: style.fontFamily || 'Arial, sans-serif',
+      bold: style.bold || false,
+      italic: style.italic || false,
+      underline: style.underline || false,
+    });
 
     // NOTE: Don't call atlas.updateTexture() here - it's batched in the effect below
 
@@ -228,11 +245,26 @@ const AtlasTextSprite = ({
 
   // Update atlas texture once when geometry is created
   // This batches all text additions and updates the texture once
+  // Also fixes UVs if the atlas auto-expanded after this geometry was created
   useEffect(() => {
     if (geometry) {
-      // Use requestAnimationFrame to batch multiple atlas updates into one
       const frameId = requestAnimationFrame(() => {
         atlas.updateTexture();
+
+        // If the atlas resized after our geometry was created, re-apply corrected UVs
+        if (atlasVersionRef.current !== atlas.version && atlasEntryKeyRef.current) {
+          const entry = atlas.entries.get(atlasEntryKeyRef.current);
+          if (entry && geometry.attributes.uv) {
+            const uvAttr = geometry.attributes.uv;
+            const { u, v, uWidth, vHeight } = entry.uvs;
+            uvAttr.setXY(0, u, 1 - v);
+            uvAttr.setXY(1, u + uWidth, 1 - v);
+            uvAttr.setXY(2, u, 1 - (v + vHeight));
+            uvAttr.setXY(3, u + uWidth, 1 - (v + vHeight));
+            uvAttr.needsUpdate = true;
+            atlasVersionRef.current = atlas.version;
+          }
+        }
       });
       return () => cancelAnimationFrame(frameId);
     }

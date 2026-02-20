@@ -26,6 +26,59 @@ export class TextAtlas {
     this.currentY = this.padding;
     this.rowHeight = 0;
     this.dirty = false;
+    this.version = 0; // Incremented on resize so consumers can detect UV changes
+  }
+
+  /**
+   * Auto-expand the atlas canvas when out of space.
+   * Doubles the smaller dimension (up to 16384 max).
+   * Preserves existing drawn content and recalculates all entry UVs.
+   * @returns {boolean} true if resize succeeded
+   */
+  _resize() {
+    const oldCanvas = this.canvas;
+    const oldWidth = this.maxWidth;
+    const oldHeight = this.maxHeight;
+
+    // Double the dimension that gives more rows (prefer height since packing is top-to-bottom)
+    let newWidth = this.maxWidth;
+    let newHeight = this.maxHeight;
+    if (this.maxHeight <= this.maxWidth) {
+      newHeight = Math.min(this.maxHeight * 2, 16384);
+    } else {
+      newWidth = Math.min(this.maxWidth * 2, 16384);
+    }
+
+    // Already at max size
+    if (newWidth === oldWidth && newHeight === oldHeight) {
+      return false;
+    }
+
+    // Create new larger canvas and copy old content
+    this.maxWidth = newWidth;
+    this.maxHeight = newHeight;
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = newWidth;
+    this.canvas.height = newHeight;
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+    this.ctx.drawImage(oldCanvas, 0, 0);
+
+    // Recalculate UV coordinates for all existing entries (normalization factors changed)
+    for (const [, entry] of this.entries) {
+      entry.uvs = {
+        u: entry.x / this.maxWidth,
+        v: entry.y / this.maxHeight,
+        uWidth: entry.width / this.maxWidth,
+        vHeight: entry.height / this.maxHeight,
+      };
+    }
+
+    // Update texture to use new canvas (same texture object, so all materials stay valid)
+    this.texture.image = this.canvas;
+    this.texture.needsUpdate = true;
+    this.version++;
+
+    return true;
   }
 
   /**
@@ -63,12 +116,19 @@ export class TextAtlas {
       this.rowHeight = 0;
     }
 
-    // Check if we've run out of space
+    // Check if we've run out of space — auto-expand if possible
     if (this.currentY + height + this.padding > this.maxHeight) {
-      console.warn(
-        'TextAtlas: Out of space, need to create a new atlas or increase size'
-      );
-      return null;
+      if (this._resize()) {
+        // Retry — row wrap already happened above, just need the height check to pass now
+        if (this.currentY + height + this.padding > this.maxHeight) {
+          // Still doesn't fit even after resize (shouldn't happen but be safe)
+          console.warn('TextAtlas: Still out of space after resize');
+          return null;
+        }
+      } else {
+        console.warn('TextAtlas: At maximum size (16384), cannot expand further');
+        return null;
+      }
     }
 
     // Set font BEFORE drawing

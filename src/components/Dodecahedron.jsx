@@ -188,13 +188,22 @@ const Sphere = React.memo(
         navigator.userAgent
       );
 
-    // Get object data from objects store
-    const objects = useObjectsStore((state) => state.objects);
+    // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
+    // Previously subscribed to the entire objects array, causing O(N) re-renders on every move.
+    const objectData = useObjectsStore(
+      useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+    );
     const setObjects = useObjectsStore((state) => state.setObjects);
-    const objectData = objects.find((obj) => obj.id === id);
 
-    // Get connections from connection store instead of props
-    const connections = useConnectionStore((state) => state.connections);
+    // PERFORMANCE: Subscribe only to connections involving THIS dodecahedron.
+    const connections = useConnectionStore(
+      useCallback(
+        (state) => state.connections.filter(
+          (c) => c.start?.objectId === id?.toString() || c.end?.objectId === id?.toString()
+        ),
+        [id]
+      )
+    );
 
     // Consolidate all derived dodecahedron data into single useMemo (like Cube optimization)
     // This ensures all properties update together and dependencies are explicit
@@ -351,8 +360,6 @@ const Sphere = React.memo(
     // Helper function to update both stores and database
     const updateObjectAndStores = useCallback(
       (updates) => {
-        console.log('updateObjectAndStores called with updates:', updates);
-
         // Update UI store
         updateDodecahedron(id, updates);
 
@@ -360,10 +367,6 @@ const Sphere = React.memo(
         setObjects((prevObjects) =>
           prevObjects.map((obj) => {
             if (obj.id === id) {
-              console.log('Updating object in objects store:', {
-                ...obj,
-                ...updates,
-              });
               return { ...obj, ...updates };
             }
             return obj;
@@ -898,18 +901,9 @@ const Sphere = React.memo(
       // Use dodecahedron store value if available, fallback to objectData
       const currentHeaderStyle = dodecahedron?.headerStyle || headerStyle || {};
       const newHeaderStyle = { ...currentHeaderStyle, ...newStyle };
-      console.log('handleStyleChange - Header style update:', {
-        currentHeaderStyle,
-        newStyle,
-        newHeaderStyle,
-      });
       updateObjectAndStores({ headerStyle: newHeaderStyle });
     };
     const handleLineColorChange = (color) => {
-      console.log(
-        'Dodecahedron handleLineColorChange called with color:',
-        color
-      );
       updateObjectAndStores({ lineColor: color });
     };
     const handleBackgroundClick = (e) => {
@@ -963,13 +957,6 @@ const Sphere = React.memo(
 
         // Merge the new style with the existing style
         const mergedStyle = { ...currentStyle, ...newStyle };
-
-        console.log('handleFaceTextStyleChange - Face text style update:', {
-          faceIndex: dodecahedron.activeFaceText,
-          currentStyle,
-          newStyle,
-          mergedStyle,
-        });
 
         updateFaceProperty(
           'faceTextStyles',

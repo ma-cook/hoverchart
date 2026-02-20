@@ -1,4 +1,4 @@
-import { useMemo, useRef, useCallback } from 'react';
+import { useMemo, useRef, useCallback, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -127,6 +127,26 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
   const lastObjectsLengthRef = useRef(0);
   // Track the objects array reference to detect position changes (size alone is not enough)
   const lastObjectsRef = useRef(null);
+
+  // Camera movement tracking: throttle to every 200ms and only if camera moved > 50 units.
+  // This causes the useMemo below to recompute when the camera pans/zooms, keeping the
+  // frustum-culled list fresh even when no objects/connections change.
+  const [cameraKey, setCameraKey] = useState(0);
+  const cameraKeyTimeRef = useRef(0);
+  const tempCamPos = useRef(new THREE.Vector3());
+
+  useFrame(() => {
+    if (!enabled || !camera) return;
+    const now = Date.now();
+    if (now - cameraKeyTimeRef.current < 200) return; // throttle to 5 Hz
+
+    tempCamPos.current.setFromMatrixPosition(camera.matrixWorld);
+    if (tempCamPos.current.distanceTo(lastCameraPositionRef.current) > 50) {
+      lastCameraPositionRef.current.copy(tempCamPos.current);
+      cameraKeyTimeRef.current = now;
+      setCameraKey((k) => k + 1);
+    }
+  });
   
   // Build object position map for fast lookups
   const objectPositions = useMemo(() => {
@@ -151,8 +171,8 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
   }, [objectPositions]);
   
   // Calculate visible connections
-  // PERFORMANCE: Use camera ref to avoid re-running on every camera matrix update
-  // The camera object reference is stable, only recalc when connections/objects change
+  // useMemo re-runs when connections/objects change OR when cameraKey increments (camera moved)
+  const lastCameraKeyRef = useRef(-1);
   const visibleConnections = useMemo(() => {
     if (!enabled || !connections || connections.length === 0) {
       cachedVisibleConnectionsRef.current = connections || [];
@@ -170,16 +190,18 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     // Detect object position changes by checking the objects array reference (it gets a new
     // reference whenever any position/scale changes via the store's hash guard), not just size.
     const objectsChanged = objects !== lastObjectsRef.current || objectPositions.size !== lastObjectsLengthRef.current;
+    // Detect camera movement
+    const cameraChanged = cameraKey !== lastCameraKeyRef.current;
     
     // If nothing changed and we have a cache, return cache
-    // Camera movement will be handled by the spatial hash optimization
-    if (!connectionsChanged && !objectsChanged && cachedVisibleConnectionsRef.current.length > 0) {
+    if (!connectionsChanged && !objectsChanged && !cameraChanged && cachedVisibleConnectionsRef.current.length > 0) {
       return cachedVisibleConnectionsRef.current;
     }
     
     lastConnectionsLengthRef.current = connections.length;
     lastObjectsLengthRef.current = objectPositions.size;
     lastObjectsRef.current = objects;
+    lastCameraKeyRef.current = cameraKey;
     
     // Update frustum from camera (camera ref is stable, matrices update internally)
     projScreenMatrix.multiplyMatrices(
@@ -195,7 +217,7 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     
     cachedVisibleConnectionsRef.current = visible;
     return visible;
-  }, [connections, objectPositions, objects, enabled]); // objects included to detect position changes
+  }, [connections, objectPositions, objects, enabled, cameraKey]); // cameraKey triggers recompute when camera moves
   
   return {
     visibleConnections,
