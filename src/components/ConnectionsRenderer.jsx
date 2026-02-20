@@ -120,12 +120,8 @@ const Connection = React.memo(
     // Consolidated line width calculation - consistent across all line types
     const getLineWidth = useCallback(
       () => {
-        const isMobile =
-          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-            navigator.userAgent
-          );
-        const baseWidth = isMobile ? 2 : 1;
-        const selectedWidth = isMobile ? 3 : 2.5;
+        const baseWidth = 1;
+        const selectedWidth = 2.5;
         return isSelected ? selectedWidth : baseWidth;
       },
       [isSelected]
@@ -1084,7 +1080,7 @@ const ConnectionsRenderer = ({
           objectPositions={objectPositions}
           selectedConnectionId={selectedConnection}
           onConnectionClick={handleBatchedConnectionClick}
-          lineWidth={/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 3 : 1}
+          lineWidth={1}
         />
       )}
       
@@ -1096,7 +1092,7 @@ const ConnectionsRenderer = ({
           pathfindingObjects={pathfindingObjects}
           selectedConnectionId={selectedConnection}
           onConnectionClick={handleBatchedConnectionClick}
-          lineWidth={/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ? 3 : 1}
+          lineWidth={1}
         />
       )}
       

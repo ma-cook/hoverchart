@@ -13,15 +13,13 @@ import LineShaderMaterial from './LineShaderMaterial';
  * This component uses InstancedBufferGeometry quads to achieve real line thickness.
  */
 
-const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
 // Shared base quad — same layout used by all fat-line renderers
 const BASE_POSITIONS = new Float32Array([
   0, -1, 0, 1, -1, 0, 0, 1, 0,
   1, -1, 0, 1,  1, 0, 0, 1, 0,
 ]);
 
-const LINE_COLOR = isMobile ? 0.85 : 0.55; // Slightly brighter on mobile for visibility
+const LINE_COLOR = 0.55;
 
 const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
   const { size } = useThree();
@@ -96,7 +94,7 @@ const CellBoundaryRenderer = ({ loadedCells = [], visible = true }) => {
   // Lazy-init material
   if (!materialRef.current) {
     materialRef.current = LineShaderMaterial.clone();
-    materialRef.current.uniforms.linewidth.value = isMobile ? 3 : 1;
+    materialRef.current.uniforms.linewidth.value = 1;
     materialRef.current.uniforms.resolution.value.x = window.innerWidth;
     materialRef.current.uniforms.resolution.value.y = window.innerHeight;
     materialRef.current.depthWrite = false;

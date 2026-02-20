@@ -1321,25 +1321,7 @@ const App = () => {
     const { isMobile, isLowEnd } = deviceInfo;
     const dpr = Math.min(window.devicePixelRatio, 2);
     
-    if (isMobile) {
-      return {
-        gl: {
-          antialias: false,
-          samples: 0,
-          alpha: true,
-          stencil: false,
-          depth: true,
-          logarithmicDepthBuffer: false,
-          powerPreference: 'default',
-          precision: 'mediump',
-        },
-        dpr,
-        frameloop: 'always',
-        camera: { fov: 70, near: 0.01, far: 10000, position: [0, 0, 30] },
-      };
-    }
-    
-    if (canvasQuality === 'low' || isLowEnd) {
+    if (canvasQuality === 'low' || isLowEnd || isMobile) {
       return {
         gl: {
           antialias: false,

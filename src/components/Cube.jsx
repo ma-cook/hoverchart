@@ -39,12 +39,6 @@ const DEFAULT_COLOR = '#000000';
 // Reusable Vector3 for world position calculations (avoids GC pressure)
 const tempWorldPosVec = new THREE.Vector3();
 
-// Mobile-aware sizing - must be defined before SHARED_FACE_GEOMETRY
-const isMobile =
-  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-    navigator.userAgent
-  );
-
 // Default text style constant
 const DEFAULT_TEXT_STYLE = {
   fontSize: 1.5,
@@ -62,7 +56,7 @@ const DEFAULT_FACE_TEXT_STYLES = {
   left: { fontSize: 0.5, color: 'black', underline: false },
 };
 
-const CUBE_SIZE = isMobile ? 8 : 5; // Larger cubes on mobile
+const CUBE_SIZE = 5;
 
 // Cube edges - flattened array for InstancedLine
 // Format: [x1,y1,z1, x2,y2,z2, x3,y3,z3, ...] for edge pairs

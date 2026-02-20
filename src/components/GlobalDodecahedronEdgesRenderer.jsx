@@ -6,12 +6,6 @@ import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 extend({ LineShaderMaterial });
 
-// Mobile-aware sizing
-const isMobile =
-  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-    navigator.userAgent
-  );
-
 // Threshold for enabling frustum culling (only cull when count exceeds this)
 const FRUSTUM_CULLING_THRESHOLD = 50;
 
@@ -169,7 +163,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
     );
 
     const mat = LineShaderMaterial.clone();
-    mat.uniforms.linewidth.value = isMobile ? 3 : defaultLineWidth;
+    mat.uniforms.linewidth.value = defaultLineWidth;
 
     return { geometry: geo, material: mat };
   }, [totalEdges, defaultLineWidth]);
