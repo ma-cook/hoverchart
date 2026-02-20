@@ -1368,7 +1368,7 @@ const Cube = ({
           }}
         >
           <boxGeometry
-            args={[isMobile ? 16 : 10, isMobile ? 16 : 10, isMobile ? 16 : 10]}
+            args={[CUBE_SIZE * 2, CUBE_SIZE * 2, CUBE_SIZE * 2]}
           />
           <meshBasicMaterial visible={false} />
         </mesh>
