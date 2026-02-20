@@ -1943,13 +1943,12 @@ export class MarkdownDiagramService {
         }
       });
 
-      // Use much more conservative spacing adjustment
-      // Only add a portion of the scale factor to avoid excessive spacing
-      const baseSpacing = 100;
-      const scaleAdjustment = (maxScale - 1) * 5; // Only add 30 units per scale factor above 1
-      const adjustedSpacing = baseSpacing + scaleAdjustment;
-
-      return Math.max(baseSpacing, adjustedSpacing);
+      // A cube's geometry is [10,10,10], so its world-space half-size is 5 * scale.
+      // Minimum center-to-center distance = diameter + gap = maxScale * 10 + 40.
+      // Base spacing of 100 handles scale ≤ 6; larger scales need more room.
+      const nodeHalfSize = maxScale * 5;
+      const gap = 40; // minimum gap between edges of adjacent nodes
+      return Math.max(100, nodeHalfSize * 2 + gap);
     };
 
     // Helper to calculate group bounds without actually positioning nodes
@@ -1979,17 +1978,21 @@ export class MarkdownDiagramService {
         const node = graphNodes.get(nodeId);
         const nodeType = node ? (node.type || '').toLowerCase().trim() : '';
         
-        let nodeSize = 5; // Default size
+        // Components (dodecahedrons) have base radius ≈ 10 * scale.
+        // All other node types are cubes with geometry [10,10,10]: half-size = 5 * scale.
+        let nodeHalfSize;
         if (nodeType === MarkdownDiagramService.NODE_TYPE_COMPONENT) {
-          nodeSize = Math.max(...scale) * 10;
+          nodeHalfSize = Math.max(...scale) * 10;
+        } else {
+          nodeHalfSize = Math.max(...scale) * 5;
         }
 
-        minX = Math.min(minX, x - nodeSize);
-        maxX = Math.max(maxX, x + nodeSize);
-        minY = Math.min(minY, -nodeSize);
-        maxY = Math.max(maxY, nodeSize);
-        minZ = Math.min(minZ, z - nodeSize);
-        maxZ = Math.max(maxZ, z + nodeSize);
+        minX = Math.min(minX, x - nodeHalfSize);
+        maxX = Math.max(maxX, x + nodeHalfSize);
+        minY = Math.min(minY, -nodeHalfSize);
+        maxY = Math.max(maxY, nodeHalfSize);
+        minZ = Math.min(minZ, z - nodeHalfSize);
+        maxZ = Math.max(maxZ, z + nodeHalfSize);
       });
 
       // Add padding
@@ -2555,19 +2558,22 @@ export class MarkdownDiagramService {
         const node = graphNodes.get(nodeId);
         const nodeType = node ? (node.type || '').toLowerCase().trim() : '';
 
-        // Calculate node size based on type and scale
-        let nodeSize = 5; // Default size for cubes/tetrahedrons
+        // Calculate node half-size based on type and scale.
+        // Components (dodecahedrons) have base radius ≈ 10 * scale.
+        // All other types are cubes with geometry [10,10,10]: half-size = 5 * scale.
+        let nodeHalfSize;
         if (nodeType === MarkdownDiagramService.NODE_TYPE_COMPONENT) {
-          // For dodecahedrons (components), use the actual scale
-          nodeSize = Math.max(...scale) * 10; // Scale factor times base size
+          nodeHalfSize = Math.max(...scale) * 10;
+        } else {
+          nodeHalfSize = Math.max(...scale) * 5;
         }
 
-        minX = Math.min(minX, pos[0] - nodeSize);
-        maxX = Math.max(maxX, pos[0] + nodeSize);
-        minY = Math.min(minY, pos[1] - nodeSize);
-        maxY = Math.max(maxY, pos[1] + nodeSize);
-        minZ = Math.min(minZ, pos[2] - nodeSize);
-        maxZ = Math.max(maxZ, pos[2] + nodeSize);
+        minX = Math.min(minX, pos[0] - nodeHalfSize);
+        maxX = Math.max(maxX, pos[0] + nodeHalfSize);
+        minY = Math.min(minY, pos[1] - nodeHalfSize);
+        maxY = Math.max(maxY, pos[1] + nodeHalfSize);
+        minZ = Math.min(minZ, pos[2] - nodeHalfSize);
+        maxZ = Math.max(maxZ, pos[2] + nodeHalfSize);
       });
 
       // Add padding
