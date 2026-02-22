@@ -6,6 +6,9 @@ import ColorPicker from './ColorPicker';
 import { useColorPickerStore, useFaceStore } from '../stores';
 import * as THREE from 'three';
 
+// Pre-allocated temp vector to avoid GC pressure in useFrame
+const _tempVec3 = new THREE.Vector3();
+
 const FaceUI = React.memo(
   ({
     position,
@@ -61,14 +64,15 @@ const FaceUI = React.memo(
           // Keep UI facing camera
           groupRef.current.quaternion.copy(camera.quaternion);
 
-          // Only update position if it has changed significantly
-          const newPos = new THREE.Vector3(...position);
+          // Only update position if it has changed significantly (reuse temp vector)
+          _tempVec3.set(position[0], position[1], position[2]);
           if (
             !lastPosition.current ||
-            lastPosition.current.distanceTo(newPos) > 0.001
+            lastPosition.current.distanceTo(_tempVec3) > 0.001
           ) {
-            groupRef.current.position.copy(newPos);
-            lastPosition.current = newPos.clone();
+            groupRef.current.position.copy(_tempVec3);
+            if (!lastPosition.current) lastPosition.current = new THREE.Vector3();
+            lastPosition.current.copy(_tempVec3);
           }
           groupRef.current._lastFaceUIUpdate = Date.now();
         }

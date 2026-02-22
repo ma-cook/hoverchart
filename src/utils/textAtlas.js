@@ -5,6 +5,25 @@ import * as THREE from 'three';
  * to reduce texture binds and improve rendering performance for large diagrams
  */
 export class TextAtlas {
+  /**
+   * Maximum texture dimension the GPU supports.
+   * Detected lazily via setMaxGPUTextureSize() the first time a component
+   * has access to the WebGL context.  Until then we use a safe default
+   * (8192) that works on virtually all hardware from the last decade.
+   */
+  static _maxGPUTextureSize = 8192;
+  static _gpuLimitDetected = false;
+
+  /**
+   * Call once with the renderer's gl.getParameter(gl.MAX_TEXTURE_SIZE)
+   * to let all atlas instances respect the actual GPU limit.
+   */
+  static setMaxGPUTextureSize(size) {
+    if (TextAtlas._gpuLimitDetected) return;
+    TextAtlas._maxGPUTextureSize = size;
+    TextAtlas._gpuLimitDetected = true;
+  }
+
   constructor(options = {}) {
     this.maxWidth = options.maxWidth || 2048;
     this.maxHeight = options.maxHeight || 2048;
@@ -31,7 +50,7 @@ export class TextAtlas {
 
   /**
    * Auto-expand the atlas canvas when out of space.
-   * Doubles the smaller dimension (up to 16384 max).
+   * Doubles the smaller dimension (up to the GPU's MAX_TEXTURE_SIZE).
    * Preserves existing drawn content and recalculates all entry UVs.
    * @returns {boolean} true if resize succeeded
    */
@@ -39,15 +58,13 @@ export class TextAtlas {
     const oldCanvas = this.canvas;
     const oldWidth = this.maxWidth;
     const oldHeight = this.maxHeight;
+    const gpuLimit = TextAtlas._maxGPUTextureSize;
 
-    // Double the dimension that gives more rows (prefer height since packing is top-to-bottom)
-    let newWidth = this.maxWidth;
-    let newHeight = this.maxHeight;
-    if (this.maxHeight <= this.maxWidth) {
-      newHeight = Math.min(this.maxHeight * 2, 16384);
-    } else {
-      newWidth = Math.min(this.maxWidth * 2, 16384);
-    }
+    // Jump straight to the GPU max in ONE step instead of doubling gradually.
+    // Gradual doubling (2048→4096→8192) causes a chain of canvas copies + GPU
+    // re-uploads that can crash the graphics card during progressive loading.
+    let newWidth = gpuLimit;
+    let newHeight = gpuLimit;
 
     // Already at max size
     if (newWidth === oldWidth && newHeight === oldHeight) {
@@ -116,18 +133,18 @@ export class TextAtlas {
       this.rowHeight = 0;
     }
 
-    // Check if we've run out of space — auto-expand if possible
-    if (this.currentY + height + this.padding > this.maxHeight) {
-      if (this._resize()) {
-        // Retry — row wrap already happened above, just need the height check to pass now
-        if (this.currentY + height + this.padding > this.maxHeight) {
-          // Still doesn't fit even after resize (shouldn't happen but be safe)
-          console.warn('TextAtlas: Still out of space after resize');
-          return null;
-        }
-      } else {
-        console.warn('TextAtlas: At maximum size (16384), cannot expand further');
+    // Check if we've run out of space — auto-expand until it fits or we hit the GPU limit
+    while (this.currentY + height + this.padding > this.maxHeight) {
+      if (!this._resize()) {
+        // Silently return null — MultiPageTextAtlas handles overflow by creating a new page
         return null;
+      }
+      // After a width-only resize the row might now fit horizontally,
+      // so re-check the row wrap
+      if (this.currentX + width + this.padding > this.maxWidth) {
+        this.currentX = this.padding;
+        this.currentY += this.rowHeight + this.padding;
+        this.rowHeight = 0;
       }
     }
 
@@ -294,13 +311,172 @@ export class TextAtlas {
 let globalAtlas = null;
 
 /**
- * Get or create the global text atlas
+ * Multi-page text atlas that automatically creates new pages when the
+ * current one fills up.  Entries include a `texture` reference so
+ * consumers can build a material pointing at the correct page.
+ */
+/**
+ * Maximum number of atlas pages to prevent GPU VRAM exhaustion.
+ * Each page at 8192×8192 RGBA = ~256MB VRAM.
+ * 3 pages ≈ 768MB — safe for most GPUs.
+ */
+const MAX_PAGES = 3;
+
+class MultiPageTextAtlas {
+  /**
+   * Minimum ms between GPU texture uploads.
+   * During progressive loading many texts are added across consecutive frames;
+   * uploading the full texture every frame (256 MB at 8192×8192) can crash the
+   * GPU.  Throttling to one upload per interval keeps bandwidth manageable.
+   * REDUCED from 200ms to 50ms to avoid text appearing blank during
+   * progressive mounting — 50ms still limits to ~20 uploads/sec which is safe.
+   */
+  static UPLOAD_THROTTLE_MS = 50;
+
+  constructor(pageOpts = {}) {
+    this._pageOpts = pageOpts;
+    this._pages = [];
+    // Combined lookup across all pages: key → entry (with .texture added)
+    // Exposed as `entries` for compatibility with AtlasTextSprite's UV fixup code
+    this.entries = new Map();
+    this._version = 0;
+    this._lastUploadTime = 0;
+    this._pendingUploadId = null;
+    this._addPage();
+  }
+
+  _addPage() {
+    // Start pages SMALL (2048×2048 = 16 MB upload) so the GPU isn't
+    // hammered with a 256 MB upload the moment the first text is added.
+    // _resize() will jump straight to gpuMax in one step if needed.
+    const page = new TextAtlas({
+      ...this._pageOpts,
+      maxWidth: 2048,
+      maxHeight: 2048,
+    });
+    this._pages.push(page);
+    return page;
+  }
+
+  /**
+   * Add text — tries the current (last) page, creates a new page if full.
+   * The returned entry has an extra `.texture` property for the page it lives on.
+   */
+  addText(text, style = {}) {
+    const key = this._getKey(text, style);
+
+    if (this.entries.has(key)) {
+      return this.entries.get(key);
+    }
+
+    // Try current page
+    let page = this._pages[this._pages.length - 1];
+    let entry = page.addText(text, style);
+
+    if (!entry) {
+      // Current page full — check page limit before creating another
+      if (this._pages.length >= MAX_PAGES) {
+        console.warn(
+          `MultiPageTextAtlas: ${MAX_PAGES} pages full (${this.entries.size} entries). ` +
+          `Skipping: "${text.slice(0, 40)}"`
+        );
+        return null;
+      }
+      page = this._addPage();
+      entry = page.addText(text, style);
+      if (!entry) {
+        console.warn('MultiPageTextAtlas: text too large for a single atlas page:', text);
+        return null;
+      }
+    }
+
+    // Attach the page's texture so consumers know which map to use
+    entry.texture = page.texture;
+    this.entries.set(key, entry);
+    return entry;
+  }
+
+  /**
+   * Flush dirty flags on all pages — throttled to prevent GPU crashes.
+   * During progressive mounting dozens of texts can be added over consecutive
+   * frames. Uploading a large texture every single frame stalls the GPU.
+   * This limits uploads to once per UPLOAD_THROTTLE_MS and schedules a
+   * deferred upload so the latest content eventually reaches the GPU.
+   */
+  updateTexture() {
+    const now = performance.now();
+    const elapsed = now - this._lastUploadTime;
+
+    if (elapsed < MultiPageTextAtlas.UPLOAD_THROTTLE_MS) {
+      // Too soon — schedule a deferred upload if not already pending
+      if (!this._pendingUploadId) {
+        this._pendingUploadId = setTimeout(() => {
+          this._pendingUploadId = null;
+          this._flushTextures();
+        }, MultiPageTextAtlas.UPLOAD_THROTTLE_MS - elapsed);
+      }
+      return;
+    }
+
+    this._flushTextures();
+  }
+
+  /** Actually push dirty textures to the GPU. */
+  _flushTextures() {
+    for (const page of this._pages) {
+      page.updateTexture();
+    }
+    this._lastUploadTime = performance.now();
+  }
+
+  /** Primary texture (page 0) — used when a single texture ref is needed */
+  getTexture() {
+    this._pages[0].updateTexture();
+    return this._pages[0].texture;
+  }
+
+  /** Generate the same cache key that TextAtlas uses */
+  _getKey(text, style) {
+    return `${text}|${style.fontSize || 16}|${style.color || '#000000'}|${
+      style.fontFamily || 'Arial'}|${style.bold || false}|${style.italic || false}|${
+      style.underline || false}`;
+  }
+
+  /** Aggregate stats */
+  getStats() {
+    return {
+      pages: this._pages.length,
+      entriesCount: this.entries.size,
+      perPage: this._pages.map((p) => p.getStats()),
+    };
+  }
+
+  /** Current atlas version — sum of all page versions */
+  get version() {
+    let v = 0;
+    for (const p of this._pages) v += p.version;
+    return v;
+  }
+
+  dispose() {
+    if (this._pendingUploadId) {
+      clearTimeout(this._pendingUploadId);
+      this._pendingUploadId = null;
+    }
+    for (const page of this._pages) {
+      page.dispose();
+    }
+    this._pages = [];
+    this.entries.clear();
+  }
+}
+
+/**
+ * Get or create the global text atlas (multi-page)
  */
 export function getGlobalTextAtlas() {
   if (!globalAtlas) {
-    globalAtlas = new TextAtlas({
-      maxWidth: 8192,
-      maxHeight: 8192,
+    globalAtlas = new MultiPageTextAtlas({
       padding: 4,
     });
   }
@@ -351,9 +527,9 @@ export function createAtlasTextMesh(text, style = {}, position = [0, 0, 0]) {
 
   uvs.needsUpdate = true;
 
-  // Create material using the atlas texture
+  // Create material using the entry's page texture
   const material = new THREE.MeshBasicMaterial({
-    map: atlas.getTexture(),
+    map: entry.texture || atlas.getTexture(),
     transparent: true,
     side: THREE.DoubleSide,
     depthWrite: false,

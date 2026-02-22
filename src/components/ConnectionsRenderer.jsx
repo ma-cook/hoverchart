@@ -1,5 +1,6 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
 
 import InstancedLine from './InstancedLine';
 import BatchedConnectionLines from './BatchedConnectionLines';
@@ -36,18 +37,23 @@ const DistanceFilteredConnectionText = React.memo(({
   maxDistance = 500,
   children 
 }) => {
-  const [isVisible, setIsVisible] = useState(true);
+  // GPU RESOURCE FIX: Use a ref + group visibility instead of useState which
+  // caused rapid mount/unmount of AtlasTextSprite children (creating and
+  // disposing PlaneGeometry on every visibility toggle during camera movement).
+  const groupRef = useRef();
   const lastCheckRef = useRef(0);
   const maxDistanceSquared = maxDistance * maxDistance;
   
   useFrame(({ camera }) => {
-    // Throttle checks to every 100ms
+    // Throttle checks to every 200ms (was 100ms — reduced frequency during fast panning)
     const now = Date.now();
-    if (now - lastCheckRef.current < 100) return;
+    if (now - lastCheckRef.current < 200) return;
     lastCheckRef.current = now;
     
+    if (!groupRef.current) return;
+    
     if (!position) {
-      setIsVisible(false);
+      groupRef.current.visible = false;
       return;
     }
     
@@ -56,13 +62,10 @@ const DistanceFilteredConnectionText = React.memo(({
     const dz = camera.position.z - position[2];
     const distanceSquared = dx * dx + dy * dy + dz * dz;
     
-    const shouldBeVisible = distanceSquared <= maxDistanceSquared;
-    if (shouldBeVisible !== isVisible) {
-      setIsVisible(shouldBeVisible);
-    }
+    groupRef.current.visible = distanceSquared <= maxDistanceSquared;
   });
   
-  return isVisible ? children : null;
+  return <group ref={groupRef}>{children}</group>;
 });
 
 DistanceFilteredConnectionText.displayName = 'DistanceFilteredConnectionText';
@@ -730,8 +733,16 @@ const Connection = React.memo(
       prevProps.connection.lineStyle !== nextProps.connection.lineStyle ||
       prevProps.connection.dashDirection !==
         nextProps.connection.dashDirection ||
-      JSON.stringify(prevProps.connection.textStyle) !==
-        JSON.stringify(nextProps.connection.textStyle) ||
+      // Shallow comparison instead of JSON.stringify for textStyle
+      (() => {
+        const a = prevProps.connection.textStyle;
+        const b = nextProps.connection.textStyle;
+        if (a === b) return false;
+        if (!a || !b) return true;
+        const keys = Object.keys(a);
+        if (keys.length !== Object.keys(b).length) return true;
+        return keys.some(k => a[k] !== b[k]);
+      })() ||
       prevProps.connection.start?.position !==
         nextProps.connection.start?.position ||
       prevProps.connection.end?.position !== nextProps.connection.end?.position;
@@ -843,6 +854,135 @@ const ConnectionsRenderer = ({
     true // Enable frustum culling
   );
 
+  // ─── Progressive connection mounting ──────────────────────────────
+  // Mirrors ObjectsRenderer's progressive mounting pattern:
+  // Instead of rendering ALL frustum-culled connections in a single frame
+  // (which overwhelms the GPU with pathfinding, buffer builds, text atlas
+  // entries, and component mounting), we spread work across frames.
+  //
+  // Batched renderers (BatchedConnectionLines, BatchedCurvedLines) receive
+  // only the progressively-mounted subset. Because they use instanced
+  // single-draw-call rendering, incremental buffer growth is cheap.
+  // ──────────────────────────────────────────────────────────────────
+  const CONNECTION_MOUNT_BUDGET = 6;
+  /** Below this count, skip progressive mounting entirely (instant mount). */
+  const CONNECTION_PROGRESSIVE_THRESHOLD = 60;
+  const mountedConnIdsRef = useRef(new Set());
+  const [mountedConnIds, setMountedConnIds] = useState(() => new Set());
+  const pendingConnsRef = useRef([]);
+  const connRafIdRef = useRef(null);
+  // BUGFIX: Keep a ref to the latest frustum-culled set so the rAF callback
+  // always checks against the CURRENT visible set, not a stale closure capture.
+  const frustumCulledIdsRef = useRef(new Set());
+
+  useEffect(() => {
+    // Cancel any in-progress progressive mounting
+    if (connRafIdRef.current) {
+      cancelAnimationFrame(connRafIdRef.current);
+      connRafIdRef.current = null;
+    }
+
+    const current = mountedConnIdsRef.current;
+    const culledIds = new Set(frustumCulledConnections.map(c => c.id));
+    // Update ref so rAF callback uses the latest set
+    frustumCulledIdsRef.current = culledIds;
+
+    // 1. Remove connections no longer in the frustum-culled set
+    let removed = false;
+    for (const id of current) {
+      if (!culledIds.has(id)) {
+        current.delete(id);
+        removed = true;
+      }
+    }
+
+    // 2. Find new connections to mount
+    const toAdd = [];
+    for (const conn of frustumCulledConnections) {
+      if (!current.has(conn.id)) {
+        toAdd.push(conn.id);
+      }
+    }
+
+    // 3. If few enough, mount all at once (no need for batching)
+    if (toAdd.length <= CONNECTION_MOUNT_BUDGET || culledIds.size <= CONNECTION_PROGRESSIVE_THRESHOLD) {
+      toAdd.forEach(id => current.add(id));
+      if (removed || toAdd.length > 0) {
+        setMountedConnIds(new Set(current));
+      }
+      return;
+    }
+
+    // 4. Many new connections — mount first batch immediately, rest over frames
+    pendingConnsRef.current = toAdd;
+    const firstBatch = pendingConnsRef.current.splice(0, CONNECTION_MOUNT_BUDGET);
+    firstBatch.forEach(id => current.add(id));
+    setMountedConnIds(new Set(current));
+
+    const mountNextBatch = () => {
+      const pending = pendingConnsRef.current;
+      if (pending.length === 0) {
+        connRafIdRef.current = null;
+        return;
+      }
+
+      // Use the shared render budget — coordinate with ObjectsRenderer
+      // PERF: Skip mounting while camera is actively moving to keep panning smooth
+      if (isCameraMoving()) {
+        connRafIdRef.current = requestAnimationFrame(mountNextBatch);
+        return;
+      }
+      const budget = acquireBudget(CONNECTION_MOUNT_BUDGET);
+      let added = 0;
+      while (pending.length > 0 && added < budget) {
+        const id = pending.shift();
+        // BUGFIX: Use ref for latest frustum-culled set instead of stale closure
+        if (frustumCulledIdsRef.current.has(id)) {
+          mountedConnIdsRef.current.add(id);
+          added++;
+        }
+      }
+
+      if (added > 0) {
+        setMountedConnIds(new Set(mountedConnIdsRef.current));
+      }
+
+      if (pending.length > 0) {
+        connRafIdRef.current = requestAnimationFrame(mountNextBatch);
+      } else {
+        connRafIdRef.current = null;
+      }
+    };
+
+    connRafIdRef.current = requestAnimationFrame(mountNextBatch);
+
+    return () => {
+      if (connRafIdRef.current) {
+        cancelAnimationFrame(connRafIdRef.current);
+        connRafIdRef.current = null;
+      }
+    };
+  }, [frustumCulledConnections]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (connRafIdRef.current) {
+        cancelAnimationFrame(connRafIdRef.current);
+      }
+    };
+  }, []);
+
+  // Filter frustumCulledConnections to only the progressively mounted subset
+  const progressiveConnections = useMemo(() => {
+    if (mountedConnIds.size === 0) return [];
+    // Fast path: if all connections are mounted, return the full array
+    if (mountedConnIds.size >= frustumCulledConnections.length) {
+      return frustumCulledConnections;
+    }
+    return frustumCulledConnections.filter(c => mountedConnIds.has(c.id));
+  }, [frustumCulledConnections, mountedConnIds]);
+
   // PERFORMANCE: Build object positions map for batched rendering
   // NOTE: This uses object CENTER positions - connections store their face positions
   // BatchedConnectionLines uses connection.start/end.position for accurate face positions
@@ -864,7 +1004,7 @@ const ConnectionsRenderer = ({
   // setObjects function guards against spurious updates via its own position hash check).
   const prevPathfindingObjectsRef = useRef(null);
   const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
-  const lastCategorizationInputsRef = useRef({ connectionsLength: 0, selectedConnection: null, pathfindingObjectsRef: null });
+  const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null });
 
   // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
   // smaller than 0.5 units would never trigger cache invalidation. Since pathfindingObjects
@@ -884,9 +1024,14 @@ const ConnectionsRenderer = ({
     // True early exit: nothing at all changed
     // IMPORTANT: never skip when objects changed — a moved object may now intersect lines
     // that are not connected to it, requiring those lines to switch to curved.
+    // BUGFIX: Compare progressiveConnections by REFERENCE, not just length.
+    // When RealTimeConnectionUpdater updates connection positions in the store,
+    // progressiveConnections gets a new reference with updated position data.
+    // Comparing only length would return stale cached connection objects with
+    // old positions, causing text labels to cluster at outdated coordinates.
     if (
       !objectsChanged &&
-      frustumCulledConnections.length === inputsRef.connectionsLength &&
+      progressiveConnections === inputsRef.progressiveConnectionsRef &&
       selectedConnection === inputsRef.selectedConnection &&
       cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
     ) {
@@ -901,7 +1046,7 @@ const ConnectionsRenderer = ({
       invalidatePathfindingCaches();
       prevPathfindingObjectsRef.current = pathfindingObjects;
       if (window._debugPathfinding) {
-        console.log(`[PathDebug] pathfindingObjects changed: ${pathfindingObjects.length} objects, ${frustumCulledConnections.length} connections to categorize`);
+        console.log(`[PathDebug] pathfindingObjects changed: ${pathfindingObjects.length} objects, ${progressiveConnections.length} connections to categorize`);
       }
     }
 
@@ -910,7 +1055,7 @@ const ConnectionsRenderer = ({
     const curved = [];
     const individual = [];
     
-    frustumCulledConnections.forEach(conn => {
+    progressiveConnections.forEach(conn => {
       const style = conn.styleType || conn.lineStyle || 'straight';
       const baseStyle = style.split('-')[0];
       const isSelected = conn.id === selectedConnection;
@@ -929,11 +1074,12 @@ const ConnectionsRenderer = ({
       }
       
       // For straight-style connections, check if they need pathfinding (curve around obstacles)
-      // Get connection positions
+      // Use same position priority as BatchedConnectionLines for consistency:
+      // conn.start.position first (face position), then objectPositions fallback
       let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
       let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
-      
-      // Fallback to object positions if needed
+
+      // Fallback to object centers if no connection positions available
       if (!startPos && conn.start?.objectId) {
         startPos = objectPositions.get(conn.start.objectId.toString());
       }
@@ -988,13 +1134,13 @@ const ConnectionsRenderer = ({
     }
     lastCategorizationRef.current = result;
     lastCategorizationInputsRef.current = {
-      connectionsLength: frustumCulledConnections.length,
+      progressiveConnectionsRef: progressiveConnections,
       selectedConnection,
       pathfindingObjectsRef: pathfindingObjects,
     };
     
     return result;
-  }, [frustumCulledConnections, selectedConnection, objectPositions, pathfindingObjects]);
+  }, [progressiveConnections, selectedConnection, objectPositions, pathfindingObjects]);
 
   // Combine all straight connections for batched line rendering
   const allStraightConnections = useMemo(() => {
@@ -1002,13 +1148,20 @@ const ConnectionsRenderer = ({
   }, [batchedConnections, textConnections]);
 
   // PERFORMANCE: Pre-calculate text positions for connections with text
+  // BUGFIX: Use the SAME position resolution order as BatchedConnectionLines
+  // to ensure text labels appear at the line midpoint, not at a different spot.
+  // Previous version preferred objectPositions (object CENTER) which differs
+  // from the face positions that BatchedConnectionLines uses to draw lines.
   const textLabels = useMemo(() => {
     return textConnections.map(conn => {
-      // Get connection positions
+      // Use same priority as BatchedConnectionLines:
+      // 1. conn.start.position (face position from store — set by RealTimeConnectionUpdater or Firestore)
+      // 2. conn.start.facePosition / worldPosition (alternative fields)
+      // 3. objectPositions (object center — last resort)
       let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
       let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
       
-      // Fallback to object positions if connection positions not available
+      // Fallback to object centers if no connection positions available
       if (!startPos && conn.start?.objectId) {
         startPos = objectPositions.get(conn.start.objectId.toString());
       }
@@ -1018,11 +1171,22 @@ const ConnectionsRenderer = ({
       
       if (!startPos || !endPos) return null;
       
+      // Handle both array [x,y,z] and object {x,y,z} formats
+      const sx = Array.isArray(startPos) ? startPos[0] : startPos.x;
+      const sy = Array.isArray(startPos) ? startPos[1] : startPos.y;
+      const sz = Array.isArray(startPos) ? startPos[2] : startPos.z;
+      const ex = Array.isArray(endPos) ? endPos[0] : endPos.x;
+      const ey = Array.isArray(endPos) ? endPos[1] : endPos.y;
+      const ez = Array.isArray(endPos) ? endPos[2] : endPos.z;
+      
+      // Skip if any coordinate is invalid
+      if (isNaN(sx) || isNaN(sy) || isNaN(sz) || isNaN(ex) || isNaN(ey) || isNaN(ez)) return null;
+      
       // Calculate midpoint
       const midpoint = [
-        (startPos[0] + endPos[0]) / 2,
-        (startPos[1] + endPos[1]) / 2 + 2, // Offset above line
-        (startPos[2] + endPos[2]) / 2,
+        (sx + ex) / 2,
+        (sy + ey) / 2 + 2, // Offset above line
+        (sz + ez) / 2,
       ];
       
       return {

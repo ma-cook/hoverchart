@@ -8,11 +8,23 @@ extend({ LineShaderMaterial });
 // Reusable identity matrix for all instances - created once
 const IDENTITY_MATRIX = new THREE.Matrix4();
 
+// Base quad geometry positions - shared across all instances
+const BASE_POSITIONS = new Float32Array([
+  0, -1, 0, 1, -1, 0, 0, 1, 0,
+  1, -1, 0, 1, 1, 0, 0, 1, 0,
+]);
+
 // Reusable vectors for raycasting calculations
 const _start = new THREE.Vector3();
 const _end = new THREE.Vector3();
 const _closestPoint = new THREE.Vector3();
 const _rayDirection = new THREE.Vector3();
+// Additional pre-allocated vectors for raycast to avoid .clone() calls
+const _lineDir = new THREE.Vector3();
+const _w0 = new THREE.Vector3();
+const _rayPoint = new THREE.Vector3();
+// Reusable color object
+const _tempColor = new THREE.Color();
 
 const InstancedLine = forwardRef(
   (
@@ -28,13 +40,12 @@ const InstancedLine = forwardRef(
   ) => {
     const meshRef = useRef();
     const matricesInitializedRef = useRef(false);
+    const geometryRef = useRef(null);
+    const materialRef = useRef(null);
+    const bufferCapacityRef = useRef(0);
 
     // Expose the mesh ref via the forwarded ref
     useImperativeHandle(ref, () => meshRef.current, []);
-
-    // Determine the number of instances based on points
-    // Points should be pairs: [start1, end1, start2, end2, ...]
-    // So count = points.length / 2
 
     // Flatten points if they're in array-of-arrays format
     const flatPoints = useMemo(() => {
@@ -51,72 +62,91 @@ const InstancedLine = forwardRef(
 
     const count = Math.floor(flatPoints.length / 6); // Each line needs 6 values (2 points × 3 coords)
 
-    // Create geometry synchronously using useMemo to avoid null geometry
+    // GPU RESOURCE FIX: Create geometry ONCE with oversize buffers, then update in-place.
+    // This avoids recreating InstancedBufferGeometry on every position change which
+    // leaked GPU memory and caused graphics card crashes during camera movement.
     const geometry = useMemo(() => {
       if (!flatPoints || flatPoints.length < 6) {
-        // Need at least 2 points (6 values) for one line
         return null;
       }
 
-      const geo = new THREE.InstancedBufferGeometry();
+      // If we already have a geometry with enough capacity, reuse it
+      if (geometryRef.current && bufferCapacityRef.current >= count) {
+        const geo = geometryRef.current;
+        const instanceStart = geo.getAttribute('instanceStart');
+        const instanceEnd = geo.getAttribute('instanceEnd');
+        const instanceColor = geo.getAttribute('instanceColor');
 
-      // Create a simple quad for the line (two triangles, x in [0,1], y in [-1,1])
-      // vertex layout (two triangles):
-      // triangle 1: (0,-1), (1,-1), (0,1)
-      // triangle 2: (1,-1), (1,1),  (0,1)
-      const positions = new Float32Array([
-        0, -1, 0, 1, -1, 0, 0, 1, 0,
+        _tempColor.set(color);
+        const colorArr = _tempColor.toArray();
 
-        1, -1, 0, 1, 1, 0, 0, 1, 0,
-      ]);
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        for (let i = 0; i < count; i++) {
+          const startIdx = i * 2;
+          const endIdx = startIdx + 1;
+          instanceStart.setXYZ(i, flatPoints[startIdx * 3], flatPoints[startIdx * 3 + 1], flatPoints[startIdx * 3 + 2]);
+          instanceEnd.setXYZ(i, flatPoints[endIdx * 3], flatPoints[endIdx * 3 + 1], flatPoints[endIdx * 3 + 2]);
+          instanceColor.setXYZ(i, colorArr[0], colorArr[1], colorArr[2]);
+        }
 
-      // Add instance attributes
-      const instanceStart = new Float32Array(count * 3);
-      const instanceEnd = new Float32Array(count * 3);
-      const instanceColor = new Float32Array(count * 3);
+        instanceStart.needsUpdate = true;
+        instanceEnd.needsUpdate = true;
+        instanceColor.needsUpdate = true;
+        geo.instanceCount = count;
+        geo.computeBoundingBox();
+        geo.computeBoundingSphere();
 
-      // Points array format: [x1,y1,z1, x2,y2,z2, x3,y3,z3, ...]
-      // We need to treat them as pairs: (0,1), (2,3), (4,5), ...
-      for (let i = 0; i < count; i++) {
-        const startIdx = i * 2; // Every pair of points
-        const endIdx = startIdx + 1;
-
-        const start = [
-          flatPoints[startIdx * 3],
-          flatPoints[startIdx * 3 + 1],
-          flatPoints[startIdx * 3 + 2],
-        ];
-        const end = [
-          flatPoints[endIdx * 3],
-          flatPoints[endIdx * 3 + 1],
-          flatPoints[endIdx * 3 + 2],
-        ];
-
-        instanceStart.set(start, i * 3);
-        instanceEnd.set(end, i * 3);
-        instanceColor.set(new THREE.Color(color).toArray(), i * 3);
+        return geo;
       }
 
-      geo.setAttribute(
-        'instanceStart',
-        new THREE.InstancedBufferAttribute(instanceStart, 3)
-      );
-      geo.setAttribute(
-        'instanceEnd',
-        new THREE.InstancedBufferAttribute(instanceEnd, 3)
-      );
-      geo.setAttribute(
-        'instanceColor',
-        new THREE.InstancedBufferAttribute(instanceColor, 3)
-      );
+      // Need a new (or larger) geometry — dispose old one first
+      if (geometryRef.current) {
+        geometryRef.current.dispose();
+      }
 
-      // Compute bounding box and bounding sphere
+      const capacity = Math.max(count * 2, 8); // Overallocate to reduce future reallocations
+      const geo = new THREE.InstancedBufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(BASE_POSITIONS, 3));
+
+      const instanceStart = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+      const instanceEnd = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+      const instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+      instanceStart.setUsage(THREE.DynamicDrawUsage);
+      instanceEnd.setUsage(THREE.DynamicDrawUsage);
+      instanceColor.setUsage(THREE.DynamicDrawUsage);
+
+      _tempColor.set(color);
+      const colorArr = _tempColor.toArray();
+
+      for (let i = 0; i < count; i++) {
+        const startIdx = i * 2;
+        const endIdx = startIdx + 1;
+        instanceStart.setXYZ(i, flatPoints[startIdx * 3], flatPoints[startIdx * 3 + 1], flatPoints[startIdx * 3 + 2]);
+        instanceEnd.setXYZ(i, flatPoints[endIdx * 3], flatPoints[endIdx * 3 + 1], flatPoints[endIdx * 3 + 2]);
+        instanceColor.setXYZ(i, colorArr[0], colorArr[1], colorArr[2]);
+      }
+
+      geo.setAttribute('instanceStart', instanceStart);
+      geo.setAttribute('instanceEnd', instanceEnd);
+      geo.setAttribute('instanceColor', instanceColor);
+      geo.instanceCount = count;
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
+      geometryRef.current = geo;
+      bufferCapacityRef.current = capacity;
+
       return geo;
     }, [flatPoints, color, count]);
+
+    // GPU RESOURCE FIX: Dispose geometry on unmount
+    useEffect(() => {
+      return () => {
+        if (geometryRef.current) {
+          geometryRef.current.dispose();
+          geometryRef.current = null;
+        }
+      };
+    }, []);
 
     // Get camera for screen-space line width calculation
     const { camera } = useThree();
@@ -148,18 +178,18 @@ const InstancedLine = forwardRef(
         );
         
         // Calculate the closest point on the line segment to the ray
-        const lineDir = _end.clone().sub(_start);
-        const lineLength = lineDir.length();
+        _lineDir.copy(_end).sub(_start);
+        const lineLength = _lineDir.length();
         if (lineLength === 0) continue;
-        lineDir.normalize();
+        _lineDir.normalize();
         
         // Ray-line segment closest point calculation
-        const w0 = ray.origin.clone().sub(_start);
+        _w0.copy(ray.origin).sub(_start);
         const a = ray.direction.dot(ray.direction);
-        const b = ray.direction.dot(lineDir);
-        const c = lineDir.dot(lineDir);
-        const d = ray.direction.dot(w0);
-        const e = lineDir.dot(w0);
+        const b = ray.direction.dot(_lineDir);
+        const c = _lineDir.dot(_lineDir);
+        const d = ray.direction.dot(_w0);
+        const e = _lineDir.dot(_w0);
         
         const denom = a * c - b * b;
         let sc, tc;
@@ -177,13 +207,13 @@ const InstancedLine = forwardRef(
         tc = Math.max(0, Math.min(lineLength, tc));
         
         // Get the closest point on the line segment
-        _closestPoint.copy(_start).addScaledVector(lineDir, tc);
+        _closestPoint.copy(_start).addScaledVector(_lineDir, tc);
         
-        // Get the closest point on the ray
-        const rayPoint = ray.origin.clone().addScaledVector(ray.direction, Math.max(0, sc));
+        // Get the closest point on the ray (reuse pre-allocated vector)
+        _rayPoint.copy(ray.origin).addScaledVector(ray.direction, Math.max(0, sc));
         
         // Calculate distance between closest points
-        const distance = rayPoint.distanceTo(_closestPoint);
+        const distance = _rayPoint.distanceTo(_closestPoint);
         
         // Adjust threshold based on distance to camera for consistent clicking
         const distanceToCamera = _closestPoint.distanceTo(camera.position);
@@ -200,20 +230,31 @@ const InstancedLine = forwardRef(
       }
     }, [geometry, count, lineWidth, camera]);
 
-    // Create material instance with linewidth uniform
+    // GPU RESOURCE FIX: Create material ONCE and dispose on unmount
     const material = useMemo(() => {
-      return LineShaderMaterial.clone();
+      const mat = LineShaderMaterial.clone();
+      materialRef.current = mat;
+      return mat;
+    }, []);
+
+    // GPU RESOURCE FIX: Dispose material on unmount
+    useEffect(() => {
+      return () => {
+        if (materialRef.current) {
+          materialRef.current.dispose();
+          materialRef.current = null;
+        }
+      };
     }, []);
 
     // Update linewidth uniform when lineWidth prop changes
-    useMemo(() => {
+    useEffect(() => {
       if (material) {
         material.uniforms.linewidth.value = lineWidth;
       }
     }, [material, lineWidth]);
 
     // PERFORMANCE: Initialize instance matrices ONCE instead of every frame
-    // This removes the useFrame loop that was running for every InstancedLine
     useEffect(() => {
       if (!meshRef.current || !geometry || matricesInitializedRef.current) return;
       
@@ -229,6 +270,14 @@ const InstancedLine = forwardRef(
     useEffect(() => {
       matricesInitializedRef.current = false;
     }, [flatPoints, color]);
+
+    // Sync geometry/material to mesh when they change (in-place reuse path)
+    useEffect(() => {
+      if (meshRef.current && geometry) {
+        meshRef.current.geometry = geometry;
+        meshRef.current.count = count;
+      }
+    }, [geometry, count]);
 
     // Attach custom raycast function to the mesh
     useEffect(() => {

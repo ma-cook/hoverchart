@@ -5,14 +5,22 @@ import * as THREE from 'three';
 import { useTextObjectStore } from '../stores';
 import { frameCounter } from '../utils/frameCounter';
 
-// Add this helper function for position smoothing
+// Pre-allocated temp objects to avoid GC pressure in hot paths (90s game dev technique)
+const _tempVec3A = new THREE.Vector3();
+const _tempVec3B = new THREE.Vector3();
+const _tempVec3C = new THREE.Vector3();
+const _tempMatrix = new THREE.Matrix4();
+const _flipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
+const _zeroVec = new THREE.Vector3(0, 0, 0);
+const _upVec = new THREE.Vector3(0, 1, 0);
+
+// In-place lerp helper - mutates current instead of allocating
 const lerpVector = (current, target, factor = 0.1) => {
   if (!current || !target) return target;
-  return new THREE.Vector3(
-    current.x + (target.x - current.x) * factor,
-    current.y + (target.y - current.y) * factor,
-    current.z + (target.z - current.z) * factor
-  );
+  current.x += (target.x - current.x) * factor;
+  current.y += (target.y - current.y) * factor;
+  current.z += (target.z - current.z) * factor;
+  return current;
 };
 
 const TextSprite = React.memo(
@@ -270,9 +278,9 @@ const TextSprite = React.memo(
 
           // Apply smoothed position updates
           if (calculatedPosition && smoothedPositionRef.current) {
-            // Create target vector from calculated position
+            // Reuse pre-allocated vector for target position
             const targetPosition = Array.isArray(calculatedPosition)
-              ? new THREE.Vector3(
+              ? _tempVec3A.set(
                   calculatedPosition[0],
                   calculatedPosition[1],
                   calculatedPosition[2]
@@ -310,10 +318,9 @@ const TextSprite = React.memo(
 
           // PERFORMANCE FIX: Only apply billboard when within 1000 units of camera
           if (billboard && !style.isFaceText) {
-            // Use world position for distance calculation
-            const worldPos = new THREE.Vector3();
-            textRef.current.getWorldPosition(worldPos);
-            const distanceToCamera = camera.position.distanceTo(worldPos);
+            // Reuse pre-allocated vector for world position
+            textRef.current.getWorldPosition(_tempVec3A);
+            const distanceToCamera = camera.position.distanceTo(_tempVec3A);
             if (distanceToCamera < 1000) {
               textRef.current.quaternion.copy(camera.quaternion);
             }
@@ -321,11 +328,10 @@ const TextSprite = React.memo(
 
           if (style.isFaceText && normal) {
             // For face text, update visibility based on face orientation to camera
-            const worldNormal = new THREE.Vector3(...normal).normalize();
-            const textWorldPos = new THREE.Vector3();
-            textRef.current.getWorldPosition(textWorldPos);
-            const viewDir = textWorldPos
-              .clone()
+            const worldNormal = _tempVec3A.set(normal[0], normal[1], normal[2]).normalize();
+            textRef.current.getWorldPosition(_tempVec3B);
+            const viewDir = _tempVec3C
+              .copy(_tempVec3B)
               .sub(camera.position)
               .normalize();
 
@@ -337,19 +343,11 @@ const TextSprite = React.memo(
               // We're looking at the face from the front
               textRef.current.visible = true;
 
-              // Build rotation matrix for text orientation
-              const matrix = new THREE.Matrix4();
-              matrix.lookAt(
-                new THREE.Vector3(0, 0, 0),
-                worldNormal,
-                new THREE.Vector3(0, 1, 0)
-              );
+              // Build rotation matrix for text orientation (reuse pre-allocated objects)
+              _tempMatrix.lookAt(_zeroVec, worldNormal, _upVec);
+              _tempMatrix.multiply(_flipMatrix);
 
-              // Flip text 180° to face viewer
-              const flipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
-              matrix.multiply(flipMatrix);
-
-              textRef.current.setRotationFromMatrix(matrix);
+              textRef.current.setRotationFromMatrix(_tempMatrix);
             } else {
               // We're looking at the face from behind
               textRef.current.visible = false;
@@ -368,7 +366,7 @@ const TextSprite = React.memo(
                   ? position
                   : [position?.x || 0, position?.y || 0, position?.z || 0];
                 const distanceToCamera = camera.position.distanceTo(
-                  new THREE.Vector3(...calculatedPos)
+                  _tempVec3A.set(calculatedPos[0], calculatedPos[1], calculatedPos[2])
                 );
                 const baseScale = Math.min(
                   Math.max(distanceToCamera * 0.01, 0.5),
@@ -398,9 +396,8 @@ const TextSprite = React.memo(
                 }
 
                 // Calculate distance to camera using world position
-                const worldPos = new THREE.Vector3();
-                textRef.current.getWorldPosition(worldPos);
-                const distanceToCamera = camera.position.distanceTo(worldPos);
+                textRef.current.getWorldPosition(_tempVec3A);
+                const distanceToCamera = camera.position.distanceTo(_tempVec3A);
 
                 // PERFORMANCE FIX: Only update billboard when within 1000 units
                 if (distanceToCamera < 1000) {
@@ -456,9 +453,8 @@ const TextSprite = React.memo(
                 textRef.current.scale.set(baseScale, baseScale, baseScale);
               }
               if (billboard) {
-                const worldPos = new THREE.Vector3();
-                textRef.current.getWorldPosition(worldPos);
-                const distanceToCamera = camera.position.distanceTo(worldPos);
+                textRef.current.getWorldPosition(_tempVec3A);
+                const distanceToCamera = camera.position.distanceTo(_tempVec3A);
                 if (distanceToCamera < 1000) {
                   textRef.current.quaternion.copy(camera.quaternion);
                 }
@@ -468,17 +464,15 @@ const TextSprite = React.memo(
               if (style.isFaceText) {
                 textRef.current.scale.set(1, 1, 1); // Keep constant size
                 if (!style.fixedSize && billboard) {
-                  const worldPos = new THREE.Vector3();
-                  textRef.current.getWorldPosition(worldPos);
-                  const distanceToCamera = camera.position.distanceTo(worldPos);
+                  textRef.current.getWorldPosition(_tempVec3A);
+                  const distanceToCamera = camera.position.distanceTo(_tempVec3A);
                   if (distanceToCamera < 1000) {
                     textRef.current.quaternion.copy(camera.quaternion);
                   }
                 }
               } else if (!style.fixedSize && billboard) {
-                const worldPos = new THREE.Vector3();
-                textRef.current.getWorldPosition(worldPos);
-                const distanceToCamera = camera.position.distanceTo(worldPos);
+                textRef.current.getWorldPosition(_tempVec3A);
+                const distanceToCamera = camera.position.distanceTo(_tempVec3A);
                 if (distanceToCamera < 1000) {
                   textRef.current.quaternion.copy(camera.quaternion);
                 }

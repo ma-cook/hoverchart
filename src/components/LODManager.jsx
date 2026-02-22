@@ -11,6 +11,7 @@ const _objectPos = new THREE.Vector3();
 // Throttle settings
 const LOD_UPDATE_INTERVAL = 100; // ms between LOD updates
 const CAMERA_MOVE_THRESHOLD = 10; // Only recalculate if camera moved more than this
+const CAMERA_MOVE_THRESHOLD_SQ = CAMERA_MOVE_THRESHOLD * CAMERA_MOVE_THRESHOLD;
 
 /**
  * LODManager Component
@@ -182,8 +183,8 @@ const LODManager = ({ enabled = true }) => {
     // Get current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);
     
-    // Check if camera moved significantly
-    const cameraMoved = _cameraPos.distanceTo(lastCameraPositionRef.current) > CAMERA_MOVE_THRESHOLD;
+    // Check if camera moved significantly (squared distance avoids sqrt)
+    const cameraMoved = _cameraPos.distanceToSquared(lastCameraPositionRef.current) > CAMERA_MOVE_THRESHOLD_SQ;
     
     if (!cameraMoved) {
       return;
@@ -212,8 +213,8 @@ const LODManager = ({ enabled = true }) => {
         continue;
       }
       
-      // Calculate distance to camera
-      const distance = _cameraPos.distanceTo(_objectPos);
+      // Calculate squared distance to camera (avoids sqrt per object)
+      const distanceSq = _cameraPos.distanceToSquared(_objectPos);
       
       // Check if this is a grouping container (excluded from LOD system)
       const isGroupingContainer = obj.merfolkData?.isContainer === true;
@@ -227,14 +228,14 @@ const LODManager = ({ enabled = true }) => {
       const isParent = currentParentIds.has(obj.id);
       const isChild = currentChildParentMap.has(obj.id);
       
-      // Calculate LOD level based on object type
+      // Calculate LOD level based on object type (using squared distance)
       let newLodLevel;
       if (isParent) {
         // Parent objects use 5x distance thresholds
-        newLodLevel = calculateParentLODLevel(distance);
+        newLodLevel = calculateParentLODLevel(distanceSq);
       } else if (isChild) {
         // Child objects use standard thresholds
-        newLodLevel = calculateLODLevel(distance);
+        newLodLevel = calculateLODLevel(distanceSq);
       } else {
         // Objects that are neither parent nor child don't get LOD applied
         // (they render at full detail always)

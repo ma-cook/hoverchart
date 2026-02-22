@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
-import { getGlobalTextAtlas } from '../utils/textAtlas';
+import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 
 // =============================================================================
 // PERFORMANCE OPTIMIZATION: Reusable THREE objects to avoid GC pressure
@@ -20,12 +20,17 @@ const tempFlipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
 // =============================================================================
 const materialCache = new Map();
 
-function getSharedMaterial(atlas, side, depthWrite, depthTest, opacity) {
-  const key = `${side}-${depthWrite}-${depthTest}-${opacity}`;
+/**
+ * Get a shared material keyed by (texture, side, depthWrite, depthTest, opacity).
+ * Multi-page atlas: each page has its own texture, so materials must be per-texture.
+ */
+function getSharedMaterial(texture, side, depthWrite, depthTest, opacity) {
+  const texId = texture.id; // THREE.js unique id per texture object
+  const key = `${texId}-${side}-${depthWrite}-${depthTest}-${opacity}`;
   
   if (!materialCache.has(key)) {
     const mat = new THREE.MeshBasicMaterial({
-      map: atlas.getTexture(),
+      map: texture,
       transparent: true,
       side: side,
       depthWrite: depthWrite,
@@ -82,6 +87,20 @@ const AtlasTextSprite = ({
 
   // Get shared atlas instance
   const atlas = useMemo(() => getGlobalTextAtlas(), []);
+
+  // PERFORMANCE: Detect the GPU's max texture size on first render
+  // so the atlas never grows beyond what the hardware supports.
+  // R3F's `gl` is THREE.WebGLRenderer — use getContext() for the raw WebGL context.
+  const { gl } = useThree();
+  useMemo(() => {
+    if (!TextAtlas._gpuLimitDetected && gl) {
+      const glCtx = gl.getContext();
+      if (glCtx) {
+        const maxSize = glCtx.getParameter(glCtx.MAX_TEXTURE_SIZE);
+        TextAtlas.setMaxGPUTextureSize(maxSize);
+      }
+    }
+  }, [gl]);
 
   // Calculate position based on line style and path points (for connection lines)
   const calculatedPosition = useMemo(() => {
@@ -219,10 +238,12 @@ const AtlasTextSprite = ({
     uvAttr.needsUpdate = true;
 
     // PERFORMANCE: Use shared material from cache instead of creating new one per instance
+    // Multi-page atlas: entry.texture points to the correct page's texture
+    const entryTexture = entry.texture || atlas.getTexture();
     const depthWriteValue = style.depthWrite !== undefined ? style.depthWrite : false;
     const depthTestValue = style.depthTest !== undefined ? style.depthTest : true;
     const opacityValue = style.opacity !== undefined ? style.opacity : 1;
-    const mat = getSharedMaterial(atlas, side, depthWriteValue, depthTestValue, opacityValue);
+    const mat = getSharedMaterial(entryTexture, side, depthWriteValue, depthTestValue, opacityValue);
 
     return {
       geometry: geo,
@@ -269,6 +290,30 @@ const AtlasTextSprite = ({
       return () => cancelAnimationFrame(frameId);
     }
   }, [atlas, geometry]);
+
+  // BUGFIX: Continuously watch for atlas version changes (resizes) that happen
+  // AFTER this component's initial mount. During progressive loading, later
+  // batches of text may trigger atlas resize, invalidating UVs for all
+  // previously-mounted sprites. Without this, UVs stay stale until the
+  // component remounts (e.g. zoom out/in triggers LOD change).
+  useFrame(() => {
+    if (!geometry || !atlasEntryKeyRef.current) return;
+    if (atlasVersionRef.current === atlas.version) return;
+
+    const entry = atlas.entries.get(atlasEntryKeyRef.current);
+    if (entry && geometry.attributes.uv) {
+      const uvAttr = geometry.attributes.uv;
+      const { u, v, uWidth, vHeight } = entry.uvs;
+      uvAttr.setXY(0, u, 1 - v);
+      uvAttr.setXY(1, u + uWidth, 1 - v);
+      uvAttr.setXY(2, u, 1 - (v + vHeight));
+      uvAttr.setXY(3, u + uWidth, 1 - (v + vHeight));
+      uvAttr.needsUpdate = true;
+      atlasVersionRef.current = atlas.version;
+      // Also ensure texture is uploaded
+      atlas.updateTexture();
+    }
+  });
 
   // Cleanup geometry on unmount
   // NOTE: Material is shared via cache, so we don't dispose it here

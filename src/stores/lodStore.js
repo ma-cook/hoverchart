@@ -21,15 +21,27 @@ import { create } from 'zustand';
 
 // LOD distance thresholds for CHILD objects (inside containers)
 export const LOD_THRESHOLDS = {
-  FULL_DETAIL: 5000,   // Below this: full detail (LOD 0)
+  FULL_DETAIL: 2000,   // Below this: full detail (LOD 0)
   MEDIUM_DETAIL: 20000, // Below this: medium detail (LOD 1), above: low detail (LOD 2)
+};
+
+// Pre-squared thresholds for distanceToSquared() comparison (avoids sqrt)
+export const LOD_THRESHOLDS_SQ = {
+  FULL_DETAIL: LOD_THRESHOLDS.FULL_DETAIL * LOD_THRESHOLDS.FULL_DETAIL,
+  MEDIUM_DETAIL: LOD_THRESHOLDS.MEDIUM_DETAIL * LOD_THRESHOLDS.MEDIUM_DETAIL,
 };
 
 // LOD distance thresholds for PARENT objects
 // Note: Grouping containers (isContainer) are excluded from LOD system entirely
 export const LOD_THRESHOLDS_PARENT = {
-  FULL_DETAIL: 5000,  // Full detail below this distance
+  FULL_DETAIL: 4000,  // Full detail below this distance
   MEDIUM_DETAIL: 20000, // Basic mesh renders from FULL_DETAIL to this distance, then LOW (hidden)
+};
+
+// Pre-squared parent thresholds
+export const LOD_THRESHOLDS_PARENT_SQ = {
+  FULL_DETAIL: LOD_THRESHOLDS_PARENT.FULL_DETAIL * LOD_THRESHOLDS_PARENT.FULL_DETAIL,
+  MEDIUM_DETAIL: LOD_THRESHOLDS_PARENT.MEDIUM_DETAIL * LOD_THRESHOLDS_PARENT.MEDIUM_DETAIL,
 };
 
 // LOD level constants
@@ -40,25 +52,26 @@ export const LOD_LEVELS = {
 };
 
 /**
- * Calculate LOD level based on distance (for child objects)
+ * Calculate LOD level based on squared distance (for child objects)
+ * Uses squared distances to avoid sqrt per object per frame
  */
-export const calculateLODLevel = (distance) => {
-  if (distance < LOD_THRESHOLDS.FULL_DETAIL) {
+export const calculateLODLevel = (distanceSq) => {
+  if (distanceSq < LOD_THRESHOLDS_SQ.FULL_DETAIL) {
     return LOD_LEVELS.FULL;
-  } else if (distance < LOD_THRESHOLDS.MEDIUM_DETAIL) {
+  } else if (distanceSq < LOD_THRESHOLDS_SQ.MEDIUM_DETAIL) {
     return LOD_LEVELS.MEDIUM;
   }
   return LOD_LEVELS.LOW;
 };
 
 /**
- * Calculate LOD level based on distance (for parent/container objects)
- * Uses 3x the distance thresholds of child objects
+ * Calculate LOD level based on squared distance (for parent/container objects)
+ * Uses squared distances to avoid sqrt per object per frame
  */
-export const calculateParentLODLevel = (distance) => {
-  if (distance < LOD_THRESHOLDS_PARENT.FULL_DETAIL) {
+export const calculateParentLODLevel = (distanceSq) => {
+  if (distanceSq < LOD_THRESHOLDS_PARENT_SQ.FULL_DETAIL) {
     return LOD_LEVELS.FULL;
-  } else if (distance < LOD_THRESHOLDS_PARENT.MEDIUM_DETAIL) {
+  } else if (distanceSq < LOD_THRESHOLDS_PARENT_SQ.MEDIUM_DETAIL) {
     return LOD_LEVELS.MEDIUM;
   }
   return LOD_LEVELS.LOW;

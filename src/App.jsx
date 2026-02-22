@@ -47,6 +47,7 @@ import {
 import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { checkPositionJitter } from './utils/positionUtils';
 import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle utility
+import { notifyCameraMove } from './utils/renderWorkScheduler';
 
 import { signInUser } from './services/authService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
@@ -1213,32 +1214,76 @@ const App = () => {
     selectedIndicatorsRef,
   ]); // Virtualized object rendering with LOD
   const [visibleObjectIds, setVisibleObjectIds] = useState(new Set());
-  const [cameraDistance, setCameraDistance] = useState(50);
+
+  // LOD: Use a ref for camera distance to avoid triggering App re-renders on
+  // every camera movement.  Only store the derived boolean `useLOD` in state —
+  // this way App only re-renders when the threshold is actually crossed.
+  // Camera starts at [5100, 5000, 5000] ≈ 8718 from origin, well above the 100
+  // threshold, so initialise useLOD to true to avoid a flip on first move.
+  const cameraDistanceRef = useRef(Infinity);
+  const [useLOD, setUseLOD] = useState(true);
 
   // Update visible objects based on camera frustum
+  // PERF: Stabilize the Set reference — only create a new Set when the
+  // membership actually changes.  This avoids cascading re-renders in
+  // ObjectsRenderer / ConnectionsRenderer on every camera frame.
+  const prevVisibleRef = useRef(new Set());
+
+  // PERF: Use refs for objects and loadedCells so that updateVisibleObjects
+  // doesn't recreate on every objects/loadedCells change.  Recreating the
+  // callback cascades: throttle recreates → camera listener re-registers →
+  // initial-visibility call fires → visibleObjectIds ping-pongs between
+  // "all objects" and the virtualizer subset on every data change.
+  const objectsForVisibilityRef = useRef(objects);
+  useEffect(() => { objectsForVisibilityRef.current = objects; }, [objects]);
+  const loadedCellsForVisibilityRef = useRef(loadedCells);
+  useEffect(() => { loadedCellsForVisibilityRef.current = loadedCells; }, [loadedCells]);
+
   const updateVisibleObjects = useCallback(
     (camera) => {
-      if (!camera || objects.length === 0) return;
+      const currentObjects = objectsForVisibilityRef.current;
+      if (!camera || currentObjects.length === 0) return;
 
-      // Calculate camera distance for LOD
+      // Calculate camera distance for LOD — use a ref to avoid App re-renders.
+      // Only promote to state when the useLOD threshold is actually crossed.
       const distance = camera.position.length();
-      setCameraDistance(distance);
+      const prevDistance = cameraDistanceRef.current;
+      cameraDistanceRef.current = distance;
+      const wasLOD = prevDistance > 100;
+      const nowLOD = distance > 100;
+      if (wasLOD !== nowLOD) {
+        setUseLOD(nowLOD);
+      }
 
       // Use virtualization to get visible objects, coordinating with spatial partitioning
+      const lc = loadedCellsForVisibilityRef.current;
       const loadedCellsSet =
-        loadedCells && Array.isArray(loadedCells) ? new Set(loadedCells) : null;
+        lc && Array.isArray(lc) ? new Set(lc) : null;
       const visible = objectVirtualizer.updateVisibility(
         camera,
-        objects,
+        currentObjects,
         loadedCellsSet
       );
-      setVisibleObjectIds(new Set(visible));
+
+      // Only create a new Set reference when membership changed
+      const prev = prevVisibleRef.current;
+      let changed = visible.length !== prev.size;
+      if (!changed) {
+        for (const id of visible) {
+          if (!prev.has(id)) { changed = true; break; }
+        }
+      }
+      if (changed) {
+        const next = new Set(visible);
+        prevVisibleRef.current = next;
+        setVisibleObjectIds(next);
+      }
     },
-    [objects, loadedCells]
+    [] // Stable — reads objects/loadedCells from refs
   );
-  // Throttled visibility update - fix throttle dependency
+  // Throttled visibility update - stable because updateVisibleObjects is stable
   const throttledUpdateVisibility = useMemo(
-    () => throttle((camera) => updateVisibleObjects(camera), 100),
+    () => throttle((camera) => updateVisibleObjects(camera), 200),
     [updateVisibleObjects]
   );
 
@@ -1254,6 +1299,7 @@ const App = () => {
 
       if (controls) {
         const handleCameraUpdate = () => {
+          notifyCameraMove(); // Tell progressive mounters to defer work
           throttledUpdateVisibility(camera);
         };
 
@@ -1270,23 +1316,56 @@ const App = () => {
     throttledUpdateVisibility,
     updateVisibleObjects,
   ]);
-  // Initial setup for all objects to be visible if no camera yet or if objects changed
-  // Debounced to prevent infinite loops during rapid object creation
+
+  // Ensure newly-created objects become visible without waiting for a camera move.
+  // Uses a "seen" set so we only ADD genuinely new IDs — we never re-add objects
+  // that the virtualizer previously removed (distance/count limit).  This prevents
+  // the old oscillation: effect set ALL visible → virtualizer set SUBSET →
+  // objects change → effect set ALL again → ObjectsRenderer restarts progressive
+  // mounting on every camera move.
+  const seenObjectIdsRef = useRef(new Set());
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (objects.length > 0) {
-        // Always ensure all objects are in the visible set initially
-        // This prevents objects from disappearing due to virtualization timing issues
-        const allObjectIds = new Set(objects.map((obj) => obj.id));
-        setVisibleObjectIds(allObjectIds);
+    if (objects.length === 0) return;
+
+    // Collect IDs we have never seen before
+    const newIds = [];
+    for (const obj of objects) {
+      if (!seenObjectIdsRef.current.has(obj.id)) {
+        seenObjectIdsRef.current.add(obj.id);
+        newIds.push(obj.id);
       }
-    }, 100); // 100ms debounce
+    }
+
+    if (newIds.length === 0) return; // Nothing new — skip state update entirely
+
+    const timeoutId = setTimeout(() => {
+      setVisibleObjectIds((prev) => {
+        const next = new Set(prev);
+        for (const id of newIds) {
+          next.add(id);
+        }
+        // BUGFIX: Keep prevVisibleRef in sync so the first updateVisibleObjects
+        // call (on camera move) doesn't see a stale empty Set and think the
+        // membership changed.  Without this, the virtualizer returns the same
+        // IDs but prevVisibleRef is empty → "changed" = true → new Set
+        // reference → ObjectsRenderer's progressive effect restarts.
+        prevVisibleRef.current = next;
+        return next;
+      });
+
+      // Also kick off the initial updateVisibleObjects if camera is available,
+      // so cameraDistanceRef gets the real value and the virtualizer establishes
+      // its baseline BEFORE the user moves the camera.
+      if (cameraRef.current?.camera) {
+        updateVisibleObjects(cameraRef.current.camera);
+      }
+    }, 100); // 100ms debounce for rapid object creation
 
     return () => clearTimeout(timeoutId);
-  }, [objects]);
+  }, [objects, updateVisibleObjects]);
 
-  // Determine LOD based on camera distance
-  const useLOD = cameraDistance > 100;
+  // useLOD is now derived directly as state (see above) — no need for
+  // `const useLOD = cameraDistance > 100;`
 
   // Lazy load state for Canvas
   const [shouldRenderCanvas, setShouldRenderCanvas] = useState(false);

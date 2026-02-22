@@ -294,12 +294,12 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
       // Check if this dodecahedron's position/scale/color changed
       const lastKnown = lastPositionsRef.current.get(dodecaId);
       const positionChanged = !lastKnown || 
-        lastKnown.position[0] !== position[0] ||
-        lastKnown.position[1] !== position[1] ||
-        lastKnown.position[2] !== position[2] ||
-        lastKnown.scale[0] !== scale[0] ||
-        lastKnown.scale[1] !== scale[1] ||
-        lastKnown.scale[2] !== scale[2] ||
+        lastKnown.px !== position[0] ||
+        lastKnown.py !== position[1] ||
+        lastKnown.pz !== position[2] ||
+        lastKnown.sx !== scale[0] ||
+        lastKnown.sy !== scale[1] ||
+        lastKnown.sz !== scale[2] ||
         lastKnown.color !== color;
 
       if (positionChanged || visibilityChanged || needsFullUpdateRef.current) {
@@ -318,8 +318,8 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
         }
         
         lastPositionsRef.current.set(dodecaId, { 
-          position: [...position], 
-          scale: [...scale],
+          px: position[0], py: position[1], pz: position[2],
+          sx: scale[0], sy: scale[1], sz: scale[2],
           color 
         });
         needsUpdate = true;

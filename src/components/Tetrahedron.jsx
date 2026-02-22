@@ -8,6 +8,28 @@ import AtlasTextSprite from './AtlasTextSprite';
 import ObjectUI from './ObjectUI';
 
 import HeaderInput from './HeaderInput';
+
+// Fast comparison helpers to replace JSON.stringify in React.memo
+const arraysEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+};
+
+const shallowObjEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+};
 import TextStyleUI from './TextStyleUI';
 
 import InstancedLine from './InstancedLine';
@@ -36,6 +58,52 @@ const tetrahedronVertices = [
   [TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE, TETRAHEDRON_SIZE], // bottom-right-front
   [0, -TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE * 1.5], // bottom-back
 ];
+
+// FLYWEIGHT: Module-level shared geometries — all Tetrahedron instances reuse these
+const _createTriangleGeometry = (vertices) => {
+  const geometry = new THREE.BufferGeometry();
+  const positions = new Float32Array(vertices.flat());
+  const normals = new Float32Array(9);
+  const uvs = new Float32Array([0.5, 1.0, 0.0, 0.0, 1.0, 0.0]);
+
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
+  // Calculate normal using temp vectors
+  const v1x = vertices[0][0], v1y = vertices[0][1], v1z = vertices[0][2];
+  const v2x = vertices[1][0], v2y = vertices[1][1], v2z = vertices[1][2];
+  const v3x = vertices[2][0], v3y = vertices[2][1], v3z = vertices[2][2];
+  // edge1 = v2 - v1, edge2 = v3 - v1
+  const e1x = v2x - v1x, e1y = v2y - v1y, e1z = v2z - v1z;
+  const e2x = v3x - v1x, e2y = v3y - v1y, e2z = v3z - v1z;
+  // cross product
+  let nx = e1y * e2z - e1z * e2y;
+  let ny = e1z * e2x - e1x * e2z;
+  let nz = e1x * e2y - e1y * e2x;
+  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (len > 0) { nx /= len; ny /= len; nz /= len; }
+
+  for (let i = 0; i < 3; i++) {
+    normals[i * 3] = nx;
+    normals[i * 3 + 1] = ny;
+    normals[i * 3 + 2] = nz;
+  }
+
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  const indices = new Uint16Array([0, 1, 2]);
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.frustumCulled = false;
+  geometry.computeBoundingSphere();
+  geometry.computeBoundingBox();
+  return geometry;
+};
+
+const SHARED_TETRAHEDRON_FACES = {
+  bottom: _createTriangleGeometry([tetrahedronVertices[1], tetrahedronVertices[2], tetrahedronVertices[3]]),
+  front: _createTriangleGeometry([tetrahedronVertices[0], tetrahedronVertices[2], tetrahedronVertices[1]]),
+  left: _createTriangleGeometry([tetrahedronVertices[0], tetrahedronVertices[1], tetrahedronVertices[3]]),
+  right: _createTriangleGeometry([tetrahedronVertices[0], tetrahedronVertices[3], tetrahedronVertices[2]]),
+};
 
 // Get face indicator positions and rotations
 const getFaceIndicatorProps = (faceName) => {
@@ -143,95 +211,8 @@ const Tetrahedron = ({
   );
   // Tetrahedron vertices (regular tetrahedron)
 
-  const tetrahedronTriangleFaces = useMemo(() => {
-    const createTriangleGeometry = (vertices) => {
-      const geometry = new THREE.BufferGeometry();
-
-      const positions = new Float32Array(vertices.flat());
-      const normals = new Float32Array(9); // 3 vertices * 3 components
-      const uvs = new Float32Array([
-        0.5,
-        1.0, // top vertex
-        0.0,
-        0.0, // bottom left
-        1.0,
-        0.0, // bottom right
-      ]);
-
-      geometry.setAttribute(
-        'position',
-        new THREE.BufferAttribute(positions, 3)
-      );
-      geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-
-      // Calculate normal for the triangle
-      const v1 = new THREE.Vector3(
-        vertices[0][0],
-        vertices[0][1],
-        vertices[0][2]
-      );
-      const v2 = new THREE.Vector3(
-        vertices[1][0],
-        vertices[1][1],
-        vertices[1][2]
-      );
-      const v3 = new THREE.Vector3(
-        vertices[2][0],
-        vertices[2][1],
-        vertices[2][2]
-      );
-
-      const normal = new THREE.Vector3()
-        .crossVectors(
-          new THREE.Vector3().subVectors(v2, v1),
-          new THREE.Vector3().subVectors(v3, v1)
-        )
-        .normalize();
-
-      // Set the same normal for all vertices
-      for (let i = 0; i < 3; i++) {
-        normals[i * 3] = normal.x;
-        normals[i * 3 + 1] = normal.y;
-        normals[i * 3 + 2] = normal.z;
-      }
-
-      geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-
-      // Add indices for proper face rendering and raycasting
-      const indices = new Uint16Array([0, 1, 2]);
-      geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-
-      // Disable frustum culling to prevent premature culling at edge angles
-      geometry.frustumCulled = false;
-
-      geometry.computeBoundingSphere();
-      geometry.computeBoundingBox();
-      return geometry;
-    };
-
-    return {
-      bottom: createTriangleGeometry([
-        tetrahedronVertices[1], // bottom-left-front
-        tetrahedronVertices[2], // bottom-right-front
-        tetrahedronVertices[3], // bottom-back
-      ]),
-      front: createTriangleGeometry([
-        tetrahedronVertices[0], // top
-        tetrahedronVertices[2], // bottom-right-front
-        tetrahedronVertices[1], // bottom-left-front
-      ]),
-      left: createTriangleGeometry([
-        tetrahedronVertices[0], // top
-        tetrahedronVertices[1], // bottom-left-front
-        tetrahedronVertices[3], // bottom-back
-      ]),
-      right: createTriangleGeometry([
-        tetrahedronVertices[0], // top
-        tetrahedronVertices[3], // bottom-back
-        tetrahedronVertices[2], // bottom-right-front
-      ]),
-    };
-  }, []);
+  // FLYWEIGHT: Use module-level shared geometries instead of creating per instance
+  const tetrahedronTriangleFaces = SHARED_TETRAHEDRON_FACES;
 
   // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
   const objectData = useObjectsStore(
@@ -1419,28 +1400,17 @@ export default React.memo(Tetrahedron, (prevProps, nextProps) => {
   if (prevProps.globalIndicatorSelected !== nextProps.globalIndicatorSelected)
     return false;
   if (prevProps.indicatorMode !== nextProps.indicatorMode) return false;
-  if (
-    JSON.stringify(prevProps.selectedIndicators) !==
-    JSON.stringify(nextProps.selectedIndicators)
-  )
+  if (!arraysEqual(prevProps.selectedIndicators, nextProps.selectedIndicators))
     return false;
-  if (JSON.stringify(prevProps.position) !== JSON.stringify(nextProps.position))
+  if (!arraysEqual(prevProps.position, nextProps.position))
     return false;
-  if (JSON.stringify(prevProps.scale) !== JSON.stringify(nextProps.scale))
+  if (!arraysEqual(prevProps.scale, nextProps.scale))
     return false;
-  if (
-    JSON.stringify(prevProps.faceColors) !==
-    JSON.stringify(nextProps.faceColors)
-  )
+  if (!shallowObjEqual(prevProps.faceColors, nextProps.faceColors))
     return false;
-  if (
-    JSON.stringify(prevProps.faceTexts) !== JSON.stringify(nextProps.faceTexts)
-  )
+  if (!shallowObjEqual(prevProps.faceTexts, nextProps.faceTexts))
     return false;
-  if (
-    JSON.stringify(prevProps.faceTextStyles) !==
-    JSON.stringify(nextProps.faceTextStyles)
-  )
+  if (!shallowObjEqual(prevProps.faceTextStyles, nextProps.faceTextStyles))
     return false;
   if (prevProps.color !== nextProps.color) return false;
   if (prevProps.headerText !== nextProps.headerText) return false;

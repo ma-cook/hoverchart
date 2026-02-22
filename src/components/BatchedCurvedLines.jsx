@@ -75,7 +75,7 @@ const BatchedCurvedLines = memo(({
   const bufferCapacityRef = useRef(0);
   const currentCountRef = useRef(0);
   // PERFORMANCE: Track previous buffer state to avoid unnecessary GPU uploads
-  const prevBufferHashRef = useRef('');
+  const prevBufferHashRef = useRef(0);
   const pathCacheRef = useRef(new Map()); // Cache computed paths
   // Track previous pathfindingObjects reference so we can detect changes
   // and invalidate the path cache (which is keyed only on start+end positions,
@@ -245,7 +245,7 @@ const BatchedCurvedLines = memo(({
     const geo = geometryRef.current;
     if (!geo || !allSegments.length) {
       currentCountRef.current = 0;
-      prevBufferHashRef.current = '';
+      prevBufferHashRef.current = 0;
       return;
     }
     
@@ -255,8 +255,8 @@ const BatchedCurvedLines = memo(({
     
     if (!instanceStart || !instanceEnd || !instanceColor) return;
     
-    // Build hash while updating
-    let hashParts = [];
+    // Build numeric rolling hash while updating (no string allocations)
+    let bufferHash = allSegments.length;
     
     // Update buffers in-place
     for (let i = 0; i < allSegments.length; i++) {
@@ -269,8 +269,11 @@ const BatchedCurvedLines = memo(({
       const ey = seg.end[1];
       const ez = seg.end[2];
       
-      // Add to hash
-      hashParts.push(`${sx.toFixed(1)},${sy.toFixed(1)}-${ex.toFixed(1)},${ey.toFixed(1)}-${seg.color}`);
+      // Add to numeric hash
+      bufferHash = Math.imul(bufferHash ^ ((sx * 10) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((sy * 10) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((ex * 10) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((ey * 10) | 0), 0x9e3779b9);
       
       // Update positions
       instanceStart.setXYZ(i, sx, sy, sz);
@@ -282,11 +285,10 @@ const BatchedCurvedLines = memo(({
     }
     
     // Check if anything changed
-    const newHash = `${allSegments.length}:${hashParts.join('|')}`;
-    if (newHash === prevBufferHashRef.current) {
+    if (bufferHash === prevBufferHashRef.current) {
       return;
     }
-    prevBufferHashRef.current = newHash;
+    prevBufferHashRef.current = bufferHash;
     
     // Mark buffers as needing update
     instanceStart.needsUpdate = true;

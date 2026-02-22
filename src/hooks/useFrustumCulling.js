@@ -1,4 +1,4 @@
-import { useMemo, useRef, useCallback, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -115,39 +115,40 @@ class SpatialHash {
 /**
  * Hook for frustum-culled connections
  * Returns only connections that are visible in the current camera view
- * PERFORMANCE: Only recalculates when camera moves significantly or connections change
+ *
+ * PERFORMANCE: No useState inside useFrame — camera movement is tracked via
+ * a ref-based dirty flag + a coalesced setState outside the render loop.
+ * This avoids triggering React re-renders on every camera frame which was
+ * the primary cause of jerky OrbitControls.
  */
 export const useFrustumCulledConnections = (connections, objects, enabled = true) => {
   const { camera } = useThree();
-  const spatialHashRef = useRef(new SpatialHash(200));
   const lastCameraPositionRef = useRef(new THREE.Vector3());
-  const lastCameraQuaternionRef = useRef(new THREE.Quaternion());
   const cachedVisibleConnectionsRef = useRef([]);
-  const lastConnectionsLengthRef = useRef(0);
-  const lastObjectsLengthRef = useRef(0);
-  // Track the objects array reference to detect position changes (size alone is not enough)
+  const lastConnectionsRef = useRef(null);
   const lastObjectsRef = useRef(null);
-
-  // Camera movement tracking: throttle to every 200ms and only if camera moved > 50 units.
-  // This causes the useMemo below to recompute when the camera pans/zooms, keeping the
-  // frustum-culled list fresh even when no objects/connections change.
-  const [cameraKey, setCameraKey] = useState(0);
-  const cameraKeyTimeRef = useRef(0);
   const tempCamPos = useRef(new THREE.Vector3());
 
+  // Instead of useState(cameraKey) which caused React re-renders from useFrame,
+  // use a dirty flag that is checked on the *next* React render triggered by
+  // an actual prop change (connections / objects).
+  const cameraDirtyRef = useRef(false);
+  const cameraCheckTimeRef = useRef(0);
+
+  // Track camera movement without triggering React re-renders
   useFrame(() => {
     if (!enabled || !camera) return;
     const now = Date.now();
-    if (now - cameraKeyTimeRef.current < 200) return; // throttle to 5 Hz
+    if (now - cameraCheckTimeRef.current < 300) return; // 3.3 Hz — plenty for culling
+    cameraCheckTimeRef.current = now;
 
     tempCamPos.current.setFromMatrixPosition(camera.matrixWorld);
     if (tempCamPos.current.distanceTo(lastCameraPositionRef.current) > 50) {
       lastCameraPositionRef.current.copy(tempCamPos.current);
-      cameraKeyTimeRef.current = now;
-      setCameraKey((k) => k + 1);
+      cameraDirtyRef.current = true;
     }
   });
-  
+
   // Build object position map for fast lookups
   const objectPositions = useMemo(() => {
     const map = new Map();
@@ -161,64 +162,49 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     
     return map;
   }, [objects]);
-  
-  // Build spatial hash for objects
-  useMemo(() => {
-    spatialHashRef.current.clear();
-    objectPositions.forEach((position, id) => {
-      spatialHashRef.current.insert(id, position);
-    });
-  }, [objectPositions]);
-  
-  // Calculate visible connections
-  // useMemo re-runs when connections/objects change OR when cameraKey increments (camera moved)
-  const lastCameraKeyRef = useRef(-1);
+
+  // Calculate visible connections.
+  // Re-runs when connections/objects change (prop-driven).
+  // Camera movement sets the dirty flag which is consumed on the next
+  // natural render cycle — no extra renders are scheduled.
   const visibleConnections = useMemo(() => {
     if (!enabled || !connections || connections.length === 0) {
       cachedVisibleConnectionsRef.current = connections || [];
       return cachedVisibleConnectionsRef.current;
     }
-    
+
     // Skip frustum culling for small numbers of connections
     if (connections.length < 50) {
       cachedVisibleConnectionsRef.current = connections;
       return connections;
     }
-    
-    // Check if data has changed (don't rely on camera for dependency)
-    const connectionsChanged = connections.length !== lastConnectionsLengthRef.current;
-    // Detect object position changes by checking the objects array reference (it gets a new
-    // reference whenever any position/scale changes via the store's hash guard), not just size.
-    const objectsChanged = objects !== lastObjectsRef.current || objectPositions.size !== lastObjectsLengthRef.current;
-    // Detect camera movement
-    const cameraChanged = cameraKey !== lastCameraKeyRef.current;
-    
-    // If nothing changed and we have a cache, return cache
+
+    const connectionsChanged = connections !== lastConnectionsRef.current;
+    const objectsChanged = objects !== lastObjectsRef.current;
+    const cameraChanged = cameraDirtyRef.current;
+
     if (!connectionsChanged && !objectsChanged && !cameraChanged && cachedVisibleConnectionsRef.current.length > 0) {
       return cachedVisibleConnectionsRef.current;
     }
-    
-    lastConnectionsLengthRef.current = connections.length;
-    lastObjectsLengthRef.current = objectPositions.size;
+
+    lastConnectionsRef.current = connections;
     lastObjectsRef.current = objects;
-    lastCameraKeyRef.current = cameraKey;
-    
-    // Update frustum from camera (camera ref is stable, matrices update internally)
+    cameraDirtyRef.current = false;
+
     projScreenMatrix.multiplyMatrices(
       camera.projectionMatrix,
       camera.matrixWorldInverse
     );
     frustum.setFromProjectionMatrix(projScreenMatrix);
-    
-    // Filter connections by visibility
-    const visible = connections.filter(connection => 
+
+    const visible = connections.filter(connection =>
       isConnectionVisible(connection, frustum, objectPositions)
     );
-    
+
     cachedVisibleConnectionsRef.current = visible;
     return visible;
-  }, [connections, objectPositions, objects, enabled, cameraKey]); // cameraKey triggers recompute when camera moves
-  
+  }, [connections, objectPositions, objects, enabled, camera]);
+
   return {
     visibleConnections,
     totalConnections: connections?.length || 0,

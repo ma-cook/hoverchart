@@ -24,6 +24,7 @@ import {
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
+import { shallow } from 'zustand/shallow';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 // Import unified utilities
@@ -73,62 +74,65 @@ const Plane = ({
 
   // Store state and actions - moved before memoized values to avoid initialization order issues
   const plane = usePlaneStore((state) => state.getPlane(id));
-  const createPlane = usePlaneStore((state) => state.createPlane);
-  const updatePlane = usePlaneStore((state) => state.updatePlane);
-  const selectPlane = usePlaneStore((state) => state.selectPlane);
-  const deselectPlane = usePlaneStore((state) => state.deselectPlane);
-  const isPlaneSelected = usePlaneStore((state) => state.isPlaneSelected(id));
-  const setPlaneShowUI = usePlaneStore((state) => state.setPlaneShowUI);
-  const setPlaneShowTextInput = usePlaneStore(
-    (state) => state.setPlaneShowTextInput
+
+  // Single selector for all plane actions (prevents 20+ subscriptions)
+  const planeActions = usePlaneStore(
+    (state) => ({
+      createPlane: state.createPlane,
+      updatePlane: state.updatePlane,
+      selectPlane: state.selectPlane,
+      deselectPlane: state.deselectPlane,
+      isPlaneSelected: state.isPlaneSelected(id),
+      setPlaneShowUI: state.setPlaneShowUI,
+      setPlaneShowTextInput: state.setPlaneShowTextInput,
+      setPlaneShowTextStyleUI: state.setPlaneShowTextStyleUI,
+      setPlaneShowTransform: state.setPlaneShowTransform,
+      setPlaneIsResizing: state.setPlaneIsResizing,
+      setPlaneShowHeader: state.setPlaneShowHeader,
+      setPlaneShowHeaderStyleUI: state.setPlaneShowHeaderStyleUI,
+      setPlaneIndicatorSelected: state.setPlaneIndicatorSelected,
+      setPlaneWebcamActive: state.setPlaneWebcamActive,
+      setPlaneWebcamInitialized: state.setPlaneWebcamInitialized,
+      setPlaneScreenShareActive: state.setPlaneScreenShareActive,
+      setPlaneScreenShareInitialized: state.setPlaneScreenShareInitialized,
+      setPlaneIsBroadcasting: state.setPlaneIsBroadcasting,
+      setPlaneIsViewingBroadcast: state.setPlaneIsViewingBroadcast,
+      setPlaneIsScreenSharing: state.setPlaneIsScreenSharing,
+      setPlaneBroadcastInfo: state.setPlaneBroadcastInfo,
+      setPlaneViewerCount: state.setPlaneViewerCount,
+      setPlaneImageTexture: state.setPlaneImageTexture,
+      setPlaneIsUploadingImage: state.setPlaneIsUploadingImage,
+    }),
+    shallow
   );
-  const setPlaneShowTextStyleUI = usePlaneStore(
-    (state) => state.setPlaneShowTextStyleUI
-  );
-  const setPlaneShowTransform = usePlaneStore(
-    (state) => state.setPlaneShowTransform
-  );
-  const setPlaneIsResizing = usePlaneStore((state) => state.setPlaneIsResizing);
-  const setPlaneShowHeader = usePlaneStore((state) => state.setPlaneShowHeader);
-  const setPlaneShowHeaderStyleUI = usePlaneStore(
-    (state) => state.setPlaneShowHeaderStyleUI
-  );
-  const setPlaneIndicatorSelected = usePlaneStore(
-    (state) => state.setPlaneIndicatorSelected
-  );
-  const setPlaneWebcamActive = usePlaneStore(
-    (state) => state.setPlaneWebcamActive
-  );
-  const setPlaneWebcamInitialized = usePlaneStore(
-    (state) => state.setPlaneWebcamInitialized
-  );
-  const setPlaneScreenShareActive = usePlaneStore(
-    (state) => state.setPlaneScreenShareActive
-  );
-  const setPlaneScreenShareInitialized = usePlaneStore(
-    (state) => state.setPlaneScreenShareInitialized
-  );
-  const setPlaneIsBroadcasting = usePlaneStore(
-    (state) => state.setPlaneIsBroadcasting
-  );
-  const setPlaneIsViewingBroadcast = usePlaneStore(
-    (state) => state.setPlaneIsViewingBroadcast
-  );
-  const setPlaneIsScreenSharing = usePlaneStore(
-    (state) => state.setPlaneIsScreenSharing
-  );
-  const setPlaneBroadcastInfo = usePlaneStore(
-    (state) => state.setPlaneBroadcastInfo
-  );
-  const setPlaneViewerCount = usePlaneStore(
-    (state) => state.setPlaneViewerCount
-  );
-  const setPlaneImageTexture = usePlaneStore(
-    (state) => state.setPlaneImageTexture
-  );
-  const setPlaneIsUploadingImage = usePlaneStore(
-    (state) => state.setPlaneIsUploadingImage
-  );
+
+  // Destructure actions for easier access
+  const {
+    createPlane,
+    updatePlane,
+    selectPlane,
+    deselectPlane,
+    isPlaneSelected,
+    setPlaneShowUI,
+    setPlaneShowTextInput,
+    setPlaneShowTextStyleUI,
+    setPlaneShowTransform,
+    setPlaneIsResizing,
+    setPlaneShowHeader,
+    setPlaneShowHeaderStyleUI,
+    setPlaneIndicatorSelected,
+    setPlaneWebcamActive,
+    setPlaneWebcamInitialized,
+    setPlaneScreenShareActive,
+    setPlaneScreenShareInitialized,
+    setPlaneIsBroadcasting,
+    setPlaneIsViewingBroadcast,
+    setPlaneIsScreenSharing,
+    setPlaneBroadcastInfo,
+    setPlaneViewerCount,
+    setPlaneImageTexture,
+    setPlaneIsUploadingImage,
+  } = planeActions;
 
   // Get hover state from indicators store
   const hoveredObjectId = useIndicatorsStore((state) => state.hoveredObjectId);
@@ -136,141 +140,81 @@ const Plane = ({
     (state) => state.setHoveredObjectId
   );
 
-  // Memoize derived values to prevent unnecessary re-renders
-  const position = useMemo(
-    () => objectData?.position || [0, 0, 0],
-    [objectData?.position]
-  );
-  const scale = useMemo(
-    () => objectData?.scale || [1, 1, 1],
-    [objectData?.scale]
-  );
-  const color = useMemo(() => {
-    const finalColor = plane?.color || objectData?.color || 'white';
-    return finalColor;
-  }, [plane?.color, objectData?.color]);
-  const headerText = useMemo(
-    () => plane?.headerText || objectData?.headerText || '',
-    [plane?.headerText, objectData?.headerText]
-  );
-  const borderStyle = useMemo(
-    () => plane?.borderStyle || objectData?.borderStyle || 'solid',
-    [plane?.borderStyle, objectData?.borderStyle]
-  );
-  const borderColor = useMemo(
-    () => plane?.borderColor || objectData?.borderColor || 'black',
-    [plane?.borderColor, objectData?.borderColor]
-  );
-  const lineThickness = useMemo(() => {
-    const baseThickness =
-      plane?.lineThickness || objectData?.lineThickness || 2;
-    return isMobile ? Math.max(baseThickness * 2, 3) : baseThickness;
-  }, [plane?.lineThickness, objectData?.lineThickness]);
-  const headerStyle = useMemo(
-    () =>
-      plane?.headerStyle ||
-      objectData?.headerStyle || {
-        fontSize: 1.5,
-        color: 'black',
-        underline: false,
-      },
-    [plane?.headerStyle, objectData?.headerStyle]
-  );
-  const faceText = useMemo(
-    () => plane?.faceText || objectData?.faceText || '',
-    [plane?.faceText, objectData?.faceText]
-  );
-  const faceTextStyle = useMemo(
-    () =>
-      plane?.faceTextStyle ||
-      objectData?.faceTextStyle || {
-        fontSize: 0.5,
-        color: 'black',
-        underline: false,
-      },
-    [plane?.faceTextStyle, objectData?.faceTextStyle]
-  );
-  const imageUrl = useMemo(
-    () => objectData?.imageUrl || null,
-    [objectData?.imageUrl]
-  );
-  const webcamActive = useMemo(
-    () => plane?.webcamActive ?? objectData?.webcamActive ?? false,
-    [plane?.webcamActive, objectData?.webcamActive]
-  );
+  // Consolidated derived values — single memo replacing ~20 trivial individual useMemos
+  const planeData = useMemo(() => {
+    const baseThickness = plane?.lineThickness || objectData?.lineThickness || 2;
+    return {
+      position: objectData?.position || [0, 0, 0],
+      scale: objectData?.scale || [1, 1, 1],
+      color: plane?.color || objectData?.color || 'white',
+      headerText: plane?.headerText || objectData?.headerText || '',
+      borderStyle: plane?.borderStyle || objectData?.borderStyle || 'solid',
+      borderColor: plane?.borderColor || objectData?.borderColor || 'black',
+      lineThickness: isMobile ? Math.max(baseThickness * 2, 3) : baseThickness,
+      headerStyle: plane?.headerStyle || objectData?.headerStyle || { fontSize: 1.5, color: 'black', underline: false },
+      faceText: plane?.faceText || objectData?.faceText || '',
+      faceTextStyle: plane?.faceTextStyle || objectData?.faceTextStyle || { fontSize: 0.5, color: 'black', underline: false },
+      imageUrl: objectData?.imageUrl || null,
+      webcamActive: plane?.webcamActive ?? objectData?.webcamActive ?? false,
+      webcamInitialized: plane?.webcamInitialized || false,
+      screenShareActive: plane?.screenShareActive || false,
+      screenShareInitialized: plane?.screenShareInitialized || false,
+      isBroadcasting: plane?.isBroadcasting || false,
+      isScreenSharing: plane?.isScreenSharing || false,
+      isViewingBroadcast: plane?.isViewingBroadcast || false,
+      broadcastInfo: plane?.broadcastInfo,
+      showUI: plane?.showUI || false,
+      showTextInput: plane?.showTextInput || false,
+      showTextStyleUI: plane?.showTextStyleUI || false,
+      showTransform: plane?.showTransform || false,
+      isResizing: plane?.isResizing || false,
+      showHeader: plane?.showHeader || false,
+      showHeaderStyleUI: plane?.showHeaderStyleUI || false,
+      isUploadingImage: plane?.isUploadingImage || false,
+      indicatorSelected: plane?.indicatorSelected || false,
+      viewerCount: plane?.viewerCount || 0,
+    };
+  }, [plane, objectData]);
+
+  // Destructure for convenient access
+  const {
+    position,
+    scale,
+    color,
+    headerText,
+    borderStyle,
+    borderColor,
+    lineThickness,
+    headerStyle,
+    faceText,
+    faceTextStyle,
+    imageUrl,
+    webcamActive,
+    webcamInitialized,
+    screenShareActive,
+    screenShareInitialized,
+    isBroadcasting,
+    isScreenSharing,
+    isViewingBroadcast,
+    broadcastInfo,
+    showUI,
+    showTextInput,
+    showTextStyleUI,
+    showTransform,
+    isResizing,
+    showHeader,
+    showHeaderStyleUI,
+    isUploadingImage,
+    indicatorSelected,
+    viewerCount,
+  } = planeData;
+
   const groupRef = useRef();
   const meshRef = useRef();
   const contentRef = useRef();
   const { camera } = useThree();
   // Mobile-aware sizing
-  const size = isMobile ? 8 : 5;
-
-  // Get derived UI state from plane store (transient state only)
-  const webcamInitialized = useMemo(
-    () => plane?.webcamInitialized || false,
-    [plane?.webcamInitialized]
-  );
-  const screenShareActive = useMemo(
-    () => plane?.screenShareActive || false,
-    [plane?.screenShareActive]
-  );
-  const screenShareInitialized = useMemo(
-    () => plane?.screenShareInitialized || false,
-    [plane?.screenShareInitialized]
-  );
-  const isBroadcasting = useMemo(
-    () => plane?.isBroadcasting || false,
-    [plane?.isBroadcasting]
-  );
-  const isScreenSharing = useMemo(
-    () => plane?.isScreenSharing || false,
-    [plane?.isScreenSharing]
-  );
-  const isViewingBroadcast = useMemo(
-    () => plane?.isViewingBroadcast || false,
-    [plane?.isViewingBroadcast]
-  );
-  const broadcastInfo = useMemo(
-    () => plane?.broadcastInfo,
-    [plane?.broadcastInfo]
-  );
-  const showUI = useMemo(() => plane?.showUI || false, [plane?.showUI]);
-  const showTextInput = useMemo(
-    () => plane?.showTextInput || false,
-    [plane?.showTextInput]
-  );
-  const showTextStyleUI = useMemo(
-    () => plane?.showTextStyleUI || false,
-    [plane?.showTextStyleUI]
-  );
-  const showTransform = useMemo(
-    () => plane?.showTransform || false,
-    [plane?.showTransform]
-  );
-  const isResizing = useMemo(
-    () => plane?.isResizing || false,
-    [plane?.isResizing]
-  );
-  const showHeader = useMemo(
-    () => plane?.showHeader || false,
-    [plane?.showHeader]
-  );
-  const showHeaderStyleUI = useMemo(
-    () => plane?.showHeaderStyleUI || false,
-    [plane?.showHeaderStyleUI]
-  );
-  const isUploadingImage = useMemo(
-    () => plane?.isUploadingImage || false,
-    [plane?.isUploadingImage]
-  );
-  const indicatorSelected = useMemo(
-    () => plane?.indicatorSelected || false,
-    [plane?.indicatorSelected]
-  );
-  const viewerCount = useMemo(
-    () => plane?.viewerCount || 0,
-    [plane?.viewerCount]
-  ); // Initialize plane UI state in store if it doesn't exist
+  const size = isMobile ? 8 : 5; // Initialize plane UI state in store if it doesn't exist
   useEffect(() => {
     if (!plane) {
       createPlane(id, {

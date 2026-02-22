@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { Line } from '@react-three/drei';
 import { useAnimatedConnectionLineStore } from '../stores';
 import { useAnimatedLine } from '../hooks/useConnectionAnimationManager';
@@ -6,6 +6,11 @@ import { useAnimatedLine } from '../hooks/useConnectionAnimationManager';
 /**
  * AnimatedConnectionLine - Optimized line component for animated dashed/dotted connection lines
  * PERFORMANCE: Now uses global animation manager instead of individual useFrame callbacks
+ *
+ * GPU RESOURCE FIX: Removed key-based remounting that caused drei Line to create
+ * new LineGeometry/LineMaterial on every position change without disposing the old
+ * ones, leading to VRAM exhaustion and GPU crashes during camera movement.
+ * drei's Line component can update points in-place via its props.
  */
 const AnimatedConnectionLine = ({
   points,
@@ -26,43 +31,22 @@ const AnimatedConnectionLine = ({
   // Use store for global animation state only
   const globalAnimationEnabled = useAnimatedConnectionLineStore(
     (state) => state.globalAnimationEnabled
-  ); // Create a stable key based on points to force re-render when points change
-  const pointsKey = useMemo(() => {
-    if (!points || !Array.isArray(points) || points.length === 0) {
-      return 'empty';
-    }
+  );
 
-    return points
-      .map((p) => {
-        let x, y, z;
-
-        // Handle both Vector3 objects and arrays
-        if (p && typeof p === 'object' && 'x' in p && 'y' in p && 'z' in p) {
-          // Vector3 object
-          x = typeof p.x === 'number' && !isNaN(p.x) ? p.x : 0;
-          y = typeof p.y === 'number' && !isNaN(p.y) ? p.y : 0;
-          z = typeof p.z === 'number' && !isNaN(p.z) ? p.z : 0;
-        } else if (Array.isArray(p) && p.length >= 3) {
-          // Array format
-          x = typeof p[0] === 'number' && !isNaN(p[0]) ? p[0] : 0;
-          y = typeof p[1] === 'number' && !isNaN(p[1]) ? p[1] : 0;
-          z = typeof p[2] === 'number' && !isNaN(p[2]) ? p[2] : 0;
-        } else {
-          console.warn('Invalid point in AnimatedConnectionLine:', p);
-          return '0,0,0';
-        }
-
-        return `${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}`;
-      })
-      .join('|');
-  }, [points]);
+  // GPU RESOURCE FIX: Throttle key changes to limit drei Line remounts.
+  // Only generate a new key when the NUMBER of points changes (structural change)
+  // or when the line style changes. Position updates are handled in-place by drei.
+  const structuralKey = useMemo(() => {
+    const pointCount = points?.length || 0;
+    return `${connectionId}-${pointCount}-${lineStyle}`;
+  }, [connectionId, points?.length, lineStyle]);
 
   // Force Line component to update when points change
   useEffect(() => {
     if (lineRef.current) {
-      // The key change will force React to remount the Line component
+      // drei Line updates geometry in-place via props — no key remount needed
     }
-  }, [pointsKey, connectionId]);
+  }, [connectionId]);
 
   // Determine if this line should be animated
   const shouldAnimate =
@@ -91,7 +75,7 @@ const AnimatedConnectionLine = ({
     if (material && material.uniforms && material.uniforms.dashOffset) {
       materialRef.current = { current: material };
     }
-  }, [pointsKey]); // Re-extract when points change
+  }, [structuralKey]); // Re-extract when structure changes
 
   // PERFORMANCE: Register with global animation manager instead of individual useFrame
   // This replaces 500+ useFrame callbacks with a single global one
@@ -174,7 +158,7 @@ const AnimatedConnectionLine = ({
     <>
       {/* Main visible line with optimized rendering and material ref */}{' '}
       <Line
-        key={`line-${connectionId}-${pointsKey}`}
+        key={`line-${structuralKey}`}
         ref={lineRef}
         points={normalizedPoints}
         color={color || (isSelected ? '#ffff00' : 'black')}
@@ -199,7 +183,7 @@ const AnimatedConnectionLine = ({
       {/* Invisible hitbox for interaction - only render if handlers exist */}
       {needsHitbox && (
         <Line
-          key={`hitbox-${connectionId}-${pointsKey}`}
+          key={`hitbox-${structuralKey}`}
           points={normalizedPoints}
           color="white"
           lineWidth={14}

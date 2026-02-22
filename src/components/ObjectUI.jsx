@@ -6,6 +6,9 @@ import { useFrame, useThree } from '@react-three/fiber'; // <-- New import
 import * as THREE from 'three';
 import { useColorPickerStore } from '../stores';
 
+// Pre-allocated temp vector to avoid GC pressure in useFrame
+const _tempVec3 = new THREE.Vector3();
+
 const ObjectUI = React.memo(
   ({
     onTransformToggle,
@@ -40,21 +43,17 @@ const ObjectUI = React.memo(
     const { camera } = useThree(); // <-- Get camera from Three.js context
     useFrame(({ camera }) => {
       if (groupRef.current && followTarget?.current) {
-        // Get the target's world position
-        const worldPosition = new THREE.Vector3();
-        followTarget.current.getWorldPosition(worldPosition);
-
-        // Position the UI at the target's position
-        // The CSS transform will handle moving it above the object
-        const newPos = worldPosition.clone();
+        // Get the target's world position (reuse pre-allocated vector)
+        followTarget.current.getWorldPosition(_tempVec3);
 
         // Only update if position has changed significantly
         if (
           !lastPosition.current ||
-          lastPosition.current.distanceTo(newPos) > 0.001
+          lastPosition.current.distanceTo(_tempVec3) > 0.001
         ) {
-          groupRef.current.position.copy(newPos);
-          lastPosition.current = newPos.clone();
+          groupRef.current.position.copy(_tempVec3);
+          if (!lastPosition.current) lastPosition.current = new THREE.Vector3();
+          lastPosition.current.copy(_tempVec3);
         }
 
         // Keep UI facing camera

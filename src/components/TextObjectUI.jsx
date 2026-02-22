@@ -7,6 +7,10 @@ import * as THREE from 'three';
 import ColorPicker from './ColorPicker';
 import { useColorPickerStore } from '../stores';
 
+// Pre-allocated temp vectors to avoid GC pressure in useFrame
+const _tempVec3 = new THREE.Vector3();
+const _offsetVec = new THREE.Vector3();
+
 const TextObjectUI = forwardRef(
   (
     {
@@ -70,17 +74,18 @@ const TextObjectUI = forwardRef(
       if (groupRef.current && followTarget?.current) {
         const targetPos = followTarget.current.position;
         const verticalOffset = 12; // Increased upward offset from 9 to 12
-        // Use global up vector instead of camera.up
-        const newPos = targetPos
-          .clone()
-          .add(new THREE.Vector3(0, verticalOffset, 0));
+        // Reuse pre-allocated vectors instead of .clone() + new Vector3
+        _tempVec3.copy(targetPos);
+        _offsetVec.set(0, verticalOffset, 0);
+        _tempVec3.add(_offsetVec);
 
         if (
           !lastPosition.current ||
-          lastPosition.current.distanceTo(newPos) > 0.001
+          lastPosition.current.distanceTo(_tempVec3) > 0.001
         ) {
-          groupRef.current.position.copy(newPos);
-          lastPosition.current = newPos.clone();
+          groupRef.current.position.copy(_tempVec3);
+          if (!lastPosition.current) lastPosition.current = new THREE.Vector3();
+          lastPosition.current.copy(_tempVec3);
         }
         groupRef.current.quaternion.copy(camera.quaternion);
 

@@ -49,9 +49,9 @@ const BatchedConnectionLines = memo(({
   const bufferCapacityRef = useRef(0);
   const currentCountRef = useRef(0);
   // PERFORMANCE: Track previous buffer state to avoid unnecessary GPU uploads
-  const prevBufferHashRef = useRef('');
+  const prevBufferHashRef = useRef(0);
   const prevConnectionsKeyRef = useRef('');
-  const prevQuickHashRef = useRef('');
+  const prevQuickHashRef = useRef(0);
   
   const { camera, size } = useThree();
   
@@ -111,24 +111,28 @@ const BatchedConnectionLines = memo(({
     const geo = geometryRef.current;
     if (!geo || !straightConnections.length) {
       currentCountRef.current = 0;
-      prevBufferHashRef.current = '';
+      prevBufferHashRef.current = 0;
       return;
     }
     
     // PERFORMANCE: Quick reference check - if connections array is same reference, skip
     // This prevents work when only objectPositions Map changes but positions are the same
     const connectionsKey = straightConnections.map(c => c.id).join(',');
-    if (prevConnectionsKeyRef.current === connectionsKey && prevBufferHashRef.current !== '') {
+    if (prevConnectionsKeyRef.current === connectionsKey && prevBufferHashRef.current !== 0) {
       // Same connections, positions likely haven't changed - verify with quick position check
       const firstConn = straightConnections[0];
       const startPos = firstConn?.start?.position || firstConn?.start?.facePosition;
       const endPos = firstConn?.end?.position || firstConn?.end?.facePosition;
       if (startPos && endPos) {
-        const quickHash = `${startPos[0].toFixed(2)},${startPos[1].toFixed(2)},${endPos[0].toFixed(2)},${endPos[1].toFixed(2)}`;
-        if (quickHash === prevQuickHashRef.current) {
+        // Numeric quick hash instead of template literal
+        let qh = ((startPos[0] * 100) | 0);
+        qh = Math.imul(qh ^ ((startPos[1] * 100) | 0), 0x9e3779b9);
+        qh = Math.imul(qh ^ ((endPos[0] * 100) | 0), 0x9e3779b9);
+        qh = Math.imul(qh ^ ((endPos[1] * 100) | 0), 0x9e3779b9);
+        if (qh === prevQuickHashRef.current) {
           return; // Nothing changed, skip full hash computation
         }
-        prevQuickHashRef.current = quickHash;
+        prevQuickHashRef.current = qh;
       }
     }
     prevConnectionsKeyRef.current = connectionsKey;
@@ -142,9 +146,9 @@ const BatchedConnectionLines = memo(({
     const connectionMap = new Map();
     let validCount = 0;
     
-    // PERFORMANCE: Build hash while updating to detect actual changes
-    // Use a simple string hash instead of expensive hashing algorithms
-    let hashParts = [];
+    // PERFORMANCE: Build numeric rolling hash while updating to detect actual changes
+    // Uses Math.imul XOR pattern - no string allocations
+    let bufferHash = validCount;
     
     // Update buffers in-place - no new array allocations
     for (let i = 0; i < straightConnections.length; i++) {
@@ -184,8 +188,13 @@ const BatchedConnectionLines = memo(({
       const isSelected = conn.id === selectedConnectionId;
       const colorHex = conn.color || (isSelected ? '#ffff00' : '#000000');
       
-      // Add to hash (round positions to 2 decimal places to avoid floating point noise)
-      hashParts.push(`${conn.id}:${sx.toFixed(2)},${sy.toFixed(2)},${sz.toFixed(2)}-${ex.toFixed(2)},${ey.toFixed(2)},${ez.toFixed(2)}-${colorHex}`);
+      // Add to numeric hash (multiply by 100 to preserve 2 decimal places)
+      bufferHash = Math.imul(bufferHash ^ ((sx * 100) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((sy * 100) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((sz * 100) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((ex * 100) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((ey * 100) | 0), 0x9e3779b9);
+      bufferHash = Math.imul(bufferHash ^ ((ez * 100) | 0), 0x9e3779b9);
       
       // Update start position
       instanceStart.setXYZ(validCount, sx, sy, sz);
@@ -203,12 +212,11 @@ const BatchedConnectionLines = memo(({
     }
     
     // PERFORMANCE: Check if anything actually changed
-    const newHash = `${validCount}:${hashParts.join('|')}`;
-    if (newHash === prevBufferHashRef.current) {
+    if (bufferHash === prevBufferHashRef.current) {
       // Nothing changed - skip GPU upload
       return;
     }
-    prevBufferHashRef.current = newHash;
+    prevBufferHashRef.current = bufferHash;
     
     // Mark buffers as needing update (only when data actually changed)
     instanceStart.needsUpdate = true;

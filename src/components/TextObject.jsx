@@ -1758,8 +1758,9 @@ const TextObject = React.memo(
         groupRef.current.quaternion.copy(camera.quaternion);
 
         // CRITICAL: Ensure group scale is always (1,1,1) to prevent text scaling
-        if (!groupRef.current.scale.equals(new THREE.Vector3(1, 1, 1))) {
-          groupRef.current.scale.set(1, 1, 1);
+        const s = groupRef.current.scale;
+        if (s.x !== 1 || s.y !== 1 || s.z !== 1) {
+          s.set(1, 1, 1);
         }
 
         // Only update world matrix if this object has connections AND is not being transformed

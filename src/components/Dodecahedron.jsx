@@ -11,6 +11,7 @@ import {
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
+import { shallow } from 'zustand/shallow';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
@@ -278,75 +279,62 @@ const Sphere = React.memo(
     const renderHeaderText = dodecahedron?.headerText || headerText;
     const renderHeaderStyle = dodecahedron?.headerStyle || headerStyle;
 
-    const createDodecahedron = useDodecahedronStore(
-      (state) => state.createDodecahedron
+    // Single selector for all dodecahedron actions (prevents 20+ subscriptions)
+    const dodecahedronActions = useDodecahedronStore(
+      (state) => ({
+        createDodecahedron: state.createDodecahedron,
+        updateDodecahedron: state.updateDodecahedron,
+        selectDodecahedron: state.selectDodecahedron,
+        deselectDodecahedron: state.deselectDodecahedron,
+        isDodecahedronSelected: state.isDodecahedronSelected(id),
+        setDodecahedronShowTransform: state.setDodecahedronShowTransform,
+        setDodecahedronShowHeader: state.setDodecahedronShowHeader,
+        setDodecahedronIsResizing: state.setDodecahedronIsResizing,
+        setDodecahedronHighlightedFaces: state.setDodecahedronHighlightedFaces,
+        setDodecahedronShowStyleMenu: state.setDodecahedronShowStyleMenu,
+        setDodecahedronActiveFace: state.setDodecahedronActiveFace,
+        setDodecahedronShowFaceUI: state.setDodecahedronShowFaceUI,
+        setDodecahedronShowObjectUI: state.setDodecahedronShowObjectUI,
+        setDodecahedronShowFaceTextInput: state.setDodecahedronShowFaceTextInput,
+        setDodecahedronActiveFaceText: state.setDodecahedronActiveFaceText,
+        setDodecahedronShowFaceTextStyleMenu: state.setDodecahedronShowFaceTextStyleMenu,
+        setDodecahedronSelectedIndicator: state.setDodecahedronSelectedIndicator,
+        setDodecahedronIsConnected: state.setDodecahedronIsConnected,
+        setDodecahedronConnectedFaces: state.setDodecahedronConnectedFaces,
+        setDodecahedronIsScaleModified: state.setDodecahedronIsScaleModified,
+        updateDodecahedronFaceColor: state.updateDodecahedronFaceColor,
+        updateDodecahedronFaceText: state.updateDodecahedronFaceText,
+        updateDodecahedronFaceTextStyle: state.updateDodecahedronFaceTextStyle,
+      }),
+      shallow
     );
-    const updateDodecahedron = useDodecahedronStore(
-      (state) => state.updateDodecahedron
-    );
-    const selectDodecahedron = useDodecahedronStore(
-      (state) => state.selectDodecahedron
-    );
-    const deselectDodecahedron = useDodecahedronStore(
-      (state) => state.deselectDodecahedron
-    );
-    const isDodecahedronSelected = useDodecahedronStore((state) =>
-      state.isDodecahedronSelected(id)
-    );
-    const setDodecahedronShowTransform = useDodecahedronStore(
-      (state) => state.setDodecahedronShowTransform
-    );
-    const setDodecahedronShowHeader = useDodecahedronStore(
-      (state) => state.setDodecahedronShowHeader
-    );
-    const setDodecahedronIsResizing = useDodecahedronStore(
-      (state) => state.setDodecahedronIsResizing
-    );
-    const setDodecahedronHighlightedFaces = useDodecahedronStore(
-      (state) => state.setDodecahedronHighlightedFaces
-    );
-    const setDodecahedronShowStyleMenu = useDodecahedronStore(
-      (state) => state.setDodecahedronShowStyleMenu
-    );
-    const setDodecahedronActiveFace = useDodecahedronStore(
-      (state) => state.setDodecahedronActiveFace
-    );
-    const setDodecahedronShowFaceUI = useDodecahedronStore(
-      (state) => state.setDodecahedronShowFaceUI
-    );
-    const setDodecahedronShowObjectUI = useDodecahedronStore(
-      (state) => state.setDodecahedronShowObjectUI
-    );
-    const setDodecahedronShowFaceTextInput = useDodecahedronStore(
-      (state) => state.setDodecahedronShowFaceTextInput
-    );
-    const setDodecahedronActiveFaceText = useDodecahedronStore(
-      (state) => state.setDodecahedronActiveFaceText
-    );
-    const setDodecahedronShowFaceTextStyleMenu = useDodecahedronStore(
-      (state) => state.setDodecahedronShowFaceTextStyleMenu
-    );
-    const setDodecahedronSelectedIndicator = useDodecahedronStore(
-      (state) => state.setDodecahedronSelectedIndicator
-    );
-    const setDodecahedronIsConnected = useDodecahedronStore(
-      (state) => state.setDodecahedronIsConnected
-    );
-    const setDodecahedronConnectedFaces = useDodecahedronStore(
-      (state) => state.setDodecahedronConnectedFaces
-    );
-    const setDodecahedronIsScaleModified = useDodecahedronStore(
-      (state) => state.setDodecahedronIsScaleModified
-    );
-    const updateDodecahedronFaceColor = useDodecahedronStore(
-      (state) => state.updateDodecahedronFaceColor
-    );
-    const updateDodecahedronFaceText = useDodecahedronStore(
-      (state) => state.updateDodecahedronFaceText
-    );
-    const updateDodecahedronFaceTextStyle = useDodecahedronStore(
-      (state) => state.updateDodecahedronFaceTextStyle
-    );
+
+    // Destructure actions for easier access
+    const {
+      createDodecahedron,
+      updateDodecahedron,
+      selectDodecahedron,
+      deselectDodecahedron,
+      isDodecahedronSelected,
+      setDodecahedronShowTransform,
+      setDodecahedronShowHeader,
+      setDodecahedronIsResizing,
+      setDodecahedronHighlightedFaces,
+      setDodecahedronShowStyleMenu,
+      setDodecahedronActiveFace,
+      setDodecahedronShowFaceUI,
+      setDodecahedronShowObjectUI,
+      setDodecahedronShowFaceTextInput,
+      setDodecahedronActiveFaceText,
+      setDodecahedronShowFaceTextStyleMenu,
+      setDodecahedronSelectedIndicator,
+      setDodecahedronIsConnected,
+      setDodecahedronConnectedFaces,
+      setDodecahedronIsScaleModified,
+      updateDodecahedronFaceColor,
+      updateDodecahedronFaceText,
+      updateDodecahedronFaceTextStyle,
+    } = dodecahedronActions;
 
     // Get hover state from indicators store
 

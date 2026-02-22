@@ -290,9 +290,24 @@ const useConnectionStore = create((set, get) => ({
       let hasChanges = false;
 
       for (const [key, value] of Object.entries(updates)) {
-        if (JSON.stringify(currentConnection[key]) !== JSON.stringify(value)) {
-          hasChanges = true;
-          break;
+        const curr = currentConnection[key];
+        if (curr !== value) {
+          // Quick reference check failed, do shallow comparison for objects/arrays
+          if (typeof curr === 'object' && typeof value === 'object' && curr !== null && value !== null) {
+            const keys = Object.keys(value);
+            if (Array.isArray(value)) {
+              if (!Array.isArray(curr) || curr.length !== value.length || value.some((v, i) => v !== curr[i])) {
+                hasChanges = true;
+                break;
+              }
+            } else if (keys.length !== Object.keys(curr).length || keys.some(k => curr[k] !== value[k])) {
+              hasChanges = true;
+              break;
+            }
+          } else {
+            hasChanges = true;
+            break;
+          }
         }
       }
 
@@ -320,12 +335,12 @@ const useConnectionStore = create((set, get) => ({
     }
 
     set((state) => {
-      let hasChanges = false;
-      const newConnections = [...state.connections];
+      let newConnections = null; // PERFORMANCE: Defer array copy until we know there are changes
 
       // Apply all updates in a single pass
       connectionUpdates.forEach((updates, connectionId) => {
-        const connectionIndex = newConnections.findIndex(
+        const arr = newConnections || state.connections;
+        const connectionIndex = arr.findIndex(
           (conn) => conn.id === connectionId
         );
 
@@ -333,30 +348,44 @@ const useConnectionStore = create((set, get) => ({
           return; // Connection not found
         }
 
-        const currentConnection = newConnections[connectionIndex];
+        const currentConnection = arr[connectionIndex];
 
         // Check if the updates would actually change the connection
         let hasConnectionChanges = false;
         for (const [key, value] of Object.entries(updates)) {
-          if (
-            JSON.stringify(currentConnection[key]) !== JSON.stringify(value)
-          ) {
-            hasConnectionChanges = true;
-            break;
+          const curr = currentConnection[key];
+          if (curr !== value) {
+            if (typeof curr === 'object' && typeof value === 'object' && curr !== null && value !== null) {
+              const keys = Object.keys(value);
+              if (Array.isArray(value)) {
+                if (!Array.isArray(curr) || curr.length !== value.length || value.some((v, i) => v !== curr[i])) {
+                  hasConnectionChanges = true;
+                  break;
+                }
+              } else if (keys.length !== Object.keys(curr).length || keys.some(k => curr[k] !== value[k])) {
+                hasConnectionChanges = true;
+                break;
+              }
+            } else {
+              hasConnectionChanges = true;
+              break;
+            }
           }
         }
 
         if (hasConnectionChanges) {
+          if (!newConnections) {
+            newConnections = [...state.connections]; // Lazy copy only when needed
+          }
           newConnections[connectionIndex] = {
             ...currentConnection,
             ...updates,
           };
-          hasChanges = true;
         }
       });
 
-      if (!hasChanges) {
-        return state; // No actual changes
+      if (!newConnections) {
+        return state; // No actual changes, no array copy was made
       }
 
       return {
