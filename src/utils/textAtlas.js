@@ -27,6 +27,7 @@ export class TextAtlas {
   constructor(options = {}) {
     this.maxWidth = options.maxWidth || 2048;
     this.maxHeight = options.maxHeight || 2048;
+    this.maxResizeLimit = options.maxResizeLimit || TextAtlas._maxGPUTextureSize;
     this.padding = options.padding || 4;
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.maxWidth;
@@ -58,13 +59,13 @@ export class TextAtlas {
     const oldCanvas = this.canvas;
     const oldWidth = this.maxWidth;
     const oldHeight = this.maxHeight;
-    const gpuLimit = TextAtlas._maxGPUTextureSize;
+    const limit = Math.min(TextAtlas._maxGPUTextureSize, this.maxResizeLimit);
 
-    // Jump straight to the GPU max in ONE step instead of doubling gradually.
-    // Gradual doubling (2048→4096→8192) causes a chain of canvas copies + GPU
-    // re-uploads that can crash the graphics card during progressive loading.
-    let newWidth = gpuLimit;
-    let newHeight = gpuLimit;
+    // Double both dimensions up to the per-page limit.
+    // This caps the upload size per resize (e.g. 4096×4096 = 64 MB)
+    // instead of jumping to the GPU max (8192×8192 = 256 MB).
+    let newWidth = Math.min(oldWidth * 2, limit);
+    let newHeight = Math.min(oldHeight * 2, limit);
 
     // Already at max size
     if (newWidth === oldWidth && newHeight === oldHeight) {
@@ -316,11 +317,20 @@ let globalAtlas = null;
  * consumers can build a material pointing at the correct page.
  */
 /**
- * Maximum number of atlas pages to prevent GPU VRAM exhaustion.
- * Each page at 8192×8192 RGBA = ~256MB VRAM.
- * 3 pages ≈ 768MB — safe for most GPUs.
+ * Maximum per-page texture dimension.
+ * Capping at 4096 limits each page to ~64 MB VRAM (4096×4096 RGBA)
+ * instead of ~256 MB (8192×8192).  Smaller pages are faster to upload
+ * and allow finer-grained VRAM management.
  */
-const MAX_PAGES = 3;
+const PAGE_MAX_SIZE = 4096;
+
+/**
+ * Maximum number of atlas pages to prevent GPU VRAM exhaustion.
+ * Each page at 4096×4096 RGBA ≈ 64 MB VRAM.
+ * 8 pages ≈ 512 MB — safe for most GPUs while holding many more entries
+ * than the old 3×8192 (768 MB) layout.
+ */
+const MAX_PAGES = 8;
 
 class MultiPageTextAtlas {
   /**
@@ -347,12 +357,13 @@ class MultiPageTextAtlas {
 
   _addPage() {
     // Start pages SMALL (2048×2048 = 16 MB upload) so the GPU isn't
-    // hammered with a 256 MB upload the moment the first text is added.
-    // _resize() will jump straight to gpuMax in one step if needed.
+    // hammered with a large upload the moment the first text is added.
+    // _resize() will double dimensions up to PAGE_MAX_SIZE.
     const page = new TextAtlas({
       ...this._pageOpts,
       maxWidth: 2048,
       maxHeight: 2048,
+      maxResizeLimit: PAGE_MAX_SIZE,
     });
     this._pages.push(page);
     return page;
@@ -421,10 +432,25 @@ class MultiPageTextAtlas {
     this._flushTextures();
   }
 
-  /** Actually push dirty textures to the GPU. */
+  /** Actually push dirty textures to the GPU — ONE page per call.
+   *  Uploading multiple large textures in a single frame can crash the GPU.
+   *  If more pages are still dirty, a deferred flush is scheduled.
+   */
   _flushTextures() {
     for (const page of this._pages) {
-      page.updateTexture();
+      if (page.dirty) {
+        page.updateTexture();
+        this._lastUploadTime = performance.now();
+        // If other pages are also dirty, schedule another flush
+        const hasMoreDirty = this._pages.some(p => p.dirty);
+        if (hasMoreDirty && !this._pendingUploadId) {
+          this._pendingUploadId = setTimeout(() => {
+            this._pendingUploadId = null;
+            this._flushTextures();
+          }, MultiPageTextAtlas.UPLOAD_THROTTLE_MS);
+        }
+        return; // Only ONE page per flush cycle
+      }
     }
     this._lastUploadTime = performance.now();
   }
