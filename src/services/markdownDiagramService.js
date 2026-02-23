@@ -3864,43 +3864,94 @@ export class MarkdownDiagramService {
           return;
         }
 
-        // Track face usage for dodecahedrons to distribute connections across faces
-        const getFaceForObject = (objectId, isSource) => {
+        // Distribute connections across faces to prevent text label stacking.
+        // Previously only dodecahedrons got face distribution; cubes/tetrahedrons
+        // were hardcoded to 'front', causing all connections from the same object
+        // to share the same endpoint and midpoint.
+        const CUBE_FACES = ['front', 'back', 'left', 'right', 'top', 'bottom'];
+        const TETRAHEDRON_FACES = ['front', 'left', 'right', 'bottom'];
+
+        const getFaceForObject = (objectId, objectType, isSource) => {
           const key = `${objectId}_${isSource ? 'source' : 'target'}`;
 
-          if (!window.dodecahedronFaceCounters) {
-            window.dodecahedronFaceCounters = new Map();
+          if (!window._faceDistributionCounters) {
+            window._faceDistributionCounters = new Map();
           }
 
-          const currentCount = window.dodecahedronFaceCounters.get(key) || 0;
-          const faceIndex = currentCount % 12; // 12 faces on a dodecahedron (0-11)
+          const currentCount = window._faceDistributionCounters.get(key) || 0;
+          window._faceDistributionCounters.set(key, currentCount + 1);
 
-          window.dodecahedronFaceCounters.set(key, currentCount + 1);
-          return faceIndex;
+          if (objectType === 'dodecahedron') {
+            return currentCount % 12;
+          } else if (objectType === 'tetrahedron') {
+            return TETRAHEDRON_FACES[currentCount % TETRAHEDRON_FACES.length];
+          } else {
+            // Cube and all other 3D object types
+            return CUBE_FACES[currentCount % CUBE_FACES.length];
+          }
+        };
+
+        // Helper: compute cube/tetrahedron face world position from face name
+        const computeFaceWorldPosition = (objectPosition, objectScale, faceName, objectType) => {
+          const pos = [...objectPosition];
+          const s = objectScale || [1, 1, 1];
+          const cubeSize = 5; // Must match cubeHelpers / facePositionUtils
+
+          if (objectType === 'tetrahedron') {
+            // Tetrahedron face centers (same vertex layout as facePositionUtils)
+            const TETRA_SIZE = 5;
+            const v = [
+              [0, TETRA_SIZE, 0],
+              [-TETRA_SIZE, -TETRA_SIZE, TETRA_SIZE],
+              [TETRA_SIZE, -TETRA_SIZE, TETRA_SIZE],
+              [0, -TETRA_SIZE, -TETRA_SIZE * 1.5],
+            ];
+            let fc;
+            switch (faceName) {
+              case 'bottom': fc = [(v[1][0]+v[2][0]+v[3][0])/3, (v[1][1]+v[2][1]+v[3][1])/3, (v[1][2]+v[2][2]+v[3][2])/3]; break;
+              case 'front':  fc = [(v[0][0]+v[2][0]+v[1][0])/3, (v[0][1]+v[2][1]+v[1][1])/3, (v[0][2]+v[2][2]+v[1][2])/3]; break;
+              case 'left':   fc = [(v[0][0]+v[1][0]+v[3][0])/3, (v[0][1]+v[1][1]+v[3][1])/3, (v[0][2]+v[1][2]+v[3][2])/3]; break;
+              case 'right':  fc = [(v[0][0]+v[3][0]+v[2][0])/3, (v[0][1]+v[3][1]+v[2][1])/3, (v[0][2]+v[3][2]+v[2][2])/3]; break;
+              default:       fc = [0, 0, 0];
+            }
+            return [pos[0] + fc[0] * s[0], pos[1] + fc[1] * s[1], pos[2] + fc[2] * s[2]];
+          }
+
+          // Cube face offsets
+          switch (faceName) {
+            case 'front':  return [pos[0], pos[1], pos[2] + cubeSize * s[2]];
+            case 'back':   return [pos[0], pos[1], pos[2] - cubeSize * s[2]];
+            case 'left':   return [pos[0] - cubeSize * s[0], pos[1], pos[2]];
+            case 'right':  return [pos[0] + cubeSize * s[0], pos[1], pos[2]];
+            case 'top':    return [pos[0], pos[1] + cubeSize * s[1], pos[2]];
+            case 'bottom': return [pos[0], pos[1] - cubeSize * s[1], pos[2]];
+            default:       return pos;
+          }
         };
 
         // Calculate face positions for both objects
         let sourceFaceIndex, targetFaceIndex;
         let sourceWorldPosition, targetWorldPosition;
 
+        // Distribute faces for ALL object types (not just dodecahedrons)
+        sourceFaceIndex = getFaceForObject(sourceObjectId, sourceObject.type, true);
+        targetFaceIndex = getFaceForObject(targetObjectId, targetObject.type, false);
+
         if (sourceObject.type === 'dodecahedron') {
-          sourceFaceIndex = getFaceForObject(sourceObjectId, true);
-          // For dodecahedrons, we don't pre-calculate world positions
-          // Let the existing facePositionUtils.js handle this
           sourceWorldPosition = [...sourceObject.position];
         } else {
-          sourceFaceIndex = 'front';
-          sourceWorldPosition = [...sourceObject.position];
+          // Compute accurate face world position for cubes/tetrahedrons
+          sourceWorldPosition = computeFaceWorldPosition(
+            sourceObject.position, sourceObject.scale, sourceFaceIndex, sourceObject.type
+          );
         }
 
         if (targetObject.type === 'dodecahedron') {
-          targetFaceIndex = getFaceForObject(targetObjectId, false);
-          // For dodecahedrons, we don't pre-calculate world positions
-          // Let the existing facePositionUtils.js handle this
           targetWorldPosition = [...targetObject.position];
         } else {
-          targetFaceIndex = 'front';
-          targetWorldPosition = [...targetObject.position];
+          targetWorldPosition = computeFaceWorldPosition(
+            targetObject.position, targetObject.scale, targetFaceIndex, targetObject.type
+          );
         }
 
         // Calculate face centers for dodecahedrons using EXACT same logic as Dodecahedron.jsx getFaceInfo
@@ -4012,8 +4063,7 @@ export class MarkdownDiagramService {
               sourceObject.type === 'dodecahedron'
                 ? 'dodecahedron'
                 : sourceObject.type || 'cube',
-            face:
-              sourceObject.type === 'dodecahedron' ? sourceFaceIndex : 'front',
+            face: sourceFaceIndex,
             position: sourceWorldPosition,
             ...(sourceObject.type === 'dodecahedron' && {
               faceCenter: calculateDodecahedronFaceCenter(sourceFaceIndex),
@@ -4034,8 +4084,7 @@ export class MarkdownDiagramService {
               targetObject.type === 'dodecahedron'
                 ? 'dodecahedron'
                 : targetObject.type || 'cube',
-            face:
-              targetObject.type === 'dodecahedron' ? targetFaceIndex : 'front',
+            face: targetFaceIndex,
             position: targetWorldPosition,
             ...(targetObject.type === 'dodecahedron' && {
               faceCenter: calculateDodecahedronFaceCenter(targetFaceIndex),
@@ -4466,6 +4515,11 @@ export class MarkdownDiagramService {
     const nodeToObjectIdMap = new Map();
     const allConnectionsToSave = [];
     const allObjectsToSave = [];
+
+    // Reset face distribution counters for a fresh diagram processing run.
+    // This ensures each diagram generation starts with a clean slate rather
+    // than accumulating counters from previous runs.
+    window._faceDistributionCounters = new Map();
 
     // Process each diagram
     for (let diagramIndex = 0; diagramIndex < diagrams.length; diagramIndex++) {

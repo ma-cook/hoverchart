@@ -71,6 +71,93 @@ const DistanceFilteredConnectionText = React.memo(({
 DistanceFilteredConnectionText.displayName = 'DistanceFilteredConnectionText';
 
 /**
+ * Compute a deterministic parametric t-value for positioning text along a
+ * connection line.  Instead of always placing text at the midpoint (t=0.5),
+ * this gives each connection a unique t so that connections sharing the same
+ * line (identical start/end positions) have their labels spread out rather
+ * than stacking on top of each other.
+ *
+ * The t-value is derived from a hash of the connection ID and mapped into
+ * the range [0.25, 0.75] with 13 distinct slots.  13 is large enough to
+ * handle the "10+ headers stacked" scenario the user reported.
+ *
+ * @param {string} connectionId
+ * @returns {number} t ∈ [0.25 .. 0.75]
+ */
+function getTextParametricT(connectionId) {
+  let hash = 0;
+  const str = String(connectionId);
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash = hash & hash; // 32-bit
+  }
+  // 13 slots in [0.25, 0.75]
+  return 0.25 + (Math.abs(hash) % 13) * (0.5 / 12);
+}
+
+/**
+ * Redistribute faces at render time for connections that share the same
+ * object + face combination.  Returns a Map<connectionId, {startFace, endFace}>
+ * with potentially reassigned face values so that no two connections from/to
+ * the same endpoint object use the same face.
+ *
+ * This fixes existing connections loaded from Firestore that were saved with
+ * face='front' before the face-distribution fix in markdownDiagramService.
+ */
+const CUBE_FACE_NAMES = ['front', 'back', 'left', 'right', 'top', 'bottom'];
+const TETRA_FACE_NAMES = ['front', 'left', 'right', 'bottom'];
+
+function redistributeFaces(connections, objectsById) {
+  const redistributed = new Map();
+
+  // Group by (objectId, endpoint) to find conflicts
+  // key = "objectId_start" or "objectId_end"
+  const endpointGroups = new Map();
+  for (const conn of connections) {
+    const sk = conn.start?.objectId && `${conn.start.objectId}_start`;
+    const ek = conn.end?.objectId && `${conn.end.objectId}_end`;
+    if (sk) {
+      if (!endpointGroups.has(sk)) endpointGroups.set(sk, []);
+      endpointGroups.get(sk).push({ connId: conn.id, side: 'start', face: conn.start?.face, type: conn.start?.type });
+    }
+    if (ek) {
+      if (!endpointGroups.has(ek)) endpointGroups.set(ek, []);
+      endpointGroups.get(ek).push({ connId: conn.id, side: 'end', face: conn.end?.face, type: conn.end?.type });
+    }
+  }
+
+  for (const [key, items] of endpointGroups) {
+    if (items.length <= 1) continue; // no conflict
+
+    // Check if all items share the same face (conflict)
+    const faces = new Set(items.map(it => String(it.face)));
+    if (faces.size >= items.length) continue; // already unique
+
+    // Determine the face list for this object type
+    const objectId = key.split('_')[0];
+    const obj = objectsById.get(objectId);
+    const objType = items[0]?.type || obj?.type || 'cube';
+    let faceList;
+    if (objType === 'dodecahedron') {
+      faceList = Array.from({ length: 12 }, (_, i) => i);
+    } else if (objType === 'tetrahedron') {
+      faceList = TETRA_FACE_NAMES;
+    } else {
+      faceList = CUBE_FACE_NAMES;
+    }
+
+    // Assign faces round-robin
+    items.forEach((item, i) => {
+      const newFace = faceList[i % faceList.length];
+      if (!redistributed.has(item.connId)) redistributed.set(item.connId, {});
+      redistributed.get(item.connId)[item.side === 'start' ? 'startFace' : 'endFace'] = newFace;
+    });
+  }
+
+  return redistributed;
+}
+
+/**
  * Convert a path of connected points into line segments for InstancedLine
  * Path: [p0, p1, p2, p3] -> Segments: [p0, p1, p1, p2, p2, p3]
  * This allows InstancedLine to render connected line segments
@@ -83,6 +170,63 @@ function pathToLineSegments(path) {
     segments.push(path[i], path[i + 1]);
   }
   return segments;
+}
+
+/**
+ * Resolve the world position for a connection endpoint.
+ * ALWAYS computes face positions from current object geometry when face data
+ * is available – stored positions from Firestore / RealTimeConnectionUpdater
+ * may be stale (saved before objects moved) or wrong (face-0 falsiness bug in
+ * the old connectionPositionResolver).
+ *
+ * Priority:
+ *   1. Calculate from face index + current object geometry (most accurate)
+ *   2. Stored position (set by RealTimeConnectionUpdater or Firestore)
+ *   3. Object center (last resort)
+ *
+ * @param {Object}  endpointData - conn.start or conn.end
+ * @param {Map}     objectsById  - Map<objectIdString, objectData>
+ * @param {Array}   objects      - Full objects array (needed by calculateFacePosition)
+ * @returns {Array|null} [x, y, z] or null
+ */
+function resolveEndpointPosition(endpointData, objectsById, objects) {
+  if (!endpointData) return null;
+
+  const objId = endpointData.objectId?.toString();
+
+  // 1. Has face data + object available → compute fresh position from geometry
+  //    This is the most accurate path and avoids stale stored positions
+  if (endpointData.face !== undefined && objId) {
+    const obj = objectsById.get(objId);
+    if (obj?.position) {
+      try {
+        return calculateFacePosition(
+          {
+            type: endpointData.type || obj.type || 'cube',
+            face: endpointData.face,
+            objectId: endpointData.objectId,
+            faceCenter: endpointData.faceCenter,
+            cube: { position: obj.position, scale: obj.scale || [1, 1, 1] },
+            plane: obj.type === 'plane'
+              ? { position: obj.position, scale: obj.scale || [1, 1, 1] }
+              : undefined,
+          },
+          objects
+        );
+      } catch {
+        // Fall through to stored / center
+      }
+    }
+  }
+
+  // 2. Stored position (fallback when face data isn't available or calc failed)
+  const stored = endpointData.position || endpointData.facePosition || endpointData.worldPosition;
+  if (stored) return stored;
+
+  // 3. Object center (last resort)
+  if (!objId) return null;
+  const obj = objectsById.get(objId);
+  return obj?.position || null;
 }
 
 // Separate connection rendering into a sub-component to fix the hooks issue
@@ -535,32 +679,44 @@ const Connection = React.memo(
     ]);
 
     // Fourth hook: Calculate text position
+    // SOURCE-LEVEL FIX: Use a per-connection parametric t-value so that
+    // connections sharing the same line (identical endpoints / faces) place
+    // their text labels at different positions along the line instead of all
+    // stacking at the midpoint.
     const textPositionData = useMemo(() => {
       if (!connectionData.isValid) {
         return { textPosition: [0, 0, 0] };
       }
 
-      const { midpoint } = connectionData;
+      const { startPosition, endPosition } = connectionData;
       const { calculatedPathPoints } = pathData;
       const offset = 2;
+      const t = getTextParametricT(connection?.id);
 
       let textPosition;
       // Check if path is curved (has more than 2 points) regardless of line style
       if (calculatedPathPoints?.length > 2) {
-        // Use the middle point of the curved path
-        const midIdx = Math.floor(calculatedPathPoints.length / 2);
-        const midPoint = calculatedPathPoints[midIdx];
+        // Pick a point at parametric position t along the curved path
+        const idx = Math.min(
+          Math.floor(t * (calculatedPathPoints.length - 1)),
+          calculatedPathPoints.length - 1
+        );
+        const midPoint = calculatedPathPoints[idx];
         const pos = Array.isArray(midPoint)
           ? midPoint
           : [midPoint.x, midPoint.y, midPoint.z];
         textPosition = [pos[0], pos[1] + offset, pos[2]];
       } else {
-        // Use straight line midpoint
-        textPosition = [midpoint[0], midpoint[1] + offset, midpoint[2]];
+        // Parametric lerp between start and end
+        textPosition = [
+          startPosition[0] + (endPosition[0] - startPosition[0]) * t,
+          startPosition[1] + (endPosition[1] - startPosition[1]) * t + offset,
+          startPosition[2] + (endPosition[2] - startPosition[2]) * t,
+        ];
       }
 
       return { textPosition };
-    }, [connectionData, pathData]); // Early return after all hooks are declared
+    }, [connectionData, pathData, connection?.id]); // Early return after all hooks are declared
     if (!connection) {
       return null;
     }
@@ -1054,6 +1210,14 @@ const ConnectionsRenderer = ({
     const withText = [];
     const curved = [];
     const individual = [];
+
+    // Build objectsById for face position resolution in categorization
+    const catObjectsById = new Map();
+    if (pathfindingObjects?.length) {
+      for (const obj of pathfindingObjects) {
+        if (obj?.id) catObjectsById.set(obj.id.toString(), obj);
+      }
+    }
     
     progressiveConnections.forEach(conn => {
       const style = conn.styleType || conn.lineStyle || 'straight';
@@ -1074,18 +1238,10 @@ const ConnectionsRenderer = ({
       }
       
       // For straight-style connections, check if they need pathfinding (curve around obstacles)
-      // Use same position priority as BatchedConnectionLines for consistency:
-      // conn.start.position first (face position), then objectPositions fallback
-      let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
-      let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
-
-      // Fallback to object centers if no connection positions available
-      if (!startPos && conn.start?.objectId) {
-        startPos = objectPositions.get(conn.start.objectId.toString());
-      }
-      if (!endPos && conn.end?.objectId) {
-        endPos = objectPositions.get(conn.end.objectId.toString());
-      }
+      // BUGFIX: Use resolveEndpointPosition to compute face positions inline when
+      // conn.start.position is not yet set, instead of falling back to object centers.
+      let startPos = resolveEndpointPosition(conn.start, catObjectsById, pathfindingObjects);
+      let endPos = resolveEndpointPosition(conn.end, catObjectsById, pathfindingObjects);
       
       // Check for intersections if we have valid positions and objects to check against.
       // checkLineIntersection has its own internal TTL cache (2s) keyed on start+end positions.
@@ -1147,27 +1303,50 @@ const ConnectionsRenderer = ({
     return [...batchedConnections, ...textConnections];
   }, [batchedConnections, textConnections]);
 
+  // SOURCE-LEVEL FIX: Render-time face redistribution for ALL connections.
+  // Connections sharing the same object+face (e.g. all using face='front' from
+  // pre-fix Firestore data) get reassigned to different faces so their endpoints
+  // differ, producing unique midpoints and preventing text stacking.
+  // Computed once for all connections and applied to both textLabels and
+  // individualConnections rendering paths.
+  const faceOverrides = useMemo(() => {
+    const objectsById = new Map();
+    if (objects?.length) {
+      for (const obj of objects) {
+        if (obj?.id) objectsById.set(obj.id.toString(), obj);
+      }
+    }
+    return redistributeFaces(progressiveConnections, objectsById);
+  }, [progressiveConnections, objects]);
+
   // PERFORMANCE: Pre-calculate text positions for connections with text
-  // BUGFIX: Use the SAME position resolution order as BatchedConnectionLines
-  // to ensure text labels appear at the line midpoint, not at a different spot.
-  // Previous version preferred objectPositions (object CENTER) which differs
-  // from the face positions that BatchedConnectionLines uses to draw lines.
+  // SOURCE-LEVEL FIX: Two mechanisms prevent text stacking:
+  //   1. Render-time face redistribution — connections sharing the same
+  //      object+face get reassigned to different faces so their endpoints
+  //      (and therefore their midpoints) differ.
+  //   2. Parametric t-positioning — even after redistribution, use a
+  //      per-connection hash to pick a unique position along the line.
   const textLabels = useMemo(() => {
+    // Build an objectId → object lookup for inline face position calculation
+    const objectsById = new Map();
+    if (objects?.length) {
+      for (const obj of objects) {
+        if (obj?.id) objectsById.set(obj.id.toString(), obj);
+      }
+    }
+
     return textConnections.map(conn => {
-      // Use same priority as BatchedConnectionLines:
-      // 1. conn.start.position (face position from store — set by RealTimeConnectionUpdater or Firestore)
-      // 2. conn.start.facePosition / worldPosition (alternative fields)
-      // 3. objectPositions (object center — last resort)
-      let startPos = conn.start?.position || conn.start?.facePosition || conn.start?.worldPosition;
-      let endPos = conn.end?.position || conn.end?.facePosition || conn.end?.worldPosition;
-      
-      // Fallback to object centers if no connection positions available
-      if (!startPos && conn.start?.objectId) {
-        startPos = objectPositions.get(conn.start.objectId.toString());
-      }
-      if (!endPos && conn.end?.objectId) {
-        endPos = objectPositions.get(conn.end.objectId.toString());
-      }
+      // Apply face overrides if this connection was reassigned
+      const overrides = faceOverrides.get(conn.id);
+      const startData = overrides?.startFace !== undefined
+        ? { ...conn.start, face: overrides.startFace }
+        : conn.start;
+      const endData = overrides?.endFace !== undefined
+        ? { ...conn.end, face: overrides.endFace }
+        : conn.end;
+
+      const startPos = resolveEndpointPosition(startData, objectsById, objects);
+      const endPos = resolveEndpointPosition(endData, objectsById, objects);
       
       if (!startPos || !endPos) return null;
       
@@ -1182,21 +1361,22 @@ const ConnectionsRenderer = ({
       // Skip if any coordinate is invalid
       if (isNaN(sx) || isNaN(sy) || isNaN(sz) || isNaN(ex) || isNaN(ey) || isNaN(ez)) return null;
       
-      // Calculate midpoint
-      const midpoint = [
-        (sx + ex) / 2,
-        (sy + ey) / 2 + 2, // Offset above line
-        (sz + ez) / 2,
+      // Parametric text position — unique per connection ID
+      const t = getTextParametricT(conn.id);
+      const position = [
+        sx + (ex - sx) * t,
+        sy + (ey - sy) * t + 2, // Offset above line
+        sz + (ez - sz) * t,
       ];
       
       return {
         id: conn.id,
         text: conn.text,
-        position: midpoint,
+        position,
         textStyle: conn.textStyle,
       };
     }).filter(Boolean);
-  }, [textConnections, objectPositions]);
+  }, [textConnections, objects, faceOverrides]);
 
   // Handle connection click from batched renderer
   const handleBatchedConnectionClick = useCallback((e, connectionId) => {
@@ -1246,21 +1426,37 @@ const ConnectionsRenderer = ({
       />
       
       {/* Render individual connections that need special handling (selected, dashed/dotted, with text on curves) */}
-      {individualConnections.map((connection) => (
-        <Connection
-          key={connection.id}
-          connection={connection}
-          allObjectsForPathfinding={pathfindingObjects}
-          onLineStyleChange={onLineStyleChange}
-          onLineColorChange={onLineColorChange}
-          onConnectionClick={onConnectionClick}
-          onLineTextClick={onLineTextClick}
-          onLineTextSubmit={onLineTextSubmit}
-          onLineTextStyleChange={onLineTextStyleChange}
-          selectedConnection={selectedConnection}
-          connections={connections}
-        />
-      ))}
+      {individualConnections.map((connection) => {
+        // SOURCE-LEVEL FIX: Apply face redistribution to individual connections
+        // so that connections sharing the same object+face get different endpoints
+        const overrides = faceOverrides.get(connection.id);
+        const effectiveConnection = overrides
+          ? {
+              ...connection,
+              ...(overrides.startFace !== undefined && {
+                start: { ...connection.start, face: overrides.startFace },
+              }),
+              ...(overrides.endFace !== undefined && {
+                end: { ...connection.end, face: overrides.endFace },
+              }),
+            }
+          : connection;
+        return (
+          <Connection
+            key={connection.id}
+            connection={effectiveConnection}
+            allObjectsForPathfinding={pathfindingObjects}
+            onLineStyleChange={onLineStyleChange}
+            onLineColorChange={onLineColorChange}
+            onConnectionClick={onConnectionClick}
+            onLineTextClick={onLineTextClick}
+            onLineTextSubmit={onLineTextSubmit}
+            onLineTextStyleChange={onLineTextStyleChange}
+            selectedConnection={selectedConnection}
+            connections={connections}
+          />
+        );
+      })}
     </group>
   );
 };

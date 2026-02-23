@@ -63,7 +63,8 @@ const resolveConnectionEndpoint = (endpoint, currentObject) => {
 
   try {
     // For face-based connections (cubes, dodecahedrons), recalculate face position
-    if (endpoint.face && endpoint.type !== 'text') {
+    // NOTE: Use !== undefined/null instead of truthiness – face index 0 is valid (dodecahedron)
+    if (endpoint.face !== undefined && endpoint.face !== null && endpoint.type !== 'text') {
       let faceWorldPosition;
       // Detect object type by face identifier
       if (typeof endpoint.face === 'number') {
