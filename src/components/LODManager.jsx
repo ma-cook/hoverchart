@@ -64,11 +64,14 @@ const LODManager = ({ enabled = true }) => {
   // This prevents the O(N²) spatial containment scan from re-running on every object move.
   const containersKey = useMemo(() => {
     if (!objects || objects.length === 0) return '';
-    return objects
+    const containerParts = objects
       .filter(obj => obj.merfolkData?.isContainer || obj.merfolkData?.isParent || obj.merfolkData?.parentId)
       .map(obj => `${obj.id}:${obj.merfolkData?.parentId || 'root'}`)
       .sort()
       .join('|');
+    // Include objects.length so the effect re-runs when objects load,
+    // even if none have container metadata (containersKey would stay '' otherwise)
+    return `${objects.length}:${containerParts}`;
   }, [objects]);
 
   // Initialize parent-child relationships when container STRUCTURE changes.
@@ -173,6 +176,13 @@ const LODManager = ({ enabled = true }) => {
   useFrame(() => {
     if (!lodEnabled || !camera || !initializedRef.current) return;
     
+    // NOTE: We intentionally do NOT gate on isFrameBudgetExhausted() here.
+    // LOD computation is cheap (distance math for N objects) but its effect
+    // is to dramatically reduce rendering cost. Blocking LOD when frames are
+    // slow creates a vicious cycle: slow frames → LOD blocked → objects stay
+    // at full detail → frames stay slow. The 100ms throttle + cameraMoved
+    // check below are sufficient rate-limiting.
+    
     const now = performance.now();
     
     // Throttle updates
@@ -237,9 +247,8 @@ const LODManager = ({ enabled = true }) => {
         // Child objects use standard thresholds
         newLodLevel = calculateLODLevel(distanceSq);
       } else {
-        // Objects that are neither parent nor child don't get LOD applied
-        // (they render at full detail always)
-        continue;
+        // Standalone objects (neither parent nor child) also get LOD
+        newLodLevel = calculateLODLevel(distanceSq);
       }
       
       const currentLevel = currentLodLevels.get(obj.id);

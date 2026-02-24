@@ -10,6 +10,7 @@ import {
   TransformControls as DreiTransformControls,
 } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
+import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
@@ -1755,6 +1756,7 @@ const TextObject = React.memo(
     // Update rotation to always face camera - optimized to only run when needed
     useFrame(({ camera }) => {
       if (groupRef.current) {
+        // FREEZE FIX: During frame overload, still copy quaternion (cheap) but skip everything else
         groupRef.current.quaternion.copy(camera.quaternion);
 
         // CRITICAL: Ensure group scale is always (1,1,1) to prevent text scaling
@@ -1762,6 +1764,7 @@ const TextObject = React.memo(
         if (s.x !== 1 || s.y !== 1 || s.z !== 1) {
           s.set(1, 1, 1);
         }
+        if (isFrameBudgetExhausted()) return;
 
         // Only update world matrix if this object has connections AND is not being transformed
         // This is expensive so we minimize it

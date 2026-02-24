@@ -77,7 +77,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
   const lastPositionsRef = useRef(new Map());
   const visibilityRef = useRef(new Map());
   
-  const { camera } = useThree();
+  const { camera, size } = useThree();
   
   // Get LOD data from store
   // _lodVersion is a counter incremented when lodLevels Map is mutated in-place (avoids O(N) Map copy)
@@ -115,9 +115,17 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
   // Track IDs to detect actual changes, not just length
   const tetrahedronIds = useMemo(() => filteredTetrahedrons.map(t => t.id).join(','), [filteredTetrahedrons]);
 
-  // Create geometry with all tetrahedron edges
+  // FLICKER FIX: Use a grow-only capacity (power-of-2) so the instancedMesh
+  // is NOT destroyed/recreated on every progressive-mount batch.
+  const capacityRef = useRef(0);
+  if (totalEdges > capacityRef.current) {
+    capacityRef.current = Math.max(128, 2 ** Math.ceil(Math.log2(Math.max(1, totalEdges))));
+  }
+  const capacity = capacityRef.current;
+
+  // Create geometry with capacity-sized buffers (only recreated when capacity grows)
   const { geometry, material } = useMemo(() => {
-    if (filteredTetrahedrons.length === 0) return { geometry: null, material: null };
+    if (capacity === 0) return { geometry: null, material: null };
 
     const geo = new THREE.InstancedBufferGeometry();
 
@@ -128,10 +136,10 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     ]);
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-    // Pre-allocate instance attributes for all edges
-    const instanceStart = new Float32Array(totalEdges * 3);
-    const instanceEnd = new Float32Array(totalEdges * 3);
-    const instanceColor = new Float32Array(totalEdges * 3);
+    // Pre-allocate instance attributes with CAPACITY (not totalEdges)
+    const instanceStart = new Float32Array(capacity * 3);
+    const instanceEnd = new Float32Array(capacity * 3);
+    const instanceColor = new Float32Array(capacity * 3);
 
     geo.setAttribute(
       'instanceStart',
@@ -150,7 +158,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     mat.uniforms.linewidth.value = defaultLineWidth;
 
     return { geometry: geo, material: mat };
-  }, [totalEdges, defaultLineWidth, tetrahedronIds]);
+  }, [capacity, defaultLineWidth]);
 
   // Dispose GPU resources when geometry/material change or on unmount
   useEffect(() => {
@@ -159,6 +167,14 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
       material?.dispose();
     };
   }, [geometry, material]);
+
+  // Keep resolution uniform in sync with the actual viewport size.
+  useEffect(() => {
+    if (material) {
+      material.uniforms.resolution.value.x = size.width;
+      material.uniforms.resolution.value.y = size.height;
+    }
+  }, [material, size.width, size.height]);
 
   // Mark for full update when tetrahedrons array changes
   useEffect(() => {
@@ -209,18 +225,38 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     }
   }, []);
 
+  // Frame counter for throttling frustum culling (runs every N frames when idle)
+  const cullingFrameCounterRef = useRef(0);
+  const CULLING_FRAME_INTERVAL = 3;
+
   // Use useFrame for real-time position sync during transforms
   // PERFORMANCE: Skip frame processing when nothing is being transformed
   useFrame(() => {
-    if (!geometry || !meshRef.current || filteredTetrahedrons.length === 0) return;
+    if (!geometry || !meshRef.current) return;
 
-    // PERFORMANCE: Early exit when no transforms are active AND we've done initial setup
-    // tetrahedronTransformMap only has entries when tetrahedrons are being actively transformed
+    // FLICKER FIX: Always keep rendered instance count in sync
+    meshRef.current.count = totalEdges;
+
+    if (filteredTetrahedrons.length === 0) return;
+
     const hasActiveTransforms = tetrahedronTransformMap.size > 0;
     const needsInitialSetup = needsFullUpdateRef.current;
-    
-    if (!hasActiveTransforms && !needsInitialSetup) {
-      return; // Nothing moving and initial setup done, skip all per-frame work
+    const enableCulling = filteredTetrahedrons.length > cullingThreshold;
+
+    // PERFORMANCE: Early exit when no transforms are active, initial setup is
+    // done, AND frustum culling is disabled. When culling IS enabled we must
+    // periodically re-evaluate because the camera may have rotated — edges
+    // zeroed-out for off-screen shapes need to be restored when back in view.
+    if (!hasActiveTransforms && !needsInitialSetup && !enableCulling) {
+      return;
+    }
+
+    // Throttle frustum-culling-only frames to every N frames to reduce CPU cost.
+    if (enableCulling && !hasActiveTransforms && !needsInitialSetup) {
+      cullingFrameCounterRef.current++;
+      if (cullingFrameCounterRef.current % CULLING_FRAME_INTERVAL !== 0) {
+        return;
+      }
     }
 
     const instanceStart = geometry.getAttribute('instanceStart');
@@ -228,8 +264,6 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     const instanceColor = geometry.getAttribute('instanceColor');
 
     let needsUpdate = needsFullUpdateRef.current;
-    
-    const enableCulling = filteredTetrahedrons.length > cullingThreshold;
     
     if (enableCulling) {
       camera.updateMatrixWorld();
@@ -240,8 +274,6 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
       tempFrustum.setFromProjectionMatrix(tempProjectionMatrix);
     }
     
-    let visibleCount = 0;
-
     filteredTetrahedrons.forEach((tetra, tetraIndex) => {
       const tetraId = tetra.id?.toString();
       
@@ -288,7 +320,6 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
           }
         } else {
           updateTetrahedronEdges(tetraIndex, position, scale, color, instanceStart, instanceEnd, instanceColor);
-          if (enableCulling) visibleCount++;
         }
         
         lastPositionsRef.current.set(tetraId, { 
@@ -297,8 +328,6 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
           color 
         });
         needsUpdate = true;
-      } else if (enableCulling && isVisible) {
-        visibleCount++;
       }
     });
 
@@ -308,7 +337,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
       instanceColor.needsUpdate = true;
 
       if (needsFullUpdateRef.current) {
-        for (let i = 0; i < totalEdges; i++) {
+        for (let i = 0; i < capacity; i++) {
           meshRef.current.setMatrixAt(i, IDENTITY_MATRIX);
         }
         meshRef.current.instanceMatrix.needsUpdate = true;
@@ -317,15 +346,15 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     }
   });
 
-  if (!geometry || totalEdges === 0) {
+  if (!geometry || capacity === 0) {
     return null;
   }
 
   return (
     <instancedMesh
-      key={totalEdges}
+      key={capacity}
       ref={meshRef}
-      args={[geometry, material, totalEdges]}
+      args={[geometry, material, capacity]}
       frustumCulled={false}
       renderOrder={10}
     />

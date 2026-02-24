@@ -1130,11 +1130,11 @@ export const getOccupiedCells = async (userId, spaceId) => {
     const occupiedCells = [];
 
     snapshot.forEach((doc) => {
-      const cellData = doc.data();
-      // Check if cell has any objects
-      if (cellData.objects && Object.keys(cellData.objects).length > 0) {
-        occupiedCells.push(doc.id);
-      }
+      // Objects are stored in subcollections (cells/{cellId}/objects/),
+      // not in the cell document's objects map field.
+      // Return all existing cell IDs - the subscription will determine
+      // which cells actually have objects.
+      occupiedCells.push(doc.id);
     });
 
     return occupiedCells;

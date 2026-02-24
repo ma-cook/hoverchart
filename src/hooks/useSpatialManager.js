@@ -50,8 +50,10 @@ export const useSpatialManager = ({
       initializeSpatialSystem(user, currentSpaceId, cameraRef);
 
       // Force initial camera position update after initialization
+      // Use orbit controls target if available (same logic as handleCameraMove)
       if (cameraRef?.current?.camera) {
-        const pos = cameraRef.current.camera.position;
+        const target = cameraRef.current.orbitControls?.target;
+        const pos = target || cameraRef.current.camera.position;
         updateCameraPosition(
           { x: pos.x, y: pos.y, z: pos.z },
           user,
@@ -99,7 +101,14 @@ export const useSpatialManager = ({
       let debounceTimer = null;
 
       const handleCameraMove = () => {
-        const currentPos = camera.position;
+        // BUGFIX: Use the orbit controls TARGET (the point being looked at)
+        // instead of camera.position for cell determination.  During zoom,
+        // camera.position moves through 3D space while the target stays fixed.
+        // Using camera.position caused zooming out to jump the camera to a
+        // different cell, triggering unloadCellsBatch and removing all 1038
+        // connections.  The target represents where the user is actually
+        // working and only changes during pan operations.
+        const currentPos = controls.target || camera.position;
         const currentCellCoords = getCellForPosition([
           currentPos.x,
           currentPos.y,

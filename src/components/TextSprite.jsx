@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useMemo } from 'react'; // Added useMemo
 import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
+import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import * as THREE from 'three';
 import { useTextObjectStore } from '../stores';
 import { frameCounter } from '../utils/frameCounter';
@@ -272,6 +273,8 @@ const TextSprite = React.memo(
 
     useFrame(({ camera }) => {
       if (textRef.current) {
+        // FREEZE FIX: Skip text updates when main thread is lagging
+        if (isFrameBudgetExhausted()) return;
         // PERFORMANCE FIX: Throttle updates to reduce frame calculations (30fps)
         if (frameCounter.shouldUpdate(textRef.current._lastUpdate, 32)) {
           textRef.current._lastUpdate = frameCounter.getTime();

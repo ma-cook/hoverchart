@@ -12,7 +12,11 @@ import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
  * The scheduler may grant fewer if connections or other systems have already
  * consumed part of this frame's budget.
  */
-const MOUNT_BUDGET = 4;
+const MOUNT_BUDGET = 8;
+
+/** Reduced budget used during camera movement — still makes progress but doesn't
+ *  compete with GPU rendering of the current frame. */
+const MOUNT_BUDGET_MOVING = 2;
 
 /** Below this object count, skip progressive mounting entirely (instant mount). */
 const PROGRESSIVE_THRESHOLD = 40;
@@ -87,12 +91,11 @@ const ObjectsRenderer = React.memo(({
   }, [objects]);
 
   useEffect(() => {
-    // Cancel any in-progress progressive mounting
-    if (rafIdRef.current) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-
+    // PERF FIX: Don't cancel in-progress progressive mounting when new objects
+    // arrive. Instead, merge new IDs into the pending queue. Canceling and
+    // restarting caused a cascade: each Firebase snapshot → visibleObjectIds
+    // change → effect restart → cancel rAF → re-sort ALL → new rAF loop,
+    // which meant objects never actually finished mounting during rapid loading.
     const currentMounted = mountedIdsRef.current;
 
     // 1. Remove objects that are truly unloaded (no longer in the objects array).
@@ -110,13 +113,24 @@ const ObjectsRenderer = React.memo(({
       }
     }
 
-    // 2. Find new objects that need mounting
+    // 2. Find new objects that need mounting (not already mounted or pending)
+    //    BUGFIX: iterate over ALL loaded objects (objectsRef.current), not just
+    //    visibleObjectIds. The virtualizer caps visibleObjectIds (e.g. 3200
+    //    closest objects), so objects beyond the cap would never be queued
+    //    for mounting — their Cube component never mounts, meaning no edges,
+    //    no faces, and no header text.  Once mounted, objects stay mounted
+    //    (Three.js frustum culling handles draw-call skipping at zero React
+    //    cost), so mounting everything is safe.
+    const pendingSet = new Set(pendingRef.current);
     const toAdd = [];
-    for (const id of visibleObjectIds) {
-      if (!currentMounted.has(id)) {
-        toAdd.push(id);
+    for (const obj of objectsRef.current) {
+      if (!currentMounted.has(obj.id) && !pendingSet.has(obj.id)) {
+        toAdd.push(obj.id);
       }
     }
+
+    // Nothing new to add and nothing removed — skip
+    if (toAdd.length === 0 && !removed) return;
 
     // 3. Sort new objects by distance to camera (closest first)
     if (toAdd.length > 1 && camera) {
@@ -140,7 +154,7 @@ const ObjectsRenderer = React.memo(({
     }
 
     // 4. If few enough, mount all at once (no need for batching)
-    if (toAdd.length <= MOUNT_BUDGET || visibleObjectIds.size <= PROGRESSIVE_THRESHOLD) {
+    if (toAdd.length <= MOUNT_BUDGET || objectsRef.current.length <= PROGRESSIVE_THRESHOLD) {
       toAdd.forEach(id => currentMounted.add(id));
       if (removed || toAdd.length > 0) {
         setMountedIds(new Set(currentMounted));
@@ -148,58 +162,113 @@ const ObjectsRenderer = React.memo(({
       return;
     }
 
-    // 5. Many new objects — mount first batch immediately, rest progressively
-    pendingRef.current = toAdd;
-    const firstBatch = pendingRef.current.splice(0, MOUNT_BUDGET);
-    firstBatch.forEach(id => currentMounted.add(id));
-    setMountedIds(new Set(currentMounted));
+    // 5. Many new objects — append to pending queue
+    //    If a rAF loop is already running, it will pick these up automatically.
+    //    If not, start a new one.
+    const isAlreadyMounting = rafIdRef.current !== null;
+    pendingRef.current = pendingRef.current.concat(toAdd);
 
-    const mountNextBatch = () => {
-      const pending = pendingRef.current;
-      if (pending.length === 0) {
-        rafIdRef.current = null;
-        return;
-      }
+    if (!isAlreadyMounting) {
+      // Mount first batch immediately
+      const firstBatch = pendingRef.current.splice(0, MOUNT_BUDGET);
+      firstBatch.forEach(id => currentMounted.add(id));
+      setMountedIds(new Set(currentMounted));
+    } else if (removed) {
+      // Just sync the removal
+      setMountedIds(new Set(currentMounted));
+    }
 
-      // Only mount objects still in the visible set (camera may have moved)
-      // Use the shared render budget so objects + connections don't overwhelm one frame
-      // PERF: Skip mounting while camera is actively moving to keep panning smooth
-      if (isCameraMoving()) {
-        rafIdRef.current = requestAnimationFrame(mountNextBatch);
-        return;
-      }
-      const budget = acquireBudget(MOUNT_BUDGET);
-      let added = 0;
-      while (pending.length > 0 && added < budget) {
-        const id = pending.shift();
-        // BUGFIX: Use ref for latest visible set instead of stale closure
-        if (visibleObjectIdsRef.current.has(id)) {
-          mountedIdsRef.current.add(id);
-          added++;
+    if (!isAlreadyMounting && pendingRef.current.length > 0) {
+      const mountNextBatch = () => {
+        const pending = pendingRef.current;
+        if (pending.length === 0) {
+          // SAFETY NET: Before terminating, check if any objects slipped through
+          // the queuing pipeline (e.g., due to timing races between effects,
+          // rAF callbacks, and React batching). If unmounted objects exist,
+          // re-queue them instead of stopping.
+          const allObjs = objectsRef.current;
+          const unmounted = [];
+          for (const obj of allObjs) {
+            if (!mountedIdsRef.current.has(obj.id)) {
+              unmounted.push(obj.id);
+            }
+          }
+          if (unmounted.length > 0) {
+            pendingRef.current = unmounted;
+            rafIdRef.current = requestAnimationFrame(mountNextBatch);
+            return;
+          }
+          rafIdRef.current = null;
+          return;
         }
-      }
 
-      if (added > 0) {
-        setMountedIds(new Set(mountedIdsRef.current));
-      }
+        // Only mount objects still in the loaded set (camera may have moved)
+        // Use the shared render budget so objects + connections don't overwhelm one frame
+        // PERF: Use a reduced budget during camera movement instead of blocking
+        // completely — the old full-block caused cubes to never mount in large
+        // diagrams when orbit damping kept isCameraMoving() true for seconds.
+        const isMoving = isCameraMoving();
+        const budget = acquireBudget(isMoving ? MOUNT_BUDGET_MOVING : MOUNT_BUDGET);
+        if (budget === 0) {
+          // Entire frame budget consumed by other systems — try next frame
+          rafIdRef.current = requestAnimationFrame(mountNextBatch);
+          return;
+        }
+        let added = 0;
+        // Build object existence set once per batch (not per item)
+        const allObjectIds = new Set(objectsRef.current.map(o => o.id));
+        while (pending.length > 0 && added < budget) {
+          const id = pending.shift();
+          // BUGFIX: Check if the object still exists in the objects array, NOT
+          // whether it's still in visibleObjectIds. The virtualizer may have
+          // re-capped visibleObjectIds (dropping distant objects) between when
+          // this ID was queued and now. Checking visibleObjectIds here caused
+          // objects to silently never mount — their text appeared via
+          // ConnectionsRenderer but the Cube component never mounted, so no
+          // mesh or edges rendered. Once mounted, objects stay mounted until
+          // truly unloaded (removed from the objects array), matching the
+          // behavior documented on progressiveVisibleObjects.
+          if (allObjectIds.has(id)) {
+            mountedIdsRef.current.add(id);
+            added++;
+          }
+        }
 
-      if (pending.length > 0) {
-        rafIdRef.current = requestAnimationFrame(mountNextBatch);
-      } else {
-        rafIdRef.current = null;
-      }
-    };
+        if (added > 0) {
+          setMountedIds(new Set(mountedIdsRef.current));
+        }
 
-    rafIdRef.current = requestAnimationFrame(mountNextBatch);
+        if (pending.length > 0) {
+          rafIdRef.current = requestAnimationFrame(mountNextBatch);
+        } else {
+          // Queue drained — check for unmounted objects before terminating
+          // (same safety net as the top of the function)
+          const allObjs = objectsRef.current;
+          let hasUnmounted = false;
+          for (const obj of allObjs) {
+            if (!mountedIdsRef.current.has(obj.id)) {
+              hasUnmounted = true;
+              break;
+            }
+          }
+          if (hasUnmounted) {
+            // Re-queue on next frame — the safety net at the top will
+            // populate pendingRef.current with the unmounted IDs.
+            rafIdRef.current = requestAnimationFrame(mountNextBatch);
+          } else {
+            rafIdRef.current = null;
+          }
+        }
+      };
 
-    return () => {
-      if (rafIdRef.current) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    };
+      rafIdRef.current = requestAnimationFrame(mountNextBatch);
+    }
+
+    // NOTE: No cleanup that cancels rafIdRef here — we want the mounting loop
+    // to survive across visibleObjectIds changes. Only the unmount effect below
+    // cancels it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleObjectIds]);
+  }, [visibleObjectIds, objects.length]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -211,11 +280,6 @@ const ObjectsRenderer = React.memo(({
   }, []);
 
   // ─── Derived lists ──────────────────────────────────────────────────
-  // Full visible set — used for instanced edge renderers (cheap GPU buffer writes)
-  const visibleObjects = useMemo(() => {
-    return objects.filter((obj) => visibleObjectIds.has(obj.id));
-  }, [objects, visibleObjectIds]);
-
   // Progressive set — used for individual component mounting (expensive React work).
   // Filtered by `mountedIds` ONLY — never by `visibleObjectIds`.
   // Once mounted, an object's React component STAYS in the tree until the object
@@ -229,21 +293,26 @@ const ObjectsRenderer = React.memo(({
   }, [objects, mountedIds]);
 
   // Extract cube objects for batched edge rendering (includes containers)
+  // BUGFIX: Use progressiveVisibleObjects (same as mesh components) instead of
+  // visibleObjects. visibleObjects is capped by the virtualizer's maxObjects
+  // limit — distant objects get dropped on camera move, causing their edges to
+  // vanish while the mesh/text stays mounted.  Edge renderers do their own
+  // frustum culling in useFrame, so passing the full mounted set is safe.
   const cubeObjects = useMemo(() => {
-    return visibleObjects.filter((obj) => obj.type === 'cube');
-  }, [visibleObjects]);
+    return progressiveVisibleObjects.filter((obj) => obj.type === 'cube');
+  }, [progressiveVisibleObjects]);
 
   // Extract dodecahedron objects for batched edge rendering
   const dodecahedronObjects = useMemo(() => {
-    return visibleObjects.filter(
+    return progressiveVisibleObjects.filter(
       (obj) => obj.type === 'sphere' || obj.type === 'dodecahedron'
     );
-  }, [visibleObjects]);
+  }, [progressiveVisibleObjects]);
 
   // Extract tetrahedron objects for batched edge rendering
   const tetrahedronObjects = useMemo(() => {
-    return visibleObjects.filter((obj) => obj.type === 'tetrahedron');
-  }, [visibleObjects]);
+    return progressiveVisibleObjects.filter((obj) => obj.type === 'tetrahedron');
+  }, [progressiveVisibleObjects]);
 
   // Render individual objects (progressively mounted to prevent freezes)
   const renderedObjects = useMemo(() => {

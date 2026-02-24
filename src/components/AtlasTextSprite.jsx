@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
+import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 
 // =============================================================================
 // PERFORMANCE OPTIMIZATION: Reusable THREE objects to avoid GC pressure
@@ -453,6 +454,8 @@ const DynamicBillboardMesh = React.memo(({
   // PERFORMANCE OPTIMIZED: Uses reusable THREE objects and smart throttling
   useFrame(({ camera }) => {
     if (!meshRef.current) return;
+    // FREEZE FIX: Skip billboard updates when main thread is lagging
+    if (isFrameBudgetExhausted()) return;
 
     // Determine throttle interval based on text type
     const now = Date.now();

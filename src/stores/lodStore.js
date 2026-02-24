@@ -3,11 +3,10 @@ import { create } from 'zustand';
 /**
  * LOD (Level of Detail) Store
  * 
- * Manages LOD levels for objects based on camera distance.
- * Used for child objects inside containers AND parent objects (not grouping containers).
+ * Manages LOD levels for ALL objects based on camera distance.
  * 
  * NOTE: Grouping containers (isContainer: true) are excluded from the LOD system
- * and always render at full detail.
+ * and always render at full detail. All other objects get LOD applied.
  * 
  * LOD Levels:
  * - 0: Full detail (edges, faces, text, indicators)
@@ -15,8 +14,8 @@ import { create } from 'zustand';
  * - 2: Low detail (don't render)
  * 
  * Distance Thresholds:
- * - Child objects: FULL < 2000, MEDIUM 2000-6000, LOW > 6000
- * - Parent objects: FULL < 3500, MEDIUM 3500-11000, LOW > 11000
+ * - Child/standalone objects: FULL < 2000, MEDIUM 2000-20000, LOW > 20000
+ * - Parent objects: FULL < 4000, MEDIUM 4000-20000, LOW > 20000
  */
 
 // LOD distance thresholds for CHILD objects (inside containers)

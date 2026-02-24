@@ -161,7 +161,7 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
     } // Deep clone the object to prevent reference issues
     let newData;
     try {
-      newData = JSON.parse(JSON.stringify(object));
+      newData = structuredClone(object);
     } catch (error) {
       console.warn(
         '⚠️ Failed to clone object in spatialObjectsService:',
@@ -670,6 +670,12 @@ export const subscribeToSpatialObjects = (
                 }
 
                 // Process each object document in the subcollection
+                // PERF: Batch all changes from this snapshot into arrays,
+                // then fire a single callback per type. This avoids O(n²)
+                // array spreads in the consumer when a cell with 50+ objects loads.
+                const batchedAdds = [];
+                const batchedRemoves = [];
+
                 querySnapshot.forEach((doc) => {
                   const objectData = doc.data();
                   const objectId = doc.id;
@@ -767,7 +773,7 @@ export const subscribeToSpatialObjects = (
                     try {
                       objectsCache.set(
                         cacheKey,
-                        JSON.parse(JSON.stringify(objectData))
+                        structuredClone(objectData)
                       );
                     } catch (error) {
                       console.warn(
@@ -779,7 +785,7 @@ export const subscribeToSpatialObjects = (
                       objectsCache.set(cacheKey, { ...objectData }); // Fallback to shallow copy
                     }
                     lastReceivedObjects.set(cacheKey, objectData);
-                    callback({
+                    batchedAdds.push({
                       type: 'added',
                       id: objectId,
                       object: objectData,
@@ -795,13 +801,27 @@ export const subscribeToSpatialObjects = (
                     const cacheKey = `${spaceId}_${objectId}`;
                     objectsCache.delete(cacheKey);
                     lastReceivedObjects.delete(cacheKey);
-                    callback({
+                    batchedRemoves.push({
                       type: 'removed',
                       id: objectId,
                       cellCoords: { x, y, z: z || 0 },
                     });
                   }
                 });
+
+                // Fire batched callbacks — one call for all adds, one for all removes
+                if (batchedAdds.length > 0) {
+                  callback({
+                    type: 'batch-added',
+                    changes: batchedAdds,
+                  });
+                }
+                if (batchedRemoves.length > 0) {
+                  callback({
+                    type: 'batch-removed',
+                    changes: batchedRemoves,
+                  });
+                }
               },
               (error) => {
                 console.error(`Subscription error for cell ${cellKey}:`, error);

@@ -47,7 +47,7 @@ import {
 import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { checkPositionJitter } from './utils/positionUtils';
 import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle utility
-import { notifyCameraMove } from './utils/renderWorkScheduler';
+import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkScheduler';
 
 import { signInUser } from './services/authService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
@@ -646,6 +646,96 @@ const App = () => {
       (change) => {
         currentSetObjects((prev) => {
           switch (change.type) {
+            // PERF: Batched add — all objects from a single Firebase snapshot
+            // arrive together. This replaces N individual array spreads with
+            // one single spread, eliminating O(n²) array copying.
+            case 'batch-added': {
+              const validObjects = [];
+              const existingIds = new Set(prev.map(o => o.id));
+
+              for (const item of change.changes) {
+                // Check deletion blacklist
+                try {
+                  if (window.getObjectDeletionStatus) {
+                    const deletionStatus = window.getObjectDeletionStatus();
+                    if (deletionStatus && deletionStatus.deletingObjects.includes(item.id.toString())) {
+                      continue;
+                    }
+                  }
+                } catch (error) { /* ignore */ }
+
+                // Track object change
+                if (window.trackObjectChange) {
+                  window.trackObjectChange(item.id, 'add');
+                }
+
+                // Clear transitioning flag
+                if (transitioningObjectsRef.current.has(item.id.toString())) {
+                  transitioningObjectsRef.current.delete(item.id.toString());
+                }
+
+                // Skip unloaded
+                if (window._unloadedObjects?.has(item.id.toString())) continue;
+
+                // Skip duplicates
+                if (existingIds.has(item.id)) continue;
+
+                // Validate position
+                const pos = item.object?.position;
+                const hasValidPosition = pos && (
+                  (Array.isArray(pos) && pos.length === 3 && pos.every(v => typeof v === 'number' && !isNaN(v))) ||
+                  (typeof pos === 'object' && 'x' in pos && 'y' in pos && 'z' in pos &&
+                    typeof pos.x === 'number' && typeof pos.y === 'number' && typeof pos.z === 'number' &&
+                    !isNaN(pos.x) && !isNaN(pos.y) && !isNaN(pos.z))
+                );
+                if (!hasValidPosition) continue;
+
+                // Normalize position to array
+                if (pos && !Array.isArray(pos)) {
+                  item.object.position = [pos.x, pos.y, pos.z];
+                }
+
+                // Track in cell
+                if (item.cellCoords && currentTrackObjectInCell) {
+                  const cellId = `${item.cellCoords.x},${item.cellCoords.y},${item.cellCoords.z || 0}`;
+                  currentTrackObjectInCell(item.id.toString(), cellId);
+                } else if (item.object.position && currentTrackObjectInCell) {
+                  const cellCoords = getCellCoordinates(item.object.position);
+                  const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+                  currentTrackObjectInCell(item.id.toString(), cellId);
+                }
+
+                validObjects.push(item.object);
+                existingIds.add(item.id); // prevent dupes within same batch
+              }
+
+              if (validObjects.length > 0) {
+                scheduleLoadingComplete();
+                return [...prev, ...validObjects]; // ONE spread for entire batch
+              }
+              return prev;
+            }
+
+            // PERF: Batched remove — all removals from a single snapshot
+            case 'batch-removed': {
+              const removeIds = new Set();
+              for (const item of change.changes) {
+                if (window.trackObjectChange) {
+                  window.trackObjectChange(item.id, 'remove');
+                }
+                if (item.cellCoords && currentUntrackObjectInCell) {
+                  const cellId = `${item.cellCoords.x},${item.cellCoords.y},${item.cellCoords.z || 0}`;
+                  currentUntrackObjectInCell(item.id.toString(), cellId);
+                }
+                delete currentLastUpdateRef.current[item.id];
+                removeIds.add(item.id.toString());
+              }
+              if (removeIds.size > 0) {
+                return prev.filter(obj => !removeIds.has(obj.id.toString()));
+              }
+              return prev;
+            }
+
             case 'added': {
               // Check deletion blacklist before adding object
               // Import deletion status check dynamically to avoid circular dependencies
@@ -1239,10 +1329,21 @@ const App = () => {
   const loadedCellsForVisibilityRef = useRef(loadedCells);
   useEffect(() => { loadedCellsForVisibilityRef.current = loadedCells; }, [loadedCells]);
 
+  // PERF: Guard against redundant visibility recalculations.
+  // Both handleCameraSettle and seenObjectIdsRef effect can trigger
+  // updateVisibleObjects within ~100ms of each other, causing double
+  // sort + double Set creation + double progressive mount restart.
+  const lastVisibilityUpdateRef = useRef(0);
+
   const updateVisibleObjects = useCallback(
     (camera) => {
       const currentObjects = objectsForVisibilityRef.current;
       if (!camera || currentObjects.length === 0) return;
+
+      // Skip if we just ran within the last 150ms (debounce overlapping calls)
+      const now = Date.now();
+      if (now - lastVisibilityUpdateRef.current < 150) return;
+      lastVisibilityUpdateRef.current = now;
 
       // Calculate camera distance for LOD — use a ref to avoid App re-renders.
       // Only promote to state when the useLOD threshold is actually crossed.
@@ -1281,9 +1382,15 @@ const App = () => {
     },
     [] // Stable — reads objects/loadedCells from refs
   );
-  // Throttled visibility update - stable because updateVisibleObjects is stable
+  // Throttled visibility update - stable because updateVisibleObjects is stable.
+  // FREEZE FIX: During rapid camera movement, skip visibility recalculation
+  // entirely. The O(n log n) sort + new Set creation + React re-render cascade
+  // is the #1 cause of freezes during fast panning.
   const throttledUpdateVisibility = useMemo(
-    () => throttle((camera) => updateVisibleObjects(camera), 200),
+    () => throttle((camera) => {
+      if (isCameraMovingRapidly()) return; // Defer until movement settles
+      updateVisibleObjects(camera);
+    }, 200),
     [updateVisibleObjects]
   );
 
@@ -1303,10 +1410,23 @@ const App = () => {
           throttledUpdateVisibility(camera);
         };
 
+        // FREEZE FIX: When camera movement settles, run one final
+        // visibility update to catch up on deferred work.
+        let settleTimer = null;
+        const handleCameraSettle = () => {
+          clearTimeout(settleTimer);
+          settleTimer = setTimeout(() => {
+            updateVisibleObjects(camera);
+          }, 200);
+        };
+
         controls.addEventListener('change', handleCameraUpdate);
+        controls.addEventListener('change', handleCameraSettle);
 
         return () => {
           controls.removeEventListener('change', handleCameraUpdate);
+          controls.removeEventListener('change', handleCameraSettle);
+          clearTimeout(settleTimer);
         };
       }
     }
@@ -1353,11 +1473,19 @@ const App = () => {
         return next;
       });
 
-      // Also kick off the initial updateVisibleObjects if camera is available,
-      // so cameraDistanceRef gets the real value and the virtualizer establishes
-      // its baseline BEFORE the user moves the camera.
+      // BUGFIX: Defer the virtualizer call so it doesn't get batched with the
+      // setVisibleObjectIds above.  React 18 automatic batching causes both
+      // state updates to merge — the virtualizer's CAPPED set wins, and
+      // objects beyond the cap never enter the progressive mounting queue.
+      // Using a second setTimeout ensures the full set applies first, giving
+      // progressive mounting a chance to queue ALL objects before the
+      // virtualizer caps the set on the next cycle.
       if (cameraRef.current?.camera) {
-        updateVisibleObjects(cameraRef.current.camera);
+        setTimeout(() => {
+          if (cameraRef.current?.camera) {
+            updateVisibleObjects(cameraRef.current.camera);
+          }
+        }, 200);
       }
     }, 100); // 100ms debounce for rapid object creation
 

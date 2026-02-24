@@ -43,10 +43,10 @@ export class ObjectVirtualizer {
             : 600;
         }
         return canvasQuality === 'low'
-          ? 800
-          : canvasQuality === 'medium'
           ? 1600
-          : 3600; // Much higher limits for large diagrams
+          : canvasQuality === 'medium'
+          ? 3200
+          : 7200; // Much higher limits for large diagrams
       };
 
       const maxObjects = getMaxObjects();

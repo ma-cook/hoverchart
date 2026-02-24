@@ -1,6 +1,6 @@
 import React, { useMemo, useCallback, useRef, useEffect, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
+import { acquireBudget, isCameraMoving, isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 
 import InstancedLine from './InstancedLine';
 import BatchedConnectionLines from './BatchedConnectionLines';
@@ -48,6 +48,8 @@ const DistanceFilteredConnectionText = React.memo(({
     // Throttle checks to every 200ms (was 100ms — reduced frequency during fast panning)
     const now = Date.now();
     if (now - lastCheckRef.current < 200) return;
+    // FREEZE FIX: Skip visibility checks when main thread is lagging
+    if (isFrameBudgetExhausted()) return;
     lastCheckRef.current = now;
     
     if (!groupRef.current) return;
@@ -1020,9 +1022,12 @@ const ConnectionsRenderer = ({
   // only the progressively-mounted subset. Because they use instanced
   // single-draw-call rendering, incremental buffer growth is cheap.
   // ──────────────────────────────────────────────────────────────────
-  const CONNECTION_MOUNT_BUDGET = 6;
+  const CONNECTION_MOUNT_BUDGET = 12;
+  /** Reduced budget during camera movement — keep making progress without
+   *  competing heavily with GPU rendering of the current frame. */
+  const CONNECTION_MOUNT_BUDGET_MOVING = 2;
   /** Below this count, skip progressive mounting entirely (instant mount). */
-  const CONNECTION_PROGRESSIVE_THRESHOLD = 60;
+  const CONNECTION_PROGRESSIVE_THRESHOLD = 120;
   const mountedConnIdsRef = useRef(new Set());
   const [mountedConnIds, setMountedConnIds] = useState(() => new Set());
   const pendingConnsRef = useRef([]);
@@ -1083,12 +1088,16 @@ const ConnectionsRenderer = ({
       }
 
       // Use the shared render budget — coordinate with ObjectsRenderer
-      // PERF: Skip mounting while camera is actively moving to keep panning smooth
-      if (isCameraMoving()) {
+      // PERF: Use a reduced budget during camera movement instead of blocking
+      // completely — the old full-block caused connections to never mount in
+      // large diagrams when orbit damping kept isCameraMoving() true.
+      const isMoving = isCameraMoving();
+      const budget = acquireBudget(isMoving ? CONNECTION_MOUNT_BUDGET_MOVING : CONNECTION_MOUNT_BUDGET);
+      if (budget === 0) {
+        // Entire frame budget consumed by other systems — try next frame
         connRafIdRef.current = requestAnimationFrame(mountNextBatch);
         return;
       }
-      const budget = acquireBudget(CONNECTION_MOUNT_BUDGET);
       let added = 0;
       while (pending.length > 0 && added < budget) {
         const id = pending.shift();

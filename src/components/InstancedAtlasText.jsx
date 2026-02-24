@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
+import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 
 // =============================================================================
@@ -255,6 +256,8 @@ const PageInstancedMesh = React.memo(
     // ----- per-frame: billboard, distance culling, UV fixup -----
     useFrame(({ camera }) => {
       if (!meshRef.current) return;
+      // FREEZE FIX: Skip instanced billboard updates when main thread is lagging
+      if (isFrameBudgetExhausted()) return;
 
       const now = Date.now();
       // Throttle updates to ~10 Hz — billboard rotation and distance-based

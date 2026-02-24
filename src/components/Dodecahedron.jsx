@@ -1152,14 +1152,15 @@ const Sphere = React.memo(
     // Grouping containers are excluded from LOD system - always render at full detail
     const isGroupingContainer = objectData?.merfolkData?.isContainer === true;
     
-    // If LOD level is LOW (2), don't render for children or parents (but not grouping containers)
-    if (!isGroupingContainer && (isChildOfContainer || isParentObject) && lodLevel === LOD_LEVELS.LOW) {
+    // If LOD level is LOW (2), don't render (except grouping containers)
+    if (!isGroupingContainer && lodLevel === LOD_LEVELS.LOW) {
       return null;
     }
     
     // Determine what to render based on LOD level
     // Grouping containers always render at full detail
-    const isLODRestricted = !isGroupingContainer && (isChildOfContainer || isParentObject);
+    // All other objects respond to LOD
+    const isLODRestricted = !isGroupingContainer;
     const shouldRenderFullDetail = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
 
     return (
@@ -1219,19 +1220,16 @@ const Sphere = React.memo(
               />
             </mesh>
           )}
-          {/* LOD MEDIUM: Render simple grey sphere mesh for parent objects */}
+          {/* LOD MEDIUM: Render simple sphere for objects at medium distance */}
           {/* Using sphere with radius ~8 to match edge renderer bounds (PHI * 5) */}
-          {isParentObject && lodLevel === LOD_LEVELS.MEDIUM && (
+          {!isGroupingContainer && lodLevel === LOD_LEVELS.MEDIUM && (
             <mesh>
               <sphereGeometry args={[8, 8, 6]} />
-              <meshBasicMaterial color="#888888" transparent opacity={0.6} />
-            </mesh>
-          )}
-          {/* LOD MEDIUM: Render simple colored sphere mesh for child objects */}
-          {isChildOfContainer && lodLevel === LOD_LEVELS.MEDIUM && (
-            <mesh>
-              <sphereGeometry args={[8, 8, 6]} />
-              <meshBasicMaterial color="#888888" transparent opacity={0.8} />
+              <meshBasicMaterial
+                color={isParentObject ? "#888888" : (dodecahedron?.color || "#888888")}
+                transparent
+                opacity={isParentObject ? 0.6 : 0.8}
+              />
             </mesh>
           )}
           {/* Render faces using DodecahedronFace component (consistent with Cube architecture) */}

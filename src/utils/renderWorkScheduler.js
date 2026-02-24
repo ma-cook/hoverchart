@@ -12,8 +12,12 @@
  * **completely defer** non-essential mounting work during pans/orbits,
  * keeping OrbitControls smooth.
  *
+ * Frame-time monitoring: tracks actual frame durations so that per-frame
+ * hooks (LOD, frustum culling, billboard) can skip work when the main
+ * thread is overloaded, preventing total freezes.
+ *
  * Usage:
- *   import { acquireBudget, isCameraMoving, notifyCameraMove } from '../utils/renderWorkScheduler';
+ *   import { acquireBudget, isCameraMoving, notifyCameraMove, isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
  *
  *   // Call from OrbitControls 'change' handler or useFrame:
  *   notifyCameraMove();
@@ -21,18 +25,73 @@
  *   // In progressive mounting rAF loop:
  *   if (isCameraMoving()) return; // skip this frame, camera is panning
  *   const allowed = acquireBudget(requestedCount);
+ *
+ *   // In useFrame hooks, skip non-essential work when frames are slow:
+ *   if (isFrameBudgetExhausted()) return;
  */
 
 // ── Per-frame budget ──────────────────────────────────────────────
 
-/** Maximum new items (components, buffer entries, textures) to process per frame. */
-let _frameBudget = 8;
+/** Maximum new items (components, buffer entries, textures) to process per frame.
+ *  ObjectsRenderer requests up to 8 (or 2 during movement),
+ *  ConnectionsRenderer requests up to 12 (or 2 during movement).
+ *  Budget of 20 allows both to run at full speed on idle frames. */
+let _frameBudget = 20;
 
 /** How much of the budget has been consumed this frame. */
 let _frameUsed = 0;
 
 /** Whether we have already scheduled a rAF reset for this frame. */
 let _resetScheduled = false;
+
+// ── Frame-time monitoring ─────────────────────────────────────────
+// Tracks how long frames actually take so that useFrame hooks can
+// voluntarily skip non-essential work when the main thread is lagging.
+//
+// CRITICAL: This runs on its OWN persistent rAF loop, independent of
+// acquireBudget(). The old design only measured frame time inside
+// _resetForNextFrame (which was scheduled by acquireBudget). Once
+// progressive mounting finished, acquireBudget stopped being called,
+// _smoothFrameTime froze at a high value, and isFrameBudgetExhausted()
+// permanently returned true — blocking LOD, text billboarding, and
+// connection visibility updates forever.
+
+/** Timestamp of the previous rAF tick (for computing frame delta). */
+let _prevFrameTs = 0;
+
+/** Smoothed frame time in ms (EMA with alpha=0.3). */
+let _smoothFrameTime = 16;
+
+/** Threshold: if smoothed frame time exceeds this, `isFrameBudgetExhausted()` returns true. */
+const FRAME_TIME_BUDGET_MS = 28; // ~35 fps — anything slower means we should shed work
+
+/** Number of camera move events in the last 500ms — detects "rapid" panning. */
+let _moveCount = 0;
+let _moveCountResetTime = 0;
+const MOVE_COUNT_WINDOW_MS = 500;
+
+/** Whether the persistent frame-time tracking loop is running. */
+let _frameTrackingRunning = false;
+
+/**
+ * Persistent rAF loop that continuously measures frame time.
+ * Starts automatically and runs for the lifetime of the app.
+ */
+function _frameTimeTracker(ts) {
+  if (_prevFrameTs > 0) {
+    const dt = ts - _prevFrameTs;
+    // EMA smoothing (alpha=0.3) — reacts to spikes within ~3 frames
+    _smoothFrameTime = _smoothFrameTime * 0.7 + dt * 0.3;
+  }
+  _prevFrameTs = ts;
+  requestAnimationFrame(_frameTimeTracker);
+}
+
+// Start the persistent frame-time tracking loop immediately
+if (!_frameTrackingRunning) {
+  _frameTrackingRunning = true;
+  requestAnimationFrame(_frameTimeTracker);
+}
 
 /** rAF callback: resets the budget for the next frame. */
 function _resetForNextFrame() {
@@ -95,6 +154,14 @@ const MOVE_SETTLE_MS = 150;
  */
 export function notifyCameraMove() {
   _lastMoveTs = performance.now();
+
+  // Track move frequency for rapid-movement detection
+  const now = performance.now();
+  if (now - _moveCountResetTime > MOVE_COUNT_WINDOW_MS) {
+    _moveCount = 0;
+    _moveCountResetTime = now;
+  }
+  _moveCount++;
 }
 
 /**
@@ -103,4 +170,37 @@ export function notifyCameraMove() {
  */
 export function isCameraMoving() {
   return performance.now() - _lastMoveTs < MOVE_SETTLE_MS;
+}
+
+/**
+ * Returns `true` if the camera is being moved rapidly (many move events
+ * per second). During rapid movement, even throttled work like visibility
+ * updates should be deferred to prevent React re-render cascades.
+ *
+ * "Rapid" = more than 8 OrbitControls change events in 500ms.
+ */
+export function isCameraMovingRapidly() {
+  if (!isCameraMoving()) return false;
+  return _moveCount > 8;
+}
+
+/**
+ * Returns `true` when recent frame times exceed the budget threshold
+ * (~28ms / 35fps). Per-frame hooks should use this to voluntarily skip
+ * non-essential work (LOD, billboard, culling) and let the main thread
+ * recover.
+ *
+ * @returns {boolean}
+ */
+export function isFrameBudgetExhausted() {
+  return _smoothFrameTime > FRAME_TIME_BUDGET_MS;
+}
+
+/**
+ * Returns the current smoothed frame time in ms.
+ * Useful for adaptive throttling.
+ * @returns {number}
+ */
+export function getSmoothedFrameTime() {
+  return _smoothFrameTime;
 }

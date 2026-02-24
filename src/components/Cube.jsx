@@ -1317,21 +1317,15 @@ const Cube = ({
   // Grouping containers are excluded from LOD system - always render at full detail
   const isGroupingContainer = objectData?.merfolkData?.isContainer === true;
   
-  // If this cube is a child of a container and LOD level is LOW (2), don't render
-  if (!isGroupingContainer && isChildOfContainer && lodLevel === LOD_LEVELS.LOW) {
-    return null; // Don't render - parent outline only
-  }
-  
-  // If this cube is a parent object and LOD level is LOW (2), don't render
-  if (!isGroupingContainer && isParentObject && lodLevel === LOD_LEVELS.LOW) {
+  // If LOD level is LOW (2), don't render (except grouping containers)
+  if (!isGroupingContainer && lodLevel === LOD_LEVELS.LOW) {
     return null; // Don't render at long distance
   }
 
   // Determine what to render based on LOD level
   // Grouping containers always render at full detail
-  // For child cubes: full detail at FULL LOD, basic mesh at MEDIUM
-  // For parent cubes: full detail at FULL LOD, basic grey mesh at MEDIUM
-  const isLODRestricted = !isGroupingContainer && (isChildOfContainer || isParentObject);
+  // All other objects: full detail at FULL LOD, basic mesh at MEDIUM, hidden at LOW
+  const isLODRestricted = !isGroupingContainer;
   const shouldRenderEdges = renderEdges && (!isLODRestricted || lodLevel === LOD_LEVELS.FULL);
   const shouldRenderFaces = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
   const shouldRenderText = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
@@ -1381,19 +1375,15 @@ const Cube = ({
           <meshBasicMaterial visible={false} />
         </mesh>
         
-        {/* LOD MEDIUM: Render simple colored box for distant cubes in containers */}
-        {isChildOfContainer && lodLevel === LOD_LEVELS.MEDIUM && (
+        {/* LOD MEDIUM: Render simple box for objects at medium distance */}
+        {!isGroupingContainer && lodLevel === LOD_LEVELS.MEDIUM && (
           <mesh>
             <boxGeometry args={[CUBE_SIZE * 2, CUBE_SIZE * 2, CUBE_SIZE * 2]} />
-            <meshBasicMaterial color={cube?.color || color} transparent opacity={0.8} />
-          </mesh>
-        )}
-        
-        {/* LOD MEDIUM: Render simple grey box for parent objects at medium distance */}
-        {isParentObject && lodLevel === LOD_LEVELS.MEDIUM && (
-          <mesh>
-            <boxGeometry args={[CUBE_SIZE * 2, CUBE_SIZE * 2, CUBE_SIZE * 2]} />
-            <meshBasicMaterial color="#d0d0d0" transparent opacity={0.6} />
+            <meshBasicMaterial
+              color={isParentObject ? "#d0d0d0" : (cube?.color || color)}
+              transparent
+              opacity={isParentObject ? 0.6 : 0.8}
+            />
           </mesh>
         )}
         
