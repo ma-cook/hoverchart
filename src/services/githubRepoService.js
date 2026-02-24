@@ -1846,12 +1846,26 @@ export const isGithubAuthenticated = () => {
 
 /**
  * Get GitHub OAuth URL for login
- * @param {string} redirectUri - Redirect URI after OAuth
+ * Preserves the current page's query parameters (e.g. spaceId) via the
+ * OAuth `state` parameter so the user is returned to the same context.
  * @returns {string} - GitHub OAuth URL
  */
-export const getGithubOAuthUrl = (redirectUri = 'https://space.volscape.com/') => {
+export const getGithubOAuthUrl = () => {
   const clientId = 'Ov23liLYzf9WoYPLBNat';
-  return `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  const redirectUri = window.location.origin + window.location.pathname;
+
+  // Encode current query params (minus any leftover OAuth params) into `state`
+  // so we can restore them after the redirect.
+  const currentParams = new URLSearchParams(window.location.search);
+  currentParams.delete('code');
+  currentParams.delete('state');
+  const statePayload = currentParams.toString();
+
+  let url = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  if (statePayload) {
+    url += `&state=${encodeURIComponent(statePayload)}`;
+  }
+  return url;
 };
 
 /**
@@ -1867,21 +1881,47 @@ export const handleGithubCallback = async () => {
     return null;
   }
 
+  // Restore original query params from the OAuth `state` parameter
+  const state = params.get('state');
+  if (state) {
+    const restoredParams = new URLSearchParams(state);
+    for (const [key, value] of restoredParams) {
+      if (!params.has(key)) {
+        params.set(key, value);
+      }
+    }
+  }
+
   try {
     const token = await exchangeGithubCode(code);
     setGithubToken(token);
 
-    // Clean up the URL by removing the code parameter
+    // Clean up OAuth params but keep restored params (e.g. spaceId)
     const newUrl = new URL(window.location);
     newUrl.searchParams.delete('code');
+    newUrl.searchParams.delete('state');
+    // Restore params from state into the URL
+    if (state) {
+      const restoredParams = new URLSearchParams(state);
+      for (const [key, value] of restoredParams) {
+        newUrl.searchParams.set(key, value);
+      }
+    }
     window.history.replaceState({}, '', newUrl);
 
     return token;
   } catch (error) {
     console.error('GitHub OAuth flow failed:', error);
-    // Clean up the URL even on failure
+    // Clean up the URL even on failure, but keep original params
     const newUrl = new URL(window.location);
     newUrl.searchParams.delete('code');
+    newUrl.searchParams.delete('state');
+    if (state) {
+      const restoredParams = new URLSearchParams(state);
+      for (const [key, value] of restoredParams) {
+        newUrl.searchParams.set(key, value);
+      }
+    }
     window.history.replaceState({}, '', newUrl);
     return null;
   }
