@@ -49,7 +49,7 @@ export class MarkdownDiagramService {
   static MAX_RECURSION_DEPTH = 15;
   static BASE_DODECAHEDRON_SIZE = 10;
   static BASE_DODECAHEDRON_RADIUS = 10;
-  static DEFAULT_CAMERA_DISTANCE = 15;
+  static DEFAULT_CAMERA_DISTANCE = 100;
   static SPACING_BETWEEN_COMPONENTS = 200;
   static DEFAULT_CUBE_SIZE = 5;
   static DEFAULT_SPHERE_SIZE = 4;
@@ -812,8 +812,9 @@ export class MarkdownDiagramService {
     const node = graphNodes.get(nodeId);
     const nodeType = node ? node.type : 'unknown';
 
-    // Add Y offset for component hierarchies to raise them 300 units higher
-    const componentYOffset = 1300;
+    // No Y offset — root nodes are placed directly at the camera-based position
+    // so the diagram builds in front of the camera
+    const componentYOffset = 0;
 
     if (level === 0) {
       // Root level - arrange in a reasonable grid pattern with adequate spacing for circular children
