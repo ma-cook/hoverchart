@@ -1,10 +1,12 @@
-import RecordRTC from 'recordrtc';
+import fixWebmDuration from 'fix-webm-duration';
 
 export class ScreenRecordingService {
   constructor() {
     this.recorder = null;
     this.stream = null;
+    this.chunks = [];
     this.isRecording = false;
+    this.startTime = null;
   }
 
   async startRecording() {
@@ -24,22 +26,36 @@ export class ScreenRecordingService {
         },
       });
 
-      // Create RecordRTC instance
-      this.recorder = new RecordRTC(this.stream, {
-        type: 'video',
-        mimeType: 'video/webm;codecs=vp8,opus',
-        videoBitsPerSecond: 2000000, // 2 Mbps
+      // Pick the best supported mime type
+      const mimeType = [
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+      ].find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+
+      this.chunks = [];
+
+      // Use native MediaRecorder directly for reliable chunk collection
+      this.recorder = new MediaRecorder(this.stream, {
+        mimeType,
+        videoBitsPerSecond: 2500000, // 2.5 Mbps
         audioBitsPerSecond: 128000, // 128 kbps
-        canvas: {
-          width: 1920,
-          height: 1080,
-        },
-        frameInterval: 90, // Lower = higher quality
       });
 
-      // Start recording
-      this.recorder.startRecording();
+      // Collect data chunks as they arrive
+      this.recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          this.chunks.push(event.data);
+        }
+      };
+
+      // Start recording (no timeslice — ondataavailable fires once on stop
+      // with a single properly-formed WebM blob)
+      this.recorder.start();
       this.isRecording = true;
+      this.startTime = Date.now();
 
       // Handle stream ending (user stops sharing via browser UI)
       this.stream.getVideoTracks()[0].addEventListener('ended', () => {
@@ -75,25 +91,35 @@ export class ScreenRecordingService {
       return null;
     }
 
+    const duration = Date.now() - this.startTime;
+    const mimeType = this.recorder.mimeType || 'video/webm';
+
     return new Promise((resolve) => {
-      this.recorder.stopRecording(() => {
-        // Use getSeekableBlob to inject correct duration metadata into the WebM header.
-        // Without this, the file has no duration info and platforms like LinkedIn
-        // treat it as a 0-second video.
-        this.recorder.getSeekableBlob(this.recorder.getBlob(), (seekableBlob) => {
-          // Stop all tracks
-          if (this.stream) {
-            this.stream.getTracks().forEach((track) => track.stop());
-          }
+      this.recorder.onstop = async () => {
+        // Combine all collected chunks into a single blob
+        const rawBlob = new Blob(this.chunks, { type: mimeType });
+        console.log(`Recording complete: ${this.chunks.length} chunks, ${(rawBlob.size / 1024 / 1024).toFixed(1)} MB, ${(duration / 1000).toFixed(1)}s`);
 
-          // Reset state
-          this.isRecording = false;
-          this.recorder = null;
-          this.stream = null;
+        // Fix WebM duration metadata so platforms like LinkedIn
+        // can detect the correct video length
+        const fixedBlob = await fixWebmDuration(rawBlob, duration, { logger: false });
 
-          resolve(seekableBlob);
-        });
-      });
+        // Stop all tracks
+        if (this.stream) {
+          this.stream.getTracks().forEach((track) => track.stop());
+        }
+
+        // Reset state
+        this.isRecording = false;
+        this.recorder = null;
+        this.stream = null;
+        this.chunks = [];
+        this.startTime = null;
+
+        resolve(fixedBlob);
+      };
+
+      this.recorder.stop();
     });
   }
 
