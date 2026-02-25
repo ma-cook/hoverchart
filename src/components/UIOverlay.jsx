@@ -901,7 +901,7 @@ const UIOverlay = ({
             onClick={handleRecordClick}
             title={isRecording ? 'Stop Recording' : 'Start Recording'}
           >
-            {isRecording ? '■' : ''}
+            {isRecording ? '' : ''}
           </button>
           <div style={{ position: 'relative', display: 'inline-block' }}>
             {showConnectionsHint && (

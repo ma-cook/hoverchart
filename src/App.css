@@ -805,17 +805,14 @@ body {
 }
 
 .visual-tools-container .record-button.recording {
-  background: #333;
   border-radius: 4px;
-  animation: none;
   font-size: 20px;
   line-height: 1;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 .visual-tools-container .record-button.recording:hover {
-  background: #444;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(135deg, #ff3742, #ff2f3a);
+  box-shadow: 0 4px 12px rgba(255, 71, 87, 0.4);
 }
 
 /* Responsive design for visual tools container */
