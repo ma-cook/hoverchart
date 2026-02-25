@@ -77,19 +77,22 @@ export class ScreenRecordingService {
 
     return new Promise((resolve) => {
       this.recorder.stopRecording(() => {
-        const blob = this.recorder.getBlob();
+        // Use getSeekableBlob to inject correct duration metadata into the WebM header.
+        // Without this, the file has no duration info and platforms like LinkedIn
+        // treat it as a 0-second video.
+        this.recorder.getSeekableBlob(this.recorder.getBlob(), (seekableBlob) => {
+          // Stop all tracks
+          if (this.stream) {
+            this.stream.getTracks().forEach((track) => track.stop());
+          }
 
-        // Stop all tracks
-        if (this.stream) {
-          this.stream.getTracks().forEach((track) => track.stop());
-        }
+          // Reset state
+          this.isRecording = false;
+          this.recorder = null;
+          this.stream = null;
 
-        // Reset state
-        this.isRecording = false;
-        this.recorder = null;
-        this.stream = null;
-
-        resolve(blob);
+          resolve(seekableBlob);
+        });
       });
     });
   }
