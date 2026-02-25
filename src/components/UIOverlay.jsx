@@ -62,7 +62,10 @@ const UIOverlay = ({
   const setIsProcessingMarkdown = useUIOverlayStore(
     (state) => state.setIsProcessingMarkdown
   );
-  const setIsRecording = useUIOverlayStore((state) => state.setIsRecording);
+  const setIsRecording = useCallback(
+    (val) => useUIOverlayStore.getState().setIsRecording('main', val),
+    []
+  );
 
   // Connection store for toggling connection visibility
   const connectionsVisible = useConnectionStore(
