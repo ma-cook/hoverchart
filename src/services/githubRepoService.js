@@ -17,10 +17,12 @@ const GITHUB_API_BASE = 'https://api.github.com';
  */
 export const exchangeGithubCode = async (code) => {
   try {
+    // GitHub requires the same redirect_uri used in the authorization request
+    const redirectUri = window.location.origin + window.location.pathname;
     const response = await fetch(GITHUB_TOKEN_EXCHANGE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, redirect_uri: redirectUri }),
     });
 
     if (!response.ok) {

@@ -2,6 +2,7 @@ import { initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
+import { defineSecret } from 'firebase-functions/params';
 
 import express from 'express';
 import cors from 'cors';
@@ -319,12 +320,17 @@ export const bulkImport = onRequest(
   createBulkImportApp()
 );
 
+// Declare secrets for GitHub OAuth
+const githubClientId = defineSecret('GITHUB_CLIENT_ID');
+const githubClientSecret = defineSecret('GITHUB_CLIENT_SECRET');
+
 export const fetchGithubToken = onRequest(
   {
     memory: '256MiB',
     region: 'us-central1',
     cors: true,
     maxInstances: 10,
+    secrets: [githubClientId, githubClientSecret],
   },
   async (req, res) => {
     corsHandler(req, res, async () => {
@@ -341,9 +347,12 @@ export const fetchGithubToken = onRequest(
           .json({ error: 'Authorization code is required' });
       }
 
+      // redirect_uri must match the one used in the authorization request
+      const redirectUri = req.body.redirect_uri;
+
       try {
-        const clientId = process.env.GITHUB_CLIENT_ID;
-        const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+        const clientId = githubClientId.value();
+        const clientSecret = githubClientSecret.value();
 
         if (!clientId || !clientSecret) {
           console.error('Missing GitHub credentials:', {
@@ -355,16 +364,21 @@ export const fetchGithubToken = onRequest(
             .json({ error: 'GitHub credentials not configured' });
         }
 
+        const tokenBody = {
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+        };
+        if (redirectUri) {
+          tokenBody.redirect_uri = redirectUri;
+        }
+
         const response = await fetch(
           'https://github.com/login/oauth/access_token',
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              client_id: clientId,
-              client_secret: clientSecret,
-              code,
-            }),
+            body: JSON.stringify(tokenBody),
           }
         );
 
