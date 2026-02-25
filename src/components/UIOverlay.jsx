@@ -182,14 +182,15 @@ const UIOverlay = ({
         if (blob) {
           screenRecorder.downloadRecording(blob);
         }
-        setIsRecording(false);
       } catch {
         alert('Failed to stop recording');
+      } finally {
+        setIsRecording(false);
       }
     } else {
       // Ask for confirmation before starting
       const confirmed = window.confirm(
-        'Do you want to start recording your screen? You will be asked to select which screen or window to share.'
+        'Do you want to start recording your screen? You will be asked to select which screen or window to record.'
       );
 
       if (confirmed) {
@@ -200,6 +201,13 @@ const UIOverlay = ({
       }
     }
   }, [isRecording, setIsRecording]);
+
+  // Sync React state when recording stops via browser's "Stop sharing" button
+  useEffect(() => {
+    const handler = () => setIsRecording(false);
+    window.addEventListener('screenRecordingStopped', handler);
+    return () => window.removeEventListener('screenRecordingStopped', handler);
+  }, [setIsRecording]);
 
   // Get the resetObjects function from the objects store
   const resetObjects = useObjectsStore((state) => state.resetObjects);
@@ -890,6 +898,7 @@ const UIOverlay = ({
             onClick={handleRecordClick}
             title={isRecording ? 'Stop Recording' : 'Start Recording'}
           >
+            {isRecording ? '■' : ''}
           </button>
           <div style={{ position: 'relative', display: 'inline-block' }}>
             {showConnectionsHint && (

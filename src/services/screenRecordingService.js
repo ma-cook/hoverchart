@@ -41,9 +41,15 @@ export class ScreenRecordingService {
       this.recorder.startRecording();
       this.isRecording = true;
 
-      // Handle stream ending (user stops sharing)
+      // Handle stream ending (user stops sharing via browser UI)
       this.stream.getVideoTracks()[0].addEventListener('ended', () => {
-        this.stopRecording();
+        this.stopRecording().then((blob) => {
+          if (blob) {
+            this.downloadRecording(blob);
+          }
+          // Dispatch event so React state can update
+          window.dispatchEvent(new CustomEvent('screenRecordingStopped'));
+        });
       });
 
       return true;
@@ -52,7 +58,7 @@ export class ScreenRecordingService {
 
       if (error.name === 'NotAllowedError') {
         alert(
-          'Screen recording permission denied. Please allow screen sharing to record.'
+          'Screen recording permission denied. Please allow screen recording to proceed.'
         );
       } else if (error.name === 'NotSupportedError') {
         alert('Screen recording is not supported in this browser.');

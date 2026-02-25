@@ -806,6 +806,8 @@ body {
 .visual-tools-container .record-button.recording {
   background: linear-gradient(135deg, #ff6b7a, #ff4757);
   animation: pulse 1.5s infinite;
+  font-size: 18px;
+  line-height: 1;
 }
 
 /* Responsive design for visual tools container */
