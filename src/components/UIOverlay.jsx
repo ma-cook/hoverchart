@@ -40,6 +40,7 @@ const UIOverlay = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [scanProgress, setScanProgress] = useState({ isScanning: false, progress: 0, stage: '' });
   const [notification, setNotification] = useState({ show: false, message: '' });
+  const [currentDiagramRepo, setCurrentDiagramRepo] = useState(null);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
   const updateTemplateConfig = useUIOverlayStore(
@@ -137,6 +138,7 @@ const UIOverlay = ({
       
       // Show notification instead of alert
       if (result.success) {
+        setCurrentDiagramRepo(repo);
         setNotification({
           show: true,
           message: `Diagram created! Generated: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`
@@ -275,6 +277,7 @@ const UIOverlay = ({
       }
 
       if (result.success) {
+        setCurrentDiagramRepo(null);
         alert(
           `Successfully deleted ${result.cellsDeleted} cells, ${result.objectsDeleted} objects, and ${result.connectionsDeleted} connections.`
         );
@@ -461,6 +464,11 @@ const UIOverlay = ({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionCount]);
+
+  // Clear the current diagram repo when the space changes
+  useEffect(() => {
+    setCurrentDiagramRepo(null);
+  }, [currentSpaceId]);
 
   const handleTemplateConfigChange = (field, value) => {
     updateTemplateConfig('main', field, value);
@@ -970,6 +978,20 @@ const UIOverlay = ({
             }}
           >
             {isDeleting ? '...' : '🗑️'}
+          </button>
+          <button
+            className="shape-button"
+            onClick={() => fetchAppJsxFromRepo(currentDiagramRepo)}
+            disabled={!currentDiagramRepo || scanProgress.isScanning}
+            title={currentDiagramRepo?.name ? `Rescan ${currentDiagramRepo.name}` : 'No repo scanned yet'}
+            style={{
+              backgroundColor: currentDiagramRepo && !scanProgress.isScanning ? '#e8f5e9' : '#ccc',
+              borderColor: currentDiagramRepo && !scanProgress.isScanning ? '#4caf50' : '#aaa',
+              color: currentDiagramRepo && !scanProgress.isScanning ? '#4caf50' : '#aaa',
+              opacity: currentDiagramRepo && !scanProgress.isScanning ? 1 : 0.5,
+            }}
+          >
+            🔄
           </button>
         </div>
       )}
