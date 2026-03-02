@@ -277,6 +277,7 @@ const UIOverlay = ({
       }
 
       if (result.success) {
+        setCurrentDiagramRepo(null);
         alert(
           `Successfully deleted ${result.cellsDeleted} cells, ${result.objectsDeleted} objects, and ${result.connectionsDeleted} connections.`
         );
@@ -463,6 +464,11 @@ const UIOverlay = ({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionCount]);
+
+  // Clear the current diagram repo when the space changes
+  useEffect(() => {
+    setCurrentDiagramRepo(null);
+  }, [currentSpaceId]);
 
   const handleTemplateConfigChange = (field, value) => {
     updateTemplateConfig('main', field, value);
@@ -979,10 +985,10 @@ const UIOverlay = ({
             disabled={!currentDiagramRepo || scanProgress.isScanning}
             title={currentDiagramRepo?.name ? `Rescan ${currentDiagramRepo.name}` : 'No repo scanned yet'}
             style={{
-              backgroundColor: currentDiagramRepo ? '#e8f5e9' : '#ccc',
-              borderColor: currentDiagramRepo ? '#4caf50' : '#aaa',
-              color: currentDiagramRepo ? '#4caf50' : '#aaa',
-              opacity: currentDiagramRepo ? 1 : 0.5,
+              backgroundColor: currentDiagramRepo && !scanProgress.isScanning ? '#e8f5e9' : '#ccc',
+              borderColor: currentDiagramRepo && !scanProgress.isScanning ? '#4caf50' : '#aaa',
+              color: currentDiagramRepo && !scanProgress.isScanning ? '#4caf50' : '#aaa',
+              opacity: currentDiagramRepo && !scanProgress.isScanning ? 1 : 0.5,
             }}
           >
             🔄
