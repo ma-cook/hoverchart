@@ -3042,6 +3042,16 @@ export class MarkdownDiagramService {
     // Collect all objects for this diagram before adding to store
     const allObjectsForDiagram = [];
 
+    // Build a lookup map of existing objects by merfolkData.nodeId to avoid re-creating
+    // objects that were already created in a previous scan of the same repository.
+    const existingObjects = useObjectsStore.getState().objects;
+    const existingNodeIdMap = new Map();
+    for (const obj of existingObjects) {
+      if (obj.merfolkData?.nodeId) {
+        existingNodeIdMap.set(obj.merfolkData.nodeId, obj.id);
+      }
+    }
+
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
       const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1; // eslint-disable-line no-unused-vars
@@ -3115,6 +3125,13 @@ export class MarkdownDiagramService {
               !Number.isFinite(data.position[1]) || 
               !Number.isFinite(data.position[2])) {
             console.warn('⚠️ Skipping object with invalid position:', data.nodeId, data.position);
+            continue;
+          }
+
+          // Skip nodes that already have a corresponding object in the store
+          // (i.e. from a previous scan), but register their ID so connections work.
+          if (existingNodeIdMap.has(data.nodeId)) {
+            nodeToObjectIdMap.set(data.nodeId, existingNodeIdMap.get(data.nodeId));
             continue;
           }
 
@@ -3822,6 +3839,13 @@ export class MarkdownDiagramService {
     }
 
     // Process connections
+    const existingConnections = useConnectionStore.getState().connections;
+    // Build a Set of existing connection pairs for O(1) duplicate lookups
+    const existingConnectionPairs = new Set(
+      existingConnections
+        .filter((conn) => conn.start?.objectId && conn.end?.objectId)
+        .map((conn) => `${conn.start.objectId}|${conn.end.objectId}`)
+    );
     Array.from(graph.connections.values()).forEach((connection) => {
       const sourceNodeId = connection.source?.nodeId || connection.source;
       const targetNodeId = connection.target?.nodeId || connection.target;
@@ -3834,6 +3858,11 @@ export class MarkdownDiagramService {
         targetObjectId &&
         sourceObjectId !== targetObjectId
       ) {
+        // Skip if a connection between these two objects already exists
+        if (existingConnectionPairs.has(`${sourceObjectId}|${targetObjectId}`)) {
+          return;
+        }
+
         // Extract connection label - check multiple possible locations
         let connectionText = '';
         if (connection.visual?.label?.text) {
