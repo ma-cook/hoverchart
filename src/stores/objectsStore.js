@@ -116,11 +116,16 @@ const useObjectsStore = createWithEqualityFn(
         for (let i = 0; i < currentObjects.length; i++) {
           const co = currentObjects[i];
           const no = filteredObjects[i];
-          // Mix in id, position hash, and scale hash
+          // Mix in id, position hash, scale hash, and volatile state fields
+          // (broadcasting, color, headerText etc.) so property-only updates are not dropped.
           const idVal = typeof co.id === 'number' ? co.id : (co.id ? co.id.length : 0);
-          currentHash = (Math.imul(currentHash, 1000003) ^ idVal ^ numericHash(co.position) ^ (numericHash(co.scale) * 7)) | 0;
+          const coVolatile = (co.broadcasting ? 1 : 0) | (co.webcamActive ? 2 : 0) | (co.screenShareActive ? 4 : 0);
+          const coBroadcastIdHash = co.broadcastId ? co.broadcastId.length : 0;
+          currentHash = (Math.imul(currentHash, 1000003) ^ idVal ^ numericHash(co.position) ^ (numericHash(co.scale) * 7) ^ (coVolatile * 13) ^ (coBroadcastIdHash * 17)) | 0;
           const idVal2 = typeof no.id === 'number' ? no.id : (no.id ? no.id.length : 0);
-          newHash = (Math.imul(newHash, 1000003) ^ idVal2 ^ numericHash(no.position) ^ (numericHash(no.scale) * 7)) | 0;
+          const noVolatile = (no.broadcasting ? 1 : 0) | (no.webcamActive ? 2 : 0) | (no.screenShareActive ? 4 : 0);
+          const noBroadcastIdHash = no.broadcastId ? no.broadcastId.length : 0;
+          newHash = (Math.imul(newHash, 1000003) ^ idVal2 ^ numericHash(no.position) ^ (numericHash(no.scale) * 7) ^ (noVolatile * 13) ^ (noBroadcastIdHash * 17)) | 0;
         }
 
         if (currentHash !== newHash) {

@@ -17,7 +17,6 @@ import ScreenShareStream from './ScreenShareStream';
 import * as THREE from 'three';
 import isEqual from 'lodash/isEqual';
 import { uploadImageToStorage } from '../services/storageService';
-import { subscribePlaneToBroadcasts } from '../services/centralizedBroadcastManager';
 import {
   usePlaneStore,
   useObjectsStore,
@@ -942,62 +941,51 @@ const Plane = ({
       return;
     }
 
-    // console.log(`[Plane ${id}] Setting up broadcast listener`);
+    // Detect broadcast changes directly from objectData (synced via spatial partitioning)
+    // The objectData already receives real-time Firestore updates through the spatial objects service
+    const isRemoteBroadcastingNow =
+      objectData?.broadcasting === true &&
+      objectData?.broadcasterId !== user.uid;
+    const newBroadcastId = objectData?.broadcastId || null;
+    const newBroadcasterId = objectData?.broadcasterId || null;
 
-    // Use centralized broadcast manager with fallback to individual listening
-    const unsubscribe = subscribePlaneToBroadcasts(
-      window.currentSpaceOwner,
-      currentSpaceId,
-      id,
-      (objectData) => {
-        if (!isMountedRef.current || plane?.webcamActive) return;
+    if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
+      lastBroadcastSeenRef.current = Date.now();
 
-        const isRemoteBroadcastingNow =
-          objectData?.broadcasting === true &&
-          objectData?.broadcasterId !== user.uid;
-        const newBroadcastId = objectData?.broadcastId || null;
-        const newBroadcasterId = objectData?.broadcasterId || null;
-
-        if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
-          lastBroadcastSeenRef.current = Date.now();
-
-          const newBroadcastInfo = {
-            broadcastId: newBroadcastId,
-            broadcasterId: newBroadcasterId,
-            planeId: id,
-          };
-          if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
-            setPlaneBroadcastInfo(id, newBroadcastInfo);
-            broadcastInfoRef.current = newBroadcastInfo;
-            if (!plane?.isViewingBroadcast) {
-              setPlaneIsViewingBroadcast(id, true);
-            }
-          }
-        } else {
-          if (plane?.isViewingBroadcast) {
-            const now = Date.now();
-            if (now - lastBroadcastSeenRef.current > 5000) {
-              setPlaneBroadcastInfo(id, null);
-              broadcastInfoRef.current = null;
-              setPlaneIsViewingBroadcast(id, false);
-            }
-          } else if (broadcastInfoRef.current !== null) {
-            setPlaneBroadcastInfo(id, null);
-            broadcastInfoRef.current = null;
-          }
+      const newBroadcastInfo = {
+        broadcastId: newBroadcastId,
+        broadcasterId: newBroadcasterId,
+        planeId: id,
+      };
+      if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
+        setPlaneBroadcastInfo(id, newBroadcastInfo);
+        broadcastInfoRef.current = newBroadcastInfo;
+        if (!plane?.isViewingBroadcast) {
+          setPlaneIsViewingBroadcast(id, true);
         }
       }
-    );
-    return () => {
-      console.log(`[Plane ${id}] Cleaning up broadcast listener`);
-      unsubscribe();
-    };
+    } else {
+      if (plane?.isViewingBroadcast) {
+        const now = Date.now();
+        if (now - lastBroadcastSeenRef.current > 5000) {
+          setPlaneBroadcastInfo(id, null);
+          broadcastInfoRef.current = null;
+          setPlaneIsViewingBroadcast(id, false);
+        }
+      } else if (broadcastInfoRef.current !== null) {
+        setPlaneBroadcastInfo(id, null);
+        broadcastInfoRef.current = null;
+      }
+    }
   }, [
     currentSpaceId,
     id,
     user,
     plane?.webcamActive,
     plane?.isViewingBroadcast,
+    objectData?.broadcasting,
+    objectData?.broadcastId,
+    objectData?.broadcasterId,
     setPlaneBroadcastInfo,
     setPlaneIsViewingBroadcast,
   ]); // Removed broadcastInfo to prevent reactive loop

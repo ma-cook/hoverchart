@@ -123,7 +123,10 @@ const WebcamStream = ({
         }
 
         // Function to attempt playing the video (defined first)
+        let attemptPlayCalled = false;
         const attemptPlay = async () => {
+          if (attemptPlayCalled) return;
+          attemptPlayCalled = true;
           try {
             await video.play();
 
@@ -236,11 +239,6 @@ const WebcamStream = ({
             videoHeight: video.videoHeight,
             readyState: video.readyState,
           });
-        });
-
-        video.addEventListener('canplay', () => {
-          console.log('Video canplay event fired');
-          attemptPlay();
         });
 
         video.addEventListener('error', (e) => {

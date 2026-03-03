@@ -393,6 +393,14 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
           }
         }
       });
+    }, (error) => {
+      console.error(`Error in signaling query listener for broadcast ${broadcastId}:`, error);
+      if (error.code === 'failed-precondition') {
+        console.error(
+          'Missing Firestore composite index for signaling collection. ' +
+          'Please deploy indexes with: firebase deploy --only firestore:indexes'
+        );
+      }
     });
 
     return {

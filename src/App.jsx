@@ -651,6 +651,7 @@ const App = () => {
             // one single spread, eliminating O(n²) array copying.
             case 'batch-added': {
               const validObjects = [];
+              const updatedObjects = new Map(); // Track updates to existing objects
               const existingIds = new Set(prev.map(o => o.id));
 
               for (const item of change.changes) {
@@ -677,9 +678,6 @@ const App = () => {
                 // Skip unloaded
                 if (window._unloadedObjects?.has(item.id.toString())) continue;
 
-                // Skip duplicates
-                if (existingIds.has(item.id)) continue;
-
                 // Validate position
                 const pos = item.object?.position;
                 const hasValidPosition = pos && (
@@ -705,15 +703,39 @@ const App = () => {
                   currentTrackObjectInCell(item.id.toString(), cellId);
                 }
 
-                validObjects.push(item.object);
-                existingIds.add(item.id); // prevent dupes within same batch
+                if (existingIds.has(item.id)) {
+                  // Update existing object — merge changed properties (e.g. broadcasting)
+                  updatedObjects.set(item.id, item.object);
+                } else {
+                  validObjects.push(item.object);
+                  existingIds.add(item.id); // prevent dupes within same batch
+                }
               }
 
+              let result = prev;
+
+              // Apply updates to existing objects
+              if (updatedObjects.size > 0) {
+                result = result.map(obj => {
+                  const updated = updatedObjects.get(obj.id);
+                  if (updated) {
+                    // Skip update for objects currently being transformed locally
+                    if (window._currentTransformingObjects?.has(obj.id?.toString())) {
+                      return obj;
+                    }
+                    return { ...obj, ...updated };
+                  }
+                  return obj;
+                });
+              }
+
+              // Append new objects
               if (validObjects.length > 0) {
                 scheduleLoadingComplete();
-                return [...prev, ...validObjects]; // ONE spread for entire batch
+                result = [...result, ...validObjects];
               }
-              return prev;
+
+              return result !== prev ? result : prev;
             }
 
             // PERF: Batched remove — all removals from a single snapshot
