@@ -7,6 +7,9 @@ import {
 } from '../services/spatialObjectsService';
 import useConnectionStore from './connectionStore';
 
+// Module-level timer for deferred setObjects calls (avoids storing in Zustand state)
+let _pendingSetObjectsTimer = null;
+
 const useObjectsStore = createWithEqualityFn(
   (set, get) => ({
     // State
@@ -38,7 +41,22 @@ const useObjectsStore = createWithEqualityFn(
 
       // CRITICAL: Prevent updates that happen too quickly (throttle to max 1 per 16ms = 60fps)
       if (state._isUpdating || now - state._lastUpdateTime < 16) {
-        return; // Skip update if already updating or too soon
+        // Defer instead of dropping — queue the last pending update
+        // so broadcast state changes and other important updates aren't permanently lost.
+        if (_pendingSetObjectsTimer) {
+          clearTimeout(_pendingSetObjectsTimer);
+        }
+        _pendingSetObjectsTimer = setTimeout(() => {
+          _pendingSetObjectsTimer = null;
+          get().setObjects(objects);
+        }, 20);
+        return;
+      }
+
+      // Clear any pending deferred update since we're processing now
+      if (_pendingSetObjectsTimer) {
+        clearTimeout(_pendingSetObjectsTimer);
+        _pendingSetObjectsTimer = null;
       }
 
       set({ _isUpdating: true, _lastUpdateTime: now });
