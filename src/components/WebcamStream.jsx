@@ -105,7 +105,8 @@ const WebcamStream = ({
 
         try {
           if (effectCancelled) {
-            console.log('Broadcasting effect cancelled, returning early');
+            console.log('Broadcasting effect cancelled, stopping leaked stream');
+            stream.getTracks().forEach((track) => track.stop());
             return;
           }
 
@@ -266,6 +267,12 @@ const WebcamStream = ({
         'Broadcasting effect cleanup - setting effectCancelled to true'
       );
       effectCancelled = true;
+      // Clean up the video element created in this effect run to prevent DOM leaks
+      if (video && document.body.contains(video)) {
+        video.pause();
+        video.srcObject = null;
+        document.body.removeChild(video);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, isBroadcasting, userId, spaceId, planeId, retryTrigger]); // Receiving effect
@@ -278,7 +285,7 @@ const WebcamStream = ({
       return;
     }
 
-    // isMounted.current is already true from initialization
+    let effectCancelled = false; // Local cancellation token (safe across StrictMode double-mount)
     let connection = null;
     let currentStream = null;
     const currentBroadcastId = broadcastData.broadcastId;
@@ -300,12 +307,12 @@ const WebcamStream = ({
     }
 
     const connectToBroadcast = async () => {
-      if (!isMounted.current) return;
+      if (effectCancelled) return;
 
       try {
         connection = await joinBroadcast(spaceId, currentBroadcastId, userId);
 
-        if (!isMounted.current) {
+        if (effectCancelled) {
           connection?.disconnect();
           return;
         }
@@ -391,7 +398,7 @@ const WebcamStream = ({
           }
         };
       } catch (error) {
-        if (!isMounted.current) return;
+        if (effectCancelled) return;
         setWebcamError(streamId, true, `Failed to connect: ${error.message}`);
         setWebcamLoading(streamId, false);
       }
@@ -399,7 +406,7 @@ const WebcamStream = ({
 
     connectToBroadcast();
     return () => {
-      // Don't set isMounted.current = false here as it interferes with broadcasting
+      effectCancelled = true;
 
       if (connection) {
         connection.disconnect();
@@ -442,6 +449,7 @@ const WebcamStream = ({
 
   // Cleanup on unmount
   useEffect(() => {
+    isMounted.current = true; // Reset on each effect run (survives StrictMode double-mount)
     const currentMesh = meshRef.current; // Capture reference
     return () => {
       console.log('Component unmounting - setting isMounted to false');
