@@ -184,7 +184,7 @@ const ScreenShareStream = ({
             setScreenShareLoading(streamId, false);
 
             // Start broadcasting the screen share
-            startBroadcasting(userId, spaceId, planeId, stream)
+            startBroadcasting(userId, spaceId, planeId, stream, 'screenshare')
               .then((broadcastControl) => {
                 if (effectCancelled) return;
                 broadcastControlRef.current = broadcastControl;

@@ -946,7 +946,9 @@ const Plane = ({
     const isLocalWebcamActive = plane?.webcamActive && !isRemoteBroadcastActive;
 
     if (isLocalWebcamActive || plane?.isViewingBroadcast) {
-      if (plane?.isViewingBroadcast && plane?.webcamActive) {
+      // Only clear isViewingBroadcast when the user has their OWN local webcam active
+      // (not when plane.webcamActive is true because of a remote broadcaster's Firestore data).
+      if (plane?.isViewingBroadcast && isLocalWebcamActive) {
         setPlaneIsViewingBroadcast(id, false);
         setPlaneBroadcastInfo(id, null);
       }
@@ -964,10 +966,17 @@ const Plane = ({
     if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
       lastBroadcastSeenRef.current = Date.now();
 
+      // Determine broadcast type — prefer the explicit field written by startBroadcasting,
+      // fall back to inferring from objectData fields for backward compatibility.
+      const resolvedBroadcastType =
+        objectData?.broadcastType ||
+        (objectData?.screenShareActive ? 'screenshare' : 'webcam');
+
       const newBroadcastInfo = {
         broadcastId: newBroadcastId,
         broadcasterId: newBroadcasterId,
         planeId: id,
+        broadcastType: resolvedBroadcastType,
       };
       if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
         setPlaneBroadcastInfo(id, newBroadcastInfo);
@@ -998,6 +1007,8 @@ const Plane = ({
     objectData?.broadcasting,
     objectData?.broadcastId,
     objectData?.broadcasterId,
+    objectData?.broadcastType,
+    objectData?.screenShareActive,
     setPlaneBroadcastInfo,
     setPlaneIsViewingBroadcast,
   ]); // Removed broadcastInfo to prevent reactive loop
@@ -1402,18 +1413,21 @@ const Plane = ({
             <planeGeometry args={[size * 2 - 0.2, size * 2 - 0.2]} />
             {meshMaterial}
           </mesh>{' '}
-          {(webcamActive || isViewingBroadcast) &&
-            (webcamInitialized || isViewingBroadcast) && (
+          {/* Only mount WebcamStream for local webcam use OR remote webcam broadcasts.
+              Never mount for screenshare broadcasts — both components sharing isViewingBroadcast
+              would call joinBroadcast on the same signaling doc and corrupt the handshake. */}
+          {(webcamActive || (isViewingBroadcast && broadcastInfo?.broadcastType === 'webcam')) &&
+            (webcamInitialized || (isViewingBroadcast && broadcastInfo?.broadcastType === 'webcam')) && (
               <>
                 <WebcamStream
                   key={`${id}-webcam`}
                   meshRef={meshRef}
-                  active={webcamActive || isViewingBroadcast}
+                  active={webcamActive || (isViewingBroadcast && broadcastInfo?.broadcastType === 'webcam')}
                   userId={user?.uid}
                   spaceId={currentSpaceId}
                   planeId={id}
                   isBroadcasting={webcamActive && isBroadcasting}
-                  isReceiving={isViewingBroadcast}
+                  isReceiving={isViewingBroadcast && broadcastInfo?.broadcastType === 'webcam'}
                   broadcastData={broadcastInfo}
                   onBroadcastStarted={handleBroadcastStarted}
                   onBroadcastStopped={handleBroadcastStopped}
@@ -1421,18 +1435,19 @@ const Plane = ({
                 />
               </>
             )}
-          {(screenShareActive || isViewingBroadcast) &&
-            (screenShareInitialized || isViewingBroadcast) && (
+          {/* Only mount ScreenShareStream for local screenshare use OR remote screenshare broadcasts. */}
+          {(screenShareActive || (isViewingBroadcast && broadcastInfo?.broadcastType === 'screenshare')) &&
+            (screenShareInitialized || (isViewingBroadcast && broadcastInfo?.broadcastType === 'screenshare')) && (
               <>
                 <ScreenShareStream
                   key={`${id}-screenshare`}
                   meshRef={meshRef}
-                  active={screenShareActive || isViewingBroadcast}
+                  active={screenShareActive || (isViewingBroadcast && broadcastInfo?.broadcastType === 'screenshare')}
                   userId={user?.uid}
                   spaceId={currentSpaceId}
                   planeId={id}
                   isScreenSharing={screenShareActive && isScreenSharing}
-                  isReceiving={isViewingBroadcast}
+                  isReceiving={isViewingBroadcast && broadcastInfo?.broadcastType === 'screenshare'}
                   broadcastData={broadcastInfo}
                   onBroadcastStarted={handleBroadcastStarted}
                   onBroadcastStopped={handleBroadcastStopped}

@@ -318,7 +318,7 @@ class BroadcastSession {
   }
 }
 
-export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
+export const startBroadcasting = async (userId, spaceId, planeId, stream, broadcastType = 'webcam') => {
   try {
     const broadcastId = `broadcast_${Date.now()}_${Math.random()
       .toString(36)
@@ -342,6 +342,7 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
       broadcastId,
       broadcasting: true,
       broadcasterId: userId,
+      broadcastType,
       lastUpdated: new Date(),
     };
 

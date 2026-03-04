@@ -180,7 +180,7 @@ const WebcamStream = ({
 
             // Start broadcasting in the background
 
-            startBroadcasting(userId, spaceId, planeId, stream)
+            startBroadcasting(userId, spaceId, planeId, stream, 'webcam')
               .then((broadcastControl) => {
                 if (effectCancelled) return;
                 broadcastControlRef.current = broadcastControl;
