@@ -1,12 +1,54 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { startBroadcasting, joinBroadcast } from '../services/webRservice';
 import { useWebcamStreamStore } from '../stores';
+import { shallow } from 'zustand/shallow';
 // Import unified resource cleanup
 import { resourceCleanupService } from '../services/resourceCleanupService';
-// Import unified texture updater
-import useTextureUpdater from '../hooks/useTextureUpdater';
+
+// Module-level constant — never changes, no need for useMemo
+const WEBCAM_CONSTRAINTS = {
+  video: {
+    width: { ideal: 1280, max: 1920 },
+    height: { ideal: 720, max: 1080 },
+    frameRate: { ideal: 30, max: 60 },
+    facingMode: 'user',
+  },
+  audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+};
+
+/**
+ * Creates a VideoTexture from a video element and applies it to a mesh.
+ * Disposes the previous material to prevent memory leaks.
+ * THREE.VideoTexture auto-updates via the renderer each frame — no RAF loop needed.
+ */
+const applyVideoTexture = (videoEl, mesh, cleanupLabel, textureRef) => {
+  const texture = new THREE.VideoTexture(videoEl);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.format = THREE.RGBAFormat;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  // eslint-disable-next-line no-param-reassign
+  textureRef.current = texture;
+
+  if (mesh) {
+    if (mesh.material && mesh.material.map !== texture) {
+      resourceCleanupService.disposeMaterial(mesh.material, cleanupLabel);
+    }
+    mesh.material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 1,
+      side: THREE.DoubleSide,
+    });
+  }
+  return texture;
+};
 
 const WebcamStream = ({
   active = false,
@@ -24,19 +66,22 @@ const WebcamStream = ({
   // Create unique stream ID
   const streamId = `${userId}-${spaceId}-${planeId}`;
 
-  // Use webcam stream store
-  const getWebcamStream = useWebcamStreamStore(
-    (state) => state.getWebcamStream
-  );
-  const setWebcamLoading = useWebcamStreamStore(
-    (state) => state.setWebcamLoading
-  );
-  const setWebcamError = useWebcamStreamStore((state) => state.setWebcamError);
-  const retryWebcamStream = useWebcamStreamStore(
-    (state) => state.retryWebcamStream
+  // Single subscription for all webcam store actions (4 → 1 subscriptions)
+  const {
+    getWebcamStream,
+    setWebcamLoading,
+    setWebcamError,
+    retryWebcamStream,
+  } = useWebcamStreamStore(
+    (state) => ({
+      getWebcamStream: state.getWebcamStream,
+      setWebcamLoading: state.setWebcamLoading,
+      setWebcamError: state.setWebcamError,
+      retryWebcamStream: state.retryWebcamStream,
+    }),
+    shallow
   );
 
-  // Get store state
   const webcamStream = getWebcamStream(streamId);
   const { hasError, errorMessage, isLoading, retryTrigger } = webcamStream;
 
@@ -47,7 +92,6 @@ const WebcamStream = ({
   const broadcastControlRef = useRef(null);
   const viewerConnectionRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const isMounted = useRef(true);
   // Stable refs for callback functions to avoid effect re-runs
   const onBroadcastStartedRef = useRef(onBroadcastStarted);
   const onViewerCountChangeRef = useRef(onViewerCountChange);
@@ -57,23 +101,8 @@ const WebcamStream = ({
   onBroadcastStartedRef.current = onBroadcastStarted;
   onViewerCountChangeRef.current = onViewerCountChange;
   onBroadcastStoppedRef.current = onBroadcastStopped;
-  // Optimized webcam constraints for better performance
-  const webcamConstraints = useMemo(
-    () => ({
-      video: {
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 },
-        frameRate: { ideal: 30, max: 60 },
-        facingMode: 'user',
-      },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    }),
-    []
-  ); // Broadcasting effect
+
+  // Broadcasting effect
   useEffect(() => {
     if (!active || !isBroadcasting || !userId || !spaceId || !planeId) {
       return;
@@ -99,7 +128,7 @@ const WebcamStream = ({
     // Start webcam stream
 
     navigator.mediaDevices
-      .getUserMedia(webcamConstraints)
+      .getUserMedia(WEBCAM_CONSTRAINTS)
       .then((stream) => {
         console.log('User media stream obtained:', stream);
 
@@ -135,46 +164,15 @@ const WebcamStream = ({
               return;
             }
 
-            // Create video texture for local display
-
-            const texture = new THREE.VideoTexture(video);
-            texture.minFilter = THREE.LinearFilter;
-            texture.magFilter = THREE.LinearFilter;
-            texture.format = THREE.RGBAFormat;
-            texture.colorSpace = THREE.SRGBColorSpace;
-            textureRef.current = texture;
-
-            const currentMesh = currentMeshRef;
-
-            if (currentMesh) {
-              // Dispose previous material to prevent memory leaks
-              if (
-                currentMesh.material &&
-                currentMesh.material.map !== texture
-              ) {
-                if (currentMesh.material.map) {
-                  console.log('Disposing previous material map');
-                  currentMesh.material.map.dispose();
-                }
-                console.log(
-                  'Disposing previous material using unified service'
-                );
-                resourceCleanupService.disposeMaterial(
-                  currentMesh.material,
-                  `webcam-${streamId}-material`
-                );
-              }
-
-              const material = new THREE.MeshBasicMaterial({
-                map: texture,
-                transparent: true,
-                opacity: 1,
-                side: THREE.DoubleSide,
-              });
-              currentMesh.material = material;
-            } else {
-              console.log('No mesh found to apply texture to');
-            }
+            // Create video texture and apply to mesh.
+            // THREE.VideoTexture auto-updates every render frame via the WebGL renderer —
+            // no separate RAF loop required.
+            applyVideoTexture(
+              video,
+              currentMeshRef,
+              `webcam-${streamId}-material`,
+              textureRef
+            );
 
             setWebcamLoading(streamId, false);
 
@@ -340,33 +338,14 @@ const WebcamStream = ({
               remoteVideoRef.current.onloadedmetadata = () => {
                 if (remoteVideoRef.current?.srcObject !== currentStream) return;
 
-                const texture = new THREE.VideoTexture(remoteVideoRef.current);
-                texture.minFilter = THREE.LinearFilter;
-                texture.magFilter = THREE.LinearFilter;
-                texture.format = THREE.RGBAFormat;
-                texture.colorSpace = THREE.SRGBColorSpace;
-                textureRef.current = texture;
-
-                if (currentMesh) {
-                  if (
-                    currentMesh.material &&
-                    currentMesh.material.map !== texture
-                  ) {
-                    // Use unified resource cleanup service
-                    resourceCleanupService.disposeMaterial(
-                      currentMesh.material,
-                      `webcam-${streamId}-material-update`
-                    );
-                  }
-
-                  const material = new THREE.MeshBasicMaterial({
-                    map: texture,
-                    transparent: true,
-                    opacity: 1,
-                    side: THREE.DoubleSide,
-                  });
-                  currentMesh.material = material;
-                }
+                // Apply video texture using shared helper.
+                // THREE.VideoTexture auto-updates via the renderer — no RAF loop needed.
+                applyVideoTexture(
+                  remoteVideoRef.current,
+                  currentMesh,
+                  `webcam-${streamId}-material-update`,
+                  textureRef
+                );
                 remoteVideoRef.current
                   .play()
                   .then(() => {
@@ -432,7 +411,9 @@ const WebcamStream = ({
   }, [
     active,
     isReceiving,
-    broadcastData,
+    // Use broadcastId string (not the broadcastData object) so a new object reference
+    // with the same broadcastId does not trigger a spurious disconnect + reconnect.
+    broadcastData?.broadcastId,
     spaceId,
     userId,
     meshRef,
@@ -440,21 +421,13 @@ const WebcamStream = ({
     retryTrigger,
   ]);
 
-  // Use unified texture updater with 60fps throttling for webcam
-  useTextureUpdater({
-    active: active && textureRef.current,
-    textureRef,
-    meshRef,
-    throttleMs: 16, // ~60fps for webcam
-  });
+  // THREE.VideoTexture marks itself needsUpdate automatically every frame via
+  // WebGLRenderer — no separate RAF texture-update loop is needed here.
 
   // Cleanup on unmount
   useEffect(() => {
-    isMounted.current = true; // Reset on each effect run (survives StrictMode double-mount)
     const currentMesh = meshRef.current; // Capture reference
     return () => {
-      console.log('Component unmounting - setting isMounted to false');
-      isMounted.current = false;
       if (
         isBroadcasting &&
         broadcastControlRef.current &&

@@ -201,23 +201,19 @@ class BroadcastSession {
       peerConnection.onicecandidate = async (event) => {
         if (event.candidate) {
           try {
-            const currentSignalDoc = await getDoc(signalingRef);
-            if (currentSignalDoc.exists()) {
-              await updateDoc(signalingRef, {
-                broadcasterCandidates: arrayUnion(event.candidate.toJSON()),
-                lastUpdated: serverTimestamp(),
-              });
-              console.log(`Added broadcaster ICE candidate for ${viewerId}`);
-            } else {
-              console.warn(
-                `Signaling document ${signalingId} doesn't exist, cannot add ICE candidate.`
+            await updateDoc(signalingRef, {
+              broadcasterCandidates: arrayUnion(event.candidate.toJSON()),
+              lastUpdated: serverTimestamp(),
+            });
+            console.log(`Added broadcaster ICE candidate for ${viewerId}`);
+          } catch (err) {
+            // Doc may not exist if viewer disconnected before ICE gathering complete — ignore
+            if (!err.message?.includes('No document to update')) {
+              console.error(
+                `Error adding broadcaster ICE candidate for ${viewerId}:`,
+                err
               );
             }
-          } catch (err) {
-            console.error(
-              `Error adding broadcaster ICE candidate for ${viewerId}:`,
-              err
-            );
           }
         }
       };
@@ -505,22 +501,18 @@ export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
     peerConnection.onicecandidate = async (event) => {
       if (event.candidate) {
         try {
-          const currentSignalDoc = await getDoc(signalingRef);
-          if (currentSignalDoc.exists()) {
-            await updateDoc(signalingRef, {
-              viewerCandidates: arrayUnion(event.candidate.toJSON()),
-              lastUpdated: serverTimestamp(),
-            });
-            console.log(
-              `Viewer ${viewerId} added ICE candidate for ${broadcastId}`
-            );
-          } else {
-            console.warn(
-              `Signaling document ${signalingId} missing, cannot add ICE candidate.`
-            );
-          }
+          await updateDoc(signalingRef, {
+            viewerCandidates: arrayUnion(event.candidate.toJSON()),
+            lastUpdated: serverTimestamp(),
+          });
+          console.log(
+            `Viewer ${viewerId} added ICE candidate for ${broadcastId}`
+          );
         } catch (err) {
-          console.error(`Viewer ${viewerId} error adding ICE candidate:`, err);
+          // Doc may not exist if broadcaster stopped before ICE gathering complete — ignore
+          if (!err.message?.includes('No document to update')) {
+            console.error(`Viewer ${viewerId} error adding ICE candidate:`, err);
+          }
         }
       }
     };
