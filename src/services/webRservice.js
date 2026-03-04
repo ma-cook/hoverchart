@@ -458,35 +458,13 @@ export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
       `Viewer ${viewerId} attempting to join broadcast: ${broadcastId} in space: ${spaceId}`
     );
 
-    // Use spatial partitioning to find broadcast objects
-    const { getAllObjectsInSpace } = await import('./spatialPartitioning');
-    const spaceOwner = window.currentSpaceOwner;
-
-    // Get all objects in the space across all cells
-    const allObjects = await getAllObjectsInSpace(spaceOwner, spaceId);
-
-    // Find the broadcasting object with the specified broadcastId
-    let planeId = null;
-    let planeData = null;
-
-    for (const [objectId, objectData] of Object.entries(allObjects)) {
-      if (
-        objectData.broadcastId === broadcastId &&
-        objectData.broadcasting === true
-      ) {
-        planeId = objectId;
-        planeData = objectData;
-        break;
-      }
-    }
-
-    if (!planeId || !planeData) {
-      throw new Error(`Broadcast plane not found with ID: ${broadcastId}`);
-    }
-    console.log('Found broadcast plane to join:', {
-      planeId: planeId,
-      broadcasterId: planeData.broadcasterId,
-    });
+    // NOTE: The viewer already has broadcastId, broadcasterId, and planeId from their
+    // broadcastInfo store (set by the detection effect reading Firestore via objectData).
+    // We do NOT need to re-query getAllObjectsInSpace here — that scan can fail silently
+    // (wrong window.currentSpaceOwner, Firestore propagation delay, permission issues)
+    // and was the root cause of viewers never being able to join broadcasts.
+    // The signaling path only requires broadcastId + viewerId to set up the WebRTC handshake.
+    console.log(`Viewer ${viewerId} joining broadcast ${broadcastId} directly via signaling`);
 
     const peerConnection = new RTCPeerConnection(getRTCConfiguration());
     const signalingId = `${broadcastId}_${viewerId}`;

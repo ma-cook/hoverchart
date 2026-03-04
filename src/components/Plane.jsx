@@ -339,17 +339,30 @@ const Plane = ({
     }
   }, [id, imageUrl, plane?.imageTexture, setPlaneImageTexture]);
   useEffect(() => {
-    // Handle webcam initialization from store state
+    // Handle webcam initialization from store state.
+    // IMPORTANT: Only sync webcamActive into the planeStore when it is the LOCAL user's
+    // own webcam state. If objectData.webcamActive=true came from the BROADCASTER's
+    // Firestore write, we must NOT set plane.webcamActive=true for the VIEWER —
+    // doing so would make the viewer look like they activated their own webcam, which
+    // interferes with the broadcast detection logic (isLocalWebcamActive).
+    const isRemoteBroadcastDriving =
+      objectData?.broadcasting === true &&
+      objectData?.broadcasterId &&
+      objectData?.broadcasterId !== user?.uid;
+
     if (webcamActive !== lastWebcamStateRef.current) {
       // Don't force sync if user just toggled webcam - wait for prop to catch up
       if (!userJustToggledWebcamRef.current) {
-        setPlaneWebcamActive(id, webcamActive);
-        lastWebcamStateRef.current = webcamActive;
-        if (webcamActive && !plane?.webcamInitialized) {
-          setPlaneWebcamInitialized(id, true);
+        if (!isRemoteBroadcastDriving) {
+          // Only sync webcamActive to planeStore when it's the local user's own state
+          setPlaneWebcamActive(id, webcamActive);
+          if (webcamActive && !plane?.webcamInitialized) {
+            setPlaneWebcamInitialized(id, true);
+          }
         }
+        lastWebcamStateRef.current = webcamActive;
       }
-    } else if (webcamActive && !plane?.webcamInitialized) {
+    } else if (webcamActive && !plane?.webcamInitialized && !isRemoteBroadcastDriving) {
       setPlaneWebcamInitialized(id, true);
       setPlaneWebcamActive(id, true);
       lastWebcamStateRef.current = true;
@@ -366,6 +379,9 @@ const Plane = ({
     id,
     webcamActive,
     plane?.webcamInitialized,
+    objectData?.broadcasting,
+    objectData?.broadcasterId,
+    user?.uid,
     setPlaneWebcamActive,
     setPlaneWebcamInitialized,
   ]);
@@ -721,7 +737,8 @@ const Plane = ({
           faceText: faceText,
           faceTextStyle: faceTextStyle,
           imageUrl: imageUrl,
-          webcamActive: webcamActive,
+          // webcamActive intentionally excluded — managed exclusively by
+          // handleWebcamToggle / webRservice.js, not UI interaction handlers.
         });
       }
     },
@@ -943,6 +960,7 @@ const Plane = ({
       // Only clear isViewingBroadcast when the user has their OWN local webcam active
       // (not when plane.webcamActive is true because of a remote broadcaster's Firestore data).
       if (plane?.isViewingBroadcast && isLocalWebcamActive) {
+        console.log(`[BroadcastDetect] ${id}: clearing isViewingBroadcast (local webcam took over)`);
         setPlaneIsViewingBroadcast(id, false);
         setPlaneBroadcastInfo(id, null);
       }
@@ -956,6 +974,8 @@ const Plane = ({
       objectData?.broadcasterId !== user.uid;
     const newBroadcastId = objectData?.broadcastId || null;
     const newBroadcasterId = objectData?.broadcasterId || null;
+
+    console.log(`[BroadcastDetect] ${id}: broadcasting=${objectData?.broadcasting}, broadcasterId=${objectData?.broadcasterId}, user=${user.uid}, isRemote=${isRemoteBroadcastingNow}`);
 
     if (isRemoteBroadcastingNow && newBroadcastId && newBroadcasterId) {
       lastBroadcastSeenRef.current = Date.now();
@@ -973,6 +993,7 @@ const Plane = ({
         broadcastType: resolvedBroadcastType,
       };
       if (!isEqual(broadcastInfoRef.current, newBroadcastInfo)) {
+        console.log(`[BroadcastDetect] ${id}: setting isViewingBroadcast=true, broadcastType=${resolvedBroadcastType}`);
         setPlaneBroadcastInfo(id, newBroadcastInfo);
         broadcastInfoRef.current = newBroadcastInfo;
         if (!plane?.isViewingBroadcast) {
@@ -983,6 +1004,7 @@ const Plane = ({
       if (plane?.isViewingBroadcast) {
         const now = Date.now();
         if (now - lastBroadcastSeenRef.current > 5000) {
+          console.log(`[BroadcastDetect] ${id}: broadcast ended, clearing isViewingBroadcast`);
           setPlaneBroadcastInfo(id, null);
           broadcastInfoRef.current = null;
           setPlaneIsViewingBroadcast(id, false);

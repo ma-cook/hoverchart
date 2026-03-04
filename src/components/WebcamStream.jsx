@@ -310,6 +310,7 @@ const WebcamStream = ({
       if (effectCancelled) return;
 
       try {
+        console.log(`[WebcamStream] Joining broadcast: spaceId=${spaceId}, broadcastId=${currentBroadcastId}, userId=${userId}`);
         connection = await joinBroadcast(spaceId, currentBroadcastId, userId);
 
         if (effectCancelled) {
