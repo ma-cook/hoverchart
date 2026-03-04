@@ -933,7 +933,19 @@ const Plane = ({
   ]);
   useEffect(() => {
     if (!currentSpaceId || !id || !user || !window.currentSpaceOwner) return;
-    if (plane?.webcamActive || plane?.isViewingBroadcast) {
+
+    // Only skip broadcast detection if THIS user activated their own webcam (not due to
+    // objectData.webcamActive being synced from a remote broadcaster's Firestore update).
+    // When another user broadcasts, objectData.webcamActive becomes true and propagates to
+    // plane.webcamActive — but we must NOT return early in that case, because we need to
+    // detect and join the remote broadcast.
+    const isRemoteBroadcastActive =
+      objectData?.broadcasting === true &&
+      objectData?.broadcasterId &&
+      objectData?.broadcasterId !== user?.uid;
+    const isLocalWebcamActive = plane?.webcamActive && !isRemoteBroadcastActive;
+
+    if (isLocalWebcamActive || plane?.isViewingBroadcast) {
       if (plane?.isViewingBroadcast && plane?.webcamActive) {
         setPlaneIsViewingBroadcast(id, false);
         setPlaneBroadcastInfo(id, null);
