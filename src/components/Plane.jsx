@@ -440,16 +440,14 @@ const Plane = ({
       lineThickness: plane?.lineThickness || objectData?.lineThickness || 2,
       faceText: plane?.faceText || objectData?.faceText || '',
       faceTextStyle: plane?.faceTextStyle || objectData?.faceTextStyle || {},
-      webcamActive: plane?.webcamActive || objectData?.webcamActive || false,
-      screenShareActive:
-        plane?.screenShareActive || objectData?.screenShareActive || false,
-      broadcasting:
-        (plane?.webcamActive || objectData?.webcamActive || false) &&
-        (plane?.isBroadcasting || false),
-      screenSharing:
-        (plane?.screenShareActive || objectData?.screenShareActive || false) &&
-        (plane?.isScreenSharing || false),
       imageUrl: plane?.imageUrl || objectData?.imageUrl || '',
+      // STREAMING FIELDS (webcamActive, screenShareActive, broadcasting, broadcastId,
+      // broadcasterId, broadcastType, screenSharing) are intentionally excluded here.
+      // They are managed exclusively by:
+      //   - webRservice.js startBroadcasting() / stop() for broadcast fields
+      //   - handleWebcamToggle / handleScreenShareToggle for local toggle writes
+      // Writing them here causes every viewer to overwrite the broadcaster's Firestore
+      // state (e.g. broadcasting:true → false) on every objectData sync.
     };
 
     onUpdate(id, updates);
@@ -464,10 +462,6 @@ const Plane = ({
     plane?.lineThickness,
     plane?.faceText,
     plane?.faceTextStyle,
-    plane?.webcamActive,
-    plane?.screenShareActive,
-    plane?.isBroadcasting,
-    plane?.isScreenSharing,
     plane?.imageUrl,
     onUpdate,
     id,
