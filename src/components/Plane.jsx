@@ -347,8 +347,8 @@ const Plane = ({
     // interferes with the broadcast detection logic (isLocalWebcamActive).
     const isRemoteBroadcastDriving =
       objectData?.broadcasting === true &&
-      objectData?.broadcasterId &&
-      objectData?.broadcasterId !== user?.uid;
+      objectData?.broadcastId &&
+      !plane?.isBroadcasting;
 
     if (webcamActive !== lastWebcamStateRef.current) {
       // Don't force sync if user just toggled webcam - wait for prop to catch up
@@ -379,9 +379,9 @@ const Plane = ({
     id,
     webcamActive,
     plane?.webcamInitialized,
+    plane?.isBroadcasting,
     objectData?.broadcasting,
-    objectData?.broadcasterId,
-    user?.uid,
+    objectData?.broadcastId,
     setPlaneWebcamActive,
     setPlaneWebcamInitialized,
   ]);
@@ -952,8 +952,8 @@ const Plane = ({
     // detect and join the remote broadcast.
     const isRemoteBroadcastActive =
       objectData?.broadcasting === true &&
-      objectData?.broadcasterId &&
-      objectData?.broadcasterId !== user?.uid;
+      objectData?.broadcastId &&
+      !plane?.isBroadcasting;
     const isLocalWebcamActive = plane?.webcamActive && !isRemoteBroadcastActive;
 
     if (isLocalWebcamActive || plane?.isViewingBroadcast) {
@@ -971,7 +971,7 @@ const Plane = ({
     // The objectData already receives real-time Firestore updates through the spatial objects service
     const isRemoteBroadcastingNow =
       objectData?.broadcasting === true &&
-      objectData?.broadcasterId !== user.uid;
+      !plane?.isBroadcasting;
     const newBroadcastId = objectData?.broadcastId || null;
     const newBroadcasterId = objectData?.broadcasterId || null;
 
@@ -1018,6 +1018,7 @@ const Plane = ({
     currentSpaceId,
     id,
     user,
+    plane?.isBroadcasting,
     plane?.webcamActive,
     plane?.isViewingBroadcast,
     objectData?.broadcasting,
