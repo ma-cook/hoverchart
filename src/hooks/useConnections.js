@@ -528,8 +528,8 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
   const handleConnectionClick = useCallback((e, connectionId) => {
     e.stopPropagation();
-    const { selectConnection } = useConnectionStore.getState();
-    selectConnection(connectionId);
+    const { selectConnectionWithFlowPath } = useConnectionStore.getState();
+    selectConnectionWithFlowPath(connectionId);
   }, []);
 
   const handleLineTextClick = useCallback((e, connectionId) => {

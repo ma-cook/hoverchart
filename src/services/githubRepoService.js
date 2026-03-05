@@ -164,8 +164,15 @@ const analyzeFile = (filePath) => {
   const isService = /(?:^|\/)services\//.test(filePath);
   const isStore   = /(?:^|\/)stores\//.test(filePath);
   const isUtil    = /(?:^|\/)utils\//.test(filePath) || /(?:^|\/)helpers\//.test(filePath);
+  // Backend folders: functions (Firebase/cloud functions), api, server, backend, lambda, routes
+  const isBackend = /(?:^|\/)functions\//.test(filePath) ||
+    /(?:^|\/)api\//.test(filePath) ||
+    /(?:^|\/)server\//.test(filePath) ||
+    /(?:^|\/)backend\//.test(filePath) ||
+    /(?:^|\/)lambda\//.test(filePath) ||
+    /(?:^|\/)routes\//.test(filePath);
 
-  return { isComponent, isHook, isService, isStore, isUtil };
+  return { isComponent, isHook, isService, isStore, isUtil, isBackend };
 };
 
 /**
@@ -579,6 +586,13 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                     }
                     // Hooks in component files are standalone - don't create file containers for them
                   }
+                } else if (fileContext.isBackend) {
+                  // Backend functions - tracked under backend_${fileName} container
+                  elements.services.push(funcName);
+                  if (!fileFunctions.has(fileName)) {
+                    fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
+                  }
+                  fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isService) {
                   // Use simple name - allow duplicates for child nodes
                   elements.services.push(funcName);
@@ -866,6 +880,13 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                           }
                           // Hooks in component files are standalone - don't create file containers for them
                         }
+                      } else if (fileContext.isBackend) {
+                        // Backend functions - tracked under backend_${fileName} container
+                        elements.services.push(varName);
+                        if (!fileFunctions.has(fileName)) {
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
+                        }
+                        fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isService) {
                         // Use simple name - allow duplicates for child nodes
                         elements.services.push(varName);
@@ -990,7 +1011,16 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                       decl.init.callee.type === 'Identifier'
                     ) {
                       // Treat as service/utility based on file context
-                      if (fileContext.isService) {
+                      if (fileContext.isBackend) {
+                        if (!foundItems.services.has(varName)) {
+                          foundItems.services.add(varName);
+                          elements.services.push(varName);
+                        }
+                        if (!fileFunctions.has(fileName)) {
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
+                        }
+                        fileFunctions.get(fileName).functions.add(varName);
+                      } else if (fileContext.isService) {
                         elements.services.push(varName);
                         if (!fileFunctions.has(fileName)) {
                           fileFunctions.set(fileName, { type: 'service', functions: new Set() });
@@ -1055,6 +1085,16 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
                     fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                  }
+                  fileFunctions.get(fileName).functions.add(className);
+                } else if (fileContext.isBackend) {
+                  // Classes in backend files are tracked under backend_ container
+                  if (!foundItems.services.has(className)) {
+                    foundItems.services.add(className);
+                    elements.services.push(className);
+                  }
+                  if (!fileFunctions.has(fileName)) {
+                    fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
                   }
                   fileFunctions.get(fileName).functions.add(className);
                 } else if (fileContext.isService && !foundItems.services.has(className)) {
@@ -1385,7 +1425,10 @@ const generateMerfolkMarkdown = (
   // Every file in fileFunctions now gets a container, so always map all children.
   fileFunctions.forEach((fileInfo, fileName) => {
     const needsSuffix = filesNeedingSuffix.has(fileName);
-    const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
+    // Backend files get a backend_ prefix on their container node ID
+    const fileNodeId = fileInfo.type === 'backend'
+      ? `backend_${fileName}`
+      : ((fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName);
     fileInfo.functions.forEach((funcName) => {
       childToParentMap.set(funcName, { parentId: fileNodeId, parentName: fileName, type: fileInfo.type });
     });
@@ -1650,30 +1693,52 @@ const generateMerfolkMarkdown = (
       // functions (to avoid duplicate node IDs) or when a suffix is otherwise required.
       const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
 
-      if (nodeIds.has(fileNodeId)) {
-        duplicates.push({
-          id: fileNodeId,
-          type: `${fileInfo.type} File`,
-          section: 'File Container Nodes',
-        });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (${fileInfo.type} File)`);
-      }
-      nodeIds.add(fileNodeId);
-
       // Use appropriate shape based on file type
-      if (fileInfo.type === 'service') {
+      // Backend files get a backend_ prefix on their node ID so markdownDiagramService
+      // can detect and group them separately with a red container.
+      if (fileInfo.type === 'backend') {
+        const backendNodeId = `backend_${fileName}`;
+        if (nodeIds.has(backendNodeId)) {
+          duplicates.push({ id: backendNodeId, type: 'Backend File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${backendNodeId} (Backend File)`);
+        }
+        nodeIds.add(backendNodeId);
+        markdown += `${backendNodeId}((Service: ${fileName}))\n`;
+        fileInfo.nodeId = backendNodeId;
+      } else if (fileInfo.type === 'service') {
+        if (nodeIds.has(fileNodeId)) {
+          duplicates.push({ id: fileNodeId, type: 'Service File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Service File)`);
+        }
+        nodeIds.add(fileNodeId);
         markdown += `${fileNodeId}((Service: ${fileName}))\n`;
+        fileInfo.nodeId = fileNodeId;
       } else if (fileInfo.type === 'hook') {
+        if (nodeIds.has(fileNodeId)) {
+          duplicates.push({ id: fileNodeId, type: 'Hook File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Hook File)`);
+        }
+        nodeIds.add(fileNodeId);
         markdown += `${fileNodeId}[Hook: ${fileName}]\n`;
+        fileInfo.nodeId = fileNodeId;
       } else if (fileInfo.type === 'store') {
+        if (nodeIds.has(fileNodeId)) {
+          duplicates.push({ id: fileNodeId, type: 'Store File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Store File)`);
+        }
+        nodeIds.add(fileNodeId);
         markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
+        fileInfo.nodeId = fileNodeId;
       } else {
         // utility
+        if (nodeIds.has(fileNodeId)) {
+          duplicates.push({ id: fileNodeId, type: 'Utility File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Utility File)`);
+        }
+        nodeIds.add(fileNodeId);
         markdown += `${fileNodeId}[Function: ${fileName}]\n`;
+        fileInfo.nodeId = fileNodeId;
       }
-
-      // Store the file node ID for later connection generation
-      fileInfo.nodeId = fileNodeId;
     });
 
     // Add file→function connections with dashed arrows (containment)
@@ -1685,6 +1750,13 @@ const generateMerfolkMarkdown = (
       fileInfo.functions.forEach((funcName) => {
         // Create connection from file container to each function it contains
         if (fileNodeId) {
+          // If the function was never declared as a node (e.g. Firebase onCall wrappers
+          // whose CallExpression init is not recognised as a function), declare it now
+          // so the connection target is always valid.
+          if (!nodeIds.has(funcName)) {
+            nodeIds.add(funcName);
+            markdown += `${funcName}[Function: ${funcName}]\n`;
+          }
           markdown += `${fileNodeId} -.-> ${funcName} : "contains"\n`;
         }
       });

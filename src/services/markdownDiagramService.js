@@ -1308,11 +1308,12 @@ export class MarkdownDiagramService {
       containersByLevel.get(-1).push('__UNGROUPED__');
     }
     
-    // Get utility/hook/service/store nodes from context
+    // Get utility/hook/service/store/backend nodes from context
     const utilityNodes = [];
     const hookNodes = [];
     const serviceNodes = [];
     const storeNodes = [];
+    const backendCollisionNodes = [];
     
     for (const [nodeId, node] of graphNodes.entries()) {
       const childParentMap = context.childParentMap;
@@ -1324,7 +1325,11 @@ export class MarkdownDiagramService {
       } else if (nodeType === MarkdownDiagramService.NODE_TYPE_HOOK) {
         hookNodes.push(nodeId);
       } else if (nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE) {
-        serviceNodes.push(nodeId);
+        if (nodeId.startsWith('backend_')) {
+          backendCollisionNodes.push(nodeId);
+        } else {
+          serviceNodes.push(nodeId);
+        }
       } else if (nodeType === MarkdownDiagramService.NODE_TYPE_STORE) {
         storeNodes.push(nodeId);
       }
@@ -1341,6 +1346,9 @@ export class MarkdownDiagramService {
     }
     if (storeNodes.length > 0) {
       containersByLevel.get(-1).push('__STORES__');
+    }
+    if (backendCollisionNodes.length > 0) {
+      containersByLevel.get(-1).push('__BACKEND__');
     }
 
     // Process each level from deepest to shallowest
@@ -1394,6 +1402,15 @@ export class MarkdownDiagramService {
           for (const [nodeId, node] of graphNodes.entries()) {
             if (!context.childParentMap.has(nodeId) && 
                 node.type === MarkdownDiagramService.NODE_TYPE_STORE) {
+              nodeList.push(nodeId);
+            }
+          }
+        } else if (containerId === '__BACKEND__') {
+          nodeList = [];
+          for (const [nodeId, node] of graphNodes.entries()) {
+            if (!context.childParentMap.has(nodeId) && 
+                node.type === MarkdownDiagramService.NODE_TYPE_SERVICE &&
+                nodeId.startsWith('backend_')) {
               nodeList.push(nodeId);
             }
           }
@@ -1514,7 +1531,8 @@ export class MarkdownDiagramService {
                   '__UTILITIES__': [],
                   '__HOOKS__': [],
                   '__SERVICES__': [],
-                  '__STORES__': []
+                  '__STORES__': [],
+                  '__BACKEND__': []
                 };
                 
                 // Populate virtual container node lists
@@ -1526,10 +1544,12 @@ export class MarkdownDiagramService {
                       virtualContainerMap['__UTILITIES__'].push(nodeId);
                     } else if (bbox2.nodeId === '__HOOKS__' && nodeType === MarkdownDiagramService.NODE_TYPE_HOOK) {
                       virtualContainerMap['__HOOKS__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__SERVICES__' && nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE) {
+                    } else if (bbox2.nodeId === '__SERVICES__' && nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE && !nodeId.startsWith('backend_')) {
                       virtualContainerMap['__SERVICES__'].push(nodeId);
                     } else if (bbox2.nodeId === '__STORES__' && nodeType === MarkdownDiagramService.NODE_TYPE_STORE) {
                       virtualContainerMap['__STORES__'].push(nodeId);
+                    } else if (bbox2.nodeId === '__BACKEND__' && nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE && nodeId.startsWith('backend_')) {
+                      virtualContainerMap['__BACKEND__'].push(nodeId);
                     }
                   }
                 }
@@ -1568,7 +1588,8 @@ export class MarkdownDiagramService {
                   '__UTILITIES__': [],
                   '__HOOKS__': [],
                   '__SERVICES__': [],
-                  '__STORES__': []
+                  '__STORES__': [],
+                  '__BACKEND__': []
                 };
                 
                 // Populate virtual container node lists
@@ -1580,10 +1601,12 @@ export class MarkdownDiagramService {
                       virtualContainerMap['__UTILITIES__'].push(nodeId);
                     } else if (bbox2.nodeId === '__HOOKS__' && nodeType === MarkdownDiagramService.NODE_TYPE_HOOK) {
                       virtualContainerMap['__HOOKS__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__SERVICES__' && nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE) {
+                    } else if (bbox2.nodeId === '__SERVICES__' && nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE && !nodeId.startsWith('backend_')) {
                       virtualContainerMap['__SERVICES__'].push(nodeId);
                     } else if (bbox2.nodeId === '__STORES__' && nodeType === MarkdownDiagramService.NODE_TYPE_STORE) {
                       virtualContainerMap['__STORES__'].push(nodeId);
+                    } else if (bbox2.nodeId === '__BACKEND__' && nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE && nodeId.startsWith('backend_')) {
+                      virtualContainerMap['__BACKEND__'].push(nodeId);
                     }
                   }
                 }
@@ -1831,6 +1854,7 @@ export class MarkdownDiagramService {
     const serviceNodes = [];
     const storeNodes = [];
     const hookNodes = []; // Top-level hook nodes
+    const backendNodes = []; // Top-level backend service nodes (node ID starts with 'backend_')
     const ungroupedComponents = []; // Top-level component nodes (not in hierarchy)
 
     for (const [nodeId, node] of graphNodes.entries()) {
@@ -1848,7 +1872,12 @@ export class MarkdownDiagramService {
         // Top-level hooks - include ALL hook files (both single and multi-hook files)
         hookNodes.push(nodeId);
       } else if (nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE) {
-        serviceNodes.push(nodeId);
+        // Backend nodes are service-type but carry a 'backend_' prefix on their ID
+        if (nodeId.startsWith('backend_')) {
+          backendNodes.push(nodeId);
+        } else {
+          serviceNodes.push(nodeId);
+        }
       } else if (nodeType === MarkdownDiagramService.NODE_TYPE_STORE) {
         storeNodes.push(nodeId);
       }
@@ -2109,6 +2138,28 @@ export class MarkdownDiagramService {
       }
     });
 
+    // Calculate scales for backend files BEFORE positioning
+    // Same approach as service files
+    backendNodes.forEach((backendId) => {
+      const children = context.parentChildMap.get(backendId) || new Set();
+      if (children.size > 0) {
+        const childCount = children.size;
+        const gridSize3D = Math.ceil(Math.pow(childCount, 1 / 3));
+        const childSize = 10;
+        const spacing = 50;
+        const requiredSpace = (gridSize3D - 1) * spacing + childSize * 2;
+        const baseCubeSize = 20;
+        const generousPadding = Math.max(30, childCount * 8);
+        const totalRequiredSize = requiredSpace + generousPadding * 2;
+        const minScaleFactor = Math.max(1.5, 1 + childCount * 0.3);
+        const calculatedScaleFactor = totalRequiredSize / baseCubeSize;
+        const scaleFactor = Math.max(minScaleFactor, calculatedScaleFactor);
+        nodeScales.set(backendId, [scaleFactor, scaleFactor, scaleFactor]);
+      } else {
+        nodeScales.set(backendId, [1, 1, 1]);
+      }
+    });
+
     // Calculate scales for hook files BEFORE positioning
     // This ensures proper scaling based on their children functions
     // Use same cube-specific scaling approach as utility files
@@ -2173,6 +2224,7 @@ export class MarkdownDiagramService {
     const hookBounds = calculateGroupBounds(hookNodes);
     const serviceBounds = calculateGroupBounds(serviceNodes);
     const storeBounds = calculateGroupBounds(storeNodes);
+    const backendBounds = calculateGroupBounds(backendNodes);
     
     // Root hierarchy container edges (absolute positions)
     const rootLeftEdge = rootHierarchyBounds.minX;
@@ -2188,6 +2240,12 @@ export class MarkdownDiagramService {
     // xOffset = rootLeftEdge - edgeSpacing - utilityBounds.width - basePosition[0]
     const utilityXOffset = rootLeftEdge - edgeSpacing - utilityBounds.width - basePosition[0];
     positionGroup(utilityNodes, utilityXOffset, groupContainerYOffset, 0);
+
+    // Backend: positioned to the left of utilities
+    // backendRightEdge = utilityLeftEdge - edgeSpacing
+    // utilityLeftEdge = basePosition[0] + utilityXOffset (the grid starts at that X)
+    const backendXOffset = utilityXOffset - edgeSpacing - backendBounds.width;
+    positionGroup(backendNodes, backendXOffset, groupContainerYOffset, 0);
 
     // Hooks: positioned to the right with edge-to-edge spacing
     // Grid extends in positive X from xOffset, so place xOffset at root's right edge + spacing
@@ -2390,6 +2448,41 @@ export class MarkdownDiagramService {
       }
     });
 
+    // Process children of backend functions (backend file-function relationships)
+    backendNodes.forEach((backendId) => {
+      const children = context.parentChildMap.get(backendId) || new Set();
+      if (children.size > 0) {
+        const backendPosition = nodePositions.get(backendId);
+        const childArray = Array.from(children).sort();
+        childArray.forEach((childId, index) => {
+          const childNode = graphNodes.get(childId);
+          if (!childNode) return;
+          const childType = (childNode.type || '').toLowerCase().trim();
+          if (
+            childType === MarkdownDiagramService.NODE_TYPE_FUNCTION ||
+            childType === MarkdownDiagramService.NODE_TYPE_SERVICE
+          ) {
+            const childPosition = this.calculateNodePosition(
+              childId,
+              basePosition,
+              1,
+              index,
+              childArray.length,
+              backendPosition,
+              50,
+              new Set(),
+              graphNodes,
+              context.parentChildMap,
+              context?.internalComponentChildren || new Set()
+            );
+            nodePositions.set(childId, childPosition);
+            nodeScales.set(childId, [1, 1, 1]);
+            context.processedNodes.add(childId);
+          }
+        });
+      }
+    });
+
     // Process children of hook functions (hook file-function relationships)
     // Hook files like "useGlobalClickHandler" should contain their functions like "handleGlobalClick"
     hookNodes.forEach((hookId) => {
@@ -2463,6 +2556,7 @@ export class MarkdownDiagramService {
     const serviceNodes = [];
     const storeNodes = [];
     const hookNodes = []; // Top-level hook nodes
+    const backendNodes = []; // Backend service nodes (backend_ prefix)
     const ungroupedComponents = []; // Components not reachable from root modules
 
     // Build set of components reachable from actual root modules
@@ -2503,7 +2597,12 @@ export class MarkdownDiagramService {
         // Top-level hooks - include ALL hook files (both single and multi-hook files)
         hookNodes.push(nodeId);
       } else if (nodeType === MarkdownDiagramService.NODE_TYPE_SERVICE) {
-        serviceNodes.push(nodeId);
+        // Backend nodes carry a 'backend_' prefix on their ID
+        if (nodeId.startsWith('backend_')) {
+          backendNodes.push(nodeId);
+        } else {
+          serviceNodes.push(nodeId);
+        }
       } else if (nodeType === MarkdownDiagramService.NODE_TYPE_STORE) {
         storeNodes.push(nodeId);
       } else if (
@@ -2687,6 +2786,7 @@ export class MarkdownDiagramService {
     createContainerForGroup(hookNodes, 'Hooks', '#2196F3'); // Blue
     createContainerForGroup(serviceNodes, 'Services', '#FF9800'); // Orange
     createContainerForGroup(storeNodes, 'Stores', '#9C27B0'); // Purple
+    createContainerForGroup(backendNodes, 'Backend', '#F44336'); // Red
     createContainerForGroup(
       ungroupedComponents,
       'Ungrouped Components',
@@ -3823,15 +3923,91 @@ export class MarkdownDiagramService {
   }
 
   /**
+   * Parse flowpath directives and #tag annotations from Merfolk code blocks.
+   * Returns a Map of "sourceNodeId|targetNodeId" -> Set<flowpathName> so that
+   * createConnectionsFromDiagram can tag each connection with its flow paths.
+   *
+   * Supported syntax:
+   *   flowpath "name" : A --> B --> C
+   *   flowpath "name" (-.->): A --> B --> C
+   *   flowpath "name" : A --> B --> C : "description"
+   *   A --> B : "text" #tag1 #tag2
+   *
+   * @param {string} content - Raw markdown content
+   * @returns {Map} connectionTags - "src|tgt" -> Set<name>
+   */
+  parseFlowPaths(content) {
+    const connectionTags = new Map();
+
+    // Only process content inside ```merfolk ... ``` code blocks
+    const blockRegex = /```merfolk\n([\s\S]*?)```/g;
+    const merfolkChunks = [];
+    let blockMatch;
+    while ((blockMatch = blockRegex.exec(content)) !== null) {
+      merfolkChunks.push(blockMatch[1]);
+    }
+    if (merfolkChunks.length === 0) return connectionTags;
+    const merfolkContent = merfolkChunks.join('\n');
+
+    const addTag = (src, tgt, name) => {
+      const key = `${src}|${tgt}`;
+      if (!connectionTags.has(key)) connectionTags.set(key, new Set());
+      connectionTags.get(key).add(name);
+    };
+
+    // 1. Parse flowpath directives
+    const flowpathRegex =
+      /^[ \t]*flowpath\s+"([^"]+)"\s*(?:\([^)]*\))?\s*:\s*(.+?)(?:\s*:\s*"[^"]*")?\s*$/gm;
+    let match;
+    while ((match = flowpathRegex.exec(merfolkContent)) !== null) {
+      const name = match[1];
+      const sequenceStr = match[2];
+      const nodes = sequenceStr
+        .split(/\s*(?:-->|-.->|-\.->|===+>|--[^>]*>)\s*/)
+        .map(n => n.trim())
+        .filter(Boolean);
+      for (let i = 0; i < nodes.length - 1; i++) {
+        addTag(nodes[i], nodes[i + 1], name);
+      }
+    }
+
+    // 2. Parse #tag annotations on individual connection lines
+    //    NodeA --> NodeB : "text" #tag1 #tag2
+    const taggedConnRegex =
+      /^[ \t]*(\w[\w-]*)[ \t]*(?:-->|-.->|-\.->|===+>|--[^>]*>)[ \t]*(\w[\w-]*)[ \t]*(?::\s*"[^"]*")?[ \t]*((?:#\w+[ \t]*)+)/gm;
+    while ((match = taggedConnRegex.exec(merfolkContent)) !== null) {
+      const srcId = match[1];
+      const tgtId = match[2];
+      const tags = (match[3].match(/#(\w+)/g) || []).map(t => t.slice(1));
+      tags.forEach(tag => addTag(srcId, tgtId, tag));
+    }
+
+    return connectionTags;
+  }
+
+  /**
+   * Remove flowpath directives from raw markdown content before passing to
+   * MarkdownProcessor, which doesn't understand this syntax.
+   * @param {string} content - Raw markdown content
+   * @returns {string} - Cleaned markdown content
+   */
+  stripFlowPathSyntax(content) {
+    // Remove flowpath directive lines wherever they appear
+    return content.replace(/^[ \t]*flowpath\b[^\n]*/gm, '');
+  }
+
+  /**
    * Create connections between objects
    * @param {Object} diagram - The processed diagram
    * @param {Map} nodeToObjectIdMap - Map of node ID to object ID
    * @param {Array} allConnectionsToSave - Array to collect all connections
+   * @param {Map} connectionTags - Optional flow path tags per node pair
    */
   createConnectionsFromDiagram(
     diagram,
     nodeToObjectIdMap,
-    allConnectionsToSave
+    allConnectionsToSave,
+    connectionTags = new Map()
   ) {
     const graph = diagram.graph;
     if (!graph || !graph.connections) {
@@ -4148,6 +4324,9 @@ export class MarkdownDiagramService {
             sourceNode: sourceNodeId,
             targetNode: targetNodeId,
             connectionType: connection.type,
+            flowPaths: Array.from(
+              connectionTags.get(`${sourceNodeId}|${targetNodeId}`) || []
+            ),
           },
         };
 
@@ -4526,8 +4705,13 @@ export class MarkdownDiagramService {
       this.initializeProcessor();
     }
 
+    // Parse flowpath directives before stripping them from the content
+    const connectionTags = this.parseFlowPaths(content);
+    // Strip flowpath syntax so MarkdownProcessor doesn't encounter unknown directives
+    const processedContent = this.stripFlowPathSyntax(content);
+
     // Process the markdown using 3d-ast-generator
-    const diagrams = this.processor.processMarkdown(content);
+    const diagrams = this.processor.processMarkdown(processedContent);
 
     if (!diagrams || diagrams.length === 0) {
       throw new Error(
@@ -4577,7 +4761,8 @@ export class MarkdownDiagramService {
       this.createConnectionsFromDiagram(
         diagram,
         nodeToObjectIdMap,
-        allConnectionsToSave
+        allConnectionsToSave,
+        connectionTags
       );
     }
 

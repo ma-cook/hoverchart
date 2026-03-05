@@ -257,11 +257,11 @@ const Connection = React.memo(
     const actions = useConnectionActions();
     
     // Destructure for easier access
-    const { isSelected, isDeleting, lineText, showTextInput, showStyleUI } = connectionState;
+    const { isSelected, isFlowPathHighlighted, isDeleting, lineText, showTextInput, showStyleUI } = connectionState;
     const { 
       setShowLineTextStyleUI, 
       setShowLineTextInput, 
-      selectConnection, 
+      selectConnectionWithFlowPath, 
       setLineText, 
       updateConnection 
     } = actions;
@@ -269,11 +269,11 @@ const Connection = React.memo(
     // Consolidated line width calculation - consistent across all line types
     const getLineWidth = useCallback(
       () => {
-        const baseWidth = 1;
-        const selectedWidth = 2.5;
-        return isSelected ? selectedWidth : baseWidth;
+        if (isSelected) return 2.5;
+        if (isFlowPathHighlighted) return 2;
+        return 1;
       },
-      [isSelected]
+      [isSelected, isFlowPathHighlighted]
     );
 
     // Handler function - always use passed onConnectionClick if available for consistency
@@ -283,10 +283,10 @@ const Connection = React.memo(
         if (onConnectionClick) {
           onConnectionClick(e, connectionId);
         } else {
-          selectConnection(connectionId);
+          selectConnectionWithFlowPath(connectionId);
         }
       },
-      [onConnectionClick, selectConnection]
+      [onConnectionClick, selectConnectionWithFlowPath]
     );
 
     const handleLineTextClick = (e, connectionId) => {
@@ -758,8 +758,9 @@ const Connection = React.memo(
                 }`}
                 points={pathToLineSegments(calculatedPathPoints)}
                 color={
-                  connection.color ||
-                  (isSelected ? '#ffff00' : 'black')
+                  isSelected ? '#ffff00' :
+                  isFlowPathHighlighted ? '#FF9800' :
+                  (connection.color || 'black')
                 }
                 lineWidth={getLineWidth()}
                 onClick={(e) => handleConnectionClick(e, connection.id)}
@@ -785,8 +786,9 @@ const Connection = React.memo(
               points={calculatedPathPoints}
               connectionId={connection.id}
               color={
-                connection.color ||
-                (isSelected ? '#ffff00' : 'black')
+                isSelected ? '#ffff00' :
+                isFlowPathHighlighted ? '#FF9800' :
+                (connection.color || 'black')
               }
               lineWidth={getLineWidth()}
               lineStyle={effectiveLineStyle}
@@ -936,6 +938,7 @@ const ConnectionsRenderer = ({
     connectionsVisible,
     focusedObjectId,
     selectedConnection,
+    highlightedFlowPathIds,
   } = useConnectionsRendererStore();
 
   // Create a stable set of available object IDs to avoid recalculating on every render
@@ -1002,8 +1005,31 @@ const ConnectionsRenderer = ({
     });
   }, [focusedObjectId, connectionsVisible, connections, visibleObjectIds, availableObjectIds]);
 
-  // Determine which connections to consider for rendering
-  const connectionsForCulling = connectionsVisible ? objectVisibleConnections : focusedConnections;
+  // When flow-path highlighting is active, include all highlighted connections
+  // regardless of the focus filter — they may span objects beyond the focused one.
+  const flowPathHighlightedConnections = useMemo(() => {
+    if (!highlightedFlowPathIds?.size || !connections?.length) return [];
+    // Respect spatial availability (don't render connections to unloaded objects)
+    // but bypass the focusedObjectId filter so off-focus segments become visible.
+    const visibleIds = (visibleObjectIds && visibleObjectIds.size > 0) ? visibleObjectIds : availableObjectIds;
+    return connections.filter(conn => {
+      if (!highlightedFlowPathIds.has(conn.id)) return false;
+      const startId = conn.start?.objectId?.toString();
+      const endId = conn.end?.objectId?.toString();
+      return startId && endId && visibleIds.has(startId) && visibleIds.has(endId);
+    });
+  }, [highlightedFlowPathIds, connections, visibleObjectIds, availableObjectIds]);
+
+  // Determine which connections to consider for rendering.
+  // When a flow-path is highlighted, merge its connections into the culling set
+  // so they get rendered even when globally hidden or outside the focus filter.
+  const connectionsForCulling = useMemo(() => {
+    const base = connectionsVisible ? objectVisibleConnections : focusedConnections;
+    if (!highlightedFlowPathIds?.size || flowPathHighlightedConnections.length === 0) return base;
+    const baseIds = new Set(base.map(c => c.id));
+    const extras = flowPathHighlightedConnections.filter(c => !baseIds.has(c.id));
+    return extras.length > 0 ? [...base, ...extras] : base;
+  }, [connectionsVisible, objectVisibleConnections, focusedConnections, highlightedFlowPathIds, flowPathHighlightedConnections]);
 
   // PERFORMANCE: Apply frustum culling to only render connections visible in camera
   const { visibleConnections: frustumCulledConnections } = useFrustumCulledConnections(
@@ -1169,7 +1195,7 @@ const ConnectionsRenderer = ({
   // setObjects function guards against spurious updates via its own position hash check).
   const prevPathfindingObjectsRef = useRef(null);
   const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
-  const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null });
+  const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, highlightedFlowPathIds: null });
 
   // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
   // smaller than 0.5 units would never trigger cache invalidation. Since pathfindingObjects
@@ -1198,6 +1224,7 @@ const ConnectionsRenderer = ({
       !objectsChanged &&
       progressiveConnections === inputsRef.progressiveConnectionsRef &&
       selectedConnection === inputsRef.selectedConnection &&
+      highlightedFlowPathIds === inputsRef.highlightedFlowPathIds &&
       cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
     ) {
       return cacheRef;
@@ -1232,10 +1259,19 @@ const ConnectionsRenderer = ({
       const style = conn.styleType || conn.lineStyle || 'straight';
       const baseStyle = style.split('-')[0];
       const isSelected = conn.id === selectedConnection;
+      const isFlowPathHighlighted = !isSelected &&
+        highlightedFlowPathIds?.size > 0 &&
+        highlightedFlowPathIds.has(conn.id);
       const hasText = conn.text && conn.text.trim() !== '';
       
       // Selected connections need full UI (LineUI, etc)
       if (isSelected) {
+        individual.push(conn);
+        return;
+      }
+
+      // Flow-path-highlighted connections need individual rendering for colour override
+      if (isFlowPathHighlighted) {
         individual.push(conn);
         return;
       }
@@ -1302,10 +1338,11 @@ const ConnectionsRenderer = ({
       progressiveConnectionsRef: progressiveConnections,
       selectedConnection,
       pathfindingObjectsRef: pathfindingObjects,
+      highlightedFlowPathIds,
     };
     
     return result;
-  }, [progressiveConnections, selectedConnection, objectPositions, pathfindingObjects]);
+  }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, objectPositions, pathfindingObjects]);
 
   // Combine all straight connections for batched line rendering
   const allStraightConnections = useMemo(() => {
@@ -1393,10 +1430,10 @@ const ConnectionsRenderer = ({
     if (onConnectionClick) {
       onConnectionClick(e, connectionId);
     } else {
-      // Use store directly to select connection
-      const selectConnection = useConnectionStore.getState().selectConnection;
-      if (selectConnection) {
-        selectConnection(connectionId);
+      // Use selectConnectionWithFlowPath so flow path siblings are highlighted
+      const { selectConnectionWithFlowPath } = useConnectionStore.getState();
+      if (selectConnectionWithFlowPath) {
+        selectConnectionWithFlowPath(connectionId);
       }
     }
   }, [onConnectionClick]);

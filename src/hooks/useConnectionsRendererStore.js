@@ -12,6 +12,9 @@ const getConnectionStateSelector = (connectionId) => {
   if (!connectionStateSelectors.has(connectionId)) {
     connectionStateSelectors.set(connectionId, (state) => ({
       isSelected: state.selectedConnection === connectionId,
+      isFlowPathHighlighted:
+        !!(state.highlightedFlowPathIds?.size > 0 &&
+          state.highlightedFlowPathIds.has(connectionId)),
       isDeleting: state.deletingConnections.has(connectionId),
       lineText: state.lineTexts?.[connectionId] || '',
       showTextInput: state.showLineTextInput === connectionId,
@@ -43,6 +46,8 @@ const actionsSelector = (state) => ({
   setShowLineTextStyleUI: state.setShowLineTextStyleUI,
   setShowLineTextInput: state.setShowLineTextInput,
   selectConnection: state.selectConnection,
+  selectConnectionWithFlowPath: state.selectConnectionWithFlowPath,
+  clearFlowPathHighlight: state.clearFlowPathHighlight,
   setLineText: state.setLineText,
   updateConnection: state.updateConnection,
 });
@@ -58,6 +63,7 @@ export const useConnectionsRendererStore = () => {
       // Connection data
       connections: state.connections,
       selectedConnection: state.selectedConnection,
+      highlightedFlowPathIds: state.highlightedFlowPathIds,
       deletingConnections: state.deletingConnections,
       connectionsVisible: state.connectionsVisible,
       focusedObjectId: state.focusedObjectId,
@@ -71,6 +77,8 @@ export const useConnectionsRendererStore = () => {
       setShowLineTextStyleUI: state.setShowLineTextStyleUI,
       setShowLineTextInput: state.setShowLineTextInput,
       selectConnection: state.selectConnection,
+      selectConnectionWithFlowPath: state.selectConnectionWithFlowPath,
+      clearFlowPathHighlight: state.clearFlowPathHighlight,
       setLineText: state.setLineText,
       updateConnection: state.updateConnection,
     }),

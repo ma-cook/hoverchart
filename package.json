@@ -13,7 +13,7 @@
     "@react-three/drei": "^9.105.6",
     "@react-three/fiber": "^8.15.13",
     "@react-three/postprocessing": "^2.16.3",
-    "3d-ast-generator": "^1.0.17",
+    "3d-ast-generator": "^1.0.18",
     "firebase": "^11.0.1",
     "fix-webm-duration": "^1.0.6",
     "lodash": "^4.17.21",

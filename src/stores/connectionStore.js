@@ -4,6 +4,7 @@ const useConnectionStore = create((set, get) => ({
   // State for all connections
   connections: [], // Array of connection objects
   selectedConnection: null,
+  highlightedFlowPathIds: new Set(), // Set of connection IDs highlighted as part of a flow path
   activeConnection: null,
   isCreatingConnection: false,
   connectionStartPoint: null,
@@ -424,11 +425,128 @@ const useConnectionStore = create((set, get) => ({
   },
 
   selectConnection: (connectionId) => {
-    set({ selectedConnection: connectionId });
+    if (connectionId === null) {
+      set({ selectedConnection: null, highlightedFlowPathIds: new Set() });
+    } else {
+      set({ selectedConnection: connectionId });
+    }
   },
 
   deselectConnection: () => {
-    set({ selectedConnection: null });
+    set({ selectedConnection: null, highlightedFlowPathIds: new Set() });
+  },
+
+  /**
+   * Select a connection and highlight all connections that share the same flow path(s).
+   * If the connection has no flow paths, falls back to normal selection.
+   */
+  selectConnectionWithFlowPath: (connectionId) => {
+    if (!connectionId) {
+      set({ selectedConnection: null, highlightedFlowPathIds: new Set() });
+      return;
+    }
+
+    const state = get();
+    const connection = state.connections.find(c => c.id === connectionId);
+
+    if (!connection) {
+      set({ selectedConnection: connectionId, highlightedFlowPathIds: new Set() });
+      return;
+    }
+
+    const flowPaths = connection?.merfolkData?.flowPaths;
+
+    if (flowPaths && flowPaths.length > 0) {
+      // Highlight all connections that share any of the same explicit flow path tags
+      const pathNames = new Set(flowPaths);
+      const highlightedIds = new Set();
+
+      state.connections.forEach(conn => {
+        const connFlowPaths = conn.merfolkData?.flowPaths;
+        if (connFlowPaths && connFlowPaths.some(fp => pathNames.has(fp))) {
+          highlightedIds.add(conn.id);
+        }
+      });
+
+      set({ selectedConnection: connectionId, highlightedFlowPathIds: highlightedIds });
+    } else {
+      // No explicit flow path tags — trace the directed data flow chain.
+      //
+      // Directed traversal avoids the "hub problem" where bidirectional BFS
+      // would fan out through every connection at a shared node and highlight
+      // nearly the entire scene. Instead we follow only the arrow direction:
+      //   • Backward from the clicked connection's source: find connections whose
+      //     END lands on the source node (upstream producers of this data).
+      //   • Forward from the clicked connection's target: find connections whose
+      //     START leaves the target node (downstream consumers of this data).
+      //
+      // This naturally traces internal-function hops (A→fn→B) because fn is both
+      // the target of A→fn and the source of fn→B, so both segments are included.
+
+      const clickedSourceId = connection.start?.objectId;
+      const clickedTargetId = connection.end?.objectId;
+
+      if (!clickedSourceId && !clickedTargetId) {
+        set({ selectedConnection: connectionId, highlightedFlowPathIds: new Set() });
+        return;
+      }
+
+      // Pre-build directional lookups for O(1) access.
+      // outgoing: objectId → connections that start at that object
+      // incoming: objectId → connections that end at that object
+      const outgoing = new Map(); // objectId → conn[]
+      const incoming = new Map(); // objectId → conn[]
+      state.connections.forEach(conn => {
+        const src = conn.start?.objectId;
+        const tgt = conn.end?.objectId;
+        if (src) {
+          if (!outgoing.has(src)) outgoing.set(src, []);
+          outgoing.get(src).push(conn);
+        }
+        if (tgt) {
+          if (!incoming.has(tgt)) incoming.set(tgt, []);
+          incoming.get(tgt).push(conn);
+        }
+      });
+
+      const highlightedIds = new Set();
+      // Always include the clicked connection itself
+      highlightedIds.add(connectionId);
+
+      // ── Forward pass: follow outgoing edges from the target node ──────────
+      const fwdVisited = new Set();
+      const fwdQueue = clickedTargetId ? [clickedTargetId] : [];
+      while (fwdQueue.length > 0) {
+        const nodeId = fwdQueue.shift();
+        if (fwdVisited.has(nodeId)) continue;
+        fwdVisited.add(nodeId);
+        (outgoing.get(nodeId) || []).forEach(conn => {
+          highlightedIds.add(conn.id);
+          const tgt = conn.end?.objectId;
+          if (tgt && !fwdVisited.has(tgt)) fwdQueue.push(tgt);
+        });
+      }
+
+      // ── Backward pass: follow incoming edges from the source node ─────────
+      const bwdVisited = new Set();
+      const bwdQueue = clickedSourceId ? [clickedSourceId] : [];
+      while (bwdQueue.length > 0) {
+        const nodeId = bwdQueue.shift();
+        if (bwdVisited.has(nodeId)) continue;
+        bwdVisited.add(nodeId);
+        (incoming.get(nodeId) || []).forEach(conn => {
+          highlightedIds.add(conn.id);
+          const src = conn.start?.objectId;
+          if (src && !bwdVisited.has(src)) bwdQueue.push(src);
+        });
+      }
+
+      set({ selectedConnection: connectionId, highlightedFlowPathIds: highlightedIds });
+    }
+  },
+
+  clearFlowPathHighlight: () => {
+    set({ highlightedFlowPathIds: new Set() });
   },
 
   setActiveConnection: (connectionId) => {
@@ -891,6 +1009,7 @@ const useConnectionStore = create((set, get) => ({
     set({
       connections: [],
       selectedConnection: null,
+      highlightedFlowPathIds: new Set(),
       activeConnection: null,
       isCreatingConnection: false,
       connectionStartPoint: null,
