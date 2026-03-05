@@ -43,6 +43,30 @@ const UIOverlay = ({
   const [scanProgress, setScanProgress] = useState({ isScanning: false, progress: 0, stage: '' });
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [currentDiagramRepo, setCurrentDiagramRepo] = useState(null);
+
+  // Load persisted repo for this space on mount / space change
+  useEffect(() => {
+    if (!currentSpaceId) {
+      setCurrentDiagramRepo(null);
+      return;
+    }
+    try {
+      const stored = localStorage.getItem(`diagramRepo_${currentSpaceId}`);
+      setCurrentDiagramRepo(stored ? JSON.parse(stored) : null);
+    } catch {
+      setCurrentDiagramRepo(null);
+    }
+  }, [currentSpaceId]);
+
+  // Persist whenever the active repo changes
+  useEffect(() => {
+    if (!currentSpaceId) return;
+    if (currentDiagramRepo) {
+      localStorage.setItem(`diagramRepo_${currentSpaceId}`, JSON.stringify(currentDiagramRepo));
+    } else {
+      localStorage.removeItem(`diagramRepo_${currentSpaceId}`);
+    }
+  }, [currentDiagramRepo, currentSpaceId]);
   const [chatOpen, setChatOpen] = useState(false);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
@@ -468,10 +492,6 @@ const UIOverlay = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionCount]);
 
-  // Clear the current diagram repo when the space changes
-  useEffect(() => {
-    setCurrentDiagramRepo(null);
-  }, [currentSpaceId]);
 
   const handleTemplateConfigChange = (field, value) => {
     updateTemplateConfig('main', field, value);
