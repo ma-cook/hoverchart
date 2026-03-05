@@ -55,7 +55,11 @@ const useSpaceManagerStore = create((set, get) => ({
 
         // Register presence for public space
         if (window.publicAccessSpace) {
-          setUserPresence(user.uid, window.publicAccessSpace);
+          setUserPresence(user.uid, window.publicAccessSpace, {
+            displayName: user.displayName || null,
+            photoURL: user.photoURL || null,
+            isGuest: user.isAnonymous || false,
+          });
           registerUserPresence(user.uid, window.publicAccessSpace);
         }
 
@@ -76,7 +80,11 @@ const useSpaceManagerStore = create((set, get) => ({
         }
 
         // Register presence even for the same space (in case it was missed)
-        setUserPresence(user.uid, urlSpaceId);
+        setUserPresence(user.uid, urlSpaceId, {
+          displayName: user.displayName || null,
+          photoURL: user.photoURL || null,
+          isGuest: user.isAnonymous || false,
+        });
         registerUserPresence(user.uid, urlSpaceId);
 
         set({ isLoadingSpace: false });
@@ -96,7 +104,11 @@ const useSpaceManagerStore = create((set, get) => ({
           sessionStorage.setItem('currentSpaceId', urlSpaceId);
 
           // Register user presence in this space
-          setUserPresence(user.uid, urlSpaceId);
+          setUserPresence(user.uid, urlSpaceId, {
+            displayName: user.displayName || null,
+            photoURL: user.photoURL || null,
+            isGuest: user.isAnonymous || false,
+          });
           registerUserPresence(user.uid, urlSpaceId);
 
           // Case 1: URL explicitly provides owner ID

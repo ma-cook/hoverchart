@@ -19,6 +19,7 @@ import {
   getGithubOAuthUrl,
   scanRepositoryAndGenerateDiagram,
 } from '../services/githubRepoService';
+import SpacePresenceAvatars from './SpacePresenceAvatars';
 
 const UIOverlay = ({
   onCreateObject,
@@ -1021,6 +1022,8 @@ const UIOverlay = ({
           </div>
         </div>
       )}
+      {/* Space presence avatars */}
+      <SpacePresenceAvatars spaceId={currentSpaceId} />
     </>
   );
 };

@@ -175,6 +175,14 @@ const App = () => {
   // Memoize redirect decision to prevent unnecessary recalculations
   const shouldRedirect = useMemo(() => !canViewSpace, [canViewSpace]);
 
+  // Register guest presence when a non-logged-in user is viewing a space
+  useEffect(() => {
+    if (!isAuthReady || user || !effectiveSpaceId) return;
+    import('./services/presenceService').then(({ setGuestPresence }) => {
+      setGuestPresence(effectiveSpaceId);
+    });
+  }, [isAuthReady, user, effectiveSpaceId]);
+
   // Spatial partitioning hook with object change handler
   const handleSpatialObjectChange = useCallback(
     (change) => {
