@@ -20,6 +20,7 @@ import {
   scanRepositoryAndGenerateDiagram,
 } from '../services/githubRepoService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
+import SpaceChat from './SpaceChat';
 
 const UIOverlay = ({
   onCreateObject,
@@ -42,6 +43,7 @@ const UIOverlay = ({
   const [scanProgress, setScanProgress] = useState({ isScanning: false, progress: 0, stage: '' });
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [currentDiagramRepo, setCurrentDiagramRepo] = useState(null);
+  const [chatOpen, setChatOpen] = useState(false);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
   const updateTemplateConfig = useUIOverlayStore(
@@ -901,7 +903,28 @@ const UIOverlay = ({
             />
           </div>
         ) : null}
+
+        {/* Comms container - sits below tools-container inside the right panel */}
+        {currentSpaceId && (
+          <div className="coms-container">
+            <button
+              className="shape-button"
+              onClick={() => setChatOpen((prev) => !prev)}
+              title="Toggle Space Chat"
+              style={{
+                background: chatOpen ? 'rgba(74,144,217,0.2)' : undefined,
+                borderColor: chatOpen ? '#4a90d9' : undefined,
+                color: chatOpen ? '#4a90d9' : undefined,
+              }}
+            >
+              💬
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Group chat window - pops out to the left of the right panel */}
+      <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} />
       {/* Visual tools container positioned at bottom center */}
       {user && (
         <div className="visual-tools-container" onClick={(e) => e.stopPropagation()}>
@@ -996,6 +1019,8 @@ const UIOverlay = ({
           </button>
         </div>
       )}
+
+
       
       {/* Loading bar for GitHub repo scanning */}
       {scanProgress.isScanning && (

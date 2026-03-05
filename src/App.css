@@ -815,6 +815,210 @@ body {
   box-shadow: 0 4px 12px rgba(255, 71, 87, 0.4);
 }
 
+/* Comms container - sits below tools-container inside the right panel */
+.coms-container {
+  display: flex;
+  flex-direction: row;
+  gap: 5px;
+  padding: 0;
+  align-items: center;
+}
+
+/* Space chat window - pops out to the left of the right-side tools panel */
+.space-chat-window {
+  position: fixed;
+  top: 50%;
+  right: 70px;
+  transform: translateY(-50%);
+  width: 300px;
+  height: 360px;
+  background: rgba(20, 20, 20, 0.95);
+  border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  z-index: 1001;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.space-chat-header {
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255,255,255,0.07);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.space-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+
+.space-chat-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.space-chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+  border-radius: 2px;
+}
+
+.space-chat-load-more {
+  color: rgba(255,255,255,0.35);
+  font-size: 11px;
+  text-align: center;
+  padding: 4px 0 2px;
+  user-select: none;
+}
+
+.space-chat-empty {
+  color: rgba(255,255,255,0.35);
+  font-size: 12px;
+  text-align: center;
+  margin-top: 20px;
+}
+
+.space-chat-message {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.space-chat-message.own {
+  flex-direction: row-reverse;
+}
+
+.space-chat-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #4a90d9;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.space-chat-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.space-chat-bubble-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 75%;
+}
+
+.space-chat-message.own .space-chat-bubble-wrap {
+  align-items: flex-end;
+}
+
+.space-chat-name {
+  font-size: 10px;
+  color: rgba(255,255,255,0.45);
+  padding: 0 4px;
+}
+
+.space-chat-bubble {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.space-chat-message.own .space-chat-bubble {
+  background: #4a90d9;
+  border-bottom-right-radius: 4px;
+}
+
+.space-chat-message:not(.own) .space-chat-bubble {
+  border-bottom-left-radius: 4px;
+}
+
+.space-chat-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.04);
+}
+
+.space-chat-input {
+  flex: 1;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 16px;
+  padding: 6px 12px;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+
+.space-chat-input::placeholder {
+  color: rgba(255,255,255,0.35);
+}
+
+.space-chat-input:focus {
+  border-color: rgba(74,144,217,0.6);
+  background: rgba(255,255,255,0.13);
+}
+
+.space-chat-send {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #4a90d9;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.space-chat-send:disabled {
+  background: rgba(255,255,255,0.15);
+  cursor: not-allowed;
+}
+
+.space-chat-send:not(:disabled):hover {
+  background: #357bc2;
+}
+
+.space-chat-login-hint {
+  color: rgba(255,255,255,0.4);
+  font-size: 12px;
+  text-align: center;
+  padding: 6px;
+  width: 100%;
+}
+
 /* Responsive design for visual tools container */
 @media (max-width: 768px) {
   .visual-tools-container {
@@ -830,6 +1034,18 @@ body {
     min-height: 40px;
     max-width: 40px;
     max-height: 40px;
+  }
+
+  .coms-container {
+    padding: 0;
+    gap: 4px;
+  }
+
+  .space-chat-window {
+    right: 65px;
+    left: auto;
+    width: 260px;
+    bottom: auto;
   }
 }
 
