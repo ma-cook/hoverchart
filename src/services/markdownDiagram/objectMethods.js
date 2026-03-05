@@ -99,19 +99,24 @@ export const objectMethods = {
 
           if (!objectType || !node) return null;
 
-          const calculateHeaderStyle = (scale, objectType) => {
-            if (objectType !== 'dodecahedron' || !scale) {
+          const calculateHeaderStyle = (scale, objectType, nodeId) => {
+            if (!scale) {
               return { fontSize: 1.5, color: 'black', underline: false };
             }
 
-            const scaleFactor = Math.max(...scale);
-            const uiValue = Math.min(10, Math.max(1, Math.round(1 + scaleFactor * 1.5)));
-            const fontSize = uiValue * 0.7;
+            const isParent = parentChildMap.has(nodeId) && parentChildMap.get(nodeId).size > 0;
 
-            return { fontSize: fontSize, color: 'black', underline: false };
+            if (objectType === 'dodecahedron' || isParent) {
+              const scaleFactor = Math.max(...scale);
+              const uiValue = Math.min(10, Math.max(1, Math.round(1 + scaleFactor * 1.5)));
+              const fontSize = uiValue * 0.7;
+              return { fontSize: fontSize, color: 'black', underline: false };
+            }
+
+            return { fontSize: 1.5, color: 'black', underline: false };
           };
 
-          const headerStyle = calculateHeaderStyle(scale, objectType);
+          const headerStyle = calculateHeaderStyle(scale, objectType, nodeId);
 
           return {
             nodeId,

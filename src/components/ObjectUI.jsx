@@ -69,7 +69,7 @@ const ObjectUI = React.memo(
         followTarget.current.getWorldPosition(worldPosition);
 
         // Set up the camera position at an offset from the object
-        const offset = new THREE.Vector3(20, 20, 20);
+        const offset = new THREE.Vector3(79, 79, 79);
         const cameraPosition = worldPosition.clone().add(offset);
 
         // Update camera
