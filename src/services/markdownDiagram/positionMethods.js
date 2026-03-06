@@ -317,7 +317,11 @@ export const positionMethods = {
   },
 
   /**
-   * Resolve collisions between CONTAINER CUBES only (not individual components)
+   * Resolve collisions between CONTAINER CUBES and grouped-node clusters.
+   *
+   * Virtual containers are now discovered dynamically from
+   * `context.discoveredGroups` (populated by positionGroupedNodes) so any new
+   * node type automatically participates in collision resolution.
    */
   resolveCollisions(context) {
     const {
@@ -328,22 +332,20 @@ export const positionMethods = {
       ungroupedComponents = [],
     } = context;
 
+    // ── helpers ───────────────────────────────────────────────────────────
+
     const moveComponentTree = (nodeId, offsetX, offsetZ, visited = new Set()) => {
-      if (visited.has(nodeId)) {
-        console.warn(`⚠️  Circular reference detected for ${nodeId}, skipping`);
-        return;
-      }
+      if (visited.has(nodeId)) return;
       visited.add(nodeId);
 
       const position = nodePositions.get(nodeId);
       if (!position) return;
 
-      const newPos = [
+      nodePositions.set(nodeId, [
         position[0] + offsetX,
         position[1],
         position[2] + offsetZ,
-      ];
-      nodePositions.set(nodeId, newPos);
+      ]);
 
       const children = parentChildMap.get(nodeId);
       if (children) {
@@ -358,14 +360,9 @@ export const positionMethods = {
       if (!children) return [];
 
       return Array.from(children).filter((childId) => {
-        if (internalComponentChildren && internalComponentChildren.has(childId)) {
-          return false;
-        }
+        if (internalComponentChildren && internalComponentChildren.has(childId)) return false;
         const childNode = graphNodes.get(childId);
-        return (
-          childNode &&
-          childNode.type === NODE_TYPE_COMPONENT
-        );
+        return childNode && childNode.type === NODE_TYPE_COMPONENT;
       });
     };
 
@@ -378,6 +375,8 @@ export const positionMethods = {
       );
     };
 
+    // ── 1. Component-hierarchy containers (unchanged) ─────────────────────
+
     const containerParents = [];
 
     for (const [nodeId, node] of graphNodes.entries()) {
@@ -385,88 +384,46 @@ export const positionMethods = {
       if (internalComponentChildren && internalComponentChildren.has(nodeId)) continue;
       if (!nodePositions.has(nodeId)) continue;
 
-      const componentChildren = getComponentChildren(nodeId);
-
-      if (componentChildren.length >= 2) {
+      if (getComponentChildren(nodeId).length >= 2) {
         containerParents.push(nodeId);
       }
     }
 
-    if (containerParents.length < 2) {
-      return;
-    }
+    // ── 2. Build virtual containers from dynamic groups ───────────────────
 
     const containersByLevel = new Map();
 
     for (const containerId of containerParents) {
-      const childParentMap = context.childParentMap;
-
       let level = 0;
       let currentId = containerId;
 
-      while (childParentMap.has(currentId)) {
+      while (context.childParentMap.has(currentId)) {
         level++;
-        currentId = childParentMap.get(currentId);
+        currentId = context.childParentMap.get(currentId);
         if (level > 20) break;
       }
 
       if (level === 0) {
-        if (!containersByLevel.has(level)) {
-          containersByLevel.set(level, []);
-        }
+        if (!containersByLevel.has(level)) containersByLevel.set(level, []);
         containersByLevel.get(level).push(containerId);
       }
     }
 
-    if (!containersByLevel.has(-1)) {
-      containersByLevel.set(-1, []);
-    }
+    if (!containersByLevel.has(-1)) containersByLevel.set(-1, []);
 
     if (ungroupedComponents.length > 0) {
       containersByLevel.get(-1).push('__UNGROUPED__');
     }
 
-    const utilityNodes = [];
-    const hookNodes = [];
-    const serviceNodes = [];
-    const storeNodes = [];
-    const backendCollisionNodes = [];
-
-    for (const [nodeId, node] of graphNodes.entries()) {
-      const childParentMap = context.childParentMap;
-      if (childParentMap.has(nodeId)) continue;
-
-      const nodeType = (node.type || '').toLowerCase().trim();
-      if (nodeType === NODE_TYPE_FUNCTION) {
-        utilityNodes.push(nodeId);
-      } else if (nodeType === NODE_TYPE_HOOK) {
-        hookNodes.push(nodeId);
-      } else if (nodeType === NODE_TYPE_SERVICE) {
-        if (nodeId.startsWith('backend_')) {
-          backendCollisionNodes.push(nodeId);
-        } else {
-          serviceNodes.push(nodeId);
-        }
-      } else if (nodeType === NODE_TYPE_STORE) {
-        storeNodes.push(nodeId);
+    // Read dynamically-discovered groups set by positionGroupedNodes
+    const discoveredGroups = context.discoveredGroups || new Map();
+    for (const [groupKey, nodes] of discoveredGroups) {
+      if (nodes.length > 0) {
+        containersByLevel.get(-1).push(`__GROUP_${groupKey}__`);
       }
     }
 
-    if (utilityNodes.length > 0) {
-      containersByLevel.get(-1).push('__UTILITIES__');
-    }
-    if (hookNodes.length > 0) {
-      containersByLevel.get(-1).push('__HOOKS__');
-    }
-    if (serviceNodes.length > 0) {
-      containersByLevel.get(-1).push('__SERVICES__');
-    }
-    if (storeNodes.length > 0) {
-      containersByLevel.get(-1).push('__STORES__');
-    }
-    if (backendCollisionNodes.length > 0) {
-      containersByLevel.get(-1).push('__BACKEND__');
-    }
+    // ── 3. Build bounding boxes ───────────────────────────────────────────
 
     const levels = Array.from(containersByLevel.keys()).sort((a, b) => b - a);
 
@@ -481,49 +438,12 @@ export const positionMethods = {
         let maxX = -Infinity, maxZ = -Infinity;
 
         let nodeList = null;
+
         if (containerId === '__UNGROUPED__') {
           nodeList = ungroupedComponents;
-        } else if (containerId === '__UTILITIES__') {
-          nodeList = [];
-          for (const [nodeId, node] of graphNodes.entries()) {
-            if (!context.childParentMap.has(nodeId) &&
-                node.type === NODE_TYPE_FUNCTION) {
-              nodeList.push(nodeId);
-            }
-          }
-        } else if (containerId === '__HOOKS__') {
-          nodeList = [];
-          for (const [nodeId, node] of graphNodes.entries()) {
-            if (!context.childParentMap.has(nodeId) &&
-                node.type === NODE_TYPE_HOOK) {
-              nodeList.push(nodeId);
-            }
-          }
-        } else if (containerId === '__SERVICES__') {
-          nodeList = [];
-          for (const [nodeId, node] of graphNodes.entries()) {
-            if (!context.childParentMap.has(nodeId) &&
-                node.type === NODE_TYPE_SERVICE) {
-              nodeList.push(nodeId);
-            }
-          }
-        } else if (containerId === '__STORES__') {
-          nodeList = [];
-          for (const [nodeId, node] of graphNodes.entries()) {
-            if (!context.childParentMap.has(nodeId) &&
-                node.type === NODE_TYPE_STORE) {
-              nodeList.push(nodeId);
-            }
-          }
-        } else if (containerId === '__BACKEND__') {
-          nodeList = [];
-          for (const [nodeId, node] of graphNodes.entries()) {
-            if (!context.childParentMap.has(nodeId) &&
-                node.type === NODE_TYPE_SERVICE &&
-                nodeId.startsWith('backend_')) {
-              nodeList.push(nodeId);
-            }
-          }
+        } else if (containerId.startsWith('__GROUP_')) {
+          const groupKey = containerId.slice(8, -2); // extract key from __GROUP_xxx__
+          nodeList = discoveredGroups.get(groupKey) || [];
         }
 
         if (nodeList) {
@@ -534,15 +454,10 @@ export const positionMethods = {
             const nodeScale = context.nodeScales?.get(nodeId) || [1, 1, 1];
             const nodeSize = BASE_DODECAHEDRON_RADIUS * Math.max(...nodeScale);
 
-            const nodeMinX = pos[0] - nodeSize;
-            const nodeMaxX = pos[0] + nodeSize;
-            const nodeMinZ = pos[2] - nodeSize;
-            const nodeMaxZ = pos[2] + nodeSize;
-
-            minX = Math.min(minX, nodeMinX);
-            maxX = Math.max(maxX, nodeMaxX);
-            minZ = Math.min(minZ, nodeMinZ);
-            maxZ = Math.max(maxZ, nodeMaxZ);
+            minX = Math.min(minX, pos[0] - nodeSize);
+            maxX = Math.max(maxX, pos[0] + nodeSize);
+            minZ = Math.min(minZ, pos[2] - nodeSize);
+            maxZ = Math.max(maxZ, pos[2] + nodeSize);
           }
         } else {
           const componentChildren = getComponentChildren(containerId);
@@ -555,159 +470,83 @@ export const positionMethods = {
             const childScale = context.nodeScales?.get(childId) || [1, 1, 1];
             const childSize = BASE_DODECAHEDRON_RADIUS * Math.max(...childScale);
 
-            const childMinX = childPos[0] - childSize;
-            const childMaxX = childPos[0] + childSize;
-            const childMinZ = childPos[2] - childSize;
-            const childMaxZ = childPos[2] + childSize;
-
-            minX = Math.min(minX, childMinX);
-            maxX = Math.max(maxX, childMaxX);
-            minZ = Math.min(minZ, childMinZ);
-            maxZ = Math.max(maxZ, childMaxZ);
+            minX = Math.min(minX, childPos[0] - childSize);
+            maxX = Math.max(maxX, childPos[0] + childSize);
+            minZ = Math.min(minZ, childPos[2] - childSize);
+            maxZ = Math.max(maxZ, childPos[2] + childSize);
           }
         }
 
         if (minX === Infinity || maxX === -Infinity) continue;
 
         const padding = 120;
-        minX -= padding;
-        maxX += padding;
-        minZ -= padding;
-        maxZ += padding;
+        minX -= padding; maxX += padding;
+        minZ -= padding; maxZ += padding;
 
         containerBBoxes.push({
           nodeId: containerId,
-          minX,
-          maxX,
-          minZ,
-          maxZ,
+          minX, maxX, minZ, maxZ,
           width: maxX - minX,
           height: maxZ - minZ,
         });
       }
+
+      // ── 4. Pairwise overlap resolution ──────────────────────────────────
+
+      const resolveNodeMove = (bbox, offsetX, offsetZ) => {
+        if (bbox.nodeId === '__UNGROUPED__') {
+          for (const nId of ungroupedComponents) moveComponentTree(nId, offsetX, offsetZ);
+        } else if (bbox.nodeId.startsWith('__GROUP_')) {
+          const groupKey = bbox.nodeId.slice(8, -2);
+          const nodes = discoveredGroups.get(groupKey) || [];
+          for (const nId of nodes) moveComponentTree(nId, offsetX, offsetZ);
+        } else {
+          moveComponentTree(bbox.nodeId, offsetX, offsetZ);
+        }
+      };
 
       for (let i = 0; i < containerBBoxes.length; i++) {
         for (let j = i + 1; j < containerBBoxes.length; j++) {
           const bbox1 = containerBBoxes[i];
           const bbox2 = containerBBoxes[j];
 
-          if (checkOverlap(bbox1, bbox2)) {
-            const overlapX =
-              Math.min(bbox1.maxX, bbox2.maxX) -
-              Math.max(bbox1.minX, bbox2.minX);
-            const overlapZ =
-              Math.min(bbox1.maxZ, bbox2.maxZ) -
-              Math.max(bbox1.minZ, bbox2.minZ);
+          if (!checkOverlap(bbox1, bbox2)) continue;
 
-            if (overlapX < 1 && overlapZ < 1) {
-              continue;
+          const overlapX =
+            Math.min(bbox1.maxX, bbox2.maxX) - Math.max(bbox1.minX, bbox2.minX);
+          const overlapZ =
+            Math.min(bbox1.maxZ, bbox2.maxZ) - Math.max(bbox1.minZ, bbox2.minZ);
+
+          if (overlapX < 1 && overlapZ < 1) continue;
+
+          const center1X = (bbox1.minX + bbox1.maxX) / 2;
+          const center1Z = (bbox1.minZ + bbox1.maxZ) / 2;
+          const center2X = (bbox2.minX + bbox2.maxX) / 2;
+          const center2Z = (bbox2.minZ + bbox2.maxZ) / 2;
+
+          const minGap = 150;
+
+          if (overlapX < overlapZ) {
+            const direction = center2X > center1X ? 1 : -1;
+            const requiredDistance = bbox1.width / 2 + bbox2.width / 2 + minGap;
+            const moveDistance = requiredDistance - Math.abs(center2X - center1X);
+
+            if (moveDistance > 0) {
+              const offsetX = direction * moveDistance;
+              resolveNodeMove(bbox2, offsetX, 0);
+              bbox2.minX += offsetX;
+              bbox2.maxX += offsetX;
             }
+          } else {
+            const direction = center2Z > center1Z ? 1 : -1;
+            const requiredDistance = bbox1.height / 2 + bbox2.height / 2 + minGap;
+            const moveDistance = requiredDistance - Math.abs(center2Z - center1Z);
 
-            const center1X = (bbox1.minX + bbox1.maxX) / 2;
-            const center1Z = (bbox1.minZ + bbox1.maxZ) / 2;
-            const center2X = (bbox2.minX + bbox2.maxX) / 2;
-            const center2Z = (bbox2.minZ + bbox2.maxZ) / 2;
-
-            if (overlapX < overlapZ) {
-              const direction = center2X > center1X ? 1 : -1;
-              const halfWidth1 = bbox1.width / 2;
-              const halfWidth2 = bbox2.width / 2;
-              const minGap = 150;
-              const requiredDistance = halfWidth1 + halfWidth2 + minGap;
-              const currentDistance = Math.abs(center2X - center1X);
-              const moveDistance = requiredDistance - currentDistance;
-
-              if (moveDistance > 0) {
-                const offsetX = direction * moveDistance;
-
-                const virtualContainerMap = {
-                  '__UNGROUPED__': ungroupedComponents,
-                  '__UTILITIES__': [],
-                  '__HOOKS__': [],
-                  '__SERVICES__': [],
-                  '__STORES__': [],
-                  '__BACKEND__': []
-                };
-
-                if (bbox2.nodeId.startsWith('__')) {
-                  for (const [nodeId, node] of graphNodes.entries()) {
-                    if (context.childParentMap.has(nodeId)) continue;
-                    const nodeType = (node.type || '').toLowerCase().trim();
-                    if (bbox2.nodeId === '__UTILITIES__' && nodeType === NODE_TYPE_FUNCTION) {
-                      virtualContainerMap['__UTILITIES__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__HOOKS__' && nodeType === NODE_TYPE_HOOK) {
-                      virtualContainerMap['__HOOKS__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__SERVICES__' && nodeType === NODE_TYPE_SERVICE && !nodeId.startsWith('backend_')) {
-                      virtualContainerMap['__SERVICES__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__STORES__' && nodeType === NODE_TYPE_STORE) {
-                      virtualContainerMap['__STORES__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__BACKEND__' && nodeType === NODE_TYPE_SERVICE && nodeId.startsWith('backend_')) {
-                      virtualContainerMap['__BACKEND__'].push(nodeId);
-                    }
-                  }
-                }
-
-                if (virtualContainerMap[bbox2.nodeId]) {
-                  for (const nodeId of virtualContainerMap[bbox2.nodeId]) {
-                    moveComponentTree(nodeId, offsetX, 0);
-                  }
-                } else {
-                  moveComponentTree(bbox2.nodeId, offsetX, 0);
-                }
-
-                bbox2.minX += offsetX;
-                bbox2.maxX += offsetX;
-              }
-            } else {
-              const direction = center2Z > center1Z ? 1 : -1;
-              const halfDepth1 = bbox1.height / 2;
-              const halfDepth2 = bbox2.height / 2;
-              const minGap = 150;
-              const requiredDistance = halfDepth1 + halfDepth2 + minGap;
-              const currentDistance = Math.abs(center2Z - center1Z);
-              const moveDistance = requiredDistance - currentDistance;
-
-              if (moveDistance > 0) {
-                const offsetZ = direction * moveDistance;
-
-                const virtualContainerMap = {
-                  '__UNGROUPED__': ungroupedComponents,
-                  '__UTILITIES__': [],
-                  '__HOOKS__': [],
-                  '__SERVICES__': [],
-                  '__STORES__': [],
-                  '__BACKEND__': []
-                };
-
-                if (bbox2.nodeId.startsWith('__')) {
-                  for (const [nodeId, node] of graphNodes.entries()) {
-                    if (context.childParentMap.has(nodeId)) continue;
-                    const nodeType = (node.type || '').toLowerCase().trim();
-                    if (bbox2.nodeId === '__UTILITIES__' && nodeType === NODE_TYPE_FUNCTION) {
-                      virtualContainerMap['__UTILITIES__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__HOOKS__' && nodeType === NODE_TYPE_HOOK) {
-                      virtualContainerMap['__HOOKS__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__SERVICES__' && nodeType === NODE_TYPE_SERVICE && !nodeId.startsWith('backend_')) {
-                      virtualContainerMap['__SERVICES__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__STORES__' && nodeType === NODE_TYPE_STORE) {
-                      virtualContainerMap['__STORES__'].push(nodeId);
-                    } else if (bbox2.nodeId === '__BACKEND__' && nodeType === NODE_TYPE_SERVICE && nodeId.startsWith('backend_')) {
-                      virtualContainerMap['__BACKEND__'].push(nodeId);
-                    }
-                  }
-                }
-
-                if (virtualContainerMap[bbox2.nodeId]) {
-                  for (const nodeId of virtualContainerMap[bbox2.nodeId]) {
-                    moveComponentTree(nodeId, 0, offsetZ);
-                  }
-                } else {
-                  moveComponentTree(bbox2.nodeId, 0, offsetZ);
-                }
-
-                bbox2.minZ += offsetZ;
-                bbox2.maxZ += offsetZ;
-              }
+            if (moveDistance > 0) {
+              const offsetZ = direction * moveDistance;
+              resolveNodeMove(bbox2, 0, offsetZ);
+              bbox2.minZ += offsetZ;
+              bbox2.maxZ += offsetZ;
             }
           }
         }
@@ -861,7 +700,12 @@ export const positionMethods = {
   },
 
   /**
-   * Position utility modules, services, and stores in grouped square grids
+   * Position grouped nodes (utilities, services, stores, hooks, workers, etc.)
+   * in square grids arranged around the root component hierarchy.
+   *
+   * Groups are discovered dynamically from the node types present in the graph
+   * rather than being hard-coded, so any new folder / node type automatically
+   * gets its own positioned group and container.
    */
   positionGroupedNodes(context) {
     const {
@@ -874,92 +718,69 @@ export const positionMethods = {
       internalComponentChildren,
     } = context;
 
-    const utilityNodes = [];
-    const serviceNodes = [];
-    const storeNodes = [];
-    const hookNodes = [];
-    const backendNodes = [];
+    // ── 1. Dynamic group discovery ────────────────────────────────────────
+    const groupedByType = new Map(); // groupKey → [nodeId, …]
     const ungroupedComponents = [];
 
     for (const [nodeId, node] of graphNodes.entries()) {
-      if (childParentMap.has(nodeId)) {
+      // Skip nodes that are children of another node
+      if (childParentMap.has(nodeId)) continue;
+
+      const nodeType = (node.type || '').toLowerCase().trim();
+
+      // Components are handled by hierarchy or collected as ungrouped
+      if (nodeType === NODE_TYPE_COMPONENT) {
+        if (
+          nodeId !== 'MainEntry' &&
+          !(internalComponentChildren && internalComponentChildren.has(nodeId)) &&
+          !nodePositions.has(nodeId)
+        ) {
+          ungroupedComponents.push(nodeId);
+        }
         continue;
       }
 
-      const nodeType = (node.type || '').toLowerCase().trim();
+      // Datapaths don't produce 3D objects
+      if (nodeType === NODE_TYPE_DATAPATH) continue;
 
-      if (nodeType === NODE_TYPE_FUNCTION) {
-        utilityNodes.push(nodeId);
-      } else if (nodeType === NODE_TYPE_HOOK) {
-        hookNodes.push(nodeId);
-      } else if (nodeType === NODE_TYPE_SERVICE) {
-        if (nodeId.startsWith('backend_')) {
-          backendNodes.push(nodeId);
-        } else {
-          serviceNodes.push(nodeId);
-        }
-      } else if (nodeType === NODE_TYPE_STORE) {
-        storeNodes.push(nodeId);
+      // Determine group key — preserve backend splitting for services
+      let groupKey = nodeType;
+      if (nodeType === NODE_TYPE_SERVICE && nodeId.startsWith('backend_')) {
+        groupKey = 'backend';
       }
+
+      if (!groupedByType.has(groupKey)) {
+        groupedByType.set(groupKey, []);
+      }
+      groupedByType.get(groupKey).push(nodeId);
     }
 
-    const reachableFromRootModules = new Set();
-    const rootModuleNames = ['main', 'index', 'firebase', 'App'];
-
-    const actualRootModules = Array.from(rootNodes).filter((nodeId) => {
-      return rootModuleNames.includes(nodeId);
-    });
-
-    const markReachable = (nodeId) => {
-      if (reachableFromRootModules.has(nodeId)) return;
-
-      const node = graphNodes.get(nodeId);
-      if (!node) return;
-
-      if (node.type === NODE_TYPE_COMPONENT) {
-        reachableFromRootModules.add(nodeId);
-      }
-
+    // ── 2. Unified scale calculation for all grouped nodes ────────────────
+    const calculateNodeScaleFromChildren = (nodeId) => {
       const children = context.parentChildMap.get(nodeId) || new Set();
-      children.forEach((childId) => markReachable(childId));
-
-      if (context.graphConnections) {
-        Array.from(context.graphConnections.values()).forEach((connection) => {
-          if (connection.source === nodeId && connection.target) {
-            const targetNode = graphNodes.get(connection.target);
-            if (targetNode && targetNode.type === NODE_TYPE_COMPONENT) {
-              markReachable(connection.target);
-            }
-          }
-        });
+      if (children.size > 0) {
+        const childCount = children.size;
+        const gridSize3D = Math.ceil(Math.pow(childCount, 1 / 3));
+        const childSize = 10;
+        const spacing = 50;
+        const requiredSpace = (gridSize3D - 1) * spacing + childSize * 2;
+        const baseCubeSize = 20;
+        const generousPadding = Math.max(30, childCount * 8);
+        const totalRequiredSize = requiredSpace + generousPadding * 2;
+        const minScaleFactor = Math.max(1.5, 1 + childCount * 0.3);
+        const calculatedScaleFactor = totalRequiredSize / baseCubeSize;
+        const scaleFactor = Math.max(minScaleFactor, calculatedScaleFactor);
+        nodeScales.set(nodeId, [scaleFactor, scaleFactor, scaleFactor]);
+      } else {
+        nodeScales.set(nodeId, [1, 1, 1]);
       }
     };
 
-    actualRootModules.forEach((rootModuleId) => {
-      markReachable(rootModuleId);
-    });
-
-    for (const nodeId of graphNodes.keys()) {
-      const node = graphNodes.get(nodeId);
-      const nodeType = (node.type || '').toLowerCase().trim();
-
-      if (
-        nodeType === NODE_TYPE_COMPONENT &&
-        nodeId !== 'MainEntry'
-      ) {
-        if (
-          context.internalComponentChildren &&
-          context.internalComponentChildren.has(nodeId)
-        ) {
-          continue;
-        }
-
-        if (!nodePositions.has(nodeId)) {
-          ungroupedComponents.push(nodeId);
-        }
-      }
+    for (const [, nodes] of groupedByType) {
+      nodes.forEach(calculateNodeScaleFromChildren);
     }
 
+    // ── 3. Layout helpers ─────────────────────────────────────────────────
     const calculateGroupSpacing = (nodes) => {
       let maxScale = 1;
       nodes.forEach((nodeId) => {
@@ -969,16 +790,13 @@ export const positionMethods = {
           maxScale = Math.max(maxScale, nodeScale);
         }
       });
-
       const nodeHalfSize = maxScale * 5;
       const gap = 40;
       return Math.max(100, nodeHalfSize * 2 + gap);
     };
 
     const calculateGroupBounds = (nodes) => {
-      if (nodes.length === 0) {
-        return { width: 0, height: 0, depth: 0 };
-      }
+      if (nodes.length === 0) return { width: 0, height: 0, depth: 0 };
 
       const nodeSpacing = calculateGroupSpacing(nodes);
       const gridSize = Math.ceil(Math.sqrt(nodes.length));
@@ -990,20 +808,15 @@ export const positionMethods = {
       nodes.forEach((nodeId, index) => {
         const row = Math.floor(index / gridSize);
         const col = index % gridSize;
-
         const x = col * nodeSpacing;
         const z = row * nodeSpacing;
 
         const scale = nodeScales.get(nodeId) || [1, 1, 1];
         const node = graphNodes.get(nodeId);
-        const nodeType = node ? (node.type || '').toLowerCase().trim() : '';
-
-        let nodeHalfSize;
-        if (nodeType === NODE_TYPE_COMPONENT) {
-          nodeHalfSize = Math.max(...scale) * 10;
-        } else {
-          nodeHalfSize = Math.max(...scale) * 5;
-        }
+        const nType = node ? (node.type || '').toLowerCase().trim() : '';
+        const nodeHalfSize = nType === NODE_TYPE_COMPONENT
+          ? Math.max(...scale) * 10
+          : Math.max(...scale) * 5;
 
         minX = Math.min(minX, x - nodeHalfSize);
         maxX = Math.max(maxX, x + nodeHalfSize);
@@ -1017,26 +830,31 @@ export const positionMethods = {
       return {
         width: (maxX - minX) + padding * 2,
         height: (maxY - minY) + padding * 2,
-        depth: (maxZ - minZ) + padding * 2
+        depth: (maxZ - minZ) + padding * 2,
       };
     };
 
     const positionGroup = (nodes, xOffset, yOffset, zOffset) => {
       if (nodes.length === 0) return;
-
       const nodeSpacing = calculateGroupSpacing(nodes);
       const gridSize = Math.ceil(Math.sqrt(nodes.length));
+      const numRows = Math.ceil(nodes.length / gridSize);
+
+      // Center the grid around the offset point so (xOffset, zOffset)
+      // is the group's centre, not its top-left corner.
+      const gridWidth = (gridSize - 1) * nodeSpacing;
+      const gridDepth = (numRows - 1) * nodeSpacing;
+      const startX = xOffset - gridWidth / 2;
+      const startZ = zOffset - gridDepth / 2;
 
       nodes.forEach((nodeId, index) => {
         const row = Math.floor(index / gridSize);
         const col = index % gridSize;
-
         const position = [
-          basePosition[0] + xOffset + col * nodeSpacing,
+          basePosition[0] + startX + col * nodeSpacing,
           basePosition[1] + yOffset,
-          basePosition[2] + zOffset + row * nodeSpacing,
+          basePosition[2] + startZ + row * nodeSpacing,
         ];
-
         nodePositions.set(nodeId, position);
         if (!nodeScales.has(nodeId)) {
           nodeScales.set(nodeId, [1, 1, 1]);
@@ -1044,86 +862,7 @@ export const positionMethods = {
       });
     };
 
-    utilityNodes.forEach((utilityId) => {
-      const children = context.parentChildMap.get(utilityId) || new Set();
-      if (children.size > 0) {
-        const childCount = children.size;
-        const gridSize3D = Math.ceil(Math.pow(childCount, 1 / 3));
-        const childCubeSize = 10;
-        const spacing = 50;
-        const requiredSpace = (gridSize3D - 1) * spacing + childCubeSize * 2;
-        const baseCubeSize = 20;
-        const generousPadding = Math.max(30, childCount * 8);
-        const totalRequiredSize = requiredSpace + generousPadding * 2;
-        const minScaleFactor = Math.max(1.5, 1 + childCount * 0.3);
-        const calculatedScaleFactor = totalRequiredSize / baseCubeSize;
-        const scaleFactor = Math.max(minScaleFactor, calculatedScaleFactor);
-        nodeScales.set(utilityId, [scaleFactor, scaleFactor, scaleFactor]);
-      } else {
-        nodeScales.set(utilityId, [1, 1, 1]);
-      }
-    });
-
-    serviceNodes.forEach((serviceId) => {
-      const children = context.parentChildMap.get(serviceId) || new Set();
-      if (children.size > 0) {
-        const childCount = children.size;
-        const gridSize3D = Math.ceil(Math.pow(childCount, 1 / 3));
-        const childTetrahedronSize = 10;
-        const spacing = 50;
-        const requiredSpace = (gridSize3D - 1) * spacing + childTetrahedronSize * 2;
-        const baseCubeSize = 20;
-        const generousPadding = Math.max(30, childCount * 8);
-        const totalRequiredSize = requiredSpace + generousPadding * 2;
-        const minScaleFactor = Math.max(1.5, 1 + childCount * 0.3);
-        const calculatedScaleFactor = totalRequiredSize / baseCubeSize;
-        const scaleFactor = Math.max(minScaleFactor, calculatedScaleFactor);
-        nodeScales.set(serviceId, [scaleFactor, scaleFactor, scaleFactor]);
-      } else {
-        nodeScales.set(serviceId, [1, 1, 1]);
-      }
-    });
-
-    backendNodes.forEach((backendId) => {
-      const children = context.parentChildMap.get(backendId) || new Set();
-      if (children.size > 0) {
-        const childCount = children.size;
-        const gridSize3D = Math.ceil(Math.pow(childCount, 1 / 3));
-        const childSize = 10;
-        const spacing = 50;
-        const requiredSpace = (gridSize3D - 1) * spacing + childSize * 2;
-        const baseCubeSize = 20;
-        const generousPadding = Math.max(30, childCount * 8);
-        const totalRequiredSize = requiredSpace + generousPadding * 2;
-        const minScaleFactor = Math.max(1.5, 1 + childCount * 0.3);
-        const calculatedScaleFactor = totalRequiredSize / baseCubeSize;
-        const scaleFactor = Math.max(minScaleFactor, calculatedScaleFactor);
-        nodeScales.set(backendId, [scaleFactor, scaleFactor, scaleFactor]);
-      } else {
-        nodeScales.set(backendId, [1, 1, 1]);
-      }
-    });
-
-    hookNodes.forEach((hookId) => {
-      const children = context.parentChildMap.get(hookId) || new Set();
-      if (children.size > 0) {
-        const childCount = children.size;
-        const gridSize3D = Math.ceil(Math.pow(childCount, 1 / 3));
-        const childCubeSize = 10;
-        const spacing = 50;
-        const requiredSpace = (gridSize3D - 1) * spacing + childCubeSize * 2;
-        const baseCubeSize = 20;
-        const generousPadding = Math.max(30, childCount * 8);
-        const totalRequiredSize = requiredSpace + generousPadding * 2;
-        const minScaleFactor = Math.max(1.5, 1 + childCount * 0.3);
-        const calculatedScaleFactor = totalRequiredSize / baseCubeSize;
-        const scaleFactor = Math.max(minScaleFactor, calculatedScaleFactor);
-        nodeScales.set(hookId, [scaleFactor, scaleFactor, scaleFactor]);
-      } else {
-        nodeScales.set(hookId, [1, 1, 1]);
-      }
-    });
-
+    // ── 4. Root hierarchy bounds ──────────────────────────────────────────
     const rootHierarchyBounds = this.calculateRootHierarchyContainerBounds(
       context,
       graphNodes,
@@ -1135,35 +874,67 @@ export const positionMethods = {
 
     const groupContainerYOffset = rootHierarchyBounds.centerY - basePosition[1];
     const ungroupedYOffset = groupContainerYOffset + 200;
-
     const edgeSpacing = 100;
 
-    const utilityBounds = calculateGroupBounds(utilityNodes);
-    const hookBounds = calculateGroupBounds(hookNodes);
-    const serviceBounds = calculateGroupBounds(serviceNodes);
-    const storeBounds = calculateGroupBounds(storeNodes);
-    const backendBounds = calculateGroupBounds(backendNodes);
+    // ── 5. Position discovered groups in a circle around root hierarchy ───
+    const groupEntries = Array.from(groupedByType.entries())
+      .filter(([, nodes]) => nodes.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b)); // deterministic ordering
 
-    const rootLeftEdge = rootHierarchyBounds.minX;
-    const rootRightEdge = rootHierarchyBounds.maxX;
-    const rootFrontEdge = rootHierarchyBounds.maxZ;
-    const rootBackEdge = rootHierarchyBounds.minZ;
+    if (groupEntries.length > 0) {
+      const rootWidth = rootHierarchyBounds.maxX - rootHierarchyBounds.minX;
+      const rootDepth = rootHierarchyBounds.maxZ - rootHierarchyBounds.minZ;
+      const rootRadius = Math.max(rootWidth, rootDepth) / 2;
+      const rootCenterXOffset = rootHierarchyBounds.centerX - basePosition[0];
+      const rootCenterZOffset = rootHierarchyBounds.centerZ - basePosition[2];
 
-    const utilityXOffset = rootLeftEdge - edgeSpacing - utilityBounds.width - basePosition[0];
-    positionGroup(utilityNodes, utilityXOffset, groupContainerYOffset, 0);
+      const angleStep = (2 * Math.PI) / groupEntries.length;
 
-    const backendXOffset = utilityXOffset - edgeSpacing - backendBounds.width;
-    positionGroup(backendNodes, backendXOffset, groupContainerYOffset, 0);
+      // Pre-compute the bounding radius of each group
+      const groupRadii = groupEntries.map(([, nodes]) => {
+        const bounds = calculateGroupBounds(nodes);
+        return Math.max(bounds.width, bounds.depth) / 2;
+      });
 
-    const hookXOffset = rootRightEdge + edgeSpacing - basePosition[0];
-    positionGroup(hookNodes, hookXOffset, groupContainerYOffset, 0);
+      const maxGroupRadius = Math.max(...groupRadii, 0);
+      const minGapBetweenGroups = 100;
 
-    const serviceZOffset = rootFrontEdge + edgeSpacing - basePosition[2];
-    positionGroup(serviceNodes, 0, groupContainerYOffset, serviceZOffset);
+      // Calculate the minimum circle radius so that:
+      //  a) every group clears the root hierarchy
+      //  b) adjacent groups on the circle don't overlap
+      let minPlacementRadius = rootRadius + edgeSpacing + maxGroupRadius;
 
-    const storeZOffset = rootBackEdge - edgeSpacing - storeBounds.depth - basePosition[2];
-    positionGroup(storeNodes, 0, groupContainerYOffset, storeZOffset);
+      if (groupEntries.length >= 2) {
+        // For each pair of adjacent groups (including wrap-around),
+        // 2R·sin(Δθ/2) must be ≥ r_i + r_{i+1} + gap
+        const sinHalfAngle = Math.sin(angleStep / 2);
+        if (sinHalfAngle > 0.001) {
+          for (let i = 0; i < groupEntries.length; i++) {
+            const j = (i + 1) % groupEntries.length;
+            const requiredSeparation =
+              groupRadii[i] + groupRadii[j] + minGapBetweenGroups;
+            const requiredR = requiredSeparation / (2 * sinHalfAngle);
+            minPlacementRadius = Math.max(minPlacementRadius, requiredR);
+          }
+        }
+      }
 
+      groupEntries.forEach(([, nodes], index) => {
+        // Start from left side (−π) and distribute evenly
+        const angle = -Math.PI + index * angleStep;
+        const xOffset =
+          Math.cos(angle) * minPlacementRadius + rootCenterXOffset;
+        const zOffset =
+          Math.sin(angle) * minPlacementRadius + rootCenterZOffset;
+
+        positionGroup(nodes, xOffset, groupContainerYOffset, zOffset);
+      });
+    }
+
+    // Store discovered groups on context so resolveCollisions can use them
+    context.discoveredGroups = groupedByType;
+
+    // ── 6. Ungrouped components ───────────────────────────────────────────
     ungroupedComponents.forEach((componentId) => {
       const scaleResult = this.calculateDodecahedronScale(
         componentId,
@@ -1182,21 +953,20 @@ export const positionMethods = {
       ungroupedComponents.forEach((nodeId, index) => {
         const row = Math.floor(index / gridSize);
         const col = index % gridSize;
-
         const scale = nodeScales.get(nodeId) || [1, 1, 1];
         const scaleFactor = Math.max(...scale);
         const nodeSpacing = baseSpacing * scaleFactor;
 
         const position = [
-          basePosition[0] + 0 + col * nodeSpacing,
+          basePosition[0] + col * nodeSpacing,
           basePosition[1] + ungroupedYOffset,
           basePosition[2] + 50 + row * nodeSpacing,
         ];
-
         nodePositions.set(nodeId, position);
       });
     }
 
+    // ── 7. Position children of ungrouped components ──────────────────────
     ungroupedComponents.forEach((componentId) => {
       const children = context.parentChildMap.get(componentId) || new Set();
       if (children.size > 0) {
@@ -1246,88 +1016,26 @@ export const positionMethods = {
       }
     });
 
-    utilityNodes.forEach((utilityId) => {
-      const children = context.parentChildMap.get(utilityId) || new Set();
-      if (children.size > 0) {
-        const utilityPosition = nodePositions.get(utilityId);
+    // ── 8. Position children of ALL grouped nodes (unified) ───────────────
+    for (const [, nodes] of groupedByType) {
+      nodes.forEach((groupNodeId) => {
+        const children = context.parentChildMap.get(groupNodeId) || new Set();
+        if (children.size === 0) return;
 
+        const parentPosition = nodePositions.get(groupNodeId);
         const childArray = Array.from(children).sort();
+
         childArray.forEach((childId, index) => {
           const childNode = graphNodes.get(childId);
           if (!childNode) return;
 
           const childType = (childNode.type || '').toLowerCase().trim();
 
-          if (childType === NODE_TYPE_FUNCTION) {
-            const childPosition = this.calculateNodePosition(
-              childId,
-              basePosition,
-              1,
-              index,
-              childArray.length,
-              utilityPosition,
-              50,
-              new Set(),
-              graphNodes,
-              context.parentChildMap,
-              context?.internalComponentChildren || new Set()
-            );
-
-            nodePositions.set(childId, childPosition);
-            nodeScales.set(childId, [1, 1, 1]);
-            context.processedNodes.add(childId);
-          }
-        });
-      }
-    });
-
-    serviceNodes.forEach((serviceId) => {
-      const children = context.parentChildMap.get(serviceId) || new Set();
-      if (children.size > 0) {
-        const servicePosition = nodePositions.get(serviceId);
-
-        const childArray = Array.from(children).sort();
-        childArray.forEach((childId, index) => {
-          const childNode = graphNodes.get(childId);
-          if (!childNode) return;
-
-          const childType = (childNode.type || '').toLowerCase().trim();
-
-          if (childType === NODE_TYPE_FUNCTION) {
-            const childPosition = this.calculateNodePosition(
-              childId,
-              basePosition,
-              1,
-              index,
-              childArray.length,
-              servicePosition,
-              50,
-              new Set(),
-              graphNodes,
-              context.parentChildMap,
-              context?.internalComponentChildren || new Set()
-            );
-
-            nodePositions.set(childId, childPosition);
-            nodeScales.set(childId, [1, 1, 1]);
-            context.processedNodes.add(childId);
-          }
-        });
-      }
-    });
-
-    backendNodes.forEach((backendId) => {
-      const children = context.parentChildMap.get(backendId) || new Set();
-      if (children.size > 0) {
-        const backendPosition = nodePositions.get(backendId);
-        const childArray = Array.from(children).sort();
-        childArray.forEach((childId, index) => {
-          const childNode = graphNodes.get(childId);
-          if (!childNode) return;
-          const childType = (childNode.type || '').toLowerCase().trim();
+          // Position any non-component, non-datapath child inside its parent.
+          // Also position internal component children.
           if (
-            childType === NODE_TYPE_FUNCTION ||
-            childType === NODE_TYPE_SERVICE
+            childType !== NODE_TYPE_COMPONENT &&
+            childType !== NODE_TYPE_DATAPATH
           ) {
             const childPosition = this.calculateNodePosition(
               childId,
@@ -1335,44 +1043,7 @@ export const positionMethods = {
               1,
               index,
               childArray.length,
-              backendPosition,
-              50,
-              new Set(),
-              graphNodes,
-              context.parentChildMap,
-              context?.internalComponentChildren || new Set()
-            );
-            nodePositions.set(childId, childPosition);
-            nodeScales.set(childId, [1, 1, 1]);
-            context.processedNodes.add(childId);
-          }
-        });
-      }
-    });
-
-    hookNodes.forEach((hookId) => {
-      const children = context.parentChildMap.get(hookId) || new Set();
-      if (children.size > 0) {
-        const hookPosition = nodePositions.get(hookId);
-
-        const childArray = Array.from(children).sort();
-        childArray.forEach((childId, index) => {
-          const childNode = graphNodes.get(childId);
-          if (!childNode) return;
-
-          const childType = (childNode.type || '').toLowerCase().trim();
-
-          if (
-            childType === NODE_TYPE_FUNCTION ||
-            childType === NODE_TYPE_HOOK
-          ) {
-            const childPosition = this.calculateNodePosition(
-              childId,
-              basePosition,
-              1,
-              index,
-              childArray.length,
-              hookPosition,
+              parentPosition,
               50,
               new Set(),
               graphNodes,
@@ -1385,7 +1056,7 @@ export const positionMethods = {
             context.processedNodes.add(childId);
           }
         });
-      }
-    });
+      });
+    }
   },
 };

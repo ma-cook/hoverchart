@@ -42,3 +42,52 @@ export const DEFAULT_SPHERE_SIZE = 4;
 export const DEFAULT_CONTAINER_SIZE = 50;
 export const MIN_SCALE_FACTOR = 1.0;
 export const DESIRED_GAP = 8;
+
+// ── Dynamic group container support ──────────────────────────────────────────
+
+/** Rotating colour palette for dynamically-discovered group containers. */
+export const GROUP_CONTAINER_COLORS = [
+  '#4CAF50', // green
+  '#2196F3', // blue
+  '#FF9800', // orange
+  '#9C27B0', // purple
+  '#F44336', // red
+  '#00BCD4', // cyan
+  '#795548', // brown
+  '#607D8B', // blue-grey
+  '#E91E63', // pink
+  '#3F51B5', // indigo
+  '#009688', // teal
+  '#CDDC39', // lime
+];
+
+/** Human-friendly names for well-known node types. */
+const GROUP_DISPLAY_NAMES = {
+  function: 'Utility Modules',
+  hook: 'Hooks',
+  service: 'Services',
+  store: 'Stores',
+  backend: 'Backend',
+  library: 'Libraries',
+  utility: 'Utilities',
+  handler: 'Handlers',
+  control: 'Controls',
+  state: 'State',
+  data: 'Data',
+};
+
+/**
+ * Return a user-facing display name for a group key.
+ * Falls back to capitalising the key + " Modules".
+ */
+export function getGroupDisplayName(groupKey) {
+  return (
+    GROUP_DISPLAY_NAMES[groupKey] ||
+    `${groupKey.charAt(0).toUpperCase() + groupKey.slice(1)} Modules`
+  );
+}
+
+/** Pick a colour from the rotating palette for the given group index. */
+export function getGroupColor(index) {
+  return GROUP_CONTAINER_COLORS[index % GROUP_CONTAINER_COLORS.length];
+}

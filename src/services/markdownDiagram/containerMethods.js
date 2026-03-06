@@ -4,21 +4,26 @@ import {
   NODE_TYPE_HOOK,
   NODE_TYPE_SERVICE,
   NODE_TYPE_STORE,
+  NODE_TYPE_DATAPATH,
   BASE_DODECAHEDRON_RADIUS,
+  getGroupDisplayName,
+  getGroupColor,
 } from './constants.js';
 
 export const containerMethods = {
   /**
-   * Create container cubes around grouped nodes (utilities, services, stores, hooks)
+   * Create container cubes around grouped nodes.
+   *
+   * Groups are discovered dynamically by scanning the node types present in
+   * the graph.  This means new folders / node types (e.g. workers, middleware)
+   * automatically receive containers without any code changes.
    */
   async createGroupContainers(context, allObjectsToSave) {
     const {
       graphNodes,
       childParentMap,
-      parentChildMap,
       nodePositions,
       nodeScales,
-      rootNodes,
     } = context;
 
     const { useObjectsStore } = await import('../../stores');
@@ -26,73 +31,45 @@ export const containerMethods = {
       '../spatialPartitioning'
     );
 
-    const utilityNodes = [];
-    const serviceNodes = [];
-    const storeNodes = [];
-    const hookNodes = [];
-    const backendNodes = [];
+    // ── Dynamic group discovery ──────────────────────────────────────────
+    const groupedByType = new Map(); // groupKey → [nodeId, …]
     const ungroupedComponents = [];
 
-    const reachableFromRootModules = new Set();
-    const rootModuleNames = ['main', 'index', 'firebase', 'App'];
-    const actualRootModules = Array.from(rootNodes).filter((nodeId) => {
-      return rootModuleNames.includes(nodeId);
-    });
-
-    const markReachable = (nodeId) => {
-      if (reachableFromRootModules.has(nodeId)) return;
-      const node = graphNodes.get(nodeId);
-      if (!node) return;
-      if (node.type === NODE_TYPE_COMPONENT) {
-        reachableFromRootModules.add(nodeId);
-      }
-      const children = context.parentChildMap.get(nodeId) || new Set();
-      children.forEach((childId) => markReachable(childId));
-    };
-
-    actualRootModules.forEach((rootModuleId) => {
-      markReachable(rootModuleId);
-    });
-
     for (const [nodeId, node] of graphNodes.entries()) {
-      if (childParentMap.has(nodeId)) {
-        continue;
-      }
+      if (childParentMap.has(nodeId)) continue;
 
       const nodeType = (node.type || '').toLowerCase().trim();
 
-      if (nodeType === NODE_TYPE_FUNCTION) {
-        utilityNodes.push(nodeId);
-      } else if (nodeType === NODE_TYPE_HOOK) {
-        hookNodes.push(nodeId);
-      } else if (nodeType === NODE_TYPE_SERVICE) {
-        if (nodeId.startsWith('backend_')) {
-          backendNodes.push(nodeId);
-        } else {
-          serviceNodes.push(nodeId);
-        }
-      } else if (nodeType === NODE_TYPE_STORE) {
-        storeNodes.push(nodeId);
-      } else if (
-        nodeType === NODE_TYPE_COMPONENT &&
-        nodeId !== 'MainEntry'
-      ) {
+      // Components go into either the hierarchy or the "ungrouped" bucket
+      if (nodeType === NODE_TYPE_COMPONENT && nodeId !== 'MainEntry') {
         if (
           context.internalComponentChildren &&
           context.internalComponentChildren.has(nodeId)
         ) {
-          console.log(
-            `   ⏭️ Skipping ${nodeId} (internal component - positioned inside parent) [SECOND LOOP]`
-          );
           continue;
         }
-
         if (!nodePositions.has(nodeId)) {
           ungroupedComponents.push(nodeId);
         }
+        continue;
       }
+
+      // Datapaths don't produce 3D objects
+      if (nodeType === NODE_TYPE_DATAPATH) continue;
+
+      // Determine group key — preserve backend splitting for services
+      let groupKey = nodeType;
+      if (nodeType === NODE_TYPE_SERVICE && nodeId.startsWith('backend_')) {
+        groupKey = 'backend';
+      }
+
+      if (!groupedByType.has(groupKey)) {
+        groupedByType.set(groupKey, []);
+      }
+      groupedByType.get(groupKey).push(nodeId);
     }
 
+    // ── Container creation helper (unchanged logic) ──────────────────────
     const containerCubes = [];
 
     const createContainerForGroup = (nodes, groupName, color) => {
@@ -168,13 +145,15 @@ export const containerMethods = {
         lineWidth: 2,
         cellId: cellId,
         createdAt: Date.now(),
-        headerText: `${groupName} Group`,
+        headerText: '',
         faceColors: {},
         faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
         textStyle: { fontSize: 1.0, color: 'black', underline: false },
         merfolkData: {
           isContainer: true,
+          nonInteractive: true,
           groupType: groupName,
+          groupLabel: `${groupName}`,
           nodeCount: nodes.length,
         },
       };
@@ -189,15 +168,17 @@ export const containerMethods = {
         type: 'cube',
         color: color,
         lineWidth: 2,
-        content: `${groupName} Group`,
+        content: `${groupName}`,
         createdAt: Date.now(),
         cellId: cellId,
-        headerText: `${groupName} Group`,
+        headerText: '',
         faceColors: {},
         faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
         merfolkData: {
           isContainer: true,
+          nonInteractive: true,
           groupType: groupName,
+          groupLabel: `${groupName}`,
           nodeCount: nodes.length,
         },
       };
@@ -205,11 +186,18 @@ export const containerMethods = {
       allObjectsToSave.push(containerForSave);
     };
 
-    createContainerForGroup(utilityNodes, 'Utility Modules', '#4CAF50');
-    createContainerForGroup(hookNodes, 'Hooks', '#2196F3');
-    createContainerForGroup(serviceNodes, 'Services', '#FF9800');
-    createContainerForGroup(storeNodes, 'Stores', '#9C27B0');
-    createContainerForGroup(backendNodes, 'Backend', '#F44336');
+    // ── Create containers dynamically for each discovered group ─────────
+    const sortedGroups = Array.from(groupedByType.entries())
+      .filter(([, nodes]) => nodes.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b)); // deterministic ordering
+
+    sortedGroups.forEach(([groupKey, nodes], index) => {
+      const displayName = getGroupDisplayName(groupKey);
+      const color = getGroupColor(index);
+      createContainerForGroup(nodes, displayName, color);
+    });
+
+    // Ungrouped components always get the grey container
     createContainerForGroup(ungroupedComponents, 'Ungrouped Components', '#757575');
 
     if (containerCubes.length > 0) {
@@ -377,13 +365,15 @@ export const containerMethods = {
       lineWidth: 2,
       cellId: cellId,
       createdAt: Date.now(),
-      headerText: 'Component Hierarchy Group',
+      headerText: '',
       faceColors: {},
       faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
       textStyle: { fontSize: 1.0, color: 'black', underline: false },
       merfolkData: {
         isContainer: true,
+        nonInteractive: true,
         groupType: 'Component Hierarchy',
+        groupLabel: 'Component Hierarchy',
         nodeCount: hierarchyNodes.length,
       },
     };
@@ -396,15 +386,17 @@ export const containerMethods = {
       type: 'cube',
       color: '#e0e0e0',
       lineWidth: 2,
-      content: 'Component Hierarchy Group',
+      content: 'Component Hierarchy',
       createdAt: Date.now(),
       cellId: cellId,
-      headerText: 'Component Hierarchy Group',
+      headerText: '',
       faceColors: {},
       faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
       merfolkData: {
         isContainer: true,
+        nonInteractive: true,
         groupType: 'Component Hierarchy',
+        groupLabel: 'Component Hierarchy',
         nodeCount: hierarchyNodes.length,
       },
     };
@@ -649,12 +641,14 @@ export const containerMethods = {
       lineWidth: 2,
       cellId: cellId,
       createdAt: Date.now(),
-      headerText: headerText,
+      headerText: '',
       faceColors: {},
       faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
       textStyle: { fontSize: 1.0, color: 'black', underline: false },
       merfolkData: {
         isContainer: true,
+        nonInteractive: true,
+        groupLabel: headerText,
         ...merfolkData,
       },
     };
@@ -705,13 +699,15 @@ export const containerMethods = {
         lineWidth: 2,
         cellId: cellId,
         createdAt: Date.now(),
-        headerText: `${parentNode.name || parentNode.id} Group`,
+        headerText: '',
         faceColors: {},
         faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
         textStyle: { fontSize: 1.0, color: 'black', underline: false },
         merfolkData: {
           isContainer: true,
+          nonInteractive: true,
           parentNodeId: parentNodeId,
+          groupLabel: `${parentNode.name || parentNode.id}`,
           childCount: childCount,
         },
       };
@@ -726,15 +722,17 @@ export const containerMethods = {
         type: 'cube',
         color: '#e0e0e0',
         lineWidth: 2,
-        content: `${parentNode.name || parentNode.id} Group`,
+        content: `${parentNode.name || parentNode.id}`,
         createdAt: Date.now(),
         cellId: cellId,
-        headerText: `${parentNode.name || parentNode.id} Group`,
+        headerText: '',
         faceColors: {},
         faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
         merfolkData: {
           isContainer: true,
+          nonInteractive: true,
           parentNodeId: parentNodeId,
+          groupLabel: `${parentNode.name || parentNode.id}`,
           childCount: childCount,
         },
       };

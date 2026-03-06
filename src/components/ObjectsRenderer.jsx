@@ -4,6 +4,7 @@ import ObjectRenderer from './ObjectRenderer';
 import GlobalCubeEdgesRenderer from './GlobalCubeEdgesRenderer';
 import GlobalDodecahedronEdgesRenderer from './GlobalDodecahedronEdgesRenderer';
 import GlobalTetrahedronEdgesRenderer from './GlobalTetrahedronEdgesRenderer';
+import AtlasTextSprite from './AtlasTextSprite';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
 
 /**
@@ -302,7 +303,26 @@ const ObjectsRenderer = React.memo(({
     return progressiveVisibleObjects.filter((obj) => obj.type === 'cube');
   }, [progressiveVisibleObjects]);
 
-  // Extract dodecahedron objects for batched edge rendering
+  // Extract container cubes that need floating header labels
+  const containerHeaders = useMemo(() => {
+    return cubeObjects
+      .filter((obj) => obj.merfolkData?.isContainer && obj.merfolkData?.groupLabel)
+      .map((obj) => {
+        // Position header 50 units above the container's top edge
+        // Container height in world units = scale[1] * 10 (cube base size is 10)
+        const halfHeight = (obj.scale?.[1] || 1) * 5;
+        return {
+          id: obj.id,
+          label: obj.merfolkData.groupLabel,
+          position: [
+            obj.position[0],
+            obj.position[1] + halfHeight + 50,
+            obj.position[2],
+          ],
+        };
+      });
+  }, [cubeObjects]);
+
   const dodecahedronObjects = useMemo(() => {
     return progressiveVisibleObjects.filter(
       (obj) => obj.type === 'sphere' || obj.type === 'dodecahedron'
@@ -386,6 +406,27 @@ const ObjectsRenderer = React.memo(({
       
       {/* PERFORMANCE: Render all tetrahedron edges in a single draw call */}
       <GlobalTetrahedronEdgesRenderer tetrahedrons={tetrahedronObjects} defaultLineWidth={1} />
+      
+      {/* Render floating header labels above group containers */}
+      {containerHeaders.map((header) => (
+        <AtlasTextSprite
+          key={`container-header-${header.id}`}
+          text={header.label}
+          position={header.position}
+          style={{
+            fontSize: 8.0,
+            color: '#000000',
+            bold: true,
+            depthTest: false,
+            depthWrite: false,
+          }}
+          billboard={true}
+          visible={true}
+          renderOrder={25}
+          scale={1}
+          skipBillboardUpdates={true}
+        />
+      ))}
       
       {/* Render all individual objects */}
       {renderedObjects}
