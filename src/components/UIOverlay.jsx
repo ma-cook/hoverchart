@@ -43,11 +43,15 @@ const UIOverlay = ({
   const [scanProgress, setScanProgress] = useState({ isScanning: false, progress: 0, stage: '' });
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [currentDiagramRepo, setCurrentDiagramRepo] = useState(null);
+  const [lastGeneratedMarkdown, setLastGeneratedMarkdown] = useState(null);
+  const [latestMarkdownUrl, setLatestMarkdownUrl] = useState(null);
 
-  // Load persisted repo for this space on mount / space change
+  // Load persisted repo + markdown URL for this space on mount / space change
   useEffect(() => {
     if (!currentSpaceId) {
       setCurrentDiagramRepo(null);
+      setLatestMarkdownUrl(null);
+      setLastGeneratedMarkdown(null);
       return;
     }
     try {
@@ -56,6 +60,8 @@ const UIOverlay = ({
     } catch {
       setCurrentDiagramRepo(null);
     }
+    setLatestMarkdownUrl(localStorage.getItem(`diagramMarkdownUrl_${currentSpaceId}`) || null);
+    setLastGeneratedMarkdown(null);
   }, [currentSpaceId]);
 
   // Persist whenever the active repo changes
@@ -67,6 +73,16 @@ const UIOverlay = ({
       localStorage.removeItem(`diagramRepo_${currentSpaceId}`);
     }
   }, [currentDiagramRepo, currentSpaceId]);
+
+  // Persist markdown storage URL whenever it changes
+  useEffect(() => {
+    if (!currentSpaceId) return;
+    if (latestMarkdownUrl) {
+      localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, latestMarkdownUrl);
+    } else {
+      localStorage.removeItem(`diagramMarkdownUrl_${currentSpaceId}`);
+    }
+  }, [latestMarkdownUrl, currentSpaceId]);
   const [chatOpen, setChatOpen] = useState(false);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
@@ -166,6 +182,8 @@ const UIOverlay = ({
       // Show notification instead of alert
       if (result.success) {
         setCurrentDiagramRepo(repo);
+        if (result.markdown) setLastGeneratedMarkdown(result.markdown);
+        if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
         setNotification({
           show: true,
           message: `Diagram created! Generated: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`
@@ -183,6 +201,34 @@ const UIOverlay = ({
     }
   };
   
+  // Download the latest generated markdown file
+  const handleDownloadMarkdown = useCallback(async () => {
+    const repoName = currentDiagramRepo?.name || 'diagram';
+    const fileName = `${repoName}-diagram.md`;
+
+    const triggerDownload = (content) => {
+      const blob = new Blob([content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    if (lastGeneratedMarkdown) {
+      triggerDownload(lastGeneratedMarkdown);
+    } else if (latestMarkdownUrl) {
+      try {
+        const response = await fetch(latestMarkdownUrl);
+        const text = await response.text();
+        triggerDownload(text);
+      } catch {
+        alert('Failed to download markdown file.');
+      }
+    }
+  }, [lastGeneratedMarkdown, latestMarkdownUrl, currentDiagramRepo]);
+
   // Click handler to dismiss notification
   const handleScreenClick = useCallback(() => {
     if (notification.show) {
@@ -803,6 +849,19 @@ const UIOverlay = ({
               style={{ display: 'none' }}
               onChange={handleMarkdownFileSelect}
             />
+            <button
+              className="markdown-upload-button"
+              onClick={handleDownloadMarkdown}
+              disabled={!lastGeneratedMarkdown && !latestMarkdownUrl}
+              title={lastGeneratedMarkdown || latestMarkdownUrl ? 'Download the latest generated diagram markdown' : 'No diagram generated yet'}
+              style={{
+                marginTop: '6px',
+                opacity: lastGeneratedMarkdown || latestMarkdownUrl ? 1 : 0.45,
+                cursor: lastGeneratedMarkdown || latestMarkdownUrl ? 'pointer' : 'not-allowed',
+              }}
+            >
+              📥 Download Markdown
+            </button>
           </div>
           {/* GitHub repo section */}
           {isGithubAuthenticated ? (

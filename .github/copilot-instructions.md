@@ -10,6 +10,40 @@ Use `src/merfolk.md` as your primary reference for understanding:
 - Parent-child and containment relationships between modules
 - External library dependencies
 
+### Core Data Pipeline
+
+The app can scan a GitHub repository and generate an interactive 3D architecture diagram. The full pipeline is:
+
+1. **GitHub OAuth** — `exchangeGithubCode()` obtains a token via a Cloud Function
+2. **Repo structure scan** — `fetchRepositoryStructure()` recursively fetches all JS/TS/shader files from the GitHub API
+3. **AST analysis** — `generateMerfolkFromRepository()` fetches each file's content, parses it with `@babel/parser` (JSX/TS plugins, error recovery), traverses the AST to extract components, hooks, services, stores, utilities, workers, shaders, and libraries, then tracks relationships (calls, props, store usage, hook returns, imports)
+4. **Merfolk markdown generation** — The extracted data is emitted as a `merfolk` fenced code block using the syntax below (components as `{Component:}`, functions as `[Function:]`, etc.)
+5. **Merfolk parsing** — `markdownDiagramService.processMarkdownFile()` hands the markdown to the `3d-ast-generator` library's `MarkdownProcessor`, which parses the Merfolk syntax into a graph of typed nodes and connections
+6. **Hierarchy building** — `buildHierarchicalRelationships()` determines parent-child nesting from connection types and node types (e.g. dashed arrow between components = internal nesting)
+7. **Layout & positioning** — `positionNodeHierarchy()` recursively positions the component tree, then `positionGroupedNodes()` arranges non-component groups (services, hooks, stores, functions, workers, shaders) in a circle around the root hierarchy. `resolveCollisions()` prevents overlap
+8. **3D object creation** — `createObjectsFromDiagram()` builds 3D objects (dodecahedrons, cubes, tetrahedrons) and writes them to the Zustand store and Firebase
+9. **Container creation** — `createGroupContainers()` wraps each group in a translucent bounding cube, `createRootHierarchyContainer()` wraps the component tree
+10. **Connection creation** — `createConnectionsFromDiagram()` generates face-to-face connections with round-robin face distribution; `saveConnections()` bulk-saves via Cloud Function with client-side fallback
+
+Steps 5–7 are offloaded to the `markdownLayoutWorker` (Web Worker via Comlink) when possible, falling back to main thread on failure. The worker uses a `LayoutEngine` that mixes in only pure methods (hierarchy, scale, position) — it deliberately excludes container/object/connection methods that touch Zustand, Firebase, or DOM.
+
+### Key External Dependency: `3d-ast-generator`
+
+The `3d-ast-generator` package (v1.0.18) is a TypeScript library that parses Merfolk syntax into graph structures. It is a critical black box that constrains the available node types.
+
+**How it's used:** Imported as `MarkdownProcessor` in `processMethods.js` and `markdownLayoutWorker.js`. It extracts `` ```merfolk `` code blocks, validates the syntax, and returns `Graph` objects containing typed `Node` and `Connection` instances.
+
+**Supported node types in the parser:** `function`, `component`, `store`, `service`, `library`, `hook`, `datapath`, `module`, `class`, `interface`, `variable`, `constant`. Unknown type strings default to `component`.
+
+**Bracket → geometry mapping:**
+| Syntax | Geometry |
+| --- | --- |
+| `{...}` curly brackets | Dodecahedron |
+| `((...))` double parens | Tetrahedron |
+| `[...]` / `[[...]]` / `<...>` | Cube |
+
+**Of these, the app actively uses:** `function`, `component`, `store`, `service`, `library`, `hook`, `datapath`. The parser types `module`, `class`, `interface`, `variable`, `constant` are recognized by 3d-ast-generator but fall to a default Cube in the app's `getObjectTypeForNode()`.
+
 ### Merfolk Syntax Quick Reference
 
 **Node Types:**
@@ -36,6 +70,7 @@ Use `src/merfolk.md` as your primary reference for understanding:
 **Face Connections:** `A@front --> B@back` — connect to specific faces of 3D objects
 - Cubes: `front`, `back`, `top`, `bottom`, `left`, `right`
 - Dodecahedrons: `face_0` through `face_11`
+- Tetrahedrons: `front`, `left`, `right`, `bottom`
 
 **Flow Path Tracking:**
 - `flowpath "name" : A --> B --> C` — define multi-hop data paths as a traceable unit
@@ -54,13 +89,50 @@ For the full syntax specification, see [merfolk-markdown-instructions.md](../mer
 - **Backend**: Firebase (Firestore, Auth, Storage, Realtime Database, Cloud Functions)
 - **Build**: Vite
 - **Spatial System**: Custom spatial partitioning with cell-based loading
+- **Web Workers**: Comlink-based workers for layout, pathfinding, spatial indexing, and text atlas rendering (see `src/workers/`)
+- **Merfolk Parsing**: `3d-ast-generator` NPM package (parses Merfolk syntax into typed graph structures)
 
 ## Key Conventions
 
-- Components live in `src/components/`, hooks in `src/hooks/`, services in `src/services/`, stores in `src/stores/`, utilities in `src/utils/`
-- State is managed through Zustand stores, not React context
+- Components live in `src/components/`, hooks in `src/hooks/`, services in `src/services/`, stores in `src/stores/`, utilities in `src/utils/`, workers in `src/workers/`, shaders in `src/shaders/`
+- State is managed through Zustand stores, not React context — 27 stores re-exported from `src/stores/index.js`
 - Firebase operations go through service modules, never called directly from components
 - 3D objects (Cube, Dodecahedron, Tetrahedron, Plane, TextObject, ModelObject) are rendered via `ObjectsRenderer`
 - Connections between objects are managed by `useConnections` hook and rendered by `ConnectionsRenderer`
-- Spatial partitioning divides the 3D space into cells; objects load/unload as the camera moves
+- Spatial partitioning divides the 3D space into cells (`CELL_SIZE = 6667` world units); objects load/unload as the camera moves via a 3×3 horizontal grid around the camera
 - Performance is critical — use `useCallback`, `useMemo`, refs, and throttling to avoid unnecessary re-renders
+- Web Workers follow the Comlink pattern: each worker has a matching `*Client.js` that provides a lazy singleton proxy via `get*Worker()` / `terminate*Worker()`, imported with Vite's `?worker` syntax
+- The `markdownDiagramService` uses a mixin architecture — methods are split across files in `src/services/markdownDiagram/` (constants, hierarchy, scale, position, container, object, connection, process) and merged onto the prototype via `Object.assign`
+- Bulk saves to Firebase use a Cloud Function (`bulkimport`) for payloads under 9MB, with automatic fallback to client-side batch saves (batches of 20 per cell)
+
+## Known Gotchas
+
+### ID-Prefix Disambiguation
+When multiple scanned folders produce nodes of the **same Merfolk type**, they would be grouped together in a single container. To keep them separate, `githubRepoService` applies ID prefixes that the positioning and container systems use to split groups:
+
+| Prefix | Applied To | Merfolk Type | Triggered By Path Pattern |
+| --- | --- | --- | --- |
+| `backend_` | Backend file containers | `((Service:))` | `/functions/`, `/api/`, `/server/`, `/backend/`, `/lambda/`, `/routes/` |
+| `worker_` | Worker file containers | `[Function:]` | `/workers/` or `*Worker.js` filename |
+| `shader_` | Shader container | `[Function:]` | `/shaders/` or shader extensions (`.glsl`, `.vert`, `.frag`, etc.) |
+
+Both `positionMethods.positionGroupedNodes()` and `containerMethods.createGroupContainers()` must have **matching** prefix-detection logic — if one splits a group but the other doesn't, containers will overlap or be mispositioned. Any new prefix-based group requires updates in **both** files.
+
+Folders whose nodes naturally map to a **distinct** Merfolk type (e.g. hooks → `[Hook:]`, stores → `[[Store:]]`, services → `((Service:))`) are automatically positioned and containerized separately without needing a prefix.
+
+### Connection Arrow Semantics Are Context-Dependent
+The same arrow type has different meaning depending on the node types it connects:
+- **Dashed arrow (`-.->`) between Components** = internal nesting (child dodecahedron placed inside parent)
+- **Solid arrow (`-->`) between Components** = external usage (separate objects, visual connection only)
+- **Dashed arrow between Component & Function** = containment (function is child of component)
+
+### File Name Collision Handling
+When a file name collides with a node it contains (e.g. `useAuth.js` containing a hook named `useAuth`), the file container node gets a `_file` suffix to avoid ID collisions. Tracked via the `filesNeedingSuffix` set in `githubRepoService`.
+
+### Two Spatial Partitioning Systems
+The app maintains two spatial systems:
+1. `spatialPartitioning.js` — Firebase-backed cell system for persistent object storage, with hysteresis (`CELL_BOUNDARY_HYSTERESIS = 667`) and race-condition protection (`movingObjects` map with 500ms timeout)
+2. `streamlinedSpatialPartitioning.js` — `StreamlinedSpatialManager` using a local spatial index optimized for 100+ objects with minimal overhead, used for runtime queries
+
+### Text Atlas Capacity
+The `textAtlasWorker` renders text into atlas pages (4096×4096 OffscreenCanvas each, max 32 pages). Large repo scans can produce enough objects to exhaust atlas capacity. Warnings are throttled to once per 5 seconds to prevent console spam.
