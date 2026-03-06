@@ -3,8 +3,7 @@ import * as THREE from 'three';
 import { extend, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
 import {
-  checkLineIntersection,
-  generateCurvedPath,
+  computeConnectionPath,
 } from '../utils/pathfindingUtils';
 
 extend({ LineShaderMaterial });
@@ -131,38 +130,30 @@ const BatchedCurvedLines = memo(({
       
       let pathPoints;
       
-      // Check cache first
+      // Check local cache first
       const cached = pathCache.get(cacheKey);
       if (cached) {
         pathPoints = cached;
       } else {
-        // Check for intersections
-        const intersections = pathfindingObjects?.length > 0 
-          ? checkLineIntersection(start, end, pathfindingObjects)
-          : [];
-        
-        // Generate curved path if there are intersections
-        if (intersections && intersections.length > 0) {
-          pathPoints = generateCurvedPath(
-            start,
-            end,
-            intersections,
-            conn.start.objectId,
-            conn.end.objectId,
-            true
-          );
-          if (window._debugPathfinding) {
-            console.log(`[BatchedCurved] conn ${conn.id}: intersections=${intersections.length}, pathPoints=${pathPoints?.length}, isCurved=${pathPoints?.length > 2}`);
-          }
-        } else {
-          // Straight line
-          pathPoints = [start, end];
-          if (window._debugPathfinding) {
+        // computeConnectionPath checks the worker-precomputed cache first,
+        // then falls back to synchronous checkLineIntersection + generateCurvedPath.
+        const connStartId = conn.start.objectId?.toString() || '';
+        const connEndId   = conn.end.objectId?.toString()   || '';
+        const result = (pathfindingObjects?.length > 0)
+          ? computeConnectionPath(start, end, pathfindingObjects, connStartId, connEndId)
+          : { hasIntersections: false, pathPoints: [start, end] };
+
+        pathPoints = result.pathPoints;
+
+        if (window._debugPathfinding) {
+          if (result.hasIntersections) {
+            console.log(`[BatchedCurved] conn ${conn.id}: hasIntersections=true, pathPoints=${pathPoints?.length}, isCurved=${pathPoints?.length > 2}`);
+          } else {
             console.log(`[BatchedCurved] conn ${conn.id}: NO intersections → straight (startPos was: ${start?.map(v=>v.toFixed(2))})`);
           }
         }
         
-        // Cache the result
+        // Cache the result locally
         pathCache.set(cacheKey, pathPoints);
       }
       

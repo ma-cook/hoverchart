@@ -1,6 +1,7 @@
 import { MarkdownProcessor } from '3d-ast-generator';
 import * as THREE from 'three';
 import { DEFAULT_CAMERA_DISTANCE } from './constants.js';
+import { getMarkdownLayoutWorker } from '../../workers/markdownLayoutWorkerClient.js';
 
 export const processMethods = {
   initializeProcessor() {
@@ -61,7 +62,12 @@ export const processMethods = {
   },
 
   /**
-   * Main entry point: parse and process a Markdown/Merfolk file
+   * Main entry point: parse and process a Markdown/Merfolk file.
+   *
+   * The heavy layout computation (AST parsing, hierarchy building, position/scale
+   * resolution) is offloaded to markdownLayoutWorker via Comlink so the main
+   * thread stays responsive.  If the worker is unavailable or throws, the
+   * existing main-thread path is used as a transparent fallback.
    */
   async processMarkdownFile(file, onCreateObject, currentSpaceId, user) {
     this.scaleCache.clear();
@@ -76,6 +82,7 @@ export const processMethods = {
       throw new Error('Please select a Markdown file (.md or .markdown)');
     }
 
+    // Read file on the main thread (FileReader requires DOM access)
     const content = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(e.target.result);
@@ -83,14 +90,56 @@ export const processMethods = {
       reader.readAsText(file);
     });
 
-    if (!this.processor) {
-      this.initializeProcessor();
+    // Camera position must be sampled on the main thread
+    const basePosition = this.getCameraBasedPosition();
+
+    // ── Attempt worker-computed layout ────────────────────────────────────
+    let workerResult = null;
+    try {
+      const layoutWorker = getMarkdownLayoutWorker();
+      workerResult = await layoutWorker.computeLayout(content, basePosition);
+    } catch (workerError) {
+      console.warn(
+        '[MarkdownDiagramService] Layout worker failed – falling back to main thread:',
+        workerError
+      );
     }
 
-    const connectionTags = this.parseFlowPaths(content);
-    const processedContent = this.stripFlowPathSyntax(content);
+    // ── Build diagrams + connectionTags from worker output or main thread ─
+    let diagrams;
+    let connectionTags;
 
-    const diagrams = this.processor.processMarkdown(processedContent);
+    if (workerResult) {
+      // Reconstruct diagram-like objects from the serialised worker output so
+      // createObjectsFromDiagram and createConnectionsFromDiagram can consume
+      // them via the same interface they already expect.
+      diagrams = workerResult.diagramLayouts.map((layout) => ({
+        graph: {
+          // Restore graph.nodes as a Map<nodeId, {id, type, name, properties}>
+          nodes: new Map(layout.graphNodes),
+          // Restore graph.connections as a Map so .values() iteration works
+          connections: new Map(
+            layout.rawConnections.map((c, i) => [
+              `wc-${i}`,
+              { source: c.source, target: c.target, label: c.label, type: c.connectionType, visual: c.visual || null },
+            ])
+          ),
+        },
+        errors: layout.errors || [],
+      }));
+      // Restore Map<string, Set<string>> from [[key, [tag,...]]]
+      connectionTags = new Map(
+        workerResult.connectionTags.map(([key, tags]) => [key, new Set(tags)])
+      );
+    } else {
+      // ── Main-thread fallback (original behaviour) ──────────────────────
+      if (!this.processor) {
+        this.initializeProcessor();
+      }
+      connectionTags = this.parseFlowPaths(content);
+      const processedContent = this.stripFlowPathSyntax(content);
+      diagrams = this.processor.processMarkdown(processedContent);
+    }
 
     if (!diagrams || diagrams.length === 0) {
       throw new Error(
@@ -99,8 +148,6 @@ export const processMethods = {
     }
 
     window._lastMerfolkProcessTime = performance.now();
-
-    const basePosition = this.getCameraBasedPosition();
 
     let totalObjectsCreated = 0;
     const nodeToObjectIdMap = new Map();
@@ -117,6 +164,10 @@ export const processMethods = {
         continue;
       }
 
+      // Pass worker-computed layout to skip position/scale on the main thread.
+      // When null (fallback path) createObjectsFromDiagram computes it locally.
+      const precomputedLayout = workerResult?.diagramLayouts?.[diagramIndex] ?? null;
+
       const objectsCreated = await this.createObjectsFromDiagram(
         diagram,
         onCreateObject,
@@ -124,7 +175,8 @@ export const processMethods = {
         basePosition,
         user,
         currentSpaceId,
-        allObjectsToSave
+        allObjectsToSave,
+        precomputedLayout
       );
 
       totalObjectsCreated += objectsCreated;

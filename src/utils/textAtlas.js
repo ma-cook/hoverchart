@@ -497,14 +497,282 @@ class MultiPageTextAtlas {
   }
 }
 
+// ---------------------------------------------------------------------------
+// OffscreenCanvas feature detection
+// ---------------------------------------------------------------------------
+let _offscreenCanvasSupported = null;
+
 /**
- * Get or create the global text atlas (multi-page)
+ * Test whether the browser supports OffscreenCanvas 2D text rendering.
+ * Runs once and caches the result.
+ */
+function isOffscreenCanvasTextSupported() {
+  if (_offscreenCanvasSupported !== null) return _offscreenCanvasSupported;
+  try {
+    const c = new OffscreenCanvas(1, 1);
+    const ctx = c.getContext('2d');
+    if (!ctx || typeof ctx.measureText !== 'function' || typeof ctx.fillText !== 'function') {
+      _offscreenCanvasSupported = false;
+      return false;
+    }
+    ctx.font = '16px Arial';
+    const m = ctx.measureText('test');
+    _offscreenCanvasSupported = typeof m.width === 'number' && m.width > 0;
+    return _offscreenCanvasSupported;
+  } catch {
+    _offscreenCanvasSupported = false;
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WorkerMultiPageTextAtlas — offloads text rendering to a Web Worker
+// ---------------------------------------------------------------------------
+
+/**
+ * Drop-in replacement for MultiPageTextAtlas that renders text on
+ * OffscreenCanvas inside a Web Worker.
+ *
+ * API contract difference from the sync version:
+ *   addText() returns `null` on the first call for a new text+style combo.
+ *   The component re-renders via the Zustand atlasVersion bump when the
+ *   worker finishes, and the second addText() call returns the cached entry.
+ *
+ * The existing UV-fixup code in AtlasTextSprite / InstancedAtlasText
+ * continues to work because this class exposes the same `entries` Map,
+ * `version` getter, and `_getKey()` method.
+ */
+class WorkerMultiPageTextAtlas {
+  constructor() {
+    /** @type {Map<string, Object>} key → entry (with .texture) */
+    this.entries = new Map();
+
+    /** @type {THREE.Texture[]} One texture per atlas page */
+    this._pageTextures = [];
+
+    /** Pending addText requests waiting for the next flush */
+    this._pendingQueue = [];
+    this._flushScheduled = false;
+    this._flushing = false;
+    this._version = 0;
+    this._maxGPUSizeForwarded = false;
+
+    // Ensure page 0 exists with a placeholder texture
+    this._ensurePage(0);
+  }
+
+  // -- Public API (matches MultiPageTextAtlas) --
+
+  get version() {
+    return this._version;
+  }
+
+  /**
+   * Look up or queue a text entry.
+   * @returns {Object|null} cached entry or null (pending worker render)
+   */
+  addText(text, style = {}) {
+    const key = this._getKey(text, style);
+    if (this.entries.has(key)) return this.entries.get(key);
+
+    this._pendingQueue.push({ text, style, key });
+    this._scheduleFlush();
+    return null;
+  }
+
+  /**
+   * Compatibility shim — the worker handles its own texture updates.
+   * Triggers a flush if there are pending items.
+   */
+  updateTexture() {
+    if (this._pendingQueue.length > 0 && !this._flushScheduled) {
+      this._scheduleFlush();
+    }
+  }
+
+  /** Primary texture (page 0). */
+  getTexture() {
+    return this._pageTextures[0] || null;
+  }
+
+  _getKey(text, style) {
+    return `${text}|${style.fontSize || 16}|${style.color || '#000000'}|${
+      style.fontFamily || 'Arial'}|${style.bold || false}|${style.italic || false}|${
+      style.underline || false}`;
+  }
+
+  getStats() {
+    return { pages: this._pageTextures.length, entriesCount: this.entries.size };
+  }
+
+  dispose() {
+    for (const tex of this._pageTextures) {
+      if (tex.image && typeof tex.image.close === 'function') tex.image.close();
+      tex.dispose();
+    }
+    this._pageTextures = [];
+    this.entries.clear();
+    this._pendingQueue = [];
+    import('../workers/textAtlasWorkerClient.js').then(
+      ({ terminateTextAtlasWorker }) => terminateTextAtlasWorker()
+    ).catch(() => {});
+  }
+
+  // -- Internal --
+
+  _ensurePage(index) {
+    while (this._pageTextures.length <= index) {
+      const tex = new THREE.Texture();
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      // The worker pre-flips the ImageBitmap (imageOrientation: 'flipY')
+      // so we must tell Three.js NOT to flip again during upload.
+      // Without this, UNPACK_FLIP_Y_WEBGL is silently ignored for
+      // ImageBitmap sources, causing upside-down / garbled text.
+      tex.flipY = false;
+      this._pageTextures.push(tex);
+    }
+  }
+
+  _scheduleFlush() {
+    if (this._flushScheduled) return;
+    this._flushScheduled = true;
+    requestAnimationFrame(() => this._flush());
+  }
+
+  async _flush() {
+    this._flushScheduled = false;
+    if (this._pendingQueue.length === 0) return;
+    if (this._flushing) {
+      // Already in-flight — re-schedule so the new items get sent next frame
+      this._scheduleFlush();
+      return;
+    }
+    this._flushing = true;
+
+    // Grab and deduplicate the queue
+    const raw = this._pendingQueue.splice(0);
+    const seen = new Set();
+    const requests = [];
+    for (const req of raw) {
+      if (this.entries.has(req.key) || seen.has(req.key)) continue;
+      seen.add(req.key);
+      requests.push(req);
+    }
+
+    if (requests.length === 0) {
+      this._flushing = false;
+      return;
+    }
+
+    try {
+      const { getTextAtlasWorker } = await import('../workers/textAtlasWorkerClient.js');
+      const worker = getTextAtlasWorker();
+
+      // Forward GPU texture-size limit once
+      if (!this._maxGPUSizeForwarded && TextAtlas._gpuLimitDetected) {
+        await worker.setMaxGPUTextureSize(TextAtlas._maxGPUTextureSize);
+        this._maxGPUSizeForwarded = true;
+      }
+
+      const result = await worker.renderBatch(
+        requests.map(r => ({ text: r.text, style: r.style }))
+      );
+
+      // Ensure page textures exist for all pages the worker reports
+      this._ensurePage(result.pageCount - 1);
+
+      // Update textures from transferred ImageBitmaps
+      for (const { pageIndex, bitmap } of result.bitmaps) {
+        const tex = this._pageTextures[pageIndex];
+        if (tex.image && typeof tex.image.close === 'function') tex.image.close();
+        tex.image = bitmap;
+        tex.needsUpdate = true;
+      }
+
+      // If the worker resized any page, refresh ALL cached entries (UVs changed)
+      if (result.allEntries) {
+        for (const entry of result.allEntries) {
+          this._ensurePage(entry.pageIndex);
+          const tex = this._pageTextures[entry.pageIndex];
+          this.entries.set(entry.key, { ...entry, texture: tex });
+        }
+      }
+
+      // Add newly rendered entries to the cache
+      for (const entry of result.entries) {
+        if (!this.entries.has(entry.key)) {
+          this._ensurePage(entry.pageIndex);
+          const tex = this._pageTextures[entry.pageIndex];
+          this.entries.set(entry.key, { ...entry, texture: tex });
+        }
+      }
+
+      this._version++;
+
+      // Notify React via the Zustand store so consumers re-render
+      const { default: useTextAtlasStore } = await import('../stores/textAtlasStore.js');
+      useTextAtlasStore.getState().bumpVersion();
+
+    } catch (err) {
+      console.warn('[WorkerMultiPageTextAtlas] Worker error, falling back to sync atlas:', err);
+      _switchToSyncAtlas(requests);
+    } finally {
+      this._flushing = false;
+      if (this._pendingQueue.length > 0) {
+        this._scheduleFlush();
+      }
+    }
+  }
+}
+
+/**
+ * Emergency fallback: replace the global atlas with the synchronous
+ * MultiPageTextAtlas and re-add any pending requests.
+ */
+function _switchToSyncAtlas(pendingRequests = []) {
+  const oldAtlas = globalAtlas;
+  globalAtlas = new MultiPageTextAtlas({ padding: 4 });
+
+  // Re-add previously cached entries (sync draw)
+  if (oldAtlas && oldAtlas.entries) {
+    for (const [, entry] of oldAtlas.entries) {
+      if (entry.text && entry.style) {
+        globalAtlas.addText(entry.text, entry.style);
+      }
+    }
+  }
+
+  // Add the requests that triggered the error
+  for (const req of pendingRequests) {
+    globalAtlas.addText(req.text, req.style);
+  }
+  globalAtlas.updateTexture();
+
+  if (oldAtlas && typeof oldAtlas.dispose === 'function') {
+    oldAtlas.dispose();
+  }
+
+  // Bump Zustand version so consumers re-render with the sync atlas
+  import('../stores/textAtlasStore.js').then(({ default: store }) => {
+    store.getState().bumpVersion();
+  }).catch(() => {});
+}
+
+/**
+ * Get or create the global text atlas (multi-page).
+ * Uses the OffscreenCanvas worker-backed atlas when the browser supports
+ * OffscreenCanvas 2D text rendering, otherwise falls back to the
+ * synchronous main-thread atlas.
  */
 export function getGlobalTextAtlas() {
   if (!globalAtlas) {
-    globalAtlas = new MultiPageTextAtlas({
-      padding: 4,
-    });
+    if (isOffscreenCanvasTextSupported()) {
+      globalAtlas = new WorkerMultiPageTextAtlas();
+    } else {
+      globalAtlas = new MultiPageTextAtlas({ padding: 4 });
+    }
   }
   return globalAtlas;
 }

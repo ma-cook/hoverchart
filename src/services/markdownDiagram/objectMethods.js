@@ -2,7 +2,19 @@ import { useObjectsStore } from '../../stores';
 
 export const objectMethods = {
   /**
-   * Create 3D objects from processed diagram data
+   * Create 3D objects from processed diagram data.
+   *
+   * @param {object}      diagram          - Raw diagram from MarkdownProcessor (or a reconstructed
+   *                                         diagram-like object when using precomputedLayout).
+   * @param {Function}    onCreateObject   - Callback invoked for each new object.
+   * @param {Map}         nodeToObjectIdMap - Populated with nodeId → objectId mappings.
+   * @param {number[]}    basePosition     - [x, y, z] spawn origin.
+   * @param {object}      user             - Authenticated user record.
+   * @param {string}      currentSpaceId   - Active space identifier.
+   * @param {object[]}    allObjectsToSave - Accumulator for batch-saving to Firebase.
+   * @param {object|null} precomputedLayout - When provided (from markdownLayoutWorker) the
+   *                                         position/scale/hierarchy computation is skipped and
+   *                                         the serialised arrays are restored into ES6 Maps.
    */
   async createObjectsFromDiagram(
     diagram,
@@ -11,58 +23,90 @@ export const objectMethods = {
     basePosition,
     user,
     currentSpaceId,
-    allObjectsToSave
+    allObjectsToSave,
+    precomputedLayout = null
   ) {
     const graph = diagram.graph;
     if (!graph || !graph.nodes) {
       return 0;
     }
 
-    // Build hierarchical relationships
-    const {
-      parentChildMap,
-      childParentMap,
-      rootNodes,
-      internalComponentChildren,
-    } = this.buildHierarchicalRelationships(graph);
+    let parentChildMap, childParentMap, rootNodes, internalComponentChildren;
+    let nodePositions, nodeScales;
+    let context;
 
-    // Calculate hierarchical positions and scales
-    const nodePositions = new Map();
-    const nodeScales = new Map();
-    const processedNodes = new Set();
-
-    // Create processing context
-    const context = {
-      parentChildMap,
-      childParentMap,
-      rootNodes,
-      internalComponentChildren,
-      graphNodes: graph.nodes,
-      graphConnections: graph.connections,
-      basePosition,
-      nodePositions,
-      nodeScales,
-      processedNodes,
-    };
-
-    // Process root nodes
-    const rootArray = Array.from(rootNodes);
-    rootArray.forEach((rootId, index) => {
-      this.positionNodeHierarchy(
-        rootId,
-        context,
-        basePosition,
-        0,
-        index,
-        rootArray.length
+    if (precomputedLayout) {
+      // ── Worker-computed layout ───────────────────────────────────────────
+      // Reconstruct ES6 Maps / Sets from the serialised arrays returned by
+      // markdownLayoutWorker so container methods receive the types they expect.
+      parentChildMap = new Map(
+        precomputedLayout.parentChildMap.map(([k, v]) => [k, new Set(v)])
       );
-    });
+      childParentMap = new Map(precomputedLayout.childParentMap);
+      rootNodes = new Set(precomputedLayout.rootNodes);
+      internalComponentChildren = new Set(precomputedLayout.internalComponentChildren);
+      nodePositions = new Map(
+        precomputedLayout.nodes.map((n) => [n.nodeId, n.position])
+      );
+      nodeScales = new Map(
+        precomputedLayout.nodes.map((n) => [n.nodeId, n.scale])
+      );
+      context = {
+        parentChildMap,
+        childParentMap,
+        rootNodes,
+        internalComponentChildren,
+        graphNodes: graph.nodes,
+        graphConnections: graph.connections,
+        basePosition,
+        nodePositions,
+        nodeScales,
+        processedNodes: new Set(),
+      };
+    } else {
+      // ── Main-thread fallback (original code path) ────────────────────────
+      const relationships = this.buildHierarchicalRelationships(graph);
+      parentChildMap = relationships.parentChildMap;
+      childParentMap = relationships.childParentMap;
+      rootNodes = relationships.rootNodes;
+      internalComponentChildren = relationships.internalComponentChildren;
 
-    // Position grouped nodes (utilities, services, stores) in square grids
-    this.positionGroupedNodes(context);
+      nodePositions = new Map();
+      nodeScales = new Map();
+      const processedNodes = new Set();
 
-    // Apply collision detection and resolution to prevent overlapping subtrees
-    this.resolveCollisions(context);
+      context = {
+        parentChildMap,
+        childParentMap,
+        rootNodes,
+        internalComponentChildren,
+        graphNodes: graph.nodes,
+        graphConnections: graph.connections,
+        basePosition,
+        nodePositions,
+        nodeScales,
+        processedNodes,
+      };
+
+      // Process root nodes
+      const rootArray = Array.from(rootNodes);
+      rootArray.forEach((rootId, index) => {
+        this.positionNodeHierarchy(
+          rootId,
+          context,
+          basePosition,
+          0,
+          index,
+          rootArray.length
+        );
+      });
+
+      // Position grouped nodes (utilities, services, stores) in square grids
+      this.positionGroupedNodes(context);
+
+      // Apply collision detection and resolution to prevent overlapping subtrees
+      this.resolveCollisions(context);
+    }
 
     // Create 3D objects with batch processing for better performance
     let objectsCreated = 0;

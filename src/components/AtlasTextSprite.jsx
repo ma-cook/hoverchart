@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
+import useTextAtlasStore from '../stores/textAtlasStore';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 
 // =============================================================================
@@ -88,6 +89,11 @@ const AtlasTextSprite = ({
 
   // Get shared atlas instance
   const atlas = useMemo(() => getGlobalTextAtlas(), []);
+
+  // Subscribe to atlas version so this component re-renders when the worker
+  // delivers rendered text bitmaps (the first addText call returns null;
+  // the second call after version bump returns the cached entry).
+  const atlasVersion = useTextAtlasStore((s) => s.atlasVersion);
 
   // PERFORMANCE: Detect the GPU's max texture size on first render
   // so the atlas never grows beyond what the hardware supports.
@@ -198,7 +204,8 @@ const AtlasTextSprite = ({
     });
 
     if (!entry) {
-      console.warn('Failed to add text to atlas:', text);
+      // Worker-backed atlas returns null on first call (pending render).
+      // The entry will arrive after the worker finishes and bumps atlasVersion.
       atlasEntryKeyRef.current = null;
       return { geometry: null, material: null };
     }
@@ -263,6 +270,7 @@ const AtlasTextSprite = ({
     style.opacity,
     side,
     atlas,
+    atlasVersion,
   ]);
 
   // Update atlas texture once when geometry is created

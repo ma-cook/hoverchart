@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
+import useTextAtlasStore from '../stores/textAtlasStore';
 
 // =============================================================================
 // Reusable THREE objects — avoids GC pressure in the per-frame loop
@@ -79,6 +80,10 @@ const InstancedAtlasText = ({
   const atlas = useMemo(() => getGlobalTextAtlas(), []);
   const { gl } = useThree();
 
+  // Subscribe to atlas version so this component re-renders when the worker
+  // delivers rendered text bitmaps.
+  const atlasVersion = useTextAtlasStore((s) => s.atlasVersion);
+
   // Detect GPU max texture size once
   useMemo(() => {
     if (!TextAtlas._gpuLimitDetected && gl) {
@@ -152,7 +157,7 @@ const InstancedAtlasText = ({
     }
 
     return Array.from(groupMap.values());
-  }, [labels, atlas, scale]);
+  }, [labels, atlas, scale, atlasVersion]);
 
   // Kick off one batched texture upload after all texts are added
   useEffect(() => {

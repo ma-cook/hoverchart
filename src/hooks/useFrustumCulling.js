@@ -1,12 +1,16 @@
 import { useMemo, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 
 /**
  * Frustum culling hook for connection lines
  * Only renders connections that are visible in the camera frustum
  * 
- * PERFORMANCE: Reduces rendered connections by 60-80% when zoomed in
+ * PERFORMANCE: Reduces rendered connections by 60-80% when zoomed in.
+ * Heavy frustum math is offloaded to a Web Worker via the spatial-index
+ * worker.  The worker result is stored in a ref and consumed on the next
+ * natural render pass (fire-and-forget pattern — no React state).
  */
 
 // Frustum and matrix for culling calculations - reused to avoid allocations
@@ -135,7 +139,16 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
   const cameraDirtyRef = useRef(false);
   const cameraCheckTimeRef = useRef(0);
 
-  // Track camera movement without triggering React re-renders
+  // Worker frustum culling state (fire-and-forget pattern)
+  const workerBusyRef = useRef(false);
+  // { connectionArr: connections snapshot, visibleSet: Set<index> }
+  const workerResultRef = useRef(null);
+  // Keep a ref to connections for the useFrame closure
+  const connectionsRef = useRef(connections);
+  connectionsRef.current = connections;
+
+  // Track camera movement without triggering React re-renders.
+  // When the camera moves, also fire a worker dispatch for frustum culling.
   useFrame(() => {
     if (!enabled || !camera) return;
     const now = Date.now();
@@ -146,6 +159,46 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     if (tempCamPos.current.distanceTo(lastCameraPositionRef.current) > 50) {
       lastCameraPositionRef.current.copy(tempCamPos.current);
       cameraDirtyRef.current = true;
+
+      // --- Worker dispatch (fire-and-forget) ---
+      const conns = connectionsRef.current;
+      if (conns && conns.length >= 50 && !workerBusyRef.current) {
+        workerBusyRef.current = true;
+
+        // Extract frustum planes as plain arrays [nx, ny, nz, constant]
+        projScreenMatrix.multiplyMatrices(
+          camera.projectionMatrix,
+          camera.matrixWorldInverse
+        );
+        frustum.setFromProjectionMatrix(projScreenMatrix);
+        const planes = [];
+        for (let i = 0; i < 6; i++) {
+          const p = frustum.planes[i];
+          planes.push([p.normal.x, p.normal.y, p.normal.z, p.constant]);
+        }
+
+        // Build compact connection endpoint list — worker has object positions
+        const endpoints = [];
+        for (let i = 0; i < conns.length; i++) {
+          const c = conns[i];
+          endpoints.push({
+            id: i, // use array index as ID
+            startObjId: String(c.start?.objectId || ''),
+            endObjId: String(c.end?.objectId || ''),
+          });
+        }
+
+        const worker = getSpatialIndexWorker();
+        worker.frustumCullConnections(planes, endpoints)
+          .then((visibleIndices) => {
+            workerResultRef.current = {
+              connectionArr: conns, // snapshot for freshness check
+              visibleSet: new Set(visibleIndices),
+            };
+          })
+          .catch(() => { /* worker error — sync fallback will run at next render */ })
+          .finally(() => { workerBusyRef.current = false; });
+      }
     }
   });
 
@@ -191,6 +244,15 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
     lastObjectsRef.current = objects;
     cameraDirtyRef.current = false;
 
+    // --- Try worker result first ---
+    const wr = workerResultRef.current;
+    if (wr && wr.connectionArr === connections && wr.visibleSet.size > 0) {
+      const visible = connections.filter((_, idx) => wr.visibleSet.has(idx));
+      cachedVisibleConnectionsRef.current = visible;
+      return visible;
+    }
+
+    // --- Sync fallback ---
     projScreenMatrix.multiplyMatrices(
       camera.projectionMatrix,
       camera.matrixWorldInverse

@@ -12,6 +12,20 @@ const pathCache = new Map();
 // Track object positions for cache invalidation
 const objectPositionCache = new Map(); // objectId -> rounded position string
 
+// ---------------------------------------------------------------------------
+// Worker-precomputed results cache
+// ---------------------------------------------------------------------------
+
+/**
+ * Cache of results precomputed by the pathfinding Web Worker.
+ * Keyed by deterministic string derived from start/end positions + connection IDs.
+ * Value: `{ hasIntersections: boolean, pathPoints: number[][] }`
+ */
+const precomputedResults = new Map();
+
+/** True while a worker batch is in-flight to avoid duplicate dispatches. */
+let _workerBusy = false;
+
 /**
  * Completely clear all path-finding caches.
  * Call this whenever objects move so that intersection checks use fresh geometry.
@@ -19,6 +33,7 @@ const objectPositionCache = new Map(); // objectId -> rounded position string
 export function invalidatePathfindingCaches() {
   intersectionCache.clear();
   pathCache.clear();
+  precomputedResults.clear();
   // Note: objectPositionCache is intentionally kept so checkObjectMovement keeps working.
 }
 
@@ -945,3 +960,127 @@ function generateMultiSegmentPath(
   const curvePoints = curve.getPoints(Math.max(20, waypoints.length * 6));
   return curvePoints.map((point) => [point.x, point.y, point.z]);
 }
+
+// ---------------------------------------------------------------------------
+// Worker-backed batch precomputation
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the cache key used for the precomputed results map.
+ * Must be deterministic for the same logical connection.
+ */
+function precomputeCacheKey(startPos, endPos, startConnId, endConnId) {
+  const rs = roundForCache(startPos);
+  const re = roundForCache(endPos);
+  return `${rs.join(',')}|${re.join(',')}|${startConnId}|${endConnId}`;
+}
+
+/**
+ * Look up a worker-precomputed result.
+ *
+ * @returns {{ hasIntersections: boolean, pathPoints: number[][] } | null}
+ */
+export function getPrecomputedResult(startPos, endPos, startConnId, endConnId) {
+  if (precomputedResults.size === 0) return null;
+  const key = precomputeCacheKey(startPos, endPos, startConnId, endConnId);
+  return precomputedResults.get(key) || null;
+}
+
+/**
+ * Combined helper: returns a precomputed path if available, otherwise
+ * falls back to synchronous computation on the main thread.
+ *
+ * @returns {{ hasIntersections: boolean, pathPoints: number[][] }}
+ */
+export function computeConnectionPath(
+  startPos,
+  endPos,
+  objects,
+  startConnId,
+  endConnId
+) {
+  // 1. Worker-precomputed cache
+  const precomputed = getPrecomputedResult(
+    startPos, endPos, startConnId, endConnId
+  );
+  if (precomputed) return precomputed;
+
+  // 2. Sync fallback (still uses its own TTL caches)
+  const intersections = checkLineIntersection(startPos, endPos, objects);
+  const hasIntersections =
+    intersections !== null &&
+    intersections !== undefined &&
+    intersections.length > 0;
+  const pathPoints = hasIntersections
+    ? generateCurvedPath(
+        startPos, endPos, intersections, startConnId, endConnId, true
+      )
+    : [startPos, endPos];
+  return { hasIntersections, pathPoints };
+}
+
+/**
+ * Dispatch a batch of connection path computations to the Web Worker.
+ *
+ * Call this whenever the connection list or object positions change.
+ * Results populate `precomputedResults` so that subsequent sync calls
+ * to `computeConnectionPath` / `getPrecomputedResult` are instant.
+ *
+ * This is fire-and-forget — it does NOT trigger React re-renders.
+ * Results are picked up passively on the next natural render cycle.
+ *
+ * @param {Array<{id: string, startPos: number[], endPos: number[],
+ *                 startConnId: string, endConnId: string}>} requests
+ * @param {Array<{id: string, type: string, position: number[],
+ *                 scale: number[]}>} objects — plain serialisable object data
+ * @returns {Promise<void>}
+ */
+export async function precomputePathsBatch(requests, objects) {
+  if (_workerBusy || !requests || requests.length === 0) {
+    return;
+  }
+
+  let workerProxy;
+  try {
+    // Lazy import to avoid bundling worker code into the main chunk when
+    // the feature isn't used (e.g. SSR, tests).
+    const { getPathfindingWorker } = await import(
+      '../workers/pathfindingWorkerClient.js'
+    );
+    workerProxy = getPathfindingWorker();
+  } catch {
+    // Worker unavailable (e.g. SharedArrayBuffer restrictions, test env).
+    return;
+  }
+
+  _workerBusy = true;
+
+  try {
+    // Invalidate worker-side caches too, so it recomputes from scratch.
+    await workerProxy.invalidateCaches();
+
+    const results = await workerProxy.computePathsBatch(requests, objects);
+
+    // Build O(1) lookup for matching requests to results.
+    const requestsById = new Map(requests.map(r => [r.id, r]));
+
+    // Populate the main-thread precomputed map.
+    precomputedResults.clear();
+    for (const res of results) {
+      const req = requestsById.get(res.id);
+      if (!req) continue;
+      const key = precomputeCacheKey(
+        req.startPos, req.endPos, req.startConnId, req.endConnId
+      );
+      precomputedResults.set(key, {
+        hasIntersections: res.hasIntersections,
+        pathPoints: res.pathPoints,
+      });
+    }
+  } catch (err) {
+    console.warn('[pathfinding] Worker batch failed:', err);
+  } finally {
+    _workerBusy = false;
+  }
+}
+

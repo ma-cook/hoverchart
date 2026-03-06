@@ -12,9 +12,9 @@ import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
 import AnimatedConnectionLine from './AnimatedConnectionLine';
 import {
-  checkLineIntersection,
-  generateCurvedPath,
   invalidatePathfindingCaches,
+  computeConnectionPath,
+  precomputePathsBatch,
 } from '../utils/pathfindingUtils';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
@@ -627,13 +627,24 @@ const Connection = React.memo(
 
       // Only check intersections when necessary
       const shouldCheckIntersections = lineStyle === 'curved' || !hasStoredPath;
-      const intersections = shouldCheckIntersections
-        ? checkLineIntersection(
-            startPosition,
-            endPosition,
-            allObjectsForPathfinding
-          ) // <-- Use the prop name
-        : null;
+
+      let intersections = null;
+      let computedPathPoints = null;
+
+      if (shouldCheckIntersections) {
+        // computeConnectionPath checks the worker-precomputed cache first,
+        // then falls back to synchronous computation.
+        const result = computeConnectionPath(
+          startPosition,
+          endPosition,
+          allObjectsForPathfinding,
+          stableStartObjectId?.toString() || '',
+          stableEndObjectId?.toString() || ''
+        );
+        // Reconstruct the intersections-like truthiness for shouldCurve check
+        intersections = result.hasIntersections ? [true] : null;
+        computedPathPoints = result.pathPoints;
+      }
 
       // Determine if we need curved path
       const shouldCurve =
@@ -641,14 +652,7 @@ const Connection = React.memo(
 
       // Use stored path when possible
       const calculatedPathPoints = shouldCurve
-        ? generateCurvedPath(
-            startPosition,
-            endPosition,
-            intersections,
-            stableStartObjectId,
-            stableEndObjectId,
-            true
-          )
+        ? computedPathPoints || [startPosition, endPosition]
         : stablePathPoints || [startPosition, endPosition];
 
       const isCurvedPath =
@@ -1289,20 +1293,24 @@ const ConnectionsRenderer = ({
       let endPos = resolveEndpointPosition(conn.end, catObjectsById, pathfindingObjects);
       
       // Check for intersections if we have valid positions and objects to check against.
-      // checkLineIntersection has its own internal TTL cache (2s) keyed on start+end positions.
-      // Because we called invalidatePathfindingCaches() above when objects moved, those caches
-      // are already cleared and the fresh blocking-object positions are used.
+      // computeConnectionPath checks the worker-precomputed cache first, then
+      // falls back to synchronous checkLineIntersection (which has its own TTL cache).
+      // Because we called invalidatePathfindingCaches() above when objects moved,
+      // those caches are already cleared and the fresh blocking-object positions are used.
       let hasIntersection = false;
       if (startPos && endPos && pathfindingObjects && pathfindingObjects.length > 0) {
-        const intersections = checkLineIntersection(startPos, endPos, pathfindingObjects);
-        hasIntersection = intersections && intersections.length > 0;
+        const { hasIntersections } = computeConnectionPath(
+          startPos, endPos, pathfindingObjects,
+          conn.start?.objectId?.toString() || '',
+          conn.end?.objectId?.toString() || ''
+        );
+        hasIntersection = hasIntersections;
         // DEBUG: Log intersection results for all connections when objects change
         if (objectsChanged && window._debugPathfinding) {
           console.log(`[PathDebug] conn ${conn.id} (${conn.start?.objectId}->${conn.end?.objectId}):`, {
             startPos: startPos?.map(v => v.toFixed(2)),
             endPos: endPos?.map(v => v.toFixed(2)),
             startPosSource: conn.start?.position ? 'position' : conn.start?.facePosition ? 'facePosition' : conn.start?.worldPosition ? 'worldPosition' : 'objectCenter',
-            intersections: intersections?.map(i => ({ id: i.objectId, type: i.objectType })),
             hasIntersection,
             bucket: hasIntersection ? (hasText ? 'individual' : 'curved') : (hasText ? 'withText' : 'batched'),
           });
@@ -1343,6 +1351,46 @@ const ConnectionsRenderer = ({
     
     return result;
   }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, objectPositions, pathfindingObjects]);
+
+  // WORKER: Fire-and-forget batch dispatch to the pathfinding Web Worker.
+  // Populates a module-level precomputed cache that `computeConnectionPath`
+  // checks on subsequent renders.  NO React state is updated — results are
+  // picked up passively the next time a useMemo re-runs for any reason.
+  useEffect(() => {
+    if (!progressiveConnections?.length || !pathfindingObjects?.length) return;
+
+    // Build an objectId → obj map for resolving face positions.
+    const pfObjectsById = new Map();
+    for (const obj of pathfindingObjects) {
+      if (obj?.id) pfObjectsById.set(obj.id.toString(), obj);
+    }
+
+    const requests = [];
+    for (const conn of progressiveConnections) {
+      const startPos = resolveEndpointPosition(conn.start, pfObjectsById, pathfindingObjects);
+      const endPos = resolveEndpointPosition(conn.end, pfObjectsById, pathfindingObjects);
+      if (!startPos || !endPos) continue;
+      requests.push({
+        id: conn.id,
+        startPos: Array.isArray(startPos) ? startPos : [startPos.x, startPos.y, startPos.z],
+        endPos:   Array.isArray(endPos)   ? endPos   : [endPos.x, endPos.y, endPos.z],
+        startConnId: conn.start?.objectId?.toString() || '',
+        endConnId:   conn.end?.objectId?.toString()   || '',
+      });
+    }
+
+    if (requests.length === 0) return;
+
+    const serializedObjects = pathfindingObjects.map(obj => ({
+      id: obj.id,
+      type: obj.type,
+      position: obj.position,
+      scale: obj.scale,
+    }));
+
+    // Fire-and-forget — no .then / state update needed
+    precomputePathsBatch(requests, serializedObjects);
+  }, [progressiveConnections, pathfindingObjects]);
 
   // Combine all straight connections for batched line rendering
   const allStraightConnections = useMemo(() => {

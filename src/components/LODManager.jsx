@@ -1,8 +1,9 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
 import * as THREE from 'three';
+import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 
 // Reusable vectors to avoid GC pressure
 const _cameraPos = new THREE.Vector3();
@@ -60,6 +61,28 @@ const LODManager = ({ enabled = true }) => {
     objectsRef.current = objects;
   }, [objects]);
 
+  // WORKER: Sync objects to the spatial index worker whenever they change.
+  // Also request spatial containment computation (replaces the O(N²) loop below).
+  const workerBusyRef = useRef(false);
+  const workerSyncedRef = useRef(false);
+
+  useEffect(() => {
+    if (!objects || objects.length === 0) return;
+
+    // Serialise just the data the worker needs
+    const serialised = objects.map(obj => ({
+      id: String(obj.id),
+      position: obj.position || [0, 0, 0],
+      scale: obj.scale || [1, 1, 1],
+      merfolkData: obj.merfolkData || null,
+    }));
+
+    const worker = getSpatialIndexWorker();
+    worker.syncObjects(serialised).then(() => {
+      workerSyncedRef.current = true;
+    }).catch(() => { /* worker unavailable — sync fallback will run */ });
+  }, [objects]);
+
   // Stable key that only changes when container STRUCTURE changes (not positions/scales).
   // This prevents the O(N²) spatial containment scan from re-running on every object move.
   const containersKey = useMemo(() => {
@@ -75,102 +98,95 @@ const LODManager = ({ enabled = true }) => {
   }, [objects]);
 
   // Initialize parent-child relationships when container STRUCTURE changes.
-  // We read objectsRef.current inside so we always use the latest positions for
-  // spatial containment without making objects itself a dependency (which would
-  // re-run on every position update).
+  // Tries the worker first (off-main-thread O(N×containers) scan), falls back
+  // to sync computation if the worker hasn't synced yet.
   useEffect(() => {
     const objects = objectsRef.current;
     if (!objects || objects.length === 0) {
       return;
     }
-    
+
+    // --- Try worker path first ---
+    if (workerSyncedRef.current) {
+      const worker = getSpatialIndexWorker();
+      worker.computeSpatialContainment().then(({ parentIdList, relationships }) => {
+        if (parentIdList.length > 0) {
+          // Deduplicate parentIdList
+          batchRegisterParents([...new Set(parentIdList)]);
+        }
+        if (relationships.length > 0) {
+          batchRegisterParentChild(relationships);
+        }
+        initializedRef.current = true;
+      }).catch(() => {
+        // Worker failed — fall through to sync path
+        computeContainmentSync(objects);
+      });
+      return;
+    }
+
+    // --- Sync fallback (identical to original logic) ---
+    computeContainmentSync(objects);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containersKey, batchRegisterParentChild, batchRegisterParents]);
+
+  // Extracted sync containment logic for fallback
+  const computeContainmentSync = useCallback((objects) => {
     const relationships = [];
     const parentIdList = [];
-    
-    // Find all container objects (can be cubes, dodecahedrons, or tetrahedrons)
+
     const containers = objects.filter(obj => obj.merfolkData?.isContainer);
-    
-    // Register all containers as parents
+
     for (const container of containers) {
       parentIdList.push(container.id);
     }
-    
+
     if (containers.length === 0) {
-      // Even without containers, we might have parent components from merfolk data
-      // Check for objects that have children based on merfolkData
       for (const obj of objects) {
         if (obj.merfolkData?.isParent || obj.merfolkData?.hasChildren) {
           parentIdList.push(obj.id);
         }
       }
-      
       if (parentIdList.length > 0) {
         batchRegisterParents(parentIdList);
       }
       initializedRef.current = true;
       return;
     }
-    
+
     for (const container of containers) {
       const containerId = container.id;
       const containerPos = container.position || [0, 0, 0];
       const containerScale = container.scale || [1, 1, 1];
-      
-      // Calculate container bounds (approximate)
       const halfSize = [
-        (containerScale[0] || 1) * 5 * 1.5, // CUBE_SIZE * some margin
+        (containerScale[0] || 1) * 5 * 1.5,
         (containerScale[1] || 1) * 5 * 1.5,
         (containerScale[2] || 1) * 5 * 1.5,
       ];
-      
+
       for (const obj of objects) {
-        // Skip containers themselves and self-reference
-        if (obj.merfolkData?.isContainer || obj.id === containerId) {
-          continue;
-        }
-        
-        // Check if object has explicit parent reference
+        if (obj.merfolkData?.isContainer || obj.id === containerId) continue;
         if (obj.merfolkData?.parentId === containerId) {
           relationships.push({ parentId: containerId, childId: obj.id });
           continue;
         }
-        
-        // Check spatial containment
         const objPos = obj.position;
         if (!objPos) continue;
-        
-        const ox = objPos[0] || 0;
-        const oy = objPos[1] || 0;
-        const oz = objPos[2] || 0;
-        const cx = containerPos[0] || 0;
-        const cy = containerPos[1] || 0;
-        const cz = containerPos[2] || 0;
-        
-        // Check if object is inside container bounds
         if (
-          Math.abs(ox - cx) < halfSize[0] &&
-          Math.abs(oy - cy) < halfSize[1] &&
-          Math.abs(oz - cz) < halfSize[2]
+          Math.abs((objPos[0] || 0) - (containerPos[0] || 0)) < halfSize[0] &&
+          Math.abs((objPos[1] || 0) - (containerPos[1] || 0)) < halfSize[1] &&
+          Math.abs((objPos[2] || 0) - (containerPos[2] || 0)) < halfSize[2]
         ) {
           relationships.push({ parentId: containerId, childId: obj.id });
         }
       }
     }
-    
-    // Batch register parents first
-    if (parentIdList.length > 0) {
-      batchRegisterParents(parentIdList);
-    }
-    
-    // Then batch register relationships
-    if (relationships.length > 0) {
-      batchRegisterParentChild(relationships);
-    }
-    
+
+    if (parentIdList.length > 0) batchRegisterParents(parentIdList);
+    if (relationships.length > 0) batchRegisterParentChild(relationships);
     initializedRef.current = true;
-  // containersKey changes only when container structure changes, not on position updates
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containersKey, batchRegisterParentChild, batchRegisterParents]);
+  }, [batchRegisterParentChild, batchRegisterParents]);
   
   // Update LOD levels in useFrame
   useFrame(() => {
@@ -204,14 +220,37 @@ const LODManager = ({ enabled = true }) => {
     lastCameraPositionRef.current.copy(_cameraPos);
     lastUpdateTimeRef.current = now;
     
-    // Calculate LOD updates for ALL objects (parents and children)
-    const lodUpdates = [];
     const currentLodLevels = useLODStore.getState().lodLevels;
-    const currentChildParentMap = useLODStore.getState().childParentMap;
     const currentParentIds = useLODStore.getState().parentIds;
+    const currentChildParentMap = useLODStore.getState().childParentMap;
+
+    // --- Try worker path (fire-and-forget, off main thread) ---
+    if (workerSyncedRef.current && !workerBusyRef.current) {
+      workerBusyRef.current = true;
+
+      const cameraPos = [_cameraPos.x, _cameraPos.y, _cameraPos.z];
+      const parentIdArr = [...currentParentIds];
+      const childIdArr = [...currentChildParentMap.keys()];
+      // Send current LOD levels so the worker only returns deltas
+      const lodEntries = [...currentLodLevels.entries()];
+
+      const worker = getSpatialIndexWorker();
+      worker.computeLODLevels(cameraPos, parentIdArr, childIdArr, lodEntries)
+        .then((updates) => {
+          if (updates && updates.length > 0) {
+            batchSetLODLevels(updates);
+          }
+        })
+        .catch(() => { /* worker error — next frame will retry or sync fallback runs */ })
+        .finally(() => { workerBusyRef.current = false; });
+
+      return; // Don't also run the sync path this frame
+    }
+    
+    // --- Sync fallback (runs when worker not yet synced or is busy) ---
+    const lodUpdates = [];
     
     for (const obj of objects) {
-      // Get object position
       const pos = obj.position;
       if (!pos) continue;
       
@@ -223,43 +262,26 @@ const LODManager = ({ enabled = true }) => {
         continue;
       }
       
-      // Calculate squared distance to camera (avoids sqrt per object)
       const distanceSq = _cameraPos.distanceToSquared(_objectPos);
       
-      // Check if this is a grouping container (excluded from LOD system)
-      const isGroupingContainer = obj.merfolkData?.isContainer === true;
-      
-      // Grouping containers are excluded from LOD - they always render at full detail
-      if (isGroupingContainer) {
+      if (obj.merfolkData?.isContainer === true) {
         continue;
       }
       
-      // Determine if this object is a parent (has children) or a child
       const isParent = currentParentIds.has(obj.id);
-      const isChild = currentChildParentMap.has(obj.id);
       
-      // Calculate LOD level based on object type (using squared distance)
       let newLodLevel;
       if (isParent) {
-        // Parent objects use 5x distance thresholds
         newLodLevel = calculateParentLODLevel(distanceSq);
-      } else if (isChild) {
-        // Child objects use standard thresholds
-        newLodLevel = calculateLODLevel(distanceSq);
       } else {
-        // Standalone objects (neither parent nor child) also get LOD
         newLodLevel = calculateLODLevel(distanceSq);
       }
       
-      const currentLevel = currentLodLevels.get(obj.id);
-      
-      // Only update if changed
-      if (currentLevel !== newLodLevel) {
+      if (currentLodLevels.get(obj.id) !== newLodLevel) {
         lodUpdates.push([obj.id, newLodLevel]);
       }
     }
     
-    // Batch update if there are changes
     if (lodUpdates.length > 0) {
       batchSetLODLevels(lodUpdates);
     }
