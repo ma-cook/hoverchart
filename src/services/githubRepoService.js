@@ -138,6 +138,21 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
             type: 'file',
           });
         }
+        // Include shader files (GLSL, WGSL, HLSL, etc.)
+        else if (
+          item.name.endsWith('.glsl') ||
+          item.name.endsWith('.wgsl') ||
+          item.name.endsWith('.hlsl') ||
+          item.name.endsWith('.vert') ||
+          item.name.endsWith('.frag') ||
+          item.name.endsWith('.comp')
+        ) {
+          structure.push({
+            path: item.path,
+            name: item.name,
+            type: 'shader',
+          });
+        }
       }
     }
 
@@ -164,6 +179,11 @@ const analyzeFile = (filePath) => {
   const isService = /(?:^|\/)services\//.test(filePath);
   const isStore   = /(?:^|\/)stores\//.test(filePath);
   const isUtil    = /(?:^|\/)utils\//.test(filePath) || /(?:^|\/)helpers\//.test(filePath);
+  // Worker folders/files
+  const isWorker  = /(?:^|\/)workers\//.test(filePath) || /[Ww]orker\.(js|ts|jsx|tsx)$/.test(filePath);
+  // Shader folders/files
+  const isShader  = /(?:^|\/)shaders\//.test(filePath) ||
+    /\.(glsl|wgsl|hlsl|vert|frag|comp)$/.test(filePath);
   // Backend folders: functions (Firebase/cloud functions), api, server, backend, lambda, routes
   const isBackend = /(?:^|\/)functions\//.test(filePath) ||
     /(?:^|\/)api\//.test(filePath) ||
@@ -172,7 +192,7 @@ const analyzeFile = (filePath) => {
     /(?:^|\/)lambda\//.test(filePath) ||
     /(?:^|\/)routes\//.test(filePath);
 
-  return { isComponent, isHook, isService, isStore, isUtil, isBackend };
+  return { isComponent, isHook, isService, isStore, isUtil, isWorker, isShader, isBackend };
 };
 
 /**
@@ -303,6 +323,15 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // Fetch entire repository structure
     const structure = await fetchRepositoryStructure(owner, repoName, token);
 
+    // Log structure breakdown
+    const shaderFiles = structure.filter(f => f.type === 'shader');
+    const jsFiles = structure.filter(f => f.type === 'file');
+    const workerJsFiles = jsFiles.filter(f => /(?:^|\/)workers\//.test(f.path));
+    console.log(`📁 Repository structure: ${structure.length} total files`);
+    console.log(`   JS/TS files: ${jsFiles.length}, Shader files: ${shaderFiles.length}, Worker JS files: ${workerJsFiles.length}`);
+    if (shaderFiles.length > 0) console.log(`   Shaders:`, shaderFiles.map(f => f.path));
+    if (workerJsFiles.length > 0) console.log(`   Workers:`, workerJsFiles.map(f => f.path));
+
     // Define structure to hold ALL found elements across entire repo
     const elements = {
       components: [],
@@ -388,7 +417,25 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
           const fileContext = analyzeFile(file.path);
 
           // Extract file name without extension for file-level tracking
-          const fileName = file.path.split('/').pop().replace(/\.(jsx?|tsx?)$/, '');
+          const fileName = file.path.split('/').pop().replace(/\.(jsx?|tsx?|glsl|wgsl|hlsl|vert|frag|comp)$/, '');
+
+          // Handle shader files — they can't be parsed as JS ASTs,
+          // so we add them directly as utility nodes under a shader file container.
+          if (file.type === 'shader' || fileContext.isShader) {
+            const shaderName = file.path.split('/').pop(); // Keep full filename with extension
+            const shaderNodeName = shaderName.replace(/\./g, '_'); // Sanitise dots for node IDs
+            if (!foundItems.utilities.has(shaderNodeName)) {
+              foundItems.utilities.add(shaderNodeName);
+              elements.utilities.push(shaderNodeName);
+            }
+            // Group under a "shaders" file container
+            const shaderContainerName = 'shaders';
+            if (!fileFunctions.has(shaderContainerName)) {
+              fileFunctions.set(shaderContainerName, { type: 'utility', functions: new Set() });
+            }
+            fileFunctions.get(shaderContainerName).functions.add(shaderNodeName);
+            return; // Skip AST parsing for shader files
+          }
 
           try {
             // Parse the file content into an AST with lenient settings
@@ -628,6 +675,14 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                     fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
+                } else if (fileContext.isWorker) {
+                  // Worker functions - grouped under worker file container
+                  elements.utilities.push(funcName);
+                  // Track file→function relationship
+                  if (!fileFunctions.has(fileName)) {
+                    fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
+                  }
+                  fileFunctions.get(fileName).functions.add(funcName);
                 } else {
                   // Default: treat as function
                   // If we're inside a component OR in a component file, track this function as belonging to it
@@ -657,6 +712,17 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                       // Track file→function relationship so the file container is always created
                       if (!fileFunctions.has(fileName)) {
                         fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                      }
+                      fileFunctions.get(fileName).functions.add(funcName);
+                    }
+                  } else if (fileContext.isWorker) {
+                    // Functions in worker files should be utilities under a worker container
+                    if (!foundItems.utilities.has(funcName)) {
+                      foundItems.utilities.add(funcName);
+                      elements.utilities.push(funcName);
+                      // Track file→function relationship
+                      if (!fileFunctions.has(fileName)) {
+                        fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
                     }
@@ -922,6 +988,14 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                           fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
+                      } else if (fileContext.isWorker) {
+                        // Worker functions - grouped under worker file container
+                        elements.utilities.push(varName);
+                        // Track file→function relationship
+                        if (!fileFunctions.has(fileName)) {
+                          fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
+                        }
+                        fileFunctions.get(fileName).functions.add(varName);
                       } else {
                         // Default: treat as function
                         // If we're inside a component OR in a component file, track this function as belonging to it
@@ -953,6 +1027,20 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                             if (!fileFunctions.has(fileName)) {
                               fileFunctions.set(fileName, {
                                 type: 'utility',
+                                functions: new Set(),
+                              });
+                            }
+                            fileFunctions.get(fileName).functions.add(varName);
+                          }
+                        } else if (fileContext.isWorker && isFunction) {
+                          // Functions in worker files should be utilities under a worker container
+                          if (!foundItems.utilities.has(varName)) {
+                            foundItems.utilities.add(varName);
+                            elements.utilities.push(varName);
+                            // Track file→function relationship
+                            if (!fileFunctions.has(fileName)) {
+                              fileFunctions.set(fileName, {
+                                type: 'worker',
                                 functions: new Set(),
                               });
                             }
@@ -1106,6 +1194,15 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                     fileFunctions.set(fileName, { type: 'service', functions: new Set() });
                   }
                   fileFunctions.get(fileName).functions.add(className);
+                } else if (fileContext.isWorker && !foundItems.utilities.has(className)) {
+                  // Classes in worker files are utilities under a worker container
+                  foundItems.utilities.add(className);
+                  elements.utilities.push(className);
+                  // Track file→function relationship
+                  if (!fileFunctions.has(fileName)) {
+                    fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
+                  }
+                  fileFunctions.get(fileName).functions.add(className);
                 }
               }
 
@@ -1253,12 +1350,32 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
                 }
               }
             }
-          } catch {
-            // Silently skip files that can't be parsed
+          } catch (parseError) {
+            // Log which files can't be parsed (helps debug missing nodes)
+            console.warn(`⚠️  Failed to parse ${file.path}:`, parseError?.message || parseError);
             return;
           }
         })
       );
+    }
+
+    // Log diagnostic summary for file containers
+    const fileContainerSummary = [];
+    fileFunctions.forEach((info, name) => {
+      fileContainerSummary.push(`  ${name} (${info.type}): ${[...info.functions].join(', ')}`);
+    });
+    console.log(`📊 GitHub Repo Scan Summary for ${repoName}:`);
+    console.log(`  Files scanned: ${structure.length}`);
+    console.log(`  Components: ${elements.components.length}`);
+    console.log(`  Hooks: ${elements.hooks.length}`);
+    console.log(`  Services: ${elements.services.length}`);
+    console.log(`  Stores: ${elements.stores.length}`);
+    console.log(`  Utilities: ${elements.utilities.length}`);
+    console.log(`  Functions: ${elements.functions.length}`);
+    console.log(`  Libraries: ${elements.imports.libraries.length}`);
+    console.log(`  File containers (${fileFunctions.size}):`);
+    if (fileContainerSummary.length > 0) {
+      fileContainerSummary.forEach(line => console.log(line));
     }
 
     // Generate Merfolk markdown
@@ -1425,10 +1542,18 @@ const generateMerfolkMarkdown = (
   // Every file in fileFunctions now gets a container, so always map all children.
   fileFunctions.forEach((fileInfo, fileName) => {
     const needsSuffix = filesNeedingSuffix.has(fileName);
-    // Backend files get a backend_ prefix on their container node ID
-    const fileNodeId = fileInfo.type === 'backend'
-      ? `backend_${fileName}`
-      : ((fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName);
+    // Backend/worker/shader files get a prefix on their container node ID
+    // so markdownDiagramService can detect and group them separately.
+    let fileNodeId;
+    if (fileInfo.type === 'backend') {
+      fileNodeId = `backend_${fileName}`;
+    } else if (fileInfo.type === 'worker') {
+      fileNodeId = `worker_${fileName}`;
+    } else if (fileInfo.type === 'utility' && fileName === 'shaders') {
+      fileNodeId = `shader_${fileName}`;
+    } else {
+      fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
+    }
     fileInfo.functions.forEach((funcName) => {
       childToParentMap.set(funcName, { parentId: fileNodeId, parentName: fileName, type: fileInfo.type });
     });
@@ -1729,15 +1854,27 @@ const generateMerfolkMarkdown = (
         nodeIds.add(fileNodeId);
         markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
         fileInfo.nodeId = fileNodeId;
-      } else {
-        // utility
-        if (nodeIds.has(fileNodeId)) {
-          duplicates.push({ id: fileNodeId, type: 'Utility File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Utility File)`);
+      } else if (fileInfo.type === 'worker') {
+        // Worker files get a worker_ prefix so they are grouped separately
+        const workerNodeId = `worker_${fileName}`;
+        if (nodeIds.has(workerNodeId)) {
+          duplicates.push({ id: workerNodeId, type: 'Worker File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${workerNodeId} (Worker File)`);
         }
-        nodeIds.add(fileNodeId);
-        markdown += `${fileNodeId}[Function: ${fileName}]\n`;
-        fileInfo.nodeId = fileNodeId;
+        nodeIds.add(workerNodeId);
+        markdown += `${workerNodeId}[Function: ${fileName}]\n`;
+        fileInfo.nodeId = workerNodeId;
+      } else {
+        // utility (and shaders container)
+        // Shader containers get a shader_ prefix for separate grouping
+        const utilNodeId = (fileName === 'shaders') ? `shader_${fileName}` : fileNodeId;
+        if (nodeIds.has(utilNodeId)) {
+          duplicates.push({ id: utilNodeId, type: 'Utility File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${utilNodeId} (Utility File)`);
+        }
+        nodeIds.add(utilNodeId);
+        markdown += `${utilNodeId}[Function: ${fileName}]\n`;
+        fileInfo.nodeId = utilNodeId;
       }
     });
 

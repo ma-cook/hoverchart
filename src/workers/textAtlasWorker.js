@@ -20,7 +20,7 @@ import { expose, transfer } from 'comlink';
 // ---------------------------------------------------------------------------
 const PADDING = 4;
 const PAGE_MAX_SIZE = 4096;
-const MAX_PAGES = 8;
+const MAX_PAGES = 32;
 
 let maxGPUTextureSize = 8192;
 
@@ -208,10 +208,18 @@ const workerApi = {
       if (!entry) {
         // Page full — create a new one
         if (pages.length >= MAX_PAGES) {
-          console.warn(
-            `TextAtlasWorker: ${MAX_PAGES} pages full (${allEntries.size} entries). ` +
-            `Skipping: "${req.text.slice(0, 40)}"`
-          );
+          // Throttle warning to at most once every 5 seconds to avoid log spam
+          const now = Date.now();
+          if (!workerApi._lastFullWarn || now - workerApi._lastFullWarn > 5000) {
+            workerApi._lastFullWarn = now;
+            workerApi._skippedSinceWarn = (workerApi._skippedSinceWarn || 0) + 1;
+            console.warn(
+              `TextAtlasWorker: ${MAX_PAGES} pages full (${allEntries.size} entries). ` +
+              `Skipping texts (${workerApi._skippedSinceWarn} skipped so far)`
+            );
+          } else {
+            workerApi._skippedSinceWarn = (workerApi._skippedSinceWarn || 0) + 1;
+          }
           continue;
         }
         page = addPage();

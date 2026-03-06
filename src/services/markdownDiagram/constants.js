@@ -74,6 +74,8 @@ const GROUP_DISPLAY_NAMES = {
   control: 'Controls',
   state: 'State',
   data: 'Data',
+  worker: 'Workers',
+  shader: 'Shaders',
 };
 
 /**

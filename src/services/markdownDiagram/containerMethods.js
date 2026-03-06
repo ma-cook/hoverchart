@@ -57,10 +57,14 @@ export const containerMethods = {
       // Datapaths don't produce 3D objects
       if (nodeType === NODE_TYPE_DATAPATH) continue;
 
-      // Determine group key — preserve backend splitting for services
+      // Determine group key — preserve backend/worker/shader splitting
       let groupKey = nodeType;
       if (nodeType === NODE_TYPE_SERVICE && nodeId.startsWith('backend_')) {
         groupKey = 'backend';
+      } else if (nodeType === NODE_TYPE_FUNCTION && nodeId.startsWith('worker_')) {
+        groupKey = 'worker';
+      } else if (nodeType === NODE_TYPE_FUNCTION && nodeId.startsWith('shader_')) {
+        groupKey = 'shader';
       }
 
       if (!groupedByType.has(groupKey)) {
