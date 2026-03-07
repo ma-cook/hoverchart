@@ -308,6 +308,226 @@ const containsJSX = (node, fileContext = {}) => {
 };
 
 /**
+ * Detect whether a repository uses React or is plain vanilla JS/TS.
+ * Checks for JSX/TSX files first (fast path), then inspects package.json.
+ * @param {string} owner - Repo owner
+ * @param {string} repoName - Repo name
+ * @param {string} token - GitHub token
+ * @param {Array} structure - Array of file objects from fetchRepositoryStructure
+ * @returns {Promise<'react'|'vanilla'>}
+ */
+const detectRepoType = async (owner, repoName, token, structure) => {
+  // JSX/TSX files are a definitive React indicator
+  if (structure.some(f => f.path.endsWith('.jsx') || f.path.endsWith('.tsx'))) {
+    return 'react';
+  }
+
+  // Check package.json for React dependency
+  try {
+    const pkgContent = await fetchFileContent(owner, repoName, 'package.json', token);
+    if (pkgContent) {
+      const pkg = JSON.parse(pkgContent);
+      const allDeps = {
+        ...(pkg.dependencies || {}),
+        ...(pkg.devDependencies || {}),
+        ...(pkg.peerDependencies || {}),
+      };
+      if (allDeps['react'] || allDeps['react-dom']) return 'react';
+    }
+  } catch (_e) {
+    // package.json missing or unparseable — treat as vanilla
+  }
+
+  return 'vanilla';
+};
+
+/**
+ * Traverse a Babel AST for a vanilla JS/TS file.
+ * Extracts exported symbols (functions, classes, interfaces, type aliases)
+ * and inter-module import relationships.
+ *
+ * Populates fileFunctions, elements, moduleImportRelationships in-place.
+ *
+ * @param {Object} ast - Parsed Babel AST
+ * @param {string} fileName - Base file name without extension
+ * @param {string} filePath - Full relative path in the repo
+ * @param {Object} fileContext - Flags from analyzeFile()
+ * @param {Object} elements - Shared elements object
+ * @param {Object} foundItems - Shared foundItems sets
+ * @param {Map} fileFunctions - fileName -> { type, functions: Set }
+ * @param {Map} moduleImportRelationships - sourceFile -> Set<importedFileBase>
+ * @param {Map} functionCallRelationships - caller -> Set<{target,label,type}>
+ */
+const traverseVanillaAST = (
+  ast,
+  fileName,
+  filePath,
+  fileContext,
+  elements,
+  foundItems,
+  fileFunctions,
+  moduleImportRelationships,
+  functionCallRelationships
+) => {
+  // Determine initial container type from folder conventions (same as React rules)
+  let containerType = 'utility';
+  if (fileContext.isBackend) containerType = 'backend';
+  else if (fileContext.isWorker) containerType = 'worker';
+  else if (fileContext.isService) containerType = 'service';
+  else if (fileContext.isStore) containerType = 'store';
+  else if (fileContext.isHook) containerType = 'hook';
+  // For unrecognised folders, containerType starts as 'utility' and may upgrade
+  // to 'service' if we find class declarations.
+
+  // ── Collect explicitly exported names (first pass) ────────────────────────
+  const exportedNames = new Set();
+
+  ast.program.body.forEach((node) => {
+    if (node.type === 'ExportNamedDeclaration') {
+      if (node.declaration) {
+        const d = node.declaration;
+        if ((d.type === 'FunctionDeclaration' || d.type === 'ClassDeclaration' ||
+             d.type === 'TSInterfaceDeclaration' || d.type === 'TSTypeAliasDeclaration') && d.id) {
+          exportedNames.add(d.id.name);
+        } else if (d.type === 'VariableDeclaration') {
+          d.declarations.forEach((vd) => { if (vd.id?.name) exportedNames.add(vd.id.name); });
+        }
+      }
+      if (node.specifiers) {
+        node.specifiers.forEach((s) => { if (s.exported?.name) exportedNames.add(s.exported.name); });
+      }
+    } else if (node.type === 'ExportDefaultDeclaration') {
+      const d = node.declaration;
+      if (d?.id?.name) exportedNames.add(d.id.name);
+      else if (d?.type === 'Identifier') exportedNames.add(d.name);
+      else exportedNames.add(fileName); // anonymous default export
+    }
+  });
+
+  // If nothing is explicitly exported (e.g. CommonJS / plain script), treat
+  // every top-level declaration as public.
+  const isExported = exportedNames.size > 0
+    ? (name) => exportedNames.has(name)
+    : () => true;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const ensureContainer = () => {
+    if (!fileFunctions.has(fileName)) {
+      fileFunctions.set(fileName, { type: containerType, functions: new Set() });
+    }
+  };
+
+  const addSymbol = (name, isClass) => {
+    if (isClass && containerType === 'utility') {
+      // Upgrade the file container type when we encounter a class
+      containerType = 'service';
+      // Update existing container type if already created
+      if (fileFunctions.has(fileName)) fileFunctions.get(fileName).type = containerType;
+    }
+    ensureContainer();
+    fileFunctions.get(fileName).functions.add(name);
+
+    if (isClass) {
+      if (containerType === 'backend' || containerType === 'service') {
+        if (!foundItems.services.has(name)) {
+          foundItems.services.add(name);
+          elements.services.push(name);
+        }
+      } else {
+        if (!foundItems.utilities.has(name)) {
+          foundItems.utilities.add(name);
+          elements.utilities.push(name);
+        }
+      }
+    } else {
+      if (!foundItems.utilities.has(name)) {
+        foundItems.utilities.add(name);
+        elements.utilities.push(name);
+      }
+    }
+  };
+
+  // ── Second pass: process each top-level node ──────────────────────────────
+  ast.program.body.forEach((node) => {
+
+    // External / relative imports
+    if (node.type === 'ImportDeclaration') {
+      const source = node.source.value;
+      if (!source.startsWith('./') && !source.startsWith('../')) {
+        if (!elements.imports.libraries.includes(source)) {
+          elements.imports.libraries.push(source);
+        }
+      } else {
+        // Resolve to a base name for cross-file relationships
+        const importedBase = source
+          .replace(/^(\.\.\/|\.\/)[\/\.]*/, '')
+          .replace(/\.(jsx?|tsx?|mjs|cjs)$/, '')
+          .split('/')
+          .pop();
+        if (importedBase && importedBase !== fileName) {
+          if (!moduleImportRelationships.has(fileName)) {
+            moduleImportRelationships.set(fileName, new Set());
+          }
+          moduleImportRelationships.get(fileName).add(importedBase);
+        }
+      }
+      return;
+    }
+
+    // Top-level function declarations (not wrapped in export)
+    if (node.type === 'FunctionDeclaration' && node.id && isExported(node.id.name)) {
+      addSymbol(node.id.name, false);
+      return;
+    }
+
+    // Top-level class declarations (not wrapped in export)
+    if (node.type === 'ClassDeclaration' && node.id && isExported(node.id.name)) {
+      addSymbol(node.id.name, true);
+      return;
+    }
+
+    // export named declaration
+    if (node.type === 'ExportNamedDeclaration' && node.declaration) {
+      const d = node.declaration;
+      if (d.type === 'FunctionDeclaration' && d.id) {
+        addSymbol(d.id.name, false);
+      } else if (d.type === 'ClassDeclaration' && d.id) {
+        addSymbol(d.id.name, true);
+      } else if (d.type === 'TSInterfaceDeclaration' && d.id) {
+        addSymbol(d.id.name, false);
+      } else if (d.type === 'TSTypeAliasDeclaration' && d.id) {
+        addSymbol(d.id.name, false);
+      } else if (d.type === 'VariableDeclaration') {
+        d.declarations.forEach((vd) => {
+          if (!vd.id?.name) return;
+          addSymbol(vd.id.name, false);
+        });
+      }
+      return;
+    }
+
+    // export default declaration
+    if (node.type === 'ExportDefaultDeclaration') {
+      const d = node.declaration;
+      if (d?.type === 'FunctionDeclaration' && d.id) addSymbol(d.id.name, false);
+      else if (d?.type === 'ClassDeclaration' && d.id) addSymbol(d.id.name, true);
+      else if (d?.type === 'ArrowFunctionExpression' || d?.type === 'FunctionExpression') {
+        addSymbol(fileName, false); // anonymous default export — use file name
+      }
+      return;
+    }
+
+    // Top-level variable declarations (arrow functions, consts, etc.)
+    if (node.type === 'VariableDeclaration') {
+      node.declarations.forEach((vd) => {
+        if (!vd.id?.name || !isExported(vd.id.name)) return;
+        addSymbol(vd.id.name, false);
+      });
+    }
+  });
+};
+
+/**
  * Generate Merfolk markdown from an entire repository
  * @param {string} owner - Repository owner
  * @param {string} repoName - Repository name
@@ -331,6 +551,11 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     console.log(`   JS/TS files: ${jsFiles.length}, Shader files: ${shaderFiles.length}, Worker JS files: ${workerJsFiles.length}`);
     if (shaderFiles.length > 0) console.log(`   Shaders:`, shaderFiles.map(f => f.path));
     if (workerJsFiles.length > 0) console.log(`   Workers:`, workerJsFiles.map(f => f.path));
+
+    // Detect repo type: 'react' uses the React-specific AST traversal;
+    // 'vanilla' uses the file-as-module traversal for plain JS/TS projects.
+    const repoType = await detectRepoType(owner, repoName, token, structure);
+    console.log(`🔍 Detected repo type: ${repoType}`);
 
     // Define structure to hold ALL found elements across entire repo
     const elements = {
@@ -397,6 +622,10 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // NEW: Track hook return value destructuring
     // Maps: componentName -> Set of { hook: hookName, returnValues: Set of destructured variable names }
     const hookReturnValueRelationships = new Map();
+
+    // For vanilla JS/TS repos: track inter-module import relationships.
+    // Maps: sourceFileName -> Set<importedFileBaseName>
+    const moduleImportRelationships = new Map();
 
     // Process files in parallel batches for better performance
     const BATCH_SIZE = 10; // Process 10 files at a time
@@ -469,6 +698,25 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
               allowSuperOutsideMethod: true,
               allowUndeclaredExports: true,
             });
+
+            // ── Vanilla JS/TS path ────────────────────────────────────────────
+            // For vanilla repos, use the file-as-module traversal and skip all
+            // the React-specific component / hook / store detection below.
+            if (repoType === 'vanilla') {
+              traverseVanillaAST(
+                ast,
+                fileName,
+                file.path,
+                fileContext,
+                elements,
+                foundItems,
+                fileFunctions,
+                moduleImportRelationships,
+                functionCallRelationships
+              );
+              return; // skip React traversal for this file
+            }
+            // ── React / framework path ────────────────────────────────────────
 
             let currentComponent = null;
             const fileImports = {
@@ -1357,6 +1605,27 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
           }
         })
       );
+    }
+
+    // ── Vanilla post-processing: convert inter-module imports to connections ──
+    // Each file container that imports another known file container gets a
+    // directed 'imports' connection so the 3D diagram shows module dependencies.
+    if (repoType === 'vanilla') {
+      const knownContainers = new Set(fileFunctions.keys());
+      moduleImportRelationships.forEach((importedFiles, sourceFile) => {
+        if (!knownContainers.has(sourceFile)) return;
+        importedFiles.forEach((targetFile) => {
+          if (!knownContainers.has(targetFile)) return;
+          if (!functionCallRelationships.has(sourceFile)) {
+            functionCallRelationships.set(sourceFile, new Set());
+          }
+          functionCallRelationships.get(sourceFile).add({
+            target: targetFile,
+            label: 'imports',
+            type: 'utility',
+          });
+        });
+      });
     }
 
     // Log diagnostic summary for file containers
