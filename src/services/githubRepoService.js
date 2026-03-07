@@ -168,7 +168,7 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
  * @param {string} filePath - Path to the file
  * @returns {Object} - Object with boolean flags for file type
  */
-const analyzeFile = (filePath) => {
+const analyzeFile = (filePath, repoType = 'react') => {
   // Use regex to match folder names at any level, including repo root (no leading slash)
   // e.g. matches both 'utils/foo.js' and 'src/utils/foo.js'
   const isComponent =
@@ -177,14 +177,16 @@ const analyzeFile = (filePath) => {
     filePath === 'App.jsx';
   const isHook    = /(?:^|\/)hooks\//.test(filePath);
   const isService = /(?:^|\/)services\//.test(filePath);
-  const isStore   = /(?:^|\/)stores\//.test(filePath);
-  const isUtil    = /(?:^|\/)utils\//.test(filePath) || /(?:^|\/)helpers\//.test(filePath);
+  const isStore   = /(?:^|\/)stores\//.test(filePath) || /(?:^|\/)store\//.test(filePath);
+  const isUtil    = /(?:^|\/)utils\//.test(filePath) || /(?:^|\/)helpers\//.test(filePath) ||
+    /(?:^|\/)lib\//.test(filePath);
   // Worker folders/files
   const isWorker  = /(?:^|\/)workers\//.test(filePath) || /[Ww]orker\.(js|ts|jsx|tsx)$/.test(filePath);
   // Shader folders/files
   const isShader  = /(?:^|\/)shaders\//.test(filePath) ||
     /\.(glsl|wgsl|hlsl|vert|frag|comp)$/.test(filePath);
   // Backend folders: functions (Firebase/cloud functions), api, server, backend, lambda, routes
+  // For Next.js repos, `pages/api/` and `app/api/` are API routes (backend).
   const isBackend = /(?:^|\/)functions\//.test(filePath) ||
     /(?:^|\/)api\//.test(filePath) ||
     /(?:^|\/)server\//.test(filePath) ||
@@ -192,7 +194,14 @@ const analyzeFile = (filePath) => {
     /(?:^|\/)lambda\//.test(filePath) ||
     /(?:^|\/)routes\//.test(filePath);
 
-  return { isComponent, isHook, isService, isStore, isUtil, isWorker, isShader, isBackend };
+  // Next.js route files: files inside `app/` or `pages/` that are NOT in
+  // api/, components/, hooks/, services/, stores/, utils/, lib/, or workers/
+  // directories.  These represent pages/layouts in the routing hierarchy.
+  const isNextRoute = repoType === 'nextjs' && (
+    /(?:^|\/)(?:app|pages)\//.test(filePath)
+  ) && !isBackend && !isComponent && !isHook && !isService && !isStore && !isUtil && !isWorker;
+
+  return { isComponent, isHook, isService, isStore, isUtil, isWorker, isShader, isBackend, isNextRoute };
 };
 
 /**
@@ -314,13 +323,52 @@ const containsJSX = (node, fileContext = {}) => {
  * @param {string} repoName - Repo name
  * @param {string} token - GitHub token
  * @param {Array} structure - Array of file objects from fetchRepositoryStructure
- * @returns {Promise<'react'|'vanilla'>}
+ * @returns {Promise<'react'|'nextjs'|'vanilla'>}
  */
 const detectRepoType = async (owner, repoName, token, structure) => {
   // Directories that contain example / demo / test code — these shouldn't
   // determine the repo type because library repos often ship a React example
   // even though the library itself is vanilla JS/TS.
   const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook)\//i;
+
+  // ── Check package.json early so we can detect Next.js before the
+  //    generic React check (Next.js repos also have React as a dep).
+  let hasReactDep = false;
+  let hasNextDep = false;
+  let pkgProdDeps = {};
+  try {
+    const pkgContent = await fetchFileContent(owner, repoName, 'package.json', token);
+    if (pkgContent) {
+      const pkg = JSON.parse(pkgContent);
+      pkgProdDeps = {
+        ...(pkg.dependencies || {}),
+        ...(pkg.peerDependencies || {}),
+      };
+      hasReactDep = !!(pkgProdDeps['react'] || pkgProdDeps['react-dom']);
+      hasNextDep = !!pkgProdDeps['next'];
+      console.log(`  [detectRepoType] package.json prod/peer deps keys: ${Object.keys(pkgProdDeps).join(', ')}`);
+      console.log(`  [detectRepoType] hasReactDep: ${hasReactDep}, hasNextDep: ${hasNextDep}`);
+    } else {
+      console.log(`  [detectRepoType] package.json not found or empty`);
+    }
+  } catch (_e) {
+    console.log(`  [detectRepoType] package.json missing or unparseable`);
+  }
+
+  // Next.js detection — `next` in prod/peer deps is the definitive signal.
+  // Also look for the conventional `next.config.*` file or `app/`/`pages/` dirs.
+  if (hasNextDep) {
+    console.log(`  [detectRepoType] → nextjs (next found in prod/peer dependencies)`);
+    return 'nextjs';
+  }
+  const hasNextConfig = structure.some(f => /(?:^|\/)next\.config\.(js|mjs|ts)$/.test(f.path));
+  const hasAppOrPagesDir = structure.some(f =>
+    /(?:^|\/)(?:app|pages)\//.test(f.path)
+  );
+  if (hasNextConfig || (hasAppOrPagesDir && hasReactDep)) {
+    console.log(`  [detectRepoType] → nextjs (next.config or app/pages dir with React dep)`);
+    return 'nextjs';
+  }
 
   // .jsx files are a definitive React indicator — but only in source directories.
   const allJsxFiles = structure.filter(f => f.path.endsWith('.jsx'));
@@ -341,26 +389,6 @@ const detectRepoType = async (owner, repoName, token, structure) => {
   const hasTSX = sourceTsxFiles.length > 0;
   console.log(`  [detectRepoType] .tsx files total: ${allTsxFiles.length}, in source dirs: ${sourceTsxFiles.length}`);
   if (allTsxFiles.length > 0) console.log(`    all: ${allTsxFiles.map(f => f.path).join(', ')}`);
-
-  // Check package.json for React as a production / peer dependency
-  let hasReactDep = false;
-  try {
-    const pkgContent = await fetchFileContent(owner, repoName, 'package.json', token);
-    if (pkgContent) {
-      const pkg = JSON.parse(pkgContent);
-      const prodDeps = {
-        ...(pkg.dependencies || {}),
-        ...(pkg.peerDependencies || {}),
-      };
-      hasReactDep = !!(prodDeps['react'] || prodDeps['react-dom']);
-      console.log(`  [detectRepoType] package.json prod/peer deps keys: ${Object.keys(prodDeps).join(', ')}`);
-      console.log(`  [detectRepoType] hasReactDep: ${hasReactDep}`);
-    } else {
-      console.log(`  [detectRepoType] package.json not found or empty`);
-    }
-  } catch (_e) {
-    console.log(`  [detectRepoType] package.json missing or unparseable`);
-  }
 
   if (hasReactDep) {
     console.log(`  [detectRepoType] → react (React found in prod/peer dependencies)`);
@@ -741,6 +769,10 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // Maps: sourceFileName -> Set<importedFileBaseName>
     const moduleImportRelationships = new Map();
 
+    // For Next.js repos: track route files and their hierarchy.
+    // Maps: sanitizedFileName -> { segment, routePath, parentRoutePath, isLayout, isPage, isLoading, isError, isApi, filePath }
+    const nextjsRouteMap = new Map();
+
     // Process files in parallel batches for better performance
     const BATCH_SIZE = 10; // Process 10 files at a time
     const batches = [];
@@ -757,13 +789,61 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
             return;
           }
 
-          const fileContext = analyzeFile(file.path);
+          const fileContext = analyzeFile(file.path, repoType);
 
           // Extract file name without extension for file-level tracking
           // Sanitize to remove hyphens/dots that break Merfolk node-ID syntax
           const fileName = sanitizeNodeId(
             file.path.split('/').pop().replace(/\.(jsx?|tsx?|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
           );
+
+          // ── Next.js route tracking ────────────────────────────────────────
+          // For Next.js repos, track which files are route files (pages,
+          // layouts, loading, error) so we can build a routing hierarchy.
+          if (fileContext.isNextRoute) {
+            const rawBase = file.path.split('/').pop().replace(/\.(jsx?|tsx?)$/, '');
+            const isLayout  = /^layout$/i.test(rawBase);
+            const isPage    = /^page$/i.test(rawBase) || /^index$/i.test(rawBase);
+            const isLoading = /^loading$/i.test(rawBase);
+            const isError   = /^error$/i.test(rawBase);
+            const isNotFound = /^not[_-]found$/i.test(rawBase);
+            // Next.js special files: _app, _document (Pages Router)
+            const isAppShell = /^_app$/i.test(rawBase);
+            const isDocument = /^_document$/i.test(rawBase);
+            const isMiddleware = /^middleware$/i.test(rawBase);
+            // API route files inside app/api/ or pages/api/
+            const isApi = /(?:^|\/)api\//.test(file.path);
+
+            // Build the route path: strip the router root (app/ or pages/ or src/app/ etc.)
+            // and remove the file name to get the directory-based route.
+            const pathWithoutFile = file.path.replace(/\/[^/]+$/, ''); // strip filename
+            const routePath = pathWithoutFile
+              .replace(/^(?:src\/)?(?:app|pages)\/?/, ''); // strip router root
+            // Parent route = one directory up (empty string for root)
+            const parentRoutePath = routePath.includes('/')
+              ? routePath.substring(0, routePath.lastIndexOf('/'))
+              : '';
+
+            // Determine a human-readable segment name for the node label
+            let segment = routePath ? routePath.split('/').pop() : '/';
+            if (isApi) segment = `api/${segment === '/' ? '' : segment}`;
+
+            nextjsRouteMap.set(fileName, {
+              segment,
+              routePath,
+              parentRoutePath,
+              isLayout,
+              isPage,
+              isLoading,
+              isError,
+              isNotFound,
+              isAppShell,
+              isDocument,
+              isMiddleware,
+              isApi,
+              filePath: file.path,
+            });
+          }
 
           // Handle shader files — they can't be parsed as JS ASTs,
           // so we add them directly as utility nodes under a shader file container.
@@ -1763,6 +1843,12 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     if (fileContainerSummary.length > 0) {
       fileContainerSummary.forEach(line => console.log(line));
     }
+    if (repoType === 'nextjs') {
+      console.log(`  Next.js route files (${nextjsRouteMap.size}):`);
+      nextjsRouteMap.forEach((info, name) => {
+        console.log(`    ${name}: route=${info.routePath || '/'}, layout=${info.isLayout}, page=${info.isPage}, api=${info.isApi}`);
+      });
+    }
 
     // Generate Merfolk markdown
     const merfolkResult = generateMerfolkMarkdown(
@@ -1781,7 +1867,8 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
       storeUsageRelationships,
       hookReturnValueRelationships,
       repoType,
-      moduleImportRelationships
+      moduleImportRelationships,
+      nextjsRouteMap
     );
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
@@ -1811,8 +1898,9 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
  * @param {Map} componentPropsRelationships - Component to child props relationships
  * @param {Map} storeUsageRelationships - Component to store usage relationships
  * @param {Map} hookReturnValueRelationships - Component to hook return value relationships
- * @param {'react'|'vanilla'} repoType - Detected repository type
+ * @param {'react'|'nextjs'|'vanilla'} repoType - Detected repository type
  * @param {Map} moduleImportRelationships - sourceFile -> Set<importedFileBase>
+ * @param {Map} nextjsRouteMap - filePath -> { segment, parentPath, isLayout, isPage, isApi }
  * @returns {string} - Merfolk markdown content
  */
 const generateMerfolkMarkdown = (
@@ -1831,9 +1919,11 @@ const generateMerfolkMarkdown = (
   storeUsageRelationships = new Map(),
   hookReturnValueRelationships = new Map(),
   repoType = 'react',
-  moduleImportRelationships = new Map()
+  moduleImportRelationships = new Map(),
+  nextjsRouteMap = new Map()
 ) => {
   const isVanilla = repoType === 'vanilla';
+  const isNextjs = repoType === 'nextjs';
   let markdown = `%% ${repoName} Repository Analysis\n\n`;
 
   // Remove duplicates from all arrays (use Sets to ensure uniqueness)
@@ -2374,6 +2464,142 @@ const generateMerfolkMarkdown = (
         }
       });
     }
+  }
+
+  // ── Next.js route hierarchy ──────────────────────────────────────────────
+  // Creates a root Component (dodecahedron) representing the Next.js app,
+  // then route-segment Components nested in a descending hierarchy that
+  // mirrors the file-system routing (app/ or pages/ directory structure).
+  // Non-route components/hooks/services/stores keep their normal React
+  // shapes and are positioned by the circular group layout as usual.
+  if (isNextjs && nextjsRouteMap.size > 0) {
+    const nextRootId = `${sanitizeNodeId(repoName)}_root`;
+    markdown += `\n%% Next.js Route Hierarchy\n`;
+
+    // Emit root entry-point node
+    if (!nodeIds.has(nextRootId)) {
+      markdown += `${nextRootId}{Component: ${repoName}}\n`;
+      nodeIds.add(nextRootId);
+    }
+
+    // Helper: resolve a route fileName to its actual Merfolk node ID.
+    // Route files processed via the React AST path are emitted earlier as
+    // {Component: name} and may have _file suffixes or be in nodeIds under
+    // their plain name.  API routes get a backend_ prefix.
+    const resolveRouteNodeId = (fileName) => {
+      const info = nextjsRouteMap.get(fileName);
+      if (info && info.isApi) {
+        const apiId = `backend_${fileName}`;
+        if (nodeIds.has(apiId)) return apiId;
+      }
+      const suffixed = `${fileName}_file`;
+      if (nodeIds.has(suffixed)) return suffixed;
+      if (nodeIds.has(fileName)) return fileName;
+      return null;
+    };
+
+    // Group route files by their routePath so we can find layouts & pages
+    // that live at the same route level.
+    const routeGroups = new Map();
+    nextjsRouteMap.forEach((info, fileName) => {
+      const rp = info.routePath;
+      if (!routeGroups.has(rp)) {
+        routeGroups.set(rp, { layouts: [], pages: [], others: [] });
+      }
+      const group = routeGroups.get(rp);
+      if (info.isLayout || info.isAppShell) group.layouts.push(fileName);
+      else if (info.isPage) group.pages.push(fileName);
+      else group.others.push(fileName);
+    });
+
+    // For each route group, the "representative" node is the layout if one
+    // exists, otherwise the page.  This is the node that participates in
+    // the parent→child hierarchy chain.
+    const routeRepresentative = new Map();
+    routeGroups.forEach((group, routePath) => {
+      const rep = group.layouts[0] || group.pages[0] || group.others[0];
+      if (rep) routeRepresentative.set(routePath, rep);
+    });
+
+    // Emit route-segment Component nodes for any route file that is NOT
+    // already emitted.  Route files processed through the React AST path
+    // are already in elements.components and nodeIds.
+    nextjsRouteMap.forEach((info, fileName) => {
+      const existingId = resolveRouteNodeId(fileName);
+      if (existingId) return; // already emitted
+
+      let label = info.segment;
+      if (info.isLayout) label = `${info.segment} layout`;
+      else if (info.isPage) label = `${info.segment} page`;
+      else if (info.isLoading) label = `${info.segment} loading`;
+      else if (info.isError) label = `${info.segment} error`;
+      else if (info.isNotFound) label = `${info.segment} not-found`;
+      else if (info.isMiddleware) label = 'middleware';
+
+      if (info.isApi) {
+        const apiId = `backend_${fileName}`;
+        if (!nodeIds.has(apiId)) {
+          markdown += `${apiId}((Service: ${label}))\n`;
+          nodeIds.add(apiId);
+        }
+      } else {
+        markdown += `${fileName}{Component: ${label}}\n`;
+        nodeIds.add(fileName);
+      }
+    });
+
+    // Build hierarchy connections with SOLID arrows (-->) for descending
+    // hierarchy positioning (not internalComponentChildren clustering).
+    markdown += '\n%% Next.js Route Nesting\n';
+
+    // Connect root to top-level route representative
+    const rootRep = routeRepresentative.get('');
+    if (rootRep) {
+      const rootRepId = resolveRouteNodeId(rootRep);
+      if (rootRepId) {
+        markdown += `${nextRootId} --> ${rootRepId} : "root layout"\n`;
+      }
+    }
+
+    // Connect parent routes to child routes
+    routeRepresentative.forEach((repFileName, routePath) => {
+      if (routePath === '') return;
+      const info = nextjsRouteMap.get(repFileName);
+      if (!info) return;
+
+      const parentRep = routeRepresentative.get(info.parentRoutePath);
+      const childId = resolveRouteNodeId(repFileName);
+      if (!childId) return;
+
+      if (parentRep) {
+        const parentId = resolveRouteNodeId(parentRep);
+        if (parentId) {
+          markdown += `${parentId} --> ${childId} : "route"\n`;
+        }
+      } else {
+        // No parent representative found — connect directly to root
+        markdown += `${nextRootId} --> ${childId} : "route"\n`;
+      }
+    });
+
+    // Connect non-representative route files (pages, loading, error) to
+    // their route group's representative via dashed containment arrows.
+    routeGroups.forEach((group, routePath) => {
+      const rep = routeRepresentative.get(routePath);
+      if (!rep) return;
+      const repId = resolveRouteNodeId(rep);
+      if (!repId) return;
+
+      const siblings = [...group.pages, ...group.others].filter(f => f !== rep);
+      siblings.forEach((fileName) => {
+        const sibId = resolveRouteNodeId(fileName);
+        if (sibId && sibId !== repId) {
+          markdown += `${repId} -.-> ${sibId} : "contains"\n`;
+        }
+      });
+    });
+
+    console.log(`📁 Next.js route hierarchy: ${nextjsRouteMap.size} route files, ${routeGroups.size} route groups`);
   }
 
   // Add component-to-component relationships
