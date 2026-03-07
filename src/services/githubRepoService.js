@@ -317,28 +317,76 @@ const containsJSX = (node, fileContext = {}) => {
  * @returns {Promise<'react'|'vanilla'>}
  */
 const detectRepoType = async (owner, repoName, token, structure) => {
-  // JSX/TSX files are a definitive React indicator
-  if (structure.some(f => f.path.endsWith('.jsx') || f.path.endsWith('.tsx'))) {
+  // Directories that contain example / demo / test code — these shouldn't
+  // determine the repo type because library repos often ship a React example
+  // even though the library itself is vanilla JS/TS.
+  const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook)\//i;
+
+  // .jsx files are a definitive React indicator — but only in source directories.
+  const allJsxFiles = structure.filter(f => f.path.endsWith('.jsx'));
+  const sourceJsxFiles = allJsxFiles.filter(f => !nonSourceDirPattern.test(f.path));
+  console.log(`  [detectRepoType] .jsx files total: ${allJsxFiles.length}, in source dirs: ${sourceJsxFiles.length}`);
+  if (allJsxFiles.length > 0) console.log(`    all: ${allJsxFiles.map(f => f.path).join(', ')}`);
+  if (sourceJsxFiles.length > 0) {
+    console.log(`  [detectRepoType] → react (source .jsx files found)`);
     return 'react';
   }
 
-  // Check package.json for React dependency
+  // .tsx files are ambiguous — TS libraries can have .tsx test files without
+  // being React apps.  Only count them as React if package.json also lists
+  // react as a production or peer dependency (NOT devDependencies — many
+  // libraries use React there purely for testing/types).
+  const allTsxFiles = structure.filter(f => f.path.endsWith('.tsx'));
+  const sourceTsxFiles = allTsxFiles.filter(f => !nonSourceDirPattern.test(f.path));
+  const hasTSX = sourceTsxFiles.length > 0;
+  console.log(`  [detectRepoType] .tsx files total: ${allTsxFiles.length}, in source dirs: ${sourceTsxFiles.length}`);
+  if (allTsxFiles.length > 0) console.log(`    all: ${allTsxFiles.map(f => f.path).join(', ')}`);
+
+  // Check package.json for React as a production / peer dependency
+  let hasReactDep = false;
   try {
     const pkgContent = await fetchFileContent(owner, repoName, 'package.json', token);
     if (pkgContent) {
       const pkg = JSON.parse(pkgContent);
-      const allDeps = {
+      const prodDeps = {
         ...(pkg.dependencies || {}),
-        ...(pkg.devDependencies || {}),
         ...(pkg.peerDependencies || {}),
       };
-      if (allDeps['react'] || allDeps['react-dom']) return 'react';
+      hasReactDep = !!(prodDeps['react'] || prodDeps['react-dom']);
+      console.log(`  [detectRepoType] package.json prod/peer deps keys: ${Object.keys(prodDeps).join(', ')}`);
+      console.log(`  [detectRepoType] hasReactDep: ${hasReactDep}`);
+    } else {
+      console.log(`  [detectRepoType] package.json not found or empty`);
     }
   } catch (_e) {
-    // package.json missing or unparseable — treat as vanilla
+    console.log(`  [detectRepoType] package.json missing or unparseable`);
   }
 
+  if (hasReactDep) {
+    console.log(`  [detectRepoType] → react (React found in prod/peer dependencies)`);
+    return 'react';
+  }
+  // .tsx without react in prod deps → treat as vanilla TS
+  if (hasTSX && !hasReactDep) {
+    console.log('ℹ️  .tsx files found but no React production dependency — treating as vanilla');
+  }
+
+  console.log(`  [detectRepoType] → vanilla`);
   return 'vanilla';
+};
+
+/**
+ * Sanitize a string for use as a Merfolk node ID.
+ * Replaces characters that conflict with Merfolk/Mermaid syntax (hyphens,
+ * dots, spaces) with underscores, and prefixes with `_` if the name starts
+ * with a digit.
+ * @param {string} name
+ * @returns {string}
+ */
+const sanitizeNodeId = (name) => {
+  let safe = name.replace(/[-. ]+/g, '_');
+  if (/^\d/.test(safe)) safe = `_${safe}`;
+  return safe;
 };
 
 /**
@@ -447,30 +495,75 @@ const traverseVanillaAST = (
     }
   };
 
+  // ── Helper to track a relative import source as a module relationship ────
+  const trackRelativeSource = (source, isReexport = false) => {
+    if (!source) return;
+    if (!source.startsWith('./') && !source.startsWith('../')) {
+      // External (e.g. a library re-exported) — add as library
+      if (!elements.imports.libraries.includes(source)) {
+        elements.imports.libraries.push(source);
+      }
+      return;
+    }
+    const importedBase = sanitizeNodeId(
+      source
+        .replace(/^(\.\.\/|\.\/)[\/\.]*/, '')
+        .replace(/\.(jsx?|tsx?|mjs|cjs)$/, '')
+        .split('/')
+        .pop()
+    );
+    if (importedBase && importedBase !== fileName) {
+      if (!moduleImportRelationships.has(fileName)) {
+        moduleImportRelationships.set(fileName, new Set());
+      }
+      moduleImportRelationships.get(fileName).add(importedBase);
+      // For re-exports (barrel files), ensure the current file gets a
+      // container even if it doesn't declare any symbols itself — the
+      // container acts as the entry-point module in the diagram.
+      if (isReexport) {
+        ensureContainer();
+      }
+    }
+  };
+
+  // ── Collect import binding names so we can exclude them from utilities ─────
+  // e.g. `import fs from 'fs'` or `const fs = require('fs')` — the local
+  // binding `fs` is not a symbol this module exports.
+  const importBindings = new Set();
+  ast.program.body.forEach((node) => {
+    if (node.type === 'ImportDeclaration' && node.specifiers) {
+      node.specifiers.forEach((s) => {
+        if (s.local?.name) importBindings.add(s.local.name);
+      });
+    }
+    // CommonJS: const x = require('...')
+    if (node.type === 'VariableDeclaration') {
+      node.declarations.forEach((vd) => {
+        if (
+          vd.init?.type === 'CallExpression' &&
+          vd.init.callee?.name === 'require' &&
+          vd.id?.name
+        ) {
+          importBindings.add(vd.id.name);
+        }
+      });
+    }
+  });
+
   // ── Second pass: process each top-level node ──────────────────────────────
   ast.program.body.forEach((node) => {
 
     // External / relative imports
     if (node.type === 'ImportDeclaration') {
-      const source = node.source.value;
-      if (!source.startsWith('./') && !source.startsWith('../')) {
-        if (!elements.imports.libraries.includes(source)) {
-          elements.imports.libraries.push(source);
-        }
-      } else {
-        // Resolve to a base name for cross-file relationships
-        const importedBase = source
-          .replace(/^(\.\.\/|\.\/)[\/\.]*/, '')
-          .replace(/\.(jsx?|tsx?|mjs|cjs)$/, '')
-          .split('/')
-          .pop();
-        if (importedBase && importedBase !== fileName) {
-          if (!moduleImportRelationships.has(fileName)) {
-            moduleImportRelationships.set(fileName, new Set());
-          }
-          moduleImportRelationships.get(fileName).add(importedBase);
-        }
-      }
+      trackRelativeSource(node.source.value);
+      return;
+    }
+
+    // export * from './someModule'  (ExportAllDeclaration)
+    // Barrel re-exports — track as module relationships so the diagram
+    // shows that this file depends on the re-exported module.
+    if (node.type === 'ExportAllDeclaration' && node.source) {
+      trackRelativeSource(node.source.value, true);
       return;
     }
 
@@ -486,17 +579,24 @@ const traverseVanillaAST = (
       return;
     }
 
-    // export named declaration
+    // export { X } from './module' — re-exports with a source but no declaration
+    // Track as module relationship + ensure contained file gets a container
+    if (node.type === 'ExportNamedDeclaration' && !node.declaration && node.source) {
+      trackRelativeSource(node.source.value, true);
+      return;
+    }
+
+    // export named declaration (with inline declaration)
     if (node.type === 'ExportNamedDeclaration' && node.declaration) {
       const d = node.declaration;
       if (d.type === 'FunctionDeclaration' && d.id) {
         addSymbol(d.id.name, false);
       } else if (d.type === 'ClassDeclaration' && d.id) {
         addSymbol(d.id.name, true);
-      } else if (d.type === 'TSInterfaceDeclaration' && d.id) {
-        addSymbol(d.id.name, false);
-      } else if (d.type === 'TSTypeAliasDeclaration' && d.id) {
-        addSymbol(d.id.name, false);
+      } else if (d.type === 'TSInterfaceDeclaration' || d.type === 'TSTypeAliasDeclaration') {
+        // TypeScript-only declarations — skip.
+        // Interfaces and type aliases have no runtime representation and
+        // would clutter the diagram with non-functional nodes.
       } else if (d.type === 'VariableDeclaration') {
         d.declarations.forEach((vd) => {
           if (!vd.id?.name) return;
@@ -521,6 +621,8 @@ const traverseVanillaAST = (
     if (node.type === 'VariableDeclaration') {
       node.declarations.forEach((vd) => {
         if (!vd.id?.name || !isExported(vd.id.name)) return;
+        // Skip variables that are just import bindings (require() calls, etc.)
+        if (importBindings.has(vd.id.name)) return;
         addSymbol(vd.id.name, false);
       });
     }
@@ -556,6 +658,18 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // 'vanilla' uses the file-as-module traversal for plain JS/TS projects.
     const repoType = await detectRepoType(owner, repoName, token, structure);
     console.log(`🔍 Detected repo type: ${repoType}`);
+
+    // For vanilla repos, filter out example/test/debug directories that would
+    // pollute the diagram with demo scripts and local variables.  React repos
+    // keep these because components in examples can still be meaningful.
+    const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook)\//i;
+    const nonSourceFilePattern = /(?:^|\/)(?:debug[\-_]|test[\-_])/i;
+    const filesToProcess = repoType === 'vanilla'
+      ? structure.filter(f => !nonSourceDirPattern.test(f.path) && !nonSourceFilePattern.test(f.name))
+      : structure;
+    if (filesToProcess.length !== structure.length) {
+      console.log(`   Filtered ${structure.length - filesToProcess.length} non-source files for vanilla repo (${filesToProcess.length} remaining)`);
+    }
 
     // Define structure to hold ALL found elements across entire repo
     const elements = {
@@ -630,8 +744,8 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // Process files in parallel batches for better performance
     const BATCH_SIZE = 10; // Process 10 files at a time
     const batches = [];
-    for (let i = 0; i < structure.length; i += BATCH_SIZE) {
-      batches.push(structure.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
+      batches.push(filesToProcess.slice(i, i + BATCH_SIZE));
     }
 
     for (const batch of batches) {
@@ -646,7 +760,10 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
           const fileContext = analyzeFile(file.path);
 
           // Extract file name without extension for file-level tracking
-          const fileName = file.path.split('/').pop().replace(/\.(jsx?|tsx?|glsl|wgsl|hlsl|vert|frag|comp)$/, '');
+          // Sanitize to remove hyphens/dots that break Merfolk node-ID syntax
+          const fileName = sanitizeNodeId(
+            file.path.split('/').pop().replace(/\.(jsx?|tsx?|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
+          );
 
           // Handle shader files — they can't be parsed as JS ASTs,
           // so we add them directly as utility nodes under a shader file container.
@@ -1648,7 +1765,7 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     }
 
     // Generate Merfolk markdown
-    return generateMerfolkMarkdown(
+    const merfolkResult = generateMerfolkMarkdown(
       repoName,
       elements,
       foundItems,
@@ -1662,8 +1779,16 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
       functionCallRelationships,
       componentPropsRelationships,
       storeUsageRelationships,
-      hookReturnValueRelationships
+      hookReturnValueRelationships,
+      repoType,
+      moduleImportRelationships
     );
+
+    // Debug: log the generated Merfolk markdown so we can diagnose parse issues
+    console.log(`📝 Generated Merfolk markdown (${merfolkResult.length} chars):\n${merfolkResult.substring(0, 3000)}`);
+    if (merfolkResult.length > 3000) console.log(`   ... (${merfolkResult.length - 3000} more chars)`);
+
+    return merfolkResult;
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
     return `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`;
@@ -1686,6 +1811,8 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
  * @param {Map} componentPropsRelationships - Component to child props relationships
  * @param {Map} storeUsageRelationships - Component to store usage relationships
  * @param {Map} hookReturnValueRelationships - Component to hook return value relationships
+ * @param {'react'|'vanilla'} repoType - Detected repository type
+ * @param {Map} moduleImportRelationships - sourceFile -> Set<importedFileBase>
  * @returns {string} - Merfolk markdown content
  */
 const generateMerfolkMarkdown = (
@@ -1702,8 +1829,11 @@ const generateMerfolkMarkdown = (
   functionCallRelationships = new Map(),
   componentPropsRelationships = new Map(),
   storeUsageRelationships = new Map(),
-  hookReturnValueRelationships = new Map()
+  hookReturnValueRelationships = new Map(),
+  repoType = 'react',
+  moduleImportRelationships = new Map()
 ) => {
+  const isVanilla = repoType === 'vanilla';
   let markdown = `%% ${repoName} Repository Analysis\n\n`;
 
   // Remove duplicates from all arrays (use Sets to ensure uniqueness)
@@ -1807,6 +1937,18 @@ const generateMerfolkMarkdown = (
     });
   });
   
+  // Build a set of all emitted symbol names to detect when a file container
+  // name collides with a previously-emitted node (e.g. utility `graph` vs
+  // file container `graph.ts`).
+  const allSymbolNames = new Set([
+    ...elements.components,
+    ...elements.functions,
+    ...elements.hooks,
+    ...elements.services,
+    ...elements.stores,
+    ...elements.utilities,
+  ]);
+
   // Map file container children to their parent file container
   // Every file in fileFunctions now gets a container, so always map all children.
   fileFunctions.forEach((fileInfo, fileName) => {
@@ -1821,7 +1963,9 @@ const generateMerfolkMarkdown = (
     } else if (fileInfo.type === 'utility' && fileName === 'shaders') {
       fileNodeId = `shader_${fileName}`;
     } else {
-      fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
+      fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix || allSymbolNames.has(fileName))
+        ? `${fileName}_file`
+        : fileName;
     }
     fileInfo.functions.forEach((funcName) => {
       childToParentMap.set(funcName, { parentId: fileNodeId, parentName: fileName, type: fileInfo.type });
@@ -1844,8 +1988,28 @@ const generateMerfolkMarkdown = (
   });
 
   // Helper function to generate routed connections through parent containers
-  // Returns an array of connection strings
+  // Returns an array of connection strings.
+  // Validates that every referenced node ID actually exists in nodeIds so
+  // the Merfolk output never contains dangling connection targets (which
+  // would cause the 3d-ast-generator validator to reject the entire diagram).
   const generateRoutedConnection = (sourceNode, targetNode, label) => {
+    // Quick existence check — sourceNode or targetNode (or their _file
+    // variants) must have been emitted as Merfolk node definitions.
+    const resolveId = (name) => {
+      if (filesNeedingSuffix.has(name)) return `${name}_file`;
+      return name;
+    };
+    const srcId = resolveId(sourceNode);
+    const tgtId = resolveId(targetNode);
+    if (!nodeIds.has(srcId) && !childToParentMap.has(sourceNode)) {
+      // Source is completely unknown — skip silently
+      return [];
+    }
+    if (!nodeIds.has(tgtId) && !childToParentMap.has(targetNode)) {
+      // Target is completely unknown — skip silently
+      return [];
+    }
+
     const connections = [];
     const sourceParent = childToParentMap.get(sourceNode);
     const targetParent = childToParentMap.get(targetNode);
@@ -2011,13 +2175,14 @@ const generateMerfolkMarkdown = (
     });
   }
 
-  // Add library imports
+  // Add library imports — skip any whose name collides with an already-emitted
+  // node (e.g. `fs` might already be declared as a utility from a require binding).
   if (elements.imports.libraries.length > 0) {
     markdown += `\n%% External Libraries\n`;
     elements.imports.libraries.forEach((lib) => {
       if (nodeIds.has(lib)) {
-        duplicates.push({ id: lib, type: 'Library', section: 'External Libraries' });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${lib} (Library)`);
+        // Already declared as a different node type — skip to avoid duplicate
+        return;
       }
       nodeIds.add(lib);
       markdown += `${lib}<Library: ${lib}>\n`;
@@ -2079,18 +2244,44 @@ const generateMerfolkMarkdown = (
   // Add file-function relationships for hooks/services/utilities/stores
   // Always create a container node for every file (even single-function utility files)
   // so each .js utility file appears as a parent cube with its functions as children.
+  // ── Vanilla root entry-point ──────────────────────────────────────────────────
+  // For vanilla repos, emit a root Component (dodecahedron) that represents
+  // the package entry-point.  All file containers become child Components
+  // inside it so the hierarchy builder creates a proper tree.
+  let vanillaRootId = null;
+  if (isVanilla && fileFunctions.size > 0) {
+    vanillaRootId = `${sanitizeNodeId(repoName)}_root`;
+    markdown += `\n%% Entry-point root\n`;
+    markdown += `${vanillaRootId}{Component: ${repoName}}\n`;
+    nodeIds.add(vanillaRootId);
+  }
+
   if (fileFunctions.size > 0) {
     markdown += '\n%% File Container Nodes\n';
     fileFunctions.forEach((fileInfo, fileName) => {
       const needsSuffix = filesNeedingSuffix.has(fileName);
       // Always create a container — use _file suffix when file name matches one of its contained
       // functions (to avoid duplicate node IDs) or when a suffix is otherwise required.
-      const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix) ? `${fileName}_file` : fileName;
+      // Use _file suffix when file name matches one of its contained functions,
+      // OR when the ID already exists in nodeIds (e.g. a utility `graph` was
+      // emitted earlier and now the `graph.ts` file container would collide).
+      const fileNodeId = (fileInfo.functions.has(fileName) || needsSuffix || nodeIds.has(fileName))
+        ? `${fileName}_file`
+        : fileName;
 
-      // Use appropriate shape based on file type
-      // Backend files get a backend_ prefix on their node ID so markdownDiagramService
-      // can detect and group them separately with a red container.
-      if (fileInfo.type === 'backend') {
+      // ── Vanilla repos: emit ALL file containers as Components (dodecahedrons)
+      // so `positionNodeHierarchy` includes them in the hierarchy tree.
+      // React repos keep the original type-specific shapes.
+      if (isVanilla) {
+        if (nodeIds.has(fileNodeId)) {
+          duplicates.push({ id: fileNodeId, type: 'Vanilla File', section: 'File Container Nodes' });
+          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Vanilla File)`);
+        }
+        nodeIds.add(fileNodeId);
+        markdown += `${fileNodeId}{Component: ${fileName}}\n`;
+        fileInfo.nodeId = fileNodeId;
+      } else if (fileInfo.type === 'backend') {
+        // ── React paths (unchanged) ──
         const backendNodeId = `backend_${fileName}`;
         if (nodeIds.has(backendNodeId)) {
           duplicates.push({ id: backendNodeId, type: 'Backend File', section: 'File Container Nodes' });
@@ -2167,6 +2358,22 @@ const generateMerfolkMarkdown = (
         }
       });
     });
+
+    // Vanilla: nest every file container inside the root entry-point
+    // Use SOLID arrows (-->) so the hierarchy builder creates parent-child
+    // WITHOUT adding them to internalComponentChildren.  This routes the
+    // file-container nodes through the descending-hierarchy positioning
+    // branch (depthOffset + grid) instead of the tight 3D-grid branch
+    // that clusters internal components at the parent's position.
+    if (vanillaRootId) {
+      markdown += '\n%% Vanilla hierarchy (root → file containers)\n';
+      fileFunctions.forEach((fileInfo) => {
+        const fileNodeId = fileInfo.nodeId;
+        if (fileNodeId) {
+          markdown += `${vanillaRootId} --> ${fileNodeId} : "module"\n`;
+        }
+      });
+    }
   }
 
   // Add component-to-component relationships

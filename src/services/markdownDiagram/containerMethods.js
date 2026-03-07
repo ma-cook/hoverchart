@@ -227,7 +227,7 @@ export const containerMethods = {
     const reachableFromRootModules = new Set();
     const rootModuleNames = ['main', 'index', 'firebase', 'App'];
     const actualRootModules = Array.from(rootNodes).filter((nodeId) => {
-      return rootModuleNames.includes(nodeId);
+      return rootModuleNames.includes(nodeId) || nodeId.endsWith('_root');
     });
 
     const markReachable = (nodeId) => {
