@@ -1,8 +1,11 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
-import { auth } from '../firebase';
+import { signInWithCustomToken } from 'firebase/auth';
+import { httpsCallable } from 'firebase/functions';
+import { auth, functions } from '../firebase';
 import {
   handlePostLoginRedirect,
+  handleUrlAuth,
 } from '../services/authService';
 
 const useAuthStore = createWithEqualityFn((set, get) => ({
@@ -13,8 +16,11 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
     user: null,
     connectionState: 'unknown',
     isAuthReady: false,
-    isCheckingUrlAuth: false,
+    isCheckingUrlAuth: true,
   },
+
+  // Internal state
+  hasAttemptedUrlAuth: false,
   connectionMonitor: null,
   unsubscribe: null,
 
@@ -35,6 +41,10 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
         [property]: value,
       },
     }));
+  },
+
+  setHasAttemptedUrlAuth: (value) => {
+    set({ hasAttemptedUrlAuth: value });
   },
 
   setConnectionMonitor: (monitor) => {
@@ -71,9 +81,80 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
       return null;
     };
 
+    // Handle URL authentication
+    const handleUrlAuthLocal = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+
+      if (!code) return false;
+
+      try {
+        console.log('Starting auth code exchange...');
+        const exchangeAuthCode = httpsCallable(functions, 'exchangeAuthCode');
+        const result = await exchangeAuthCode({ code });
+
+        if (!result.data?.token) {
+          console.error('No token received from auth code exchange');
+          return false;
+        }
+
+        console.log('Got custom token, signing in...');
+        await signInWithCustomToken(auth, result.data.token);
+
+        // Wait for auth to complete
+        return new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            console.error('Auth state update timeout');
+            resolve(false);
+          }, 5000);
+
+          const authUnsubscribe = auth.onAuthStateChanged((user) => {
+            if (user) {
+              console.log('URL auth successful:', user.uid);
+              clearTimeout(timeout);
+              authUnsubscribe();
+              resolve(true);
+            }
+          });
+        });
+      } catch (error) {
+        console.error('Auth code exchange error:', error);
+        return false;
+      }
+    };
+
     const initAuth = async () => {
       // Check for URL parameters first
       const params = new URLSearchParams(window.location.search);
+      if (
+        !state.hasAttemptedUrlAuth &&
+        params.has('code')
+      ) {
+        state.setHasAttemptedUrlAuth(true);
+        console.log('Found URL auth parameters, attempting auth...');
+
+        try {
+          const success = await handleUrlAuthLocal();
+          if (success) {
+            console.log('URL authentication successful');
+            // Preserve spaceId parameter when cleaning URL
+            const params = new URLSearchParams(window.location.search);
+            const spaceId = params.get('spaceId');
+
+            let newUrl = window.location.pathname;
+            if (spaceId) {
+              newUrl += `?spaceId=${encodeURIComponent(spaceId)}`;
+            }
+
+            window.history.replaceState({}, document.title, newUrl);
+          } else {
+            console.error('URL authentication failed');
+          }
+        } catch (error) {
+          console.error('Error during URL auth:', error);
+        }
+      }
+
       // Set up auth state listener
       const unsubscribeFn = auth.onAuthStateChanged((user) => {
         console.log('Auth state changed:', user?.uid || 'null');
@@ -118,8 +199,24 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
     initAuth();
   },
 
-  checkUrlAuth: () => {
-    // No-op: legacy URL auth via exchangeAuthCode has been removed
+  // Check URL auth
+  checkUrlAuth: async () => {
+    const state = get();
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+
+    if (code) {
+      state.updateAuthProperty('isCheckingUrlAuth', true);
+      try {
+        await handleUrlAuth();
+      } catch {
+        // Handle error silently
+      } finally {
+        state.updateAuthProperty('isCheckingUrlAuth', false);
+      }
+    } else {
+      state.updateAuthProperty('isCheckingUrlAuth', false);
+    }
   },
 
   // Cleanup function
@@ -142,6 +239,7 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
 
     // Reset state
     set({
+      hasAttemptedUrlAuth: false,
       connectionMonitor: null,
       unsubscribe: null,
     });

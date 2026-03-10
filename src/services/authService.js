@@ -1,5 +1,6 @@
 import {
   signInWithPopup,
+  signInWithCustomToken,
   getRedirectResult,
   onAuthStateChanged,
   browserLocalPersistence,
@@ -129,6 +130,65 @@ export const validateAuthToken = async (token) => {
   } catch (error) {
     console.error('Token validation failed:', error);
     throw error;
+  }
+};
+
+// Handle URL auth with spaceId support
+export const handleUrlAuth = async () => {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const spaceId = params.get('spaceId');
+  const ownerUid = params.get('ownerUid');
+
+  if (!code) {
+    return false;
+  }
+
+  try {
+    const { httpsCallable } = await import('firebase/functions');
+    const { functions } = await import('../firebase');
+
+    const exchangeAuthCode = httpsCallable(functions, 'exchangeAuthCode');
+    const result = await exchangeAuthCode({ code });
+
+    if (!result.data?.token) {
+      console.error('No token received from auth code exchange');
+      return false;
+    }
+
+    const userCredential = await signInWithCustomToken(auth, result.data.token);
+
+    if (!userCredential?.user) {
+      console.error('No user returned after custom token sign in');
+      return false;
+    }
+
+    const uid = userCredential.user.uid;
+
+    // Store space ID in session storage if provided
+    if (spaceId) {
+      const spaceOwner = ownerUid || uid;
+      const space = await getSpaceById(spaceOwner, spaceId);
+      if (space) {
+        sessionStorage.setItem('currentSpaceId', spaceId);
+      } else {
+        console.warn(`Space ID ${spaceId} not found, falling back to default`);
+        const defaultSpace = await getOrCreateDefaultSpace(uid);
+        if (defaultSpace) {
+          sessionStorage.setItem('currentSpaceId', defaultSpace.id);
+        }
+      }
+    } else {
+      const defaultSpace = await getOrCreateDefaultSpace(uid);
+      if (defaultSpace) {
+        sessionStorage.setItem('currentSpaceId', defaultSpace.id);
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.error('URL auth failed:', error);
+    return false;
   }
 };
 

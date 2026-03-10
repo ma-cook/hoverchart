@@ -9,6 +9,7 @@ export function useAuthState() {
     (state) => state.authState.isCheckingUrlAuth
   );
   const initializeAuth = useAuthStore((state) => state.initializeAuth);
+  const checkUrlAuth = useAuthStore((state) => state.checkUrlAuth);
   const cleanup = useAuthStore((state) => state.cleanup);
 
   useEffect(() => {
@@ -18,6 +19,11 @@ export function useAuthState() {
     // Return cleanup function
     return cleanup;
   }, [initializeAuth, cleanup]);
+
+  useEffect(() => {
+    // Check URL auth on mount
+    checkUrlAuth();
+  }, [checkUrlAuth]);
 
   return { user, isAuthReady, isCheckingUrlAuth };
 }
