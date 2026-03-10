@@ -3120,15 +3120,15 @@ export const getGithubOAuthUrl = () => {
 
   // Encode current query params (minus any leftover OAuth params) into `state`
   // so we can restore them after the redirect.
+  // Include a _source=github marker so handleGithubCallback can distinguish
+  // GitHub OAuth redirects from the login app's auth redirects.
   const currentParams = new URLSearchParams(window.location.search);
   currentParams.delete('code');
   currentParams.delete('state');
+  currentParams.set('_source', 'github');
   const statePayload = currentParams.toString();
 
-  let url = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&redirect_uri=${encodeURIComponent(redirectUri)}`;
-  if (statePayload) {
-    url += `&state=${encodeURIComponent(statePayload)}`;
-  }
+  const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}`;
   return url;
 };
 
@@ -3145,14 +3145,19 @@ export const handleGithubCallback = async () => {
     return null;
   }
 
-  // Restore original query params from the OAuth `state` parameter
+  // Only process if this redirect came from GitHub OAuth (has state with _source=github).
+  // Without this check we'd consume ?code= params from the login app's auth redirect.
   const state = params.get('state');
-  if (state) {
-    const restoredParams = new URLSearchParams(state);
-    for (const [key, value] of restoredParams) {
-      if (!params.has(key)) {
-        params.set(key, value);
-      }
+  if (!state || !new URLSearchParams(state).has('_source')) {
+    return null;
+  }
+
+  // Restore original query params from the OAuth `state` parameter
+  const restoredParams = new URLSearchParams(state);
+  restoredParams.delete('_source'); // Remove internal marker
+  for (const [key, value] of restoredParams) {
+    if (!params.has(key)) {
+      params.set(key, value);
     }
   }
 
@@ -3165,11 +3170,10 @@ export const handleGithubCallback = async () => {
     newUrl.searchParams.delete('code');
     newUrl.searchParams.delete('state');
     // Restore params from state into the URL
-    if (state) {
-      const restoredParams = new URLSearchParams(state);
-      for (const [key, value] of restoredParams) {
-        newUrl.searchParams.set(key, value);
-      }
+    const successParams = new URLSearchParams(state);
+    successParams.delete('_source');
+    for (const [key, value] of successParams) {
+      newUrl.searchParams.set(key, value);
     }
     window.history.replaceState({}, '', newUrl);
 
@@ -3180,11 +3184,10 @@ export const handleGithubCallback = async () => {
     const newUrl = new URL(window.location);
     newUrl.searchParams.delete('code');
     newUrl.searchParams.delete('state');
-    if (state) {
-      const restoredParams = new URLSearchParams(state);
-      for (const [key, value] of restoredParams) {
-        newUrl.searchParams.set(key, value);
-      }
+    const failParams = new URLSearchParams(state);
+    failParams.delete('_source');
+    for (const [key, value] of failParams) {
+      newUrl.searchParams.set(key, value);
     }
     window.history.replaceState({}, '', newUrl);
     return null;
