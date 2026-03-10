@@ -18,6 +18,9 @@ import {
   isGithubAuthenticated as checkGithubAuth,
   getGithubOAuthUrl,
   scanRepositoryAndGenerateDiagram,
+  fetchLatestCommitSha,
+  getGithubToken,
+  rescanRepositoryForChanges,
 } from '../services/githubRepoService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import SpaceChat from './SpaceChat';
@@ -45,6 +48,7 @@ const UIOverlay = ({
   const [currentDiagramRepo, setCurrentDiagramRepo] = useState(null);
   const [lastGeneratedMarkdown, setLastGeneratedMarkdown] = useState(null);
   const [latestMarkdownUrl, setLatestMarkdownUrl] = useState(null);
+  const [lastCommitSha, setLastCommitSha] = useState(null);
 
   // Load persisted repo + markdown URL for this space on mount / space change
   useEffect(() => {
@@ -61,6 +65,7 @@ const UIOverlay = ({
       setCurrentDiagramRepo(null);
     }
     setLatestMarkdownUrl(localStorage.getItem(`diagramMarkdownUrl_${currentSpaceId}`) || null);
+    setLastCommitSha(localStorage.getItem(`diagramCommitSha_${currentSpaceId}`) || null);
     setLastGeneratedMarkdown(null);
   }, [currentSpaceId]);
 
@@ -83,6 +88,16 @@ const UIOverlay = ({
       localStorage.removeItem(`diagramMarkdownUrl_${currentSpaceId}`);
     }
   }, [latestMarkdownUrl, currentSpaceId]);
+
+  // Persist commit SHA whenever it changes
+  useEffect(() => {
+    if (!currentSpaceId) return;
+    if (lastCommitSha) {
+      localStorage.setItem(`diagramCommitSha_${currentSpaceId}`, lastCommitSha);
+    } else {
+      localStorage.removeItem(`diagramCommitSha_${currentSpaceId}`);
+    }
+  }, [lastCommitSha, currentSpaceId]);
   const [chatOpen, setChatOpen] = useState(false);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
@@ -184,6 +199,18 @@ const UIOverlay = ({
         setCurrentDiagramRepo(repo);
         if (result.markdown) setLastGeneratedMarkdown(result.markdown);
         if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
+
+        // Record the commit SHA so future rescans can detect changes
+        try {
+          const token = getGithubToken();
+          if (token) {
+            const sha = await fetchLatestCommitSha(repo.owner.login, repo.name, token);
+            setLastCommitSha(sha);
+          }
+        } catch (shaErr) {
+          console.warn('Could not record commit SHA:', shaErr);
+        }
+
         setNotification({
           show: true,
           message: `Diagram created! Generated: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`
@@ -201,6 +228,112 @@ const UIOverlay = ({
     }
   };
   
+  // Rescan: check for new commits and only process changed files
+  const handleRescan = async (repo) => {
+    try {
+      setScanProgress({ isScanning: true, progress: 0, stage: 'Checking for changes...' });
+
+      // If we don't have a commit SHA to compare against, fall back to full scan
+      if (!lastCommitSha) {
+        return fetchAppJsxFromRepo(repo);
+      }
+
+      // Resolve existing markdown: prefer in-memory, then fetch from storage
+      let existingMarkdown = lastGeneratedMarkdown;
+      if (!existingMarkdown && latestMarkdownUrl) {
+        try {
+          const resp = await fetch(latestMarkdownUrl);
+          existingMarkdown = await resp.text();
+        } catch {
+          console.warn('Could not fetch existing markdown from storage');
+        }
+      }
+
+      // If we have no existing markdown to merge into, fall back to full scan
+      if (!existingMarkdown) {
+        return fetchAppJsxFromRepo(repo);
+      }
+
+      const rescanResult = await rescanRepositoryForChanges(
+        repo,
+        lastCommitSha,
+        existingMarkdown,
+        (progress, stage) => {
+          setScanProgress({ isScanning: true, progress, stage });
+        },
+      );
+
+      // No changes detected
+      if (rescanResult.noChanges) {
+        setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
+        setLastCommitSha(rescanResult.commitSha);
+        setNotification({
+          show: true,
+          message: rescanResult.message || `No changes detected in ${repo.name}`,
+        });
+        setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+        return;
+      }
+
+      // Process only the NEW merfolk entries to create new objects
+      let storageUrl = null;
+      if (user?.uid && currentSpaceId) {
+        setScanProgress({ isScanning: true, progress: 50, stage: 'Uploading updated diagram...' });
+        try {
+          storageUrl = await uploadMarkdownToStorage(
+            rescanResult.mergedMarkdown,
+            user.uid,
+            currentSpaceId,
+            `${repo.name}-diagram.md`,
+          );
+        } catch (uploadErr) {
+          console.error('Failed to upload merged markdown:', uploadErr);
+        }
+      }
+
+      // Process the new merfolk section to create additional 3D objects
+      setScanProgress({ isScanning: true, progress: 65, stage: 'Creating new objects from changes...' });
+      const newBlob = new Blob([rescanResult.newMerfolk], { type: 'text/markdown' });
+      const newFile = new File([newBlob], `${repo.name}-changes.md`, { type: 'text/markdown' });
+
+      const result = await markdownDiagramService.processMarkdownFile(
+        newFile,
+        onCreateObject,
+        currentSpaceId,
+        user,
+      );
+
+      setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
+
+      // Update stored state
+      setLastCommitSha(rescanResult.commitSha);
+      setLastGeneratedMarkdown(rescanResult.mergedMarkdown);
+      if (storageUrl) setLatestMarkdownUrl(storageUrl);
+
+      const parts = [];
+      if (rescanResult.addedFiles > 0) parts.push(`${rescanResult.addedFiles} added`);
+      if (rescanResult.modifiedFiles > 0) parts.push(`${rescanResult.modifiedFiles} modified`);
+      if (rescanResult.removedFiles > 0) parts.push(`${rescanResult.removedFiles} removed`);
+      const summary = parts.length ? parts.join(', ') : `${rescanResult.changedFileCount} changed`;
+
+      setNotification({
+        show: true,
+        message: result.success
+          ? `Rescan complete! Files: ${summary}. New objects: ${result.objectsCreated}, connections: ${result.connectionsCreated}`
+          : `Rescan found changes (${summary}) but no new objects were created`,
+      });
+      setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+    } catch (error) {
+      console.error('Error during rescan:', error);
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
+      setNotification({
+        show: true,
+        message: `Rescan failed: ${error.message}`,
+      });
+      setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+    }
+  };
+
   // Download the latest generated markdown file
   const handleDownloadMarkdown = useCallback(async () => {
     const repoName = currentDiagramRepo?.name || 'diagram';
@@ -1084,7 +1217,7 @@ const UIOverlay = ({
           </button>
           <button
             className="shape-button"
-            onClick={() => fetchAppJsxFromRepo(currentDiagramRepo)}
+            onClick={() => handleRescan(currentDiagramRepo)}
             disabled={!currentDiagramRepo || scanProgress.isScanning}
             title={currentDiagramRepo?.name ? `Rescan ${currentDiagramRepo.name}` : 'No repo scanned yet'}
             style={{

@@ -84,6 +84,73 @@ export const fetchFileContent = async (owner, repoName, filePath, token) => {
 };
 
 /**
+ * Fetch the latest commit SHA for the default branch of a repository
+ * @param {string} owner - Repository owner
+ * @param {string} repoName - Repository name
+ * @param {string} token - GitHub access token
+ * @returns {Promise<string>} - The latest commit SHA
+ */
+export const fetchLatestCommitSha = async (owner, repoName, token) => {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/commits?per_page=1`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub API error fetching latest commit: ${response.status}`);
+  }
+  const commits = await response.json();
+  if (!commits.length) {
+    throw new Error('Repository has no commits');
+  }
+  return commits[0].sha;
+};
+
+/**
+ * Fetch the list of changed files between two commits using the GitHub Compare API
+ * @param {string} owner - Repository owner
+ * @param {string} repoName - Repository name
+ * @param {string} baseSha - Base commit SHA
+ * @param {string} headSha - Head commit SHA
+ * @param {string} token - GitHub access token
+ * @returns {Promise<Array>} - Array of changed file objects { filename, status, path, name, type }
+ */
+export const fetchChangedFiles = async (owner, repoName, baseSha, headSha, token) => {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/compare/${baseSha}...${headSha}`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub API error comparing commits: ${response.status}`);
+  }
+  const comparison = await response.json();
+  return (comparison.files || []).map(f => ({
+    filename: f.filename,
+    status: f.status, // 'added', 'modified', 'removed', 'renamed'
+    path: f.filename,
+    name: f.filename.split('/').pop(),
+  }));
+};
+
+/**
+ * Determine the file type from a file path based on extension
+ * @param {string} filePath - File path
+ * @returns {string|null} - 'file' for JS/TS, 'python' for .py, 'shader' for shader files, or null
+ */
+const getFileTypeFromPath = (filePath) => {
+  const name = filePath.split('/').pop();
+  if (/\.(jsx?|tsx?)$/.test(name)) return 'file';
+  if (/\.py$/.test(name)) return 'python';
+  if (/\.(glsl|wgsl|hlsl|vert|frag|comp)$/.test(name)) return 'shader';
+  return null;
+};
+
+/**
  * Recursively fetch repository structure (JS/TS files only)
  * @param {string} owner - Repository owner
  * @param {string} repoName - Repository name
@@ -916,15 +983,23 @@ const traversePythonSource = (
  * @param {string} repoName - Repository name
  * @returns {Promise<string>} - Merfolk markdown content
  */
-export const generateMerfolkFromRepository = async (owner, repoName) => {
+export const generateMerfolkFromRepository = async (owner, repoName, options = {}) => {
   try {
     const token = localStorage.getItem('github_token');
     if (!token) {
       throw new Error('GitHub token not found');
     }
 
-    // Fetch entire repository structure
-    const structure = await fetchRepositoryStructure(owner, repoName, token);
+    // When a pre-filtered file list is provided (e.g. from Compare API during
+    // rescan), skip the expensive recursive structure fetch entirely.
+    let structure;
+    if (options.preFilteredFiles) {
+      structure = options.preFilteredFiles;
+      console.log(`📁 Using pre-filtered file list: ${structure.length} files`);
+    } else {
+      // Fetch entire repository structure
+      structure = await fetchRepositoryStructure(owner, repoName, token);
+    }
 
     // Log structure breakdown
     const shaderFiles = structure.filter(f => f.type === 'shader');
@@ -3207,4 +3282,154 @@ export const scanRepositoryAndGenerateDiagram = async (
     console.error('Error generating diagram from repository:', error);
     throw error;
   }
+};
+
+// ─── Rescan / Incremental Update Helpers ───────────────────────────────────
+
+/**
+ * Extract node IDs from a merfolk markdown string.
+ * Matches node declarations like  ID{Component: ...}, ID[Function: ...], etc.
+ * @param {string} markdown - Merfolk markdown (may include code fences)
+ * @returns {Set<string>} - Set of node ID strings
+ */
+const extractMerfolkNodeIds = (markdown) => {
+  const nodeIds = new Set();
+  const content = markdown.match(/```merfolk\n([\s\S]*?)```/)?.[1] || markdown;
+  // Match lines starting with a word-char identifier followed by a bracket type
+  const nodePattern = /^(\w+)(?:\{|\[\[|\[|\(\(|<)/gm;
+  let match;
+  while ((match = nodePattern.exec(content))) {
+    nodeIds.add(match[1]);
+  }
+  return nodeIds;
+};
+
+/**
+ * Filter new merfolk content so that only truly new node declarations are kept.
+ * All connection/arrow lines and comments are always kept.
+ * @param {string} newContent - Raw merfolk content (without fences)
+ * @param {Set<string>} existingIds - Node IDs already present in the diagram
+ * @returns {string} - Filtered merfolk content
+ */
+const filterNewMerfolkNodes = (newContent, existingIds) => {
+  const lines = newContent.split('\n');
+  const kept = [];
+  const nodePattern = /^(\w+)(?:\{|\[\[|\[|\(\(|<)/;
+  for (const line of lines) {
+    const m = line.match(nodePattern);
+    if (m && existingIds.has(m[1])) {
+      // Skip duplicate node declaration
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
+};
+
+/**
+ * Merge newly generated merfolk entries into an existing merfolk markdown.
+ * Duplicate node declarations (by ID) are stripped; new connections are appended.
+ * @param {string} existingMarkdown - The full existing merfolk markdown (with fences)
+ * @param {string} newMarkdown - The newly generated merfolk markdown (with fences)
+ * @returns {string} - Merged merfolk markdown (single code block)
+ */
+export const mergeMerfolkMarkdown = (existingMarkdown, newMarkdown) => {
+  const extractContent = (md) =>
+    md.match(/```merfolk\n([\s\S]*?)```/)?.[1]?.trimEnd() || md.trimEnd();
+
+  const existingContent = extractContent(existingMarkdown);
+  const newRawContent = extractContent(newMarkdown);
+
+  const existingIds = extractMerfolkNodeIds(existingMarkdown);
+  const filteredNew = filterNewMerfolkNodes(newRawContent, existingIds);
+
+  // Only append if there is actual new content after filtering
+  const trimmed = filteredNew.replace(/^[\s%]*$/gm, '').trim();
+  if (!trimmed) {
+    return existingMarkdown; // nothing new to add
+  }
+
+  return `\`\`\`merfolk\n${existingContent}\n\n%% === Rescan Additions ===\n${filteredNew}\n\`\`\`\n`;
+};
+
+/**
+ * Rescan a repository for changes since the last known commit.
+ * Uses the GitHub Compare API to fetch only changed files, generates merfolk
+ * entries for them, and merges the result into the existing diagram markdown.
+ *
+ * @param {Object} repo - Repository object (must have repo.owner.login and repo.name)
+ * @param {string} lastCommitSha - The commit SHA recorded during the previous scan
+ * @param {string|null} existingMarkdown - The existing merfolk markdown (if available)
+ * @param {Function} onProgress - Progress callback (progress: 0-100, stage: string)
+ * @returns {Promise<Object>} - { noChanges, commitSha, mergedMarkdown, newMarkdown, changedFileCount, addedFiles, modifiedFiles, removedFiles }
+ */
+export const rescanRepositoryForChanges = async (
+  repo,
+  lastCommitSha,
+  existingMarkdown,
+  onProgress = null,
+) => {
+  const token = getGithubToken();
+  if (!token) throw new Error('No GitHub token found');
+
+  const owner = repo.owner.login;
+  const repoName = repo.name;
+
+  // 1. Fetch the latest commit SHA
+  if (onProgress) onProgress(5, 'Checking for new commits...');
+  const currentSha = await fetchLatestCommitSha(owner, repoName, token);
+
+  if (currentSha === lastCommitSha) {
+    return { noChanges: true, commitSha: currentSha };
+  }
+
+  // 2. Get the list of changed files via Compare API
+  if (onProgress) onProgress(15, 'Fetching changes...');
+  const changedFiles = await fetchChangedFiles(owner, repoName, lastCommitSha, currentSha, token);
+
+  // Categorise
+  const addedFiles = changedFiles.filter(f => f.status === 'added');
+  const modifiedFiles = changedFiles.filter(f => f.status === 'modified' || f.status === 'renamed');
+  const removedFiles = changedFiles.filter(f => f.status === 'removed');
+
+  // 3. Keep only supported source files (added + modified)
+  const sourceFiles = [...addedFiles, ...modifiedFiles]
+    .map(f => {
+      const type = getFileTypeFromPath(f.filename);
+      return type ? { path: f.filename, name: f.name, type } : null;
+    })
+    .filter(Boolean);
+
+  if (sourceFiles.length === 0) {
+    return {
+      noChanges: true,
+      commitSha: currentSha,
+      message: `No supported source files changed (${changedFiles.length} file(s) changed total)`,
+    };
+  }
+
+  // 4. Generate merfolk from only the changed files
+  if (onProgress) onProgress(25, `Analyzing ${sourceFiles.length} changed file(s)...`);
+  const newMerfolk = await generateMerfolkFromRepository(owner, repoName, {
+    preFilteredFiles: sourceFiles,
+  });
+
+  // 5. Merge into existing markdown (or use the new markdown as-is)
+  let mergedMarkdown;
+  if (existingMarkdown) {
+    mergedMarkdown = mergeMerfolkMarkdown(existingMarkdown, newMerfolk);
+  } else {
+    mergedMarkdown = newMerfolk;
+  }
+
+  return {
+    noChanges: false,
+    commitSha: currentSha,
+    mergedMarkdown,
+    newMerfolk,
+    changedFileCount: sourceFiles.length,
+    addedFiles: addedFiles.length,
+    modifiedFiles: modifiedFiles.length,
+    removedFiles: removedFiles.length,
+  };
 };
