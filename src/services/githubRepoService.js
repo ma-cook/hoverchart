@@ -3,9 +3,8 @@
  * Handles GitHub OAuth, repository fetching, file analysis, and Merfolk markdown generation
  */
 import { parse } from '@babel/parser';
-
-// GitHub OAuth endpoint for token exchange
-const GITHUB_TOKEN_EXCHANGE_URL = 'https://fetchgithubtoken-qtk2xsi74a-uc.a.run.app';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../firebase';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -17,20 +16,10 @@ const GITHUB_API_BASE = 'https://api.github.com';
  */
 export const exchangeGithubCode = async (code) => {
   try {
-    // GitHub requires the same redirect_uri used in the authorization request
     const redirectUri = window.location.origin + window.location.pathname;
-    const response = await fetch(GITHUB_TOKEN_EXCHANGE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, redirect_uri: redirectUri }),
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch GitHub token');
-    }
-
-    const data = await response.json();
-    return data.access_token;
+    const fetchGithubToken = httpsCallable(functions, 'fetchGithubToken');
+    const result = await fetchGithubToken({ code, redirect_uri: redirectUri });
+    return result.data.access_token;
   } catch (error) {
     console.error('Error exchanging GitHub code:', error);
     throw error;
