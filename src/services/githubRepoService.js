@@ -138,6 +138,14 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
             type: 'file',
           });
         }
+        // Include Python files
+        else if (item.name.endsWith('.py')) {
+          structure.push({
+            path: item.path,
+            name: item.name,
+            type: 'python',
+          });
+        }
         // Include shader files (GLSL, WGSL, HLSL, etc.)
         else if (
           item.name.endsWith('.glsl') ||
@@ -201,7 +209,19 @@ const analyzeFile = (filePath, repoType = 'react') => {
     /(?:^|\/)(?:app|pages)\//.test(filePath)
   ) && !isBackend && !isComponent && !isHook && !isService && !isStore && !isUtil && !isWorker;
 
-  return { isComponent, isHook, isService, isStore, isUtil, isWorker, isShader, isBackend, isNextRoute };
+  // Python-specific folder patterns
+  const isModel = /(?:^|\/)models\//.test(filePath);
+  const isView = /(?:^|\/)views\//.test(filePath) || /(?:^|\/)templates\//.test(filePath);
+  const isController = /(?:^|\/)controllers\//.test(filePath) || /(?:^|\/)handlers\//.test(filePath);
+  const isMiddleware = /(?:^|\/)middleware\//.test(filePath);
+  const isConfig = /(?:^|\/)config\//.test(filePath) || /(?:^|\/)settings\//.test(filePath);
+  const isMigration = /(?:^|\/)migrations\//.test(filePath) || /(?:^|\/)alembic\//.test(filePath);
+  const isCommand = /(?:^|\/)commands\//.test(filePath) || /(?:^|\/)management\//.test(filePath);
+  const isSerializer = /(?:^|\/)serializers\//.test(filePath) || /(?:^|\/)schemas\//.test(filePath);
+  const isTask = /(?:^|\/)tasks\//.test(filePath) || /(?:^|\/)celery\//.test(filePath);
+
+  return { isComponent, isHook, isService, isStore, isUtil, isWorker, isShader, isBackend, isNextRoute,
+    isModel, isView, isController, isMiddleware, isConfig, isMigration, isCommand, isSerializer, isTask };
 };
 
 /**
@@ -317,19 +337,45 @@ const containsJSX = (node, fileContext = {}) => {
 };
 
 /**
- * Detect whether a repository uses React or is plain vanilla JS/TS.
- * Checks for JSX/TSX files first (fast path), then inspects package.json.
+ * Detect whether a repository uses React, Next.js, Python, or plain vanilla JS/TS.
+ * Checks for Python files first, then JSX/TSX files, then inspects package.json.
  * @param {string} owner - Repo owner
  * @param {string} repoName - Repo name
  * @param {string} token - GitHub token
  * @param {Array} structure - Array of file objects from fetchRepositoryStructure
- * @returns {Promise<'react'|'nextjs'|'vanilla'>}
+ * @returns {Promise<'react'|'nextjs'|'python'|'vanilla'>}
  */
 const detectRepoType = async (owner, repoName, token, structure) => {
   // Directories that contain example / demo / test code — these shouldn't
   // determine the repo type because library repos often ship a React example
   // even though the library itself is vanilla JS/TS.
   const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook)\//i;
+
+  // ── Python detection (check before JS-based detection) ──────────────────
+  const pythonFiles = structure.filter(f => f.type === 'python');
+  const sourcePythonFiles = pythonFiles.filter(f => !nonSourceDirPattern.test(f.path));
+  console.log(`  [detectRepoType] .py files total: ${pythonFiles.length}, in source dirs: ${sourcePythonFiles.length}`);
+
+  if (sourcePythonFiles.length > 0) {
+    // Check for JS/TS files too — if both exist, determine which is dominant
+    const jsFiles = structure.filter(f => f.type === 'file');
+    const sourceJsFiles = jsFiles.filter(f => !nonSourceDirPattern.test(f.path));
+    if (sourceJsFiles.length > sourcePythonFiles.length) {
+      console.log(`  [detectRepoType] Both Python and JS files found, JS dominant (${sourceJsFiles.length} vs ${sourcePythonFiles.length})`);
+      // Fall through to JS-based detection below
+    } else {
+      // Confirm Python repo via setup.py, pyproject.toml, requirements.txt, or sheer file count
+      const hasPythonSignal = structure.some(f =>
+        f.name === 'setup.py' || f.name === 'pyproject.toml' ||
+        f.name === 'requirements.txt' || f.name === 'Pipfile' ||
+        f.name === 'setup.cfg' || f.name === 'manage.py'
+      );
+      if (hasPythonSignal || sourcePythonFiles.length >= 3) {
+        console.log(`  [detectRepoType] → python (${sourcePythonFiles.length} source .py files${hasPythonSignal ? ' + Python project signal' : ''})`);
+        return 'python';
+      }
+    }
+  }
 
   // ── Check package.json early so we can detect Next.js before the
   //    generic React check (Next.js repos also have React as a dep).
@@ -397,6 +443,12 @@ const detectRepoType = async (owner, repoName, token, structure) => {
   // .tsx without react in prod deps → treat as vanilla TS
   if (hasTSX && !hasReactDep) {
     console.log('ℹ️  .tsx files found but no React production dependency — treating as vanilla');
+  }
+
+  // Last resort: if only Python files exist with no JS files at all, it's Python
+  if (pythonFiles.length > 0 && structure.filter(f => f.type === 'file').length === 0) {
+    console.log(`  [detectRepoType] → python (only Python files, no JS/TS)`);
+    return 'python';
   }
 
   console.log(`  [detectRepoType] → vanilla`);
@@ -658,6 +710,218 @@ const traverseVanillaAST = (
 };
 
 /**
+ * Traverse a Python source file using regex-based analysis.
+ * Extracts classes, top-level functions, and import relationships.
+ * Mirrors the output shape of traverseVanillaAST so the same Merfolk
+ * markdown generation and layout pipeline can be reused.
+ *
+ * @param {string} source - Raw Python source code
+ * @param {string} fileName - Base file name without extension
+ * @param {string} filePath - Full relative path in the repo
+ * @param {Object} fileContext - Flags from analyzeFile()
+ * @param {Object} elements - Shared elements object
+ * @param {Object} foundItems - Shared foundItems sets
+ * @param {Map} fileFunctions - fileName -> { type, functions: Set }
+ * @param {Map} moduleImportRelationships - sourceFile -> Set<importedFileBase>
+ * @param {Map} functionCallRelationships - caller -> Set<{target,label,type}>
+ */
+const traversePythonSource = (
+  source,
+  fileName,
+  filePath,
+  fileContext,
+  elements,
+  foundItems,
+  fileFunctions,
+  moduleImportRelationships,
+  functionCallRelationships
+) => {
+  // Determine container type from folder conventions
+  let containerType = 'utility';
+  if (fileContext.isBackend || fileContext.isController || fileContext.isView) containerType = 'backend';
+  else if (fileContext.isService) containerType = 'service';
+  else if (fileContext.isModel) containerType = 'service'; // models are service-like (data layer)
+  else if (fileContext.isStore) containerType = 'store';
+  else if (fileContext.isMiddleware) containerType = 'service';
+  else if (fileContext.isSerializer) containerType = 'service';
+  else if (fileContext.isTask) containerType = 'worker';
+  else if (fileContext.isWorker) containerType = 'worker';
+  else if (fileContext.isMigration) containerType = 'utility';
+  else if (fileContext.isConfig) containerType = 'utility';
+  else if (fileContext.isUtil) containerType = 'utility';
+
+  const ensureContainer = () => {
+    if (!fileFunctions.has(fileName)) {
+      fileFunctions.set(fileName, { type: containerType, functions: new Set() });
+    }
+  };
+
+  const addSymbol = (name, isClass) => {
+    if (isClass && containerType === 'utility') {
+      containerType = 'service';
+      if (fileFunctions.has(fileName)) fileFunctions.get(fileName).type = containerType;
+    }
+    ensureContainer();
+    fileFunctions.get(fileName).functions.add(name);
+
+    if (isClass) {
+      if (containerType === 'backend' || containerType === 'service') {
+        if (!foundItems.services.has(name)) {
+          foundItems.services.add(name);
+          elements.services.push(name);
+        }
+      } else {
+        if (!foundItems.utilities.has(name)) {
+          foundItems.utilities.add(name);
+          elements.utilities.push(name);
+        }
+      }
+    } else {
+      if (!foundItems.utilities.has(name)) {
+        foundItems.utilities.add(name);
+        elements.utilities.push(name);
+      }
+    }
+  };
+
+  // Split source into lines for analysis
+  const lines = source.split('\n');
+
+  // Track names defined in this file to avoid adding import bindings as symbols
+  const localNames = new Set();
+
+  // ── Extract imports ───────────────────────────────────────────────────────
+  // Patterns: `import module`, `from module import ...`, `from .relative import ...`
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Skip comments and empty lines
+    if (trimmed.startsWith('#') || trimmed === '') continue;
+
+    // `from .relative import Something` or `from ..package.module import Something`
+    const relativeFromMatch = trimmed.match(/^from\s+(\.+[\w.]*)(?:\s+import\s+.+)?/);
+    if (relativeFromMatch) {
+      const relSource = relativeFromMatch[1];
+      // Convert Python relative import to a module name
+      // `from .models import User` → track 'models' as a module relationship
+      const parts = relSource.replace(/^\.+/, '').split('.');
+      const importedBase = parts[parts.length - 1];
+      if (importedBase && importedBase !== fileName) {
+        const sanitized = sanitizeNodeId(importedBase);
+        if (!moduleImportRelationships.has(fileName)) {
+          moduleImportRelationships.set(fileName, new Set());
+        }
+        moduleImportRelationships.get(fileName).add(sanitized);
+      }
+      continue;
+    }
+
+    // `from package.module import Something` (absolute import from within the project)
+    const absFromMatch = trimmed.match(/^from\s+([\w.]+)\s+import\s+(.+)/);
+    if (absFromMatch) {
+      const modulePath = absFromMatch[1];
+      // Standard library / external packages are typically single words or known prefixes
+      // We track multi-part imports as potential internal module relationships
+      const parts = modulePath.split('.');
+      if (parts.length > 1) {
+        // Could be internal (e.g. `from myapp.models import User`)
+        const importedBase = sanitizeNodeId(parts[parts.length - 1]);
+        if (importedBase && importedBase !== fileName) {
+          if (!moduleImportRelationships.has(fileName)) {
+            moduleImportRelationships.set(fileName, new Set());
+          }
+          moduleImportRelationships.get(fileName).add(importedBase);
+        }
+      } else {
+        // Single-word package → treat as external library
+        const libName = parts[0];
+        if (!elements.imports.libraries.includes(libName)) {
+          elements.imports.libraries.push(libName);
+        }
+      }
+
+      // Track imported names as bindings (not local symbols)
+      const importedNames = absFromMatch[2].split(',').map(n => n.trim().split(/\s+as\s+/).pop().trim());
+      importedNames.forEach(n => { if (n && n !== '*') localNames.add(n); });
+      continue;
+    }
+
+    // `import module` or `import module as alias`
+    const importMatch = trimmed.match(/^import\s+([\w.]+)(?:\s+as\s+(\w+))?/);
+    if (importMatch) {
+      const modulePath = importMatch[1];
+      const alias = importMatch[2] || modulePath.split('.')[0];
+      localNames.add(alias);
+
+      if (!modulePath.includes('.')) {
+        // Single-word → external library
+        if (!elements.imports.libraries.includes(modulePath)) {
+          elements.imports.libraries.push(modulePath);
+        }
+      } else {
+        // Multi-part → potential internal module
+        const parts = modulePath.split('.');
+        const importedBase = sanitizeNodeId(parts[parts.length - 1]);
+        if (importedBase && importedBase !== fileName) {
+          if (!moduleImportRelationships.has(fileName)) {
+            moduleImportRelationships.set(fileName, new Set());
+          }
+          moduleImportRelationships.get(fileName).add(importedBase);
+        }
+      }
+      continue;
+    }
+  }
+
+  // ── Extract top-level classes ─────────────────────────────────────────────
+  // Pattern: `class ClassName(Base):` or `class ClassName:` at zero indentation
+  const classPattern = /^class\s+(\w+)\s*[\(:]?/gm;
+  let classMatch;
+  while ((classMatch = classPattern.exec(source)) !== null) {
+    // Verify it's at the top level (starts at column 0)
+    const lineStart = source.lastIndexOf('\n', classMatch.index) + 1;
+    const indent = classMatch.index - lineStart;
+    if (indent === 0) {
+      const className = classMatch[1];
+      // Skip private/internal classes (leading underscore convention)
+      if (!className.startsWith('_') || className.startsWith('__')) {
+        addSymbol(sanitizeNodeId(className), true);
+      }
+    }
+  }
+
+  // ── Extract top-level functions ───────────────────────────────────────────
+  // Pattern: `def function_name(...)` or `async def function_name(...)` at zero indentation
+  const funcPattern = /^(?:async\s+)?def\s+(\w+)\s*\(/gm;
+  let funcMatch;
+  while ((funcMatch = funcPattern.exec(source)) !== null) {
+    const lineStart = source.lastIndexOf('\n', funcMatch.index) + 1;
+    const indent = funcMatch.index - lineStart;
+    if (indent === 0) {
+      const funcName = funcMatch[1];
+      // Skip private/dunder functions (except __init__.py entry points)
+      if (funcName.startsWith('_') && !funcName.startsWith('__')) continue;
+      if (funcName.startsWith('__') && funcName.endsWith('__')) continue; // dunder methods shouldn't appear at top level, but skip just in case
+      // Skip names that are just import bindings
+      if (localNames.has(funcName)) continue;
+      addSymbol(sanitizeNodeId(funcName), false);
+    }
+  }
+
+  // If file is an __init__.py and no symbols were found, still ensure a container
+  // exists so the package appears in the diagram
+  if (fileName === '__init__' || fileName === 'init') {
+    // Skip __init__.py files — they are package markers, not meaningful modules
+    return;
+  }
+
+  // If the file is manage.py or similar entry-points, ensure it has a container
+  if (filePath.endsWith('manage.py') || filePath.endsWith('wsgi.py') || filePath.endsWith('asgi.py')) {
+    ensureContainer();
+  }
+};
+
+/**
  * Generate Merfolk markdown from an entire repository
  * @param {string} owner - Repository owner
  * @param {string} repoName - Repository name
@@ -676,27 +940,30 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
     // Log structure breakdown
     const shaderFiles = structure.filter(f => f.type === 'shader');
     const jsFiles = structure.filter(f => f.type === 'file');
+    const pythonFiles = structure.filter(f => f.type === 'python');
     const workerJsFiles = jsFiles.filter(f => /(?:^|\/)workers\//.test(f.path));
     console.log(`📁 Repository structure: ${structure.length} total files`);
-    console.log(`   JS/TS files: ${jsFiles.length}, Shader files: ${shaderFiles.length}, Worker JS files: ${workerJsFiles.length}`);
+    console.log(`   JS/TS files: ${jsFiles.length}, Python files: ${pythonFiles.length}, Shader files: ${shaderFiles.length}, Worker JS files: ${workerJsFiles.length}`);
     if (shaderFiles.length > 0) console.log(`   Shaders:`, shaderFiles.map(f => f.path));
     if (workerJsFiles.length > 0) console.log(`   Workers:`, workerJsFiles.map(f => f.path));
+    if (pythonFiles.length > 0) console.log(`   Python:`, pythonFiles.slice(0, 20).map(f => f.path));
 
     // Detect repo type: 'react' uses the React-specific AST traversal;
-    // 'vanilla' uses the file-as-module traversal for plain JS/TS projects.
+    // 'vanilla' uses the file-as-module traversal for plain JS/TS projects;
+    // 'python' uses regex-based source analysis for Python projects.
     const repoType = await detectRepoType(owner, repoName, token, structure);
     console.log(`🔍 Detected repo type: ${repoType}`);
 
-    // For vanilla repos, filter out example/test/debug directories that would
+    // For vanilla/python repos, filter out example/test/debug directories that would
     // pollute the diagram with demo scripts and local variables.  React repos
     // keep these because components in examples can still be meaningful.
-    const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook)\//i;
+    const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook|migrations?|alembic|__pycache__)\//i;
     const nonSourceFilePattern = /(?:^|\/)(?:debug[\-_]|test[\-_])/i;
-    const filesToProcess = repoType === 'vanilla'
+    const filesToProcess = (repoType === 'vanilla' || repoType === 'python')
       ? structure.filter(f => !nonSourceDirPattern.test(f.path) && !nonSourceFilePattern.test(f.name))
       : structure;
     if (filesToProcess.length !== structure.length) {
-      console.log(`   Filtered ${structure.length - filesToProcess.length} non-source files for vanilla repo (${filesToProcess.length} remaining)`);
+      console.log(`   Filtered ${structure.length - filesToProcess.length} non-source files for ${repoType} repo (${filesToProcess.length} remaining)`);
     }
 
     // Define structure to hold ALL found elements across entire repo
@@ -794,7 +1061,7 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
           // Extract file name without extension for file-level tracking
           // Sanitize to remove hyphens/dots that break Merfolk node-ID syntax
           const fileName = sanitizeNodeId(
-            file.path.split('/').pop().replace(/\.(jsx?|tsx?|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
+            file.path.split('/').pop().replace(/\.(jsx?|tsx?|py|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
           );
 
           // ── Next.js route tracking ────────────────────────────────────────
@@ -861,6 +1128,26 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
             }
             fileFunctions.get(shaderContainerName).functions.add(shaderNodeName);
             return; // Skip AST parsing for shader files
+          }
+
+          // Handle Python files — use regex-based analysis instead of Babel
+          if (file.type === 'python') {
+            try {
+              traversePythonSource(
+                fileContent,
+                fileName,
+                file.path,
+                fileContext,
+                elements,
+                foundItems,
+                fileFunctions,
+                moduleImportRelationships,
+                functionCallRelationships
+              );
+            } catch (pyError) {
+              console.warn(`⚠️  Failed to parse Python file ${file.path}:`, pyError?.message || pyError);
+            }
+            return; // Skip Babel AST parsing for Python files
           }
 
           try {
@@ -1804,10 +2091,10 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
       );
     }
 
-    // ── Vanilla post-processing: convert inter-module imports to connections ──
+    // ── Vanilla / Python post-processing: convert inter-module imports to connections ──
     // Each file container that imports another known file container gets a
     // directed 'imports' connection so the 3D diagram shows module dependencies.
-    if (repoType === 'vanilla') {
+    if (repoType === 'vanilla' || repoType === 'python') {
       const knownContainers = new Set(fileFunctions.keys());
       moduleImportRelationships.forEach((importedFiles, sourceFile) => {
         if (!knownContainers.has(sourceFile)) return;
@@ -1898,7 +2185,7 @@ export const generateMerfolkFromRepository = async (owner, repoName) => {
  * @param {Map} componentPropsRelationships - Component to child props relationships
  * @param {Map} storeUsageRelationships - Component to store usage relationships
  * @param {Map} hookReturnValueRelationships - Component to hook return value relationships
- * @param {'react'|'nextjs'|'vanilla'} repoType - Detected repository type
+ * @param {'react'|'nextjs'|'vanilla'|'python'} repoType - Detected repository type
  * @param {Map} moduleImportRelationships - sourceFile -> Set<importedFileBase>
  * @param {Map} nextjsRouteMap - filePath -> { segment, parentPath, isLayout, isPage, isApi }
  * @returns {string} - Merfolk markdown content
@@ -1922,7 +2209,7 @@ const generateMerfolkMarkdown = (
   moduleImportRelationships = new Map(),
   nextjsRouteMap = new Map()
 ) => {
-  const isVanilla = repoType === 'vanilla';
+  const isVanilla = repoType === 'vanilla' || repoType === 'python';
   const isNextjs = repoType === 'nextjs';
   let markdown = `%% ${repoName} Repository Analysis\n\n`;
 
