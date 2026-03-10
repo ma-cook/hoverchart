@@ -9,6 +9,7 @@ import {
 import { initializeFirestore } from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
 import { getStorage } from 'firebase/storage';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -60,5 +61,6 @@ provider.setCustomParameters({
 
 const database = getDatabase(app);
 const storage = getStorage(app);
+const functions = getFunctions(app);
 
-export { auth, provider, db, database, storage };
+export { auth, provider, db, database, storage, functions };

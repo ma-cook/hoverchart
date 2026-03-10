@@ -1,9 +1,9 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import { signInWithCustomToken } from 'firebase/auth';
-import { auth } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, functions } from '../firebase';
 import {
-  validateAuthToken,
   handlePostLoginRedirect,
   handleUrlAuth,
 } from '../services/authService';
@@ -84,22 +84,22 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
     // Handle URL authentication
     const handleUrlAuth = async () => {
       const params = new URLSearchParams(window.location.search);
-      const uid = params.get('uid');
-      const token = params.get('token');
+      const code = params.get('code');
 
-      if (!uid || !token) return false;
+      if (!code) return false;
 
       try {
-        console.log('Starting token auth with UID:', uid);
-        const customToken = await validateAuthToken(token);
+        console.log('Starting auth code exchange...');
+        const exchangeAuthCode = httpsCallable(functions, 'exchangeAuthCode');
+        const result = await exchangeAuthCode({ code });
 
-        if (!customToken) {
-          console.error('Token validation failed');
+        if (!result.data?.token) {
+          console.error('No token received from auth code exchange');
           return false;
         }
 
         console.log('Got custom token, signing in...');
-        await signInWithCustomToken(auth, customToken);
+        await signInWithCustomToken(auth, result.data.token);
 
         // Wait for auth to complete
         return new Promise((resolve) => {
@@ -118,7 +118,7 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
           });
         });
       } catch (error) {
-        console.error('Token auth error:', error);
+        console.error('Auth code exchange error:', error);
         return false;
       }
     };
@@ -128,8 +128,7 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
       const params = new URLSearchParams(window.location.search);
       if (
         !state.hasAttemptedUrlAuth &&
-        params.has('uid') &&
-        params.has('token')
+        params.has('code')
       ) {
         state.setHasAttemptedUrlAuth(true);
         console.log('Found URL auth parameters, attempting auth...');
@@ -204,10 +203,9 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
   checkUrlAuth: async () => {
     const state = get();
     const params = new URLSearchParams(window.location.search);
-    const uid = params.get('uid');
-    const token = params.get('token');
+    const code = params.get('code');
 
-    if (uid && token) {
+    if (code) {
       state.updateAuthProperty('isCheckingUrlAuth', true);
       try {
         await handleUrlAuth();

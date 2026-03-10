@@ -136,45 +136,39 @@ export const validateAuthToken = async (token) => {
 // Handle URL auth with spaceId support
 export const handleUrlAuth = async () => {
   const params = new URLSearchParams(window.location.search);
-  const uid = params.get('uid');
-  const token = params.get('token');
+  const code = params.get('code');
   const spaceId = params.get('spaceId');
+  const ownerUid = params.get('ownerUid');
 
-  if (!token || !uid) {
+  if (!code) {
     return false;
   }
 
   try {
-    // Get custom token from validation
-    const customToken = await validateAuthToken(token);
+    const { httpsCallable } = await import('firebase/functions');
+    const { functions } = await import('../firebase');
 
-    if (!customToken) {
-      console.error('No custom token received from validation');
+    const exchangeAuthCode = httpsCallable(functions, 'exchangeAuthCode');
+    const result = await exchangeAuthCode({ code });
+
+    if (!result.data?.token) {
+      console.error('No token received from auth code exchange');
       return false;
     }
 
-    // Sign in with the custom token
-
-    const userCredential = await signInWithCustomToken(auth, customToken);
+    const userCredential = await signInWithCustomToken(auth, result.data.token);
 
     if (!userCredential?.user) {
       console.error('No user returned after custom token sign in');
       return false;
     }
 
-    // Verify the UID matches
-    if (userCredential.user.uid !== uid) {
-      console.error('UID mismatch:', {
-        expected: uid,
-        received: userCredential.user.uid,
-      });
-      return false;
-    }
+    const uid = userCredential.user.uid;
 
     // Store space ID in session storage if provided
     if (spaceId) {
-      // Verify space exists
-      const space = await getSpaceById(uid, spaceId);
+      const spaceOwner = ownerUid || uid;
+      const space = await getSpaceById(spaceOwner, spaceId);
       if (space) {
         sessionStorage.setItem('currentSpaceId', spaceId);
       } else {
@@ -185,7 +179,6 @@ export const handleUrlAuth = async () => {
         }
       }
     } else {
-      // No space ID provided, get or create default
       const defaultSpace = await getOrCreateDefaultSpace(uid);
       if (defaultSpace) {
         sessionStorage.setItem('currentSpaceId', defaultSpace.id);

@@ -118,12 +118,11 @@ const App = () => {
     // Otherwise, extract from URL parameters immediately
     const params = new URLSearchParams(window.location.search);
     const spaceParam = params.get('space') || params.get('spaceId');
-    const uidParam = params.get('uid');
-    const tokenParam = params.get('token');
-    const ownerParam = params.get('owner');
+    const codeParam = params.get('code');
+    const ownerParam = params.get('owner') || params.get('ownerUid');
 
     // Only treat as public space if no auth params and no owner param
-    if (spaceParam && !uidParam && !tokenParam && !ownerParam) {
+    if (spaceParam && !codeParam && !ownerParam) {
       // Check if we already know this is a public space from session storage
       const isKnownPublic =
         sessionStorage.getItem(`isPublicSpace_${spaceParam}`) === 'true';
@@ -355,13 +354,12 @@ const App = () => {
     // Extract parameters from URL
     const params = new URLSearchParams(window.location.search);
     const spaceParam = params.get('space') || params.get('spaceId'); // Support both 'space' and 'spaceId'
-    const ownerParam = params.get('owner');
-    const uidParam = params.get('uid'); // Check for authenticated access
-    const tokenParam = params.get('token'); // Check for authentication token
+    const ownerParam = params.get('owner') || params.get('ownerUid');
+    const codeParam = params.get('code'); // Check for authenticated access
 
     if (spaceParam) {
-      // If we have uid and token, this is authenticated access - let the auth system handle it
-      if (uidParam && tokenParam) {
+      // If we have a code param, this is authenticated access - let the auth system handle it
+      if (codeParam) {
         // Don't set up public space access - let the normal auth flow handle this
         // The space manager will pick up the spaceId from URL parameters
         return;
@@ -400,8 +398,7 @@ const App = () => {
         // AND we don't already have the space data
         if (
           !user &&
-          !uidParam &&
-          !tokenParam &&
+          !codeParam &&
           !publicSpaceReady &&
           !currentSpaceOwner
         ) {
@@ -473,8 +470,7 @@ const App = () => {
             });
         } else if (
           !user &&
-          !uidParam &&
-          !tokenParam &&
+          !codeParam &&
           (publicSpaceReady || currentSpaceOwner)
         ) {
           // We already have public space data, just make sure lookup state is correct
