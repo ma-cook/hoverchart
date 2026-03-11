@@ -140,12 +140,13 @@ export const fetchChangedFiles = async (owner, repoName, baseSha, headSha, token
 /**
  * Determine the file type from a file path based on extension
  * @param {string} filePath - File path
- * @returns {string|null} - 'file' for JS/TS, 'python' for .py, 'shader' for shader files, or null
+ * @returns {string|null} - 'file' for JS/TS, 'python' for .py, 'vue' for .vue, 'shader' for shader files, or null
  */
 const getFileTypeFromPath = (filePath) => {
   const name = filePath.split('/').pop();
   if (/\.(jsx?|tsx?)$/.test(name)) return 'file';
   if (/\.py$/.test(name)) return 'python';
+  if (/\.vue$/.test(name)) return 'vue';
   if (/\.(glsl|wgsl|hlsl|vert|frag|comp)$/.test(name)) return 'shader';
   return null;
 };
@@ -200,6 +201,14 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
             path: item.path,
             name: item.name,
             type: 'python',
+          });
+        }
+        // Include Vue single-file components
+        else if (item.name.endsWith('.vue')) {
+          structure.push({
+            path: item.path,
+            name: item.name,
+            type: 'vue',
           });
         }
         // Include shader files (GLSL, WGSL, HLSL, etc.)
@@ -276,8 +285,18 @@ const analyzeFile = (filePath, repoType = 'react') => {
   const isSerializer = /(?:^|\/)serializers\//.test(filePath) || /(?:^|\/)schemas\//.test(filePath);
   const isTask = /(?:^|\/)tasks\//.test(filePath) || /(?:^|\/)celery\//.test(filePath);
 
+  // Vue-specific folder patterns
+  const isComposable = /(?:^|\/)composables?\//.test(filePath);
+  const isPlugin = /(?:^|\/)plugins?\//.test(filePath);
+  const isDirective = /(?:^|\/)directives?\//.test(filePath);
+  const isMixin = /(?:^|\/)mixins?\//.test(filePath);
+  const isLayout = /(?:^|\/)layouts?\//.test(filePath);
+  const isPage = /(?:^|\/)pages?\//.test(filePath) || /(?:^|\/)views?\//.test(filePath);
+  const isRouter = /(?:^|\/)router\//.test(filePath);
+
   return { isComponent, isHook, isService, isStore, isUtil, isWorker, isShader, isBackend, isNextRoute,
-    isModel, isView, isController, isMiddleware, isConfig, isMigration, isCommand, isSerializer, isTask };
+    isModel, isView, isController, isMiddleware, isConfig, isMigration, isCommand, isSerializer, isTask,
+    isComposable, isPlugin, isDirective, isMixin, isLayout, isPage, isRouter };
 };
 
 /**
@@ -393,13 +412,13 @@ const containsJSX = (node, fileContext = {}) => {
 };
 
 /**
- * Detect whether a repository uses React, Next.js, Python, or plain vanilla JS/TS.
- * Checks for Python files first, then JSX/TSX files, then inspects package.json.
+ * Detect whether a repository uses React, Next.js, Vue, Python, or plain vanilla JS/TS.
+ * Checks for Python files first, then Vue files, then JSX/TSX files, then inspects package.json.
  * @param {string} owner - Repo owner
  * @param {string} repoName - Repo name
  * @param {string} token - GitHub token
  * @param {Array} structure - Array of file objects from fetchRepositoryStructure
- * @returns {Promise<'react'|'nextjs'|'python'|'vanilla'>}
+ * @returns {Promise<'react'|'nextjs'|'vue'|'python'|'vanilla'>}
  */
 const detectRepoType = async (owner, repoName, token, structure) => {
   // Directories that contain example / demo / test code — these shouldn't
@@ -433,10 +452,21 @@ const detectRepoType = async (owner, repoName, token, structure) => {
     }
   }
 
+  // ── Vue detection (check before JS-based detection) ─────────────────────
+  const vueFiles = structure.filter(f => f.type === 'vue');
+  const sourceVueFiles = vueFiles.filter(f => !nonSourceDirPattern.test(f.path));
+  console.log(`  [detectRepoType] .vue files total: ${vueFiles.length}, in source dirs: ${sourceVueFiles.length}`);
+
+  if (sourceVueFiles.length > 0) {
+    console.log(`  [detectRepoType] → vue (${sourceVueFiles.length} source .vue files)`);
+    return 'vue';
+  }
+
   // ── Check package.json early so we can detect Next.js before the
   //    generic React check (Next.js repos also have React as a dep).
   let hasReactDep = false;
   let hasNextDep = false;
+  let hasVueDep = false;
   let pkgProdDeps = {};
   try {
     const pkgContent = await fetchFileContent(owner, repoName, 'package.json', token);
@@ -448,6 +478,7 @@ const detectRepoType = async (owner, repoName, token, structure) => {
       };
       hasReactDep = !!(pkgProdDeps['react'] || pkgProdDeps['react-dom']);
       hasNextDep = !!pkgProdDeps['next'];
+      hasVueDep = !!(pkgProdDeps['vue'] || pkgProdDeps['nuxt']);
       console.log(`  [detectRepoType] package.json prod/peer deps keys: ${Object.keys(pkgProdDeps).join(', ')}`);
       console.log(`  [detectRepoType] hasReactDep: ${hasReactDep}, hasNextDep: ${hasNextDep}`);
     } else {
@@ -455,6 +486,12 @@ const detectRepoType = async (owner, repoName, token, structure) => {
     }
   } catch (_e) {
     console.log(`  [detectRepoType] package.json missing or unparseable`);
+  }
+
+  // Vue detection via package.json — `vue` or `nuxt` in prod/peer deps.
+  if (hasVueDep) {
+    console.log(`  [detectRepoType] → vue (vue/nuxt found in prod/peer dependencies)`);
+    return 'vue';
   }
 
   // Next.js detection — `next` in prod/peer deps is the definitive signal.
@@ -978,6 +1015,290 @@ const traversePythonSource = (
 };
 
 /**
+ * Traverse a Vue single-file component (.vue) or a plain JS/TS file from a
+ * Vue repo.  For .vue files the <script> block is extracted and parsed with
+ * Babel; the <template> block is scanned via regex for child component usage.
+ * Plain JS/TS files (composables, store modules, utilities) are parsed with
+ * Babel using the vanilla-style file-as-module approach.
+ *
+ * Populates fileFunctions, elements, moduleImportRelationships, and the
+ * component relationship maps in-place.
+ *
+ * @param {string} source        - Raw file content
+ * @param {string} fileName      - Base file name without extension
+ * @param {string} filePath      - Full relative path in the repo
+ * @param {Object} fileContext    - Flags from analyzeFile()
+ * @param {boolean} isVueFile    - true when the file has a .vue extension
+ * @param {Object} elements      - Shared elements object
+ * @param {Object} foundItems    - Shared foundItems sets
+ * @param {Map}    fileFunctions  - fileName -> { type, functions: Set }
+ * @param {Map}    moduleImportRelationships - sourceFile -> Set<importedFileBase>
+ * @param {Map}    functionCallRelationships - caller -> Set<{target,label,type}>
+ * @param {Map}    componentRelationships    - component -> Set<usedComponent>
+ * @param {Map}    componentDependencies     - component -> { hooks, services, stores, utilities }
+ * @param {Function} parseFn     - Babel parse function
+ */
+const traverseVueSource = (
+  source,
+  fileName,
+  filePath,
+  fileContext,
+  isVueFile,
+  elements,
+  foundItems,
+  fileFunctions,
+  moduleImportRelationships,
+  functionCallRelationships,
+  componentRelationships,
+  componentDependencies,
+  parseFn
+) => {
+  // ── Determine the container type from folder conventions ──────────────
+  let containerType = 'utility';
+  if (fileContext.isBackend)                          containerType = 'service';
+  else if (fileContext.isService || fileContext.isRouter) containerType = 'service';
+  else if (fileContext.isStore)                        containerType = 'store';
+  else if (fileContext.isHook || fileContext.isComposable) containerType = 'hook';
+  else if (fileContext.isUtil)                         containerType = 'utility';
+  else if (fileContext.isPlugin || fileContext.isDirective || fileContext.isMixin) containerType = 'utility';
+  else if (fileContext.isWorker)                       containerType = 'utility';
+
+  // ── For .vue SFCs, extract blocks ────────────────────────────────────
+  let scriptContent = source; // default: treat entire source as script (for .js/.ts files)
+  let templateContent = '';
+  let isScriptSetup = false;
+  const componentName = fileName.replace(/^./, c => c.toUpperCase()); // PascalCase the filename
+
+  if (isVueFile) {
+    // Extract <script> or <script setup> block
+    const scriptMatch = source.match(/<script\b([^>]*)>([\s\S]*?)<\/script>/i);
+    if (scriptMatch) {
+      const attrs = scriptMatch[1];
+      scriptContent = scriptMatch[2].trim();
+      isScriptSetup = /\bsetup\b/.test(attrs);
+    } else {
+      scriptContent = '';
+    }
+
+    // Extract <template> block for component usage scanning
+    const templateMatch = source.match(/<template\b[^>]*>([\s\S]*?)<\/template>/i);
+    if (templateMatch) {
+      templateContent = templateMatch[1];
+    }
+
+    // Register this .vue file as a component (dodecahedron)
+    if (!foundItems.components.has(componentName)) {
+      foundItems.components.add(componentName);
+      elements.components.push(componentName);
+    }
+  }
+
+  // ── Helper: resolve an import source to a sanitised base name ─────────
+  const trackRelativeSource = (importSource) => {
+    if (!importSource.startsWith('.') && !importSource.startsWith('/')) return;
+    const parts = importSource.split('/');
+    let base = parts[parts.length - 1];
+    if (base === 'index' || base === '') base = parts[parts.length - 2] || base;
+    base = base.replace(/\.(vue|jsx?|tsx?)$/, '');
+    const sanitised = sanitizeNodeId(base);
+    if (!moduleImportRelationships.has(fileName)) {
+      moduleImportRelationships.set(fileName, new Set());
+    }
+    moduleImportRelationships.get(fileName).add(sanitised);
+  };
+
+  const ensureContainer = () => {
+    if (!fileFunctions.has(fileName)) {
+      fileFunctions.set(fileName, { type: containerType, functions: new Set() });
+    }
+  };
+
+  const addSymbol = (name, isClass) => {
+    const safe = sanitizeNodeId(name);
+    ensureContainer();
+    fileFunctions.get(fileName).functions.add(safe);
+    // Determine which element category to put it in
+    if (fileContext.isStore) {
+      if (!foundItems.stores.has(safe)) { foundItems.stores.add(safe); elements.stores.push(safe); }
+    } else if (fileContext.isHook || fileContext.isComposable) {
+      if (!foundItems.hooks.has(safe)) { foundItems.hooks.add(safe); elements.hooks.push(safe); }
+    } else if (fileContext.isService || fileContext.isBackend || fileContext.isRouter || isClass) {
+      if (!foundItems.services.has(safe)) { foundItems.services.add(safe); elements.services.push(safe); }
+    } else {
+      if (!foundItems.utilities.has(safe)) { foundItems.utilities.add(safe); elements.utilities.push(safe); }
+    }
+  };
+
+  // ── Parse script content with Babel ──────────────────────────────────
+  if (scriptContent) {
+    try {
+      const ast = parseFn(scriptContent, {
+        sourceType: 'module',
+        plugins: [
+          'typescript',
+          'decorators-legacy',
+          'classProperties',
+          'optionalChaining',
+          'nullishCoalescingOperator',
+          'dynamicImport',
+          'objectRestSpread',
+          'topLevelAwait',
+        ],
+        errorRecovery: true,
+        allowImportExportEverywhere: true,
+      });
+
+      const importBindings = new Set();
+
+      ast.program.body.forEach((node) => {
+        // ── Import declarations ─────────────────────────────────────────
+        if (node.type === 'ImportDeclaration') {
+          const src = node.source.value;
+          trackRelativeSource(src);
+
+          // Track library imports
+          if (!src.startsWith('.') && !src.startsWith('/')) {
+            if (!elements.imports.libraries.includes(src)) {
+              elements.imports.libraries.push(src);
+            }
+          }
+
+          // Collect import binding names
+          (node.specifiers || []).forEach(spec => {
+            const localName = spec.local?.name;
+            if (localName) importBindings.add(localName);
+
+            // Track dependency type for .vue component files
+            if (isVueFile && localName) {
+              if (src.includes('/store') || src.includes('pinia') || src.includes('vuex')) {
+                if (!componentDependencies.has(componentName)) {
+                  componentDependencies.set(componentName, { hooks: [], services: [], stores: [], utilities: [] });
+                }
+                componentDependencies.get(componentName).stores.push(localName);
+              } else if (src.includes('/composable') || /^use[A-Z]/.test(localName)) {
+                if (!componentDependencies.has(componentName)) {
+                  componentDependencies.set(componentName, { hooks: [], services: [], stores: [], utilities: [] });
+                }
+                componentDependencies.get(componentName).hooks.push(localName);
+              } else if (src.includes('/service') || src.includes('/api')) {
+                if (!componentDependencies.has(componentName)) {
+                  componentDependencies.set(componentName, { hooks: [], services: [], stores: [], utilities: [] });
+                }
+                componentDependencies.get(componentName).services.push(localName);
+              }
+            }
+          });
+          return;
+        }
+
+        // For non-.vue files (composable, store, utility, service), extract exported symbols
+        if (!isVueFile) {
+          // Named export
+          if (node.type === 'ExportNamedDeclaration') {
+            if (node.declaration) {
+              const decl = node.declaration;
+              if (decl.type === 'FunctionDeclaration' && decl.id) {
+                addSymbol(decl.id.name, false);
+              } else if (decl.type === 'ClassDeclaration' && decl.id) {
+                addSymbol(decl.id.name, true);
+              } else if (decl.type === 'VariableDeclaration') {
+                decl.declarations.forEach(d => {
+                  if (d.id?.name && !importBindings.has(d.id.name)) {
+                    addSymbol(d.id.name, false);
+                  }
+                });
+              }
+            }
+            // Re-export: export { x } from './module'
+            if (node.source) {
+              trackRelativeSource(node.source.value);
+            }
+            return;
+          }
+          // Default export
+          if (node.type === 'ExportDefaultDeclaration') {
+            const decl = node.declaration;
+            if (decl.type === 'FunctionDeclaration' && decl.id) {
+              addSymbol(decl.id.name, false);
+            } else if (decl.type === 'ClassDeclaration' && decl.id) {
+              addSymbol(decl.id.name, true);
+            } else if (decl.type === 'Identifier' && !importBindings.has(decl.name)) {
+              addSymbol(decl.name, false);
+            }
+            return;
+          }
+        }
+
+        // For <script setup> files, all top-level declarations are public
+        if (isVueFile && isScriptSetup) {
+          if (node.type === 'VariableDeclaration') {
+            node.declarations.forEach(d => {
+              if (d.id?.name && !importBindings.has(d.id.name)) {
+                // Track function calls as relationships
+                if (d.init?.type === 'CallExpression') {
+                  const callee = d.init.callee;
+                  const calleeName = callee?.name || callee?.property?.name;
+                  if (calleeName && !importBindings.has(d.id.name)) {
+                    if (!functionCallRelationships.has(componentName)) {
+                      functionCallRelationships.set(componentName, new Set());
+                    }
+                    functionCallRelationships.get(componentName).add({
+                      target: sanitizeNodeId(calleeName),
+                      label: d.id.name,
+                      type: 'utility',
+                    });
+                  }
+                }
+              }
+            });
+          } else if (node.type === 'FunctionDeclaration' && node.id) {
+            // Internal helper function in <script setup> — add to component functions
+            // but don't add as a top-level element
+          }
+        }
+      });
+    } catch (parseError) {
+      console.warn(`\u26A0\uFE0F  Failed to parse script in Vue file ${filePath}:`, parseError?.message || parseError);
+    }
+  }
+
+  // ── Scan <template> for child component usage ────────────────────────
+  if (isVueFile && templateContent) {
+    // Match PascalCase tags: <MyComponent ... > or <MyComponent />
+    const pascalPattern = /<([A-Z][a-zA-Z0-9]+)[\s/>]/g;
+    let tagMatch;
+    while ((tagMatch = pascalPattern.exec(templateContent)) !== null) {
+      const usedComp = tagMatch[1];
+      if (usedComp !== componentName) {
+        if (!componentRelationships.has(componentName)) {
+          componentRelationships.set(componentName, new Set());
+        }
+        componentRelationships.get(componentName).add(usedComp);
+      }
+    }
+    // Match kebab-case tags that look like components (contain a hyphen): <my-component>
+    const kebabPattern = /<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)[\s/>]/g;
+    while ((tagMatch = kebabPattern.exec(templateContent)) !== null) {
+      // Convert kebab-case to PascalCase
+      const pascal = tagMatch[1].split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
+      if (pascal !== componentName) {
+        if (!componentRelationships.has(componentName)) {
+          componentRelationships.set(componentName, new Set());
+        }
+        componentRelationships.get(componentName).add(pascal);
+      }
+    }
+  }
+
+  // For non-.vue files, ensure the file container exists if we found nothing
+  // (e.g. a utility file with only side effects)
+  if (!isVueFile && !fileFunctions.has(fileName)) {
+    // Only create a container if the file likely has meaningful exports
+    // Skip empty or config-only files
+  }
+};
+
+/**
  * Generate Merfolk markdown from an entire repository
  * @param {string} owner - Repository owner
  * @param {string} repoName - Repository name
@@ -1005,12 +1326,14 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     const shaderFiles = structure.filter(f => f.type === 'shader');
     const jsFiles = structure.filter(f => f.type === 'file');
     const pythonFiles = structure.filter(f => f.type === 'python');
+    const vueFiles = structure.filter(f => f.type === 'vue');
     const workerJsFiles = jsFiles.filter(f => /(?:^|\/)workers\//.test(f.path));
     console.log(`📁 Repository structure: ${structure.length} total files`);
-    console.log(`   JS/TS files: ${jsFiles.length}, Python files: ${pythonFiles.length}, Shader files: ${shaderFiles.length}, Worker JS files: ${workerJsFiles.length}`);
+    console.log(`   JS/TS files: ${jsFiles.length}, Python files: ${pythonFiles.length}, Vue files: ${vueFiles.length}, Shader files: ${shaderFiles.length}, Worker JS files: ${workerJsFiles.length}`);
     if (shaderFiles.length > 0) console.log(`   Shaders:`, shaderFiles.map(f => f.path));
     if (workerJsFiles.length > 0) console.log(`   Workers:`, workerJsFiles.map(f => f.path));
     if (pythonFiles.length > 0) console.log(`   Python:`, pythonFiles.slice(0, 20).map(f => f.path));
+    if (vueFiles.length > 0) console.log(`   Vue:`, vueFiles.slice(0, 20).map(f => f.path));
 
     // Use caller-provided repo type during rescan (avoids misdetection from a
     // tiny changed-file list). Full scans detect automatically.
@@ -1022,7 +1345,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // keep these because components in examples can still be meaningful.
     const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook|migrations?|alembic|__pycache__)\//i;
     const nonSourceFilePattern = /(?:^|\/)(?:debug[\-_]|test[\-_])/i;
-    const filesToProcess = (repoType === 'vanilla' || repoType === 'python')
+    const filesToProcess = (repoType === 'vanilla' || repoType === 'python' || repoType === 'vue')
       ? structure.filter(f => !nonSourceDirPattern.test(f.path) && !nonSourceFilePattern.test(f.name))
       : structure;
     if (filesToProcess.length !== structure.length) {
@@ -1124,7 +1447,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
           // Extract file name without extension for file-level tracking
           // Sanitize to remove hyphens/dots that break Merfolk node-ID syntax
           const fileName = sanitizeNodeId(
-            file.path.split('/').pop().replace(/\.(jsx?|tsx?|py|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
+            file.path.split('/').pop().replace(/\.(jsx?|tsx?|py|vue|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
           );
 
           // ── Next.js route tracking ────────────────────────────────────────
@@ -1211,6 +1534,30 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
               console.warn(`⚠️  Failed to parse Python file ${file.path}:`, pyError?.message || pyError);
             }
             return; // Skip Babel AST parsing for Python files
+          }
+
+          // Handle Vue repos — .vue SFCs and plain JS/TS companion files
+          if (repoType === 'vue') {
+            try {
+              traverseVueSource(
+                fileContent,
+                fileName,
+                file.path,
+                fileContext,
+                file.type === 'vue',
+                elements,
+                foundItems,
+                fileFunctions,
+                moduleImportRelationships,
+                functionCallRelationships,
+                componentRelationships,
+                componentDependencies,
+                parse
+              );
+            } catch (vueError) {
+              console.warn(`⚠️  Failed to parse Vue file ${file.path}:`, vueError?.message || vueError);
+            }
+            return;
           }
 
           try {
@@ -2154,10 +2501,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       );
     }
 
-    // ── Vanilla / Python post-processing: convert inter-module imports to connections ──
+    // ── Vanilla / Python / Vue post-processing: convert inter-module imports to connections ──
     // Each file container that imports another known file container gets a
     // directed 'imports' connection so the 3D diagram shows module dependencies.
-    if (repoType === 'vanilla' || repoType === 'python') {
+    if (repoType === 'vanilla' || repoType === 'python' || repoType === 'vue') {
       const knownContainers = new Set(fileFunctions.keys());
       moduleImportRelationships.forEach((importedFiles, sourceFile) => {
         if (!knownContainers.has(sourceFile)) return;
@@ -2248,7 +2595,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
  * @param {Map} componentPropsRelationships - Component to child props relationships
  * @param {Map} storeUsageRelationships - Component to store usage relationships
  * @param {Map} hookReturnValueRelationships - Component to hook return value relationships
- * @param {'react'|'nextjs'|'vanilla'|'python'} repoType - Detected repository type
+ * @param {'react'|'nextjs'|'vanilla'|'python'|'vue'} repoType - Detected repository type
  * @param {Map} moduleImportRelationships - sourceFile -> Set<importedFileBase>
  * @param {Map} nextjsRouteMap - filePath -> { segment, parentPath, isLayout, isPage, isApi }
  * @returns {string} - Merfolk markdown content
@@ -2272,7 +2619,7 @@ const generateMerfolkMarkdown = (
   moduleImportRelationships = new Map(),
   nextjsRouteMap = new Map()
 ) => {
-  const isVanilla = repoType === 'vanilla' || repoType === 'python';
+  const isVanilla = repoType === 'vanilla' || repoType === 'python' || repoType === 'vue';
   const isNextjs = repoType === 'nextjs';
   let markdown = `%% ${repoName} Repository Analysis\n\n`;
 
