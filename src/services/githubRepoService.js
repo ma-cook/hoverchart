@@ -1012,10 +1012,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     if (workerJsFiles.length > 0) console.log(`   Workers:`, workerJsFiles.map(f => f.path));
     if (pythonFiles.length > 0) console.log(`   Python:`, pythonFiles.slice(0, 20).map(f => f.path));
 
-    // Detect repo type: 'react' uses the React-specific AST traversal;
-    // 'vanilla' uses the file-as-module traversal for plain JS/TS projects;
-    // 'python' uses regex-based source analysis for Python projects.
-    const repoType = await detectRepoType(owner, repoName, token, structure);
+    // Use caller-provided repo type during rescan (avoids misdetection from a
+    // tiny changed-file list). Full scans detect automatically.
+    const repoType = options.repoType || await detectRepoType(owner, repoName, token, structure);
     console.log(`🔍 Detected repo type: ${repoType}`);
 
     // For vanilla/python repos, filter out example/test/debug directories that would
@@ -3220,6 +3219,10 @@ export const scanRepositoryAndGenerateDiagram = async (
   }
 
   try {
+    // Capture the commit SHA before scanning so rescans can compare later
+    if (onProgress) onProgress(5, 'Recording commit...');
+    const commitSha = await fetchLatestCommitSha(repo.owner.login, repo.name, token);
+
     // Report progress: Fetching repository structure
     if (onProgress) onProgress(10, 'Fetching repository structure...');
     
@@ -3279,7 +3282,8 @@ export const scanRepositoryAndGenerateDiagram = async (
       objectsCreated: result.objectsCreated,
       connectionsCreated: result.connectionsCreated,
       storageUrl,
-      markdown: merfolkMarkdown
+      markdown: merfolkMarkdown,
+      commitSha,
     };
   } catch (error) {
     console.error('Error generating diagram from repository:', error);
@@ -3411,13 +3415,21 @@ export const rescanRepositoryForChanges = async (
     };
   }
 
-  // 4. Generate merfolk from only the changed files
+  // 4. Detect repo type from the FULL file list in the existing markdown to
+  //    avoid misdetection from only a handful of changed files.  We fetch
+  //    package.json once (a single lightweight API call) rather than the
+  //    entire repo structure.
+  if (onProgress) onProgress(20, 'Detecting project type...');
+  const detectedRepoType = await detectRepoType(owner, repoName, token, sourceFiles);
+
+  // 5. Generate merfolk from only the changed files
   if (onProgress) onProgress(25, `Analyzing ${sourceFiles.length} changed file(s)...`);
   const newMerfolk = await generateMerfolkFromRepository(owner, repoName, {
     preFilteredFiles: sourceFiles,
+    repoType: detectedRepoType,
   });
 
-  // 5. Merge into existing markdown (or use the new markdown as-is)
+  // 6. Merge into existing markdown (or use the new markdown as-is)
   let mergedMarkdown;
   if (existingMarkdown) {
     mergedMarkdown = mergeMerfolkMarkdown(existingMarkdown, newMerfolk);

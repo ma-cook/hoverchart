@@ -205,7 +205,8 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
 
-    if (code) {
+    // Skip if initializeAuth already handled (or is handling) this code
+    if (code && !state.hasAttemptedUrlAuth) {
       state.updateAuthProperty('isCheckingUrlAuth', true);
       try {
         await handleUrlAuth();

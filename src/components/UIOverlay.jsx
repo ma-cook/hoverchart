@@ -18,8 +18,6 @@ import {
   isGithubAuthenticated as checkGithubAuth,
   getGithubOAuthUrl,
   scanRepositoryAndGenerateDiagram,
-  fetchLatestCommitSha,
-  getGithubToken,
   rescanRepositoryForChanges,
 } from '../services/githubRepoService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
@@ -199,17 +197,7 @@ const UIOverlay = ({
         setCurrentDiagramRepo(repo);
         if (result.markdown) setLastGeneratedMarkdown(result.markdown);
         if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
-
-        // Record the commit SHA so future rescans can detect changes
-        try {
-          const token = getGithubToken();
-          if (token) {
-            const sha = await fetchLatestCommitSha(repo.owner.login, repo.name, token);
-            setLastCommitSha(sha);
-          }
-        } catch (shaErr) {
-          console.warn('Could not record commit SHA:', shaErr);
-        }
+        if (result.commitSha) setLastCommitSha(result.commitSha);
 
         setNotification({
           show: true,
@@ -233,9 +221,15 @@ const UIOverlay = ({
     try {
       setScanProgress({ isScanning: true, progress: 0, stage: 'Checking for changes...' });
 
-      // If we don't have a commit SHA to compare against, fall back to full scan
+      // Must have a commit SHA from the initial scan to compare against
       if (!lastCommitSha) {
-        return fetchAppJsxFromRepo(repo);
+        setScanProgress({ isScanning: false, progress: 0, stage: '' });
+        setNotification({
+          show: true,
+          message: 'No previous scan commit found. Run a full scan first.',
+        });
+        setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+        return;
       }
 
       // Resolve existing markdown: prefer in-memory, then fetch from storage
@@ -249,9 +243,15 @@ const UIOverlay = ({
         }
       }
 
-      // If we have no existing markdown to merge into, fall back to full scan
+      // Must have existing markdown to merge into
       if (!existingMarkdown) {
-        return fetchAppJsxFromRepo(repo);
+        setScanProgress({ isScanning: false, progress: 0, stage: '' });
+        setNotification({
+          show: true,
+          message: 'No existing diagram found. Run a full scan first.',
+        });
+        setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+        return;
       }
 
       const rescanResult = await rescanRepositoryForChanges(

@@ -1,6 +1,6 @@
-# Hoverchart
+Volscape
 
-Hoverchart is a collaborative 3D code architecture visualization tool. It scans a GitHub repository, analyses its source code via AST parsing, and generates an interactive 3D diagram where components, hooks, services, stores, utilities, workers, and libraries are represented as geometric objects — dodecahedrons, cubes, and tetrahedrons — with connections drawn between them to show data flow, containment, and dependency relationships.
+Hoverchart(Volscape) is a collaborative 3D code architecture visualization tool. It scans a GitHub repository, analyses its source code via AST parsing, and generates an interactive 3D diagram where components, hooks, services, stores, utilities, workers, and libraries are represented as geometric objects — dodecahedrons, cubes, and tetrahedrons — with connections drawn between them to show data flow, containment, and dependency relationships.
 
 Users authenticate with GitHub, select a repository, and the app produces a explorable 3D scene backed by Firebase for real-time collaboration and persistent storage.
 
