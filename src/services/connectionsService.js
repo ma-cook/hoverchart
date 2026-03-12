@@ -130,6 +130,9 @@ const clearConnectionCache = (spaceId, connectionId) => {
  */
 const connectionDataChanged = (cached, incoming) => {
   if (!cached || !incoming) return true;
+
+  // PERF: Reference equality — skip all field checks when same object
+  if (cached === incoming) return false;
   
   // Compare primitive fields first (fast path)
   if (cached.lineStyle !== incoming.lineStyle) return true;

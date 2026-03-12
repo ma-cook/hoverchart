@@ -11,14 +11,21 @@ import { calculateFacePosition } from '../utils/facePositionUtils';
  * - Uses throttled updates (100ms) to reduce store update frequency
  * - Batches all connection updates into single store call
  * - Only updates connections whose objects actually moved
+ *
+ * PERF FIX: connections and objects are read from refs populated by
+ * Zustand subscribe() instead of React state selectors.  The old
+ * pattern (`useConnectionStore(s => s.connections)`) caused this
+ * component to re-render on every object property change (color, text,
+ * scale) — not just position — which cascaded into O(N) scans and
+ * connection store writes that propagated to all Connection components.
  */
 const RealTimeConnectionUpdater = () => {
+  // Only subscribe to the action (stable reference, never changes)
   const updateConnections = useConnectionStore(
     (state) => state.updateConnections
   );
-  const connections = useConnectionStore((state) => state.connections);
-  const objects = useObjectsStore((state) => state.objects);
-  const { isInitialized } = useSpatialManagerStore();
+  // Only subscribe to isInitialized from spatial store (boolean, cheap)
+  const isInitialized = useSpatialManagerStore((state) => state.isInitialized);
 
   // Track previous object positions to detect changes
   const previousPositionsRef = useRef(new Map());
@@ -32,13 +39,11 @@ const RealTimeConnectionUpdater = () => {
   const pendingUpdateRef = useRef(null);
   const isUpdatingRef = useRef(false);
 
-  // Store current connections in a ref to avoid infinite loops
-  const connectionsRef = useRef(connections);
-  connectionsRef.current = connections;
-
-  // Keep fresh references for the deferred update callback
-  const objectsRef = useRef(objects);
-  objectsRef.current = objects;
+  // PERF: Populate refs via store.subscribe() instead of React state.
+  // This avoids re-rendering the component (and re-running effects) on
+  // every unrelated property change in the objects/connections arrays.
+  const connectionsRef = useRef(useConnectionStore.getState().connections);
+  const objectsRef = useRef(useObjectsStore.getState().objects);
   const updateConnectionsRef = useRef(updateConnections);
   updateConnectionsRef.current = updateConnections;
   const isInitializedRef = useRef(isInitialized);
@@ -182,12 +187,14 @@ const RealTimeConnectionUpdater = () => {
     }
   }, []);
 
-  // Build object-to-connections mapping when connections change
-  useEffect(() => {
-    if (!isInitialized) return;
+  // ─── Rebuild object-to-connections map ────────────────────────────
+  // Extracted so it can be invoked from the subscribe callback below
+  // as well as from `runConnectionUpdate`.
+  const rebuildConnectionMap = useCallback(() => {
+    const currentConnections = connectionsRef.current;
+    if (!isInitializedRef.current || !Array.isArray(currentConnections)) return;
 
     const objectConnMap = new Map();
-    const currentConnections = connectionsRef.current;
 
     // Detect genuinely new connections
     const newConnectionIds = [];
@@ -248,48 +255,70 @@ const RealTimeConnectionUpdater = () => {
         runConnectionUpdate();
       }, 16);
     }
-  }, [connections, isInitialized, runConnectionUpdate]);
+  }, [runConnectionUpdate]);
 
-  // React to object position changes - update connections with throttling
-  // PERFORMANCE: Visual rendering uses objectPositions map directly for smooth updates
-  // This store update is only needed for persistence/sync and can be infrequent
+  // ─── Zustand subscribe() listeners ─────────────────────────────────
+  // PERF FIX: Instead of using React state selectors (which trigger
+  // component re-renders and effect re-runs on EVERY store change),
+  // we subscribe directly to the stores and update refs.  The
+  // subscribe callbacks only fire work when the data they care about
+  // actually changes (connection array reference / objects array reference).
+
+  // Subscribe to connection store — rebuild map when connections change
   useEffect(() => {
-    if (!isInitialized || window._connectionUpdateSkip) return;
-    const currentConnections = connectionsRef.current;
-    if (
-      !Array.isArray(currentConnections) ||
-      !currentConnections.length ||
-      !objects.length
-    )
-      return;
+    // Seed with current state
+    connectionsRef.current = useConnectionStore.getState().connections;
+    rebuildConnectionMap();
 
-    // Prevent multiple updates running simultaneously
-    if (isUpdatingRef.current) return;
-
-    // PERFORMANCE: Throttle store updates to 100ms (10fps)
-    // Visual updates happen at 60fps via objectPositions map in BatchedConnectionLines
-    const now = Date.now();
-    const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
-    
-    if (timeSinceLastUpdate < 100) {
-      // BUGFIX: Schedule a deferred UPDATE (not just a ref reset).
-      // Previously, the timeout just set lastUpdateTimeRef = 0 without
-      // triggering re-execution. This meant connections for objects that
-      // loaded in rapid batches (<100ms apart) never got their positions
-      // recalculated — causing text labels to cluster at stale Firestore
-      // positions ("half way through" the progressive mount).
-      if (!pendingUpdateRef.current) {
-        pendingUpdateRef.current = setTimeout(() => {
-          pendingUpdateRef.current = null;
-          // Actually run the update logic with latest data from refs
-          runConnectionUpdate();
-        }, 100 - timeSinceLastUpdate);
+    const unsub = useConnectionStore.subscribe((state) => {
+      const next = state.connections;
+      if (next !== connectionsRef.current) {
+        connectionsRef.current = next;
+        rebuildConnectionMap();
       }
-      return;
-    }
+    });
+    return unsub;
+  }, [rebuildConnectionMap]);
 
-    runConnectionUpdate();
-  }, [objects, updateConnections, isInitialized, runConnectionUpdate]);
+  // Subscribe to objects store — throttled position update when objects change
+  useEffect(() => {
+    objectsRef.current = useObjectsStore.getState().objects;
+
+    const unsub = useObjectsStore.subscribe((state) => {
+      const next = state.objects;
+      if (next !== objectsRef.current) {
+        objectsRef.current = next;
+
+        // Gate checks (mirrors the old useEffect guards)
+        if (!isInitializedRef.current || window._connectionUpdateSkip) return;
+        const currentConnections = connectionsRef.current;
+        if (
+          !Array.isArray(currentConnections) ||
+          !currentConnections.length ||
+          !next.length
+        ) return;
+        if (isUpdatingRef.current) return;
+
+        // PERFORMANCE: Throttle store updates to 100ms (10fps)
+        const now = Date.now();
+        const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+
+        if (timeSinceLastUpdate < 100) {
+          // Schedule a deferred update so rapid batches still converge.
+          if (!pendingUpdateRef.current) {
+            pendingUpdateRef.current = setTimeout(() => {
+              pendingUpdateRef.current = null;
+              runConnectionUpdate();
+            }, 100 - timeSinceLastUpdate);
+          }
+          return;
+        }
+
+        runConnectionUpdate();
+      }
+    });
+    return unsub;
+  }, [runConnectionUpdate]);
 
   return null;
 };

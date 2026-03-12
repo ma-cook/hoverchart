@@ -1,16 +1,20 @@
 import { useEffect } from 'react';
+import { shallow } from 'zustand/shallow';
 import { useAuthStore } from '../stores';
 
+// Module-level selector — single subscription instead of six
+const selectAuthState = (state) => ({
+  user: state.authState.user,
+  isAuthReady: state.authState.isAuthReady,
+  isCheckingUrlAuth: state.authState.isCheckingUrlAuth,
+  initializeAuth: state.initializeAuth,
+  checkUrlAuth: state.checkUrlAuth,
+  cleanup: state.cleanup,
+});
+
 export function useAuthState() {
-  // Use auth store
-  const user = useAuthStore((state) => state.authState.user);
-  const isAuthReady = useAuthStore((state) => state.authState.isAuthReady);
-  const isCheckingUrlAuth = useAuthStore(
-    (state) => state.authState.isCheckingUrlAuth
-  );
-  const initializeAuth = useAuthStore((state) => state.initializeAuth);
-  const checkUrlAuth = useAuthStore((state) => state.checkUrlAuth);
-  const cleanup = useAuthStore((state) => state.cleanup);
+  const { user, isAuthReady, isCheckingUrlAuth, initializeAuth, checkUrlAuth, cleanup } =
+    useAuthStore(selectAuthState, shallow);
 
   useEffect(() => {
     // Initialize auth when hook is mounted

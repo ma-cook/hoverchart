@@ -1,3 +1,4 @@
+import { shallow } from 'zustand/shallow';
 import { useIndicatorsStore } from '../stores';
 
 /**
@@ -5,41 +6,43 @@ import { useIndicatorsStore } from '../stores';
  * Migrated to use Zustand store for state management
  */
 export function useIndicators() {
-  // Get all state and actions from the store
+  // PERFORMANCE: Select only reactive state with shallow equality —
+  // avoids re-renders when unrelated indicator fields change.
+  const state = useIndicatorsStore(
+    (s) => ({
+      showAllCubesIndicators: s.showAllCubesIndicators,
+      activeIndicator: s.activeIndicator,
+      indicatorMode: s.indicatorMode,
+      selectedIndicators: s.selectedIndicators,
+      isConnectMode: s.isConnectMode,
+      globalIndicatorSelected: s.globalIndicatorSelected,
+      selectedIndicatorsRef: s.selectedIndicatorsRef,
+    }),
+    shallow
+  );
+
+  // Actions are stable references — read once, no subscription needed.
   const {
-    showAllCubesIndicators,
     setShowAllCubesIndicators,
-    activeIndicator,
     setActiveIndicator,
-    indicatorMode,
     setIndicatorMode,
-    selectedIndicators,
     setSelectedIndicators,
-    isConnectMode,
     setIsConnectMode,
-    globalIndicatorSelected,
     setGlobalIndicatorSelected,
-    selectedIndicatorsRef,
     handleToggleIndicators,
     handleIndicatorSelected,
     handleIndicatorDeselected,
-  } = useIndicatorsStore();
+  } = useIndicatorsStore.getState();
 
   // Return the same API as before for backward compatibility
   return {
-    showAllCubesIndicators,
+    ...state,
     setShowAllCubesIndicators,
-    activeIndicator,
     setActiveIndicator,
-    indicatorMode,
     setIndicatorMode,
-    selectedIndicators,
     setSelectedIndicators,
-    isConnectMode,
     setIsConnectMode,
-    globalIndicatorSelected,
     setGlobalIndicatorSelected,
-    selectedIndicatorsRef,
     handleToggleIndicators,
     handleIndicatorSelected,
     handleIndicatorDeselected,

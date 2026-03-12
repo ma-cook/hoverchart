@@ -9,6 +9,63 @@ const tempWorldScale = new THREE.Vector3();
 const tempOffsetVec = new THREE.Vector3();
 const tempMatrix = new THREE.Matrix4();
 
+// PERFORMANCE: Hoisted regex to avoid re-creation per call
+const NUMERIC_FACE_RE = /^\d+$/;
+
+// PERFORMANCE: Pre-computed dodecahedron geometry — vertices, faces, and
+// face centers are constants that never change. Computing them once at
+// module load eliminates ~40 array allocations per dodecahedron face lookup.
+const _PHI = (1 + Math.sqrt(5)) / 2;
+const _DODECA_SCALE = 5;
+const _DODECA_VERTICES = [
+  [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+  [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+  [0, -_PHI, -1 / _PHI], [0, _PHI, -1 / _PHI],
+  [0, _PHI, 1 / _PHI], [0, -_PHI, 1 / _PHI],
+  [-1 / _PHI, 0, -_PHI], [1 / _PHI, 0, -_PHI],
+  [1 / _PHI, 0, _PHI], [-1 / _PHI, 0, _PHI],
+  [-_PHI, -1 / _PHI, 0], [-_PHI, 1 / _PHI, 0],
+  [_PHI, 1 / _PHI, 0], [_PHI, -1 / _PHI, 0],
+];
+const _DODECA_FACES = [
+  [0, 12, 13, 1, 8], [0, 16, 17, 3, 12], [0, 8, 11, 4, 16],
+  [1, 19, 5, 11, 8], [1, 13, 2, 18, 19], [2, 13, 12, 3, 9],
+  [2, 9, 10, 6, 18], [3, 17, 7, 10, 9], [4, 11, 5, 14, 15],
+  [4, 15, 7, 17, 16], [5, 19, 18, 6, 14], [6, 10, 7, 15, 14],
+];
+// Pre-computed face centers (local-space, already scaled by _DODECA_SCALE)
+const _DODECA_FACE_CENTERS = _DODECA_FACES.map((face) => {
+  let cx = 0, cy = 0, cz = 0;
+  for (const vi of face) {
+    cx += _DODECA_VERTICES[vi][0];
+    cy += _DODECA_VERTICES[vi][1];
+    cz += _DODECA_VERTICES[vi][2];
+  }
+  const n = face.length;
+  return [cx / n * _DODECA_SCALE, cy / n * _DODECA_SCALE, cz / n * _DODECA_SCALE];
+});
+
+// PERFORMANCE: Pre-computed tetrahedron face centers (local-space)
+const _TETRA_SIZE = 5;
+const _TETRA_VERTICES = [
+  [0, _TETRA_SIZE, 0],
+  [-_TETRA_SIZE, -_TETRA_SIZE, _TETRA_SIZE],
+  [_TETRA_SIZE, -_TETRA_SIZE, _TETRA_SIZE],
+  [0, -_TETRA_SIZE, -_TETRA_SIZE * 1.5],
+];
+const _avg3 = (a, b, c) => [(a[0]+b[0]+c[0])/3, (a[1]+b[1]+c[1])/3, (a[2]+b[2]+c[2])/3];
+const _TETRA_FACE_CENTERS = {
+  bottom: _avg3(_TETRA_VERTICES[1], _TETRA_VERTICES[2], _TETRA_VERTICES[3]),
+  front:  _avg3(_TETRA_VERTICES[0], _TETRA_VERTICES[2], _TETRA_VERTICES[1]),
+  left:   _avg3(_TETRA_VERTICES[0], _TETRA_VERTICES[1], _TETRA_VERTICES[3]),
+  right:  _avg3(_TETRA_VERTICES[0], _TETRA_VERTICES[3], _TETRA_VERTICES[2]),
+};
+
+// Pre-computed map for numeric-to-cube-face conversion
+const _NUMERIC_TO_CUBE_FACE = {
+  0: 'front', 1: 'back', 2: 'right', 3: 'left', 4: 'top', 5: 'bottom',
+};
+
 /**
  * Calculates the position of a face indicator in world space
  * @param {Object} indicator - The face indicator object
@@ -298,96 +355,11 @@ export const calculateFacePosition = (indicator, objects) => {
 
         let faceOffset;
         if (indicator.type === 'tetrahedron') {
-          // Tetrahedron face offset calculation - use accurate face centers
-          // Tetrahedron vertices (same as in component)
-          const TETRAHEDRON_SIZE = 5;
-          const tetrahedronVertices = [
-            [0, TETRAHEDRON_SIZE, 0], // top vertex
-            [-TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE, TETRAHEDRON_SIZE], // bottom-left-front
-            [TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE, TETRAHEDRON_SIZE], // bottom-right-front
-            [0, -TETRAHEDRON_SIZE, -TETRAHEDRON_SIZE * 1.5], // bottom-back
-          ];
+          // PERFORMANCE: Use pre-computed tetrahedron face centers (module-level constants)
+          const faceCenter = _TETRA_FACE_CENTERS[indicator.face] || [0, 0, 0];
 
-          let faceCenter;
-          switch (indicator.face) {
-            case 'bottom': {
-              // Bottom face: vertices 1, 2, 3 (bottom triangle)
-              faceCenter = [
-                (tetrahedronVertices[1][0] +
-                  tetrahedronVertices[2][0] +
-                  tetrahedronVertices[3][0]) /
-                  3,
-                (tetrahedronVertices[1][1] +
-                  tetrahedronVertices[2][1] +
-                  tetrahedronVertices[3][1]) /
-                  3,
-                (tetrahedronVertices[1][2] +
-                  tetrahedronVertices[2][2] +
-                  tetrahedronVertices[3][2]) /
-                  3,
-              ];
-              break;
-            }
-            case 'front': {
-              // Front face: vertices 0, 2, 1 (top, bottom-right-front, bottom-left-front)
-              faceCenter = [
-                (tetrahedronVertices[0][0] +
-                  tetrahedronVertices[2][0] +
-                  tetrahedronVertices[1][0]) /
-                  3,
-                (tetrahedronVertices[0][1] +
-                  tetrahedronVertices[2][1] +
-                  tetrahedronVertices[1][1]) /
-                  3,
-                (tetrahedronVertices[0][2] +
-                  tetrahedronVertices[2][2] +
-                  tetrahedronVertices[1][2]) /
-                  3,
-              ];
-              break;
-            }
-            case 'left': {
-              // Left face: vertices 0, 1, 3 (top, bottom-left-front, bottom-back)
-              faceCenter = [
-                (tetrahedronVertices[0][0] +
-                  tetrahedronVertices[1][0] +
-                  tetrahedronVertices[3][0]) /
-                  3,
-                (tetrahedronVertices[0][1] +
-                  tetrahedronVertices[1][1] +
-                  tetrahedronVertices[3][1]) /
-                  3,
-                (tetrahedronVertices[0][2] +
-                  tetrahedronVertices[1][2] +
-                  tetrahedronVertices[3][2]) /
-                  3,
-              ];
-              break;
-            }
-            case 'right': {
-              // Right face: vertices 0, 3, 2 (top, bottom-back, bottom-right-front)
-              faceCenter = [
-                (tetrahedronVertices[0][0] +
-                  tetrahedronVertices[3][0] +
-                  tetrahedronVertices[2][0]) /
-                  3,
-                (tetrahedronVertices[0][1] +
-                  tetrahedronVertices[3][1] +
-                  tetrahedronVertices[2][1]) /
-                  3,
-                (tetrahedronVertices[0][2] +
-                  tetrahedronVertices[3][2] +
-                  tetrahedronVertices[2][2]) /
-                  3,
-              ];
-              break;
-            }
-            default:
-              faceCenter = [0, 0, 0];
-          }
-
-          // Apply scaling to face center
-          faceOffset = new THREE.Vector3(
+          // Apply scaling to face center — reuse tempOffsetVec
+          faceOffset = tempOffsetVec.set(
             faceCenter[0] * tempWorldScale.x,
             faceCenter[1] * tempWorldScale.y,
             faceCenter[2] * tempWorldScale.z
@@ -427,88 +399,15 @@ export const calculateFacePosition = (indicator, objects) => {
               faceIndex = indicator.face;
             } else if (
               typeof indicator.face === 'string' &&
-              /^\d+$/.test(indicator.face)
+              NUMERIC_FACE_RE.test(indicator.face)
             ) {
               faceIndex = parseInt(indicator.face);
             }
 
-            // Use the same calculateDodecahedronFaceCenter function from markdown service
-            const calculateFaceCenter = (faceIndex) => {
-              const phi = (1 + Math.sqrt(5)) / 2;
-              const scale = 5; // Same as Dodecahedron component
-
-              const vertices = [
-                [-1, -1, -1],
-                [1, -1, -1],
-                [1, 1, -1],
-                [-1, 1, -1],
-                [-1, -1, 1],
-                [1, -1, 1],
-                [1, 1, 1],
-                [-1, 1, 1],
-                [0, -phi, -1 / phi],
-                [0, phi, -1 / phi],
-                [0, phi, 1 / phi],
-                [0, -phi, 1 / phi],
-                [-1 / phi, 0, -phi],
-                [1 / phi, 0, -phi],
-                [1 / phi, 0, phi],
-                [-1 / phi, 0, phi],
-                [-phi, -1 / phi, 0],
-                [-phi, 1 / phi, 0],
-                [phi, 1 / phi, 0],
-                [phi, -1 / phi, 0],
-              ];
-
-              const faces = [
-                [0, 12, 13, 1, 8],
-                [0, 16, 17, 3, 12],
-                [0, 8, 11, 4, 16],
-                [1, 19, 5, 11, 8],
-                [1, 13, 2, 18, 19],
-                [2, 13, 12, 3, 9],
-                [2, 9, 10, 6, 18],
-                [3, 17, 7, 10, 9],
-                [4, 11, 5, 14, 15],
-                [4, 15, 7, 17, 16],
-                [5, 19, 18, 6, 14],
-                [6, 10, 7, 15, 14],
-              ];
-
-              if (faceIndex < 0 || faceIndex >= faces.length) {
-                return [0, 0, 0];
-              }
-
-              const faceVertices = faces[faceIndex];
-              const positions = [];
-
-              for (const vertexIndex of faceVertices) {
-                const vertex = vertices[vertexIndex];
-                positions.push(
-                  vertex[0] * scale,
-                  vertex[1] * scale,
-                  vertex[2] * scale
-                );
-              }
-
-              let centerX = 0,
-                centerY = 0,
-                centerZ = 0;
-              for (let i = 0; i < positions.length; i += 3) {
-                centerX += positions[i];
-                centerY += positions[i + 1];
-                centerZ += positions[i + 2];
-              }
-              const vertexCount = positions.length / 3;
-
-              return [
-                centerX / vertexCount,
-                centerY / vertexCount,
-                centerZ / vertexCount,
-              ];
-            };
-
-            const localFaceCenter = calculateFaceCenter(faceIndex);
+            // PERFORMANCE: Use pre-computed dodecahedron face centers (module-level constants)
+            const localFaceCenter = (faceIndex >= 0 && faceIndex < _DODECA_FACE_CENTERS.length)
+              ? _DODECA_FACE_CENTERS[faceIndex]
+              : [0, 0, 0];
 
             // Transform to world coordinates the same way as the main case
             const worldFaceCenter = [
@@ -527,28 +426,15 @@ export const calculateFacePosition = (indicator, objects) => {
           let cubeFace = indicator.face;
           if (
             typeof indicator.face === 'number' ||
-            /^\d+$/.test(indicator.face)
+            NUMERIC_FACE_RE.test(indicator.face)
           ) {
             const faceIndex = parseInt(indicator.face);
             console.warn(
               `⚠️ Numeric face (${faceIndex}) found on ${indicator.type} - this might be a dodecahedron misclassified as cube`
             );
 
-            // Map numeric faces to cube faces (0-5 for cube faces)
-            const numericToCubeFace = {
-              0: 'front', // 0 -> front
-              1: 'back', // 1 -> back
-              2: 'right', // 2 -> right
-              3: 'left', // 3 -> left
-              4: 'top', // 4 -> top
-              5: 'bottom', // 5 -> bottom
-            };
-
             if (faceIndex >= 0 && faceIndex <= 5) {
-              cubeFace = numericToCubeFace[faceIndex];
-              console.log(
-                `🔄 Mapped numeric cube face ${faceIndex} to '${cubeFace}'`
-              );
+              cubeFace = _NUMERIC_TO_CUBE_FACE[faceIndex];
             } else {
               console.warn(
                 `⚠️ Numeric face ${faceIndex} out of range for cube (0-5), using 'front'`
@@ -557,24 +443,25 @@ export const calculateFacePosition = (indicator, objects) => {
             }
           }
 
+          // PERFORMANCE: Reuse tempOffsetVec instead of allocating new THREE.Vector3()
           switch (cubeFace) {
             case 'top':
-              faceOffset = new THREE.Vector3(0, objectSize * tempWorldScale.y, 0);
+              faceOffset = tempOffsetVec.set(0, objectSize * tempWorldScale.y, 0);
               break;
             case 'bottom':
-              faceOffset = new THREE.Vector3(0, -objectSize * tempWorldScale.y, 0);
+              faceOffset = tempOffsetVec.set(0, -objectSize * tempWorldScale.y, 0);
               break;
             case 'front':
-              faceOffset = new THREE.Vector3(0, 0, objectSize * tempWorldScale.z);
+              faceOffset = tempOffsetVec.set(0, 0, objectSize * tempWorldScale.z);
               break;
             case 'back':
-              faceOffset = new THREE.Vector3(0, 0, -objectSize * tempWorldScale.z);
+              faceOffset = tempOffsetVec.set(0, 0, -objectSize * tempWorldScale.z);
               break;
             case 'right':
-              faceOffset = new THREE.Vector3(objectSize * tempWorldScale.x, 0, 0);
+              faceOffset = tempOffsetVec.set(objectSize * tempWorldScale.x, 0, 0);
               break;
             case 'left':
-              faceOffset = new THREE.Vector3(-objectSize * tempWorldScale.x, 0, 0);
+              faceOffset = tempOffsetVec.set(-objectSize * tempWorldScale.x, 0, 0);
               break;
             default:
               console.warn(
@@ -585,7 +472,7 @@ export const calculateFacePosition = (indicator, objects) => {
                 'Type:',
                 indicator.type
               );
-              faceOffset = new THREE.Vector3(0, 0, 0);
+              faceOffset = tempOffsetVec.set(0, 0, 0);
           }
 
           // Face offset calculated for cube

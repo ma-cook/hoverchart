@@ -53,8 +53,8 @@ function parentLOD(distanceSq) {
  */
 function isPointInFrustum(px, py, pz, planes) {
   for (let i = 0; i < 6; i++) {
-    const p = planes[i];
-    if (p[0] * px + p[1] * py + p[2] * pz + p[3] < 0) return false;
+    const off = i * 4;
+    if (planes[off] * px + planes[off + 1] * py + planes[off + 2] * pz + planes[off + 3] < 0) return false;
   }
   return true;
 }

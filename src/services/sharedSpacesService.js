@@ -11,6 +11,17 @@ import {
 
 // Cache shared space relationships to minimize database reads
 const sharedSpacesCache = new Map();
+const SHARED_SPACES_CACHE_MAX = 500;
+
+/** Evict oldest entries (FIFO) when cache exceeds limit */
+function sharedSpacesCacheSet(key, value) {
+  sharedSpacesCache.set(key, value);
+  if (sharedSpacesCache.size > SHARED_SPACES_CACHE_MAX) {
+    // Map iterates in insertion order — first key is oldest
+    const oldest = sharedSpacesCache.keys().next().value;
+    sharedSpacesCache.delete(oldest);
+  }
+}
 
 // Check if a space is shared with the current user - updated to match landing page structure
 export const isSharedSpace = async (currentUserId, spaceId) => {
@@ -62,7 +73,7 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
           ownerId: currentUserId,
           permissions: 'write',
         };
-        sharedSpacesCache.set(cacheKey, result);
+        sharedSpacesCacheSet(cacheKey, result);
         return result;
       }
     } catch {
@@ -81,7 +92,7 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
       // If the space is owned by the current user, it's not a shared space
       if (spaceData.ownerId === currentUserId) {
         const result = { isShared: false, ownerId: currentUserId };
-        sharedSpacesCache.set(cacheKey, result);
+        sharedSpacesCacheSet(cacheKey, result);
         return result;
       }
 
@@ -115,7 +126,7 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
             spaceName: spaceData.name,
           };
 
-          sharedSpacesCache.set(cacheKey, result);
+          sharedSpacesCacheSet(cacheKey, result);
           console.log(
             `Space is shared with user: ${currentUserId}, owner: ${spaceData.ownerId}, permissions: ${result.permissions}`
           );
@@ -130,7 +141,7 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
 
     if (ownSpaceDoc.exists()) {
       // This is user's own space
-      sharedSpacesCache.set(cacheKey, {
+      sharedSpacesCacheSet(cacheKey, {
         isShared: false,
         ownerId: currentUserId,
       });
@@ -163,7 +174,7 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
             spaceName: spaceData.name,
           };
 
-          sharedSpacesCache.set(cacheKey, result);
+          sharedSpacesCacheSet(cacheKey, result);
           console.log(
             `Space is shared with user: ${currentUserId}, owner: ${spaceData.ownerId}`
           );
@@ -190,7 +201,7 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
         permissions: sharedSpaceData.permissions || 'read',
       };
 
-      sharedSpacesCache.set(cacheKey, result);
+      sharedSpacesCacheSet(cacheKey, result);
       console.log(
         `Space found in sharedSpaces collection, owner: ${sharedSpaceData.ownerId}`
       );
@@ -213,12 +224,12 @@ export const isSharedSpace = async (currentUserId, spaceId) => {
         ownerId: ownerIdFromSession,
         permissions: 'write', // Default to write permission
       };
-      sharedSpacesCache.set(cacheKey, result);
+      sharedSpacesCacheSet(cacheKey, result);
       return result;
     }
 
     // If we get here, the space doesn't exist or isn't shared with this user
-    sharedSpacesCache.set(cacheKey, { isShared: false, ownerId: null });
+    sharedSpacesCacheSet(cacheKey, { isShared: false, ownerId: null });
     return { isShared: false, ownerId: null };
   } catch (error) {
     console.error('Error checking if space is shared:', error);

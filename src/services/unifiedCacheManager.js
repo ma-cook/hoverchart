@@ -54,12 +54,16 @@ const CACHE_CONFIG = {
  */
 class UnifiedCacheManager {
   constructor() {
-    this.cache = new Map();
+    // PERF: Per-namespace Maps instead of single flat Map with prefix strings.
+    // Eliminates O(total_cache) startsWith scans — size(), enforceSizeLimit(),
+    // cleanupExpired(), and clear() now only iterate their own namespace.
+    this.namespaces = new Map(); // namespace -> Map<key, entry>
     this.stats = new Map();
     this.cleanupIntervals = new Map();
 
-    // Initialize stats for each namespace
+    // Initialize stats and namespace maps
     Object.keys(CACHE_CONFIG).forEach((namespace) => {
+      this.namespaces.set(namespace, new Map());
       this.stats.set(namespace, {
         hits: 0,
         misses: 0,
@@ -73,22 +77,32 @@ class UnifiedCacheManager {
     console.log('🗂️ Unified Cache Manager initialized');
   }
 
+  /** Get or lazily create the Map for a namespace */
+  _ns(namespace) {
+    let ns = this.namespaces.get(namespace);
+    if (!ns) {
+      ns = new Map();
+      this.namespaces.set(namespace, ns);
+    }
+    return ns;
+  }
+
   /**
    * Get value from cache
    */
   get(key, namespace = 'generic') {
-    const fullKey = `${namespace}:${key}`;
     const stats = this.stats.get(namespace);
+    const nsMap = this._ns(namespace);
 
-    if (this.cache.has(fullKey)) {
-      const entry = this.cache.get(fullKey);
+    if (nsMap.has(key)) {
+      const entry = nsMap.get(key);
       const config = CACHE_CONFIG[namespace];
 
       // Check TTL if configured
       if (config.ttl > 0) {
         const age = Date.now() - entry.timestamp;
         if (age > config.ttl) {
-          this.cache.delete(fullKey);
+          nsMap.delete(key);
           stats.misses++;
           return undefined;
         }
@@ -106,7 +120,6 @@ class UnifiedCacheManager {
    * Set value in cache
    */
   set(key, value, namespace = 'generic', customTtl = null) {
-    const fullKey = `${namespace}:${key}`;
     const stats = this.stats.get(namespace);
     const config = CACHE_CONFIG[namespace];
 
@@ -114,10 +127,9 @@ class UnifiedCacheManager {
       value,
       timestamp: Date.now(),
       ttl: customTtl || config.ttl,
-      namespace,
     };
 
-    this.cache.set(fullKey, entry);
+    this._ns(namespace).set(key, entry);
     stats.sets++;
 
     // Check size limits
@@ -128,10 +140,9 @@ class UnifiedCacheManager {
    * Delete value from cache
    */
   delete(key, namespace = 'generic') {
-    const fullKey = `${namespace}:${key}`;
     const stats = this.stats.get(namespace);
 
-    if (this.cache.delete(fullKey)) {
+    if (this._ns(namespace).delete(key)) {
       stats.deletes++;
       return true;
     }
@@ -146,26 +157,24 @@ class UnifiedCacheManager {
 
     if (namespace && pattern) {
       // Clear specific pattern within namespace
-      const prefix = `${namespace}:`;
-      for (const key of this.cache.keys()) {
-        if (key.startsWith(prefix) && key.includes(pattern)) {
-          this.cache.delete(key);
+      const nsMap = this._ns(namespace);
+      for (const key of nsMap.keys()) {
+        if (key.includes(pattern)) {
+          nsMap.delete(key);
           cleared++;
         }
       }
     } else if (namespace) {
-      // Clear entire namespace
-      const prefix = `${namespace}:`;
-      for (const key of this.cache.keys()) {
-        if (key.startsWith(prefix)) {
-          this.cache.delete(key);
-          cleared++;
-        }
-      }
+      // Clear entire namespace — O(1)
+      const nsMap = this._ns(namespace);
+      cleared = nsMap.size;
+      nsMap.clear();
     } else {
       // Clear everything
-      cleared = this.cache.size;
-      this.cache.clear();
+      for (const nsMap of this.namespaces.values()) {
+        cleared += nsMap.size;
+        nsMap.clear();
+      }
     }
 
     if (namespace && this.stats.has(namespace)) {
@@ -182,17 +191,17 @@ class UnifiedCacheManager {
    * Check if key exists in cache
    */
   has(key, namespace = 'generic') {
-    const fullKey = `${namespace}:${key}`;
+    const nsMap = this._ns(namespace);
 
-    if (this.cache.has(fullKey)) {
-      const entry = this.cache.get(fullKey);
+    if (nsMap.has(key)) {
+      const entry = nsMap.get(key);
       const config = CACHE_CONFIG[namespace];
 
       // Check TTL if configured
       if (config.ttl > 0) {
         const age = Date.now() - entry.timestamp;
         if (age > config.ttl) {
-          this.cache.delete(fullKey);
+          nsMap.delete(key);
           return false;
         }
       }
@@ -204,21 +213,17 @@ class UnifiedCacheManager {
   }
 
   /**
-   * Get cache size for namespace
+   * Get cache size for namespace — O(1) per namespace
    */
   size(namespace = null) {
     if (namespace) {
-      const prefix = `${namespace}:`;
-      let count = 0;
-      for (const key of this.cache.keys()) {
-        if (key.startsWith(prefix)) {
-          count++;
-        }
-      }
-      return count;
+      return this._ns(namespace).size;
     }
-
-    return this.cache.size;
+    let total = 0;
+    for (const nsMap of this.namespaces.values()) {
+      total += nsMap.size;
+    }
+    return total;
   }
 
   /**
@@ -243,7 +248,7 @@ class UnifiedCacheManager {
     }
 
     allStats.total = {
-      size: this.cache.size,
+      size: this.size(),
       namespaces: Object.keys(allStats).length,
     };
 
@@ -260,30 +265,25 @@ class UnifiedCacheManager {
   }
 
   /**
-   * Enforce size limits for namespace
+   * Enforce size limits for namespace — now iterates only the target namespace
    */
   enforceSizeLimit(namespace) {
     const config = CACHE_CONFIG[namespace];
-    const currentSize = this.size(namespace);
+    const nsMap = this._ns(namespace);
 
-    if (currentSize > config.maxSize) {
-      const prefix = `${namespace}:`;
+    if (nsMap.size > config.maxSize) {
       const entries = [];
-
-      // Collect entries for this namespace
-      for (const [key, entry] of this.cache.entries()) {
-        if (key.startsWith(prefix)) {
-          entries.push({ key, entry });
-        }
+      for (const [key, entry] of nsMap.entries()) {
+        entries.push({ key, entry });
       }
 
       // Sort by timestamp (oldest first)
       entries.sort((a, b) => a.entry.timestamp - b.entry.timestamp);
 
       // Remove oldest entries
-      const excessCount = currentSize - config.maxSize;
+      const excessCount = nsMap.size - config.maxSize;
       for (let i = 0; i < excessCount; i++) {
-        this.cache.delete(entries[i].key);
+        nsMap.delete(entries[i].key);
       }
 
       console.log(
@@ -308,7 +308,7 @@ class UnifiedCacheManager {
   }
 
   /**
-   * Clean up expired entries for namespace
+   * Clean up expired entries for namespace — now iterates only the target namespace
    */
   cleanupExpired(namespace) {
     const config = CACHE_CONFIG[namespace];
@@ -316,16 +316,14 @@ class UnifiedCacheManager {
     if (config.ttl === 0) return; // No TTL configured
 
     const now = Date.now();
-    const prefix = `${namespace}:`;
+    const nsMap = this._ns(namespace);
     let cleaned = 0;
 
-    for (const [key, entry] of this.cache.entries()) {
-      if (key.startsWith(prefix)) {
-        const age = now - entry.timestamp;
-        if (age > config.ttl) {
-          this.cache.delete(key);
-          cleaned++;
-        }
+    for (const [key, entry] of nsMap.entries()) {
+      const age = now - entry.timestamp;
+      if (age > config.ttl) {
+        nsMap.delete(key);
+        cleaned++;
       }
     }
 
@@ -351,7 +349,9 @@ class UnifiedCacheManager {
    */
   cleanup() {
     this.stopCleanupProcesses();
-    this.cache.clear();
+    for (const nsMap of this.namespaces.values()) {
+      nsMap.clear();
+    }
     this.stats.clear();
     console.log('🧹 Unified Cache Manager cleaned up');
   }

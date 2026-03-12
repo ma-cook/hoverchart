@@ -114,27 +114,25 @@ export const ConnectionAnimationManager = () => {
  * Use this instead of useFrame in AnimatedConnectionLine
  */
 export const useAnimatedLine = (connectionId, materialRef, shouldAnimate, speed = 1, direction = 1) => {
-  const registerLine = useAnimationManagerStore((state) => state.registerLine);
-  const unregisterLine = useAnimationManagerStore((state) => state.unregisterLine);
-  const updateLine = useAnimationManagerStore((state) => state.updateLine);
+  // Use getState() for store actions — avoids 3 subscriptions per animated connection
   
   // Register/unregister based on shouldAnimate
   useEffect(() => {
     if (shouldAnimate && connectionId && materialRef) {
-      registerLine(connectionId, materialRef, speed, direction);
+      useAnimationManagerStore.getState().registerLine(connectionId, materialRef, speed, direction);
       
       return () => {
-        unregisterLine(connectionId);
+        useAnimationManagerStore.getState().unregisterLine(connectionId);
       };
     }
-  }, [connectionId, shouldAnimate, registerLine, unregisterLine, materialRef, speed, direction]);
+  }, [connectionId, shouldAnimate, materialRef, speed, direction]);
   
   // Update animation properties when they change
   useEffect(() => {
     if (shouldAnimate && connectionId) {
-      updateLine(connectionId, { speed, direction });
+      useAnimationManagerStore.getState().updateLine(connectionId, { speed, direction });
     }
-  }, [connectionId, shouldAnimate, speed, direction, updateLine]);
+  }, [connectionId, shouldAnimate, speed, direction]);
 };
 
 /**

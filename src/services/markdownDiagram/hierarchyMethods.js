@@ -168,10 +168,6 @@ export const hierarchyMethods = {
             if (isInternalComponent) {
               addParentChildRelation(parentId, childId);
               internalComponentChildren.add(childId);
-            } else {
-              console.log(
-                `🔗 EXTERNAL COMPONENT USAGE (dataflow/solid arrow): ${sourceId} uses ${targetId}`
-              );
             }
           }
         }

@@ -1765,9 +1765,11 @@ const App = () => {
               visible={cellBoundariesVisible}
             />
           </group>
+          {canvasQuality !== 'low' && (
           <EffectComposer>
             <SMAA />
           </EffectComposer>
+          )}
         </Canvas>
         </div>
       )}

@@ -28,6 +28,11 @@ import {
 import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
 import useConnectionStore from '../stores/connectionStore';
 
+// PERFORMANCE: Hoisted pointer handlers — identical for every connection,
+// avoids creating new closures on each render.
+const handlePointerOver = (e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; };
+const handlePointerOut = (e) => { e.stopPropagation(); document.body.style.cursor = 'auto'; };
+
 /**
  * PERFORMANCE: Distance-filtered text for individual Connection components
  * Only renders text when camera is within maxDistance units
@@ -264,6 +269,7 @@ const Connection = React.memo(
       setShowLineTextStyleUI, 
       setShowLineTextInput, 
       selectConnectionWithFlowPath, 
+      selectConnection,
       setLineText, 
       updateConnection 
     } = actions;
@@ -729,14 +735,8 @@ const Connection = React.memo(
                 }
                 lineWidth={getLineWidth()}
                 onClick={(e) => handleConnectionClick(e, connection.id)}
-                onPointerOver={(e) => {
-                  e.stopPropagation();
-                  document.body.style.cursor = 'pointer';
-                }}
-                onPointerOut={(e) => {
-                  e.stopPropagation();
-                  document.body.style.cursor = 'auto';
-                }}
+                onPointerOver={handlePointerOver}
+                onPointerOut={handlePointerOut}
               />
             );
           }
@@ -761,14 +761,8 @@ const Connection = React.memo(
               dashOffset={connection.dashOffset || 0}
               isSelected={isSelected}
               onClick={(e) => handleConnectionClick(e, connection.id)}
-              onPointerOver={(e) => {
-                e.stopPropagation();
-                document.body.style.cursor = 'pointer';
-              }}
-              onPointerOut={(e) => {
-                e.stopPropagation();
-                document.body.style.cursor = 'auto';
-              }}
+              onPointerOver={handlePointerOver}
+              onPointerOut={handlePointerOut}
             />
           );
         })()}

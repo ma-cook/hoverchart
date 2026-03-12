@@ -12,6 +12,22 @@ const pathCache = new Map();
 // Track object positions for cache invalidation
 const objectPositionCache = new Map(); // objectId -> rounded position string
 
+// Pre-computed math constant for roundForCache
+const CACHE_MULTIPLIER = Math.pow(10, POSITION_PRECISION);
+
+// Module-level reusable Vector3 objects to reduce GC pressure in hot paths
+const _tempDir = new THREE.Vector3();
+const _tempResult = new THREE.Vector3();
+const _tempBoxCenter = new THREE.Vector3();
+const _tempClosest = new THREE.Vector3();
+const _tempLineToCenter = new THREE.Vector3();
+const _tempBoxRadiusVec = new THREE.Vector3();
+const _tempCurveStart = new THREE.Vector3();
+const _tempCurveEnd = new THREE.Vector3();
+const _tempCurveDir = new THREE.Vector3();
+const _tempRay = new THREE.Ray();
+const _tempIntersectTarget = new THREE.Vector3();
+
 // ---------------------------------------------------------------------------
 // Worker-precomputed results cache
 // ---------------------------------------------------------------------------
@@ -73,9 +89,7 @@ function cleanCaches() {
 function roundForCache(pos) {
   if (!Array.isArray(pos)) return [0, 0, 0];
   return pos.map(
-    (v) =>
-      Math.round(v * Math.pow(10, POSITION_PRECISION)) /
-      Math.pow(10, POSITION_PRECISION)
+    (v) => Math.round(v * CACHE_MULTIPLIER) / CACHE_MULTIPLIER
   );
 }
 
@@ -95,9 +109,7 @@ function lineIntersectsBoundingBox(line, boundingBox) {
   }
 
   // Ray-box intersection test
-  const direction = new THREE.Vector3()
-    .subVectors(lineEnd, lineStart)
-    .normalize();
+  const direction = _tempDir.subVectors(lineEnd, lineStart).normalize();
   const length = lineStart.distanceTo(lineEnd);
 
   let tMin = 0;
@@ -210,16 +222,14 @@ export function checkLineIntersection(startPos, endPos, objects) {
     const threshold = (segLen + 50) * (segLen + 50);
     return minDistSquared < threshold;
   });
-  const direction = new THREE.Vector3(
-    endPos[0] - startPos[0],
-    endPos[1] - startPos[1],
-    endPos[2] - startPos[2]
-  ).normalize();
+  // Hoist invariant line vectors (reused across all objectBoxes iterations)
+  const cliLineStart = new THREE.Vector3(startPos[0], startPos[1], startPos[2]);
+  const cliLineEnd = new THREE.Vector3(endPos[0], endPos[1], endPos[2]);
+  const cliLineDir = new THREE.Vector3().subVectors(cliLineEnd, cliLineStart);
+  const cliLineLength = cliLineDir.length();
+  cliLineDir.normalize();
 
-  const ray = new THREE.Raycaster(
-    new THREE.Vector3(startPos[0], startPos[1], startPos[2]),
-    direction
-  );
+  const ray = new THREE.Raycaster(cliLineStart, cliLineDir);
 
   // Create simplified bounding boxes for filtered objects
   const objectBoxes = objectsToTest
@@ -289,60 +299,45 @@ export function checkLineIntersection(startPos, endPos, objects) {
   const intersections = [];
 
   objectBoxes.forEach((box) => {
-    // Create a simple box for intersection testing
     const bbox = new THREE.Box3(box.min, box.max);
 
-    // IMPROVED INTERSECTION DETECTION: Check if the line segment intersects with the box
-    // Create line segment from start to end
-    const lineStart = new THREE.Vector3(...startPos);
-    const lineEnd = new THREE.Vector3(...endPos);
-    const lineDirection = new THREE.Vector3().subVectors(lineEnd, lineStart);
-    const lineLength = lineDirection.length();
-    lineDirection.normalize();
+    // Check if ray intersects box (reuse module-level temp)
+    const hitPoint = ray.ray.intersectBox(bbox, _tempResult);
 
-    // Check if ray intersects box
-    const result = ray.ray.intersectBox(bbox, new THREE.Vector3());
-
-    // Additional check: does the line segment actually pass through or near the box?
-    const boxCenter = new THREE.Vector3()
-      .addVectors(box.min, box.max)
-      .multiplyScalar(0.5);
-    const closestPointOnLine = new THREE.Vector3();
+    // Does the line segment actually pass through or near the box?
+    _tempBoxCenter.addVectors(box.min, box.max).multiplyScalar(0.5);
 
     // Project box center onto line segment
-    const lineToCenter = new THREE.Vector3().subVectors(boxCenter, lineStart);
-    const projectionLength = lineToCenter.dot(lineDirection);
+    _tempLineToCenter.subVectors(_tempBoxCenter, cliLineStart);
+    const projectionLength = _tempLineToCenter.dot(cliLineDir);
     const clampedProjection = Math.max(
       0,
-      Math.min(lineLength, projectionLength)
+      Math.min(cliLineLength, projectionLength)
     );
-    closestPointOnLine
-      .copy(lineStart)
-      .add(lineDirection.clone().multiplyScalar(clampedProjection));
+    _tempClosest.copy(cliLineStart).addScaledVector(cliLineDir, clampedProjection);
 
-    const distanceToLine = boxCenter.distanceTo(closestPointOnLine);
+    const distanceToLine = _tempBoxCenter.distanceTo(_tempClosest);
     const boxRadius =
-      new THREE.Vector3().subVectors(box.max, box.min).length() * 0.5;
+      _tempBoxRadiusVec.subVectors(box.max, box.min).length() * 0.5;
 
     // Consider it an intersection if:
     // 1. Ray intersects the box AND intersection is within line segment, OR
     // 2. Line segment passes close to the box center
     const rayIntersectsInRange =
-      result && result.distanceTo(ray.ray.origin) <= lineLength;
+      hitPoint && hitPoint.distanceTo(ray.ray.origin) <= cliLineLength;
     const linePassesNearBox = distanceToLine <= boxRadius;
 
     if (rayIntersectsInRange || linePassesNearBox) {
-      // Found intersection
       intersections.push({
         objectId: box.id,
         objectType: box.type,
-        position: result
-          ? [result.x, result.y, result.z]
-          : [closestPointOnLine.x, closestPointOnLine.y, closestPointOnLine.z],
-        distance: result
-          ? result.distanceTo(ray.ray.origin)
+        position: hitPoint
+          ? [hitPoint.x, hitPoint.y, hitPoint.z]
+          : [_tempClosest.x, _tempClosest.y, _tempClosest.z],
+        distance: hitPoint
+          ? hitPoint.distanceTo(ray.ray.origin)
           : clampedProjection,
-        boundingBox: bbox, // Store the bounding box for further calculations
+        boundingBox: bbox,
       });
     }
   });
@@ -442,8 +437,6 @@ export function generateCurvedPath(
         (int.objectId === startConnIdStr || int.objectId === endConnIdStr) &&
         int.boundingBox
       ) {
-        const startVec = new THREE.Vector3(...startPos);
-        const endVec = new THREE.Vector3(...endPos);
         const bbox = int.boundingBox;
         if (bbox.containsPoint(startVec) && bbox.containsPoint(endVec)) {
           isParentChildInside = true;
@@ -459,8 +452,6 @@ export function generateCurvedPath(
       for (const int of intersections) {
         if (int.boundingBox) {
           const bbox = int.boundingBox;
-          const startVec = new THREE.Vector3(...startPos);
-          const endVec = new THREE.Vector3(...endPos);
 
           // Check if both connection endpoints are inside this object's bounding box
           const startInside = bbox.containsPoint(startVec);
@@ -492,8 +483,6 @@ export function generateCurvedPath(
   // Additional check: if intersection detection missed container objects,
   // check if connection line is entirely within any large object
   if (!isParentChildInside && intersections && intersections.length > 0) {
-    const startVec = new THREE.Vector3(...startPos);
-    const endVec = new THREE.Vector3(...endPos);
     const lineLength = startVec.distanceTo(endVec);
 
     // Look for large objects that might contain both endpoints
@@ -563,8 +552,6 @@ export function generateCurvedPath(
         )
         .multiplyScalar(0.5);
 
-      const startVec = new THREE.Vector3(...startPos);
-      const endVec = new THREE.Vector3(...endPos);
       const distToStart = attachmentCenter.distanceTo(startVec);
       const distToEnd = attachmentCenter.distanceTo(endVec);
       const attachmentPoint = distToStart < distToEnd ? startVec : endVec;
@@ -664,29 +651,24 @@ function checkCurveIntersections(curvePoints, intersections) {
     const start = curvePoints[i];
     const end = curvePoints[i + 1];
 
+    // Compute segment vectors once per outer iteration
+    _tempCurveStart.set(start[0], start[1], start[2]);
+    _tempCurveEnd.set(end[0], end[1], end[2]);
+    _tempCurveDir.subVectors(_tempCurveEnd, _tempCurveStart);
+    const lineLength = _tempCurveDir.length();
+    if (lineLength < 0.1) continue;
+    _tempCurveDir.normalize();
+    _tempRay.set(_tempCurveStart, _tempCurveDir);
+
     // Check against each intersection's bounding box
     for (const intersection of intersections) {
       if (!intersection.boundingBox) continue;
 
-      // Create line segment
-      const lineStart = new THREE.Vector3(...start);
-      const lineEnd = new THREE.Vector3(...end);
-      const lineDir = new THREE.Vector3().subVectors(lineEnd, lineStart);
-      const lineLength = lineDir.length();
-
-      if (lineLength < 0.1) continue; // Skip tiny segments
-      lineDir.normalize();
-
-      // Quick box intersection test
-      const ray = new THREE.Ray(lineStart, lineDir);
-      const intersectionPoint = new THREE.Vector3();
-
-      if (ray.intersectBox(intersection.boundingBox, intersectionPoint)) {
-        // Check if intersection point is within segment bounds
-        const dist = intersectionPoint.distanceTo(lineStart);
+      if (_tempRay.intersectBox(intersection.boundingBox, _tempIntersectTarget)) {
+        const dist = _tempIntersectTarget.distanceTo(_tempCurveStart);
         if (dist <= lineLength) {
           intersectionCount++;
-          break; // Count each object only once
+          break;
         }
       }
     }

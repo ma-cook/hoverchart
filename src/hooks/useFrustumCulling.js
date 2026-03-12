@@ -17,6 +17,7 @@ import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 const frustum = new THREE.Frustum();
 const projScreenMatrix = new THREE.Matrix4();
 const tempPoint = new THREE.Vector3();
+const _midPoint = new THREE.Vector3();
 
 /**
  * Check if a point is within the camera frustum (with padding)
@@ -51,13 +52,13 @@ function isConnectionVisible(connection, frustum, objectPositions) {
   }
   
   // Check midpoint for long connections that might span the screen
-  const midpoint = [
+  _midPoint.set(
     (startPos[0] + endPos[0]) / 2,
     (startPos[1] + endPos[1]) / 2,
-    (startPos[2] + endPos[2]) / 2,
-  ];
+    (startPos[2] + endPos[2]) / 2
+  );
   
-  return isPointInFrustum(midpoint, frustum);
+  return frustum.containsPoint(_midPoint);
 }
 
 /**
@@ -147,6 +148,10 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
   const connectionsRef = useRef(connections);
   connectionsRef.current = connections;
 
+  // Pre-allocated worker dispatch buffers (reused across dispatches)
+  const planesRef = useRef(new Float32Array(24)); // 6 planes × 4 floats, transferable
+  const endpointsRef = useRef([]);
+
   // Track camera movement without triggering React re-renders.
   // When the camera moves, also fire a worker dispatch for frustum culling.
   useFrame(() => {
@@ -171,21 +176,28 @@ export const useFrustumCulledConnections = (connections, objects, enabled = true
           camera.matrixWorldInverse
         );
         frustum.setFromProjectionMatrix(projScreenMatrix);
-        const planes = [];
+        const planes = planesRef.current;
         for (let i = 0; i < 6; i++) {
           const p = frustum.planes[i];
-          planes.push([p.normal.x, p.normal.y, p.normal.z, p.constant]);
+          const off = i * 4;
+          planes[off]     = p.normal.x;
+          planes[off + 1] = p.normal.y;
+          planes[off + 2] = p.normal.z;
+          planes[off + 3] = p.constant;
         }
 
         // Build compact connection endpoint list — worker has object positions
-        const endpoints = [];
-        for (let i = 0; i < conns.length; i++) {
+        const endpoints = endpointsRef.current;
+        const len = conns.length;
+        // Grow buffer if needed (never shrinks — reuses objects)
+        while (endpoints.length < len) endpoints.push({ id: 0, startObjId: '', endObjId: '' });
+        endpoints.length = len;
+        for (let i = 0; i < len; i++) {
           const c = conns[i];
-          endpoints.push({
-            id: i, // use array index as ID
-            startObjId: String(c.start?.objectId || ''),
-            endObjId: String(c.end?.objectId || ''),
-          });
+          const e = endpoints[i];
+          e.id = i;
+          e.startObjId = String(c.start?.objectId || '');
+          e.endObjId = String(c.end?.objectId || '');
         }
 
         const worker = getSpatialIndexWorker();

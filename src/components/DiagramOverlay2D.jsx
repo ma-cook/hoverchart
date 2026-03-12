@@ -160,6 +160,9 @@ const MINIMAP_COLORS = {
   datapath: '#ff8f00',
 };
 
+// Pre-computed entries array — avoids Object.entries() allocation per render
+const MINIMAP_COLOR_ENTRIES = Object.entries(MINIMAP_COLORS);
+
 function minimapNodeColor(node) {
   return MINIMAP_COLORS[node.data?.merfolkType] || '#9e9e9e';
 }
@@ -309,6 +312,13 @@ export default function DiagramOverlay2D() {
     setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
+  // Memoized per-key handlers to avoid inline closure allocation per render
+  const toggleLayerHandlers = useMemo(() => {
+    const map = {};
+    LAYER_DEFS.forEach(({ key }) => { map[key] = () => toggleLayer(key); });
+    return map;
+  }, [toggleLayer]);
+
   // ---- Node click → selection ----
   const handleNodeClick = useCallback((_event, node) => {
     setSelectedNodeId(node.id);
@@ -421,7 +431,7 @@ export default function DiagramOverlay2D() {
                 <input
                   type="checkbox"
                   checked={!!layers[key]}
-                  onChange={() => toggleLayer(key)}
+                  onChange={toggleLayerHandlers[key]}
                   style={{ marginRight: '6px' }}
                 />
                 {label}
@@ -453,7 +463,7 @@ export default function DiagramOverlay2D() {
         {/* Legend */}
         <Panel position="bottom-left">
           <div style={{ ...panelStyle, display: 'flex', flexWrap: 'wrap', gap: '8px', maxWidth: '460px' }}>
-            {Object.entries(MINIMAP_COLORS).map(([type, color]) => (
+            {MINIMAP_COLOR_ENTRIES.map(([type, color]) => (
               <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}>
                 <div style={{ width: '10px', height: '10px', borderRadius: '2px', background: color }} />
                 <span style={{ textTransform: 'capitalize', color: '#555' }}>{type}</span>

@@ -1,5 +1,15 @@
 import { useEffect } from 'react';
 
+// Hoisted to module level — avoids re-creating on every click event
+const DEFAULT_EXCLUDE_SELECTORS = [
+  '.object-ui-content',
+  '.color-picker-container',
+  '.face-ui-content',
+  '.face-ui-container',
+  '.text-style-ui',
+  '.header-input',
+];
+
 /**
  * Unified global click handler hook
  * Replaces duplicate window event listener patterns for click-outside functionality
@@ -27,18 +37,10 @@ export const useGlobalClickHandler = (
         ? excludeSelectors
         : [excludeSelectors];
 
-      // Default selectors that are commonly excluded
-      const defaultSelectors = [
-        '.object-ui-content',
-        '.color-picker-container',
-        '.face-ui-content',
-        '.face-ui-container',
-        '.text-style-ui',
-        '.header-input',
-      ];
-
-      // Combine provided selectors with defaults
-      const allSelectors = [...selectors, ...defaultSelectors];
+      // Combine provided selectors with module-level defaults
+      const allSelectors = selectors.length > 0
+        ? selectors.concat(DEFAULT_EXCLUDE_SELECTORS)
+        : DEFAULT_EXCLUDE_SELECTORS;
 
       // Check if click target or any parent matches excluded selectors
       if (event.target) {

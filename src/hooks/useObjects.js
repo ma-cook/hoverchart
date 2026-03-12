@@ -1,6 +1,22 @@
 import { useEffect, useRef } from 'react';
+import { shallow } from 'zustand/shallow';
 import { useObjectsStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
+
+// Module-level selector — prevents re-render on unrelated store fields
+const selectObjectsHookState = (state) => ({
+  selectedId: state.selectedId,
+  setSelectedId: state.setSelectedId,
+  objects: state.objects,
+  initializeObjectsLoading: state.initializeObjectsLoading,
+  handleCreateObject: state.handleCreateObject,
+  handleObjectDelete: state.handleObjectDelete,
+  addTransformingObject: state.addTransformingObject,
+  removeTransformingObject: state.removeTransformingObject,
+  setTransformPosition: state.setTransformPosition,
+  draggingObjects: state.draggingObjects,
+  transformingObjects: state.transformingObjects,
+});
 
 /**
  * Custom hook to manage objects state and operations
@@ -17,10 +33,9 @@ export function useObjects({ user, currentSpaceId, cameraRef }) {
     addTransformingObject,
     removeTransformingObject,
     setTransformPosition,
-    // Internal refs equivalent
     draggingObjects,
     transformingObjects,
-  } = useObjectsStore();
+  } = useObjectsStore(selectObjectsHookState, shallow);
 
   // Create stable refs that won't cause useEffect dependency cycles
   const lastUpdateRef = useRef({});

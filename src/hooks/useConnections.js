@@ -5,7 +5,17 @@ import {
   useCallback,
   startTransition,
 } from 'react';
+import { shallow } from 'zustand/shallow';
 import useConnectionStore from '../stores/connectionStore';
+
+// Module-level selector — avoids re-creating selector + equality function every render
+const selectConnectionHookState = (state) => ({
+  connections: state.connections,
+  addConnection: state.addConnection,
+  updateConnection: state.updateConnection,
+  removeConnection: state.removeConnection,
+  getConnection: state.getConnection,
+});
 import {
   subscribeToConnections,
   saveConnection,
@@ -17,24 +27,9 @@ import { getIsInitialLoading } from '../utils/loadingState';
  * Now includes spatial partitioning support for connection unloading
  */
 export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
-  // PERFORMANCE OPTIMIZATION: Single batched subscription instead of 5 separate ones
+  // PERFORMANCE OPTIMIZATION: Module-level selector + shallow equality
   const { connections, addConnection, updateConnection, removeConnection, getConnection } = 
-    useConnectionStore(
-      (state) => ({
-        connections: state.connections,
-        addConnection: state.addConnection,
-        updateConnection: state.updateConnection,
-        removeConnection: state.removeConnection,
-        getConnection: state.getConnection,
-      }),
-      // Use shallow comparison for the object
-      (a, b) => 
-        a.connections === b.connections &&
-        a.addConnection === b.addConnection &&
-        a.updateConnection === b.updateConnection &&
-        a.removeConnection === b.removeConnection &&
-        a.getConnection === b.getConnection
-    );
+    useConnectionStore(selectConnectionHookState, shallow);
 
   // Track subscription cleanup and debouncing
   const subscriptionCleanupRef = useRef(null);

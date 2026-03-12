@@ -193,11 +193,12 @@ export const handleObjectMove = ({
             const { usePublicSpaceStore } = await import('../stores');
             const { useObjectsStore } = await import('../stores');
 
-            const connections = useConnectionStore.getState().connections;
             const connectionStore = useConnectionStore.getState();
+            const connections = connectionStore.connections;
             const objects = useObjectsStore.getState().objects;
             const saveConnectionsImmediately =
-              usePublicSpaceStore.getState().saveConnectionsImmediately; // Save connections that were updated during this object movement
+              usePublicSpaceStore.getState().saveConnectionsImmediately;
+            let _objectIdSet = null; // lazy-init Set for O(1) existence checks
             // BUT EXCLUDE visual-only updates from RealTimeConnectionUpdater
             // AND EXCLUDE connections that are being deleted or reference deleted objects
             const connectionsToSave = connections.filter((conn) => {
@@ -215,13 +216,12 @@ export const handleObjectMove = ({
                 return false;
               }
 
-              // Skip connections with missing objects
-              const startObjectExists = objects.some(
-                (obj) => obj.id.toString() === conn.start?.objectId
-              );
-              const endObjectExists = objects.some(
-                (obj) => obj.id.toString() === conn.end?.objectId
-              );
+              // PERFORMANCE: Use Set for O(1) existence checks instead of O(n) .some()
+              if (!_objectIdSet) {
+                _objectIdSet = new Set(objects.map(o => o.id.toString()));
+              }
+              const startObjectExists = _objectIdSet.has(conn.start?.objectId);
+              const endObjectExists = _objectIdSet.has(conn.end?.objectId);
 
               if (!startObjectExists || !endObjectExists) {
                 console.log(

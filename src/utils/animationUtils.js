@@ -67,6 +67,12 @@ const startAnimationLoop = () => {
   lastTimestamp = performance.now();
 
   const animate = (timestamp) => {
+    // Early exit if no materials to animate
+    if (animatedMaterials.size === 0) {
+      animationFrame = requestAnimationFrame(animate);
+      return;
+    }
+
     // Calculate delta time in seconds with maximum cap
     const deltaTime = Math.min(0.1, (timestamp - lastTimestamp) / 1000);
     lastTimestamp = timestamp;

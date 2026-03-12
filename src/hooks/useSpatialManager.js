@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import { shallow } from 'zustand/shallow';
 import { useSpatialManagerStore } from '../stores';
 
 /**
@@ -12,10 +13,24 @@ export const useSpatialManager = ({
   cameraRef,
   onObjectsChange,
 }) => {
+  // PERFORMANCE: Select only reactive state with shallow equality —
+  // avoids re-renders when unrelated store fields (lastCameraPosition,
+  // cameraVelocity, loadingCells, etc.) change.
   const {
     isInitialized,
     loadedCells: loadedCellsSet,
     currentCellCoords,
+  } = useSpatialManagerStore(
+    (s) => ({
+      isInitialized: s.isInitialized,
+      loadedCells: s.loadedCells,
+      currentCellCoords: s.currentCellCoords,
+    }),
+    shallow
+  );
+
+  // Actions are stable references — read once, no subscription needed.
+  const {
     initializeSpatialSystem,
     updateCameraPosition,
     addObjectToSpatialSystem,
@@ -24,7 +39,7 @@ export const useSpatialManager = ({
     loadCell,
     trackObjectInCell,
     untrackObjectInCell,
-  } = useSpatialManagerStore();
+  } = useSpatialManagerStore.getState();
   // Memoize the loaded cells array to prevent constant re-renders
   // Only change when the Set contents actually change
   const loadedCellsKey = useMemo(() => {

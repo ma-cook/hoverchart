@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
+import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 
@@ -35,20 +36,33 @@ const LODManager = ({ enabled = true }) => {
   const lastCameraPositionRef = useRef(new THREE.Vector3());
   const initializedRef = useRef(false);
   
-  // Get objects from store
-  const objects = useObjectsStore((state) => state.objects);
+  // Get objects from store — shallow equality avoids re-renders on
+  // individual object property changes (position moves, text edits, etc.)
+  const objects = useObjectsStore((state) => state.objects, shallow);
   
-  // Get LOD store state and actions
+  // PERFORMANCE: Select only reactive LOD state with shallow equality —
+  // avoids re-renders when _lodVersion bumps (which happens on every LOD update).
   const { 
-    batchSetLODLevels, 
-    batchRegisterParentChild,
-    batchRegisterParents,
     childParentMap, 
     parentIds,
     lodEnabled,
+  } = useLODStore(
+    (s) => ({
+      childParentMap: s.childParentMap,
+      parentIds: s.parentIds,
+      lodEnabled: s.lodEnabled,
+    }),
+    shallow
+  );
+
+  // Actions are stable — read once from getState(), no subscription needed.
+  const {
+    batchSetLODLevels,
+    batchRegisterParentChild,
+    batchRegisterParents,
     setLODEnabled,
     clearLODData,
-  } = useLODStore();
+  } = useLODStore.getState();
   
   // Enable/disable LOD based on prop
   useEffect(() => {

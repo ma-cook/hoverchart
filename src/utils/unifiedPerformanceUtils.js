@@ -97,34 +97,19 @@ export const memoize = (fn) => {
       // Handle null/undefined
       if (!arg) return 'null';
 
-      // Create a minimal object with only the properties we need
-      const keyObj = {
-        type: arg.type,
-        face: arg.face || 0,
-        objectId: arg.objectId || arg.cube?.id || arg.plane?.id,
-        position: arg.position || arg.cube?.position || arg.plane?.position,
-        scale: arg.scale || arg.cube?.scale || [1, 1, 1],
-        faceCenter: arg.faceCenter,
-      };
+      // Build key via template literal — avoids object allocation + JSON.stringify
+      const oid = arg.objectId || arg.cube?.id || arg.plane?.id || '';
+      const pos = arg.position || arg.cube?.position || arg.plane?.position;
+      const sc = arg.scale || arg.cube?.scale;
+      let key = `${arg.type}|${arg.face || 0}|${oid}|${pos ? `${pos[0]},${pos[1]},${pos[2]}` : ''}|${sc ? `${sc[0]},${sc[1]},${sc[2]}` : '1,1,1'}|${arg.faceCenter ? `${arg.faceCenter[0]},${arg.faceCenter[1]},${arg.faceCenter[2]}` : ''}`;
 
-      // Special handling for sphere indicators
-      if (arg.type === 'sphere' && Array.isArray(arg.faceCenter)) {
-        keyObj.faceCenter = [...arg.faceCenter];
-      }
-
-      // Special handling for plane indicators
       if (arg.type === 'plane') {
-        keyObj.worldPosition = arg.worldPosition;
-        keyObj.planeData = arg.planeData
-          ? {
-              position: arg.planeData.position,
-              scale: arg.planeData.scale,
-              offset: arg.planeData.offset,
-            }
-          : null;
+        const wp = arg.worldPosition;
+        const pd = arg.planeData;
+        key += `|${wp ? `${wp[0]},${wp[1]},${wp[2]}` : ''}|${pd ? `${pd.position},${pd.scale},${pd.offset}` : ''}`;
       }
 
-      return JSON.stringify(keyObj);
+      return key;
     } catch (error) {
       console.warn('Error creating cache key:', error);
       // Fallback to a simple type-based key
@@ -169,10 +154,13 @@ export const memoize = (fn) => {
         );
       }
 
-      // Keep cache size reasonable
+      // Keep cache size reasonable — iterator-based trim avoids temp array allocations
       if (cache.size > 1000) {
-        const entriesToDelete = Array.from(cache.keys()).slice(0, 200);
-        entriesToDelete.forEach((key) => cache.delete(key));
+        let count = 0;
+        for (const k of cache.keys()) {
+          if (count++ >= 200) break;
+          cache.delete(k);
+        }
       }
 
       return result;

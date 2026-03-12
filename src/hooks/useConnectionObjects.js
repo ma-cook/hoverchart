@@ -2,6 +2,22 @@ import { useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
 import useObjectsStore from '../stores/objectsStore';
 
+// Module-level equality — avoids re-creating identical comparator per render per connection
+const objectPositionEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  return (
+    a.id === b.id &&
+    a.position?.[0] === b.position?.[0] &&
+    a.position?.[1] === b.position?.[1] &&
+    a.position?.[2] === b.position?.[2] &&
+    a.scale?.[0] === b.scale?.[0] &&
+    a.scale?.[1] === b.scale?.[1] &&
+    a.scale?.[2] === b.scale?.[2] &&
+    a.type === b.type
+  );
+};
+
 /**
  * Hook that selects only the object data needed for a specific connection
  * This prevents unnecessary re-renders when unrelated objects change
@@ -82,21 +98,7 @@ export const useConnectionObjectPositions = (startObjectId, endObjectId) => {
     return state.objects.find(
       (obj) => obj.id?.toString() === startObjectId.toString()
     ) || null;
-  }, (a, b) => {
-    // Custom equality check - only compare position-critical properties
-    if (a === b) return true;
-    if (!a || !b) return a === b;
-    return (
-      a.id === b.id &&
-      a.position?.[0] === b.position?.[0] &&
-      a.position?.[1] === b.position?.[1] &&
-      a.position?.[2] === b.position?.[2] &&
-      a.scale?.[0] === b.scale?.[0] &&
-      a.scale?.[1] === b.scale?.[1] &&
-      a.scale?.[2] === b.scale?.[2] &&
-      a.type === b.type
-    );
-  });
+  }, objectPositionEqual);
 
   // Select ONLY the end object with custom equality checking
   const endObject = useObjectsStore((state) => {
@@ -104,21 +106,7 @@ export const useConnectionObjectPositions = (startObjectId, endObjectId) => {
     return state.objects.find(
       (obj) => obj.id?.toString() === endObjectId.toString()
     ) || null;
-  }, (a, b) => {
-    // Custom equality check - only compare position-critical properties
-    if (a === b) return true;
-    if (!a || !b) return a === b;
-    return (
-      a.id === b.id &&
-      a.position?.[0] === b.position?.[0] &&
-      a.position?.[1] === b.position?.[1] &&
-      a.position?.[2] === b.position?.[2] &&
-      a.scale?.[0] === b.scale?.[0] &&
-      a.scale?.[1] === b.scale?.[1] &&
-      a.scale?.[2] === b.scale?.[2] &&
-      a.type === b.type
-    );
-  });
+  }, objectPositionEqual);
 
   return {
     startObject,
