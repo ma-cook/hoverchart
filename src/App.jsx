@@ -1761,7 +1761,6 @@ const App = () => {
             />
             {/* Render cell boundaries */}
             <CellBoundaryRenderer
-              loadedCells={loadedCells}
               visible={cellBoundariesVisible}
             />
           </group>
