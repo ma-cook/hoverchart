@@ -1,10 +1,8 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
   getSmoothStepPath,
-  getStraightPath,
 } from '@xyflow/react';
 
 // ---------------------------------------------------------------------------
@@ -26,43 +24,63 @@ function flowPathColor(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Style config per connection type
+// PERF: Pre-computed style objects — avoids allocations on every edge render
 // ---------------------------------------------------------------------------
 
-function getEdgeStyle(connectionType, flowPaths) {
-  // If the edge belongs to a flow path, colour by the first flow path name
-  if (flowPaths && flowPaths.length > 0) {
-    return {
-      stroke: flowPathColor(flowPaths[0]),
-      strokeWidth: 2,
-      strokeDasharray: undefined,
-    };
-  }
+const EDGE_STYLES = {
+  controlflow: { stroke: '#7b1fa2', strokeWidth: 1.5, strokeDasharray: '6 3' },
+  dotted:      { stroke: '#7b1fa2', strokeWidth: 1.5, strokeDasharray: '6 3' },
+  association:  { stroke: '#9e9e9e', strokeWidth: 1.5, strokeDasharray: undefined },
+  inheritance:  { stroke: '#424242', strokeWidth: 3, strokeDasharray: undefined },
+  dataflow:     { stroke: '#546e7a', strokeWidth: 1.5, strokeDasharray: undefined },
+};
+const DEFAULT_EDGE_STYLE = EDGE_STYLES.dataflow;
 
-  switch (connectionType) {
-    case 'controlflow':
-    case 'dotted':
-      return { stroke: '#7b1fa2', strokeWidth: 1.5, strokeDasharray: '6 3' };
-    case 'association':
-      return { stroke: '#9e9e9e', strokeWidth: 1.5, strokeDasharray: undefined };
-    case 'inheritance':
-      return { stroke: '#424242', strokeWidth: 3, strokeDasharray: undefined };
-    case 'dataflow':
-    default:
-      return { stroke: '#546e7a', strokeWidth: 1.5, strokeDasharray: undefined };
+// Cache flow-path edge styles by color to avoid re-creating per render
+const flowPathStyleCache = new Map();
+
+function getEdgeStyle(connectionType, flowPaths) {
+  if (flowPaths && flowPaths.length > 0) {
+    const color = flowPathColor(flowPaths[0]);
+    let cached = flowPathStyleCache.get(color);
+    if (!cached) {
+      cached = { stroke: color, strokeWidth: 2, strokeDasharray: undefined };
+      flowPathStyleCache.set(color, cached);
+    }
+    return cached;
   }
+  return EDGE_STYLES[connectionType] || DEFAULT_EDGE_STYLE;
 }
+
+const MARKER_ARROW = 'url(#arrow-marker)';
+const MARKER_INHERIT = 'url(#inheritance-marker)';
 
 function getMarkerEnd(connectionType) {
   switch (connectionType) {
     case 'association':
-      return undefined; // no arrow
+      return undefined;
     case 'inheritance':
-      return 'url(#inheritance-marker)';
+      return MARKER_INHERIT;
     default:
-      return 'url(#arrow-marker)';
+      return MARKER_ARROW;
   }
 }
+
+// Static label style — only `transform` is dynamic
+const LABEL_BASE_STYLE = {
+  position: 'absolute',
+  pointerEvents: 'all',
+  background: '#fff',
+  border: '1px solid #ccc',
+  borderRadius: '3px',
+  padding: '2px 6px',
+  fontSize: '10px',
+  color: '#333',
+  whiteSpace: 'nowrap',
+  maxWidth: '200px',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
 
 // ---------------------------------------------------------------------------
 // Custom edge component
@@ -81,11 +99,10 @@ function MerfolkEdge({
   style: propStyle,
 }) {
   const connectionType = data?.connectionType || 'dataflow';
-  const flowPaths = data?.flowPaths || [];
+  const flowPaths = data?.flowPaths;
   const edgeStyle = getEdgeStyle(connectionType, flowPaths);
   const label = data?.label || '';
 
-  // Use smooth step (orthogonal-ish) path for consistency with ELK orthogonal routing
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -96,38 +113,31 @@ function MerfolkEdge({
     borderRadius: 8,
   });
 
+  // Merge pre-computed edge style with dynamic opacity; only spread propStyle
+  // when it's actually provided (rare) to keep the common path allocation-free.
+  const mergedStyle = useMemo(() => {
+    const base = {
+      ...edgeStyle,
+      opacity: selected ? 1 : 0.7,
+    };
+    return propStyle ? { ...base, ...propStyle } : base;
+  }, [edgeStyle, selected, propStyle]);
+
+  const labelStyle = label
+    ? { ...LABEL_BASE_STYLE, transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }
+    : null;
+
   return (
     <>
       <BaseEdge
         id={id}
         path={edgePath}
-        style={{
-          ...edgeStyle,
-          opacity: selected ? 1 : 0.7,
-          transition: 'opacity 0.15s ease',
-          ...propStyle,
-        }}
+        style={mergedStyle}
         markerEnd={getMarkerEnd(connectionType)}
       />
       {label && (
         <EdgeLabelRenderer>
-          <div
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: 'all',
-              background: '#fff',
-              border: '1px solid #ccc',
-              borderRadius: '3px',
-              padding: '2px 6px',
-              fontSize: '10px',
-              color: '#333',
-              whiteSpace: 'nowrap',
-              maxWidth: '200px',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
+          <div style={labelStyle}>
             {label}
           </div>
         </EdgeLabelRenderer>

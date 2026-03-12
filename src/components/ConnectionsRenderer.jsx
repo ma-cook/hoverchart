@@ -244,7 +244,9 @@ const Connection = React.memo(
     onLineTextStyleChange,
     // PERFORMANCE: Pass store state as props to avoid individual subscriptions
     selectedConnection,
-    connections,
+    // PERFORMANCE: Single hash computed once in the parent for ALL objects,
+    // replaces the per-Connection O(N) nearbyObjectsHash loop.
+    objectsPositionHash,
   }) => {
     // Get only the specific objects needed for this connection
     const { startObject, endObject } = useConnectionObjectPositions(
@@ -311,7 +313,9 @@ const Connection = React.memo(
         setShowLineTextInput(null);
         // Update both store and database
         updateConnection(connectionId, { text });
-        const updatedConnection = connections.find(
+        // PERFORMANCE: Read latest connection from store at save time instead of
+        // receiving the entire connections array as a prop (which broke React.memo).
+        const updatedConnection = useConnectionStore.getState().connections.find(
           (conn) => conn.id === connectionId
         );
         if (updatedConnection) {
@@ -334,7 +338,7 @@ const Connection = React.memo(
         }
 
         // Get current connection to merge with existing textStyle (like cube header text)
-        const currentConnection = connections.find(
+        const currentConnection = useConnectionStore.getState().connections.find(
           (conn) => conn.id === connectionId
         );
         const mergedTextStyle = {
@@ -344,7 +348,7 @@ const Connection = React.memo(
 
         // Update both store and database
         updateConnection(connectionId, { textStyle: mergedTextStyle });
-        const updatedConnection = connections.find(
+        const updatedConnection = useConnectionStore.getState().connections.find(
           (conn) => conn.id === connectionId
         );
         if (updatedConnection) {
@@ -381,7 +385,7 @@ const Connection = React.memo(
           _lastStyleUpdate: Date.now(),
         });
 
-        const updatedConnection = connections.find(
+        const updatedConnection = useConnectionStore.getState().connections.find(
           (conn) => conn.id === connectionId
         );
         if (updatedConnection) {
@@ -406,7 +410,7 @@ const Connection = React.memo(
 
         // Update store with correct color property name
         updateConnection(connectionId, { color: color });
-        const updatedConnection = connections.find(
+        const updatedConnection = useConnectionStore.getState().connections.find(
           (conn) => conn.id === connectionId
         );
         if (updatedConnection) {
@@ -560,52 +564,9 @@ const Connection = React.memo(
     const stableEndObjectId = connection?.end?.objectId;
     const stablePathPoints = connection?._pathPoints;
 
-    // PERFORMANCE OPTIMIZATION: Create a numeric hash of nearby object positions
-    // Uses fast integer operations instead of expensive string concatenation
-    const nearbyObjectsHash = useMemo(() => {
-      if (!connectionData.isValid || !allObjectsForPathfinding) return 0;
-
-      const { startPosition, endPosition } = connectionData;
-      const lineLength = Math.sqrt(
-        Math.pow(endPosition[0] - startPosition[0], 2) +
-          Math.pow(endPosition[1] - startPosition[1], 2) +
-          Math.pow(endPosition[2] - startPosition[2], 2)
-      );
-
-      const thresholdSquared = lineLength * lineLength * 4; // 2x line length radius
-      let hash = 0;
-      let count = 0;
-
-      // Use simple numeric hashing instead of string concatenation
-      for (let i = 0; i < allObjectsForPathfinding.length; i++) {
-        const obj = allObjectsForPathfinding[i];
-        if (!obj?.position || !Array.isArray(obj.position)) continue;
-
-        // Quick distance check - only objects near the line
-        const dx = obj.position[0] - startPosition[0];
-        const dy = obj.position[1] - startPosition[1];
-        const dz = obj.position[2] - startPosition[2];
-        const distanceSquared = dx * dx + dy * dy + dz * dz;
-        
-        if (distanceSquared < thresholdSquared) {
-          // Fast integer hash combining position values (rounded to 1 decimal)
-          const px = Math.round(obj.position[0] * 10);
-          const py = Math.round(obj.position[1] * 10);
-          const pz = Math.round(obj.position[2] * 10);
-          // Use bitwise XOR and multiplication for fast hashing
-          hash = ((hash * 31) ^ (px + py * 1000 + pz * 1000000)) >>> 0;
-          count++;
-        }
-      }
-
-      // Include count in hash to detect added/removed objects
-      return (hash ^ (count * 17)) >>> 0;
-    }, [
-      allObjectsForPathfinding,
-      connectionData,
-      stableStartObjectId,
-      stableEndObjectId,
-    ]);
+    // PERFORMANCE: objectsPositionHash is now computed ONCE in the parent
+    // ConnectionsRenderer and passed as a prop, replacing the O(N) per-connection
+    // nearbyObjectsHash loops that iterated ALL objects for EACH connection.
 
     // Third hook: Calculate path and intersections
     // Use a more selective dependency to minimize re-renders
@@ -680,8 +641,8 @@ const Connection = React.memo(
       stableStartObjectId,
       stableEndObjectId,
       stableLineStyle,
-      allObjectsForPathfinding, // Keep for lint, but nearbyObjectsHash is what actually triggers
-      nearbyObjectsHash, // Dynamic hash triggers recalc when nearby objects move
+      allObjectsForPathfinding, // Keep for lint, but objectsPositionHash is what actually triggers
+      objectsPositionHash, // Single hash from parent — replaces per-Connection O(N) loop
     ]);
 
     // Fourth hook: Calculate text position
@@ -883,6 +844,10 @@ const Connection = React.memo(
       return false; // Props changed, need to re-render
     }
 
+    // PERFORMANCE: objectsPositionHash is a cheap numeric comparison that
+    // replaces the old pattern of passing the entire connections array.
+    if (prevProps.objectsPositionHash !== nextProps.objectsPositionHash) return false;
+
     // Only re-render if the connection data actually changed
     const connectionChanged =
       prevProps.connection.id !== nextProps.connection.id ||
@@ -970,6 +935,22 @@ const ConnectionsRenderer = ({
     }
     return result;
   }, [objects]);
+
+  // PERFORMANCE: Compute a single position hash for ALL objects once in the parent.
+  // This replaces the per-Connection O(N) nearbyObjectsHash loop.
+  // Every Connection receives this single number; when it changes, pathData recomputes.
+  const objectsPositionHash = useMemo(() => {
+    if (!pathfindingObjects.length) return 0;
+    let hash = 0;
+    for (let i = 0; i < pathfindingObjects.length; i++) {
+      const p = pathfindingObjects[i].position;
+      const px = Math.round(p[0] * 10);
+      const py = Math.round(p[1] * 10);
+      const pz = Math.round(p[2] * 10);
+      hash = ((hash * 31) ^ (px + py * 1000 + pz * 1000000)) >>> 0;
+    }
+    return (hash ^ (pathfindingObjects.length * 17)) >>> 0;
+  }, [pathfindingObjects]);
 
   // Filter connections to only show those where both endpoint objects are visible
   const objectVisibleConnections = useMemo(() => {
@@ -1547,7 +1528,7 @@ const ConnectionsRenderer = ({
             onLineTextSubmit={onLineTextSubmit}
             onLineTextStyleChange={onLineTextStyleChange}
             selectedConnection={selectedConnection}
-            connections={connections}
+            objectsPositionHash={objectsPositionHash}
           />
         );
       })}

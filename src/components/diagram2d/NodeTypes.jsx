@@ -74,67 +74,132 @@ const DEFAULT_STYLE = {
 };
 
 // ---------------------------------------------------------------------------
+// PERF: Pre-computed style objects per node type — avoids creating new objects
+// on every render.  With hundreds of nodes this eliminates thousands of
+// short-lived allocations per frame.
+// ---------------------------------------------------------------------------
+
+const HIDDEN_HANDLE_STYLE = { opacity: 0 };
+
+const BOX_SHADOW_SELECTED = '0 0 0 2px #1976d2, 0 2px 8px rgba(0,0,0,0.15)';
+const BOX_SHADOW_DEFAULT = '0 1px 3px rgba(0,0,0,0.08)';
+
+/** Build the three static style objects for a given type config */
+function buildNodeStyles(cfg) {
+  return {
+    wrapper: {
+      background: cfg.background,
+      border: cfg.border,
+      borderRadius: cfg.borderRadius,
+      padding: '6px 14px',
+      minWidth: '100px',
+      textAlign: 'center',
+      fontFamily: "'Inter', 'Segoe UI', sans-serif",
+      fontSize: '11px',
+      cursor: 'pointer',
+      transition: 'box-shadow 0.15s ease',
+    },
+    badge: {
+      position: 'absolute',
+      top: '-8px',
+      left: '8px',
+      background: cfg.badgeColor,
+      color: '#fff',
+      fontSize: '8px',
+      fontWeight: 600,
+      padding: '1px 5px',
+      borderRadius: '3px',
+      letterSpacing: '0.3px',
+      textTransform: 'uppercase',
+      lineHeight: '14px',
+    },
+    name: {
+      color: cfg.color,
+      fontWeight: 600,
+      fontSize: '12px',
+      marginTop: '2px',
+      wordBreak: 'break-word',
+      lineHeight: '1.25',
+    },
+  };
+}
+
+function buildContainerStyles(cfg) {
+  return {
+    outer: {
+      width: '100%',
+      height: '100%',
+      background: `${cfg.background}44`,
+      border: `1px solid ${cfg.badgeColor}66`,
+      borderRadius: cfg.borderRadius,
+      position: 'relative',
+    },
+    header: {
+      position: 'absolute',
+      top: '3px',
+      left: '6px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '5px',
+    },
+    badge: {
+      background: cfg.badgeColor,
+      color: '#fff',
+      fontSize: '8px',
+      fontWeight: 600,
+      padding: '1px 5px',
+      borderRadius: '3px',
+      textTransform: 'uppercase',
+      letterSpacing: '0.3px',
+      lineHeight: '14px',
+    },
+    label: {
+      color: cfg.color,
+      fontWeight: 600,
+      fontSize: '11px',
+    },
+  };
+}
+
+// Pre-compute for every known type + the default.
+// PERF: Both selected and unselected wrapper variants are frozen at module load
+// so the render path is zero-allocation.
+const PRECOMPUTED_NODE = {};
+const PRECOMPUTED_CONTAINER = {};
+
+function buildPrecomputedNode(cfg) {
+  const styles = buildNodeStyles(cfg);
+  return {
+    ...styles,
+    wrapperSelected: { ...styles.wrapper, boxShadow: BOX_SHADOW_SELECTED },
+    wrapperDefault: { ...styles.wrapper, boxShadow: BOX_SHADOW_DEFAULT },
+  };
+}
+
+for (const [type, cfg] of Object.entries(TYPE_STYLES)) {
+  PRECOMPUTED_NODE[type] = buildPrecomputedNode(cfg);
+  PRECOMPUTED_CONTAINER[type] = buildContainerStyles(cfg);
+}
+const DEFAULT_NODE_STYLES = buildPrecomputedNode(DEFAULT_STYLE);
+const DEFAULT_CONTAINER_STYLES = buildContainerStyles(DEFAULT_STYLE);
+
+// ---------------------------------------------------------------------------
 // Shared node renderer
 // ---------------------------------------------------------------------------
 
 function MerfolkNode({ data, selected }) {
   const merfolkType = data.merfolkType || 'function';
-  const style = TYPE_STYLES[merfolkType] || DEFAULT_STYLE;
+  const cfg = TYPE_STYLES[merfolkType] || DEFAULT_STYLE;
+  const styles = PRECOMPUTED_NODE[merfolkType] || DEFAULT_NODE_STYLES;
 
   return (
     <>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
-      <div
-        style={{
-          background: style.background,
-          border: style.border,
-          borderRadius: style.borderRadius,
-          padding: '6px 14px',
-          minWidth: '100px',
-          textAlign: 'center',
-          fontFamily: "'Inter', 'Segoe UI', sans-serif",
-          fontSize: '11px',
-          boxShadow: selected
-            ? '0 0 0 2px #1976d2, 0 2px 8px rgba(0,0,0,0.15)'
-            : '0 1px 3px rgba(0,0,0,0.08)',
-          cursor: 'pointer',
-          transition: 'box-shadow 0.15s ease',
-        }}
-      >
-        {/* Type badge */}
-        <div
-          style={{
-            position: 'absolute',
-            top: '-8px',
-            left: '8px',
-            background: style.badgeColor,
-            color: '#fff',
-            fontSize: '8px',
-            fontWeight: 600,
-            padding: '1px 5px',
-            borderRadius: '3px',
-            letterSpacing: '0.3px',
-            textTransform: 'uppercase',
-            lineHeight: '14px',
-          }}
-        >
-          {style.label}
-        </div>
-        {/* Node name */}
-        <div
-          style={{
-            color: style.color,
-            fontWeight: 600,
-            fontSize: '12px',
-            marginTop: '2px',
-            wordBreak: 'break-word',
-            lineHeight: '1.25',
-          }}
-        >
-          {data.label}
-        </div>
+      <Handle type="target" position={Position.Top} style={HIDDEN_HANDLE_STYLE} />
+      <div style={selected ? styles.wrapperSelected : styles.wrapperDefault}>
+        <div style={styles.badge}>{cfg.label}</div>
+        <div style={styles.name}>{data.label}</div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={HIDDEN_HANDLE_STYLE} />
     </>
   );
 }
@@ -143,59 +208,19 @@ function MerfolkNode({ data, selected }) {
 // Container (compound / group) node
 // ---------------------------------------------------------------------------
 
-function ContainerNode({ data, selected }) {
+function ContainerNode({ data }) {
   const merfolkType = data.merfolkType || 'component';
-  const style = TYPE_STYLES[merfolkType] || DEFAULT_STYLE;
+  const cfg = TYPE_STYLES[merfolkType] || DEFAULT_STYLE;
+  const styles = PRECOMPUTED_CONTAINER[merfolkType] || DEFAULT_CONTAINER_STYLES;
 
   return (
-    <div
-      style={{
-        width: '100%',
-        height: '100%',
-        background: `${style.background}44`,
-        border: `1px solid ${style.badgeColor}66`,
-        borderRadius: style.borderRadius,
-        position: 'relative',
-      }}
-    >
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
-      {/* Container header */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '3px',
-          left: '6px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '5px',
-        }}
-      >
-        <span
-          style={{
-            background: style.badgeColor,
-            color: '#fff',
-            fontSize: '8px',
-            fontWeight: 600,
-            padding: '1px 5px',
-            borderRadius: '3px',
-            textTransform: 'uppercase',
-            letterSpacing: '0.3px',
-            lineHeight: '14px',
-          }}
-        >
-          {style.label}
-        </span>
-        <span
-          style={{
-            color: style.color,
-            fontWeight: 600,
-            fontSize: '11px',
-          }}
-        >
-          {data.label}
-        </span>
+    <div style={styles.outer}>
+      <Handle type="target" position={Position.Top} style={HIDDEN_HANDLE_STYLE} />
+      <div style={styles.header}>
+        <span style={styles.badge}>{cfg.label}</span>
+        <span style={styles.label}>{data.label}</span>
       </div>
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={HIDDEN_HANDLE_STYLE} />
     </div>
   );
 }

@@ -33,6 +33,8 @@ import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 // Import LOD store for level of detail rendering
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
+const EMPTY_CONNECTIONS = [];
+
 // Constants to avoid recreation
 const DEFAULT_COLOR = '#000000';
 
@@ -190,15 +192,14 @@ const Cube = ({
   // const setIndicatorConnected = useFaceIndicatorStore(
   //   (state) => state.setIndicatorConnected
   // );
-  // PERFORMANCE: Subscribe only to connections involving THIS cube.
-  // Returns a filtered array; avoids O(N*C) re-renders when unrelated connections change.
+  // PERFORMANCE: O(1) index lookup instead of O(C) filter. Shallow equality prevents
+  // re-renders when this cube's connections haven't changed.
   const connectionsFromStore = useConnectionStore(
     useCallback(
-      (state) => state.connections.filter(
-        (c) => c.start?.objectId === id?.toString() || c.end?.objectId === id?.toString()
-      ),
+      (state) => state.connectionsByObjectId.get(id?.toString()) || EMPTY_CONNECTIONS,
       [id]
-    )
+    ),
+    shallow
   );
 
   // Refs - declare early so they can be used in memoized values

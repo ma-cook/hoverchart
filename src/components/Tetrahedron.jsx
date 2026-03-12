@@ -41,6 +41,7 @@ import {
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
+import { shallow } from 'zustand/shallow';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
@@ -49,6 +50,8 @@ import SnapLineIndicator from './SnapLineIndicator';
 // Import unified utilities
 import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
 import { debounce } from '../utils/unifiedPerformanceUtils';
+
+const EMPTY_CONNECTIONS = [];
 
 const TETRAHEDRON_SIZE = 5;
 
@@ -247,18 +250,14 @@ const Tetrahedron = ({
     [objectData?.faceTextStyles]
   );
 
-  // PERFORMANCE: Subscribe only to connections involving THIS tetrahedron.
+  // PERFORMANCE: O(1) index lookup instead of O(C) filter. Shallow equality prevents
+  // re-renders when this tetrahedron's connections haven't changed.
   const connectionsFromStore = useConnectionStore(
     useCallback(
-      (state) => state.connections.filter(
-        (c) => {
-          const sid = c.start?.objectId || c.start?.cube?.id;
-          const eid = c.end?.objectId || c.end?.cube?.id;
-          return sid === id || eid === id;
-        }
-      ),
+      (state) => state.connectionsByObjectId.get(String(id)) || EMPTY_CONNECTIONS,
       [id]
-    )
+    ),
+    shallow
   );
 
   // Refs

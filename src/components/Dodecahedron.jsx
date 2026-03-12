@@ -14,6 +14,8 @@ import {
 import { shallow } from 'zustand/shallow';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
+
+const EMPTY_CONNECTIONS = [];
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 // Import unified utilities
 import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
@@ -196,14 +198,14 @@ const Sphere = React.memo(
     );
     const setObjects = useObjectsStore((state) => state.setObjects);
 
-    // PERFORMANCE: Subscribe only to connections involving THIS dodecahedron.
+    // PERFORMANCE: O(1) index lookup instead of O(C) filter. Shallow equality prevents
+    // re-renders when this dodecahedron's connections haven't changed.
     const connections = useConnectionStore(
       useCallback(
-        (state) => state.connections.filter(
-          (c) => c.start?.objectId === id?.toString() || c.end?.objectId === id?.toString()
-        ),
+        (state) => state.connectionsByObjectId.get(id?.toString()) || EMPTY_CONNECTIONS,
         [id]
-      )
+      ),
+      shallow
     );
 
     // Consolidate all derived dodecahedron data into single useMemo (like Cube optimization)

@@ -122,21 +122,25 @@ export const getCellCoordinatesWithHysteresis = (position, currentCell) => {
   }
 
   // Check if we're within the hysteresis buffer zone of the current cell
+  // Use Chebyshev distance (max of per-axis distances) instead of Euclidean.
+  // Cells are axis-aligned cubes, so the relevant metric is the max absolute
+  // offset along any single axis. Euclidean distance underestimates at
+  // corners (√3 × half-size) causing hysteresis to never activate diagonally.
   const currentCellCenter = [
     (currentCell.x + 0.5) * CELL_SIZE,
     (currentCell.y + 0.5) * CELL_SIZE,
     (currentCell.z + 0.5) * CELL_SIZE,
   ];
 
-  const distanceFromCenter = Math.sqrt(
-    Math.pow(x - currentCellCenter[0], 2) +
-      Math.pow(y - currentCellCenter[1], 2) +
-      Math.pow(z - currentCellCenter[2], 2)
+  const chebyshevDistance = Math.max(
+    Math.abs(x - currentCellCenter[0]),
+    Math.abs(y - currentCellCenter[1]),
+    Math.abs(z - currentCellCenter[2]),
   );
 
   // If we're still within the buffer zone, stick to current cell
   const bufferDistance = CELL_SIZE / 2 - CELL_BOUNDARY_HYSTERESIS;
-  if (distanceFromCenter < bufferDistance) {
+  if (chebyshevDistance < bufferDistance) {
     return currentCell;
   }
 
@@ -795,12 +799,22 @@ export const moveObjectBetweenCells = async (
         return updateResult;
       }
 
-      // If cells are different, proceed with move
-      await removeObjectFromCell(userId, spaceId, objectId, oldPosition);
-
+      // Write to the new cell FIRST so the object is never missing from both.
+      // Only delete from the old cell on success — if the write fails the
+      // object remains safely in its original cell.
       const added = await addObjectToCell(userId, spaceId, effectiveObjectData);
 
       if (added) {
+        // New cell confirmed — now safe to remove from old cell.
+        // A failure here leaves a stale duplicate, which is recoverable;
+        // the alternative (delete-first) risks total data loss.
+        try {
+          await removeObjectFromCell(userId, spaceId, objectId, oldPosition);
+        } catch {
+          console.warn(
+            `[SpatialMove] Old-cell cleanup failed for ${objectId} in ${oldCellId}. Stale copy may remain.`
+          );
+        }
         return true;
       } else {
         return false;

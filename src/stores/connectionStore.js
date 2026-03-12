@@ -1,8 +1,36 @@
 import { create } from 'zustand';
 
+// Stable empty array for components with no connections — prevents re-renders from shallow equality
+const EMPTY_CONNECTIONS = [];
+
+// Build a Map<objectId, Connection[]> index for O(1) lookups by components.
+// Covers all objectId fallback chains used by Cube, Dodecahedron, Tetrahedron, Plane, TextObject.
+function _buildConnectionsByObjectId(connections) {
+  const index = new Map();
+  for (let i = 0; i < connections.length; i++) {
+    const conn = connections[i];
+    const startId = conn.start?.objectId || conn.start?.cube?.id || conn.start?.id;
+    const endId = conn.end?.objectId || conn.end?.cube?.id || conn.end?.id;
+    const sKey = startId != null ? String(startId) : null;
+    const eKey = endId != null ? String(endId) : null;
+    if (sKey) {
+      let arr = index.get(sKey);
+      if (!arr) { arr = []; index.set(sKey, arr); }
+      arr.push(conn);
+    }
+    if (eKey && eKey !== sKey) {
+      let arr = index.get(eKey);
+      if (!arr) { arr = []; index.set(eKey, arr); }
+      arr.push(conn);
+    }
+  }
+  return index;
+}
+
 const useConnectionStore = create((set, get) => ({
   // State for all connections
   connections: [], // Array of connection objects
+  connectionsByObjectId: new Map(), // O(1) index: objectId → Connection[]
   selectedConnection: null,
   highlightedFlowPathIds: new Set(), // Set of connection IDs highlighted as part of a flow path
   activeConnection: null,
@@ -86,8 +114,10 @@ const useConnectionStore = create((set, get) => ({
         return state;
       }
 
+      const newConns = [...state.connections, connection];
       const newState = {
-        connections: [...state.connections, connection],
+        connections: newConns,
+        connectionsByObjectId: _buildConnectionsByObjectId(newConns),
       };
 
       // Log state after update
@@ -121,8 +151,10 @@ const useConnectionStore = create((set, get) => ({
         return state;
       }
 
+      const newConns = [...state.connections, ...newConnections];
       const newState = {
-        connections: [...state.connections, ...newConnections],
+        connections: newConns,
+        connectionsByObjectId: _buildConnectionsByObjectId(newConns),
       };
 
       // Log state after update
@@ -141,10 +173,12 @@ const useConnectionStore = create((set, get) => ({
       const newDeletingSet = new Set(state.deletingConnections);
       newDeletingSet.add(connectionId);
 
-      const newState = {
-        connections: state.connections.filter(
+      const filteredConns = state.connections.filter(
           (conn) => conn.id !== connectionId
-        ),
+        );
+      const newState = {
+        connections: filteredConns,
+        connectionsByObjectId: _buildConnectionsByObjectId(filteredConns),
         deletingConnections: newDeletingSet,
         // Clean up related state
         lineTexts: Object.fromEntries(
@@ -258,6 +292,7 @@ const useConnectionStore = create((set, get) => ({
 
       const newState = {
         connections: filteredConnections,
+        connectionsByObjectId: _buildConnectionsByObjectId(filteredConnections),
         deletingConnections: state.deletingConnections, // Keep existing deletingConnections unchanged
         lineTexts: cleanLineTexts,
         lineTextStyles: cleanLineTextStyles,
@@ -323,6 +358,7 @@ const useConnectionStore = create((set, get) => ({
 
       return {
         connections: newConnections,
+        connectionsByObjectId: _buildConnectionsByObjectId(newConnections),
       };
     });
     // PERFORMANCE: Disable logging during style updates to prevent any potential issues
@@ -391,6 +427,7 @@ const useConnectionStore = create((set, get) => ({
 
       return {
         connections: newConnections,
+        connectionsByObjectId: _buildConnectionsByObjectId(newConnections),
       };
     });
 
@@ -407,14 +444,14 @@ const useConnectionStore = create((set, get) => ({
         : [];
       const newConnections = connections(currentConnections);
       if (Array.isArray(newConnections)) {
-        set({ connections: newConnections });
+        set({ connections: newConnections, connectionsByObjectId: _buildConnectionsByObjectId(newConnections) });
       } else {
-        set({ connections: [] }); // Fallback to empty array
+        set({ connections: [], connectionsByObjectId: new Map() });
       }
     } else if (Array.isArray(connections)) {
-      set({ connections });
+      set({ connections, connectionsByObjectId: _buildConnectionsByObjectId(connections) });
     } else {
-      set({ connections: [] }); // Fallback to empty array
+      set({ connections: [], connectionsByObjectId: new Map() });
     }
     // Log state after setting connections
     get()._logState();
@@ -751,10 +788,7 @@ const useConnectionStore = create((set, get) => ({
 
   getConnectionsForObject: (objectId) => {
     const state = get();
-    return state.connections.filter(
-      (conn) =>
-        conn.start?.objectId === objectId || conn.end?.objectId === objectId
-    );
+    return state.connectionsByObjectId.get(String(objectId)) || EMPTY_CONNECTIONS;
   },
 
   areObjectsConnected: (objectId1, objectId2) => {
@@ -883,11 +917,13 @@ const useConnectionStore = create((set, get) => ({
         }, 100); // Small delay to avoid race conditions
       }
 
-      const newState = {
-        connections: state.connections.filter(
+      const filteredConns = state.connections.filter(
           (conn) =>
             conn.start?.objectId !== objectId && conn.end?.objectId !== objectId
-        ),
+        );
+      const newState = {
+        connections: filteredConns,
+        connectionsByObjectId: _buildConnectionsByObjectId(filteredConns),
         deletingConnections: newDeletingSet,
         // Clean up related state
         lineTexts: Object.fromEntries(
@@ -979,8 +1015,10 @@ const useConnectionStore = create((set, get) => ({
         return state;
       }
 
+      const newConns = [...state.connections, connection];
       const newState = {
-        connections: [...state.connections, connection],
+        connections: newConns,
+        connectionsByObjectId: _buildConnectionsByObjectId(newConns),
       };
 
       // Log state after update
@@ -1008,6 +1046,7 @@ const useConnectionStore = create((set, get) => ({
   resetConnections: () => {
     set({
       connections: [],
+      connectionsByObjectId: new Map(),
       selectedConnection: null,
       highlightedFlowPathIds: new Set(),
       activeConnection: null,

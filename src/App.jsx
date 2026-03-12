@@ -16,6 +16,7 @@ import LODManager from './components/LODManager';
 import DiagramOverlay2D from './components/DiagramOverlay2D';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
+import FrameloopController from './components/FrameloopController';
 
 // Hook imports
 import { useAuthState } from './hooks/useAuthState';
@@ -1558,7 +1559,6 @@ const App = () => {
   const canvasSettings = useMemo(() => {
     const { isMobile, isLowEnd } = deviceInfo;
     const dpr = Math.min(window.devicePixelRatio, 2);
-    const frameloop = viewMode === '3d' ? 'always' : 'never';
     
     if (canvasQuality === 'low' || isLowEnd || isMobile) {
       return {
@@ -1573,7 +1573,6 @@ const App = () => {
           precision: 'highp',
         },
         dpr,
-        frameloop,
         camera: { fov: 50, near: 0.1, far: 10000, position: [0, 0, 50] },
       };
     }
@@ -1590,10 +1589,9 @@ const App = () => {
         precision: 'highp',
       },
       dpr,
-      frameloop,
       camera: { fov: 50, near: 0.1, far: 2000 },
     };
-  }, [deviceInfo, canvasQuality, viewMode]);
+  }, [deviceInfo, canvasQuality]);
 
   // Initialize Canvas rendering after initial auth/space setup
   useEffect(() => {
@@ -1709,15 +1707,16 @@ const App = () => {
           {' '}
           {/* Global frame counter - updates once per frame for all components */}
           <FrameTicker />
+          <FrameloopController />
           
           {/* PERFORMANCE: LOD Manager for distance-based level of detail */}
           <LODManager enabled={useLOD} />
-          {/* PERFORMANCE: Global animation manager for all connection line animations */}
-          <ConnectionAnimationManager />
+          {/* PERFORMANCE: skip heavy 3D-only work while 2D overlay is shown */}
+          {viewMode === '3d' && <ConnectionAnimationManager />}
           <CustomCamera ref={cameraRef} />
           <group>
             {/* Real-time connection position updater - reactive to store changes */}
-            <RealTimeConnectionUpdater />{' '}
+            {viewMode === '3d' && <RealTimeConnectionUpdater />}{' '}
             {/* Render connections with virtualization */}
             <ConnectionsRenderer
               objects={objects}

@@ -21,12 +21,15 @@ import {
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
+import { shallow } from 'zustand/shallow';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
 // Import snap line indicator
 import SnapLineIndicator from './SnapLineIndicator';
 // Import unified global click handler
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
+
+const EMPTY_CONNECTIONS = [];
 
 const TextObject = React.memo(
   ({
@@ -52,19 +55,13 @@ const TextObject = React.memo(
       useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
     );
 
-    // PERFORMANCE: Subscribe only to connections involving THIS text object.
+    // PERFORMANCE: O(1) index lookup instead of O(C) filter.
     const connectionsFromStore = useConnectionStore(
       useCallback(
-        (state) => state.connections.filter(
-          (c) => {
-            const sid = String(c.start?.objectId || c.start?.id || '');
-            const eid = String(c.end?.objectId || c.end?.id || '');
-            const thisId = id?.toString() || '';
-            return sid === thisId || eid === thisId;
-          }
-        ),
+        (state) => state.connectionsByObjectId.get(id?.toString()) || EMPTY_CONNECTIONS,
         [id]
-      )
+      ),
+      shallow
     );
 
     // Memoize derived values to prevent unnecessary re-renders

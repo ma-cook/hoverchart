@@ -6,6 +6,7 @@ import GlobalDodecahedronEdgesRenderer from './GlobalDodecahedronEdgesRenderer';
 import GlobalTetrahedronEdgesRenderer from './GlobalTetrahedronEdgesRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
+import useUIOverlayStore from '../stores/uiOverlayStore';
 
 /**
  * PROGRESSIVE MOUNT BUDGET
@@ -181,6 +182,14 @@ const ObjectsRenderer = React.memo(({
 
     if (!isAlreadyMounting && pendingRef.current.length > 0) {
       const mountNextBatch = () => {
+        // PERF: Suspend the rAF loop while the 2D overlay is shown.
+        // The pending queue is preserved so mounting resumes automatically
+        // when the user switches back to 3D.
+        if (useUIOverlayStore.getState().viewMode !== '3d') {
+          rafIdRef.current = null;
+          return;
+        }
+
         const pending = pendingRef.current;
         if (pending.length === 0) {
           // SAFETY NET: Before terminating, check if any objects slipped through
@@ -270,6 +279,40 @@ const ObjectsRenderer = React.memo(({
     // cancels it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleObjectIds, objects.length]);
+
+  // PERF: When switching back from 2D → 3D, restart the progressive mount
+  // loop if it was suspended with pending items.
+  const viewMode = useUIOverlayStore((s) => s.viewMode);
+  useEffect(() => {
+    if (viewMode === '3d' && rafIdRef.current === null && pendingRef.current.length > 0) {
+      // Re-trigger the progressive mount effect by toggling a dummy counter.
+      // The effect above uses visibleObjectIds as a dep, so we just need any
+      // change.  But the simplest approach is to explicitly schedule a frame.
+      const mountResume = () => {
+        if (useUIOverlayStore.getState().viewMode !== '3d') {
+          rafIdRef.current = null;
+          return;
+        }
+        const pending = pendingRef.current;
+        if (pending.length === 0) { rafIdRef.current = null; return; }
+        const budget = acquireBudget(MOUNT_BUDGET);
+        if (budget === 0) { rafIdRef.current = requestAnimationFrame(mountResume); return; }
+        const allObjectIds = new Set(objectsRef.current.map(o => o.id));
+        let added = 0;
+        while (pending.length > 0 && added < budget) {
+          const id = pending.shift();
+          if (allObjectIds.has(id)) { mountedIdsRef.current.add(id); added++; }
+        }
+        if (added > 0) setMountedIds(new Set(mountedIdsRef.current));
+        if (pending.length > 0) {
+          rafIdRef.current = requestAnimationFrame(mountResume);
+        } else {
+          rafIdRef.current = null;
+        }
+      };
+      rafIdRef.current = requestAnimationFrame(mountResume);
+    }
+  }, [viewMode]);
 
   // Cleanup on unmount
   useEffect(() => {

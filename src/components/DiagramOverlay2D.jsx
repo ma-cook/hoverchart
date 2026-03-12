@@ -6,7 +6,6 @@ import {
   MiniMap,
   Panel,
   useNodesState,
-  useEdgesState,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -120,11 +119,13 @@ function buildReactFlowEdges(edgeRoutes) {
 // ---------------------------------------------------------------------------
 
 /** Return the layer key for a given connection type */
+const TYPE_TO_LAYER = new Map();
+for (const def of LAYER_DEFS) {
+  for (const t of def.types) TYPE_TO_LAYER.set(t, def.key);
+}
+
 function layerForType(connectionType) {
-  for (const def of LAYER_DEFS) {
-    if (def.types.includes(connectionType)) return def.key;
-  }
-  return null; // unknown type — always show
+  return TYPE_TO_LAYER.get(connectionType) ?? null;
 }
 
 /** Filter edges by active layers and optional flow path */
@@ -164,6 +165,38 @@ function minimapNodeColor(node) {
 }
 
 // ---------------------------------------------------------------------------
+// PERF: Stable object references for ReactFlow props — prevents unnecessary
+// internal reconciliation on every render.
+// ---------------------------------------------------------------------------
+
+const PRO_OPTIONS = { hideAttribution: true };
+
+const OVERLAY_STYLE = { position: 'fixed', inset: 0, zIndex: 100, background: '#f8f8f8' };
+
+const LOADING_OVERLAY_STYLE = {
+  position: 'absolute', inset: 0, zIndex: 110,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: 'rgba(248,248,248,0.85)',
+};
+
+const ERROR_STYLE = {
+  position: 'absolute', top: '60px', left: '50%',
+  transform: 'translateX(-50%)', zIndex: 120,
+  background: '#ffebee', color: '#c62828',
+  padding: '8px 16px', borderRadius: '6px',
+  fontSize: '13px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+};
+
+const NO_DATA_OVERLAY_STYLE = {
+  position: 'fixed', inset: 0, zIndex: 100,
+  background: '#f8f8f8',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  flexDirection: 'column', gap: '12px',
+};
+
+const MINIMAP_STYLE = { border: '1px solid #ccc' };
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -178,8 +211,7 @@ export default function DiagramOverlay2D() {
   const setViewMode = useUIOverlayStore((s) => s.setViewMode);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [allEdges, setAllEdges] = useState([]); // unfiltered edges
+  const [allEdges, setAllEdges] = useState([]); // unfiltered edges from worker
   const [isLayouting, setIsLayouting] = useState(false);
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
   const [activeFlowPath, setActiveFlowPath] = useState('');
@@ -253,8 +285,6 @@ export default function DiagramOverlay2D() {
 
         setNodes(rfNodes);
         setAllEdges(rfEdges);
-        // Apply initial filter
-        setEdges(filterEdges(rfEdges, DEFAULT_LAYERS, ''));
       } catch (err) {
         if (!cancelled) {
           console.error('[DiagramOverlay2D] Layout failed:', err);
@@ -266,13 +296,13 @@ export default function DiagramOverlay2D() {
     })();
 
     return () => { cancelled = true; };
-  }, [serialisedGraphData, serialisedHierarchy, setLayout2D, setNodes, setEdges]);
+  }, [serialisedGraphData, serialisedHierarchy, setLayout2D, setNodes]);
 
-  // ---- Re-filter edges when layers or flow path change ----
-  useEffect(() => {
-    if (allEdges.length === 0) return;
-    setEdges(filterEdges(allEdges, layers, activeFlowPath));
-  }, [layers, activeFlowPath, allEdges, setEdges]);
+  // ---- Derive filtered edges via useMemo (avoids extra render from useEffect+setState) ----
+  const filteredEdges = useMemo(
+    () => filterEdges(allEdges, layers, activeFlowPath),
+    [allEdges, layers, activeFlowPath]
+  );
 
   // ---- Toggle a layer checkbox ----
   const toggleLayer = useCallback((key) => {
@@ -306,12 +336,7 @@ export default function DiagramOverlay2D() {
   // ---- No data state ----
   if (!graphs || graphs.length === 0) {
     return (
-      <div style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        background: '#f8f8f8',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexDirection: 'column', gap: '12px',
-      }}>
+      <div style={NO_DATA_OVERLAY_STYLE}>
         <div style={{ fontSize: '16px', color: '#666' }}>
           No diagram data available.
         </div>
@@ -326,15 +351,11 @@ export default function DiagramOverlay2D() {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: '#f8f8f8' }}>
+    <div style={OVERLAY_STYLE}>
       <EdgeMarkerDefs />
 
       {isLayouting && (
-        <div style={{
-          position: 'absolute', inset: 0, zIndex: 110,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(248,248,248,0.85)',
-        }}>
+        <div style={LOADING_OVERLAY_STYLE}>
           <div style={{ textAlign: 'center' }}>
             <div className="objects-loading-spinner" />
             <div style={{ marginTop: '12px', fontSize: '14px', color: '#666' }}>
@@ -345,29 +366,23 @@ export default function DiagramOverlay2D() {
       )}
 
       {layoutError && (
-        <div style={{
-          position: 'absolute', top: '60px', left: '50%',
-          transform: 'translateX(-50%)', zIndex: 120,
-          background: '#ffebee', color: '#c62828',
-          padding: '8px 16px', borderRadius: '6px',
-          fontSize: '13px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        }}>
+        <div style={ERROR_STYLE}>
           Layout error: {layoutError}
         </div>
       )}
 
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={filteredEdges}
         nodeTypes={customNodeTypes}
         edgeTypes={customEdgeTypes}
         onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
         onNodeClick={handleNodeClick}
+        onlyRenderVisibleElements
         fitView
         minZoom={0.05}
         maxZoom={2}
-        proOptions={{ hideAttribution: true }}
+        proOptions={PRO_OPTIONS}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={true}
@@ -379,7 +394,7 @@ export default function DiagramOverlay2D() {
           nodeStrokeWidth={1}
           zoomable
           pannable
-          style={{ border: '1px solid #ccc' }}
+          style={MINIMAP_STYLE}
         />
 
         {/* Filter panel + back-to-3D button */}

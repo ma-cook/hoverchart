@@ -59,11 +59,23 @@ let _resetScheduled = false;
 /** Timestamp of the previous rAF tick (for computing frame delta). */
 let _prevFrameTs = 0;
 
-/** Smoothed frame time in ms (EMA with alpha=0.3). */
+/** Smoothed frame time in ms (EMA with alpha=0.15 — slower reaction avoids
+ *  single-spike overreaction, recovers in ~5 frames instead of ~10). */
 let _smoothFrameTime = 16;
 
-/** Threshold: if smoothed frame time exceeds this, `isFrameBudgetExhausted()` returns true. */
-const FRAME_TIME_BUDGET_MS = 28; // ~35 fps — anything slower means we should shed work
+/** Threshold: if smoothed frame time exceeds this, frame budget is considered
+ *  exhausted. 40ms ≈ 25fps — a safer threshold that avoids the starvation
+ *  spiral on mid-range GPUs where the old 28ms value permanently disabled
+ *  LOD and culling. */
+const FRAME_TIME_BUDGET_MS = 40;
+
+/** Number of consecutive frames where _smoothFrameTime > FRAME_TIME_BUDGET_MS.
+ *  `isFrameBudgetExhausted()` only returns true after this many consecutive
+ *  bad frames, preventing a single spike from disabling essential culling. */
+let _consecutiveBadFrames = 0;
+
+/** How many consecutive bad frames before we start shedding work. */
+const BAD_FRAME_THRESHOLD = 5;
 
 /** Number of camera move events in the last 500ms — detects "rapid" panning. */
 let _moveCount = 0;
@@ -80,8 +92,16 @@ let _frameTrackingRunning = false;
 function _frameTimeTracker(ts) {
   if (_prevFrameTs > 0) {
     const dt = ts - _prevFrameTs;
-    // EMA smoothing (alpha=0.3) — reacts to spikes within ~3 frames
-    _smoothFrameTime = _smoothFrameTime * 0.7 + dt * 0.3;
+    // EMA smoothing (alpha=0.15) — smoother than the old 0.3, recovers faster
+    // from brief spikes while still tracking sustained degradation.
+    _smoothFrameTime = _smoothFrameTime * 0.85 + dt * 0.15;
+
+    // Track consecutive bad frames for starvation prevention
+    if (_smoothFrameTime > FRAME_TIME_BUDGET_MS) {
+      _consecutiveBadFrames++;
+    } else {
+      _consecutiveBadFrames = 0;
+    }
   }
   _prevFrameTs = ts;
   requestAnimationFrame(_frameTimeTracker);
@@ -185,15 +205,18 @@ export function isCameraMovingRapidly() {
 }
 
 /**
- * Returns `true` when recent frame times exceed the budget threshold
- * (~28ms / 35fps). Per-frame hooks should use this to voluntarily skip
- * non-essential work (LOD, billboard, culling) and let the main thread
- * recover.
+ * Returns `true` when the frame budget is considered exhausted — i.e. the
+ * renderer has been consistently slow for several consecutive frames.
+ *
+ * A single spike does NOT trigger exhaustion; only sustained degradation
+ * (BAD_FRAME_THRESHOLD consecutive frames above 40ms) causes this to fire.
+ * This prevents the starvation spiral where one bad frame disables LOD and
+ * culling — the very systems that would bring frame time back down.
  *
  * @returns {boolean}
  */
 export function isFrameBudgetExhausted() {
-  return _smoothFrameTime > FRAME_TIME_BUDGET_MS;
+  return _consecutiveBadFrames >= BAD_FRAME_THRESHOLD;
 }
 
 /**

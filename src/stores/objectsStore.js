@@ -115,18 +115,25 @@ const useObjectsStore = createWithEqualityFn(
 
         // IDs are same, but check if any object data changed (position, scale, etc.)
         // Create a lightweight hash of each object for comparison
-        // PERFORMANCE FIX: Use fast numeric hash instead of large string concatenation.
-        // The old approach built one giant string per object then joined them all —
-        // O(N) string allocations that are immediately GC'd on every update.
-        // This rolling XOR hash avoids any string allocation.
+        // PERFORMANCE FIX: Use addition-based hash instead of XOR.
+        // XOR is its own inverse — symmetric field changes can cancel out
+        // and silently produce the same hash (dropped UI updates).
+        // Addition with prime multipliers avoids that class of collisions.
         const numericHash = (arr) => {
           if (!arr) return 0;
           let h = 0;
           for (let i = 0; i < arr.length; i++) {
-            // Round to 3 decimal places to match floating-point precision noise
-            h = (Math.imul(h, 31) ^ Math.round(arr[i] * 1000)) | 0;
+            h = (Math.imul(h, 31) + Math.round(arr[i] * 1000)) | 0;
           }
           return h;
+        };
+        // Proper string hash (FNV-1a style) instead of just .length
+        const stringHash = (str) => {
+          let h = 0x811c9dc5;
+          for (let i = 0; i < str.length; i++) {
+            h = Math.imul(h ^ str.charCodeAt(i), 0x01000193);
+          }
+          return h | 0;
         };
 
         let currentHash = 0;
@@ -136,14 +143,14 @@ const useObjectsStore = createWithEqualityFn(
           const no = filteredObjects[i];
           // Mix in id, position hash, scale hash, and volatile state fields
           // (broadcasting, color, headerText etc.) so property-only updates are not dropped.
-          const idVal = typeof co.id === 'number' ? co.id : (co.id ? co.id.length : 0);
+          const idVal = typeof co.id === 'number' ? co.id : (co.id ? stringHash(co.id.toString()) : 0);
           const coVolatile = (co.broadcasting ? 1 : 0) | (co.webcamActive ? 2 : 0) | (co.screenShareActive ? 4 : 0);
-          const coBroadcastIdHash = co.broadcastId ? co.broadcastId.length : 0;
-          currentHash = (Math.imul(currentHash, 1000003) ^ idVal ^ numericHash(co.position) ^ (numericHash(co.scale) * 7) ^ (coVolatile * 13) ^ (coBroadcastIdHash * 17)) | 0;
-          const idVal2 = typeof no.id === 'number' ? no.id : (no.id ? no.id.length : 0);
+          const coBroadcastIdHash = co.broadcastId ? stringHash(co.broadcastId) : 0;
+          currentHash = (Math.imul(currentHash, 1000003) + idVal + numericHash(co.position) + Math.imul(numericHash(co.scale), 7) + coVolatile * 13 + coBroadcastIdHash * 17) | 0;
+          const idVal2 = typeof no.id === 'number' ? no.id : (no.id ? stringHash(no.id.toString()) : 0);
           const noVolatile = (no.broadcasting ? 1 : 0) | (no.webcamActive ? 2 : 0) | (no.screenShareActive ? 4 : 0);
-          const noBroadcastIdHash = no.broadcastId ? no.broadcastId.length : 0;
-          newHash = (Math.imul(newHash, 1000003) ^ idVal2 ^ numericHash(no.position) ^ (numericHash(no.scale) * 7) ^ (noVolatile * 13) ^ (noBroadcastIdHash * 17)) | 0;
+          const noBroadcastIdHash = no.broadcastId ? stringHash(no.broadcastId) : 0;
+          newHash = (Math.imul(newHash, 1000003) + idVal2 + numericHash(no.position) + Math.imul(numericHash(no.scale), 7) + noVolatile * 13 + noBroadcastIdHash * 17) | 0;
         }
 
         if (currentHash !== newHash) {

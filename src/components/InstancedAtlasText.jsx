@@ -173,7 +173,7 @@ const InstancedAtlasText = ({
     <>
       {pageGroups.map((group) => (
         <PageInstancedMesh
-          key={`instanced-page-${group.texture.id}-${group.items.length}`}
+          key={`instanced-page-${group.texture.id}`}
           atlas={atlas}
           texture={group.texture}
           items={group.items}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import Cube from './Cube';
 import Tetrahedron from './Tetrahedron';
 import Sphere from './Dodecahedron';
@@ -40,6 +40,16 @@ const ObjectRenderer = React.memo(
     user, // Add this prop
     currentSpaceId, // Add this prop
   }) => {
+    // Stable callback references — prevents new closures per render from
+    // breaking React.memo on child 3D components (Cube, Tetrahedron, etc.).
+    const objId = obj.id;
+    const onClickStable = useCallback(() => handleObjectClick(objId), [handleObjectClick, objId]);
+    const onDeleteStable = useCallback(() => handleObjectDelete(objId), [handleObjectDelete, objId]);
+    const onTransformStartStable = useCallback(() => registerTransformingObject(objId, true), [registerTransformingObject, objId]);
+    const onTransformEndStable = useCallback(() => registerTransformingObject(objId, false), [registerTransformingObject, objId]);
+    const onMatrixChangedStable = useCallback((matrixWorld) => handleObjectMatrixChanged(objId, matrixWorld), [handleObjectMatrixChanged, objId]);
+    const onMoveStable = useCallback((newPosition) => handleObjectMove(objId, newPosition, false, false), [handleObjectMove, objId]);
+
     // Container cubes now have their edges rendered by GlobalCubeEdgesRenderer
     // They don't need any other rendering (no faces, no interaction)
     if (obj.type === 'cube' && obj.merfolkData?.isContainer) {
@@ -52,7 +62,7 @@ const ObjectRenderer = React.memo(
           key={obj.id}
           id={obj.id}
           selected={selectedId === obj.id}
-          onClick={() => handleObjectClick(obj.id)}
+          onClick={onClickStable}
           onUpdate={handleObjectUpdate}
           disableOrbitControls={disableOrbitControls}
           enableOrbitControls={enableOrbitControls}
@@ -66,17 +76,13 @@ const ObjectRenderer = React.memo(
           setActiveTextStyleUI={setActiveTextStyleUI}
           handleIndicatorDeselected={handleIndicatorDeselected}
           registerTransformingObject={registerTransformingObject}
-          onTransformStart={() => registerTransformingObject(obj.id, true)}
-          onTransformEnd={() => registerTransformingObject(obj.id, false)}
-          onMatrixChanged={(matrixWorld) =>
-            handleObjectMatrixChanged(obj.id, matrixWorld)
-          }
+          onTransformStart={onTransformStartStable}
+          onTransformEnd={onTransformEndStable}
+          onMatrixChanged={onMatrixChangedStable}
           transformControls={TRANSFORM_CONTROLS_CONFIG}
-          onDelete={() => handleObjectDelete(obj.id)}
+          onDelete={onDeleteStable}
           handleObjectMove={handleObjectMove}
-          onMove={(newPosition) =>
-            handleObjectMove(obj.id, newPosition, false, false)
-          }
+          onMove={onMoveStable}
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
           renderEdges={false} // Edges rendered by GlobalCubeEdgesRenderer for better performance
         />
@@ -88,7 +94,7 @@ const ObjectRenderer = React.memo(
           key={obj.id}
           id={obj.id}
           selected={selectedId === obj.id}
-          onClick={() => handleObjectClick(obj.id)}
+          onClick={onClickStable}
           onUpdate={handleObjectUpdate}
           disableOrbitControls={disableOrbitControls}
           enableOrbitControls={enableOrbitControls}
@@ -103,17 +109,13 @@ const ObjectRenderer = React.memo(
           setActiveTextStyleUI={setActiveTextStyleUI}
           handleIndicatorDeselected={handleIndicatorDeselected}
           registerTransformingObject={registerTransformingObject}
-          onTransformStart={() => registerTransformingObject(obj.id, true)}
-          onTransformEnd={() => registerTransformingObject(obj.id, false)}
-          onMatrixChanged={(matrixWorld) =>
-            handleObjectMatrixChanged(obj.id, matrixWorld)
-          }
+          onTransformStart={onTransformStartStable}
+          onTransformEnd={onTransformEndStable}
+          onMatrixChanged={onMatrixChangedStable}
           transformControls={TRANSFORM_CONTROLS_CONFIG}
-          onDelete={() => handleObjectDelete(obj.id)}
+          onDelete={onDeleteStable}
           handleObjectMove={handleObjectMove}
-          onMove={(newPosition) =>
-            handleObjectMove(obj.id, newPosition, false, false)
-          }
+          onMove={onMoveStable}
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
           renderEdges={false} // Edges rendered by GlobalTetrahedronEdgesRenderer for better performance
         />
@@ -125,17 +127,15 @@ const ObjectRenderer = React.memo(
           key={obj.id}
           id={obj.id}
           selected={selectedId === obj.id}
-          onClick={() => handleObjectClick(obj.id)}
+          onClick={onClickStable}
           showAllIndicators={showAllCubesIndicators}
           onIndicatorSelected={handleIndicatorSelected}
           globalIndicatorSelected={globalIndicatorSelected}
           onFaceIndicatorClick={handleFaceIndicatorClick}
-          onMove={(newPosition) =>
-            handleObjectMove(obj.id, newPosition, false, false)
-          }
+          onMove={onMoveStable}
           onUpdate={handleObjectUpdate}
           onIndicatorDeselected={handleIndicatorDeselected}
-          onDelete={() => handleObjectDelete(obj.id)}
+          onDelete={onDeleteStable}
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
           selectedIndicators={selectedIndicators} // Add this prop
           indicatorMode={indicatorMode}
@@ -152,14 +152,12 @@ const ObjectRenderer = React.memo(
           position={obj.position}
           scale={obj.scale || [1, 1, 1]}
           selected={selectedId === obj.id}
-          onClick={() => handleObjectClick(obj.id)}
+          onClick={onClickStable}
           showAllIndicators={showAllCubesIndicators}
           onIndicatorSelected={handleIndicatorSelected}
           globalIndicatorSelected={globalIndicatorSelected}
           onFaceIndicatorClick={handleFaceIndicatorClick}
-          onMove={(newPosition) =>
-            handleObjectMove(obj.id, newPosition, false, false)
-          }
+          onMove={onMoveStable}
           selectedIndicators={selectedIndicators}
           indicatorMode={indicatorMode}
           onUpdate={handleObjectUpdate}
@@ -175,7 +173,7 @@ const ObjectRenderer = React.memo(
           webcamActive={obj.webcamActive}
           activeTextStyleUI={activeTextStyleUI}
           setActiveTextStyleUI={setActiveTextStyleUI}
-          onDelete={() => handleObjectDelete(obj.id)}
+          onDelete={onDeleteStable}
           user={user}
           currentSpaceId={currentSpaceId}
         />
@@ -188,7 +186,7 @@ const ObjectRenderer = React.memo(
           id={obj.id}
           position={obj.position}
           selected={selectedId === obj.id}
-          onClick={() => handleObjectClick(obj.id)}
+          onClick={onClickStable}
           showAllIndicators={showAllCubesIndicators}
           onIndicatorSelected={handleIndicatorSelected}
           globalIndicatorSelected={globalIndicatorSelected}
@@ -196,12 +194,12 @@ const ObjectRenderer = React.memo(
           selectedIndicators={selectedIndicators}
           indicatorMode={indicatorMode}
           onUpdate={handleObjectUpdate}
-          onDelete={() => handleObjectDelete(obj.id)}
+          onDelete={onDeleteStable}
           registerTransformingObject={registerTransformingObject}
-          onResizeStart={() => registerTransformingObject(obj.id, true)}
-          onResizeEnd={() => registerTransformingObject(obj.id, false)}
-          onTransformStart={() => registerTransformingObject(obj.id, true)}
-          onTransformEnd={() => registerTransformingObject(obj.id, false)}
+          onResizeStart={onTransformStartStable}
+          onResizeEnd={onTransformEndStable}
+          onTransformStart={onTransformStartStable}
+          onTransformEnd={onTransformEndStable}
         />
       );
     }
@@ -211,10 +209,10 @@ const ObjectRenderer = React.memo(
           key={obj.id}
           obj={obj}
           isSelected={selectedId === obj.id}
-          onClick={() => handleObjectClick(obj.id)}
+          onClick={onClickStable}
           onUpdate={handleObjectUpdate}
-          onTranformStart={() => registerTransformingObject(obj.id, true)}
-          onTransformEnd={() => registerTransformingObject(obj.id, false)}
+          onTranformStart={onTransformStartStable}
+          onTransformEnd={onTransformEndStable}
           onMatrixChanged={handleObjectMatrixChanged}
         />
       );

@@ -1,6 +1,5 @@
 import { db } from '../firebase';
-import { collection, onSnapshot, Timestamp } from 'firebase/firestore';
-import isEqual from 'lodash/isEqual';
+import { collection, onSnapshot, Timestamp, doc, writeBatch } from 'firebase/firestore';
 import { isSharedSpace } from './sharedSpacesService';
 import {
   addObjectToCell,
@@ -19,7 +18,7 @@ export { deleteAllCellsInSpace };
 
 // Cache and tracking for objects
 export const objectsCache = new Map();
-export const saveTimeouts = new Map();
+export const saveTimeouts = new Map(); // Legacy name kept for export compat — now tracks pending batch keys
 export const updateThrottles = new Map();
 export const lastReceivedObjects = new Map();
 export const movingObjects = new Map(); // Track objects currently being moved to prevent race conditions
@@ -28,12 +27,110 @@ export const objectCellMap = new Map(); // Track which cell each object belongs 
 // Track objects that are being deleted to prevent re-addition
 const deletingObjects = new Set(); // Set of objectId strings being deleted
 
+// ── Batched write queue ──────────────────────────────────────────────
+// Instead of N individual setTimeout→Firestore writes, pending saves
+// accumulate here and flush together in a single writeBatch.
+const pendingSaves = new Map(); // cacheKey → { ownerUserId, spaceId, objectId, objectToSave, oldCellId, newCellId, oldPosition }
+let batchFlushTimer = null;
+const BATCH_FLUSH_DELAY = 300; // ms — matches the old per-object setTimeout delay
+
+function cancelPendingSave(cacheKey) {
+  pendingSaves.delete(cacheKey);
+  saveTimeouts.delete(cacheKey);
+}
+
+function enqueueSave(cacheKey, saveInfo) {
+  pendingSaves.set(cacheKey, saveInfo);
+  saveTimeouts.set(cacheKey, true); // keep saveTimeouts in sync for external .has() checks
+  if (batchFlushTimer === null) {
+    batchFlushTimer = setTimeout(flushSaveBatch, BATCH_FLUSH_DELAY);
+  }
+}
+
+async function flushSaveBatch() {
+  batchFlushTimer = null;
+  if (pendingSaves.size === 0) return;
+
+  // Snapshot and clear atomically
+  const saves = new Map(pendingSaves);
+  pendingSaves.clear();
+  // Also clear the legacy tracking map
+  for (const key of saves.keys()) saveTimeouts.delete(key);
+
+  const sameCellSaves = [];
+  const crossCellMoves = [];
+
+  for (const [, info] of saves) {
+    if (info.oldCellId && info.newCellId && info.oldCellId !== info.newCellId && info.oldPosition) {
+      crossCellMoves.push(info);
+    } else {
+      sameCellSaves.push(info);
+    }
+  }
+
+  // ── Same-cell writes: single writeBatch (max 500 ops) ──
+  if (sameCellSaves.length > 0) {
+    for (let i = 0; i < sameCellSaves.length; i += 500) {
+      const chunk = sameCellSaves.slice(i, i + 500);
+      const batch = writeBatch(db);
+      for (const info of chunk) {
+        const cellCoords = getCellCoordinates(info.objectToSave.position);
+        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+        const objectRef = doc(
+          db, 'users', info.ownerUserId, 'spaces', info.spaceId,
+          'cells', cellId, 'objects', info.objectId,
+        );
+        batch.set(objectRef, {
+          ...info.objectToSave,
+          cellId,
+          lastUpdated: new Date(),
+          updatedAt: new Date(),
+        }, { merge: true });
+      }
+      try {
+        await batch.commit();
+      } catch (error) {
+        console.error('[SaveBatch] writeBatch commit failed, falling back to individual saves:', error);
+        // Fallback: re-enqueue failed saves for individual retry
+        for (const info of chunk) {
+          const cacheKey = `${info.spaceId}_${info.objectId}`;
+          try {
+            await addObjectToCell(info.ownerUserId, info.spaceId, info.objectToSave);
+          } catch (innerErr) {
+            console.error(`[SaveBatch] Fallback save failed for ${info.objectId}:`, innerErr);
+            objectsCache.delete(cacheKey);
+          }
+        }
+      }
+    }
+  }
+
+  // ── Cross-cell moves remain individual (delete + add atomicity) ──
+  for (const info of crossCellMoves) {
+    try {
+      await moveObjectBetweenCellsSpatial(
+        info.ownerUserId, info.spaceId, info.objectId,
+        info.oldPosition, info.objectToSave.position, info.objectToSave,
+      );
+    } catch (error) {
+      console.error(`[SaveBatch] Cross-cell move failed for ${info.objectId}:`, error);
+      const cacheKey = `${info.spaceId}_${info.objectId}`;
+      objectsCache.delete(cacheKey);
+    }
+  }
+}
+
 /**
  * Clear all object caches - used when bulk deleting to prevent ghost objects
  */
 export const clearAllObjectCaches = () => {
   objectsCache.clear();
+  pendingSaves.clear();
   saveTimeouts.clear();
+  if (batchFlushTimer !== null) {
+    clearTimeout(batchFlushTimer);
+    batchFlushTimer = null;
+  }
   updateThrottles.clear();
   lastReceivedObjects.clear();
   movingObjects.clear();
@@ -54,7 +151,7 @@ const removeObjectFromCaches = (spaceId, objectId, cellId) => {
   const cacheKey = `${spaceId}_${objectId}`;
   objectsCache.delete(cacheKey);
   lastReceivedObjects.delete(cacheKey);
-  saveTimeouts.delete(cacheKey);
+  cancelPendingSave(cacheKey);
   updateThrottles.delete(cacheKey);
   objectCellMap.delete(objectId);
 };
@@ -70,6 +167,18 @@ const positionsEqual = (posA, posB) => {
     if (Math.abs(posA[i] - posB[i]) > epsilon) return false;
   }
   return true;
+};
+
+// Lightweight fingerprint for non-position change detection.
+// Replaces structuredClone + lodash isEqual with a single JSON.stringify call
+// that excludes volatile fields. The string is cached on the cache entry so
+// repeat no-change saves are a cheap string === comparison.
+const VOLATILE_KEYS = new Set(['position', 'lastUpdated', 'cellId', 'creatorId', 'updatedAt', 'updatedBy', '_fingerprint']);
+const computeNonPositionFingerprint = (obj) => {
+  const keys = Object.keys(obj).filter(k => !VOLATILE_KEYS.has(k)).sort();
+  const subset = {};
+  for (const k of keys) subset[k] = obj[k];
+  return JSON.stringify(subset);
 };
 
 /**
@@ -155,67 +264,36 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
 
     const cachedData = objectsCache.get(cacheKey);
 
-    // Clear any pending save timeout for this object
-    if (saveTimeouts.has(cacheKey)) {
-      clearTimeout(saveTimeouts.get(cacheKey));
-    } // Deep clone the object to prevent reference issues
-    let newData;
-    try {
-      newData = structuredClone(object);
-    } catch (error) {
-      console.warn(
-        '⚠️ Failed to clone object in spatialObjectsService:',
-        error,
-        'object:',
-        object
-      );
-      newData = { ...object }; // Fallback to shallow copy
-    }
+    // Cancel any previously queued save for this object
+    cancelPendingSave(cacheKey);
 
+    // ── Change detection BEFORE cloning ──────────────────────────────
+    // During drags only position changes — positionsEqual is O(3) and
+    // avoids the old structuredClone + lodash.isEqual overhead entirely.
     let oldCellId = null;
     let newCellId = null;
     let oldPosition = null;
 
     if (cachedData && cachedData.position) {
-      oldPosition = cachedData.position; // Keep the actual old position
+      oldPosition = cachedData.position;
       const oldCellCoords = getCellCoordinates(cachedData.position);
       oldCellId = getCellId(oldCellCoords.x, oldCellCoords.y, oldCellCoords.z);
     }
 
-    const newCellCoords = getCellCoordinates(newData.position);
+    const newCellCoords = getCellCoordinates(object.position);
     newCellId = getCellId(newCellCoords.x, newCellCoords.y, newCellCoords.z);
-    // console.log(`[SaveDebug] Object ${objectId}: Old Cell: ${oldCellId}, New Cell: ${newCellId}. Old Pos: ${JSON.stringify(oldPosition)}, New Pos: ${JSON.stringify(newData.position)}`);
 
-    // Enhanced comparison logic
+    // ── Change detection (no clone, no lodash.isEqual) ────────────────
     if (cachedData) {
-      const positionChanged = !positionsEqual(
-        cachedData.position,
-        newData.position
-      );
+      const positionChanged = !positionsEqual(cachedData.position, object.position);
 
-      const nonPositionDataChanged = !isEqual(
-        // Renamed for clarity
-        {
-          ...cachedData,
-          position: undefined,
-          lastUpdated: undefined,
-          cellId: undefined,
-          creatorId: undefined,
-        }, // Exclude volatile fields
-        {
-          ...newData,
-          position: undefined,
-          lastUpdated: undefined,
-          cellId: undefined,
-          creatorId: undefined,
-        } // Exclude volatile fields
-      );
-
-      if (!positionChanged && !nonPositionDataChanged) {
-        // console.log(`[SaveDebug] Object ${objectId} data unchanged (posChanged: ${positionChanged}, nonPosChanged: ${nonPositionDataChanged}). Skipping save.`);
-        return;
+      if (!positionChanged) {
+        // Position identical — check non-position fields via cached fingerprint
+        const newFingerprint = computeNonPositionFingerprint(object);
+        if (newFingerprint === cachedData._fingerprint) {
+          return; // Nothing changed at all
+        }
       }
-      // console.log(`[SaveDebug] Object ${objectId} data changed. PosChanged: ${positionChanged}, NonPosDataChanged: ${nonPositionDataChanged}`);
     }
 
     // Check if object is marked as unloaded
@@ -223,53 +301,33 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
       return;
     }
 
-    // Update cache before saving
+    // ── Shallow copy + fingerprint (replaces structuredClone) ────────
+    const newData = { ...object };
+    newData._fingerprint = computeNonPositionFingerprint(object);
+
+    // Update cache before enqueuing
     objectsCache.set(cacheKey, newData);
 
-    // Save with timeout to batch changes
-    const saveTimeoutDelay = object.position ? 300 : 150;
+    const objectToSave = {
+      ...newData,
+      lastUpdated: Timestamp.fromDate(new Date()),
+      creatorId: ownerUserId,
+    };
+    // Remove internal fingerprint before sending to Firestore
+    delete objectToSave._fingerprint;
 
-    saveTimeouts.set(
-      cacheKey,
-      setTimeout(async () => {
-        try {
-          const objectToSave = {
-            ...newData,
-            lastUpdated: Timestamp.fromDate(new Date()), // Firestore Timestamp
-            creatorId: ownerUserId, // Ensure creatorId is the space owner or original user
-          };
+    lastReceivedObjects.set(`${spaceId}_${objectId}`, objectToSave);
 
-          // Store in last received cache for reconnection scenarios
-          lastReceivedObjects.set(`${spaceId}_${objectId}`, objectToSave);
-
-          if (
-            oldCellId &&
-            newCellId &&
-            oldCellId !== newCellId &&
-            oldPosition
-          ) {
-            await moveObjectBetweenCellsSpatial(
-              ownerUserId,
-              spaceId,
-              objectId, // Pass objectId string
-              oldPosition, // Pass the actual old position
-              newData.position, // Pass the new position
-              objectToSave // Pass the full new object data for the new cell
-            );
-          } else {
-            // console.log(`[SaveDebug] Object ${objectId} ADDED/UPDATED in cell ${newCellId}. Calling addObjectToCell.`);
-            // This will update if object exists in this cell, or add if new to this cell / or if only non-positional data changed
-            await addObjectToCell(ownerUserId, spaceId, objectToSave);
-          }
-        } catch (error) {
-          console.error(
-            `[SaveDebug] Error in throttled save for object ${objectId}:`,
-            error
-          );
-          objectsCache.delete(cacheKey); // Remove from cache on error
-        }
-      }, saveTimeoutDelay)
-    );
+    // ── Enqueue into batched write queue ─────────────────────────────
+    enqueueSave(cacheKey, {
+      ownerUserId,
+      spaceId,
+      objectId,
+      objectToSave,
+      oldCellId,
+      newCellId,
+      oldPosition,
+    });
   } catch (error) {
     console.error(
       '[SaveDebug] Error in saveObjectToCell (outer try-catch):',
@@ -315,11 +373,8 @@ export const deleteObjectFromSpatialCell = async (
     objectsCache.delete(cacheKey);
     lastReceivedObjects.delete(cacheKey);
 
-    // Clear any pending save timeouts that might re-add the object
-    if (saveTimeouts.has(cacheKey)) {
-      clearTimeout(saveTimeouts.get(cacheKey));
-      saveTimeouts.delete(cacheKey);
-    }
+    // Clear any pending batched save that might re-add the object
+    cancelPendingSave(cacheKey);
 
     updateThrottles.delete(cacheKey);
 
@@ -541,7 +596,7 @@ const clearCellCache = (spaceId, cellId) => {
       const cacheKey = `${spaceId}_${objectId}`;
       objectsCache.delete(cacheKey);
       lastReceivedObjects.delete(cacheKey);
-      saveTimeouts.delete(cacheKey);
+      cancelPendingSave(cacheKey);
       updateThrottles.delete(cacheKey);
       objectCellMap.delete(objectId);
     }
@@ -583,7 +638,7 @@ export const subscribeToSpatialObjects = (
       const cacheKey = `${spaceId}_${objectId}`;
       objectsCache.delete(cacheKey);
       lastReceivedObjects.delete(cacheKey);
-      saveTimeouts.delete(cacheKey);
+      cancelPendingSave(cacheKey);
       updateThrottles.delete(cacheKey);
       objectCellMap.delete(objectId);
     }
@@ -729,10 +784,13 @@ export const subscribeToSpatialObjects = (
                       cachedData.position,
                       objectData.position
                     );
-                    const otherDataChanged = !isEqual(
-                      { ...cachedData, position: undefined },
-                      { ...objectData, position: undefined }
-                    );
+
+                    let otherDataChanged = false;
+                    if (!positionChanged) {
+                      // Only compute fingerprint when position is the same
+                      const incomingFp = computeNonPositionFingerprint(objectData);
+                      otherDataChanged = incomingFp !== cachedData._fingerprint;
+                    }
 
                     hasChanged = positionChanged || otherDataChanged;
 
@@ -771,10 +829,9 @@ export const subscribeToSpatialObjects = (
                     }
 
                     try {
-                      objectsCache.set(
-                        cacheKey,
-                        structuredClone(objectData)
-                      );
+                      const cached = { ...objectData };
+                      cached._fingerprint = computeNonPositionFingerprint(objectData);
+                      objectsCache.set(cacheKey, cached);
                     } catch (error) {
                       console.warn(
                         '⚠️ Failed to cache object in spatialObjectsService:',

@@ -24,6 +24,8 @@ import {
   useIndicatorsStore,
 } from '../stores';
 import { shallow } from 'zustand/shallow';
+
+const EMPTY_CONNECTIONS = [];
 import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping utility
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
 // Import unified utilities
@@ -61,14 +63,13 @@ const Plane = ({
     useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
   );
 
-  // PERFORMANCE: Subscribe only to connections involving THIS plane.
+  // PERFORMANCE: O(1) index lookup instead of O(C) filter.
   const connectionsFromStore = useConnectionStore(
     useCallback(
-      (state) => state.connections.filter(
-        (c) => c.start?.objectId === id?.toString() || c.end?.objectId === id?.toString()
-      ),
+      (state) => state.connectionsByObjectId.get(id?.toString()) || EMPTY_CONNECTIONS,
       [id]
-    )
+    ),
+    shallow
   );
 
   // Store state and actions - moved before memoized values to avoid initialization order issues
