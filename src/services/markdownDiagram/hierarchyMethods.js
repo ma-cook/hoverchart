@@ -70,12 +70,21 @@ export const hierarchyMethods = {
         return dfs(startNodeId);
       };
 
+      const warnedCycles = new Set();
+
       const addParentChildRelation = (parentId, childId) => {
         if (!parentId || !childId) return;
         if (parentId === childId) return;
 
+        // Skip if this relationship already exists
+        if (parentChildMap.has(parentId) && parentChildMap.get(parentId).has(childId)) return;
+
         if (wouldCreateCycle(childId, parentId)) {
-          console.warn(`⚠️ Skipping cycle-creating relationship: ${parentId} → ${childId} (would orphan both from root)`);
+          const key = `${parentId}->${childId}`;
+          if (!warnedCycles.has(key)) {
+            warnedCycles.add(key);
+            console.warn(`⚠️ Skipping cycle-creating relationship: ${parentId} → ${childId} (would orphan both from root)`);
+          }
           return;
         }
 

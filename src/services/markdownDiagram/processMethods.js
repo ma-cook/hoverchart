@@ -2,6 +2,8 @@ import { MarkdownProcessor } from '3d-ast-generator';
 import * as THREE from 'three';
 import { DEFAULT_CAMERA_DISTANCE } from './constants.js';
 import { getMarkdownLayoutWorker } from '../../workers/markdownLayoutWorkerClient.js';
+import useDiagramStore from '../../stores/diagramStore.js';
+import useObjectsStore from '../../stores/objectsStore.js';
 
 export const processMethods = {
   initializeProcessor() {
@@ -59,6 +61,55 @@ export const processMethods = {
     } catch {
       return DEFAULT_POSITION;
     }
+  },
+
+  /**
+   * Populate diagramStore from raw markdown without creating 3D objects.
+   *
+   * Used to hydrate the 2D diagram view when loading an existing space that
+   * already has objects in Firebase but whose diagramStore is empty (because
+   * processMarkdownFile only runs during a fresh scan).
+   */
+  async hydrateStoreFromMarkdown(content) {
+    if (!this.processor) this.initializeProcessor();
+
+    const connectionTags = this.parseFlowPaths(content);
+    const processedContent = this.stripFlowPathSyntax(content);
+    const diagrams = this.processor.processMarkdown(processedContent);
+
+    if (!diagrams || diagrams.length === 0) return;
+
+    const validGraphs = diagrams
+      .filter((d) => !d.errors || d.errors.length === 0)
+      .map((d) => d.graph);
+
+    if (validGraphs.length === 0) return;
+
+    // Build hierarchy from all graphs
+    const allNodes = new Map();
+    const allConnections = new Map();
+    let connIdx = 0;
+    for (const graph of validGraphs) {
+      if (graph.nodes) for (const [id, data] of graph.nodes) allNodes.set(id, data);
+      if (graph.connections) for (const [, conn] of graph.connections) allConnections.set(`hc-${connIdx++}`, conn);
+    }
+    const combinedGraph = { nodes: allNodes, connections: allConnections };
+    const hierarchy = this.buildHierarchicalRelationships(combinedGraph);
+
+    // Build nodeToObjectIdMap from loaded 3D objects' merfolkData
+    const nodeToObjectIdMap = new Map();
+    const objects = useObjectsStore.getState().objects;
+    for (const obj of objects) {
+      const nodeId = obj.merfolkData?.nodeId;
+      if (nodeId) nodeToObjectIdMap.set(nodeId, obj.id);
+    }
+
+    // Populate store — enables the 2D view
+    const store = useDiagramStore.getState();
+    store.setGraphs(validGraphs);
+    store.setConnectionTags(connectionTags);
+    store.setHierarchy(hierarchy);
+    store.setNodeToObjectIdMap(nodeToObjectIdMap);
   },
 
   /**
@@ -149,6 +200,16 @@ export const processMethods = {
 
     window._lastMerfolkProcessTime = performance.now();
 
+    // Clear previous diagram data before processing new one
+    useDiagramStore.getState().clear();
+
+    // Persist parsed graphs and connection tags for the 2D diagram view
+    const validGraphs = diagrams
+      .filter((d) => !d.errors || d.errors.length === 0)
+      .map((d) => d.graph);
+    useDiagramStore.getState().setGraphs(validGraphs);
+    useDiagramStore.getState().setConnectionTags(connectionTags);
+
     let totalObjectsCreated = 0;
     const nodeToObjectIdMap = new Map();
     const allConnectionsToSave = [];
@@ -188,6 +249,9 @@ export const processMethods = {
         connectionTags
       );
     }
+
+    // Persist the node-to-object ID mapping so the 2D view can cross-reference
+    useDiagramStore.getState().setNodeToObjectIdMap(new Map(nodeToObjectIdMap));
 
     const savePromise = this.saveConnections(
       allConnectionsToSave,

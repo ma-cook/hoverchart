@@ -20,6 +20,7 @@ export { default as useIndicatorsStore } from './indicatorsStore.js';
 export { default as useSpaceManagerStore } from './spaceManagerStore.js';
 export { default as useObjectsStore } from './objectsStore.js';
 export { default as useSpatialManagerStore } from './spatialManagerStore.js';
+export { default as useDiagramStore } from './diagramStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';

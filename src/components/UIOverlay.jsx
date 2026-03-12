@@ -1,4 +1,4 @@
-import { useUIOverlayStore } from '../stores';
+import { useUIOverlayStore, useDiagramStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
 import { useRef, useCallback, useEffect, useState } from 'react';
@@ -96,6 +96,7 @@ const UIOverlay = ({
       localStorage.removeItem(`diagramCommitSha_${currentSpaceId}`);
     }
   }, [lastCommitSha, currentSpaceId]);
+
   const [chatOpen, setChatOpen] = useState(false);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
@@ -151,6 +152,33 @@ const UIOverlay = ({
     const overlay = state.overlays['main'];
     return overlay ? overlay.cellBoundariesVisible : false;
   });
+
+  // 2D/3D view mode toggle
+  const viewMode = useUIOverlayStore((state) => state.viewMode);
+  const setViewMode = useUIOverlayStore((state) => state.setViewMode);
+  const is2DReady = useDiagramStore((state) => state.is2DReady);
+
+  // Hydrate diagramStore from stored markdown URL when loading an existing space
+  useEffect(() => {
+    if (!currentSpaceId || !latestMarkdownUrl || is2DReady) return;
+
+    // Wait a short time for objects to start loading from Firebase
+    const timer = setTimeout(async () => {
+      // Double-check — another scan may have populated it in the meantime
+      if (useDiagramStore.getState().is2DReady) return;
+
+      try {
+        const resp = await fetch(latestMarkdownUrl);
+        if (!resp.ok) return;
+        const content = await resp.text();
+        await markdownDiagramService.hydrateStoreFromMarkdown(content);
+      } catch (err) {
+        console.warn('[UIOverlay] Could not hydrate 2D diagram from stored markdown:', err);
+      }
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [currentSpaceId, latestMarkdownUrl, is2DReady]);
 
   // Add this handler function
   const handleCellBoundariesToggle = useCallback(() => {
@@ -1202,6 +1230,20 @@ const UIOverlay = ({
           >
             ⬜
           </button>
+          {is2DReady && (
+            <button
+              className={`shape-button ${viewMode === '2d' ? 'active' : ''}`}
+              onClick={() => setViewMode(viewMode === '3d' ? '2d' : '3d')}
+              title={viewMode === '3d' ? 'Switch to 2D Diagram' : 'Switch to 3D View'}
+              style={{
+                borderColor: viewMode === '2d' ? '#2196F3' : '',
+                borderWidth: viewMode === '2d' ? '2px' : '',
+                fontWeight: viewMode === '2d' ? 'bold' : 'normal',
+              }}
+            >
+              {viewMode === '3d' ? '2D' : '3D'}
+            </button>
+          )}
           <button
             className="shape-button delete-all-button"
             onClick={handleDeleteAllCells}

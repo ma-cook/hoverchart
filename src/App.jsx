@@ -13,6 +13,7 @@ import ObjectsRenderer from './components/ObjectsRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 import LODManager from './components/LODManager';
+import DiagramOverlay2D from './components/DiagramOverlay2D';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
 
@@ -34,6 +35,7 @@ import {
   useTetrahedronStore,
   useDodecahedronStore,
   useSpatialManagerStore,
+  useDiagramStore,
 } from './stores';
 
 // PERFORMANCE: Global animation manager for connection lines
@@ -1549,10 +1551,14 @@ const App = () => {
     }
   }, [deviceInfo.isMobile, deviceInfo.isLowEnd]);
 
+  // Read view mode from store — '3d' or '2d'
+  const viewMode = useUIOverlayStore((s) => s.viewMode);
+
   // Memoize canvas settings to avoid recalculating on every render
   const canvasSettings = useMemo(() => {
     const { isMobile, isLowEnd } = deviceInfo;
     const dpr = Math.min(window.devicePixelRatio, 2);
+    const frameloop = viewMode === '3d' ? 'always' : 'never';
     
     if (canvasQuality === 'low' || isLowEnd || isMobile) {
       return {
@@ -1567,7 +1573,7 @@ const App = () => {
           precision: 'highp',
         },
         dpr,
-        frameloop: 'always',
+        frameloop,
         camera: { fov: 50, near: 0.1, far: 10000, position: [0, 0, 50] },
       };
     }
@@ -1584,10 +1590,10 @@ const App = () => {
         precision: 'highp',
       },
       dpr,
-      frameloop: 'always',
+      frameloop,
       camera: { fov: 50, near: 0.1, far: 2000 },
     };
-  }, [deviceInfo, canvasQuality]);
+  }, [deviceInfo, canvasQuality, viewMode]);
 
   // Initialize Canvas rendering after initial auth/space setup
   useEffect(() => {
@@ -1675,6 +1681,11 @@ const App = () => {
         </div>
       )}{' '}
       {shouldRenderCanvas && (
+        <div style={{
+          visibility: viewMode === '3d' ? 'visible' : 'hidden',
+          position: 'fixed',
+          inset: 0,
+        }}>
         <Canvas
           style={{
             background: backgroundColor,
@@ -1759,7 +1770,9 @@ const App = () => {
             <SMAA />
           </EffectComposer>
         </Canvas>
+        </div>
       )}
+      {viewMode === '2d' && <DiagramOverlay2D />}
       <UIOverlay
         onCreateObject={handleCreateObject}
         onToggleIndicators={handleToggleIndicators}

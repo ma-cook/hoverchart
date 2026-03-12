@@ -1,6 +1,11 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 
 const useUIOverlayStore = createWithEqualityFn((set, get) => ({
+  // View mode: '3d' (default) or '2d' for the 2D diagram overlay
+  viewMode: '3d',
+
+  setViewMode: (mode) => set({ viewMode: mode }),
+
   // UI Overlay state - can have multiple overlay instances if needed
   overlays: {}, // { overlayId: { menuOpen, templateOpen, templateConfig } }
 

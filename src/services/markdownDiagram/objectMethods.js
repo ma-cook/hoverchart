@@ -1,4 +1,5 @@
 import { useObjectsStore } from '../../stores';
+import useDiagramStore from '../../stores/diagramStore.js';
 
 export const objectMethods = {
   /**
@@ -107,6 +108,14 @@ export const objectMethods = {
       // Apply collision detection and resolution to prevent overlapping subtrees
       this.resolveCollisions(context);
     }
+
+    // Persist hierarchy for the 2D diagram view
+    useDiagramStore.getState().setHierarchy({
+      parentChildMap,
+      childParentMap,
+      rootNodes,
+      internalComponentChildren,
+    });
 
     // Create 3D objects with batch processing for better performance
     let objectsCreated = 0;
