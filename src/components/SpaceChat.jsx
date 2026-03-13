@@ -14,6 +14,15 @@ import { database } from '../firebase';
 const INITIAL_LOAD = 10;
 const PAGE_SIZE = 10;
 
+const getGuestId = () => {
+  let guestId = sessionStorage.getItem('guestPresenceId');
+  if (!guestId) {
+    guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    sessionStorage.setItem('guestPresenceId', guestId);
+  }
+  return guestId;
+};
+
 const senderInitials = (name) => {
   if (!name) return '?';
   const parts = name.trim().split(/\s+/);
@@ -158,14 +167,18 @@ const SpaceChat = ({ spaceId, user, isOpen }) => {
   // ── Send ─────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || !spaceId || !user) return;
+    if (!text || !spaceId) return;
+
+    const userId = user ? user.uid : getGuestId();
+    const displayName = user ? (user.displayName || user.email || 'User') : 'Guest';
+    const photoURL = user ? (user.photoURL || null) : null;
 
     setSending(true);
     try {
       await push(ref(database, `/chat/${spaceId}/messages`), {
-        userId: user.uid,
-        displayName: user.displayName || user.email || 'User',
-        photoURL: user.photoURL || null,
+        userId,
+        displayName,
+        photoURL,
         text,
         timestamp: Date.now(),
       });
@@ -212,7 +225,8 @@ const SpaceChat = ({ spaceId, user, isOpen }) => {
           <div className="space-chat-empty">No messages yet. Say hello!</div>
         )}
         {messages.map((msg) => {
-          const isOwn = user && msg.userId === user.uid;
+          const ownId = user ? user.uid : getGuestId();
+          const isOwn = msg.userId === ownId;
           return (
             <div
               key={msg.key}
@@ -249,30 +263,24 @@ const SpaceChat = ({ spaceId, user, isOpen }) => {
       </div>
 
       <div className="space-chat-input-row">
-        {user ? (
-          <>
-            <input
-              className="space-chat-input"
-              type="text"
-              placeholder="Send a message…"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              maxLength={500}
-              disabled={sending}
-            />
-            <button
-              className="space-chat-send"
-              onClick={handleSend}
-              disabled={!input.trim() || sending}
-              title="Send"
-            >
-              ➤
-            </button>
-          </>
-        ) : (
-          <div className="space-chat-login-hint">Login to send messages</div>
-        )}
+        <input
+          className="space-chat-input"
+          type="text"
+          placeholder="Send a message…"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          maxLength={500}
+          disabled={sending}
+        />
+        <button
+          className="space-chat-send"
+          onClick={handleSend}
+          disabled={!input.trim() || sending}
+          title="Send"
+        >
+          ➤
+        </button>
       </div>
     </div>
   );

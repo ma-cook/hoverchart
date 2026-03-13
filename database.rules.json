@@ -18,15 +18,14 @@
     },
     "chat": {
       "$spaceId": {
-        // Any authenticated user can read messages
-        ".read": "auth != null",
+        // Anyone with the spaceId can read messages (guests in public spaces)
+        ".read": true,
         "messages": {
-          // Any authenticated user can push new messages
-          ".write": "auth != null",
           ".indexOn": ["timestamp"],
           "$messageId": {
-            // Individual message structure validation
-            ".validate": "newData.hasChildren(['userId', 'text', 'timestamp'])"
+            // Authenticated users or guests (guest_ prefixed userId) can write
+            ".write": "auth != null || newData.child('userId').val().matches(/^guest_.*$/)",
+            ".validate": "newData.hasChildren(['userId', 'text', 'timestamp']) && newData.child('text').isString() && newData.child('text').val().length <= 500"
           }
         }
       }
