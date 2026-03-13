@@ -1,8 +1,8 @@
-import { memo, useMemo } from 'react';
+import { memo } from 'react';
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
+  getBezierPath,
 } from '@xyflow/react';
 
 // ---------------------------------------------------------------------------
@@ -66,25 +66,35 @@ function getMarkerEnd(connectionType) {
   }
 }
 
-// Static label style — only `transform` is dynamic
-const LABEL_BASE_STYLE = {
-  position: 'absolute',
-  pointerEvents: 'all',
-  background: '#fff',
-  border: '1px solid #ccc',
-  borderRadius: '3px',
-  padding: '2px 6px',
-  fontSize: '10px',
-  color: '#333',
-  whiteSpace: 'nowrap',
-  maxWidth: '200px',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-};
+// PERF: Label base styles are injected as a CSS rule so each edge label only
+// needs a tiny inline `transform` — no object spread per render.
+const LABEL_CSS_CLASS = 'merfolk-edge-label';
+if (typeof document !== 'undefined') {
+  const tag = document.createElement('style');
+  tag.textContent = `.${LABEL_CSS_CLASS}{position:absolute;pointer-events:all;background:#fff;border:1px solid #ccc;border-radius:3px;padding:2px 6px;font-size:10px;color:#333;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}`;
+  document.head.appendChild(tag);
+}
 
 // ---------------------------------------------------------------------------
 // Custom edge component
 // ---------------------------------------------------------------------------
+
+// PERF: Pre-build selected/unselected variants for each edge style to avoid
+// allocations in the render path.  The cache key is the style object reference
+// (stable from getEdgeStyle) so this is bounded by the number of unique styles.
+const selectedStyleCache = new WeakMap();
+const unselectedStyleCache = new WeakMap();
+
+function getSelectedStyle(base) {
+  let s = selectedStyleCache.get(base);
+  if (!s) { s = { ...base, opacity: 1 }; selectedStyleCache.set(base, s); }
+  return s;
+}
+function getUnselectedStyle(base) {
+  let s = unselectedStyleCache.get(base);
+  if (!s) { s = { ...base, opacity: 0.7 }; unselectedStyleCache.set(base, s); }
+  return s;
+}
 
 function MerfolkEdge({
   id,
@@ -96,36 +106,23 @@ function MerfolkEdge({
   targetPosition,
   data,
   selected,
-  style: propStyle,
 }) {
   const connectionType = data?.connectionType || 'dataflow';
   const flowPaths = data?.flowPaths;
   const edgeStyle = getEdgeStyle(connectionType, flowPaths);
   const label = data?.label || '';
 
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     targetX,
     targetY,
     sourcePosition,
     targetPosition,
-    borderRadius: 8,
   });
 
-  // Merge pre-computed edge style with dynamic opacity; only spread propStyle
-  // when it's actually provided (rare) to keep the common path allocation-free.
-  const mergedStyle = useMemo(() => {
-    const base = {
-      ...edgeStyle,
-      opacity: selected ? 1 : 0.7,
-    };
-    return propStyle ? { ...base, ...propStyle } : base;
-  }, [edgeStyle, selected, propStyle]);
-
-  const labelStyle = label
-    ? { ...LABEL_BASE_STYLE, transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }
-    : null;
+  // Zero-allocation style lookup — returns a cached frozen object
+  const mergedStyle = selected ? getSelectedStyle(edgeStyle) : getUnselectedStyle(edgeStyle);
 
   return (
     <>
@@ -137,7 +134,10 @@ function MerfolkEdge({
       />
       {label && (
         <EdgeLabelRenderer>
-          <div style={labelStyle}>
+          <div
+            className={`react-flow__edge-label ${LABEL_CSS_CLASS}`}
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}
+          >
             {label}
           </div>
         </EdgeLabelRenderer>

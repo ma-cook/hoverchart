@@ -57,6 +57,49 @@ canvas {
   background-color: #f0f0f0; /* Optional: Highlight on hover */
 }
 
+/* Pinned webcam overlay */
+.pinned-webcam-overlay {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2100;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  background: #000;
+}
+
+.pinned-webcam-video {
+  display: block;
+  width: 240px;
+  height: auto;
+  border-radius: 8px;
+  transform: scaleX(-1);
+}
+
+.pinned-webcam-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.pinned-webcam-close:hover {
+  background: rgba(255, 0, 0, 0.7);
+}
+
 /* Menu button styles */
 .menu-button-container {
   position: fixed;

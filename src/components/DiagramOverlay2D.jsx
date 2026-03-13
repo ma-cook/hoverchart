@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   ReactFlow,
-  Background,
   Controls,
   MiniMap,
   Panel,
@@ -163,6 +162,12 @@ const MINIMAP_COLORS = {
 // Pre-computed entries array — avoids Object.entries() allocation per render
 const MINIMAP_COLOR_ENTRIES = Object.entries(MINIMAP_COLORS);
 
+// Pre-compute legend swatch styles for each type
+const LEGEND_SWATCH_STYLES = {};
+for (const [type, color] of MINIMAP_COLOR_ENTRIES) {
+  LEGEND_SWATCH_STYLES[type] = { width: '10px', height: '10px', borderRadius: '2px', background: color };
+}
+
 function minimapNodeColor(node) {
   return MINIMAP_COLORS[node.data?.merfolkType] || '#9e9e9e';
 }
@@ -174,7 +179,7 @@ function minimapNodeColor(node) {
 
 const PRO_OPTIONS = { hideAttribution: true };
 
-const OVERLAY_STYLE = { position: 'fixed', inset: 0, zIndex: 100, background: '#f8f8f8' };
+const OVERLAY_STYLE = { position: 'fixed', inset: 0, zIndex: 100, background: '#fff', contain: 'strict' };
 
 const LOADING_OVERLAY_STYLE = {
   position: 'absolute', inset: 0, zIndex: 110,
@@ -199,11 +204,19 @@ const NO_DATA_OVERLAY_STYLE = {
 
 const MINIMAP_STYLE = { border: '1px solid #ccc' };
 
+const SELECTED_NODE_STYLE = { marginTop: '6px', fontSize: '11px', color: '#1976d2', fontStyle: 'italic' };
+const DIVIDER_STYLE = { borderTop: '1px solid #e0e0e0', margin: '8px 0' };
+const SECTION_HEADER_STYLE = { fontSize: '11px', fontWeight: 600, color: '#666', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' };
+const CHECKBOX_STYLE = { marginRight: '6px' };
+const LEGEND_PANEL_STYLE = { display: 'flex', flexWrap: 'wrap', gap: '8px', maxWidth: '460px' };
+const LEGEND_ITEM_STYLE = { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' };
+const LEGEND_TEXT_STYLE = { textTransform: 'capitalize', color: '#555' };
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export default function DiagramOverlay2D() {
+function DiagramOverlay2D() {
   const graphs = useDiagramStore((s) => s.graphs);
   const hierarchy = useDiagramStore((s) => s.hierarchy);
   const connectionTags = useDiagramStore((s) => s.connectionTags);
@@ -395,9 +408,19 @@ export default function DiagramOverlay2D() {
         proOptions={PRO_OPTIONS}
         nodesDraggable={false}
         nodesConnectable={false}
+        edgesFocusable={false}
+        edgesReconnectable={false}
+        nodesFocusable={false}
         elementsSelectable={true}
+        autoPanOnNodeDrag={false}
+        autoPanOnConnect={false}
+        elevateNodesOnSelect={false}
+        elevateEdgesOnSelect={false}
+        deleteKeyCode={null}
+        multiSelectionKeyCode={null}
+        selectionKeyCode={null}
+        zoomActivationKeyCode={null}
       >
-        <Background color="#ddd" gap={20} />
         <Controls showInteractive={false} />
         <MiniMap
           nodeColor={minimapNodeColor}
@@ -405,6 +428,7 @@ export default function DiagramOverlay2D() {
           zoomable
           pannable
           style={MINIMAP_STYLE}
+          inversePan
         />
 
         {/* Filter panel + back-to-3D button */}
@@ -415,14 +439,14 @@ export default function DiagramOverlay2D() {
             </button>
 
             {selectedNodeId && (
-              <div style={{ marginTop: '6px', fontSize: '11px', color: '#1976d2', fontStyle: 'italic' }}>
+              <div style={SELECTED_NODE_STYLE}>
                 Selected: {selectedNodeId}
               </div>
             )}
 
-            <div style={{ borderTop: '1px solid #e0e0e0', margin: '8px 0' }} />
+            <div style={DIVIDER_STYLE} />
 
-            <div style={{ fontSize: '11px', fontWeight: 600, color: '#666', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <div style={SECTION_HEADER_STYLE}>
               Connection Layers
             </div>
 
@@ -432,7 +456,7 @@ export default function DiagramOverlay2D() {
                   type="checkbox"
                   checked={!!layers[key]}
                   onChange={toggleLayerHandlers[key]}
-                  style={{ marginRight: '6px' }}
+                  style={CHECKBOX_STYLE}
                 />
                 {label}
               </label>
@@ -441,8 +465,8 @@ export default function DiagramOverlay2D() {
             {/* Flow path dropdown */}
             {flowPathNames.length > 0 && (
               <>
-                <div style={{ borderTop: '1px solid #e0e0e0', margin: '8px 0' }} />
-                <div style={{ fontSize: '11px', fontWeight: 600, color: '#666', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                <div style={DIVIDER_STYLE} />
+                <div style={SECTION_HEADER_STYLE}>
                   Flow Paths
                 </div>
                 <select
@@ -462,11 +486,11 @@ export default function DiagramOverlay2D() {
 
         {/* Legend */}
         <Panel position="bottom-left">
-          <div style={{ ...panelStyle, display: 'flex', flexWrap: 'wrap', gap: '8px', maxWidth: '460px' }}>
-            {MINIMAP_COLOR_ENTRIES.map(([type, color]) => (
-              <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' }}>
-                <div style={{ width: '10px', height: '10px', borderRadius: '2px', background: color }} />
-                <span style={{ textTransform: 'capitalize', color: '#555' }}>{type}</span>
+          <div style={{ ...panelStyle, ...LEGEND_PANEL_STYLE }}>
+            {MINIMAP_COLOR_ENTRIES.map(([type]) => (
+              <div key={type} style={LEGEND_ITEM_STYLE}>
+                <div style={LEGEND_SWATCH_STYLES[type]} />
+                <span style={LEGEND_TEXT_STYLE}>{type}</span>
               </div>
             ))}
           </div>
@@ -519,3 +543,5 @@ const selectStyle = {
   background: '#fff',
   cursor: 'pointer',
 };
+
+export default memo(DiagramOverlay2D);

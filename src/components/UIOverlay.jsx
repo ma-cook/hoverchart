@@ -699,6 +699,55 @@ const UIOverlay = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionCount]);
 
+  // Pinned webcam overlay
+  const pinnedWebcamPlaneId = useUIOverlayStore((state) => state.pinnedWebcamPlaneId);
+  const clearPinnedWebcam = useUIOverlayStore((state) => state.clearPinnedWebcam);
+  const pinnedVideoRef = useRef(null);
+  const pinnedStreamRef = useRef(null);
+
+  useEffect(() => {
+    if (!pinnedWebcamPlaneId) {
+      // Clean up stream when unpinned
+      if (pinnedStreamRef.current) {
+        pinnedStreamRef.current.getTracks().forEach((t) => t.stop());
+        pinnedStreamRef.current = null;
+      }
+      if (pinnedVideoRef.current) {
+        pinnedVideoRef.current.srcObject = null;
+      }
+      return;
+    }
+
+    let cancelled = false;
+    navigator.mediaDevices
+      .getUserMedia({ video: true, audio: false })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        pinnedStreamRef.current = stream;
+        if (pinnedVideoRef.current) {
+          pinnedVideoRef.current.srcObject = stream;
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to get webcam for pinned overlay:', err);
+      });
+
+    return () => {
+      cancelled = true;
+      if (pinnedStreamRef.current) {
+        pinnedStreamRef.current.getTracks().forEach((t) => t.stop());
+        pinnedStreamRef.current = null;
+      }
+    };
+  }, [pinnedWebcamPlaneId]);
+
+  const handleUnpinWebcam = useCallback(() => {
+    clearPinnedWebcam();
+  }, [clearPinnedWebcam]);
+
 
   const handleTemplateConfigChange = (field, value) => {
     updateTemplateConfig('main', field, value);
@@ -874,6 +923,25 @@ const UIOverlay = ({
 
   return (
     <>
+      {/* Pinned webcam overlay */}
+      {pinnedWebcamPlaneId && (
+        <div className="pinned-webcam-overlay">
+          <video
+            ref={pinnedVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="pinned-webcam-video"
+          />
+          <button
+            className="pinned-webcam-close"
+            onClick={handleUnpinWebcam}
+            title="Unpin webcam"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {' '}
       <div className="menu-button-container">
         <button

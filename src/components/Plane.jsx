@@ -22,6 +22,7 @@ import {
   useObjectsStore,
   useConnectionStore,
   useIndicatorsStore,
+  useUIOverlayStore,
 } from '../stores';
 import { shallow } from 'zustand/shallow';
 
@@ -1168,6 +1169,21 @@ const Plane = ({
     setPlaneIsScreenSharing,
     setPlaneShowUI,
   ]);
+
+  // Pin webcam to UI overlay
+  const pinnedWebcamPlaneId = useUIOverlayStore((state) => state.pinnedWebcamPlaneId);
+  const setPinnedWebcamPlaneId = useUIOverlayStore((state) => state.setPinnedWebcamPlaneId);
+  const clearPinnedWebcam = useUIOverlayStore((state) => state.clearPinnedWebcam);
+  const isPinned = pinnedWebcamPlaneId === id;
+
+  const handlePinToggle = useCallback(() => {
+    if (isPinned) {
+      clearPinnedWebcam();
+    } else {
+      setPinnedWebcamPlaneId(id);
+    }
+  }, [isPinned, id, setPinnedWebcamPlaneId, clearPinnedWebcam]);
+
   const handleImageUpload = useCallback(
     async (file) => {
       if (!user?.uid || !currentSpaceId) {
@@ -1591,6 +1607,8 @@ const Plane = ({
             isBroadcasting={isBroadcasting}
             isScreenSharing={isScreenSharing}
             viewerCount={viewerCount}
+            onPinToggle={handlePinToggle}
+            isPinned={isPinned}
             face={{ id: `plane-${id}` }}
           />
         )}{' '}

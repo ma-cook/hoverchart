@@ -29,6 +29,8 @@ const FaceUI = React.memo(
     screenShareActive = false, // Add screen share state
     isBroadcasting = false, // Add broadcasting state
     isScreenSharing = false, // Add screen sharing state
+    onPinToggle, // Pin webcam to UI overlay
+    isPinned = false, // Whether this plane's webcam is pinned
   }) => {
     // Get menu state from store
     const faceId = face?.id || 'default';
@@ -129,6 +131,15 @@ const FaceUI = React.memo(
             icon: isScreenSharing ? `🖥️` : '🖥️', // Screen share icon
             active: screenShareActive, // Show active state
           },
+          ...(webcamActive
+            ? [
+                {
+                  name: 'pin',
+                  icon: '📌',
+                  active: isPinned,
+                },
+              ]
+            : []),
           { name: 'delete', icon: '🗑️' }, // Add delete tool for planes
         ]
       : baseTools;
@@ -197,6 +208,9 @@ const FaceUI = React.memo(
         case 'screenshare': // Handle screen share toggle
           onScreenShareToggle?.();
           break;
+        case 'pin': // Toggle pinning webcam to UI overlay
+          onPinToggle?.();
+          break;
         case 'delete':
           if (window.confirm('Are you sure you want to delete this object?')) {
             onDelete?.();
@@ -263,8 +277,10 @@ const FaceUI = React.memo(
                       ? isScreenSharing
                         ? 'Stop Screen Share'
                         : 'Disable Screen Share'
-                      : 'Share Screen'
-                    : tool.name === 'image'
+                      : 'Share Screen'                    : tool.name === 'pin'
+                    ? isPinned
+                      ? 'Unpin Webcam'
+                      : 'Pin Webcam to Overlay'                    : tool.name === 'image'
                     ? 'Upload Image'
                     : tool.name === 'eye'
                     ? 'Look at this object'
@@ -357,7 +373,8 @@ const FaceUI = React.memo(
       prevProps.webcamActive === nextProps.webcamActive &&
       prevProps.screenShareActive === nextProps.screenShareActive &&
       prevProps.isBroadcasting === nextProps.isBroadcasting &&
-      prevProps.isScreenSharing === nextProps.isScreenSharing
+      prevProps.isScreenSharing === nextProps.isScreenSharing &&
+      prevProps.isPinned === nextProps.isPinned
     );
   }
 );

@@ -6,6 +6,13 @@ const useUIOverlayStore = createWithEqualityFn((set, get) => ({
 
   setViewMode: (mode) => set({ viewMode: mode }),
 
+  // Pinned webcam — plane ID whose webcam feed is pinned to the UI overlay
+  pinnedWebcamPlaneId: null,
+
+  setPinnedWebcamPlaneId: (planeId) => set({ pinnedWebcamPlaneId: planeId }),
+
+  clearPinnedWebcam: () => set({ pinnedWebcamPlaneId: null }),
+
   // UI Overlay state - can have multiple overlay instances if needed
   overlays: {}, // { overlayId: { menuOpen, templateOpen, templateConfig } }
 
