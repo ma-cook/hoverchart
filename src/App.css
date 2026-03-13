@@ -894,6 +894,23 @@ body {
   border-bottom: 1px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.space-chat-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.space-chat-close:hover {
+  color: #fff;
 }
 
 .space-chat-messages {

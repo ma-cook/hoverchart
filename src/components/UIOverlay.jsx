@@ -1232,7 +1232,7 @@ const UIOverlay = ({
       </div>
 
       {/* Group chat window - pops out to the left of the right panel */}
-      <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} />
+      <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       {/* Visual tools container positioned at bottom center */}
       {user && (
         <div className="visual-tools-container" onClick={(e) => e.stopPropagation()}>

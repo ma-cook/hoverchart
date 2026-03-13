@@ -37,7 +37,7 @@ const mergeMessages = (existing, incoming) => {
   return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 };
 
-const SpaceChat = ({ spaceId, user, isOpen }) => {
+const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -208,6 +208,15 @@ const SpaceChat = ({ spaceId, user, isOpen }) => {
     <div className="space-chat-window" onClick={(e) => e.stopPropagation()}>
       <div className="space-chat-header">
         <span>Space Chat</span>
+        {onClose && (
+          <button
+            className="space-chat-close"
+            onClick={onClose}
+            title="Close chat"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       <div
