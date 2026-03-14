@@ -2,6 +2,7 @@ import { db } from '../firebase';
 import {
   doc,
   getDoc,
+  updateDoc,
   collection,
   query,
   getDocs,
@@ -233,5 +234,17 @@ export const getPublicSpaceMetadata = async (spaceId) => {
     console.error('💥 Error name:', error.name);
     console.error('💥 Stack trace:', error.stack);
     return null;
+  }
+};
+
+// Persist the diagram markdown storage URL to the space document so it is
+// accessible from any device (not just the browser that ran the scan).
+export const updateSpaceDiagramUrl = async (userId, spaceId, url) => {
+  if (!userId || !spaceId || !url) return;
+  try {
+    const spaceRef = doc(db, 'users', userId, 'spaces', spaceId);
+    await updateDoc(spaceRef, { diagramMarkdownUrl: url });
+  } catch (error) {
+    console.error('[spacesService] Error persisting diagramMarkdownUrl:', error);
   }
 };

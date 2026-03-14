@@ -20,6 +20,7 @@ import {
   scanRepositoryAndGenerateDiagram,
   rescanRepositoryForChanges,
 } from '../services/githubRepoService';
+import { getSpaceById, updateSpaceDiagramUrl } from '../services/spacesService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import SpaceChat from './SpaceChat';
 
@@ -86,6 +87,22 @@ const UIOverlay = ({
       localStorage.removeItem(`diagramMarkdownUrl_${currentSpaceId}`);
     }
   }, [latestMarkdownUrl, currentSpaceId]);
+
+  // Fallback: load diagramMarkdownUrl from Firestore when it is absent from
+  // localStorage (e.g. first load on a device that did not run the original scan).
+  useEffect(() => {
+    if (!currentSpaceId || !user || latestMarkdownUrl != null) return;
+    let cancelled = false;
+    getSpaceById(user.uid, currentSpaceId)
+      .then((spaceData) => {
+        if (cancelled || !spaceData?.diagramMarkdownUrl) return;
+        setLatestMarkdownUrl(spaceData.diagramMarkdownUrl);
+      })
+      .catch((err) => {
+        console.warn('[UIOverlay] Could not load diagramMarkdownUrl from Firestore:', err);
+      });
+    return () => { cancelled = true; };
+  }, [currentSpaceId, user, latestMarkdownUrl]);
 
   // Persist commit SHA whenever it changes
   useEffect(() => {
@@ -224,7 +241,14 @@ const UIOverlay = ({
       if (result.success) {
         setCurrentDiagramRepo(repo);
         if (result.markdown) setLastGeneratedMarkdown(result.markdown);
-        if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
+        if (result.storageUrl) {
+          setLatestMarkdownUrl(result.storageUrl);
+          if (user?.uid && currentSpaceId) {
+            updateSpaceDiagramUrl(user.uid, currentSpaceId, result.storageUrl).catch((err) => {
+              console.warn('[UIOverlay] Could not persist diagramMarkdownUrl to Firestore:', err);
+            });
+          }
+        }
         if (result.commitSha) setLastCommitSha(result.commitSha);
 
         setNotification({
@@ -336,7 +360,14 @@ const UIOverlay = ({
       // Update stored state
       setLastCommitSha(rescanResult.commitSha);
       setLastGeneratedMarkdown(rescanResult.mergedMarkdown);
-      if (storageUrl) setLatestMarkdownUrl(storageUrl);
+      if (storageUrl) {
+        setLatestMarkdownUrl(storageUrl);
+        if (user?.uid && currentSpaceId) {
+          updateSpaceDiagramUrl(user.uid, currentSpaceId, storageUrl).catch((err) => {
+            console.warn('[UIOverlay] Could not persist diagramMarkdownUrl to Firestore:', err);
+          });
+        }
+      }
 
       const parts = [];
       if (rescanResult.addedFiles > 0) parts.push(`${rescanResult.addedFiles} added`);
