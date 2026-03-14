@@ -11,6 +11,8 @@ import { markdownDiagramService } from '../services/markdownDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches } from '../services/spatialObjectsService';
 import { getAuth } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import * as THREE from 'three';
 import {
   handleGithubCallback,
@@ -96,6 +98,34 @@ const UIOverlay = ({
       localStorage.removeItem(`diagramCommitSha_${currentSpaceId}`);
     }
   }, [lastCommitSha, currentSpaceId]);
+
+  // Fallback: fetch diagramMarkdownUrl from Firestore when localStorage doesn't have it
+  // (e.g. viewing on a different device such as mobile)
+  useEffect(() => {
+    if (!currentSpaceId || latestMarkdownUrl || is2DReady) return;
+
+    const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+    if (!spaceOwnerId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const spaceRef = doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId);
+        const spaceDoc = await getDoc(spaceRef);
+        if (cancelled) return;
+        const url = spaceDoc.data()?.diagramMarkdownUrl;
+        if (url) {
+          setLatestMarkdownUrl(url);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[UIOverlay] Could not fetch diagram URL from Firestore:', err);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [currentSpaceId, latestMarkdownUrl, is2DReady, user?.uid]);
 
   const [chatOpen, setChatOpen] = useState(false);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
@@ -227,6 +257,16 @@ const UIOverlay = ({
         if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
         if (result.commitSha) setLastCommitSha(result.commitSha);
 
+        // Persist diagram markdown URL to Firestore so it's available on other devices
+        if (result.storageUrl && user?.uid && currentSpaceId) {
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+          setDoc(
+            doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId),
+            { diagramMarkdownUrl: result.storageUrl },
+            { merge: true }
+          ).catch((err) => console.warn('[UIOverlay] Could not save diagram URL to Firestore:', err));
+        }
+
         setNotification({
           show: true,
           message: `Diagram created! Generated: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`
@@ -336,7 +376,19 @@ const UIOverlay = ({
       // Update stored state
       setLastCommitSha(rescanResult.commitSha);
       setLastGeneratedMarkdown(rescanResult.mergedMarkdown);
-      if (storageUrl) setLatestMarkdownUrl(storageUrl);
+      if (storageUrl) {
+        setLatestMarkdownUrl(storageUrl);
+
+        // Persist diagram markdown URL to Firestore so it's available on other devices
+        if (user?.uid && currentSpaceId) {
+          const spaceOwnerId = window.currentSpaceOwner || user.uid;
+          setDoc(
+            doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId),
+            { diagramMarkdownUrl: storageUrl },
+            { merge: true }
+          ).catch((err) => console.warn('[UIOverlay] Could not save diagram URL to Firestore:', err));
+        }
+      }
 
       const parts = [];
       if (rescanResult.addedFiles > 0) parts.push(`${rescanResult.addedFiles} added`);
