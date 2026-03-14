@@ -25,6 +25,20 @@ import {
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import SpaceChat from './SpaceChat';
 
+/**
+ * Persist the diagram markdown URL to the Firestore space document
+ * so it's available when loading the space on another device (e.g. mobile).
+ * Fire-and-forget: non-critical metadata, errors are logged but not thrown.
+ */
+const persistDiagramUrlToFirestore = (storageUrl, userId, spaceId) => {
+  const spaceOwnerId = window.currentSpaceOwner || userId;
+  setDoc(
+    doc(db, 'users', spaceOwnerId, 'spaces', spaceId),
+    { diagramMarkdownUrl: storageUrl },
+    { merge: true }
+  ).catch((err) => console.warn('[UIOverlay] Could not save diagram URL to Firestore:', err));
+};
+
 const UIOverlay = ({
   onCreateObject,
 
@@ -113,9 +127,11 @@ const UIOverlay = ({
         const spaceRef = doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId);
         const spaceDoc = await getDoc(spaceRef);
         if (cancelled) return;
-        const url = spaceDoc.data()?.diagramMarkdownUrl;
-        if (url) {
-          setLatestMarkdownUrl(url);
+        if (spaceDoc.exists()) {
+          const url = spaceDoc.data().diagramMarkdownUrl;
+          if (url) {
+            setLatestMarkdownUrl(url);
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -259,12 +275,7 @@ const UIOverlay = ({
 
         // Persist diagram markdown URL to Firestore so it's available on other devices
         if (result.storageUrl && user?.uid && currentSpaceId) {
-          const spaceOwnerId = window.currentSpaceOwner || user.uid;
-          setDoc(
-            doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId),
-            { diagramMarkdownUrl: result.storageUrl },
-            { merge: true }
-          ).catch((err) => console.warn('[UIOverlay] Could not save diagram URL to Firestore:', err));
+          persistDiagramUrlToFirestore(result.storageUrl, user.uid, currentSpaceId);
         }
 
         setNotification({
@@ -381,12 +392,7 @@ const UIOverlay = ({
 
         // Persist diagram markdown URL to Firestore so it's available on other devices
         if (user?.uid && currentSpaceId) {
-          const spaceOwnerId = window.currentSpaceOwner || user.uid;
-          setDoc(
-            doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId),
-            { diagramMarkdownUrl: storageUrl },
-            { merge: true }
-          ).catch((err) => console.warn('[UIOverlay] Could not save diagram URL to Firestore:', err));
+          persistDiagramUrlToFirestore(storageUrl, user.uid, currentSpaceId);
         }
       }
 
