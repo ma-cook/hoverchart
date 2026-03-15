@@ -11,6 +11,8 @@ import { markdownDiagramService } from '../services/markdownDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches } from '../services/spatialObjectsService';
 import { getAuth } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import * as THREE from 'three';
 import {
   handleGithubCallback,
@@ -62,10 +64,27 @@ const UIOverlay = ({
     } catch {
       setCurrentDiagramRepo(null);
     }
-    setLatestMarkdownUrl(localStorage.getItem(`diagramMarkdownUrl_${currentSpaceId}`) || null);
+    const localUrl = localStorage.getItem(`diagramMarkdownUrl_${currentSpaceId}`) || null;
+    setLatestMarkdownUrl(localUrl);
     setLastCommitSha(localStorage.getItem(`diagramCommitSha_${currentSpaceId}`) || null);
     setLastGeneratedMarkdown(null);
-  }, [currentSpaceId]);
+
+    // If localStorage doesn't have the URL, try loading from Firestore (cross-device support)
+    if (!localUrl) {
+      const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+      if (spaceOwnerId) {
+        getDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId))
+          .then((snap) => {
+            const url = snap.exists() ? snap.data().markdownStorageUrl : null;
+            if (url) {
+              setLatestMarkdownUrl(url);
+              localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, url);
+            }
+          })
+          .catch(() => { /* ignore – space doc may not exist */ });
+      }
+    }
+  }, [currentSpaceId, user]);
 
   // Persist whenever the active repo changes
   useEffect(() => {
@@ -224,7 +243,14 @@ const UIOverlay = ({
       if (result.success) {
         setCurrentDiagramRepo(repo);
         if (result.markdown) setLastGeneratedMarkdown(result.markdown);
-        if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
+        if (result.storageUrl) {
+          setLatestMarkdownUrl(result.storageUrl);
+          // Persist to Firestore so the URL is available on other devices
+          const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+          if (spaceOwnerId && currentSpaceId) {
+            setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), { markdownStorageUrl: result.storageUrl }, { merge: true }).catch(() => {});
+          }
+        }
         if (result.commitSha) setLastCommitSha(result.commitSha);
 
         setNotification({
@@ -336,7 +362,14 @@ const UIOverlay = ({
       // Update stored state
       setLastCommitSha(rescanResult.commitSha);
       setLastGeneratedMarkdown(rescanResult.mergedMarkdown);
-      if (storageUrl) setLatestMarkdownUrl(storageUrl);
+      if (storageUrl) {
+        setLatestMarkdownUrl(storageUrl);
+        // Persist to Firestore so the URL is available on other devices
+        const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+        if (spaceOwnerId && currentSpaceId) {
+          setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), { markdownStorageUrl: storageUrl }, { merge: true }).catch(() => {});
+        }
+      }
 
       const parts = [];
       if (rescanResult.addedFiles > 0) parts.push(`${rescanResult.addedFiles} added`);
