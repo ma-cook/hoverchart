@@ -7,8 +7,8 @@ import {
   setPersistence,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
-import { auth, provider } from '../firebase';
-
+import { auth, provider, functions } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
 import { getOrCreateDefaultSpace, getSpaceById } from './spacesService';
 import { registerSharedSpaceFromUrl } from './sharedSpacesService';
 
@@ -145,9 +145,6 @@ export const handleUrlAuth = async () => {
   }
 
   try {
-    const { httpsCallable } = await import('firebase/functions');
-    const { functions } = await import('../firebase');
-
     const exchangeAuthCode = httpsCallable(functions, 'exchangeAuthCode');
     const result = await exchangeAuthCode({ code });
 

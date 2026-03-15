@@ -22,6 +22,7 @@ import {
 } from '../services/spatialObjectsService';
 
 import { getIsInitialLoading } from '../utils/loadingState';
+import { forceCleanupSubscription, generateSubscriptionKey } from '../services/globalSubscriptionManager';
 
 // Version marker
 
@@ -52,16 +53,14 @@ const useSpatialManagerStore = create((set, get) => ({
   handleCellsReloaded: (loadedCells) => {
     if (!loadedCells?.length) return;
 
-    // Import objects store dynamically to avoid circular dependencies
-    import('./objectsStore')
-      .then(({ default: objectsStore }) => {
-        // Force a recheck of all objects against the current loaded cells
-        const currentObjects = objectsStore.getState().objects;
-        objectsStore.getState().setObjects([...currentObjects]);
-      })
-      .catch((error) => {
-        console.error('Error updating objects after cell reload:', error);
-      });
+    // Import objects store lazily to avoid circular dependency at module init
+    const objectsStore = require('./objectsStore').default;
+    try {
+      const currentObjects = objectsStore.getState().objects;
+      objectsStore.getState().setObjects([...currentObjects]);
+    } catch (error) {
+      console.error('Error updating objects after cell reload:', error);
+    }
   },
 
   // Actions
@@ -245,18 +244,17 @@ const useSpatialManagerStore = create((set, get) => ({
         get().handleCellsReloaded(loadedCellIds);
 
         // Restore connections
-        import('./connectionStore')
-          .then(({ default: connectionStore }) => {
-            connectionStore
-              .getState()
-              .clearUnloadedConnectionsForCells(loadedCellIds);
-          })
-          .catch((error) => {
-            console.error(
-              'Error restoring connections for reloaded cells:',
-              error
-            );
-          });
+        const connectionStore = require('./connectionStore').default;
+        try {
+          connectionStore
+            .getState()
+            .clearUnloadedConnectionsForCells(loadedCellIds);
+        } catch (error) {
+          console.error(
+            'Error restoring connections for reloaded cells:',
+            error
+          );
+        }
       }
 
       // Update loaded cells with successful loads
@@ -454,80 +452,53 @@ const useSpatialManagerStore = create((set, get) => ({
           });
 
           // Clean up objects state in the store
-          import('./objectsStore')
-            .then(({ default: objectsStore }) => {
-              objectsStore.getState().cleanupUnloadedObjects();
-            })
-            .catch((error) => {
-              console.error('Error cleaning up objects store:', error);
-            });
+          const objectsStore = require('./objectsStore').default;
+          try {
+            objectsStore.getState().cleanupUnloadedObjects();
+          } catch (error) {
+            console.error('Error cleaning up objects store:', error);
+          }
         }
       }
 
       // Remove connections from unloaded cells synchronously
       try {
-        // Dynamically import connection store to avoid circular dependency
-        import('./connectionStore')
-          .then(({ default: connectionStore }) => {
-            const state = connectionStore.getState();
-            state.removeConnectionsFromCells(cellsToUnloadNow);
-          })
-          .catch((error) => {
-            console.error(
-              'Error importing connection store for cleanup:',
-              error
-            );
-          });
+        const connectionStore = require('./connectionStore').default;
+        const state = connectionStore.getState();
+        state.removeConnectionsFromCells(cellsToUnloadNow);
       } catch (error) {
         console.error('Error removing connections from unloaded cells:', error);
       }
 
       // Force cleanup connection subscriptions for unloaded cells to ensure fresh subscriptions when reloaded
       try {
-        import('../services/globalSubscriptionManager')
-          .then(({ forceCleanupSubscription, generateSubscriptionKey }) => {
-            cellsToUnloadNow.forEach((cellKey) => {
-              // Generate the same subscription key that was used for this cell
-              const subscriptionKey = generateSubscriptionKey.connections(
-                currentSpaceId || 'default',
-                cellKey
-              );
-              forceCleanupSubscription(subscriptionKey);
-            });
-          })
-          .catch((error) => {
-            console.error('Error cleaning up connection subscriptions:', error);
-          });
+        cellsToUnloadNow.forEach((cellKey) => {
+          const subscriptionKey = generateSubscriptionKey.connections(
+            currentSpaceId || 'default',
+            cellKey
+          );
+          forceCleanupSubscription(subscriptionKey);
+        });
       } catch (error) {
         console.error('Error force cleaning connection subscriptions:', error);
       }
 
       // Clean up subscriptions for unloaded cells
       try {
-        import('../services/globalSubscriptionManager')
-          .then(({ forceCleanupSubscription, generateSubscriptionKey }) => {
-            cellsToUnloadNow.forEach((cellKey) => {
-              // Clean up spatial object subscriptions
-              const spatialSubKey = generateSubscriptionKey.spatialObjects(
-                currentSpaceId || 'default',
-                cellKey
-              );
-              forceCleanupSubscription(spatialSubKey);
-            });
-          })
-          .catch((error) => {
-            console.error(
-              'Error cleaning up spatial object subscriptions:',
-              error
-            );
-          });
+        cellsToUnloadNow.forEach((cellKey) => {
+          // Clean up spatial object subscriptions
+          const spatialSubKey = generateSubscriptionKey.spatialObjects(
+            currentSpaceId || 'default',
+            cellKey
+          );
+          forceCleanupSubscription(spatialSubKey);
+        });
       } catch (error) {
         console.error(
           'Error force cleaning spatial object subscriptions:',
           error
         );
       }
-
       // Remove cells from loaded set
       const newLoadedCells = new Set(state.loadedCells);
       cellsToUnloadNow.forEach((cellId) => newLoadedCells.delete(cellId));

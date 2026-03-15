@@ -10,6 +10,7 @@ import {
   getCellId,
   moveObjectBetweenCells as moveObjectBetweenCellsSpatial,
   deleteAllCellsInSpace,
+  findObjectInCells,
 } from './spatialPartitioning';
 import { getIsInitialLoading } from '../utils/loadingState';
 
@@ -391,7 +392,6 @@ export const deleteObjectFromSpatialCell = async (
 
     // If no position provided, try to find the object in all cells
     if (!position) {
-      const { findObjectInCells } = await import('./spatialPartitioning');
       const found = await findObjectInCells(
         ownerUserId,
         spaceId,

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import useTextAtlasStore from '../stores/textAtlasStore.js';
 
 /**
  * Text Atlas - Combines multiple text labels into a single texture atlas
@@ -712,7 +713,6 @@ class WorkerMultiPageTextAtlas {
       this._version++;
 
       // Notify React via the Zustand store so consumers re-render
-      const { default: useTextAtlasStore } = await import('../stores/textAtlasStore.js');
       useTextAtlasStore.getState().bumpVersion();
 
     } catch (err) {
@@ -755,9 +755,9 @@ function _switchToSyncAtlas(pendingRequests = []) {
   }
 
   // Bump Zustand version so consumers re-render with the sync atlas
-  import('../stores/textAtlasStore.js').then(({ default: store }) => {
-    store.getState().bumpVersion();
-  }).catch(() => {});
+  try {
+    useTextAtlasStore.getState().bumpVersion();
+  } catch { /* ignore */ }
 }
 
 /**

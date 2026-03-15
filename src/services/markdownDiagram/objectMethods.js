@@ -1,5 +1,6 @@
 import { useObjectsStore } from '../../stores';
 import useDiagramStore from '../../stores/diagramStore.js';
+import { getCellCoordinates, getCellId } from '../spatialPartitioning';
 
 export const objectMethods = {
   /**
@@ -184,10 +185,6 @@ export const objectMethods = {
           };
         })
         .filter(Boolean);
-
-      const { getCellCoordinates, getCellId } = await import(
-        '../spatialPartitioning'
-      );
 
       for (const data of batchData) {
         try {

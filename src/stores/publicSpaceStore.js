@@ -1,5 +1,8 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
+import { saveConnection } from '../services/connectionsService';
+import useConnectionStore from './connectionStore';
+import useObjectsStore from './objectsStore';
 
 const usePublicSpaceStore = createWithEqualityFn((set, get) => ({
   // Public Connections State
@@ -194,9 +197,6 @@ const usePublicSpaceStore = createWithEqualityFn((set, get) => ({
 
     try {
       const spaceOwnerId = window.currentSpaceOwner || user.uid;
-      const { saveConnection } = await import('../services/connectionsService');
-      const { useConnectionStore } = await import('./connectionStore');
-      const { useObjectsStore } = await import('./objectsStore');
 
       // Get current deletion blacklist and objects to verify references
       const connectionStore = useConnectionStore.getState();

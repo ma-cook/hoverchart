@@ -1,4 +1,7 @@
 import { create } from 'zustand';
+import { db, auth } from '../firebase';
+import { collection, getDocs, doc, updateDoc, deleteField } from 'firebase/firestore';
+import useSpaceManagerStore from './spaceManagerStore';
 
 // Stable empty array for components with no connections — prevents re-renders from shallow equality
 const EMPTY_CONNECTIONS = [];
@@ -839,11 +842,6 @@ const useConnectionStore = create((set, get) => ({
         // Use a simple direct deletion approach
         setTimeout(async () => {
           try {
-            // Import Firebase functions and get current auth state
-            const { db, auth } = await import('../firebase');
-            const { collection, getDocs, doc, updateDoc, deleteField } =
-              await import('firebase/firestore');
-
             const user = auth.currentUser || window.currentUser;
 
             // Use provided spaceId first, then fall back to global context
@@ -853,13 +851,10 @@ const useConnectionStore = create((set, get) => ({
             // If still no space ID, try to get it from the space manager store
             if (!finalSpaceId) {
               try {
-                const { useSpaceManagerStore } = await import(
-                  './spaceManagerStore'
-                );
                 const spaceManagerState = useSpaceManagerStore.getState();
                 finalSpaceId = spaceManagerState.currentSpaceId;
               } catch {
-                // Could not import space manager store
+                // Could not access space manager store
               }
             }
 

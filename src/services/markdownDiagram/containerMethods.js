@@ -9,6 +9,8 @@ import {
   getGroupDisplayName,
   getGroupColor,
 } from './constants.js';
+import { useObjectsStore } from '../../stores';
+import { getCellCoordinates, getCellId } from '../spatialPartitioning';
 
 export const containerMethods = {
   /**
@@ -25,11 +27,6 @@ export const containerMethods = {
       nodePositions,
       nodeScales,
     } = context;
-
-    const { useObjectsStore } = await import('../../stores');
-    const { getCellCoordinates, getCellId } = await import(
-      '../spatialPartitioning'
-    );
 
     // ── Dynamic group discovery ──────────────────────────────────────────
     const groupedByType = new Map(); // groupKey → [nodeId, …]
@@ -216,11 +213,6 @@ export const containerMethods = {
   async createRootHierarchyContainer(context, allObjectsToSave) {
     const { graphNodes, childParentMap, nodePositions, nodeScales, rootNodes } =
       context;
-
-    const { useObjectsStore } = await import('../../stores');
-    const { getCellCoordinates, getCellId } = await import(
-      '../spatialPartitioning'
-    );
 
     const hierarchyNodes = [];
 
@@ -475,7 +467,6 @@ export const containerMethods = {
       });
     }
 
-    const { useObjectsStore } = await import('../../stores');
     const objectsStore = useObjectsStore.getState();
     const updatedObjects = objectsStore.objects.map((obj) => {
       if (obj.merfolkData?.nodeId) {
@@ -666,11 +657,6 @@ export const containerMethods = {
     graphNodes,
     allObjectsToSave
   ) {
-    const { useObjectsStore } = await import('../../stores');
-    const { getCellCoordinates, getCellId } = await import(
-      '../spatialPartitioning'
-    );
-
     const containerCubes = [];
 
     for (const [parentNodeId, containerInfo] of containerDimensions.entries()) {

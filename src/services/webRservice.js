@@ -18,6 +18,7 @@ import {
   generateSubscriptionKey,
   SUBSCRIPTION_TYPES,
 } from './globalSubscriptionManager';
+import { findObjectInCells, getAllObjectsInSpace } from './spatialPartitioning';
 
 const activeStreams = new Map();
 
@@ -324,7 +325,6 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream, broadc
     console.log('Using space owner path:', spaceOwner);
 
     // Find the plane object in the spatial partitioning system
-    const { findObjectInCells } = await import('./spatialPartitioning');
     const planeResult = await findObjectInCells(spaceOwner, spaceId, planeId);
 
     if (!planeResult) {
@@ -404,7 +404,6 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream, broadc
         activeStreams.delete(`${spaceId}-${planeId}`);
         try {
           // Find the plane object in the spatial partitioning system to stop broadcasting
-          const { findObjectInCells } = await import('./spatialPartitioning');
           const planeResult = await findObjectInCells(
             spaceOwner,
             spaceId,
@@ -746,7 +745,6 @@ export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
 export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
   try {
     // Use spatial partitioning to find the plane object
-    const { getAllObjectsInSpace } = await import('./spatialPartitioning');
     const spaceOwner = window.currentSpaceOwner;
 
     // Get all objects in the space across all cells
@@ -763,7 +761,6 @@ export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
 export const findAvailableBroadcasts = async (spaceId) => {
   try {
     // Import spatial partitioning helper
-    const { getAllObjectsInSpace } = await import('./spatialPartitioning');
     const spaceOwner = window.currentSpaceOwner;
 
     // Get all objects in the space across all cells

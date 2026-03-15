@@ -6,6 +6,8 @@ import {
   deleteObjectFromSpatialCell,
 } from '../services/spatialObjectsService';
 import useConnectionStore from './connectionStore';
+import { getCellCoordinates, removeConnectionFromAllCells } from '../services/spatialPartitioning';
+import { deleteConnection } from '../services/connectionsService';
 
 // Module-level timer for deferred setObjects calls (avoids storing in Zustand state)
 let _pendingSetObjectsTimer = null;
@@ -518,14 +520,9 @@ const useObjectsStore = createWithEqualityFn(
       saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
 
       // Track object in spatial system for dynamic objects
-      const spatialManagerStore = (
-        await import('../stores/spatialManagerStore')
-      ).default;
+      const spatialManagerStore = require('../stores/spatialManagerStore').default;
       const spatialManager = spatialManagerStore.getState();
       if (spatialManager.trackObjectInCell) {
-        const { getCellCoordinates } = await import(
-          '../services/spatialPartitioning'
-        );
         const cellCoords = getCellCoordinates(position);
         const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
         spatialManager.trackObjectInCell(uniqueId.toString(), cellId);
@@ -918,14 +915,6 @@ const useObjectsStore = createWithEqualityFn(
         // Delete connections from database asynchronously
         (async () => {
           try {
-            // Import the enhanced connection deletion service
-            const { deleteConnection } = await import(
-              '../services/connectionsService'
-            );
-            const { removeConnectionFromAllCells } = await import(
-              '../services/spatialPartitioning'
-            );
-
             const deletionResults = await Promise.all(
               relatedConnections.map(async (conn) => {
                 let result = false;

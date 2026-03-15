@@ -3,6 +3,7 @@ import {
   updateObjectInSpatialCell,
 } from '../services/spatialObjectsService';
 import useObjectsStore from '../stores/objectsStore';
+import { useConnectionStore, usePublicSpaceStore } from '../stores';
 
 /**
  * Handle object movement with position updates
@@ -189,10 +190,6 @@ export const handleObjectMove = ({
           // IMPORTANT: Trigger immediate connection saves when object movement ends
           // This ensures that connection line positions are persisted immediately
           try {
-            const { useConnectionStore } = await import('../stores');
-            const { usePublicSpaceStore } = await import('../stores');
-            const { useObjectsStore } = await import('../stores');
-
             const connectionStore = useConnectionStore.getState();
             const connections = connectionStore.connections;
             const objects = useObjectsStore.getState().objects;

@@ -54,7 +54,9 @@ import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkSched
 
 import { signInUser } from './services/authService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
-import { CELL_SIZE } from './services/spatialPartitioning'; // Import CELL_SIZE constant
+import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning'; // Import CELL_SIZE constant
+import { setGuestPresence } from './services/presenceService';
+import { getPublicSpaceMetadata } from './services/spacesService';
 import { setIsInitialLoading as setGlobalInitialLoading } from './utils/loadingState';
 import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
@@ -180,9 +182,7 @@ const App = () => {
   // Register guest presence when a non-logged-in user is viewing a space
   useEffect(() => {
     if (!isAuthReady || user || !effectiveSpaceId) return;
-    import('./services/presenceService').then(({ setGuestPresence }) => {
-      setGuestPresence(effectiveSpaceId);
-    });
+    setGuestPresence(effectiveSpaceId);
   }, [isAuthReady, user, effectiveSpaceId]);
 
   // Spatial partitioning hook with object change handler
@@ -411,65 +411,48 @@ const App = () => {
 
           console.log('🔍 [App] Starting public space lookup for:', spaceParam);
 
-          // We'll need to fetch the space metadata to get the owner
-          import('./services/spacesService')
-            .then(({ getPublicSpaceMetadata }) => {
+          getPublicSpaceMetadata(spaceParam)
+            .then((spaceData) => {
               console.log(
-                '📋 [App] About to call getPublicSpaceMetadata with:',
-                spaceParam
+                '📋 [App] getPublicSpaceMetadata returned:',
+                spaceData
               );
-              getPublicSpaceMetadata(spaceParam)
-                .then((spaceData) => {
-                  console.log(
-                    '📋 [App] getPublicSpaceMetadata returned:',
-                    spaceData
-                  );
-                  if (spaceData && spaceData.isPublic && spaceData.ownerId) {
-                    console.log(
-                      '✅ [App] Successfully found public space, setting up access'
-                    );
-                    window.currentSpaceOwner = spaceData.ownerId;
-                    setCurrentSpaceOwner(spaceData.ownerId);
-                    sessionStorage.setItem(
-                      `isSharedSpace_${spaceParam}`,
-                      'true'
-                    );
-                    sessionStorage.setItem(
-                      `sharedSpaceOwner_${spaceParam}`,
-                      spaceData.ownerId
-                    );
-                    sessionStorage.setItem(
-                      `isPublicSpace_${spaceParam}`,
-                      'true'
-                    );
-                    // Trigger a re-render
-                    setPublicSpaceReady(true);
-                  } else {
-                    console.log(
-                      '❌ [App] Public space lookup failed, redirecting. SpaceData:',
-                      spaceData
-                    );
-                    window.location.href = 'https://volscape.com/';
-                    return;
-                  }
-                  setIsLookingUpPublicSpace(false);
-                })
-                .catch((error) => {
-                  console.error(
-                    '❌ [App] Failed to fetch space metadata:',
-                    error
-                  );
-                  // Redirect to volscape.com for failed space access
-
-                  window.location.href = 'https://volscape.com/';
-                });
-            })
-            .catch((importError) => {
-              console.error(
-                '❌ [App] Failed to import spacesService:',
-                importError
-              );
+              if (spaceData && spaceData.isPublic && spaceData.ownerId) {
+                console.log(
+                  '✅ [App] Successfully found public space, setting up access'
+                );
+                window.currentSpaceOwner = spaceData.ownerId;
+                setCurrentSpaceOwner(spaceData.ownerId);
+                sessionStorage.setItem(
+                  `isSharedSpace_${spaceParam}`,
+                  'true'
+                );
+                sessionStorage.setItem(
+                  `sharedSpaceOwner_${spaceParam}`,
+                  spaceData.ownerId
+                );
+                sessionStorage.setItem(
+                  `isPublicSpace_${spaceParam}`,
+                  'true'
+                );
+                // Trigger a re-render
+                setPublicSpaceReady(true);
+              } else {
+                console.log(
+                  '❌ [App] Public space lookup failed, redirecting. SpaceData:',
+                  spaceData
+                );
+                window.location.href = 'https://volscape.com/';
+                return;
+              }
               setIsLookingUpPublicSpace(false);
+            })
+            .catch((error) => {
+              console.error(
+                '❌ [App] Failed to fetch space metadata:',
+                error
+              );
+              window.location.href = 'https://volscape.com/';
             });
         } else if (
           !user &&
@@ -579,9 +562,6 @@ const App = () => {
     } // Add an initial fetch phase to ensure we get all existing objects
     const performInitialObjectFetch = async () => {
       try {
-        const { getObjectsFromCells } = await import(
-          './services/spatialPartitioning'
-        );
         const ownerUserId = currentSpaceOwner || user?.uid;
 
         // Convert cell IDs to coordinate objects
