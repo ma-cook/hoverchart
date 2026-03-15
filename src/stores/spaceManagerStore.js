@@ -312,9 +312,9 @@ const useSpaceManagerStore = create((set, get) => ({
             // Redirect to landing page for invalid space access
             setTimeout(() => {
               console.log(
-                '🔄 [SpaceManager] Redirecting to volscape.com - invalid space or no access'
+                '🔄 [SpaceManager] Redirecting to landing - invalid space or no access'
               );
-              window.location.href = 'https://volscape.com/';
+              window.location.href = '/';
             }, 1000);
             return;
           } catch (error) {
@@ -326,9 +326,9 @@ const useSpaceManagerStore = create((set, get) => ({
             // Redirect to landing page for space access errors
             setTimeout(() => {
               console.log(
-                '🔄 [SpaceManager] Redirecting to volscape.com - space access error'
+                '🔄 [SpaceManager] Redirecting to landing - space access error'
               );
-              window.location.href = 'https://volscape.com/';
+              window.location.href = '/';
             }, 1000);
             return;
           }

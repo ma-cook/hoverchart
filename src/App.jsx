@@ -67,7 +67,7 @@ import { objectVirtualizer } from './utils/objectVirtualization';
 /**
  * Main application component
  */
-const App = () => {
+const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
   // Base state
   const [backgroundColor] = useState('white');
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
@@ -442,7 +442,7 @@ const App = () => {
                   '❌ [App] Public space lookup failed, redirecting. SpaceData:',
                   spaceData
                 );
-                window.location.href = 'https://volscape.com/';
+                if (onBackToLanding) { onBackToLanding(); } else { window.location.href = '/'; }
                 return;
               }
               setIsLookingUpPublicSpace(false);
@@ -452,7 +452,7 @@ const App = () => {
                 '❌ [App] Failed to fetch space metadata:',
                 error
               );
-              window.location.href = 'https://volscape.com/';
+              if (onBackToLanding) { onBackToLanding(); } else { window.location.href = '/'; }
             });
         } else if (
           !user &&
@@ -512,9 +512,9 @@ const App = () => {
       !isLookingUpPublicSpace
     ) {
       console.log(
-        '🔄 [App] Redirecting to volscape.com - no auth and no public space access'
+        '🔄 [App] Redirecting to landing - no auth and no public space access'
       );
-      window.location.href = 'https://volscape.com/';
+      if (onBackToLanding) { onBackToLanding(); } else { window.location.href = '/'; }
       return;
     }
   }, [
@@ -1609,8 +1609,8 @@ const App = () => {
     // Clear any existing redirect timeout and schedule new one
     clearRedirectTimeout();
     setRedirectTimeout(() => {
-      console.log('🔄 [App] Executing redirect to volscape.com');
-      window.location.href = 'https://volscape.com/';
+      console.log('🔄 [App] Executing redirect to landing');
+      if (onBackToLanding) { onBackToLanding(); } else { window.location.href = '/'; }
     }, 0);
     return <div className="loading">Redirecting...</div>;
   }
