@@ -98,7 +98,7 @@ const CubeOutline = ({
         onAnimationComplete();
       }
     }
-  }, [visible]);
+  }, [visible, onAnimationComplete]);
 
   // Animation logic using useFrame (only for fade effects)
   useFrame(() => {

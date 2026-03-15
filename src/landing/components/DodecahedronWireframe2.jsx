@@ -38,7 +38,7 @@ const DodecahedronWireframe2 = ({
         onAnimationComplete();
       }
     }
-  }, [visible]);
+  }, [visible, onAnimationComplete]);
 
   // Generate individual edge lines for a dodecahedron wireframe
   const generateDodecahedronEdges = () => {
