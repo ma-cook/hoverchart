@@ -63,4 +63,9 @@ const database = getDatabase(app);
 const storage = getStorage(app);
 const functions = getFunctions(app);
 
+// Guard used by landing app to detect dev/placeholder configuration
+export const isValidFirebaseConfig =
+  import.meta.env.VITE_FIREBASE_API_KEY !== undefined &&
+  import.meta.env.VITE_FIREBASE_API_KEY !== 'placeholder-api-key';
+
 export { auth, provider, db, database, storage, functions };

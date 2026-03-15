@@ -44,7 +44,7 @@ export const getSpaceById = async (userId, spaceId) => {
 // Create a new space - DISABLED: Space creation handled by landing page
 export const createSpace = async () => {
   console.error(
-    '❌ Space creation is disabled in this application. Use the landing page (volscape.com) to create spaces.'
+    '❌ Space creation is disabled in this application. Space creation is handled by the landing page view.'
   );
   return null;
 };
@@ -84,7 +84,7 @@ export const getOrCreateDefaultSpace = async (userId) => {
 // Migrate existing user data to default space - DISABLED: Migrations handled by landing page
 export const migrateToDefaultSpace = async () => {
   console.error(
-    '❌ Data migration is disabled in this application. Use the landing page (volscape.com) for data migrations.'
+    '❌ Data migration is disabled in this application. Data migrations are handled by the landing page view.'
   );
   return false;
 };
@@ -111,7 +111,7 @@ export const getUserSpaces = async (userId) => {
 // Delete a space - DISABLED: Space management handled by landing page
 export const deleteSpace = async () => {
   console.error(
-    '❌ Space deletion is disabled in this application. Use the landing page (volscape.com) to manage spaces.'
+    '❌ Space deletion is disabled in this application. Space management is handled by the landing page view.'
   );
   return false;
 };
