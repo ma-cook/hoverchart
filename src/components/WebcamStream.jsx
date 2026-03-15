@@ -121,7 +121,18 @@ const WebcamStream = ({
     video.autoplay = true;
     video.playsInline = true;
     video.muted = true;
-    video.style.display = 'none';
+    video.setAttribute('playsinline', '');
+    video.setAttribute('webkit-playsinline', '');
+    // Use off-screen positioning instead of display:none — mobile browsers
+    // skip frame decoding for hidden elements, leaving VideoTexture blank.
+    video.style.position = 'fixed';
+    video.style.top = '0';
+    video.style.left = '0';
+    video.style.width = '1px';
+    video.style.height = '1px';
+    video.style.opacity = '0';
+    video.style.pointerEvents = 'none';
+    video.style.zIndex = '-1';
     document.body.appendChild(video);
     videoRef.current = video;
 
@@ -297,7 +308,18 @@ const WebcamStream = ({
       video.autoplay = true;
       video.playsInline = true;
       video.muted = true;
-      video.style.display = 'none';
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      // Off-screen instead of display:none — mobile browsers won't decode
+      // frames for hidden videos, causing blank VideoTexture.
+      video.style.position = 'fixed';
+      video.style.top = '0';
+      video.style.left = '0';
+      video.style.width = '1px';
+      video.style.height = '1px';
+      video.style.opacity = '0';
+      video.style.pointerEvents = 'none';
+      video.style.zIndex = '-1';
       document.body.appendChild(video);
       remoteVideoRef.current = video;
     } else {
