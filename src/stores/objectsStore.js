@@ -520,8 +520,7 @@ const useObjectsStore = createWithEqualityFn(
       saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
 
       // Track object in spatial system for dynamic objects
-      const spatialManagerStore = require('../stores/spatialManagerStore').default;
-      const spatialManager = spatialManagerStore.getState();
+      const spatialManager = (await import('./spatialManagerStore')).default.getState();
       if (spatialManager.trackObjectInCell) {
         const cellCoords = getCellCoordinates(position);
         const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;

@@ -23,6 +23,9 @@ import {
 
 import { getIsInitialLoading } from '../utils/loadingState';
 import { forceCleanupSubscription, generateSubscriptionKey } from '../services/globalSubscriptionManager';
+// Lazy-accessed at runtime (inside actions) to break circular init dependency
+import useObjectsStore from './objectsStore';
+import useConnectionStore from './connectionStore';
 
 // Version marker
 
@@ -53,11 +56,9 @@ const useSpatialManagerStore = create((set, get) => ({
   handleCellsReloaded: (loadedCells) => {
     if (!loadedCells?.length) return;
 
-    // Import objects store lazily to avoid circular dependency at module init
-    const objectsStore = require('./objectsStore').default;
     try {
-      const currentObjects = objectsStore.getState().objects;
-      objectsStore.getState().setObjects([...currentObjects]);
+      const currentObjects = useObjectsStore.getState().objects;
+      useObjectsStore.getState().setObjects([...currentObjects]);
     } catch (error) {
       console.error('Error updating objects after cell reload:', error);
     }
@@ -244,9 +245,8 @@ const useSpatialManagerStore = create((set, get) => ({
         get().handleCellsReloaded(loadedCellIds);
 
         // Restore connections
-        const connectionStore = require('./connectionStore').default;
         try {
-          connectionStore
+          useConnectionStore
             .getState()
             .clearUnloadedConnectionsForCells(loadedCellIds);
         } catch (error) {
@@ -452,9 +452,8 @@ const useSpatialManagerStore = create((set, get) => ({
           });
 
           // Clean up objects state in the store
-          const objectsStore = require('./objectsStore').default;
           try {
-            objectsStore.getState().cleanupUnloadedObjects();
+            useObjectsStore.getState().cleanupUnloadedObjects();
           } catch (error) {
             console.error('Error cleaning up objects store:', error);
           }
@@ -463,9 +462,7 @@ const useSpatialManagerStore = create((set, get) => ({
 
       // Remove connections from unloaded cells synchronously
       try {
-        const connectionStore = require('./connectionStore').default;
-        const state = connectionStore.getState();
-        state.removeConnectionsFromCells(cellsToUnloadNow);
+        useConnectionStore.getState().removeConnectionsFromCells(cellsToUnloadNow);
       } catch (error) {
         console.error('Error removing connections from unloaded cells:', error);
       }

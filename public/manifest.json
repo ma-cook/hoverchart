@@ -1,0 +1,16 @@
+{
+  "name": "Volscape - 3D Diagram Tool",
+  "short_name": "Volscape",
+  "description": "Create stunning 3D diagrams and wireframes. Collaborate in real-time, design interactive 3D models, and visualize ideas in immersive 3D spaces.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/vol.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
