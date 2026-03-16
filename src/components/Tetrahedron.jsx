@@ -1190,18 +1190,7 @@ const Tetrahedron = ({
           </mesh>
         )}
 
-        {/* LOD MEDIUM: Render simple box for objects at medium distance */}
-        {/* Using box to approximate tetrahedron bounds (extends ~7.5 units from center) */}
-        {!isGroupingContainer && lodLevel === LOD_LEVELS.MEDIUM && (
-          <mesh>
-            <boxGeometry args={[12, 12, 12]} />
-            <meshBasicMaterial
-              color={isParentObject ? "#d0d0d0" : (color || '#808080')}
-              transparent
-              opacity={isParentObject ? 0.6 : 0.8}
-            />
-          </mesh>
-        )}
+        {/* LOD MEDIUM: Simple boxes now rendered by GlobalTetrahedronMediumLODRenderer (1 draw call for all) */}
 
         {/* Tetrahedron edge lines - batched into single InstancedLine */}
         {/* Only render if renderEdges is true (when not using GlobalTetrahedronEdgesRenderer) */}

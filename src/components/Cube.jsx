@@ -1376,17 +1376,7 @@ const Cube = ({
           <meshBasicMaterial visible={false} />
         </mesh>
         
-        {/* LOD MEDIUM: Render simple box for objects at medium distance */}
-        {!isGroupingContainer && lodLevel === LOD_LEVELS.MEDIUM && (
-          <mesh>
-            <boxGeometry args={[CUBE_SIZE * 2, CUBE_SIZE * 2, CUBE_SIZE * 2]} />
-            <meshBasicMaterial
-              color={isParentObject ? "#d0d0d0" : (cube?.color || color)}
-              transparent
-              opacity={isParentObject ? 0.6 : 0.8}
-            />
-          </mesh>
-        )}
+        {/* LOD MEDIUM: Simple boxes now rendered by GlobalCubeMediumLODRenderer (1 draw call for all) */}
         
         {/* Cube edges - only render per-cube if renderEdges=true and LOD allows, otherwise GlobalCubeEdgesRenderer handles all cubes */}
         {shouldRenderEdges && (

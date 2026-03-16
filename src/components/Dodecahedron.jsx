@@ -1222,18 +1222,8 @@ const Sphere = React.memo(
               />
             </mesh>
           )}
-          {/* LOD MEDIUM: Render simple sphere for objects at medium distance */}
-          {/* Using sphere with radius ~8 to match edge renderer bounds (PHI * 5) */}
-          {!isGroupingContainer && lodLevel === LOD_LEVELS.MEDIUM && (
-            <mesh>
-              <sphereGeometry args={[8, 8, 6]} />
-              <meshBasicMaterial
-                color={isParentObject ? "#888888" : (dodecahedron?.color || "#888888")}
-                transparent
-                opacity={isParentObject ? 0.6 : 0.8}
-              />
-            </mesh>
-          )}
+          {/* LOD MEDIUM: Simple spheres now rendered by GlobalDodecahedronMediumLODRenderer (1 draw call for all) */}
+          
           {/* Render faces using DodecahedronFace component (consistent with Cube architecture) */}
           {shouldRenderFullDetail && geometry.map((faceGeometry, idx) => {
             const faceInfo = getFaceInfo(idx);

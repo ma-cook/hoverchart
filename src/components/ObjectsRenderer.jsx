@@ -4,6 +4,9 @@ import ObjectRenderer from './ObjectRenderer';
 import GlobalCubeEdgesRenderer from './GlobalCubeEdgesRenderer';
 import GlobalDodecahedronEdgesRenderer from './GlobalDodecahedronEdgesRenderer';
 import GlobalTetrahedronEdgesRenderer from './GlobalTetrahedronEdgesRenderer';
+import GlobalCubeMediumLODRenderer from './GlobalCubeMediumLODRenderer';
+import GlobalDodecahedronMediumLODRenderer from './GlobalDodecahedronMediumLODRenderer';
+import GlobalTetrahedronMediumLODRenderer from './GlobalTetrahedronMediumLODRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
 import useUIOverlayStore from '../stores/uiOverlayStore';
@@ -444,11 +447,20 @@ const ObjectsRenderer = React.memo(({
       {/* PERFORMANCE: Render all cube edges in a single draw call */}
       <GlobalCubeEdgesRenderer cubes={cubeObjects} defaultLineWidth={1} />
       
+      {/* PERFORMANCE: Render all medium-LOD cubes as simple boxes in 1 draw call */}
+      <GlobalCubeMediumLODRenderer cubes={cubeObjects} />
+      
       {/* PERFORMANCE: Render all dodecahedron edges in a single draw call */}
       <GlobalDodecahedronEdgesRenderer dodecahedrons={dodecahedronObjects} defaultLineWidth={1} />
       
+      {/* PERFORMANCE: Render all medium-LOD dodecahedrons as simple spheres in 1 draw call */}
+      <GlobalDodecahedronMediumLODRenderer dodecahedrons={dodecahedronObjects} />
+      
       {/* PERFORMANCE: Render all tetrahedron edges in a single draw call */}
       <GlobalTetrahedronEdgesRenderer tetrahedrons={tetrahedronObjects} defaultLineWidth={1} />
+      
+      {/* PERFORMANCE: Render all medium-LOD tetrahedrons as simple boxes in 1 draw call */}
+      <GlobalTetrahedronMediumLODRenderer tetrahedrons={tetrahedronObjects} />
       
       {/* Render floating header labels above group containers */}
       {containerHeaders.map((header) => (
