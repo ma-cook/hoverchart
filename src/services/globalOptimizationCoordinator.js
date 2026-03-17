@@ -140,7 +140,6 @@ class GlobalOptimizationCoordinator {
     this.registerSystem('webrtc', await this.loadWebRTCSystem());
     this.registerSystem('animation', await this.loadAnimationSystem());
     this.registerSystem('storage', await this.loadStorageSystem());
-    this.registerSystem('pooling', await this.loadPoolingSystem());
     this.registerSystem(
       'stateManagement',
       await this.loadStateManagementSystem()
@@ -744,105 +743,6 @@ class GlobalOptimizationCoordinator {
       };
     } catch (error) {
       console.warn('Failed to load storage system:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Load object pooling optimization system
-   */
-  async loadPoolingSystem() {
-    try {
-      const { getLinePool } = await import('../utils/linePoolManager.js');
-
-      const poolingManager = {
-        linePool: getLinePool(),
-        geometryPools: new Map(),
-        materialPools: new Map(),
-
-        // Pool management
-        createPool: (type) => {
-          if (!poolingManager.geometryPools.has(type)) {
-            poolingManager.geometryPools.set(type, []);
-          }
-          return poolingManager.geometryPools.get(type);
-        },
-
-        // Resource optimization
-        optimizePools: () => {
-          let cleaned = 0;
-
-          // Clean geometry pools
-          poolingManager.geometryPools.forEach((pool) => {
-            if (pool.length > 50) {
-              const excess = pool.splice(50);
-              excess.forEach((item) => item.dispose && item.dispose());
-              cleaned += excess.length;
-            }
-          });
-
-          // Clean material pools
-          poolingManager.materialPools.forEach((pool) => {
-            if (pool.length > 30) {
-              const excess = pool.splice(30);
-              excess.forEach((item) => item.dispose && item.dispose());
-              cleaned += excess.length;
-            }
-          });
-
-          return cleaned;
-        },
-
-        // Statistics
-        getStats: () => ({
-          linePoolActive: poolingManager.linePool ? true : false,
-          geometryPoolCount: poolingManager.geometryPools.size,
-          materialPoolCount: poolingManager.materialPools.size,
-          totalPooledItems:
-            Array.from(poolingManager.geometryPools.values()).reduce(
-              (total, pool) => total + pool.length,
-              0
-            ) +
-            Array.from(poolingManager.materialPools.values()).reduce(
-              (total, pool) => total + pool.length,
-              0
-            ),
-        }),
-
-        // Cleanup
-        cleanup: () => {
-          if (poolingManager.linePool) {
-            poolingManager.linePool.clear();
-          }
-          poolingManager.geometryPools.forEach((pool) => {
-            pool.forEach((item) => item.dispose && item.dispose());
-          });
-          poolingManager.materialPools.forEach((pool) => {
-            pool.forEach((item) => item.dispose && item.dispose());
-          });
-          poolingManager.geometryPools.clear();
-          poolingManager.materialPools.clear();
-        },
-      };
-
-      // Register as global pooling manager
-      if (typeof window !== 'undefined') {
-        window._globalPooling = poolingManager;
-      }
-
-      return {
-        type: 'pooling',
-        manager: poolingManager,
-        duplicates: [
-          'LinePool in linePoolManager.js',
-          'Geometry pooling scattered across components',
-          'Material pooling in PooledLine components',
-          'Three.js resource management duplicated',
-        ],
-        consolidationStatus: 'resource_optimized',
-      };
-    } catch (error) {
-      console.warn('Failed to load pooling system:', error);
       return null;
     }
   }

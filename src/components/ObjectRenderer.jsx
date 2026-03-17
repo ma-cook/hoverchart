@@ -5,7 +5,6 @@ import Sphere from './Dodecahedron';
 import Plane from './Plane';
 import TextObject from './TextObject';
 import ModelObject from './ModelObject';
-import ContainerOutline from './ContainerOutline';
 
 // Module-level constant to avoid creating new object on every render
 const TRANSFORM_CONTROLS_CONFIG = {

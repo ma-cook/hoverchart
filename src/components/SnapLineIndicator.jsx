@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
-import PooledLine from './PooledLine';
+import { useEffect, useState } from 'react';
+import InstancedLine from './InstancedLine';
 
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
 /**
- * Visual indicator showing a dotted line between objects when snapping
+ * Visual indicator showing a solid line between objects when snapping
  * @param {Object} props - Component properties
  * @param {Array} props.points - Array of two points for start and end of the line [[x1,y1,z1], [x2,y2,z2]]
  * @param {string} props.axis - The axis being snapped to ('x', 'y', or 'z')
@@ -41,17 +41,10 @@ const SnapLineIndicator = ({ points, axis, visible }) => {
   if (!visible || !points || points.length !== 2) return null;
 
   return (
-    <PooledLine
+    <InstancedLine
       points={points}
       color={color}
       lineWidth={isMobile ? 4 : 2}
-      dashed={true}
-      dashSize={0.5}
-      dashScale={1}
-      dashOffset={0}
-      opacity={fadeOut ? 0.3 : 1}
-      transparent
-      enablePooling={true}
     />
   );
 };

@@ -22,6 +22,27 @@ const _lineDir = new THREE.Vector3();
 // Reusable color object  
 const _color = new THREE.Color();
 
+/**
+ * Compute a numeric cache key from connection id + start/end positions.
+ * Uses Math.imul rolling hash — zero string allocations.
+ * Positions are quantized to 0.1 units (same precision as the old toFixed(1) key).
+ */
+function numericCacheKey(connId, start, end) {
+  let h = typeof connId === 'number' ? connId : 0;
+  if (typeof connId === 'string') {
+    for (let i = 0; i < connId.length; i++) {
+      h = Math.imul(h ^ connId.charCodeAt(i), 0x9e3779b9);
+    }
+  }
+  h = Math.imul(h ^ ((start[0] * 10) | 0), 0x9e3779b9);
+  h = Math.imul(h ^ ((start[1] * 10) | 0), 0x9e3779b9);
+  h = Math.imul(h ^ ((start[2] * 10) | 0), 0x9e3779b9);
+  h = Math.imul(h ^ ((end[0] * 10) | 0), 0x9e3779b9);
+  h = Math.imul(h ^ ((end[1] * 10) | 0), 0x9e3779b9);
+  h = Math.imul(h ^ ((end[2] * 10) | 0), 0x9e3779b9);
+  return h;
+}
+
 // Base quad geometry positions - shared across all instances
 const BASE_POSITIONS = new Float32Array([
   0, -1, 0, 1, -1, 0, 0, 1, 0,
@@ -125,8 +146,8 @@ const BatchedCurvedLines = memo(({
       if (isNaN(start[0]) || isNaN(start[1]) || isNaN(start[2]) ||
           isNaN(end[0]) || isNaN(end[1]) || isNaN(end[2])) return;
       
-      // Create cache key from positions
-      const cacheKey = `${conn.id}:${start[0].toFixed(1)},${start[1].toFixed(1)},${start[2].toFixed(1)}-${end[0].toFixed(1)},${end[1].toFixed(1)},${end[2].toFixed(1)}`;
+      // Create numeric cache key from positions (zero string allocations)
+      const cacheKey = numericCacheKey(conn.id, start, end);
       
       let pathPoints;
       
