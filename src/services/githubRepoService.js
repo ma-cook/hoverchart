@@ -1426,6 +1426,40 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // Maps: sanitizedFileName -> { segment, routePath, parentRoutePath, isLayout, isPage, isLoading, isError, isApi, filePath }
     const nextjsRouteMap = new Map();
 
+    // NEW: Track API endpoints and their handler chains
+    // Maps: endpointKey -> { method, path, handlers: string[], sourceFile: string }
+    const apiEndpoints = new Map();
+
+    // NEW: Track database model/collection definitions and relationships
+    // Maps: collectionName -> Set<relatedCollectionName>
+    const dbModels = new Map();
+
+    // NEW: Track auth guards/middleware
+    // Set of guard names found across all files
+    const authGuards = new Set();
+    // Array of { source, target, label } auth flow relationships
+    const authFlows = [];
+
+    // NEW: Track event emitters and listeners
+    // Maps: eventName -> Set<sourceFile/component> (emitters)
+    const eventEmitters = new Map();
+    // Maps: eventName -> Set<sourceFile/component> (listeners)
+    const eventListeners = new Map();
+
+    // NEW: Track error boundaries
+    // Set of error boundary class/component names
+    const errorBoundaries = new Set();
+    // Set of Suspense boundary usage locations
+    const suspenseBoundaries = new Set();
+    // Array of { boundary, wraps, label } containment relationships
+    const errorContainment = [];
+
+    // NEW: Track shared TypeScript interfaces and type aliases
+    // Maps: interfaceName -> sourceFile
+    const sharedInterfaces = new Map();
+    // Maps: consumer (component/file) -> Set<interfaceName>
+    const interfaceUsages = new Map();
+
     // Process files in parallel batches for better performance
     const BATCH_SIZE = 10; // Process 10 files at a time
     const batches = [];
@@ -2452,6 +2486,288 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 }
               }
 
+              // NEW: Detect API endpoint definitions (Express/Fastify/Next.js)
+              if (node.type === 'CallExpression') {
+                const callee = node.callee;
+                // Express/Fastify style: app.get('/path', handler1, handler2)
+                if (callee?.type === 'MemberExpression') {
+                  const methodName = callee.property?.name;
+                  const httpMethods = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options', 'use'];
+                  if (httpMethods.includes(methodName) && node.arguments?.length >= 1) {
+                    const firstArg = node.arguments[0];
+                    const routePath = firstArg?.type === 'StringLiteral' ? firstArg.value :
+                                      firstArg?.type === 'TemplateLiteral' ? '(dynamic)' : null;
+                    if (routePath && (routePath.startsWith('/') || routePath.startsWith('.'))) {
+                      const method = methodName === 'use' ? 'USE' : methodName.toUpperCase();
+                      const endpointKey = sanitizeNodeId(`${method}_${routePath}`);
+                      if (!apiEndpoints.has(endpointKey)) {
+                        apiEndpoints.set(endpointKey, { method, path: routePath, handlers: [], sourceFile: fileName });
+                      }
+                      // Collect handler names (remaining arguments that are identifiers)
+                      const handlers = node.arguments.slice(1)
+                        .filter(a => a.type === 'Identifier')
+                        .map(a => a.name);
+                      const ep = apiEndpoints.get(endpointKey);
+                      handlers.forEach(h => { if (!ep.handlers.includes(h)) ep.handlers.push(h); });
+                    }
+                  }
+                  // Fastify: fastify.route({ method, url, handler })
+                  if (methodName === 'route' && node.arguments?.[0]?.type === 'ObjectExpression') {
+                    const props = node.arguments[0].properties || [];
+                    let routeMethod = null;
+                    let routeUrl = null;
+                    let routeHandler = null;
+                    props.forEach(p => {
+                      if (p.key?.name === 'method' && p.value?.type === 'StringLiteral') {
+                        routeMethod = p.value.value.toUpperCase();
+                      }
+                      if (p.key?.name === 'url' && p.value?.type === 'StringLiteral') {
+                        routeUrl = p.value.value;
+                      }
+                      if (p.key?.name === 'handler' && p.value?.type === 'Identifier') {
+                        routeHandler = p.value.name;
+                      }
+                    });
+                    if (routeMethod && routeUrl) {
+                      const epKey = sanitizeNodeId(`${routeMethod}_${routeUrl}`);
+                      if (!apiEndpoints.has(epKey)) {
+                        apiEndpoints.set(epKey, { method: routeMethod, path: routeUrl, handlers: [], sourceFile: fileName });
+                      }
+                      if (routeHandler) {
+                        const ep = apiEndpoints.get(epKey);
+                        if (!ep.handlers.includes(routeHandler)) ep.handlers.push(routeHandler);
+                      }
+                    }
+                  }
+                }
+              }
+
+              // NEW: Detect Next.js route handler exports (export async function GET/POST... or export const GET = ...)
+              if (node.type === 'ExportNamedDeclaration' && node.declaration) {
+                const decl = node.declaration;
+                const httpMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
+                let exportedMethodName = null;
+
+                if ((decl.type === 'FunctionDeclaration' || decl.type === 'TSDeclareFunction') && decl.id) {
+                  exportedMethodName = decl.id.name;
+                } else if (decl.type === 'VariableDeclaration') {
+                  decl.declarations?.forEach(varDecl => {
+                    if (varDecl.id?.type === 'Identifier' &&
+                        (varDecl.init?.type === 'ArrowFunctionExpression' || varDecl.init?.type === 'FunctionExpression')) {
+                      exportedMethodName = varDecl.id.name;
+                    }
+                  });
+                }
+
+                if (exportedMethodName && httpMethods.includes(exportedMethodName)) {
+                  const method = exportedMethodName;
+                  const routePath = file.path.replace(/\.(jsx?|tsx?)$/, '').replace(/(?:^|\/)(?:src\/)?(?:app|pages)\//, '/').replace(/\/route$/, '').replace(/\/page$/, '') || '/';
+                  const epKey = sanitizeNodeId(`${method}_${routePath}`);
+                  if (!apiEndpoints.has(epKey)) {
+                    apiEndpoints.set(epKey, { method, path: routePath, handlers: [method], sourceFile: fileName });
+                  }
+                }
+              }
+
+              // NEW: Detect Firestore collection/model usages
+              if (node.type === 'CallExpression') {
+                const callee = node.callee;
+                const funcName = callee?.type === 'Identifier' ? callee.name :
+                                 callee?.type === 'MemberExpression' ? callee.property?.name : null;
+                // Firestore: collection(db, 'name'), doc(db, 'name', id)
+                if ((funcName === 'collection' || funcName === 'doc') && node.arguments?.length >= 2) {
+                  const collArg = node.arguments[1];
+                  if (collArg?.type === 'StringLiteral') {
+                    const collName = sanitizeNodeId(collArg.value);
+                    if (!dbModels.has(collName)) dbModels.set(collName, new Set());
+                  }
+                }
+                // Mongoose: mongoose.model('Name', schema)
+                if (funcName === 'model' && node.arguments?.length >= 1) {
+                  const nameArg = node.arguments[0];
+                  if (nameArg?.type === 'StringLiteral') {
+                    const modelName = sanitizeNodeId(nameArg.value.toLowerCase());
+                    if (!dbModels.has(modelName)) dbModels.set(modelName, new Set());
+                  }
+                }
+                // Prisma: prisma.collectionName.method()
+                if (callee?.type === 'MemberExpression' &&
+                    callee.object?.type === 'MemberExpression' &&
+                    callee.object.object?.name === 'prisma') {
+                  const modelName = sanitizeNodeId(callee.object.property?.name || '');
+                  if (modelName && !dbModels.has(modelName)) dbModels.set(modelName, new Set());
+                }
+                // Sequelize: User.hasMany(Post), Post.belongsTo(User)
+                const relationMethods = ['hasMany', 'hasOne', 'belongsTo', 'belongsToMany'];
+                if (callee?.type === 'MemberExpression' && relationMethods.includes(callee.property?.name)) {
+                  const parentModel = sanitizeNodeId(callee.object?.name || '');
+                  const childArg = node.arguments?.[0];
+                  const childModel = sanitizeNodeId(childArg?.type === 'Identifier' ? childArg.name.toLowerCase() : '');
+                  if (parentModel && childModel) {
+                    const parentKey = parentModel.toLowerCase();
+                    if (!dbModels.has(parentKey)) dbModels.set(parentKey, new Set());
+                    dbModels.get(parentKey).add(childModel);
+                  }
+                }
+              }
+
+              // Helper: check if params look like (req, res, next) middleware params
+              const isMiddlewareParams = (params) => {
+                if (!params || params.length !== 3) return false;
+                const names = params.map(p => (p.name || p.left?.name || '').toLowerCase());
+                return (names[0].startsWith('req') || names[0] === 'request' || names[0] === 'ctx') &&
+                       (names[1].startsWith('res') || names[1] === 'response' || names[1] === 'context') &&
+                       (names[2] === 'next' || names[2] === 'done');
+              };
+
+              // NEW: Detect auth middleware/guard patterns
+              if (node.type === 'FunctionDeclaration' && node.id) {
+                const name = node.id.name;
+                const params = node.params || [];
+                if (isMiddlewareParams(params) &&
+                    (name.toLowerCase().includes('auth') || name.toLowerCase().includes('guard') ||
+                     name.toLowerCase().includes('require') || name.toLowerCase().includes('protect'))) {
+                  authGuards.add(name);
+                  if (currentComponent) {
+                    authFlows.push({ source: currentComponent, target: name, label: 'uses guard' });
+                  }
+                }
+              }
+              // Auth guard as variable: const requireAuth = (req, res, next) => { ... }
+              if (node.type === 'VariableDeclaration') {
+                node.declarations?.forEach(decl => {
+                  if (decl.id?.type === 'Identifier' && decl.init) {
+                    const name = decl.id.name;
+                    const isArrow = decl.init.type === 'ArrowFunctionExpression' || decl.init.type === 'FunctionExpression';
+                    const params = isArrow ? (decl.init.params || []) : [];
+                    if (isArrow && isMiddlewareParams(params) &&
+                        (name.toLowerCase().includes('auth') || name.toLowerCase().includes('guard') ||
+                         name.toLowerCase().includes('require') || name.toLowerCase().includes('protect') ||
+                         name.toLowerCase().includes('middleware'))) {
+                      authGuards.add(name);
+                    }
+                    // HOF: export function withAuth(handler) { ... }
+                    if (name.startsWith('with') && name.toLowerCase().includes('auth') && isArrow) {
+                      authGuards.add(name);
+                    }
+                  }
+                });
+              }
+              // Firebase auth calls: onAuthStateChanged, signInWithPopup
+              if (node.type === 'CallExpression') {
+                const callee = node.callee;
+                const funcName = callee?.type === 'Identifier' ? callee.name : null;
+                if (funcName === 'onAuthStateChanged' || funcName === 'signInWithPopup' || funcName === 'signOut') {
+                  const guardKey = funcName;
+                  authGuards.add(guardKey);
+                  if (currentComponent) {
+                    authFlows.push({ source: currentComponent, target: guardKey, label: 'auth check' });
+                  }
+                }
+              }
+
+              // NEW: Detect event emitter/listener patterns
+              if (node.type === 'CallExpression') {
+                const callee = node.callee;
+                // emitter.emit / dispatchEvent / postMessage
+                if (callee?.type === 'MemberExpression') {
+                  const methodName = callee.property?.name;
+                  if (methodName === 'emit' && node.arguments?.[0]?.type === 'StringLiteral') {
+                    const evtName = sanitizeNodeId(node.arguments[0].value);
+                    if (!eventEmitters.has(evtName)) eventEmitters.set(evtName, new Set());
+                    eventEmitters.get(evtName).add(currentComponent || fileName);
+                  }
+                  if ((methodName === 'on' || methodName === 'addEventListener') && node.arguments?.[0]?.type === 'StringLiteral') {
+                    const evtName = sanitizeNodeId(node.arguments[0].value);
+                    if (!eventListeners.has(evtName)) eventListeners.set(evtName, new Set());
+                    eventListeners.get(evtName).add(currentComponent || fileName);
+                  }
+                  if (methodName === 'postMessage' && node.arguments?.[0]?.type === 'ObjectExpression') {
+                    const typeProp = node.arguments[0].properties?.find(p => p.key?.name === 'type');
+                    if (typeProp?.value?.type === 'StringLiteral') {
+                      const evtName = sanitizeNodeId(typeProp.value.value);
+                      if (!eventEmitters.has(evtName)) eventEmitters.set(evtName, new Set());
+                      eventEmitters.get(evtName).add(currentComponent || fileName);
+                    }
+                  }
+                }
+                // dispatchEvent(new CustomEvent('name'))
+                if (callee?.type === 'Identifier' && callee.name === 'dispatchEvent') {
+                  const arg = node.arguments?.[0];
+                  if (arg?.type === 'NewExpression' && arg.callee?.name === 'CustomEvent' && arg.arguments?.[0]?.type === 'StringLiteral') {
+                    const evtName = sanitizeNodeId(arg.arguments[0].value);
+                    if (!eventEmitters.has(evtName)) eventEmitters.set(evtName, new Set());
+                    eventEmitters.get(evtName).add(currentComponent || fileName);
+                  }
+                }
+                // onSnapshot / onValue (Firebase realtime listeners)
+                if (callee?.type === 'Identifier' && (callee.name === 'onSnapshot' || callee.name === 'onValue')) {
+                  // Use the function name as a stable event key so multiple files listening
+                  // to the same Firebase API can be correlated.
+                  const evtName = sanitizeNodeId(callee.name);
+                  if (!eventListeners.has(evtName)) eventListeners.set(evtName, new Set());
+                  eventListeners.get(evtName).add(currentComponent || fileName);
+                }
+              }
+
+              // NEW: Detect error boundaries
+              // Class-based: class Foo extends React.Component with componentDidCatch
+              if (node.type === 'ClassDeclaration' && node.id && node.body) {
+                const methods = node.body.body || [];
+                const hasComponentDidCatch = methods.some(m => m.key?.name === 'componentDidCatch');
+                const hasGetDerivedState = methods.some(m => m.key?.name === 'getDerivedStateFromError');
+                if (hasComponentDidCatch || hasGetDerivedState) {
+                  errorBoundaries.add(sanitizeNodeId(node.id.name));
+                  if (currentComponent && currentComponent !== node.id.name) {
+                    errorContainment.push({ boundary: sanitizeNodeId(node.id.name), wraps: currentComponent, label: 'catches errors from' });
+                  }
+                }
+              }
+              // Suspense usage: <Suspense fallback=...>
+              if (node.type === 'JSXElement') {
+                const openingName = node.openingElement?.name;
+                const compName = openingName?.type === 'JSXIdentifier' ? openingName.name :
+                                 openingName?.type === 'JSXMemberExpression' ? openingName.property?.name : null;
+                if (compName === 'Suspense') {
+                  const location = sanitizeNodeId(`Suspense_${currentComponent || fileName}`);
+                  suspenseBoundaries.add(location);
+                  if (currentComponent) {
+                    errorContainment.push({ boundary: location, wraps: currentComponent, label: 'suspends' });
+                  }
+                }
+                // ErrorBoundary component usage: <ErrorBoundary ...>
+                if (compName && compName.toLowerCase().includes('errorboundary')) {
+                  errorBoundaries.add(sanitizeNodeId(compName));
+                }
+              }
+
+              // NEW: Detect shared TypeScript interfaces and type aliases
+              if (node.type === 'TSInterfaceDeclaration' && node.id) {
+                const ifaceName = node.id.name;
+                sharedInterfaces.set(sanitizeNodeId(ifaceName), fileName);
+                if (currentComponent) {
+                  if (!interfaceUsages.has(currentComponent)) interfaceUsages.set(currentComponent, new Set());
+                  interfaceUsages.get(currentComponent).add(sanitizeNodeId(ifaceName));
+                }
+              }
+              if (node.type === 'TSTypeAliasDeclaration' && node.id) {
+                const typeName = node.id.name;
+                sharedInterfaces.set(sanitizeNodeId(typeName), fileName);
+              }
+              // Import type { Name } - detect usage (type-only imports are most reliable,
+              // but also check value imports for cases where types are re-exported without `type` keyword)
+              if (node.type === 'ImportDeclaration') {
+                node.specifiers?.forEach(spec => {
+                  const importedName = spec.imported?.name || spec.local?.name;
+                  if (importedName && sharedInterfaces.has(sanitizeNodeId(importedName))) {
+                    if (currentComponent) {
+                      if (!interfaceUsages.has(currentComponent)) interfaceUsages.set(currentComponent, new Set());
+                      interfaceUsages.get(currentComponent).add(sanitizeNodeId(importedName));
+                    }
+                  }
+                });
+              }
+
               // Recursively traverse child nodes
               Object.keys(node).forEach((key) => {
                 const child = node[key];
@@ -2565,7 +2881,18 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       hookReturnValueRelationships,
       repoType,
       moduleImportRelationships,
-      nextjsRouteMap
+      nextjsRouteMap,
+      apiEndpoints,
+      dbModels,
+      authGuards,
+      authFlows,
+      eventEmitters,
+      eventListeners,
+      errorBoundaries,
+      suspenseBoundaries,
+      errorContainment,
+      sharedInterfaces,
+      interfaceUsages
     );
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
@@ -2617,7 +2944,18 @@ const generateMerfolkMarkdown = (
   hookReturnValueRelationships = new Map(),
   repoType = 'react',
   moduleImportRelationships = new Map(),
-  nextjsRouteMap = new Map()
+  nextjsRouteMap = new Map(),
+  apiEndpoints = new Map(),
+  dbModels = new Map(),
+  authGuards = new Set(),
+  authFlows = [],
+  eventEmitters = new Map(),
+  eventListeners = new Map(),
+  errorBoundaries = new Set(),
+  suspenseBoundaries = new Set(),
+  errorContainment = [],
+  sharedInterfaces = new Map(),
+  interfaceUsages = new Map()
 ) => {
   const isVanilla = repoType === 'vanilla' || repoType === 'python' || repoType === 'vue';
   const isNextjs = repoType === 'nextjs';
@@ -3424,6 +3762,161 @@ const generateMerfolkMarkdown = (
         }
       });
     });
+  }
+
+  // ── API Endpoints ─────────────────────────────────────────────────────────
+  if (apiEndpoints.size > 0) {
+    markdown += '\n%% API Endpoints\n';
+    apiEndpoints.forEach((ep, epKey) => {
+      if (!nodeIds.has(epKey)) {
+        nodeIds.add(epKey);
+        markdown += `${epKey}[Endpoint: ${ep.method} ${ep.path}]\n`;
+      }
+    });
+
+    markdown += '\n%% API Handler Chains\n';
+    apiEndpoints.forEach((ep, epKey) => {
+      ep.handlers.forEach((handler) => {
+        markdown += `${epKey} --> ${handler} : "handler"\n`;
+      });
+    });
+  }
+
+  // ── Database Models ───────────────────────────────────────────────────────
+  if (dbModels.size > 0) {
+    markdown += '\n%% Database Models\n';
+    dbModels.forEach((_rels, modelName) => {
+      const nodeId = `${modelName}_model`;
+      if (!nodeIds.has(nodeId)) {
+        nodeIds.add(nodeId);
+        markdown += `${nodeId}{{Model: ${modelName}}}\n`;
+      }
+    });
+
+    const hasRelationships = [...dbModels.values()].some(s => s.size > 0);
+    if (hasRelationships) {
+      markdown += '\n%% Model Relationships\n';
+      dbModels.forEach((related, modelName) => {
+        const srcId = `${modelName}_model`;
+        related.forEach(relName => {
+          const tgtId = `${relName}_model`;
+          if (nodeIds.has(srcId) && nodeIds.has(tgtId)) {
+            markdown += `${srcId} --> ${tgtId} : "references"\n`;
+          }
+        });
+      });
+    }
+  }
+
+  // ── Auth Guards ───────────────────────────────────────────────────────────
+  if (authGuards.size > 0) {
+    markdown += '\n%% Auth Guards\n';
+    authGuards.forEach(guardName => {
+      const nodeId = sanitizeNodeId(guardName);
+      if (!nodeIds.has(nodeId)) {
+        nodeIds.add(nodeId);
+        markdown += `${nodeId}[Guard: ${guardName}]\n`;
+      }
+    });
+
+    if (authFlows.length > 0) {
+      markdown += '\n%% Auth Flows\n';
+      authFlows.forEach(({ source, target, label }) => {
+        const srcId = sanitizeNodeId(source);
+        const tgtId = sanitizeNodeId(target);
+        if (nodeIds.has(srcId) || childToParentMap.has(source)) {
+          markdown += `${srcId} --> ${tgtId} : "${label}"\n`;
+        }
+      });
+    }
+  }
+
+  // ── Events ────────────────────────────────────────────────────────────────
+  const allEventNames = new Set([...eventEmitters.keys(), ...eventListeners.keys()]);
+  if (allEventNames.size > 0) {
+    markdown += '\n%% Events\n';
+    allEventNames.forEach(evtName => {
+      const nodeId = `${evtName}_event`;
+      if (!nodeIds.has(nodeId)) {
+        nodeIds.add(nodeId);
+        markdown += `${nodeId}{{Event: ${evtName}}}\n`;
+      }
+    });
+
+    markdown += '\n%% Event Flows\n';
+    eventEmitters.forEach((sources, evtName) => {
+      const tgtId = `${evtName}_event`;
+      if (!nodeIds.has(tgtId)) return;
+      sources.forEach(src => {
+        const srcId = sanitizeNodeId(src);
+        if (nodeIds.has(srcId) || childToParentMap.has(src)) {
+          markdown += `${srcId} --> ${tgtId} : "emits"\n`;
+        }
+      });
+    });
+    eventListeners.forEach((sources, evtName) => {
+      const evtNodeId = `${evtName}_event`;
+      if (!nodeIds.has(evtNodeId)) return;
+      sources.forEach(listener => {
+        const listId = sanitizeNodeId(listener);
+        if (nodeIds.has(listId) || childToParentMap.has(listener)) {
+          markdown += `${evtNodeId} --> ${listId} : "listened by"\n`;
+        }
+      });
+    });
+  }
+
+  // ── Error Boundaries ──────────────────────────────────────────────────────
+  if (errorBoundaries.size > 0 || suspenseBoundaries.size > 0) {
+    markdown += '\n%% Error Boundaries\n';
+    errorBoundaries.forEach(boundaryName => {
+      if (!nodeIds.has(boundaryName)) {
+        nodeIds.add(boundaryName);
+        markdown += `${boundaryName}[Boundary: ${boundaryName}]\n`;
+      }
+    });
+    suspenseBoundaries.forEach(boundaryId => {
+      if (!nodeIds.has(boundaryId)) {
+        nodeIds.add(boundaryId);
+        markdown += `${boundaryId}[Boundary: Suspense]\n`;
+      }
+    });
+
+    if (errorContainment.length > 0) {
+      markdown += '\n%% Error Containment\n';
+      errorContainment.forEach(({ boundary, wraps, label }) => {
+        const srcId = sanitizeNodeId(boundary);
+        const tgtId = sanitizeNodeId(wraps);
+        if ((nodeIds.has(srcId) || childToParentMap.has(boundary)) &&
+            (nodeIds.has(tgtId) || childToParentMap.has(wraps))) {
+          markdown += `${srcId} -.-> ${tgtId} : "${label}"\n`;
+        }
+      });
+    }
+  }
+
+  // ── Shared Interfaces ─────────────────────────────────────────────────────
+  if (sharedInterfaces.size > 0) {
+    markdown += '\n%% Shared Interfaces\n';
+    sharedInterfaces.forEach((sourceFile, ifaceName) => {
+      if (!nodeIds.has(ifaceName)) {
+        nodeIds.add(ifaceName);
+        markdown += `${ifaceName}[Interface: ${ifaceName}]\n`;
+      }
+    });
+
+    if (interfaceUsages.size > 0) {
+      markdown += '\n%% Interface Dependencies\n';
+      interfaceUsages.forEach((ifaces, consumer) => {
+        const srcId = sanitizeNodeId(consumer);
+        if (!nodeIds.has(srcId) && !childToParentMap.has(consumer)) return;
+        ifaces.forEach(ifaceName => {
+          if (nodeIds.has(ifaceName)) {
+            markdown += `${srcId} --> ${ifaceName} : "uses type"\n`;
+          }
+        });
+      });
+    }
   }
 
   // Wrap the entire diagram in Merfolk code blocks
