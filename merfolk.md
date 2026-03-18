@@ -1130,51 +1130,52 @@ LandingApp --> OrderHeader : "windowSize"
 
 %% Component Dependencies
 DiagramOverlay2D --> useDiagramStore : "uses hook"
+useDiagramStore --> useDiagramStore : "receives"
+DiagramOverlay2D --> useDiagramStore : "uses hook"
+useDiagramStore --> useDiagramStore : "receives"
+DiagramOverlay2D --> useDiagramStore : "uses hook"
+useDiagramStore --> useDiagramStore : "receives"
+DiagramOverlay2D --> useDiagramStore : "uses hook"
+useDiagramStore --> useDiagramStore : "receives"
+DiagramOverlay2D --> useDiagramStore : "uses hook"
+useDiagramStore --> useDiagramStore : "receives"
+DiagramOverlay2D --> useDiagramStore : "uses hook"
+useDiagramStore --> useDiagramStore : "receives"
+DiagramOverlay2D --> useDiagramStore : "uses hook"
+useDiagramStore --> useDiagramStore : "receives"
 DiagramOverlay2D --> useUIOverlayStore : "uses hook"
+useUIOverlayStore --> useUIOverlayStore : "receives"
 DiagramOverlay2D --> useNodesState : "uses hook"
+useNodesState --> useNodesState : "receives"
 TextStyleUIContent --> useColorPickerStore : "uses hook"
+useColorPickerStore --> useColorPickerStore : "receives"
+TextStyleUIContent --> useColorPickerStore : "uses hook"
+useColorPickerStore --> useColorPickerStore : "receives"
+TextStyleUIContent --> useColorPickerStore : "uses hook"
+useColorPickerStore --> useColorPickerStore : "receives"
 LandingApp --> useWindowSize_file : "uses hook"
+useWindowSize_file --> useWindowSize : "receives"
 OrderHeader --> useThree : "{viewport}"
+useThree --> useThree : "receives"
 Model --> useGLTF : "{nodes, materials}"
+useGLTF --> useGLTF : "receives"
 
-%% Events
-change((Event: change))
-popstate((Event: popstate))
-click((Event: click))
-mousedown((Event: mousedown))
-pointerdown((Event: pointerdown))
-ended((Event: ended))
-canplay((Event: canplay))
-error((Event: error))
-screenRecordingStopped((Event: screenRecordingStopped))
-loadedmetadata((Event: loadedmetadata))
-resize((Event: resize))
-beforeunload((Event: beforeunload))
-unhandledrejection((Event: unhandledrejection))
-state_changed((Event: state_changed))
-value((Event: value))
-
-%% Event Relationships
-change --> App : "listened by"
-change --> useSpatialManager : "listened by"
-popstate --> AppShell : "listened by"
-click --> BVHIntegration : "listened by"
-mousedown --> BVHIntegration : "listened by"
-pointerdown --> BVHIntegration : "listened by"
-ended --> ScreenShareStream : "listened by"
-ended --> ScreenRecordingService : "listened by"
-canplay --> ScreenShareStream : "listened by"
-canplay --> WebcamStream : "listened by"
-error --> ScreenShareStream : "listened by"
-error --> WebcamStream : "listened by"
-error --> GlobalOptimizationCoordinator : "listened by"
-screenRecordingStopped --> UIOverlay : "listened by"
-loadedmetadata --> WebcamStream : "listened by"
-resize --> useWindowSize : "listened by"
-beforeunload --> GlobalOptimizationCoordinator : "listened by"
-beforeunload --> globalSubscriptionManager : "listened by"
-unhandledrejection --> GlobalOptimizationCoordinator : "listened by"
-state_changed --> storageService : "listened by"
-value --> authStore : "listened by"
+%% Function Call Relationships
+MerfolkEdge --> EdgeTypes : "calls getEdgeStyle"
+EdgeTypes --> getEdgeStyle : "receives"
+MerfolkEdge --> EdgeTypes : "calls getSelectedStyle"
+EdgeTypes --> getSelectedStyle : "receives"
+MerfolkEdge --> EdgeTypes : "calls getUnselectedStyle"
+EdgeTypes --> getUnselectedStyle : "receives"
+DiagramOverlay2D --> diagramLayoutWorkerClient : "calls getDiagramLayoutWorker"
+diagramLayoutWorkerClient --> getDiagramLayoutWorker : "receives"
+DiagramOverlay2D --> DiagramOverlay2D_file : "calls buildReactFlowNodes"
+DiagramOverlay2D_file --> buildReactFlowNodes : "receives"
+DiagramOverlay2D --> DiagramOverlay2D_file : "calls buildReactFlowEdges"
+DiagramOverlay2D_file --> buildReactFlowEdges : "receives"
+DiagramOverlay2D --> DiagramOverlay2D_file : "calls filterEdges"
+DiagramOverlay2D_file --> filterEdges : "receives"
+LandingApp --> authService : "calls signOut"
+authService --> signOut : "receives"
 
 ```
