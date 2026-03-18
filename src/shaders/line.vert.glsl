@@ -18,7 +18,9 @@ void main() {
     vec4 clipStart = projectionMatrix * start;
     vec4 clipEnd = projectionMatrix * end;
 
-    vec2 dir = normalize(clipEnd.xy / clipEnd.w - clipStart.xy / clipStart.w);
+    vec2 ndcDir = clipEnd.xy / clipEnd.w - clipStart.xy / clipStart.w;
+    float len = length(ndcDir);
+    vec2 dir = len > 0.0 ? ndcDir / len : vec2(1.0, 0.0);
 
     // Compute perpendicular direction for line thickness
     vec2 offset = vec2(-dir.y, dir.x) * linewidth / resolution.y;
@@ -26,6 +28,13 @@ void main() {
     // Apply offset to the vertex position
     vec4 clipPosition = mix(clipStart, clipEnd, position.x);
     clipPosition.xy += offset * position.y * clipPosition.w;
+
+    // Extend line past each endpoint by half the line width so that
+    // adjacent segments overlap slightly, preventing visible gaps and
+    // anti-aliasing fade at butt-end caps
+    float extend = linewidth / resolution.y * 0.5;
+    float extendSign = position.x * 2.0 - 1.0; // 0 → -1 (start), 1 → +1 (end)
+    clipPosition.xy += dir * extend * extendSign * clipPosition.w;
 
     gl_Position = clipPosition;
 

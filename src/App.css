@@ -112,9 +112,9 @@ canvas {
   width: 40px;
   height: 40px;
   border-radius: 4px;
-  background-color: rgba(0, 0, 0, 0.8);
-  color: white;
-  border: none;
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
   cursor: pointer;
   font-size: 24px;
   display: flex;
@@ -124,20 +124,23 @@ canvas {
 }
 
 .menu-button:hover {
-  background-color: rgba(0, 0, 0, 0.9);
+  background-color: #f0f0f0;
 }
 
 /* Sliding menu styles */
 .sidebar-menu {
   position: fixed;
   top: 70px; /* Position below the menu button */
-  left: 0;
-  height: calc(100vh - 70px);
+  left: 10px;
+  height: auto;
+  max-height: calc(100vh - 90px);
   width: 250px;
   background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 8px;
   z-index: 1900;
-  transform: translateX(-100%);
+  transform: translateX(calc(-100% - 10px));
   transition: transform 0.3s ease-in-out;
+  overflow-y: auto;
 }
 
 .sidebar-menu.open {
@@ -412,7 +415,9 @@ canvas {
 .current-cell-info {
   margin-bottom: 20px;
   padding: 10px;
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
   border-radius: 4px;
   font-size: 14px;
 }
@@ -420,7 +425,7 @@ canvas {
 .cell-coordinates {
   font-family: monospace;
   font-weight: bold;
-  color: #4caf50;
+  color: #333;
 }
 
 .template-section {
@@ -430,14 +435,18 @@ canvas {
 .repos-toggle-button {
   width: 100%;
   padding: 10px;
-  background-color: rgba(255, 255, 255, 0.1);
-  color: white;
-  border: none;
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
   text-align: left;
   transition: background-color 0.2s;
+}
+
+.repos-toggle-button:hover {
+  background-color: #f0f0f0;
 }
 
 .popup-overlay {
@@ -483,9 +492,9 @@ canvas {
 .github-login-button {
   width: 100%;
   padding: 10px;
-  background-color: rgba(255, 255, 255, 0.1);
-  color: white;
-  border: none;
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
@@ -493,12 +502,16 @@ canvas {
   transition: background-color 0.2s;
 }
 
+.github-login-button:hover {
+  background-color: #f0f0f0;
+}
+
 .template-toggle-button {
   width: 100%;
   padding: 10px;
-  background-color: rgba(255, 255, 255, 0.1);
-  color: white;
-  border: none;
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
@@ -507,12 +520,12 @@ canvas {
 }
 
 .template-toggle-button:hover {
-  background-color: rgba(76, 175, 80, 1);
+  background-color: #f0f0f0;
 }
 
 .template-dropdown {
   margin-top: 10px;
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
   padding: 15px;
 }
@@ -556,9 +569,9 @@ canvas {
   margin-top: 10px;
   width: 100%;
   padding: 10px;
-  background-color: #2196f3;
-  color: white;
-  border: none;
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
@@ -567,7 +580,7 @@ canvas {
 }
 
 .create-template-button:hover {
-  background-color: #1976d2;
+  background-color: #f0f0f0;
 }
 
 /* Markdown upload section styles */
@@ -578,9 +591,9 @@ canvas {
 .markdown-upload-button {
   width: 100%;
   padding: 10px;
-  background-color: rgba(255, 255, 255, 0.1);
-  color: white;
-  border: none;
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
@@ -590,7 +603,7 @@ canvas {
 }
 
 .markdown-upload-button:hover:not(:disabled) {
-  background-color: rgba(255, 152, 0, 1);
+  background-color: #f0f0f0;
 }
 
 .markdown-upload-button:disabled {
