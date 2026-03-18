@@ -267,6 +267,8 @@ const workerApi = {
           headerText: node.name || node.id || 'Node',
           headerStyle: computeHeaderStyle(nodeId, objectType, scale, parentChildMap),
           properties: node.properties || {},
+          color: node.visual?.color,
+          opacity: node.visual?.opacity,
         });
       }
 

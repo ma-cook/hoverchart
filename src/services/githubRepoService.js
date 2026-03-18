@@ -649,21 +649,39 @@ const traverseVanillaAST = (
     fileFunctions.get(fileName).functions.add(name);
 
     if (isClass) {
-      if (containerType === 'backend' || containerType === 'service') {
-        if (!foundItems.services.has(name)) {
-          foundItems.services.add(name);
-          elements.services.push(name);
-        }
-      } else {
-        if (!foundItems.utilities.has(name)) {
-          foundItems.utilities.add(name);
-          elements.utilities.push(name);
-        }
+      // Emit as [[Class:]] type for proper 3d-ast-generator recognition
+      if (!foundItems.classes.has(name)) {
+        foundItems.classes.add(name);
+        elements.classes.push(name);
       }
     } else {
       if (!foundItems.utilities.has(name)) {
         foundItems.utilities.add(name);
         elements.utilities.push(name);
+      }
+    }
+  };
+
+  // Helper to classify a variable declaration as constant, variable, or function/class.
+  // Used by both ExportNamedDeclaration and top-level VariableDeclaration handlers.
+  const addVariableDecl = (name, initType, declKind) => {
+    if (initType === 'ClassExpression') {
+      addSymbol(name, true);
+    } else if (initType === 'ArrowFunctionExpression' || initType === 'FunctionExpression') {
+      addSymbol(name, false);
+    } else if (declKind === 'const') {
+      ensureContainer();
+      fileFunctions.get(fileName).functions.add(name);
+      if (!foundItems.constants.has(name)) {
+        foundItems.constants.add(name);
+        elements.constants.push(name);
+      }
+    } else {
+      ensureContainer();
+      fileFunctions.get(fileName).functions.add(name);
+      if (!foundItems.variables.has(name)) {
+        foundItems.variables.add(name);
+        elements.variables.push(name);
       }
     }
   };
@@ -767,13 +785,17 @@ const traverseVanillaAST = (
       } else if (d.type === 'ClassDeclaration' && d.id) {
         addSymbol(d.id.name, true);
       } else if (d.type === 'TSInterfaceDeclaration' || d.type === 'TSTypeAliasDeclaration') {
-        // TypeScript-only declarations — skip.
-        // Interfaces and type aliases have no runtime representation and
-        // would clutter the diagram with non-functional nodes.
+        // Emit TypeScript interfaces/type aliases as [[Interface:]] nodes
+        if (d.id && !foundItems.interfaces.has(d.id.name)) {
+          foundItems.interfaces.add(d.id.name);
+          elements.interfaces.push(d.id.name);
+          ensureContainer();
+          fileFunctions.get(fileName).functions.add(d.id.name);
+        }
       } else if (d.type === 'VariableDeclaration') {
         d.declarations.forEach((vd) => {
           if (!vd.id?.name) return;
-          addSymbol(vd.id.name, false);
+          addVariableDecl(vd.id.name, vd.init?.type, d.kind);
         });
       }
       return;
@@ -796,7 +818,7 @@ const traverseVanillaAST = (
         if (!vd.id?.name || !isExported(vd.id.name)) return;
         // Skip variables that are just import bindings (require() calls, etc.)
         if (importBindings.has(vd.id.name)) return;
-        addSymbol(vd.id.name, false);
+        addVariableDecl(vd.id.name, vd.init?.type, node.kind);
       });
     }
   });
@@ -1360,6 +1382,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       services: [],
       stores: [],
       utilities: [],
+      classes: [],
+      interfaces: [],
+      variables: [],
+      constants: [],
       imports: {
         libraries: [],
       },
@@ -1373,6 +1399,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       services: new Set(),
       stores: new Set(),
       utilities: new Set(),
+      classes: new Set(),
+      interfaces: new Set(),
+      variables: new Set(),
+      constants: new Set(),
     };
 
     // Track component-function relationships for "contains" connections
@@ -2302,7 +2332,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 });
               }
 
-              // Check for class declarations (React components)
+              // Check for class declarations (React components or standalone classes)
               if (node.type === 'ClassDeclaration' && node.id) {
                 const className = node.id.name;
 
@@ -2342,41 +2372,18 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   fileImports.utilities.forEach((utility) =>
                     componentDependencies.get(className).add({ name: utility, type: 'utility' })
                   );
-                } else if (fileContext.isUtil && !foundItems.utilities.has(className)) {
-                  // Classes in util files are utilities
-                  foundItems.utilities.add(className);
-                  elements.utilities.push(className);
+                } else if (!foundItems.classes.has(className)) {
+                  // Non-React classes: emit as [[Class:]] type
+                  foundItems.classes.add(className);
+                  elements.classes.push(className);
                   // Track file→function relationship
+                  const containerType = fileContext.isBackend ? 'backend'
+                    : fileContext.isService ? 'service'
+                    : fileContext.isWorker ? 'worker'
+                    : fileContext.isUtil ? 'utility'
+                    : 'utility';
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
-                  }
-                  fileFunctions.get(fileName).functions.add(className);
-                } else if (fileContext.isBackend) {
-                  // Classes in backend files are tracked under backend_ container
-                  if (!foundItems.services.has(className)) {
-                    foundItems.services.add(className);
-                    elements.services.push(className);
-                  }
-                  if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
-                  }
-                  fileFunctions.get(fileName).functions.add(className);
-                } else if (fileContext.isService && !foundItems.services.has(className)) {
-                  // Classes in service files are services
-                  foundItems.services.add(className);
-                  elements.services.push(className);
-                  // Track file→function relationship
-                  if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'service', functions: new Set() });
-                  }
-                  fileFunctions.get(fileName).functions.add(className);
-                } else if (fileContext.isWorker && !foundItems.utilities.has(className)) {
-                  // Classes in worker files are utilities under a worker container
-                  foundItems.utilities.add(className);
-                  elements.utilities.push(className);
-                  // Track file→function relationship
-                  if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
+                    fileFunctions.set(fileName, { type: containerType, functions: new Set() });
                   }
                   fileFunctions.get(fileName).functions.add(className);
                 }
@@ -2968,6 +2975,10 @@ const generateMerfolkMarkdown = (
   elements.services = [...new Set(elements.services)];
   elements.stores = [...new Set(elements.stores)];
   elements.utilities = [...new Set(elements.utilities)];
+  elements.classes = [...new Set(elements.classes)];
+  elements.interfaces = [...new Set(elements.interfaces)];
+  elements.variables = [...new Set(elements.variables)];
+  elements.constants = [...new Set(elements.constants)];
   elements.imports.libraries = [...new Set(elements.imports.libraries)];
 
   // Debug: Log all detected components with first character check
@@ -2997,6 +3008,15 @@ const generateMerfolkMarkdown = (
   // Remove utilities that are in services
   const servicesSet = new Set(elements.services);
   elements.utilities = elements.utilities.filter((item) => !servicesSet.has(item));
+
+  // Remove utilities/services that are also in classes, constants, or variables
+  const classesSet = new Set(elements.classes);
+  const constantsSet = new Set(elements.constants);
+  const variablesSet = new Set(elements.variables);
+  elements.utilities = elements.utilities.filter(
+    (item) => !classesSet.has(item) && !constantsSet.has(item) && !variablesSet.has(item)
+  );
+  elements.services = elements.services.filter((item) => !classesSet.has(item));
 
   // Remove component-internal functions from the general functions list
   // These will be handled via componentFunctions relationships
@@ -3301,6 +3321,56 @@ const generateMerfolkMarkdown = (
       }
       nodeIds.add(util);
       markdown += `${util}[Function: ${util}]\n`;
+    });
+  }
+
+  // Add classes (non-React classes emitted as [[Class:]] with red color from 3d-ast-generator)
+  if (elements.classes.length > 0) {
+    markdown += `\n%% Classes\n`;
+    elements.classes.forEach((cls) => {
+      if (nodeIds.has(cls)) {
+        return;
+      }
+      nodeIds.add(cls);
+      markdown += `${cls}[[Class: ${cls}]]\n`;
+    });
+  }
+
+  // Add exported constants
+  if (elements.constants.length > 0) {
+    markdown += `\n%% Constants\n`;
+    elements.constants.forEach((cnst) => {
+      if (nodeIds.has(cnst)) {
+        return;
+      }
+      nodeIds.add(cnst);
+      markdown += `${cnst}[Constant: ${cnst}]\n`;
+    });
+  }
+
+  // Add exported variables
+  if (elements.variables.length > 0) {
+    markdown += `\n%% Variables\n`;
+    elements.variables.forEach((v) => {
+      if (nodeIds.has(v)) {
+        return;
+      }
+      nodeIds.add(v);
+      markdown += `${v}[Variable: ${v}]\n`;
+    });
+  }
+
+  // Add interfaces from elements (vanilla/Python repos)
+  // React repos emit interfaces via sharedInterfaces later, but elements.interfaces
+  // captures those detected in the vanilla AST traversal.
+  if (elements.interfaces.length > 0) {
+    markdown += `\n%% Interfaces\n`;
+    elements.interfaces.forEach((iface) => {
+      if (nodeIds.has(iface)) {
+        return;
+      }
+      nodeIds.add(iface);
+      markdown += `${iface}[[Interface: ${iface}]]\n`;
     });
   }
 
@@ -3920,7 +3990,7 @@ const generateMerfolkMarkdown = (
     sharedInterfaces.forEach((sourceFile, ifaceName) => {
       if (!nodeIds.has(ifaceName)) {
         nodeIds.add(ifaceName);
-        markdown += `${ifaceName}[Interface: ${ifaceName}]\n`;
+        markdown += `${ifaceName}[[Interface: ${ifaceName}]]\n`;
       }
     });
 

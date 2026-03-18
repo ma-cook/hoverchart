@@ -180,6 +180,8 @@ export const objectMethods = {
               scale,
               headerText: node.name || node.id || 'Node',
               headerStyle: headerStyle,
+              color: node.visual?.color,
+              opacity: node.visual?.opacity,
               ...(node.properties || {}),
             },
           };

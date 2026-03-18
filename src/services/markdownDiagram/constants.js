@@ -17,6 +17,11 @@ export const NODE_TYPE_CONTROL = 'control';
 export const NODE_TYPE_STATE = 'state';
 export const NODE_TYPE_DATA = 'data';
 export const NODE_TYPE_HOOK = 'hook';
+export const NODE_TYPE_MODULE = 'module';
+export const NODE_TYPE_CLASS = 'class';
+export const NODE_TYPE_INTERFACE = 'interface';
+export const NODE_TYPE_VARIABLE = 'variable';
+export const NODE_TYPE_CONSTANT = 'constant';
 
 // Object type constants
 export const OBJECT_TYPE_CUBE = 'cube';
@@ -76,6 +81,11 @@ const GROUP_DISPLAY_NAMES = {
   data: 'Data',
   worker: 'Workers',
   shader: 'Shaders',
+  module: 'Modules',
+  class: 'Classes',
+  interface: 'Interfaces',
+  variable: 'Variables',
+  constant: 'Constants',
 };
 
 /**

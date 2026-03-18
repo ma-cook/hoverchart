@@ -9,6 +9,11 @@ import {
   NODE_TYPE_LIBRARY,
   NODE_TYPE_UTILITY,
   NODE_TYPE_DATAPATH,
+  NODE_TYPE_MODULE,
+  NODE_TYPE_CLASS,
+  NODE_TYPE_INTERFACE,
+  NODE_TYPE_VARIABLE,
+  NODE_TYPE_CONSTANT,
   OBJECT_TYPE_CUBE,
   OBJECT_TYPE_DODECAHEDRON,
   OBJECT_TYPE_TETRAHEDRON,
@@ -26,7 +31,11 @@ export const hierarchyMethods = {
         (childNode.type === NODE_TYPE_FUNCTION ||
           childNode.type === NODE_TYPE_HANDLER ||
           childNode.type === NODE_TYPE_CONTROL ||
-          childNode.type === NODE_TYPE_HOOK)
+          childNode.type === NODE_TYPE_HOOK ||
+          childNode.type === NODE_TYPE_CLASS ||
+          childNode.type === NODE_TYPE_INTERFACE ||
+          childNode.type === NODE_TYPE_VARIABLE ||
+          childNode.type === NODE_TYPE_CONSTANT)
       );
     });
   },
@@ -110,8 +119,14 @@ export const hierarchyMethods = {
         let isInternalComponent = false;
 
         if (sourceNode && targetNode) {
+          // Helper: is this a "cube-child" type (function-like nodes that nest inside containers)
+          const isCubeChild = (type) =>
+            type === NODE_TYPE_FUNCTION || type === NODE_TYPE_CLASS ||
+            type === NODE_TYPE_INTERFACE || type === NODE_TYPE_VARIABLE ||
+            type === NODE_TYPE_CONSTANT;
+
           if (
-            sourceNode.type === NODE_TYPE_FUNCTION &&
+            isCubeChild(sourceNode.type) &&
             targetNode.type === NODE_TYPE_COMPONENT
           ) {
             const connectionType = connection.type || 'dataflow';
@@ -122,7 +137,7 @@ export const hierarchyMethods = {
             }
           } else if (
             sourceNode.type === NODE_TYPE_COMPONENT &&
-            targetNode.type === NODE_TYPE_FUNCTION
+            isCubeChild(targetNode.type)
           ) {
             const connectionType = connection.type || 'dataflow';
             const isDashed = connectionType === 'controlflow' || connectionType === 'dotted';
@@ -131,20 +146,20 @@ export const hierarchyMethods = {
               childId = targetId;
             }
           } else if (
-            sourceNode.type === NODE_TYPE_SERVICE &&
-            targetNode.type === NODE_TYPE_FUNCTION
+            (sourceNode.type === NODE_TYPE_SERVICE || sourceNode.type === NODE_TYPE_MODULE) &&
+            isCubeChild(targetNode.type)
           ) {
             parentId = sourceId;
             childId = targetId;
           } else if (
             sourceNode.type === NODE_TYPE_HOOK &&
-            targetNode.type === NODE_TYPE_FUNCTION
+            isCubeChild(targetNode.type)
           ) {
             parentId = sourceId;
             childId = targetId;
           } else if (
-            sourceNode.type === NODE_TYPE_FUNCTION &&
-            targetNode.type === NODE_TYPE_FUNCTION
+            isCubeChild(sourceNode.type) &&
+            isCubeChild(targetNode.type)
           ) {
             parentId = sourceId;
             childId = targetId;
@@ -222,6 +237,7 @@ export const hierarchyMethods = {
       case NODE_TYPE_COMPONENT:
         return OBJECT_TYPE_DODECAHEDRON;
       case NODE_TYPE_SERVICE:
+      case NODE_TYPE_MODULE:
         return OBJECT_TYPE_TETRAHEDRON;
       case NODE_TYPE_DATAPATH:
         return null;
@@ -230,6 +246,10 @@ export const hierarchyMethods = {
       case NODE_TYPE_LIBRARY:
       case NODE_TYPE_UTILITY:
       case NODE_TYPE_HOOK:
+      case NODE_TYPE_CLASS:
+      case NODE_TYPE_INTERFACE:
+      case NODE_TYPE_VARIABLE:
+      case NODE_TYPE_CONSTANT:
         return OBJECT_TYPE_CUBE;
       default:
         console.warn(
