@@ -2542,18 +2542,29 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 }
               }
 
-              // NEW: Detect Next.js route handler exports (export async function GET/POST...)
+              // NEW: Detect Next.js route handler exports (export async function GET/POST... or export const GET = ...)
               if (node.type === 'ExportNamedDeclaration' && node.declaration) {
                 const decl = node.declaration;
+                const httpMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
+                let exportedMethodName = null;
+
                 if ((decl.type === 'FunctionDeclaration' || decl.type === 'TSDeclareFunction') && decl.id) {
-                  const httpMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
-                  if (httpMethods.includes(decl.id.name)) {
-                    const method = decl.id.name;
-                    const routePath = file.path.replace(/\.(jsx?|tsx?)$/, '').replace(/(?:^|\/)(?:src\/)?(?:app|pages)\//, '/').replace(/\/route$/, '').replace(/\/page$/, '') || '/';
-                    const epKey = sanitizeNodeId(`${method}_${routePath}`);
-                    if (!apiEndpoints.has(epKey)) {
-                      apiEndpoints.set(epKey, { method, path: routePath, handlers: [decl.id.name], sourceFile: fileName });
+                  exportedMethodName = decl.id.name;
+                } else if (decl.type === 'VariableDeclaration') {
+                  decl.declarations?.forEach(varDecl => {
+                    if (varDecl.id?.type === 'Identifier' &&
+                        (varDecl.init?.type === 'ArrowFunctionExpression' || varDecl.init?.type === 'FunctionExpression')) {
+                      exportedMethodName = varDecl.id.name;
                     }
+                  });
+                }
+
+                if (exportedMethodName && httpMethods.includes(exportedMethodName)) {
+                  const method = exportedMethodName;
+                  const routePath = file.path.replace(/\.(jsx?|tsx?)$/, '').replace(/(?:^|\/)(?:src\/)?(?:app|pages)\//, '/').replace(/\/route$/, '').replace(/\/page$/, '') || '/';
+                  const epKey = sanitizeNodeId(`${method}_${routePath}`);
+                  if (!apiEndpoints.has(epKey)) {
+                    apiEndpoints.set(epKey, { method, path: routePath, handlers: [method], sourceFile: fileName });
                   }
                 }
               }
@@ -2600,12 +2611,20 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 }
               }
 
+              // Helper: check if params look like (req, res, next) middleware params
+              const isMiddlewareParams = (params) => {
+                if (!params || params.length !== 3) return false;
+                const names = params.map(p => (p.name || p.left?.name || '').toLowerCase());
+                return (names[0].startsWith('req') || names[0] === 'request' || names[0] === 'ctx') &&
+                       (names[1].startsWith('res') || names[1] === 'response' || names[1] === 'context') &&
+                       (names[2] === 'next' || names[2] === 'done');
+              };
+
               // NEW: Detect auth middleware/guard patterns
               if (node.type === 'FunctionDeclaration' && node.id) {
                 const name = node.id.name;
                 const params = node.params || [];
-                // authMiddleware(req, res, next) pattern
-                if (params.length === 3 &&
+                if (isMiddlewareParams(params) &&
                     (name.toLowerCase().includes('auth') || name.toLowerCase().includes('guard') ||
                      name.toLowerCase().includes('require') || name.toLowerCase().includes('protect'))) {
                   authGuards.add(name);
@@ -2621,7 +2640,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     const name = decl.id.name;
                     const isArrow = decl.init.type === 'ArrowFunctionExpression' || decl.init.type === 'FunctionExpression';
                     const params = isArrow ? (decl.init.params || []) : [];
-                    if (isArrow && params.length === 3 &&
+                    if (isArrow && isMiddlewareParams(params) &&
                         (name.toLowerCase().includes('auth') || name.toLowerCase().includes('guard') ||
                          name.toLowerCase().includes('require') || name.toLowerCase().includes('protect') ||
                          name.toLowerCase().includes('middleware'))) {
@@ -2681,9 +2700,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     eventEmitters.get(evtName).add(currentComponent || fileName);
                   }
                 }
-                // onSnapshot / onValue (Firebase)
+                // onSnapshot / onValue (Firebase realtime listeners)
                 if (callee?.type === 'Identifier' && (callee.name === 'onSnapshot' || callee.name === 'onValue')) {
-                  const evtName = sanitizeNodeId(`${callee.name}_${fileName}`);
+                  // Use the function name as a stable event key so multiple files listening
+                  // to the same Firebase API can be correlated.
+                  const evtName = sanitizeNodeId(callee.name);
                   if (!eventListeners.has(evtName)) eventListeners.set(evtName, new Set());
                   eventListeners.get(evtName).add(currentComponent || fileName);
                 }
@@ -2733,8 +2754,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 const typeName = node.id.name;
                 sharedInterfaces.set(sanitizeNodeId(typeName), fileName);
               }
-              // Import type { Name } - detect usage
-              if (node.type === 'ImportDeclaration' && (node.importKind === 'type' || node.importKind === 'value')) {
+              // Import type { Name } - detect usage (type-only imports are most reliable,
+              // but also check value imports for cases where types are re-exported without `type` keyword)
+              if (node.type === 'ImportDeclaration') {
                 node.specifiers?.forEach(spec => {
                   const importedName = spec.imported?.name || spec.local?.name;
                   if (importedName && sharedInterfaces.has(sanitizeNodeId(importedName))) {
@@ -3754,10 +3776,8 @@ const generateMerfolkMarkdown = (
 
     markdown += '\n%% API Handler Chains\n';
     apiEndpoints.forEach((ep, epKey) => {
-      ep.handlers.forEach((handler, idx) => {
-        const isLast = idx === ep.handlers.length - 1;
-        const label = isLast ? 'handler' : idx === 0 ? 'middleware' : 'validator';
-        markdown += `${epKey} --> ${handler} : "${label}"\n`;
+      ep.handlers.forEach((handler) => {
+        markdown += `${epKey} --> ${handler} : "handler"\n`;
       });
     });
   }
@@ -3835,12 +3855,12 @@ const generateMerfolkMarkdown = (
       });
     });
     eventListeners.forEach((sources, evtName) => {
-      const srcId = `${evtName}_event`;
-      if (!nodeIds.has(srcId)) return;
+      const evtNodeId = `${evtName}_event`;
+      if (!nodeIds.has(evtNodeId)) return;
       sources.forEach(listener => {
         const listId = sanitizeNodeId(listener);
         if (nodeIds.has(listId) || childToParentMap.has(listener)) {
-          markdown += `${listId} --> ${srcId} : "listens"\n`;
+          markdown += `${evtNodeId} --> ${listId} : "listened by"\n`;
         }
       });
     });
