@@ -3190,6 +3190,7 @@ const generateMerfolkMarkdown = (
       if (nodeIds.has(nodeId)) {
         duplicates.push({ id: nodeId, type: 'Component', section: 'Components' });
         console.warn(`⚠️ DUPLICATE NODE ID: ${nodeId} (Component)`);
+        return;
       }
       nodeIds.add(nodeId);
       markdown += `${nodeId}{Component: ${comp}}\n`;
@@ -3226,6 +3227,7 @@ const generateMerfolkMarkdown = (
       if (nodeIds.has(func)) {
         duplicates.push({ id: func, type: 'Function', section: 'Functions' });
         console.warn(`⚠️ DUPLICATE NODE ID: ${func} (Function)`);
+        return;
       }
       nodeIds.add(func);
       markdown += `${func}[Function: ${func}]\n`;
@@ -3239,6 +3241,7 @@ const generateMerfolkMarkdown = (
       if (nodeIds.has(hook)) {
         duplicates.push({ id: hook, type: 'Hook', section: 'Hooks' });
         console.warn(`⚠️ DUPLICATE NODE ID: ${hook} (Hook)`);
+        return;
       }
       nodeIds.add(hook);
       // Hook functions are cubes with [Function: name]
@@ -3280,6 +3283,7 @@ const generateMerfolkMarkdown = (
       if (nodeIds.has(store)) {
         duplicates.push({ id: store, type: 'Store', section: 'Stores' });
         console.warn(`⚠️ DUPLICATE NODE ID: ${store} (Store)`);
+        return;
       }
       nodeIds.add(store);
       markdown += `${store}[[Store: ${store}]]\n`;
@@ -3326,6 +3330,7 @@ const generateMerfolkMarkdown = (
       if (nodeIds.has(func)) {
         duplicates.push({ id: func, type: 'Function', section: 'Component Internal Functions' });
         console.warn(`⚠️ DUPLICATE NODE ID: ${func} (Component Internal Function)`);
+        return;
       }
       nodeIds.add(func);
       markdown += `${func}[Function: ${func}]\n`;
@@ -3401,54 +3406,66 @@ const generateMerfolkMarkdown = (
         if (nodeIds.has(fileNodeId)) {
           duplicates.push({ id: fileNodeId, type: 'Vanilla File', section: 'File Container Nodes' });
           console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Vanilla File)`);
+          fileInfo.nodeId = fileNodeId;
+        } else {
+          nodeIds.add(fileNodeId);
+          markdown += `${fileNodeId}{Component: ${fileName}}\n`;
+          fileInfo.nodeId = fileNodeId;
         }
-        nodeIds.add(fileNodeId);
-        markdown += `${fileNodeId}{Component: ${fileName}}\n`;
-        fileInfo.nodeId = fileNodeId;
       } else if (fileInfo.type === 'backend') {
         // ── React paths (unchanged) ──
         const backendNodeId = `backend_${fileName}`;
         if (nodeIds.has(backendNodeId)) {
           duplicates.push({ id: backendNodeId, type: 'Backend File', section: 'File Container Nodes' });
           console.warn(`⚠️ DUPLICATE NODE ID: ${backendNodeId} (Backend File)`);
+          fileInfo.nodeId = backendNodeId;
+        } else {
+          nodeIds.add(backendNodeId);
+          markdown += `${backendNodeId}((Service: ${fileName}))\n`;
+          fileInfo.nodeId = backendNodeId;
         }
-        nodeIds.add(backendNodeId);
-        markdown += `${backendNodeId}((Service: ${fileName}))\n`;
-        fileInfo.nodeId = backendNodeId;
       } else if (fileInfo.type === 'service') {
         if (nodeIds.has(fileNodeId)) {
           duplicates.push({ id: fileNodeId, type: 'Service File', section: 'File Container Nodes' });
           console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Service File)`);
+          fileInfo.nodeId = fileNodeId;
+        } else {
+          nodeIds.add(fileNodeId);
+          markdown += `${fileNodeId}((Service: ${fileName}))\n`;
+          fileInfo.nodeId = fileNodeId;
         }
-        nodeIds.add(fileNodeId);
-        markdown += `${fileNodeId}((Service: ${fileName}))\n`;
-        fileInfo.nodeId = fileNodeId;
       } else if (fileInfo.type === 'hook') {
         if (nodeIds.has(fileNodeId)) {
           duplicates.push({ id: fileNodeId, type: 'Hook File', section: 'File Container Nodes' });
           console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Hook File)`);
+          fileInfo.nodeId = fileNodeId;
+        } else {
+          nodeIds.add(fileNodeId);
+          markdown += `${fileNodeId}[Hook: ${fileName}]\n`;
+          fileInfo.nodeId = fileNodeId;
         }
-        nodeIds.add(fileNodeId);
-        markdown += `${fileNodeId}[Hook: ${fileName}]\n`;
-        fileInfo.nodeId = fileNodeId;
       } else if (fileInfo.type === 'store') {
         if (nodeIds.has(fileNodeId)) {
           duplicates.push({ id: fileNodeId, type: 'Store File', section: 'File Container Nodes' });
           console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Store File)`);
+          fileInfo.nodeId = fileNodeId;
+        } else {
+          nodeIds.add(fileNodeId);
+          markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
+          fileInfo.nodeId = fileNodeId;
         }
-        nodeIds.add(fileNodeId);
-        markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
-        fileInfo.nodeId = fileNodeId;
       } else if (fileInfo.type === 'worker') {
         // Worker files get a worker_ prefix so they are grouped separately
         const workerNodeId = `worker_${fileName}`;
         if (nodeIds.has(workerNodeId)) {
           duplicates.push({ id: workerNodeId, type: 'Worker File', section: 'File Container Nodes' });
           console.warn(`⚠️ DUPLICATE NODE ID: ${workerNodeId} (Worker File)`);
+          fileInfo.nodeId = workerNodeId;
+        } else {
+          nodeIds.add(workerNodeId);
+          markdown += `${workerNodeId}[Function: ${fileName}]\n`;
+          fileInfo.nodeId = workerNodeId;
         }
-        nodeIds.add(workerNodeId);
-        markdown += `${workerNodeId}[Function: ${fileName}]\n`;
-        fileInfo.nodeId = workerNodeId;
       } else {
         // utility (and shaders container)
         // Shader containers get a shader_ prefix for separate grouping
@@ -3456,10 +3473,12 @@ const generateMerfolkMarkdown = (
         if (nodeIds.has(utilNodeId)) {
           duplicates.push({ id: utilNodeId, type: 'Utility File', section: 'File Container Nodes' });
           console.warn(`⚠️ DUPLICATE NODE ID: ${utilNodeId} (Utility File)`);
+          fileInfo.nodeId = utilNodeId;
+        } else {
+          nodeIds.add(utilNodeId);
+          markdown += `${utilNodeId}[Function: ${fileName}]\n`;
+          fileInfo.nodeId = utilNodeId;
         }
-        nodeIds.add(utilNodeId);
-        markdown += `${utilNodeId}[Function: ${fileName}]\n`;
-        fileInfo.nodeId = utilNodeId;
       }
     });
 
@@ -3789,7 +3808,7 @@ const generateMerfolkMarkdown = (
       const nodeId = `${modelName}_model`;
       if (!nodeIds.has(nodeId)) {
         nodeIds.add(nodeId);
-        markdown += `${nodeId}{{Model: ${modelName}}}\n`;
+        markdown += `${nodeId}[[Store: ${modelName}]]\n`;
       }
     });
 
@@ -3839,7 +3858,7 @@ const generateMerfolkMarkdown = (
       const nodeId = `${evtName}_event`;
       if (!nodeIds.has(nodeId)) {
         nodeIds.add(nodeId);
-        markdown += `${nodeId}{{Event: ${evtName}}}\n`;
+        markdown += `${nodeId}((Service: ${evtName}))\n`;
       }
     });
 
