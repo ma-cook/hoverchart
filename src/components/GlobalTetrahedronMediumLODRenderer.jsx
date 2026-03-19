@@ -4,8 +4,35 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
 
-// Box approximation of tetrahedron bounds (extends ~7.5 units from center)
-const SHARED_BOX_GEOMETRY = new THREE.BoxGeometry(12, 12, 12);
+// Custom tetrahedron geometry matching the full-detail Tetrahedron.jsx vertices exactly.
+// TETRAHEDRON_SIZE = 5:
+//   v0 = (0, 5, 0)            — top
+//   v1 = (-5, -5, 5)          — bottom-left-front
+//   v2 = (5, -5, 5)           — bottom-right-front
+//   v3 = (0, -5, -7.5)        — bottom-back
+const _buildTetraGeometry = () => {
+  const S = 5;
+  const v0 = [0, S, 0];
+  const v1 = [-S, -S, S];
+  const v2 = [S, -S, S];
+  const v3 = [0, -S, -S * 1.5];
+
+  // 4 faces × 3 vertices × 3 coords = 36 floats
+  // Face order matches Tetrahedron.jsx: front, left, right, bottom
+  const positions = new Float32Array([
+    ...v0, ...v2, ...v1, // front
+    ...v0, ...v1, ...v3, // left
+    ...v0, ...v3, ...v2, // right
+    ...v1, ...v2, ...v3, // bottom
+  ]);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  return geo;
+};
+
+const SHARED_TETRAHEDRON_GEOMETRY = _buildTetraGeometry();
 
 const SHARED_MATERIAL = new THREE.MeshBasicMaterial({
   transparent: true,
@@ -140,7 +167,7 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [] }) =>
     <instancedMesh
       key={capacity}
       ref={meshRef}
-      args={[SHARED_BOX_GEOMETRY, SHARED_MATERIAL, capacity]}
+      args={[SHARED_TETRAHEDRON_GEOMETRY, SHARED_MATERIAL, capacity]}
       frustumCulled={false}
     />
   );

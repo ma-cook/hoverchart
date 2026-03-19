@@ -15,6 +15,12 @@ const LOD_UPDATE_INTERVAL = 100; // ms between LOD updates
 const CAMERA_MOVE_THRESHOLD = 10; // Only recalculate if camera moved more than this
 const CAMERA_MOVE_THRESHOLD_SQ = CAMERA_MOVE_THRESHOLD * CAMERA_MOVE_THRESHOLD;
 
+// Transition queue settings — budget how many LOD *upgrades* apply per frame
+// to prevent frame-rate spikes when many objects cross thresholds simultaneously.
+// Downgrades (FULL→MEDIUM, MEDIUM→LOW) are always applied immediately since
+// they reduce rendering cost.
+const LOD_UPGRADE_BUDGET_PER_FRAME = 15;
+
 /**
  * LODManager Component
  * 
@@ -35,6 +41,12 @@ const LODManager = ({ enabled = true }) => {
   const lastUpdateTimeRef = useRef(0);
   const lastCameraPositionRef = useRef(new THREE.Vector3());
   const initializedRef = useRef(false);
+  const needsImmediateUpdateRef = useRef(false);
+  const prevObjectCountRef = useRef(0);
+
+  // Transition queue: Map<objectId, { level, distanceSq }>.
+  // Holds pending LOD upgrades that will be drained at a budgeted rate per frame.
+  const upgradeQueueRef = useRef(new Map());
   
   // Get objects from store — shallow equality avoids re-renders on
   // individual object property changes (position moves, text edits, etc.)
@@ -73,6 +85,14 @@ const LODManager = ({ enabled = true }) => {
   const objectsRef = useRef(objects);
   useEffect(() => {
     objectsRef.current = objects;
+    // When new objects arrive, force an immediate LOD pass so they don't
+    // stay at full detail until the camera moves.
+    if (objects && objects.length !== prevObjectCountRef.current) {
+      prevObjectCountRef.current = objects.length;
+      if (initializedRef.current) {
+        needsImmediateUpdateRef.current = true;
+      }
+    }
   }, [objects]);
 
   // WORKER: Sync objects to the spatial index worker whenever they change.
@@ -132,6 +152,7 @@ const LODManager = ({ enabled = true }) => {
           batchRegisterParentChild(relationships);
         }
         initializedRef.current = true;
+        needsImmediateUpdateRef.current = true;
       }).catch(() => {
         // Worker failed — fall through to sync path
         computeContainmentSync(objects);
@@ -200,6 +221,7 @@ const LODManager = ({ enabled = true }) => {
     if (parentIdList.length > 0) batchRegisterParents(parentIdList);
     if (relationships.length > 0) batchRegisterParentChild(relationships);
     initializedRef.current = true;
+    needsImmediateUpdateRef.current = true;
   }, [batchRegisterParentChild, batchRegisterParents]);
   
   // Update LOD levels in useFrame
@@ -215,20 +237,29 @@ const LODManager = ({ enabled = true }) => {
     
     const now = performance.now();
     
-    // Throttle updates
-    if (now - lastUpdateTimeRef.current < LOD_UPDATE_INTERVAL) {
-      return;
-    }
-    
     // Get current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);
-    
-    // Check if camera moved significantly (squared distance avoids sqrt)
-    const cameraMoved = _cameraPos.distanceToSquared(lastCameraPositionRef.current) > CAMERA_MOVE_THRESHOLD_SQ;
-    
-    if (!cameraMoved) {
-      return;
+
+    // Force immediate LOD pass when initialization completes or new objects arrive,
+    // bypassing throttle and camera-movement gates so objects don't render at
+    // full detail until the user happens to move the camera.
+    const forceUpdate = needsImmediateUpdateRef.current;
+
+    if (!forceUpdate) {
+      // Throttle updates
+      if (now - lastUpdateTimeRef.current < LOD_UPDATE_INTERVAL) {
+        return;
+      }
+
+      // Check if camera moved significantly (squared distance avoids sqrt)
+      const cameraMoved = _cameraPos.distanceToSquared(lastCameraPositionRef.current) > CAMERA_MOVE_THRESHOLD_SQ;
+
+      if (!cameraMoved) {
+        return;
+      }
     }
+
+    needsImmediateUpdateRef.current = false;
     
     // Update last camera position
     lastCameraPositionRef.current.copy(_cameraPos);
@@ -237,6 +268,34 @@ const LODManager = ({ enabled = true }) => {
     const currentLodLevels = useLODStore.getState().lodLevels;
     const currentParentIds = useLODStore.getState().parentIds;
     const currentChildParentMap = useLODStore.getState().childParentMap;
+
+    // --- Enqueue LOD updates with cascading transition support ---
+    // Downgrades are applied immediately (they reduce render cost).
+    // Upgrades are queued and drained at a budgeted rate per frame.
+    const enqueueLODUpdates = (updates) => {
+      if (!updates || updates.length === 0) return;
+
+      const immediateDowngrades = [];
+      const queue = upgradeQueueRef.current;
+
+      for (const [objectId, newLevel] of updates) {
+        const currentLevel = currentLodLevels.get(objectId) ?? LOD_LEVELS.FULL;
+        if (newLevel === currentLevel) continue;
+
+        if (newLevel > currentLevel) {
+          // Downgrade (higher number = less detail) — apply immediately
+          immediateDowngrades.push([objectId, newLevel]);
+          queue.delete(objectId); // Remove any stale pending upgrade
+        } else {
+          // Upgrade (lower number = more detail) — queue for budgeted drain
+          queue.set(objectId, { level: newLevel });
+        }
+      }
+
+      if (immediateDowngrades.length > 0) {
+        batchSetLODLevels(immediateDowngrades);
+      }
+    };
 
     // --- Try worker path (fire-and-forget, off main thread) ---
     if (workerSyncedRef.current && !workerBusyRef.current) {
@@ -251,9 +310,7 @@ const LODManager = ({ enabled = true }) => {
       const worker = getSpatialIndexWorker();
       worker.computeLODLevels(cameraPos, parentIdArr, childIdArr, lodEntries)
         .then((updates) => {
-          if (updates && updates.length > 0) {
-            batchSetLODLevels(updates);
-          }
+          enqueueLODUpdates(updates);
         })
         .catch(() => { /* worker error — next frame will retry or sync fallback runs */ })
         .finally(() => { workerBusyRef.current = false; });
@@ -296,8 +353,54 @@ const LODManager = ({ enabled = true }) => {
       }
     }
     
-    if (lodUpdates.length > 0) {
-      batchSetLODLevels(lodUpdates);
+    enqueueLODUpdates(lodUpdates);
+  });
+
+  // --- Drain upgrade queue at a budgeted rate per frame ---
+  // Runs every frame (no throttle) so queued upgrades cascade smoothly.
+  // Upgrades closest objects first for best visual experience.
+  useFrame(() => {
+    const queue = upgradeQueueRef.current;
+    if (queue.size === 0) return;
+
+    // Build sortable array with distance to current camera position
+    _cameraPos.setFromMatrixPosition(camera.matrixWorld);
+
+    // Build a quick position lookup from the objects array (avoids O(N) find per entry)
+    const posMap = new Map();
+    for (const obj of objects) {
+      if (obj.position) posMap.set(obj.id, obj.position);
+    }
+
+    const entries = [];
+    for (const [objectId, data] of queue) {
+      let distSq = 0;
+      const pos = posMap.get(objectId);
+      if (pos) {
+        if (Array.isArray(pos)) {
+          _objectPos.set(pos[0] || 0, pos[1] || 0, pos[2] || 0);
+        } else if (pos.x !== undefined) {
+          _objectPos.set(pos.x, pos.y, pos.z);
+        }
+        distSq = _cameraPos.distanceToSquared(_objectPos);
+      }
+      entries.push({ objectId, level: data.level, distSq });
+    }
+
+    // Sort: closest objects upgrade first
+    entries.sort((a, b) => a.distSq - b.distSq);
+
+    // Apply up to the budget
+    const batch = [];
+    const limit = Math.min(entries.length, LOD_UPGRADE_BUDGET_PER_FRAME);
+    for (let i = 0; i < limit; i++) {
+      const { objectId, level } = entries[i];
+      batch.push([objectId, level]);
+      queue.delete(objectId);
+    }
+
+    if (batch.length > 0) {
+      batchSetLODLevels(batch);
     }
   });
   

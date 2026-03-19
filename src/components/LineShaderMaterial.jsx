@@ -9,12 +9,12 @@ const LineShaderMaterial = new ShaderMaterial({
     linewidth: { value: 1 },
     resolution: { value: { x: window.innerWidth, y: window.innerHeight } },
     opacity: { value: 1.0 },
+    glowWidth: { value: 3.0 },      // Quad expansion factor (1 = no glow, 3 = nice soft glow)
+    glowIntensity: { value: 0.45 }, // Peak glow alpha at the core edge
   },
-  // PERFORMANCE: Disable transparency since lines are fully opaque
-  // This avoids expensive depth sorting for transparent objects
-  transparent: false,
+  transparent: true,
   depthTest: true,
-  depthWrite: true,
+  depthWrite: false, // Avoid depth-fight artifacts with transparent glow
 });
 
 export default LineShaderMaterial;
