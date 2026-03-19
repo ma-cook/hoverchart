@@ -5,6 +5,7 @@ import useObjectsStore from '../stores/objectsStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
+import { isCameraMoving, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 
 // Reusable vectors to avoid GC pressure
 const _cameraPos = new THREE.Vector3();
@@ -19,7 +20,11 @@ const CAMERA_MOVE_THRESHOLD_SQ = CAMERA_MOVE_THRESHOLD * CAMERA_MOVE_THRESHOLD;
 // to prevent frame-rate spikes when many objects cross thresholds simultaneously.
 // Downgrades (FULL→MEDIUM, MEDIUM→LOW) are always applied immediately since
 // they reduce rendering cost.
-const LOD_UPGRADE_BUDGET_PER_FRAME = 15;
+const LOD_UPGRADE_BUDGET_PER_FRAME = 3;
+
+// Frame-time threshold (ms) above which upgrade budget is halved.
+// Prevents piling on detail when frames are already slow.
+const FRAME_TIME_THROTTLE_MS = 24; // ~42fps
 
 /**
  * LODManager Component
@@ -399,6 +404,13 @@ const LODManager = ({ enabled = true }) => {
     const queue = upgradeQueueRef.current;
     if (queue.size === 0) return;
 
+    // Defer ALL upgrades while the camera is actively moving.
+    // Mounting full-detail components (faces, edges, text sprites) is
+    // expensive and competes with OrbitControls for the main thread.
+    // Downgrades still apply immediately (they reduce rendering cost)
+    // so the scene gets simpler during panning, not more complex.
+    if (isCameraMoving()) return;
+
     // Build sortable array with distance to current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);
 
@@ -426,9 +438,13 @@ const LODManager = ({ enabled = true }) => {
     // Sort: closest objects upgrade first
     entries.sort((a, b) => a.distSq - b.distSq);
 
-    // Apply up to the budget
+    // Apply up to the budget (adaptive: halve budget when frames are slow)
     const batch = [];
-    const limit = Math.min(entries.length, LOD_UPGRADE_BUDGET_PER_FRAME);
+    const frameTime = getSmoothedFrameTime();
+    const effectiveBudget = frameTime > FRAME_TIME_THROTTLE_MS
+      ? Math.max(1, Math.floor(LOD_UPGRADE_BUDGET_PER_FRAME / 2))
+      : LOD_UPGRADE_BUDGET_PER_FRAME;
+    const limit = Math.min(entries.length, effectiveBudget);
     for (let i = 0; i < limit; i++) {
       const { objectId, level } = entries[i];
       batch.push([objectId, level]);

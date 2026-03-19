@@ -917,10 +917,20 @@ function generateMultiSegmentPath(
   waypoints.push([curvePoint.x, curvePoint.y, curvePoint.z]);
 
   // Waypoint 3: Transition back toward destination
+  // Scale approach distance with line length so long connections curve gradually
+  // instead of making a sharp turn right at the destination.
+  const approachBackDistance = Math.max(
+    clearanceDistance * 0.4,
+    Math.min(lineLength * 0.15, 200)
+  );
+  const approachSideDistance = Math.max(
+    clearanceDistance * 0.2,
+    Math.min(lineLength * 0.06, 80)
+  );
   const approachPoint = destinationPoint
     .clone()
-    .add(lineDirection.clone().multiplyScalar(-clearanceDistance * 0.2))
-    .add(avoidanceDirection.clone().multiplyScalar(clearanceDistance * 0.2));
+    .add(lineDirection.clone().multiplyScalar(-approachBackDistance))
+    .add(avoidanceDirection.clone().multiplyScalar(approachSideDistance));
   waypoints.push([approachPoint.x, approachPoint.y, approachPoint.z]);
 
   // End point
@@ -939,7 +949,9 @@ function generateMultiSegmentPath(
     'catmullrom',
     0.5
   );
-  const curvePoints = curve.getPoints(Math.max(20, waypoints.length * 6));
+  // More subdivision points for longer curves so they stay smooth
+  const subdivisions = Math.max(20, Math.min(waypoints.length * 6, Math.ceil(lineLength / 5)));
+  const curvePoints = curve.getPoints(subdivisions);
   return curvePoints.map((point) => [point.x, point.y, point.z]);
 }
 
