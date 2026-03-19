@@ -7,6 +7,7 @@ import GlobalTetrahedronEdgesRenderer from './GlobalTetrahedronEdgesRenderer';
 import GlobalCubeMediumLODRenderer from './GlobalCubeMediumLODRenderer';
 import GlobalDodecahedronMediumLODRenderer from './GlobalDodecahedronMediumLODRenderer';
 import GlobalTetrahedronMediumLODRenderer from './GlobalTetrahedronMediumLODRenderer';
+import GlobalCubeFaceRenderer from './GlobalCubeFaceRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
 import useUIOverlayStore from '../stores/uiOverlayStore';
@@ -446,6 +447,9 @@ const ObjectsRenderer = React.memo(({
     <>
       {/* PERFORMANCE: Render all cube edges in a single draw call */}
       <GlobalCubeEdgesRenderer cubes={cubeObjects} defaultLineWidth={1} />
+      
+      {/* PERFORMANCE: Render all colored cube faces in a single draw call */}
+      <GlobalCubeFaceRenderer cubes={cubeObjects} />
       
       {/* PERFORMANCE: Render all medium-LOD cubes as simple boxes in 1 draw call */}
       <GlobalCubeMediumLODRenderer cubes={cubeObjects} />

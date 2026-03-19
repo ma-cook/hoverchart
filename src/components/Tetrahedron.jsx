@@ -42,6 +42,9 @@ import {
   useIndicatorsStore,
 } from '../stores';
 import { shallow } from 'zustand/shallow';
+
+// Module-level cached hitbox material (avoids per-render allocation)
+const HITBOX_MATERIAL = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 // Import snapping utilities
 import { calculateAxisSnap } from '../utils/snappingUtils';
@@ -285,6 +288,9 @@ const Tetrahedron = ({
   const isParentObject = useLODStore(
     useCallback((state) => state.isParent(id), [id])
   );
+  const showFaceText = useLODStore(
+    useCallback((state) => state.faceTextVisible.get(id) !== false, [id])
+  );
 
   // Replace all individual selectors with a single consolidated selector
   const tetrahedronState = useTetrahedronStore((state) => ({
@@ -499,6 +505,21 @@ const Tetrahedron = ({
       id,
     ]
   );
+
+  // Check if any face has a connected indicator (for lazy face mounting)
+  const hasConnectedIndicators = useMemo(() =>
+    tetrahedronFaces.some(({ name }) => isIndicatorConnected(name)),
+    [isIndicatorConnected, tetrahedronFaces]
+  );
+
+  // Lazy face mounting: skip TetrahedronFace components when not needed
+  const shouldMountFaces = selected ||
+    showAllCubesIndicators ||
+    globalIndicatorSelected ||
+    selectedIndicators.length > 0 ||
+    indicatorMode === 'all' ||
+    indicatorMode === 'indicators' ||
+    hasConnectedIndicators;
 
   // Tetrahedron edge line points (wireframe) - flattened for InstancedLine
   // Format: [x1,y1,z1, x2,y2,z2, x3,y3,z3, ...] for edge pairs
@@ -1102,6 +1123,7 @@ const Tetrahedron = ({
         selectedIndicatorsLength={selectedIndicators.length}
         showAllCubesIndicators={showAllCubesIndicators}
         globalIndicatorSelected={globalIndicatorSelected}
+        showFaceText={showFaceText}
       />
     ));
   }, [
@@ -1127,6 +1149,7 @@ const Tetrahedron = ({
     selectedIndicators.length,
     showAllCubesIndicators,
     globalIndicatorSelected,
+    showFaceText,
   ]);
 
   // LOD-based rendering decisions
@@ -1183,10 +1206,7 @@ const Tetrahedron = ({
             userData={{ isHelper: true, isClickHelper: true }}
           >
             <boxGeometry args={[10, 10, 10]} />
-            <meshBasicMaterial
-              visible={false}
-              side={THREE.DoubleSide} // Allow interaction from both sides
-            />
+            <primitive object={HITBOX_MATERIAL} attach="material" />
           </mesh>
         )}
 
@@ -1202,8 +1222,8 @@ const Tetrahedron = ({
           />
         )}
 
-        {/* Render faces - only at full detail */}
-        {shouldRenderFullDetail && renderFaces}
+        {/* Render faces - only at full detail and when needed */}
+        {shouldRenderFullDetail && shouldMountFaces && renderFaces}
 
         {/* Face text elements - only at full detail */}
         {shouldRenderFullDetail && renderFaceTexts}

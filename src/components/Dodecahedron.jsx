@@ -39,6 +39,10 @@ const tempRightVec = new THREE.Vector3();
 const tempCorrectedUpVec = new THREE.Vector3();
 const tempEuler = new THREE.Euler();
 
+// Module-level cached hitbox materials (avoids per-render allocation)
+const HITBOX_SPHERE_MATERIAL = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide });
+const HITBOX_DODECA_MATERIAL = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
+
 // ============================================================================
 // OPTIMIZATION: Module-level constants for static geometry
 // These calculations are the same for all dodecahedrons, so compute them once
@@ -268,6 +272,9 @@ const Sphere = React.memo(
     );
     const isParentObject = useLODStore(
       useCallback((state) => state.isParent(id), [id])
+    );
+    const showFaceText = useLODStore(
+      useCallback((state) => state.faceTextVisible.get(id) !== false, [id])
     );
 
     // Store state and actions
@@ -1150,6 +1157,18 @@ const Sphere = React.memo(
       return [0, 5 + 5, 0]; // 5 (radius) + 5 (fixed offset) units up
     };
 
+    // Check if any face has a connected indicator (for lazy face mounting)
+    const hasConnectedIndicators = geometry.some((_, idx) => isIndicatorConnected(idx));
+
+    // Lazy face mounting: skip DodecahedronFace components when not needed
+    const shouldMountFaces = selected ||
+      showAllIndicators ||
+      globalIndicatorSelected ||
+      selectedIndicators?.length > 0 ||
+      indicatorMode === 'all' ||
+      indicatorMode === 'indicators' ||
+      hasConnectedIndicators;
+
     // LOD-based rendering decisions
     // Grouping containers are excluded from LOD system - always render at full detail
     const isGroupingContainer = objectData?.merfolkData?.isContainer === true;
@@ -1198,11 +1217,7 @@ const Sphere = React.memo(
             >
               <sphereGeometry args={[isMobile ? 10 : 6, 32, 32]} />{' '}
               {/* Slightly larger than dodecahedron */}
-              <meshBasicMaterial
-                transparent
-                opacity={0}
-                side={THREE.DoubleSide} // Allow interaction from both sides
-              />
+              <primitive object={HITBOX_SPHERE_MATERIAL} attach="material" />
             </mesh>
           )}
           {/* Original background mesh - only when not selected to avoid blocking nested interactions */}
@@ -1214,18 +1229,13 @@ const Sphere = React.memo(
             >
               <dodecahedronGeometry args={[5.1]} />{' '}
               {/* Slightly larger than face geometries */}
-              <meshBasicMaterial
-                visible={false}
-                transparent={false}
-                opacity={1}
-                side={THREE.DoubleSide} // Allow interaction from both sides
-              />
+              <primitive object={HITBOX_DODECA_MATERIAL} attach="material" />
             </mesh>
           )}
           {/* LOD MEDIUM: Simple spheres now rendered by GlobalDodecahedronMediumLODRenderer (1 draw call for all) */}
           
           {/* Render faces using DodecahedronFace component (consistent with Cube architecture) */}
-          {shouldRenderFullDetail && geometry.map((faceGeometry, idx) => {
+          {shouldRenderFullDetail && shouldMountFaces && geometry.map((faceGeometry, idx) => {
             const faceInfo = getFaceInfo(idx);
             const faceRotation = getFaceRotation(idx);
             const faceData = {
@@ -1254,6 +1264,7 @@ const Sphere = React.memo(
                 selectedIndicatorsLength={selectedIndicators?.length || 0}
                 onFaceTextSubmit={handleFaceTextSubmit}
                 inputId={`dodecahedron-${id}-face-${idx}`}
+                showFaceText={showFaceText}
               />
             );
           })}

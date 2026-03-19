@@ -76,6 +76,10 @@ export const calculateParentLODLevel = (distanceSq) => {
   return LOD_LEVELS.LOW;
 };
 
+// Face text distance threshold — face texts are small and unreadable beyond this
+export const FACE_TEXT_DISTANCE = 500;
+export const FACE_TEXT_DISTANCE_SQ = FACE_TEXT_DISTANCE * FACE_TEXT_DISTANCE;
+
 const useLODStore = create((set, get) => ({
   // Map of objectId -> LOD level
   lodLevels: new Map(),
@@ -99,6 +103,29 @@ const useLODStore = create((set, get) => ({
   
   // Whether LOD is enabled globally
   lodEnabled: true,
+  
+  // Face text visibility: Map of objectId -> boolean (true = show, false = hide)
+  // Objects beyond FACE_TEXT_DISTANCE are hidden even at FULL LOD
+  faceTextVisible: new Map(),
+  _faceTextVersion: 0,
+  
+  /**
+   * Batch update face text visibility
+   * PERFORMANCE: Mutates Map in-place, bumps version once per batch.
+   */
+  batchSetFaceTextVisible: (updates) => {
+    const state = get();
+    let changed = false;
+    for (const [objectId, visible] of updates) {
+      if (state.faceTextVisible.get(objectId) !== visible) {
+        state.faceTextVisible.set(objectId, visible);
+        changed = true;
+      }
+    }
+    if (changed) {
+      set({ _faceTextVersion: state._faceTextVersion + 1 });
+    }
+  },
   
   /**
    * Set LOD level for a specific object
@@ -258,6 +285,8 @@ const useLODStore = create((set, get) => ({
     set({
       lodLevels: new Map(),
       _lodVersion: 0,
+      faceTextVisible: new Map(),
+      _faceTextVersion: 0,
       parentIds: new Set(),
       parentChildMap: new Map(),
       childParentMap: new Map(),

@@ -41,6 +41,9 @@ const DEFAULT_COLOR = '#000000';
 // Reusable Vector3 for world position calculations (avoids GC pressure)
 const tempWorldPosVec = new THREE.Vector3();
 
+// Module-level cached hitbox material (avoids per-render allocation)
+const HITBOX_MATERIAL = new THREE.MeshBasicMaterial({ visible: false });
+
 // Default text style constant
 const DEFAULT_TEXT_STYLE = {
   fontSize: 1.5,
@@ -180,6 +183,9 @@ const Cube = ({
   );
   const isParentObject = useLODStore(
     useCallback((state) => state.isParent(id), [id])
+  );
+  const showFaceText = useLODStore(
+    useCallback((state) => state.faceTextVisible.get(id) !== false, [id])
   );
   
   // Get object data from objects store - use selector to avoid subscribing to all objects
@@ -478,6 +484,21 @@ const Cube = ({
       hoveredObjectId,
     ]
   );
+
+  // Check if any face has a connected indicator (for lazy face mounting)
+  const hasConnectedIndicators = useMemo(() =>
+    faces.some(({ name }) => isIndicatorConnected(name)),
+    [isIndicatorConnected]
+  );
+
+  // Lazy face mounting: skip CubeFace components when not needed.
+  // GlobalCubeFaceRenderer handles colored face visuals for non-selected cubes.
+  const shouldMountFaces = selected ||
+    showAllCubesIndicators ||
+    selectedIndicators.length > 0 ||
+    indicatorMode === 'all' ||
+    indicatorMode === 'indicators' ||
+    hasConnectedIndicators;
 
   // Calculate face text offset based on font size
   const getFaceTextOffset = useCallback((fontSize, faceName) => {
@@ -1142,6 +1163,7 @@ const Cube = ({
             isIndicatorConnected={isConnected}
             selectedIndicatorsLength={selectedIndicators.length} // Add this
             showAllCubesIndicators={showAllCubesIndicators}
+            skipColoredRendering={!selected}
           />
 
           {/* UI elements for selected face */}
@@ -1330,6 +1352,7 @@ const Cube = ({
   const shouldRenderEdges = renderEdges && (!isLODRestricted || lodLevel === LOD_LEVELS.FULL);
   const shouldRenderFaces = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
   const shouldRenderText = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
+  const shouldRenderFaceText = shouldRenderText && showFaceText;
   const shouldRenderIndicators = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
   const shouldRenderUI = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
 
@@ -1373,7 +1396,7 @@ const Cube = ({
           <boxGeometry
             args={[CUBE_SIZE * 2, CUBE_SIZE * 2, CUBE_SIZE * 2]}
           />
-          <meshBasicMaterial visible={false} />
+          <primitive object={HITBOX_MATERIAL} attach="material" />
         </mesh>
         
         {/* LOD MEDIUM: Simple boxes now rendered by GlobalCubeMediumLODRenderer (1 draw call for all) */}
@@ -1386,11 +1409,11 @@ const Cube = ({
             lineWidth={lineWidth !== undefined ? lineWidth : 1}
           />
         )}
-        {/* Colored faces and indicators - only at full LOD */}
-        {shouldRenderFaces && renderFaces}
+        {/* Colored faces and indicators - only at full LOD and when needed */}
+        {shouldRenderFaces && shouldMountFaces && renderFaces}
         
-        {/* Face text elements - only at full LOD */}
-        {shouldRenderText && renderFaceTexts}
+        {/* Face text elements - only at full LOD and close enough */}
+        {shouldRenderFaceText && renderFaceTexts}
         
         {/* Header text - only at full LOD */}
         {shouldRenderText && (cube?.headerText || headerText) && (

@@ -67,6 +67,7 @@ const CubeFace = React.memo(
     shouldShowIndicator,
     isIndicatorActive,
     isIndicatorConnected,
+    skipColoredRendering = false, // When true, colored visuals handled by GlobalCubeFaceRenderer
   }) => {
     // PERFORMANCE OPTIMIZATION: Single combined selector instead of two separate ones
     // This reduces subscriptions from 12 per cube (6 faces × 2) to 6 per cube
@@ -80,6 +81,11 @@ const CubeFace = React.memo(
 
     // Get cached material based on face state (avoids creating new materials)
     const faceMaterial = useMemo(() => {
+      // When global face renderer handles colored visuals, skip colored material
+      if (skipColoredRendering && faceColor && !isSelected) {
+        return materialCache.invisible;
+      }
+
       // If face has a custom color, use cached colored material
       if (faceColor) {
         return getColoredMaterial(faceColor);
@@ -92,7 +98,7 @@ const CubeFace = React.memo(
 
       // Default: use cached invisible material (for click handling only)
       return materialCache.invisible;
-    }, [faceColor, isSelected]);
+    }, [faceColor, isSelected, skipColoredRendering]);
 
     // Stable click handler - always handle clicks, parent decides what to do
     const handleClick = useCallback(

@@ -2,6 +2,7 @@
 import React, { useMemo, useCallback } from 'react';
 import * as THREE from 'three';
 import { useTetrahedronStore } from '../stores';
+import { shallow } from 'zustand/shallow';
 import FaceIndicator from './FaceIndicator';
 import FaceUI from './FaceUI';
 import FaceTextInput from './FaceTextInput';
@@ -78,43 +79,33 @@ const TetrahedronFace = React.memo(
     textStyle,
     selectedIndicatorsLength = 0, // Add this prop
     showAllCubesIndicators = false,
+    showFaceText = true,
   }) => {
-    // Subscribe only to this face's specific data
-    const faceColor = useTetrahedronStore(
-      (state) => state.getTetrahedron(id)?.faceColors?.[faceName]
-    );
-    const isSelectedFace = useTetrahedronStore(
-      (state) => state.getTetrahedron(id)?.selectedFace === faceName
-    );
-    const showFaceTextInput = useTetrahedronStore(
-      (state) => state.getTetrahedron(id)?.showFaceTextInput
-    );
-    const activeTextFace = useTetrahedronStore(
-      (state) => state.getTetrahedron(id)?.activeTextFace
-    );
-    const faceText = useTetrahedronStore(
-      (state) => state.getTetrahedron(id)?.faceTexts?.[faceName]
-    );
-    const faceTextStyle = useTetrahedronStore(
-      (state) => state.getTetrahedron(id)?.faceTextStyles?.[faceName]
-    );
+    // Single consolidated subscription for all face-specific state (6 selectors → 1)
+    const { faceColor, isSelectedFace, showFaceTextInput, activeTextFace, faceText, faceTextStyle } =
+      useTetrahedronStore(
+        (state) => {
+          const tetra = state.getTetrahedron(id);
+          return {
+            faceColor: tetra?.faceColors?.[faceName],
+            isSelectedFace: tetra?.selectedFace === faceName,
+            showFaceTextInput: tetra?.showFaceTextInput,
+            activeTextFace: tetra?.activeTextFace,
+            faceText: tetra?.faceTexts?.[faceName],
+            faceTextStyle: tetra?.faceTextStyles?.[faceName],
+          };
+        },
+        shallow
+      );
 
-    // Get actions
-    const updateTetrahedronFaceColor = useTetrahedronStore(
-      (state) => state.updateTetrahedronFaceColor
-    );
-    const updateTetrahedronFaceText = useTetrahedronStore(
-      (state) => state.updateTetrahedronFaceText
-    );
-    const setTetrahedronShowFaceTextInput = useTetrahedronStore(
-      (state) => state.setTetrahedronShowFaceTextInput
-    );
-    const setTetrahedronSelectedFace = useTetrahedronStore(
-      (state) => state.setTetrahedronSelectedFace
-    );
-    const setTetrahedronActiveTextFace = useTetrahedronStore(
-      (state) => state.setTetrahedronActiveTextFace
-    );
+    // Actions are stable refs — single subscription (5 selectors → 1)
+    const {
+      updateTetrahedronFaceColor,
+      updateTetrahedronFaceText,
+      setTetrahedronShowFaceTextInput,
+      setTetrahedronSelectedFace,
+      setTetrahedronActiveTextFace,
+    } = useTetrahedronStore.getState();
 
     // Get cached material config based on face state (avoids creating new THREE.Color on every render)
     const faceMaterial = useMemo(() => {
@@ -231,9 +222,9 @@ const TetrahedronFace = React.memo(
     // Calculate render order
     const faceRenderOrder = displayFace ? 100 : isClickable ? 50 : 10;
 
-    // Face text rendering
+    // Face text rendering — distance-gated via showFaceText
     const faceTextElement = useMemo(() => {
-      if (!faceText) return null;
+      if (!faceText || !showFaceText) return null;
 
       const textStyleCombined = faceTextStyle || {
         fontSize: 0.5,
@@ -292,6 +283,7 @@ const TetrahedronFace = React.memo(
       );
     }, [
       faceText,
+      showFaceText,
       faceTextStyle,
       faceName,
       faceData,

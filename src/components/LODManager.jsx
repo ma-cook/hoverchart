@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS } from '../stores/lodStore';
+import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
@@ -74,6 +74,7 @@ const LODManager = ({ enabled = true }) => {
     batchRegisterParents,
     setLODEnabled,
     clearLODData,
+    batchSetFaceTextVisible,
   } = useLODStore.getState();
   
   // Enable/disable LOD based on prop
@@ -315,11 +316,37 @@ const LODManager = ({ enabled = true }) => {
         .catch(() => { /* worker error — next frame will retry or sync fallback runs */ })
         .finally(() => { workerBusyRef.current = false; });
 
+      // Worker handles LOD levels but face text visibility is computed on main thread.
+      // This is cheap (distance check only) and avoids modifying the worker protocol.
+      const currentFaceTextVisible = useLODStore.getState().faceTextVisible;
+      const faceTextUpdates = [];
+      for (const obj of objects) {
+        const pos = obj.position;
+        if (!pos) continue;
+        if (Array.isArray(pos)) {
+          _objectPos.set(pos[0] || 0, pos[1] || 0, pos[2] || 0);
+        } else if (pos.x !== undefined) {
+          _objectPos.set(pos.x, pos.y, pos.z);
+        } else {
+          continue;
+        }
+        const distSq = _cameraPos.distanceToSquared(_objectPos);
+        const show = distSq < FACE_TEXT_DISTANCE_SQ;
+        if (currentFaceTextVisible.get(obj.id) !== show) {
+          faceTextUpdates.push([obj.id, show]);
+        }
+      }
+      if (faceTextUpdates.length > 0) {
+        batchSetFaceTextVisible(faceTextUpdates);
+      }
+
       return; // Don't also run the sync path this frame
     }
     
     // --- Sync fallback (runs when worker not yet synced or is busy) ---
     const lodUpdates = [];
+    const faceTextUpdates = [];
+    const currentFaceTextVisible = useLODStore.getState().faceTextVisible;
     
     for (const obj of objects) {
       const pos = obj.position;
@@ -334,6 +361,12 @@ const LODManager = ({ enabled = true }) => {
       }
       
       const distanceSq = _cameraPos.distanceToSquared(_objectPos);
+      
+      // Face text visibility (applies to all objects including containers)
+      const showFaceText = distanceSq < FACE_TEXT_DISTANCE_SQ;
+      if (currentFaceTextVisible.get(obj.id) !== showFaceText) {
+        faceTextUpdates.push([obj.id, showFaceText]);
+      }
       
       if (obj.merfolkData?.isContainer === true) {
         continue;
@@ -354,6 +387,9 @@ const LODManager = ({ enabled = true }) => {
     }
     
     enqueueLODUpdates(lodUpdates);
+    if (faceTextUpdates.length > 0) {
+      batchSetFaceTextVisible(faceTextUpdates);
+    }
   });
 
   // --- Drain upgrade queue at a budgeted rate per frame ---

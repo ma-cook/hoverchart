@@ -88,6 +88,7 @@ const DodecahedronFace = React.memo(
     selectedIndicatorsLength,
     onFaceTextSubmit,
     inputId,
+    showFaceText = true,
   }) => {
     // Only subscribe to this specific face's data from dodecahedron store
     const {
@@ -199,8 +200,8 @@ const DodecahedronFace = React.memo(
           />
         )}
 
-        {/* Face text */}
-        {faceText && (
+        {/* Face text — distance-gated via showFaceText */}
+        {faceText && showFaceText && (
           <group
             position={adjustedTextPosition}
             rotation={faceData.rotation}
