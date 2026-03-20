@@ -33,6 +33,7 @@ export const createOrganization = async (userId, orgName, plan = 'free') => {
     name: orgName,
     createdAt: now,
     createdBy: userId,
+    ownerId: userId,
     plan,
     memberLimit,
     members: [

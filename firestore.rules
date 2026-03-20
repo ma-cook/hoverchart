@@ -206,18 +206,34 @@ service cloud.firestore {
                orgData.members.where('userId', '==', request.auth.uid).size() > 0;
       }
 
-      // Owner and members can read the organization
+      function isOrgInvited(orgData) {
+        return request.auth.token.email != null &&
+               orgData.invites is list &&
+               orgData.invites.size() > 0 &&
+               orgData.invites.where('email', '==', request.auth.token.email).where('status', '==', 'pending').size() > 0;
+      }
+
+      // Owner, members, and invited users can read the organization
       allow read: if isAuthenticated() && (
         resource.data.ownerId == request.auth.uid ||
-        isOrgMember(resource.data)
+        isOrgMember(resource.data) ||
+        isOrgInvited(resource.data)
       );
 
       // Any authenticated user can create an organization (must set themselves as owner)
       allow create: if isAuthenticated() &&
                      request.resource.data.ownerId == request.auth.uid;
 
-      // Only the owner can update or delete the organization
-      allow update: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      // Owner and members can update the full organization document;
+      // invited users may only update the invites field (to accept/decline their invite).
+      allow update: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        isOrgMember(resource.data) ||
+        (isOrgInvited(resource.data) &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invites', 'members']))
+      );
+
+      // Only the owner can delete the organization
       allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
     }
 
