@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 export const SpacesTable = React.memo(
   ({
     userSpaces,
+    userOrgs = [],
     windowSize,
     user,
     isDeleting,
@@ -11,6 +12,7 @@ export const SpacesTable = React.memo(
     onShareSpace,
     onDeleteSpace,
     onLeaveSpace,
+    onCreateOrganization,
   }) => {
     const [navigatingSpaceId, setNavigatingSpaceId] = useState(null);
 
@@ -108,6 +110,7 @@ export const SpacesTable = React.memo(
 
     const hasOwnedSpaces = userSpaces.owned.length > 0;
     const hasSharedSpaces = userSpaces.shared.length > 0;
+    const hasOrgs = userOrgs.length > 0;
 
     return (
       <div
@@ -284,6 +287,55 @@ export const SpacesTable = React.memo(
                   </button>
                 </td>
               </tr>
+            )}
+
+            {/* Organizations section */}
+            {user && (
+              <>
+                <tr>
+                  <td colSpan="4" style={{ ...tdStyles, ...categoryRowStyles }}>
+                    Organizations
+                  </td>
+                </tr>
+                {hasOrgs &&
+                  userOrgs.map((org) => (
+                    <tr key={`org-${org.id}`}>
+                      <td style={tdStyles}>{org.name}</td>
+                      <td style={tdStyles}>
+                        {user.displayName || user.email.split('@')[0]}
+                      </td>
+                      <td style={tdStyles}>
+                        {org.members && org.members.length > 0
+                          ? `${org.members.length} member${org.members.length > 1 ? 's' : ''}`
+                          : 'No members'}
+                      </td>
+                      <td style={tdStyles}>
+                        {new Date(org.createdAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                {!hasOrgs && (
+                  <tr>
+                    <td colSpan="3" style={tdStyles}>
+                      No organizations yet.
+                    </td>
+                    <td style={tdStyles}></td>
+                  </tr>
+                )}
+                <tr>
+                  <td colSpan="3" style={tdStyles}></td>
+                  <td style={tdStyles}>
+                    <button
+                      onClick={onCreateOrganization}
+                      style={buttonStyles}
+                      title="Create new organization"
+                      aria-label="Create new organization"
+                    >
+                      +
+                    </button>
+                  </td>
+                </tr>
+              </>
             )}
           </tbody>
         </table>

@@ -198,6 +198,29 @@ service cloud.firestore {
       allow read: if isAuthenticated();
     }
 
+    // Organizations collection
+    match /organizations/{orgId} {
+      function isOrgMember(orgData) {
+        return orgData.members is list &&
+               orgData.members.size() > 0 &&
+               orgData.members.where('userId', '==', request.auth.uid).size() > 0;
+      }
+
+      // Owner and members can read the organization
+      allow read: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid ||
+        isOrgMember(resource.data)
+      );
+
+      // Any authenticated user can create an organization (must set themselves as owner)
+      allow create: if isAuthenticated() &&
+                     request.resource.data.ownerId == request.auth.uid;
+
+      // Only the owner can update or delete the organization
+      allow update: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
     // Deny all other access by default
     match /{document=**} {
       allow read, write: if false;

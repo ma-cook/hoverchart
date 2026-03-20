@@ -30,6 +30,7 @@ import DodecahedronWireframe2 from './components/DodecahedronWireframe2';
 
 import { CreateSpacePopup } from './components/CreateSpacePopup';
 import { ShareSpacePopup } from './components/ShareSpacePopup';
+import { CreateOrganizationPopup } from './components/CreateOrganizationPopup';
 import { SpacesTable } from './components/SpacesTable';
 import { UserLoginSection } from './components/UserLoginSection';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
@@ -68,6 +69,11 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   const [shareError, setShareError] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Organization state
+  const [userOrgs, setUserOrgs] = useState([]);
+  const [showCreateOrgPopup, setShowCreateOrgPopup] = useState(false);
+  const [isCreatingOrg, setIsCreatingOrg] = useState(false);
+
   // Auth listener
   useEffect(() => {
     try {
@@ -81,12 +87,14 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
     }
   }, []);
 
-  // Load user spaces when user changes
+  // Load user spaces and orgs when user changes
   useEffect(() => {
     if (user) {
       fetchUserSpaces();
+      fetchUserOrganizations();
     } else {
       setUserSpaces({ owned: [], shared: [] });
+      setUserOrgs([]);
     }
   }, [user]);
 
@@ -321,6 +329,53 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       console.error('Error fetching user spaces:', error);
     }
   }, [user]);
+
+  // Fetch organizations for the current user
+  const fetchUserOrganizations = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const orgsRef = collection(db, 'organizations');
+      const q = query(orgsRef, where('ownerId', '==', user.uid));
+      const snapshot = await getDocs(q);
+      const orgs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setUserOrgs(orgs);
+    } catch (error) {
+      console.error('Error fetching organizations:', error);
+    }
+  }, [user]);
+
+  // Create a new organization
+  const createOrganization = useCallback(
+    async (orgName) => {
+      if (!user || !orgName.trim()) return;
+
+      try {
+        setIsCreatingOrg(true);
+
+        const orgData = {
+          name: orgName.trim(),
+          ownerId: user.uid,
+          ownerEmail: user.email,
+          members: [],
+          createdAt: new Date().toISOString(),
+          timestamp: Date.now(),
+        };
+
+        await addDoc(collection(db, 'organizations'), orgData);
+
+        setShowCreateOrgPopup(false);
+        await fetchUserOrganizations();
+      } catch (error) {
+        console.error('Error creating organization:', error);
+        alert('Failed to create organization. Please try again.');
+        throw error;
+      } finally {
+        setIsCreatingOrg(false);
+      }
+    },
+    [fetchUserOrganizations, user]
+  );
 
   // Create new space
   const createNewSpace = useCallback(
@@ -741,6 +796,7 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   const spaceTableProps = useMemo(
     () => ({
       userSpaces,
+      userOrgs,
       windowSize,
       user,
       isDeleting,
@@ -752,9 +808,11 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       },
       onDeleteSpace: handleDeleteSpace,
       onLeaveSpace: handleLeaveSpace,
+      onCreateOrganization: () => setShowCreateOrgPopup(true),
     }),
     [
       userSpaces,
+      userOrgs,
       windowSize,
       user,
       isDeleting,
@@ -762,6 +820,17 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       handleDeleteSpace,
       handleLeaveSpace,
     ]
+  );
+
+  // Props for the create organization popup
+  const createOrgProps = useMemo(
+    () => ({
+      show: showCreateOrgPopup,
+      isCreating: isCreatingOrg,
+      onCancel: () => setShowCreateOrgPopup(false),
+      onSubmit: createOrganization,
+    }),
+    [showCreateOrgPopup, isCreatingOrg, createOrganization]
   );
 
   // Props for the create space popup
@@ -832,6 +901,7 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       {/* Modals */}
       <CreateSpacePopup {...createSpaceProps} />
       <ShareSpacePopup {...sharePopupProps} />
+      <CreateOrganizationPopup {...createOrgProps} />
 
       {/* Spaces container */}
       {user && (
