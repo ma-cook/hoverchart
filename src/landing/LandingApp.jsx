@@ -33,6 +33,12 @@ import { ShareSpacePopup } from './components/ShareSpacePopup';
 import { SpacesTable } from './components/SpacesTable';
 import { UserLoginSection } from './components/UserLoginSection';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
+import { OrganizationManager } from './components/OrganizationManager';
+import {
+  getUserOrganizations,
+  getOrganizationMembers,
+  getPendingInvitesForUser,
+} from '../services/organizationService';
 import { useWindowSize } from './hooks/useWindowSize';
 import './LandingApp.css';
 
@@ -68,6 +74,12 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   const [shareError, setShareError] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Organization state
+  const [userOrganizations, setUserOrganizations] = useState([]);
+  const [activeOrgMembers, setActiveOrgMembers] = useState([]);
+  const [showOrgManager, setShowOrgManager] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState([]);
+
   // Auth listener
   useEffect(() => {
     try {
@@ -85,8 +97,27 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   useEffect(() => {
     if (user) {
       fetchUserSpaces();
+      // Load organization data
+      getUserOrganizations(user.uid)
+        .then((orgs) => {
+          setUserOrganizations(orgs);
+          if (orgs.length > 0) {
+            getOrganizationMembers(orgs[0].id)
+              .then(setActiveOrgMembers)
+              .catch(() => setActiveOrgMembers([]));
+          } else {
+            setActiveOrgMembers([]);
+          }
+        })
+        .catch(() => setUserOrganizations([]));
+      getPendingInvitesForUser(user.email)
+        .then(setPendingInvites)
+        .catch(() => setPendingInvites([]));
     } else {
       setUserSpaces({ owned: [], shared: [] });
+      setUserOrganizations([]);
+      setActiveOrgMembers([]);
+      setPendingInvites([]);
     }
   }, [user]);
 
@@ -771,6 +802,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       initialSpaceName: newSpaceName,
       initialEmail: sharedEmail,
       isCreating: isCreatingSpace,
+      organizationMembers: activeOrgMembers,
+      currentUserId: user?.uid,
       onCancel: () => {
         setShowCreateSpacePopup(false);
         setNewSpaceName('');
@@ -784,6 +817,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       sharedEmail,
       isCreatingSpace,
       createNewSpace,
+      activeOrgMembers,
+      user?.uid,
     ]
   );
 
@@ -795,6 +830,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       email: shareEmail,
       isSharing,
       error: shareError,
+      organizationMembers: activeOrgMembers,
+      currentUserId: user?.uid,
       onChangeEmail: setShareEmail,
       onCancel: () => {
         setShowSharePopup(false);
@@ -811,6 +848,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       shareEmail,
       shareError,
       showSharePopup,
+      activeOrgMembers,
+      user?.uid,
     ]
   );
 
@@ -832,6 +871,11 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       {/* Modals */}
       <CreateSpacePopup {...createSpaceProps} />
       <ShareSpacePopup {...sharePopupProps} />
+      <OrganizationManager
+        user={user}
+        show={showOrgManager}
+        onClose={() => setShowOrgManager(false)}
+      />
 
       {/* Spaces container */}
       {user && (
@@ -870,6 +914,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
           windowSize={windowSize}
           onLogin={handleLogin}
           onLogout={handleLogout}
+          onOpenOrgManager={() => setShowOrgManager(true)}
+          pendingInviteCount={pendingInvites.length}
         />
       )}
 

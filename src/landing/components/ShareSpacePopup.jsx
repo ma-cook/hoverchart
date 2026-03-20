@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { OrgMemberDropdown } from './OrgMemberDropdown';
 
 export const ShareSpacePopup = React.memo(
   ({
@@ -10,16 +11,37 @@ export const ShareSpacePopup = React.memo(
     onChangeEmail,
     onCancel,
     onShare,
+    organizationMembers,
+    currentUserId,
   }) => {
     const [isUnrestricted, setIsUnrestricted] = useState(false);
+    const [selectedMember, setSelectedMember] = useState(null);
 
     if (!show || !space) return null;
 
     const spaceName = space?.name || 'this space';
+    const useOrgDropdown =
+      Array.isArray(organizationMembers) && organizationMembers.length > 0;
 
     const handleShare = () => {
-      onShare(isUnrestricted ? 'everyone' : email);
+      if (isUnrestricted) {
+        onShare('everyone');
+      } else if (useOrgDropdown) {
+        if (selectedMember) onShare(selectedMember.email);
+      } else {
+        onShare(email);
+      }
     };
+
+    const handleMemberSelect = (member) => {
+      setSelectedMember(member);
+      onChangeEmail(member.email);
+    };
+
+    const isShareDisabled =
+      isSharing ||
+      (!isUnrestricted &&
+        (useOrgDropdown ? !selectedMember : !email.trim()));
 
     return (
       <div
@@ -69,27 +91,39 @@ export const ShareSpacePopup = React.memo(
                 fontSize: '14px',
               }}
             >
-              Share with (email):
+              {useOrgDropdown ? 'Share with member:' : 'Share with (email):'}
             </label>
-            <input
-              id="shareEmail"
-              type="email"
-              value={email}
-              onChange={(e) => onChangeEmail(e.target.value)}
-              disabled={isUnrestricted}
-              style={{
-                width: '100%',
-                padding: '10px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                boxSizing: 'border-box',
-                fontSize: '14px',
-                fontFamily: 'inherit',
-                opacity: isUnrestricted ? 0.5 : 1,
-              }}
-              placeholder="Enter email address"
-              autoFocus={!isUnrestricted}
-            />
+            {useOrgDropdown ? (
+              <OrgMemberDropdown
+                members={organizationMembers.filter(
+                  (m) => m.userId !== currentUserId
+                )}
+                selectedUserId={selectedMember?.userId}
+                onSelect={handleMemberSelect}
+                disabled={isUnrestricted}
+                placeholder="Search members…"
+              />
+            ) : (
+              <input
+                id="shareEmail"
+                type="email"
+                value={email}
+                onChange={(e) => onChangeEmail(e.target.value)}
+                disabled={isUnrestricted}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  boxSizing: 'border-box',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  opacity: isUnrestricted ? 0.5 : 1,
+                }}
+                placeholder="Enter email address"
+                autoFocus={!isUnrestricted}
+              />
+            )}
           </div>
 
           <div style={{ marginBottom: '15px' }}>
@@ -170,7 +204,7 @@ export const ShareSpacePopup = React.memo(
                 fontWeight: '500',
                 transition: 'background-color 0.2s',
               }}
-              disabled={(!email.trim() && !isUnrestricted) || isSharing}
+              disabled={isShareDisabled}
               onMouseOver={(e) =>
                 (e.currentTarget.style.backgroundColor = '#333')
               }
