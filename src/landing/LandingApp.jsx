@@ -93,7 +93,7 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
     }
   }, []);
 
-  // Load user spaces when user changes
+  // Load user spaces and orgs when user changes
   useEffect(() => {
     if (user) {
       fetchUserSpaces();
@@ -772,6 +772,7 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   const spaceTableProps = useMemo(
     () => ({
       userSpaces,
+      userOrgs: userOrganizations,
       windowSize,
       user,
       isDeleting,
@@ -783,9 +784,11 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       },
       onDeleteSpace: handleDeleteSpace,
       onLeaveSpace: handleLeaveSpace,
+      onCreateOrganization: () => setShowOrgManager(true),
     }),
     [
       userSpaces,
+      userOrganizations,
       windowSize,
       user,
       isDeleting,
