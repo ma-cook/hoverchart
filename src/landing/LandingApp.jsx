@@ -30,10 +30,15 @@ import DodecahedronWireframe2 from './components/DodecahedronWireframe2';
 
 import { CreateSpacePopup } from './components/CreateSpacePopup';
 import { ShareSpacePopup } from './components/ShareSpacePopup';
-import { CreateOrganizationPopup } from './components/CreateOrganizationPopup';
 import { SpacesTable } from './components/SpacesTable';
 import { UserLoginSection } from './components/UserLoginSection';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
+import { OrganizationManager } from './components/OrganizationManager';
+import {
+  getUserOrganizations,
+  getOrganizationMembers,
+  getPendingInvitesForUser,
+} from '../services/organizationService';
 import { useWindowSize } from './hooks/useWindowSize';
 import './LandingApp.css';
 
@@ -70,9 +75,10 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Organization state
-  const [userOrgs, setUserOrgs] = useState([]);
-  const [showCreateOrgPopup, setShowCreateOrgPopup] = useState(false);
-  const [isCreatingOrg, setIsCreatingOrg] = useState(false);
+  const [userOrganizations, setUserOrganizations] = useState([]);
+  const [activeOrgMembers, setActiveOrgMembers] = useState([]);
+  const [showOrgManager, setShowOrgManager] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState([]);
 
   // Auth listener
   useEffect(() => {
@@ -91,10 +97,27 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   useEffect(() => {
     if (user) {
       fetchUserSpaces();
-      fetchUserOrganizations();
+      // Load organization data
+      getUserOrganizations(user.uid)
+        .then((orgs) => {
+          setUserOrganizations(orgs);
+          if (orgs.length > 0) {
+            getOrganizationMembers(orgs[0].id)
+              .then(setActiveOrgMembers)
+              .catch(() => setActiveOrgMembers([]));
+          } else {
+            setActiveOrgMembers([]);
+          }
+        })
+        .catch(() => setUserOrganizations([]));
+      getPendingInvitesForUser(user.email)
+        .then(setPendingInvites)
+        .catch(() => setPendingInvites([]));
     } else {
       setUserSpaces({ owned: [], shared: [] });
-      setUserOrgs([]);
+      setUserOrganizations([]);
+      setActiveOrgMembers([]);
+      setPendingInvites([]);
     }
   }, [user]);
 
@@ -329,53 +352,6 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       console.error('Error fetching user spaces:', error);
     }
   }, [user]);
-
-  // Fetch organizations for the current user
-  const fetchUserOrganizations = useCallback(async () => {
-    if (!user) return;
-
-    try {
-      const orgsRef = collection(db, 'organizations');
-      const q = query(orgsRef, where('ownerId', '==', user.uid));
-      const snapshot = await getDocs(q);
-      const orgs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setUserOrgs(orgs);
-    } catch (error) {
-      console.error('Error fetching organizations:', error);
-    }
-  }, [user]);
-
-  // Create a new organization
-  const createOrganization = useCallback(
-    async (orgName) => {
-      if (!user || !orgName.trim()) return;
-
-      try {
-        setIsCreatingOrg(true);
-
-        const orgData = {
-          name: orgName.trim(),
-          ownerId: user.uid,
-          ownerEmail: user.email,
-          members: [],
-          createdAt: new Date().toISOString(),
-          timestamp: Date.now(),
-        };
-
-        await addDoc(collection(db, 'organizations'), orgData);
-
-        setShowCreateOrgPopup(false);
-        await fetchUserOrganizations();
-      } catch (error) {
-        console.error('Error creating organization:', error);
-        alert('Failed to create organization. Please try again.');
-        throw error;
-      } finally {
-        setIsCreatingOrg(false);
-      }
-    },
-    [fetchUserOrganizations, user]
-  );
 
   // Create new space
   const createNewSpace = useCallback(
@@ -796,7 +772,7 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   const spaceTableProps = useMemo(
     () => ({
       userSpaces,
-      userOrgs,
+      userOrgs: userOrganizations,
       windowSize,
       user,
       isDeleting,
@@ -808,11 +784,11 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       },
       onDeleteSpace: handleDeleteSpace,
       onLeaveSpace: handleLeaveSpace,
-      onCreateOrganization: () => setShowCreateOrgPopup(true),
+      onCreateOrganization: () => setShowOrgManager(true),
     }),
     [
       userSpaces,
-      userOrgs,
+      userOrganizations,
       windowSize,
       user,
       isDeleting,
@@ -822,17 +798,6 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
     ]
   );
 
-  // Props for the create organization popup
-  const createOrgProps = useMemo(
-    () => ({
-      show: showCreateOrgPopup,
-      isCreating: isCreatingOrg,
-      onCancel: () => setShowCreateOrgPopup(false),
-      onSubmit: createOrganization,
-    }),
-    [showCreateOrgPopup, isCreatingOrg, createOrganization]
-  );
-
   // Props for the create space popup
   const createSpaceProps = useMemo(
     () => ({
@@ -840,6 +805,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       initialSpaceName: newSpaceName,
       initialEmail: sharedEmail,
       isCreating: isCreatingSpace,
+      organizationMembers: activeOrgMembers,
+      currentUserId: user?.uid,
       onCancel: () => {
         setShowCreateSpacePopup(false);
         setNewSpaceName('');
@@ -853,6 +820,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       sharedEmail,
       isCreatingSpace,
       createNewSpace,
+      activeOrgMembers,
+      user?.uid,
     ]
   );
 
@@ -864,6 +833,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       email: shareEmail,
       isSharing,
       error: shareError,
+      organizationMembers: activeOrgMembers,
+      currentUserId: user?.uid,
       onChangeEmail: setShareEmail,
       onCancel: () => {
         setShowSharePopup(false);
@@ -880,6 +851,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       shareEmail,
       shareError,
       showSharePopup,
+      activeOrgMembers,
+      user?.uid,
     ]
   );
 
@@ -901,7 +874,11 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       {/* Modals */}
       <CreateSpacePopup {...createSpaceProps} />
       <ShareSpacePopup {...sharePopupProps} />
-      <CreateOrganizationPopup {...createOrgProps} />
+      <OrganizationManager
+        user={user}
+        show={showOrgManager}
+        onClose={() => setShowOrgManager(false)}
+      />
 
       {/* Spaces container */}
       {user && (
@@ -940,6 +917,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
           windowSize={windowSize}
           onLogin={handleLogin}
           onLogout={handleLogout}
+          onOpenOrgManager={() => setShowOrgManager(true)}
+          pendingInviteCount={pendingInvites.length}
         />
       )}
 

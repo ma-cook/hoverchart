@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { OrgMemberDropdown } from './OrgMemberDropdown';
 
 export const CreateSpacePopup = React.memo(
   ({
@@ -8,11 +9,17 @@ export const CreateSpacePopup = React.memo(
     isCreating = false,
     onCancel,
     onSubmit,
+    organizationMembers,
+    currentUserId,
   }) => {
     const [localSpaceName, setLocalSpaceName] = useState(initialSpaceName);
     const [localEmail, setLocalEmail] = useState(initialEmail);
+    const [selectedMember, setSelectedMember] = useState(null);
     const spaceNameRef = useRef(null);
     const formRef = useRef(null);
+
+    const useOrgDropdown =
+      Array.isArray(organizationMembers) && organizationMembers.length > 0;
 
     // Reset local state when external props change
     useEffect(() => {
@@ -35,6 +42,11 @@ export const CreateSpacePopup = React.memo(
     const handleSpaceNameChange = (e) => setLocalSpaceName(e.target.value);
     const handleEmailChange = (e) => setLocalEmail(e.target.value);
 
+    const handleMemberSelect = (member) => {
+      setSelectedMember(member);
+      setLocalEmail(member.email);
+    };
+
     // Handle key press
     const handleKeyPress = (e) => {
       if (e.key === 'Enter' && localSpaceName.trim() && !isCreating) {
@@ -48,8 +60,12 @@ export const CreateSpacePopup = React.memo(
       if (e) e.preventDefault();
       if (!localSpaceName.trim()) return;
 
+      const emailToSubmit = useOrgDropdown
+        ? selectedMember?.email || ''
+        : localEmail.trim();
+
       try {
-        await onSubmit(localSpaceName.trim(), localEmail.trim());
+        await onSubmit(localSpaceName.trim(), emailToSubmit);
       } catch (error) {
         console.error('Error submitting form:', error);
       }
@@ -142,25 +158,36 @@ export const CreateSpacePopup = React.memo(
                   fontSize: '14px',
                 }}
               >
-                Share with (email):
+                {useOrgDropdown ? 'Share with member:' : 'Share with (email):'}
               </label>
-              <input
-                id="shareEmail"
-                type="email"
-                value={localEmail}
-                onChange={handleEmailChange}
-                onKeyPress={handleKeyPress}
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  boxSizing: 'border-box',
-                  fontSize: '14px',
-                  fontFamily: 'inherit',
-                }}
-                placeholder="Enter email to share (optional)"
-              />
+              {useOrgDropdown ? (
+                <OrgMemberDropdown
+                  members={organizationMembers.filter(
+                    (m) => m.userId !== currentUserId
+                  )}
+                  selectedUserId={selectedMember?.userId}
+                  onSelect={handleMemberSelect}
+                  placeholder="Search members… (optional)"
+                />
+              ) : (
+                <input
+                  id="shareEmail"
+                  type="email"
+                  value={localEmail}
+                  onChange={handleEmailChange}
+                  onKeyPress={handleKeyPress}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #ddd',
+                    borderRadius: '4px',
+                    boxSizing: 'border-box',
+                    fontSize: '14px',
+                    fontFamily: 'inherit',
+                  }}
+                  placeholder="Enter email to share (optional)"
+                />
+              )}
             </div>
 
             <div
