@@ -22,6 +22,10 @@ import {
   scanRepositoryAndGenerateDiagram,
   rescanRepositoryForChanges,
 } from '../services/githubRepoService';
+import {
+  scanWebsiteAndGenerateDiagram,
+  validateScanUrl,
+} from '../services/runtimeScanService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import SpaceChat from './SpaceChat';
 
@@ -117,6 +121,9 @@ const UIOverlay = ({
   }, [lastCommitSha, currentSpaceId]);
 
   const [chatOpen, setChatOpen] = useState(false);
+  const [runtimeScanUrl, setRuntimeScanUrl] = useState('');
+  const [runtimeScanDuration, setRuntimeScanDuration] = useState(10);
+  const [lastScannedUrl, setLastScannedUrl] = useState(null);
   const toggleMenu = useUIOverlayStore((state) => state.toggleMenu);
   const toggleTemplate = useUIOverlayStore((state) => state.toggleTemplate);
   const updateTemplateConfig = useUIOverlayStore(
@@ -429,6 +436,63 @@ const UIOverlay = ({
       setNotification({ show: false, message: '' });
     }
   }, [notification.show]);
+
+  // Scan a live website and generate a runtime diagram
+  const handleRuntimeScan = async () => {
+    const url = runtimeScanUrl.trim();
+    const urlError = validateScanUrl(url);
+    if (!urlError.valid) {
+      setNotification({ show: true, message: urlError.error });
+      setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+      return;
+    }
+
+    try {
+      setScanProgress({ isScanning: true, progress: 0, stage: 'Validating URL...' });
+
+      const result = await scanWebsiteAndGenerateDiagram(
+        url,
+        runtimeScanDuration,
+        onCreateObject,
+        user,
+        currentSpaceId,
+        uploadMarkdownToStorage,
+        markdownDiagramService,
+        (progress, stage) => {
+          setScanProgress({ isScanning: true, progress, stage });
+        },
+      );
+
+      setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
+
+      if (result.success) {
+        setLastScannedUrl(url);
+        if (result.markdown) setLastGeneratedMarkdown(result.markdown);
+        if (result.storageUrl) {
+          setLatestMarkdownUrl(result.storageUrl);
+          const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+          if (spaceOwnerId && currentSpaceId) {
+            setDoc(
+              doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId),
+              { markdownStorageUrl: result.storageUrl },
+              { merge: true },
+            ).catch(() => {});
+          }
+        }
+
+        setNotification({
+          show: true,
+          message: `Runtime diagram created! Generated: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,
+        });
+        setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+      }
+    } catch (error) {
+      console.error('Error scanning website runtime:', error);
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
+      setNotification({ show: true, message: `Runtime scan failed: ${error.message}` });
+      setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+    }
+  };
 
   // Handle GitHub OAuth callback
   useEffect(() => {
@@ -1176,6 +1240,47 @@ const UIOverlay = ({
                 </button>
                 <button onClick={() => setSelectedRepo(null)}>No</button>
               </div>
+            </div>
+          )}
+          {/* Runtime Website Scanner section */}
+          {user && (
+            <div className="runtime-scan-section">
+              <p className="runtime-scan-label">Scan Live Website</p>
+              <input
+                className="runtime-scan-input"
+                type="url"
+                placeholder="https://example.com"
+                value={runtimeScanUrl}
+                onChange={(e) => setRuntimeScanUrl(e.target.value)}
+                disabled={scanProgress.isScanning}
+              />
+              <div className="runtime-scan-controls">
+                <select
+                  className="runtime-scan-duration"
+                  value={runtimeScanDuration}
+                  onChange={(e) => setRuntimeScanDuration(Number(e.target.value))}
+                  disabled={scanProgress.isScanning}
+                  title="Capture duration"
+                >
+                  <option value={5}>5s</option>
+                  <option value={10}>10s</option>
+                  <option value={20}>20s</option>
+                  <option value={30}>30s</option>
+                </select>
+                <button
+                  className="runtime-scan-button"
+                  onClick={handleRuntimeScan}
+                  disabled={scanProgress.isScanning || !runtimeScanUrl.trim()}
+                  title="Scan runtime behavior of the website"
+                >
+                  {scanProgress.isScanning ? 'Scanning...' : '🌐 Scan Runtime'}
+                </button>
+              </div>
+              {lastScannedUrl && (
+                <p className="runtime-scan-last" title={lastScannedUrl}>
+                  Last: {lastScannedUrl.length > 35 ? `${lastScannedUrl.slice(0, 35)}…` : lastScannedUrl}
+                </p>
+              )}
             </div>
           )}
         </div>

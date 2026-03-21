@@ -3,6 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
+import puppeteer from 'puppeteer';
 
 import express from 'express';
 import cors from 'cors';
@@ -509,4 +510,576 @@ export const bulkDelete = onRequest(
     maxInstances: 5,
   },
   createBulkDeleteApp()
+);
+
+// ============= SCAN WEBSITE RUNTIME FUNCTION =============
+
+/**
+ * Validate that a URL is safe to scan (no SSRF).
+ * @param {string} url
+ * @returns {{ valid: boolean, error?: string }}
+ */
+function validateRuntimeScanUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return { valid: false, error: 'URL is required' };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { valid: false, error: 'Only http and https URLs are supported' };
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  const blockedHostnames = ['localhost', '127.0.0.1', '0.0.0.0', '::1'];
+  if (blockedHostnames.includes(hostname)) {
+    return { valid: false, error: 'Scanning localhost is not allowed' };
+  }
+
+  const privateRanges = [
+    /^10\.\d+\.\d+\.\d+$/,
+    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
+    /^192\.168\.\d+\.\d+$/,
+    /^169\.254\.\d+\.\d+$/,
+    /^fc[0-9a-f]{2}:/i,
+    /^fe80:/i,
+  ];
+
+  for (const range of privateRanges) {
+    if (range.test(hostname)) {
+      return { valid: false, error: 'Scanning private/internal IP ranges is not allowed' };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Convert a string into a valid Merfolk node identifier.
+ * @param {string} name
+ * @returns {string}
+ */
+function sanitizeMerfolkId(name) {
+  return String(name)
+    .replace(/[^a-zA-Z0-9_]/g, '_')
+    .replace(/^(\d)/, '_$1')
+    .slice(0, 60);
+}
+
+/**
+ * Generate Merfolk markdown from a structured runtime trace object.
+ * @param {Object} traceData
+ * @param {string} url
+ * @returns {string}
+ */
+function generateMerfolkFromRuntimeTrace(traceData, url) {
+  const {
+    components = [],
+    eventHandlers = [],
+    apiCalls = [],
+    stateStores = [],
+    hooks = [],
+    libraries = [],
+    workers = [],
+    connections = [],
+    framework = 'unknown',
+  } = traceData;
+
+  const lines = [];
+  lines.push('```merfolk');
+  lines.push(`%% Runtime Analysis: ${url}`);
+  lines.push(`%% Framework: ${framework}`);
+  lines.push('');
+
+  if (components.length > 0) {
+    lines.push('%% Components');
+    for (const comp of components) {
+      lines.push(`${sanitizeMerfolkId(comp.name)}{Component: ${comp.name}}`);
+    }
+    lines.push('');
+  }
+
+  if (eventHandlers.length > 0) {
+    lines.push('%% Event Handlers');
+    for (const handler of eventHandlers) {
+      lines.push(`${sanitizeMerfolkId(handler.name)}[Function: ${handler.name}]`);
+    }
+    lines.push('');
+  }
+
+  if (apiCalls.length > 0) {
+    lines.push('%% API Calls');
+    for (const call of apiCalls) {
+      const label = `${call.method} ${call.path}`;
+      lines.push(`${sanitizeMerfolkId(label)}((Service: ${label}))`);
+    }
+    lines.push('');
+  }
+
+  if (stateStores.length > 0) {
+    lines.push('%% State Stores');
+    for (const store of stateStores) {
+      lines.push(`${sanitizeMerfolkId(store.name)}[[Store: ${store.name}]]`);
+    }
+    lines.push('');
+  }
+
+  if (hooks.length > 0) {
+    lines.push('%% Hooks');
+    for (const hook of hooks) {
+      lines.push(`${sanitizeMerfolkId(hook.name)}[Hook: ${hook.name}]`);
+    }
+    lines.push('');
+  }
+
+  if (libraries.length > 0) {
+    lines.push('%% Libraries');
+    for (const lib of libraries) {
+      lines.push(`${sanitizeMerfolkId(lib.name)}<Library: ${lib.name}>`);
+    }
+    lines.push('');
+  }
+
+  if (workers.length > 0) {
+    lines.push('%% Workers');
+    for (const worker of workers) {
+      lines.push(`${sanitizeMerfolkId(worker.name)}[Function: ${worker.name}]`);
+    }
+    lines.push('');
+  }
+
+  if (connections.length > 0) {
+    lines.push('%% Connections');
+    for (const conn of connections) {
+      const arrow = conn.style || '-->';
+      const label = conn.label ? ` : "${conn.label}"` : '';
+      lines.push(`${sanitizeMerfolkId(conn.from)} ${arrow} ${sanitizeMerfolkId(conn.to)}${label}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('```');
+  return lines.join('\n');
+}
+
+/**
+ * Instrument a Puppeteer page and capture runtime behaviour via CDP.
+ * @param {import('puppeteer').Page} page
+ * @param {number} durationMs
+ * @returns {Promise<Object>} - traceData
+ */
+// Maximum node counts — keeps the generated diagram legible
+const MAX_COMPONENTS = 30;
+const MAX_EVENT_HANDLERS = 20;
+const MAX_API_CALLS = 20;
+const MAX_HOOKS = 15;
+// Maximum number of profiled function names added as event handlers
+const MAX_PROFILED_HANDLERS = 15;
+
+// CDP profiler function names to exclude from the diagram
+const EXCLUDED_PROFILER_NAMES = new Set([
+  '(anonymous)',
+  '(program)',
+  '(root)',
+  '(idle)',
+  '(garbage collector)',
+]);
+
+async function captureRuntimeTrace(page, durationMs) {
+  const client = await page.createCDPSession();
+
+  // Enable relevant CDP domains
+  await client.send('Network.enable');
+  await client.send('Runtime.enable');
+  await client.send('Profiler.enable');
+  await client.send('Profiler.setSamplingInterval', { interval: 100 });
+  await client.send('Profiler.start');
+
+  const networkRequests = [];
+
+  client.on('Network.requestWillBeSent', (params) => {
+    const { request, type } = params;
+    if (type === 'XHR' || type === 'Fetch') {
+      try {
+        const urlObj = new URL(request.url);
+        networkRequests.push({
+          method: request.method,
+          path: urlObj.pathname,
+          url: request.url,
+        });
+      } catch {
+        // ignore malformed URLs
+      }
+    }
+  });
+
+  // Wait for the configured capture duration
+  await new Promise((resolve) => setTimeout(resolve, durationMs));
+
+  // Stop profiler
+  const profilerResult = await client.send('Profiler.stop');
+
+  // Detect framework and extract runtime data from the page
+  const runtimeData = await page.evaluate(() => {
+    const data = {
+      framework: 'unknown',
+      components: [],
+      hooks: [],
+      stateStores: [],
+      libraries: [],
+      workers: [],
+      eventHandlers: [],
+    };
+
+    // ── Framework detection ────────────────────────────────────────────────
+    if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+      data.framework = window.__NEXT_DATA__ ? 'Next.js' : 'React';
+    } else if (window.__VUE_DEVTOOLS_GLOBAL_HOOK__ || (window.Vue && window.Vue.version)) {
+      data.framework = 'Vue';
+    } else if (window.angular || (window.ng && window.ng.coreTokens)) {
+      data.framework = 'Angular';
+    } else if (window.Svelte) {
+      data.framework = 'Svelte';
+    }
+
+    // ── React component tree via DevTools fiber ────────────────────────────
+    if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+      const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+      const seen = new Set();
+
+      const walkFiber = (fiber) => {
+        if (!fiber || seen.has(fiber)) return;
+        seen.add(fiber);
+
+        const name = fiber.type && (fiber.type.displayName || fiber.type.name);
+        if (name && typeof name === 'string' && /^[A-Z]/.test(name)) {
+          if (!data.components.find((c) => c.name === name)) {
+            data.components.push({ name });
+          }
+
+          // Extract hook names from the fiber's memoized state chain
+          let memoState = fiber.memoizedState;
+          while (memoState) {
+            const queueDispatch = memoState.queue && memoState.queue.dispatch;
+            if (queueDispatch && queueDispatch._reactName) {
+              const hookName = queueDispatch._reactName;
+              if (!data.hooks.find((h) => h.name === hookName)) {
+                data.hooks.push({ name: hookName });
+              }
+            }
+            memoState = memoState.next;
+          }
+        }
+
+        walkFiber(fiber.child);
+        walkFiber(fiber.sibling);
+      };
+
+      try {
+        hook.renderers && hook.renderers.forEach((renderer) => {
+          const root = renderer.currentDispatcherRef;
+          if (root && root.current) walkFiber(root.current);
+        });
+        // Also walk from the _roots map if present
+        if (hook._roots) {
+          hook._roots.forEach((root) => {
+            walkFiber(root.current && root.current.child);
+          });
+        }
+        // Fallback: walk the fiber tree via the root container
+        const rootEl = document.getElementById('root') || document.getElementById('app') || document.body;
+        const fiberKey = Object.keys(rootEl).find(
+          (k) => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')
+        );
+        if (fiberKey) walkFiber(rootEl[fiberKey]);
+      } catch {
+        // ignore DevTools access errors
+      }
+    }
+
+    // ── State store detection ──────────────────────────────────────────────
+    if (window.__REDUX_DEVTOOLS_EXTENSION__) {
+      data.stateStores.push({ name: 'reduxStore' });
+    }
+    if (window.__zustand__) {
+      data.stateStores.push({ name: 'zustandStore' });
+    }
+    if (window.Vuex) {
+      data.stateStores.push({ name: 'vuexStore' });
+    }
+    if (window.MobX || window.mobx) {
+      data.stateStores.push({ name: 'mobxStore' });
+    }
+
+    // ── External library detection from <script> tags ──────────────────────
+    const scriptSrcs = Array.from(document.querySelectorAll('script[src]')).map((s) => s.src);
+    const knownLibs = [
+      { pattern: /lodash/i, name: 'lodash' },
+      { pattern: /jquery/i, name: 'jQuery' },
+      { pattern: /axios/i, name: 'axios' },
+      { pattern: /moment/i, name: 'moment' },
+      { pattern: /dayjs/i, name: 'dayjs' },
+      { pattern: /d3(\.min)?\.js/i, name: 'd3' },
+      { pattern: /three(\.min)?\.js/i, name: 'three' },
+      { pattern: /gsap/i, name: 'GSAP' },
+      { pattern: /bootstrap/i, name: 'bootstrap' },
+      { pattern: /tailwind/i, name: 'tailwind' },
+      { pattern: /framer-motion/i, name: 'framer-motion' },
+      { pattern: /redux/i, name: 'redux' },
+      { pattern: /mobx/i, name: 'MobX' },
+      { pattern: /graphql/i, name: 'GraphQL' },
+      { pattern: /socket\.io/i, name: 'socket.io' },
+    ];
+    for (const src of scriptSrcs) {
+      for (const { pattern, name } of knownLibs) {
+        if (pattern.test(src) && !data.libraries.find((l) => l.name === name)) {
+          data.libraries.push({ name });
+        }
+      }
+    }
+
+    // ── Web Worker detection ───────────────────────────────────────────────
+    if (window.__workers) {
+      for (const w of window.__workers) {
+        data.workers.push({ name: w });
+      }
+    }
+
+    // ── DOM-based component detection (fallback when no framework) ─────────
+    if (data.components.length === 0) {
+      const customElements = Array.from(document.querySelectorAll('*'))
+        .map((el) => el.tagName.toLowerCase())
+        .filter((tag) => tag.includes('-'));
+      const unique = [...new Set(customElements)].slice(0, 20);
+      for (const tag of unique) {
+        const name = tag.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        data.components.push({ name });
+      }
+
+      // If still no components, create a Root component from the page title
+      if (data.components.length === 0) {
+        const title = document.title || 'Page';
+        data.components.push({ name: title.replace(/[^a-zA-Z0-9]/g, '') || 'RootComponent' });
+      }
+    }
+
+    // ── Event handler detection ────────────────────────────────────────────
+    const eventTypes = ['click', 'submit', 'input', 'change', 'keydown', 'scroll', 'load'];
+    for (const type of eventTypes) {
+      const els = document.querySelectorAll(`[on${type}]`);
+      if (els.length > 0) {
+        const name = `on${type.charAt(0).toUpperCase()}${type.slice(1)}`;
+        if (!data.eventHandlers.find((h) => h.name === name)) {
+          data.eventHandlers.push({ name });
+        }
+      }
+    }
+
+    return data;
+  });
+
+  // ── Extract top-level function names from CPU profiler ────────────────────
+  const profileNodes = profilerResult.profile ? profilerResult.profile.nodes : [];
+  const functionNames = new Set();
+  for (const node of profileNodes) {
+    const fn = node.callFrame && node.callFrame.functionName;
+    if (fn && fn.length > 1 && !EXCLUDED_PROFILER_NAMES.has(fn)) {
+      functionNames.add(fn);
+    }
+  }
+
+  // Merge profiled handlers into event handlers list (capped at 15 new entries)
+  let added = 0;
+  for (const fn of functionNames) {
+    if (added >= MAX_PROFILED_HANDLERS) break;
+    if (!runtimeData.eventHandlers.find((h) => h.name === fn)) {
+      runtimeData.eventHandlers.push({ name: fn });
+      added++;
+    }
+  }
+
+  // Deduplicate and cap lists to keep diagram manageable
+  runtimeData.apiCalls = deduplicateApiCalls(networkRequests).slice(0, MAX_API_CALLS);
+  runtimeData.components = runtimeData.components.slice(0, MAX_COMPONENTS);
+  runtimeData.eventHandlers = runtimeData.eventHandlers.slice(0, MAX_EVENT_HANDLERS);
+  runtimeData.hooks = runtimeData.hooks.slice(0, MAX_HOOKS);
+
+  // ── Build connections ──────────────────────────────────────────────────────
+  runtimeData.connections = buildConnections(runtimeData);
+
+  return runtimeData;
+}
+
+/**
+ * Deduplicate API calls and merge similar paths.
+ * @param {Array} requests
+ * @returns {Array}
+ */
+function deduplicateApiCalls(requests) {
+  const seen = new Set();
+  const result = [];
+  for (const req of requests) {
+    const key = `${req.method}:${req.path}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(req);
+    }
+  }
+  return result;
+}
+
+/**
+ * Build logical connections from the extracted runtime data.
+ * @param {Object} traceData
+ * @returns {Array}
+ */
+function buildConnections(traceData) {
+  const { components, eventHandlers, apiCalls, stateStores, hooks } = traceData;
+  const connections = [];
+
+  // Component renders child (first comp → rest via dashed arrow)
+  for (let i = 1; i < Math.min(components.length, 6); i++) {
+    connections.push({
+      from: components[0].name,
+      to: components[i].name,
+      style: '-.->', 
+      label: 'renders',
+    });
+  }
+
+  // Event handlers trigger API calls
+  for (let i = 0; i < Math.min(eventHandlers.length, 3); i++) {
+    for (let j = 0; j < Math.min(apiCalls.length, 2); j++) {
+      connections.push({
+        from: eventHandlers[i].name,
+        to: `${apiCalls[j].method} ${apiCalls[j].path}`,
+        style: '-->',
+        label: 'triggers',
+      });
+    }
+  }
+
+  // API calls update stores
+  for (const call of apiCalls.slice(0, 3)) {
+    for (const store of stateStores.slice(0, 2)) {
+      connections.push({
+        from: `${call.method} ${call.path}`,
+        to: store.name,
+        style: '-->',
+        label: 'updates',
+      });
+    }
+  }
+
+  // Store changes re-render components
+  for (const store of stateStores) {
+    for (const comp of components.slice(0, 3)) {
+      connections.push({
+        from: store.name,
+        to: comp.name,
+        style: '-->',
+        label: 'subscribes',
+      });
+    }
+  }
+
+  // Components use hooks
+  for (const comp of components.slice(0, 3)) {
+    for (const hook of hooks.slice(0, 3)) {
+      connections.push({
+        from: comp.name,
+        to: hook.name,
+        style: '-->',
+        label: 'uses',
+      });
+    }
+  }
+
+  return connections;
+}
+
+export const scanWebsiteRuntime = onCall(
+  {
+    memory: '1GiB',
+    region: 'us-central1',
+    timeoutSeconds: 120,
+    maxInstances: 3,
+  },
+  async (request) => {
+    const { url, duration = 10 } = request.data || {};
+
+    // Validate URL
+    const validation = validateRuntimeScanUrl(url);
+    if (!validation.valid) {
+      throw new HttpsError('invalid-argument', validation.error);
+    }
+
+    // Clamp duration between 5 and 30 seconds
+    const captureDuration = Math.max(5, Math.min(30, Number(duration) || 10));
+    const captureDurationMs = captureDuration * 1000;
+
+    const startTime = Date.now();
+    let browser;
+
+    try {
+      console.log(`[scanWebsiteRuntime] Launching browser for: ${url}`);
+
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--single-process',
+        ],
+      });
+
+      const page = await browser.newPage();
+
+      // Set a realistic user agent and viewport
+      await page.setUserAgent(
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      );
+      await page.setViewport({ width: 1280, height: 800 });
+
+      // Hard navigation timeout of 30 s
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+      console.log(`[scanWebsiteRuntime] Page loaded. Capturing for ${captureDuration}s...`);
+
+      const traceData = await captureRuntimeTrace(page, captureDurationMs);
+
+      const scanDuration = Date.now() - startTime;
+      console.log(`[scanWebsiteRuntime] Capture complete in ${scanDuration}ms. Framework: ${traceData.framework}`);
+
+      const markdown = generateMerfolkFromRuntimeTrace(traceData, url);
+
+      return {
+        success: true,
+        markdown,
+        metadata: {
+          framework: traceData.framework,
+          url,
+          componentCount: traceData.components.length,
+          connectionCount: traceData.connections.length,
+          scanDuration,
+        },
+      };
+    } catch (error) {
+      console.error('[scanWebsiteRuntime] Error:', error);
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('internal', `Scan failed: ${error.message}`);
+    } finally {
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
+    }
+  }
 );
