@@ -1274,3 +1274,87 @@ body {
   white-space: nowrap;
   font-family: system-ui, sans-serif;
 }
+
+/* ── Runtime Website Scanner ──────────────────────────────────────────────── */
+.runtime-scan-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #ddd;
+}
+
+.runtime-scan-label {
+  font-size: 12px;
+  font-weight: bold;
+  color: #555;
+  margin: 0 0 6px 0;
+}
+
+.runtime-scan-input {
+  width: 100%;
+  padding: 8px;
+  font-size: 13px;
+  border: 2px solid #333;
+  border-radius: 4px;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+}
+
+.runtime-scan-input:disabled {
+  opacity: 0.6;
+  background: #f5f5f5;
+}
+
+.runtime-scan-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.runtime-scan-duration {
+  padding: 8px 4px;
+  font-size: 13px;
+  border: 2px solid #333;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.runtime-scan-duration:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.runtime-scan-button {
+  flex: 1;
+  padding: 8px;
+  background-color: white;
+  color: #333;
+  border: 2px solid #333;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: bold;
+  text-align: center;
+  transition: background-color 0.2s;
+}
+
+.runtime-scan-button:hover:not(:disabled) {
+  background-color: #e8f5e9;
+  border-color: #4caf50;
+  color: #4caf50;
+}
+
+.runtime-scan-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.runtime-scan-last {
+  font-size: 11px;
+  color: #888;
+  margin: 4px 0 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

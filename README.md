@@ -8,6 +8,36 @@ Users authenticate with GitHub, select a repository, and the app produces a expl
 
 The scanning service connects to the GitHub API, recursively fetches every supported source file, parses each one, extracts architectural elements and their relationships, and emits a Merfolk diagram that the layout engine turns into positioned 3D objects.
 
+### Runtime Website Scanner
+
+In addition to static repository scanning, Hoverchart can scan a **live website by URL** and render its runtime behaviour as a 3D Merfolk diagram.
+
+Enter a public `https://` URL in the **Scan Live Website** panel, choose a capture duration (5 – 30 seconds), and press **🌐 Scan Runtime**. The app:
+
+1. Validates the URL client-side (blocks `localhost`, private IP ranges, and non-HTTP protocols for SSRF prevention)
+2. Invokes the `scanWebsiteRuntime` Firebase Cloud Function, which:
+   - Launches a headless Chromium instance via **Puppeteer**
+   - Navigates to the target URL
+   - Uses the **Chrome DevTools Protocol (CDP)** to capture:
+     - **Network requests** — XHR/fetch calls, their HTTP method and path
+     - **CPU profile** — function call tree sampled at 100 ms intervals
+     - **Console messages** — for framework signals
+   - Detects the frontend framework at runtime (`React`, `Next.js`, `Vue`, `Angular`, `Svelte`) by inspecting global DevTools hooks
+   - Walks the **React fiber tree** (when React is detected) to extract component names, hook usage, and state store presence
+   - Falls back to DOM custom-element enumeration for non-framework sites
+3. Maps the captured data to Merfolk node types:
+   - UI Components → `{Component: name}` (Dodecahedron)
+   - Event handlers / profiled functions → `[Function: name]` (Cube)
+   - API/fetch calls → `((Service: METHOD /path))` (Tetrahedron)
+   - State stores (Redux, Zustand, Vuex, MobX) → `[[Store: name]]` (Cube)
+   - React hooks → `[Hook: name]` (Cube)
+   - External script libraries → `<Library: name>` (Cube)
+4. Generates Merfolk markdown and feeds it into the same layout/3D pipeline used by the static scanner
+5. Uploads the markdown to Firebase Storage and persists it to the current space
+
+**Security constraints:** The Cloud Function blocks `localhost`, `127.0.0.1`, `0.0.0.0`, all RFC-1918 private ranges (`10.x`, `172.16-31.x`, `192.168.x`), and link-local addresses. It enforces a hard 30-second navigation timeout and a 2-minute Cloud Function timeout. A maximum of 3 concurrent headless browser instances are allowed.
+
+
 ### Supported Languages
 
 | Language | Parser | What It Extracts |
