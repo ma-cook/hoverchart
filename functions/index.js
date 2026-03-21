@@ -1010,6 +1010,7 @@ export const scanWebsiteRuntime = onCall(
     region: 'us-central1',
     timeoutSeconds: 120,
     maxInstances: 3,
+    cors: true,
   },
   async (request) => {
     const { url, duration = 10 } = request.data || {};
