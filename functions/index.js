@@ -674,6 +674,23 @@ function generateMerfolkFromRuntimeTrace(traceData, url) {
  * @param {number} durationMs
  * @returns {Promise<Object>} - traceData
  */
+// Maximum node counts — keeps the generated diagram legible
+const MAX_COMPONENTS = 30;
+const MAX_EVENT_HANDLERS = 20;
+const MAX_API_CALLS = 20;
+const MAX_HOOKS = 15;
+// Maximum number of profiled function names added as event handlers
+const MAX_PROFILED_HANDLERS = 15;
+
+// CDP profiler function names to exclude from the diagram
+const EXCLUDED_PROFILER_NAMES = new Set([
+  '(anonymous)',
+  '(program)',
+  '(root)',
+  '(idle)',
+  '(garbage collector)',
+]);
+
 async function captureRuntimeTrace(page, durationMs) {
   const client = await page.createCDPSession();
 
@@ -741,7 +758,7 @@ async function captureRuntimeTrace(page, durationMs) {
         seen.add(fiber);
 
         const name = fiber.type && (fiber.type.displayName || fiber.type.name);
-        if (name && typeof name === 'string' && name[0] === name[0].toUpperCase() && name[0] !== name[0].toLowerCase()) {
+        if (name && typeof name === 'string' && /^[A-Z]/.test(name)) {
           if (!data.components.find((c) => c.name === name)) {
             data.components.push({ name });
           }
@@ -872,7 +889,7 @@ async function captureRuntimeTrace(page, durationMs) {
   const functionNames = new Set();
   for (const node of profileNodes) {
     const fn = node.callFrame && node.callFrame.functionName;
-    if (fn && fn.length > 1 && fn !== '(anonymous)' && fn !== '(program)' && fn !== '(root)' && fn !== '(idle)' && fn !== '(garbage collector)') {
+    if (fn && fn.length > 1 && !EXCLUDED_PROFILER_NAMES.has(fn)) {
       functionNames.add(fn);
     }
   }
@@ -880,7 +897,7 @@ async function captureRuntimeTrace(page, durationMs) {
   // Merge profiled handlers into event handlers list (capped at 15 new entries)
   let added = 0;
   for (const fn of functionNames) {
-    if (added >= 15) break;
+    if (added >= MAX_PROFILED_HANDLERS) break;
     if (!runtimeData.eventHandlers.find((h) => h.name === fn)) {
       runtimeData.eventHandlers.push({ name: fn });
       added++;
@@ -888,10 +905,10 @@ async function captureRuntimeTrace(page, durationMs) {
   }
 
   // Deduplicate and cap lists to keep diagram manageable
-  runtimeData.apiCalls = deduplicateApiCalls(networkRequests).slice(0, 20);
-  runtimeData.components = runtimeData.components.slice(0, 30);
-  runtimeData.eventHandlers = runtimeData.eventHandlers.slice(0, 20);
-  runtimeData.hooks = runtimeData.hooks.slice(0, 15);
+  runtimeData.apiCalls = deduplicateApiCalls(networkRequests).slice(0, MAX_API_CALLS);
+  runtimeData.components = runtimeData.components.slice(0, MAX_COMPONENTS);
+  runtimeData.eventHandlers = runtimeData.eventHandlers.slice(0, MAX_EVENT_HANDLERS);
+  runtimeData.hooks = runtimeData.hooks.slice(0, MAX_HOOKS);
 
   // ── Build connections ──────────────────────────────────────────────────────
   runtimeData.connections = buildConnections(runtimeData);

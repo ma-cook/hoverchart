@@ -220,7 +220,9 @@ export const scanWebsiteAndGenerateDiagram = async (
   // 2. Call the Cloud Function
   if (onProgress) onProgress(15, 'Launching browser...');
   const scanWebsiteRuntime = httpsCallable(functions, 'scanWebsiteRuntime', {
-    timeout: 130000, // 130 s — just above the Cloud Function's 120 s timeout
+    // Must exceed the Cloud Function's own timeoutSeconds (120 s) so that
+    // Firebase's client SDK receives the function error rather than timing out first.
+    timeout: 130000,
   });
 
   let cloudResult;
