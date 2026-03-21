@@ -69,14 +69,19 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     if (!user) return;
     setLoading(true);
     try {
-      const [fetchedOrgs, fetchedInvites] = await Promise.all([
+      const [fetchedOrgs, fetchedInvites] = await Promise.allSettled([
         getUserOrganizations(user.uid),
         getPendingInvitesForUser(user.email),
       ]);
-      setOrgs(fetchedOrgs);
-      setPendingInvites(fetchedInvites);
+      // Only update orgs if the fetch succeeded — don't wipe existing local state on failure
+      if (fetchedOrgs.status === 'fulfilled') {
+        setOrgs(fetchedOrgs.value);
+      }
+      if (fetchedInvites.status === 'fulfilled') {
+        setPendingInvites(fetchedInvites.value);
+      }
     } catch (e) {
-      setError('Failed to load organization data.');
+      // Don't wipe existing state on error
     } finally {
       setLoading(false);
     }
@@ -84,6 +89,9 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
 
   useEffect(() => {
     if (show && user) {
+      // Clear notifications from previous session
+      setError('');
+      setSuccess('');
       refresh();
     }
   }, [show, user, refresh]);
@@ -95,12 +103,13 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     setIsCreating(true);
     setError('');
     try {
-      await createOrganization(user.uid, newOrgName.trim(), newOrgPlan);
+      const newOrg = await createOrganization(user.uid, newOrgName.trim(), newOrgPlan);
       setNewOrgName('');
       setNewOrgPlan('free');
       setCreateMode(false);
       setSuccess('Organization created!');
-      await refresh();
+      // Use the returned org data directly — avoids any Firestore read-after-write timing issues
+      setOrgs((prev) => [...prev, newOrg]);
     } catch (e) {
       setError(e.message || 'Failed to create organization.');
     } finally {
@@ -244,7 +253,7 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
           }}
         >
           <h3 style={{ margin: 0, fontWeight: '600', fontSize: '18px' }}>
-            Organizations
+            Organization
           </h3>
           <button
             onClick={onClose}
@@ -290,12 +299,6 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
             }}
           >
             {success}
-          </div>
-        )}
-
-        {loading && (
-          <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
-            Loading…
           </div>
         )}
 
@@ -367,29 +370,16 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
           </div>
         )}
 
-        {/* My Organizations */}
+        {/* Organizations */}
         <div>
           <div
             style={{
               display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
+              justifyContent: 'flex-end',
               marginBottom: '12px',
             }}
           >
-            <h4
-              style={{
-                margin: 0,
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#555',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-              }}
-            >
-              My Organizations
-            </h4>
-            {!createMode && (
+            {!createMode && orgs.length === 0 && (
               <button
                 onClick={() => {
                   setCreateMode(true);
@@ -647,9 +637,36 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                           fontWeight: '600',
                           color: '#555',
                           marginBottom: '8px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
                         }}
                       >
-                        Members ({memberCount}/{org.memberLimit})
+                        <span>Members ({memberCount}/{org.memberLimit})</span>
+                        {isAdmin && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              // Toggle invite form visibility
+                              setInviteEmail((prev) => {
+                                const isShowing = prev[`_show_${org.id}`];
+                                return { ...prev, [`_show_${org.id}`]: !isShowing };
+                              });
+                            }}
+                            style={{
+                              ...btnPrimary,
+                              padding: '2px 10px',
+                              fontSize: '14px',
+                              lineHeight: '1',
+                              opacity: isAtCapacity ? 0.5 : 1,
+                              cursor: isAtCapacity ? 'not-allowed' : 'pointer',
+                            }}
+                            disabled={isAtCapacity}
+                            title={isAtCapacity ? 'Organization at capacity' : 'Invite member'}
+                          >
+                            +
+                          </button>
+                        )}
                       </div>
                       <div
                         style={{
@@ -726,7 +743,8 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                     {/* Admin Controls */}
                     {isAdmin && (
                       <>
-                        {/* Invite */}
+                        {/* Invite - shown when + is clicked */}
+                        {inviteEmail[`_show_${org.id}`] && (
                         <div style={{ marginBottom: '16px' }}>
                           <div
                             style={{
@@ -804,6 +822,7 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                             </button>
                           </div>
                         </div>
+                        )}
 
                         {/* Plan Upgrade */}
                         <div style={{ marginBottom: '16px' }}>

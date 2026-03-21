@@ -34,10 +34,13 @@ import { SpacesTable } from './components/SpacesTable';
 import { UserLoginSection } from './components/UserLoginSection';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { OrganizationManager } from './components/OrganizationManager';
+import { UpgradePrompt, TIER_LIMITS } from './components/UpgradePrompt';
 import {
   getUserOrganizations,
   getOrganizationMembers,
   getPendingInvitesForUser,
+  acceptInvite,
+  declineInvite,
 } from '../services/organizationService';
 import { useWindowSize } from './hooks/useWindowSize';
 import './LandingApp.css';
@@ -57,6 +60,8 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
 
   // Space management state
   const [showCreateSpacePopup, setShowCreateSpacePopup] = useState(false);
+  const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
+  const [accountTier, setAccountTier] = useState('free');
   const [newSpaceName, setNewSpaceName] = useState('');
   const [sharedEmail, setSharedEmail] = useState('');
   const [isCreatingSpace, setIsCreatingSpace] = useState(false);
@@ -109,7 +114,10 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
             setActiveOrgMembers([]);
           }
         })
-        .catch(() => setUserOrganizations([]));
+        .catch((err) => {
+          console.error('Failed to load organizations:', err);
+          setUserOrganizations([]);
+        });
       getPendingInvitesForUser(user.email)
         .then(setPendingInvites)
         .catch(() => setPendingInvites([]));
@@ -131,10 +139,14 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
         await setDoc(userRef, {
           email: user.email,
           displayName: user.displayName,
+          accountTier: 'free',
           createdAt: new Date().toISOString(),
           lastLogin: new Date().toISOString(),
         });
+        setAccountTier('free');
       } else {
+        const data = userDoc.data();
+        setAccountTier(data.accountTier || 'free');
         await setDoc(
           userRef,
           { lastLogin: new Date().toISOString() },
@@ -211,44 +223,28 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
   const fetchUserSpaces = useCallback(async () => {
     if (!user) return;
 
-    console.log('Fetching user spaces for user:', user.uid);
-
     try {
       // Get owned spaces
-      const userSpacesCollectionRef = collection(
-        db,
-        'users',
-        user.uid,
-        'spaces'
+      const spacesSnapshot = await getDocs(
+        collection(db, 'users', user.uid, 'spaces')
       );
-      const spacesSnapshot = await getDocs(query(userSpacesCollectionRef));
-      console.log('Found', spacesSnapshot.docs.length, 'owned spaces');
-
       const ownedSpaces = spacesSnapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
         isOwner: true,
       }));
 
-      // Get shared spaces
-      const sharedSpacesRef = collection(db, 'users', user.uid, 'sharedSpaces');
-      const sharedSpacesSnapshot = await getDocs(sharedSpacesRef);
-      console.log(
-        'Found',
-        sharedSpacesSnapshot.docs.length,
-        'shared space references'
+      // Get shared spaces from the user's sharedSpaces subcollection
+      const sharedSpacesSnapshot = await getDocs(
+        collection(db, 'users', user.uid, 'sharedSpaces')
       );
-
       const sharedSpaces = [];
 
       for (const sharedSpaceDoc of sharedSpacesSnapshot.docs) {
         const sharedData = sharedSpaceDoc.data();
         const { spaceId, ownerId } = sharedData;
-
         try {
-          const spaceRef = doc(db, 'users', ownerId, 'spaces', spaceId);
-          const spaceDoc = await getDoc(spaceRef);
-
+          const spaceDoc = await getDoc(doc(db, 'users', ownerId, 'spaces', spaceId));
           if (spaceDoc.exists()) {
             sharedSpaces.push({
               id: spaceId,
@@ -260,94 +256,15 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
               isShared: true,
             });
           } else {
-            console.warn(
-              `Shared space ${spaceId} no longer exists, removing stale reference`
-            );
-            await deleteDoc(
-              doc(db, 'users', user.uid, 'sharedSpaces', spaceId)
-            );
+            // Stale reference — clean it up silently
+            deleteDoc(doc(db, 'users', user.uid, 'sharedSpaces', spaceId)).catch(() => {});
           }
-        } catch (error) {
-          console.warn(
-            `Could not fetch shared space ${spaceId} from owner ${ownerId}:`,
-            error
-          );
+        } catch {
+          // Skip inaccessible spaces
         }
       }
 
-      // MIGRATION: Check for legacy shared spaces
-      console.log('Checking for legacy shared spaces...');
-      const usersSnapshot = await getDocs(collection(db, 'users'));
-
-      for (const userDoc of usersSnapshot.docs) {
-        if (userDoc.id === user.uid) continue;
-
-        try {
-          const otherUserSpacesSnapshot = await getDocs(
-            collection(db, 'users', userDoc.id, 'spaces')
-          );
-
-          for (const spaceDoc of otherUserSpacesSnapshot.docs) {
-            const spaceData = spaceDoc.data();
-
-            const isSharedWithCurrentUser =
-              Array.isArray(spaceData.sharedWith) &&
-              spaceData.sharedWith.some((share) => share.userId === user.uid);
-
-            if (isSharedWithCurrentUser) {
-              const existingRefDoc = await getDoc(
-                doc(db, 'users', user.uid, 'sharedSpaces', spaceDoc.id)
-              );
-
-              if (!existingRefDoc.exists()) {
-                console.log(
-                  'Creating missing shared space reference for:',
-                  spaceDoc.id
-                );
-
-                const sharedSpaceRef = doc(
-                  db,
-                  'users',
-                  user.uid,
-                  'sharedSpaces',
-                  spaceDoc.id
-                );
-                await setDoc(sharedSpaceRef, {
-                  spaceId: spaceDoc.id,
-                  ownerId: userDoc.id,
-                  permissions: ['view', 'edit'],
-                  sharedAt: new Date().toISOString(),
-                  migratedAt: new Date().toISOString(),
-                });
-
-                sharedSpaces.push({
-                  id: spaceDoc.id,
-                  ownerId: userDoc.id,
-                  ownerEmail: spaceData.ownerEmail,
-                  ...spaceData,
-                  spaceId: spaceDoc.id,
-                  permissions: ['view', 'edit'],
-                  sharedAt: new Date().toISOString(),
-                  migratedAt: new Date().toISOString(),
-                  isOwner: false,
-                  isShared: true,
-                });
-              }
-            }
-          }
-        } catch (error) {
-          console.warn(`Could not check spaces for user ${userDoc.id}:`, error);
-        }
-      }
-
-      console.log('Setting user spaces state:', {
-        ownedCount: ownedSpaces.length,
-        sharedCount: sharedSpaces.length,
-      });
-      setUserSpaces({
-        owned: ownedSpaces,
-        shared: sharedSpaces,
-      });
+      setUserSpaces({ owned: ownedSpaces, shared: sharedSpaces });
     } catch (error) {
       console.error('Error fetching user spaces:', error);
     }
@@ -768,6 +685,39 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
     setShowSecondCube(true);
   }, []);
 
+  const handleAcceptInvite = useCallback(
+    async (orgId) => {
+      if (!user) return;
+      try {
+        await acceptInvite(orgId, user.uid, user.email);
+        setPendingInvites((prev) => prev.filter((p) => p.org.id !== orgId));
+        const orgs = await getUserOrganizations(user.uid);
+        setUserOrganizations(orgs);
+        if (orgs.length > 0) {
+          getOrganizationMembers(orgs[0].id)
+            .then(setActiveOrgMembers)
+            .catch(() => setActiveOrgMembers([]));
+        }
+      } catch (err) {
+        console.error('Failed to accept invite:', err);
+      }
+    },
+    [user]
+  );
+
+  const handleDeclineInvite = useCallback(
+    async (orgId) => {
+      if (!user) return;
+      try {
+        await declineInvite(orgId, user.email);
+        setPendingInvites((prev) => prev.filter((p) => p.org.id !== orgId));
+      } catch (err) {
+        console.error('Failed to decline invite:', err);
+      }
+    },
+    [user]
+  );
+
   // Derived state for login/spaces UI
   const spaceTableProps = useMemo(
     () => ({
@@ -776,15 +726,26 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       windowSize,
       user,
       isDeleting,
+      pendingInvites,
       onNavigateToSpace: navigateToSpace,
-      onCreateSpace: () => setShowCreateSpacePopup(true),
+      onCreateSpace: () => {
+        const limit = TIER_LIMITS[accountTier] || TIER_LIMITS.free;
+        if (userSpaces.owned.length >= limit) {
+          setShowUpgradePrompt(true);
+        } else {
+          setShowCreateSpacePopup(true);
+        }
+      },
       onShareSpace: (space) => {
         setSelectedSpaceForSharing(space);
         setShowSharePopup(true);
       },
       onDeleteSpace: handleDeleteSpace,
       onLeaveSpace: handleLeaveSpace,
+      onAcceptInvite: handleAcceptInvite,
+      onDeclineInvite: handleDeclineInvite,
       onCreateOrganization: () => setShowOrgManager(true),
+      onManageOrganization: () => setShowOrgManager(true),
     }),
     [
       userSpaces,
@@ -792,9 +753,13 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
       windowSize,
       user,
       isDeleting,
+      pendingInvites,
       navigateToSpace,
       handleDeleteSpace,
       handleLeaveSpace,
+      handleAcceptInvite,
+      handleDeclineInvite,
+      accountTier,
     ]
   );
 
@@ -873,6 +838,11 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
     >
       {/* Modals */}
       <CreateSpacePopup {...createSpaceProps} />
+      <UpgradePrompt
+        show={showUpgradePrompt}
+        onClose={() => setShowUpgradePrompt(false)}
+        currentTier={accountTier}
+      />
       <ShareSpacePopup {...sharePopupProps} />
       <OrganizationManager
         user={user}

@@ -137,6 +137,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <button
           onClick={onLogin}
+          className="welcome-btn-primary"
           style={{
             width: '100%',
             padding: isMobile ? '14px 16px' : '16px 20px',
@@ -151,23 +152,12 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin }) => {
             fontFamily: 'inherit',
             boxShadow: '0 2px 8px rgba(0, 102, 204, 0.24)',
           }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.backgroundColor = '#cc8500ff';
-            e.currentTarget.style.transform = 'translateY(-1px)';
-            e.currentTarget.style.boxShadow =
-              '0 4px 12px rgba(0, 102, 204, 0.32)';
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.backgroundColor = '#cc8500ff';
-            e.currentTarget.style.transform = 'translateY(0)';
-            e.currentTarget.style.boxShadow =
-              '0 2px 8px rgba(0, 102, 204, 0.24)';
-          }}
         >
           Get Started
         </button>
         <button
           onClick={onLogin}
+          className="welcome-btn-secondary"
           style={{
             width: '100%',
             padding: isMobile ? '12px 16px' : '14px 20px',
@@ -180,14 +170,6 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin }) => {
             cursor: 'pointer',
             transition: 'all 0.2s ease',
             fontFamily: 'inherit',
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.backgroundColor = '#f0f7ff';
-            e.currentTarget.style.borderColor = '#020202ff';
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.borderColor = '#cc8500ff';
           }}
         >
           Sign In

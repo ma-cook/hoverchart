@@ -40,6 +40,7 @@ export const UserLoginSection = React.memo(
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <button
                   onClick={onLogout}
+                  className="landing-btn"
                   style={{
                     color: '#333',
                     backgroundColor: 'white',
@@ -53,17 +54,12 @@ export const UserLoginSection = React.memo(
                     fontWeight: '500',
                     transition: 'all 0.2s',
                   }}
-                  onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = '#f5f5f5';
-                  }}
-                  onMouseOut={(e) => {
-                    e.currentTarget.style.backgroundColor = 'white';
-                  }}
                 >
                   Logout
                 </button>
                 <button
                   onClick={onOpenOrgManager}
+                  className="landing-btn"
                   style={{
                     color: '#333',
                     backgroundColor: 'white',
@@ -77,12 +73,6 @@ export const UserLoginSection = React.memo(
                     fontWeight: '500',
                     transition: 'all 0.2s',
                     position: 'relative',
-                  }}
-                  onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = '#f5f5f5';
-                  }}
-                  onMouseOut={(e) => {
-                    e.currentTarget.style.backgroundColor = 'white';
                   }}
                 >
                   Organization
@@ -116,6 +106,7 @@ export const UserLoginSection = React.memo(
             <>
               <button
                 onClick={onLogin}
+                className="landing-btn"
                 style={{
                   color: '#333',
                   backgroundColor: 'white',
@@ -130,17 +121,12 @@ export const UserLoginSection = React.memo(
                   fontWeight: '500',
                   transition: 'all 0.2s',
                 }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f5f5f5';
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.backgroundColor = 'white';
-                }}
               >
                 Login
               </button>
               <button
                 onClick={onLogin}
+                className="landing-btn"
                 style={{
                   color: '#333',
                   backgroundColor: 'white',
@@ -153,12 +139,6 @@ export const UserLoginSection = React.memo(
                   fontFamily: 'inherit',
                   fontWeight: '500',
                   transition: 'all 0.2s',
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f5f5f5';
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.backgroundColor = 'white';
                 }}
               >
                 Signup

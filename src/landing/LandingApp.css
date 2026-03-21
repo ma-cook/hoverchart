@@ -18,3 +18,46 @@
   position: absolute;
   z-index: 1;
 }
+
+/* ---- Hover states (replaces JS onMouseOver/onMouseOut handlers) ---- */
+
+/* UserLoginSection buttons */
+.landing-btn:hover {
+  background-color: #f5f5f5 !important;
+}
+
+/* WelcomeOverlay primary button (Get Started) */
+.welcome-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 102, 204, 0.32) !important;
+}
+
+/* WelcomeOverlay secondary button (Sign In) */
+.welcome-btn-secondary:hover {
+  background-color: #f0f7ff !important;
+  border-color: #020202 !important;
+}
+
+/* SpacesTable leave button */
+.leave-space-btn:hover:not(:disabled) {
+  background-color: rgba(255, 235, 235, 0.9) !important;
+  border-color: rgba(220, 53, 69, 0.5) !important;
+}
+
+/* SpacesTable invite accept / decline buttons */
+.invite-accept-btn {
+  background-color: black;
+  color: white;
+  border: 1px solid black;
+}
+.invite-accept-btn:hover {
+  background-color: #333 !important;
+}
+.invite-decline-btn {
+  background-color: white;
+  color: #333;
+  border: 1px solid #ddd;
+}
+.invite-decline-btn:hover {
+  background-color: #f5f5f5 !important;
+}

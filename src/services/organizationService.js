@@ -45,7 +45,9 @@ export const createOrganization = async (userId, orgName, plan = 'free') => {
         joinedAt: now,
       },
     ],
+    memberIds: [userId],
     invites: [],
+    invitedEmails: [],
   };
 
   await setDoc(orgRef, orgData);
@@ -64,9 +66,14 @@ export const getUserOrganizations = async (userId) => {
 
   const orgs = await Promise.all(
     orgIds.map(async (orgId) => {
-      const orgDoc = await getDoc(doc(db, 'organizations', orgId));
-      if (!orgDoc.exists()) return null;
-      return { id: orgDoc.id, ...orgDoc.data() };
+      try {
+        const orgDoc = await getDoc(doc(db, 'organizations', orgId));
+        if (!orgDoc.exists()) return null;
+        return { id: orgDoc.id, ...orgDoc.data() };
+      } catch (err) {
+        console.warn(`Failed to fetch organization ${orgId}:`, err.message);
+        return null;
+      }
     })
   );
 
@@ -146,28 +153,53 @@ export const inviteUserToOrganization = async (
 
   await updateDoc(doc(db, 'organizations', orgId), {
     invites: arrayUnion(invite),
+    invitedEmails: arrayUnion(email.toLowerCase()),
+  });
+
+  // Write a separate invite doc the invited user can query
+  const inviteDocRef = doc(collection(db, 'orgInvites'));
+  await setDoc(inviteDocRef, {
+    email: email,
+    orgId,
+    orgName: org.name,
+    invitedBy: adminUserId,
+    invitedAt: invite.invitedAt,
+    status: 'pending',
   });
 
   return invite;
 };
 
 export const getPendingInvitesForUser = async (userEmail) => {
-  const orgsSnapshot = await getDocs(collection(db, 'organizations'));
-  const results = [];
-
-  orgsSnapshot.forEach((orgDoc) => {
-    const org = { id: orgDoc.id, ...orgDoc.data() };
-    const pendingInvite = (org.invites || []).find(
-      (i) =>
-        i.email.toLowerCase() === userEmail.toLowerCase() &&
-        i.status === 'pending'
+  try {
+    const invitesQuery = query(
+      collection(db, 'orgInvites'),
+      where('email', '==', userEmail),
+      where('status', '==', 'pending')
     );
-    if (pendingInvite) {
-      results.push({ org, invite: pendingInvite });
-    }
-  });
+    const invitesSnapshot = await getDocs(invitesQuery);
+    const results = [];
 
-  return results;
+    for (const inviteDoc of invitesSnapshot.docs) {
+      const inviteData = inviteDoc.data();
+      try {
+        const org = await getOrganizationById(inviteData.orgId);
+        if (org) {
+          results.push({
+            org,
+            invite: { ...inviteData, id: inviteDoc.id },
+          });
+        }
+      } catch {
+        // Org may have been deleted or user lacks read access — skip
+      }
+    }
+
+    return results;
+  } catch (err) {
+    console.error('Failed to fetch pending invites:', err);
+    return [];
+  }
 };
 
 export const acceptInvite = async (orgId, userId, userEmail) => {
@@ -216,7 +248,25 @@ export const acceptInvite = async (orgId, userId, userEmail) => {
   await updateDoc(doc(db, 'organizations', orgId), {
     invites: updatedInvites,
     members: arrayUnion(newMember),
+    memberIds: arrayUnion(userId),
+    invitedEmails: arrayRemove(userEmail.toLowerCase()),
   });
+
+  // Clean up the orgInvites doc
+  try {
+    const invitesQuery = query(
+      collection(db, 'orgInvites'),
+      where('email', '==', userEmail),
+      where('orgId', '==', orgId),
+      where('status', '==', 'pending')
+    );
+    const invitesSnapshot = await getDocs(invitesQuery);
+    for (const inviteDoc of invitesSnapshot.docs) {
+      await updateDoc(inviteDoc.ref, { status: 'accepted' });
+    }
+  } catch {
+    // Non-critical — invite doc cleanup failed
+  }
 
   await updateDoc(userRef, { organizations: arrayUnion(orgId) });
 };
@@ -234,7 +284,24 @@ export const declineInvite = async (orgId, userEmail) => {
 
   await updateDoc(doc(db, 'organizations', orgId), {
     invites: updatedInvites,
+    invitedEmails: arrayRemove(userEmail.toLowerCase()),
   });
+
+  // Clean up the orgInvites doc
+  try {
+    const invitesQuery = query(
+      collection(db, 'orgInvites'),
+      where('email', '==', userEmail),
+      where('orgId', '==', orgId),
+      where('status', '==', 'pending')
+    );
+    const invitesSnapshot = await getDocs(invitesQuery);
+    for (const inviteDoc of invitesSnapshot.docs) {
+      await updateDoc(inviteDoc.ref, { status: 'declined' });
+    }
+  } catch {
+    // Non-critical — invite doc cleanup failed
+  }
 };
 
 export const removeMemberFromOrganization = async (
@@ -273,6 +340,7 @@ export const removeMemberFromOrganization = async (
 
   await updateDoc(doc(db, 'organizations', orgId), {
     members: updatedMembers,
+    memberIds: arrayRemove(targetUserId),
   });
 
   await updateDoc(doc(db, 'users', targetUserId), {
@@ -303,6 +371,7 @@ export const leaveOrganization = async (orgId, userId) => {
 
   await updateDoc(doc(db, 'organizations', orgId), {
     members: updatedMembers,
+    memberIds: arrayRemove(userId),
   });
 
   await updateDoc(doc(db, 'users', userId), {

@@ -201,16 +201,14 @@ service cloud.firestore {
     // Organizations collection
     match /organizations/{orgId} {
       function isOrgMember(orgData) {
-        return orgData.members is list &&
-               orgData.members.size() > 0 &&
-               orgData.members.where('userId', '==', request.auth.uid).size() > 0;
+        return orgData.memberIds is list &&
+               orgData.memberIds.hasAny([request.auth.uid]);
       }
 
       function isOrgInvited(orgData) {
         return request.auth.token.email != null &&
-               orgData.invites is list &&
-               orgData.invites.size() > 0 &&
-               orgData.invites.where('email', '==', request.auth.token.email).where('status', '==', 'pending').size() > 0;
+               orgData.invitedEmails is list &&
+               request.auth.token.email.lower() in orgData.invitedEmails;
       }
 
       // Owner, members, and invited users can read the organization
@@ -225,16 +223,30 @@ service cloud.firestore {
                      request.resource.data.ownerId == request.auth.uid;
 
       // Owner and members can update the full organization document;
-      // invited users may only update the invites field (to accept/decline their invite).
+      // invited users may only update the invites, members, and invitedEmails fields (to accept/decline their invite).
       allow update: if isAuthenticated() && (
         resource.data.ownerId == request.auth.uid ||
         isOrgMember(resource.data) ||
         (isOrgInvited(resource.data) &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invites', 'members']))
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invites', 'members', 'memberIds', 'invitedEmails']))
       );
 
       // Only the owner can delete the organization
       allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Organization invites — queryable by the invited user's email
+    match /orgInvites/{inviteId} {
+      // Invited user can read their own invites
+      allow read: if isAuthenticated() &&
+                   resource.data.email == request.auth.token.email;
+
+      // Any authenticated user can create (admin creates on behalf of org)
+      allow create: if isAuthenticated();
+
+      // Invited user or org members can update invite status (accept/decline)
+      allow update: if isAuthenticated() &&
+                     resource.data.email == request.auth.token.email;
     }
 
     // Deny all other access by default
