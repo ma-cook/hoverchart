@@ -3,7 +3,8 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 
 import express from 'express';
 import cors from 'cors';
@@ -33,6 +34,7 @@ function createVerifyAuthTokenApp() {
       'http://localhost:5173',
       'http://localhost:5000',
       'https://space.volscape.com',
+      'https://volscape.com',
     ],
     optionsSuccessStatus: 200,
   };
@@ -675,12 +677,10 @@ function generateMerfolkFromRuntimeTrace(traceData, url) {
  * @returns {Promise<Object>} - traceData
  */
 // Maximum node counts — keeps the generated diagram legible
-const MAX_COMPONENTS = 30;
-const MAX_EVENT_HANDLERS = 20;
+// Components and hooks are uncapped — the fiber walk and bundle scan only yield
+// real named items; large component counts are expected for rich SPAs.
+const MAX_EVENT_HANDLERS = 100;
 const MAX_API_CALLS = 20;
-const MAX_HOOKS = 15;
-// Maximum number of profiled function names added as event handlers
-const MAX_PROFILED_HANDLERS = 15;
 
 // CDP profiler function names to exclude from the diagram
 const EXCLUDED_PROFILER_NAMES = new Set([
@@ -691,10 +691,355 @@ const EXCLUDED_PROFILER_NAMES = new Set([
   '(garbage collector)',
 ]);
 
+// Known React / framework / bundler internals that appear in minified bundles
+// but are not user-defined components or utilities.
+const BUNDLE_NOISE_NAMES = new Set([
+  // React fiber internals
+  'renderWithHooks', 'reconcileChildren', 'reconcileChildFibers',
+  'createFiber', 'createWorkInProgress', 'beginWork', 'completeWork',
+  'commitWork', 'commitRoot', 'performSyncWorkOnRoot', 'performConcurrentWorkOnRoot',
+  'updateFunctionComponent', 'updateClassComponent', 'updateHostComponent',
+  'updateMemoComponent', 'updateSimpleMemoComponent', 'updateForwardRef',
+  'mountIndeterminateComponent', 'mountLazyComponent',
+  'throwException', 'processUpdateQueue', 'cloneUpdateQueue',
+  'getStateFromUpdate', 'invokeGuardedCallback',
+  'flushPassiveEffects', 'flushPassiveEffectsImpl',
+  'commitHookEffectListMount', 'commitHookEffectListUnmount',
+  'scheduleUpdateOnFiber', 'ensureRootIsScheduled', 'batchedUpdates',
+  'dispatchSetState', 'dispatchAction', 'basicStateReducer',
+  'enqueueSetState', 'createUpdate', 'enqueueUpdate',
+  'readContext', 'prepareToReadContext', 'propagateContextChange',
+  'resolveDefaultProps', 'applyDerivedStateFromProps',
+  // React hooks internals
+  'mountState', 'updateState', 'mountReducer', 'updateReducer',
+  'mountEffect', 'updateEffect', 'mountLayoutEffect', 'updateLayoutEffect',
+  'mountMemo', 'updateMemo', 'mountCallback', 'updateCallback',
+  'mountRef', 'updateRef', 'mountContext', 'readContextForConsumer',
+  'mountImperativeHandle', 'updateImperativeHandle',
+  'mountDeferredValue', 'updateDeferredValue',
+  'mountTransition', 'updateTransition',
+  'mountSyncExternalStore', 'updateSyncExternalStore',
+  // Scheduler / runtime
+  'workLoop', 'workLoopSync', 'workLoopConcurrent',
+  'performWork', 'performUnitOfWork', 'prepareFreshStack',
+  'pushDispatcher', 'popDispatcher', 'pushCacheProvider',
+  'unstable_scheduleCallback', 'unstable_cancelCallback',
+  'unstable_runWithPriority', 'requestUpdateLane',
+  // Bundler/webpack runtime
+  'webpackJsonpCallback', 'checkDeferredModules', '__webpack_require__',
+  'hotCreateModule', 'hotApply', 'getModuleExports',
+  // Generic noise
+  'Object', 'Array', 'Promise', 'Error', 'Symbol',
+  'Boolean', 'Number', 'String', 'Function', 'RegExp',
+  'call', 'bind', 'apply', 'then', 'catch', 'finally',
+  'toString', 'valueOf', 'hasOwnProperty', 'constructor',
+  'render', 'setState', 'forceUpdate', 'componentDidMount',
+  'componentDidUpdate', 'componentWillUnmount', 'shouldComponentUpdate',
+  'getSnapshotBeforeUpdate', 'getDerivedStateFromProps',
+]);
+
+// React DevTools hook injected via evaluateOnNewDocument (before React loads)
+// so React registers its renderer with us and we receive every onCommitFiberRoot call.
+const REACT_DEVTOOLS_INJECTION = () => {
+  window.__hc_comps = new Set();
+  window.__hc_hooks = new Set();
+
+  function getCompName(type) {
+    if (!type || typeof type === 'string') return null;
+    if (typeof type === 'function') return type.displayName || type.name || null;
+    if (typeof type === 'object') {
+      if (type.type) return (type.type.displayName || type.type.name) || null; // memo
+      if (type.render) return (type.render.displayName || type.render.name) || null; // forwardRef
+    }
+    return null;
+  }
+
+  function walkFiber(fiber) {
+    if (!fiber) return;
+    const name = getCompName(fiber.type);
+    if (name && name.length > 1 && /^[A-Z]/.test(name) && name !== 'Object') {
+      window.__hc_comps.add(name);
+    }
+    // Collect hook names from the memoized state chain
+    let s = fiber.memoizedState;
+    while (s) {
+      const dispatch = s.queue && s.queue.dispatch;
+      if (dispatch && dispatch._reactName) window.__hc_hooks.add(dispatch._reactName);
+      s = s.next;
+    }
+    walkFiber(fiber.child);
+    walkFiber(fiber.sibling);
+  }
+
+  const hookImpl = {
+    checkDCE: () => {},
+    supportsFiber: true,
+    renderers: new Map(),
+    _roots: new Map(),
+    onCommitFiberRoot: function(id, root) {
+      try { if (root && root.current) walkFiber(root.current.child || root.current); } catch (e) { /* ignore */ }
+    },
+    onPostCommitFiberRoot: function(id, root) {
+      try { if (root && root.current) walkFiber(root.current.child || root.current); } catch (e) { /* ignore */ }
+    },
+    onCommitFiberUnmount: () => {},
+    inject: function(renderer) {
+      const id = this.renderers.size;
+      this.renderers.set(id, renderer);
+      return id;
+    },
+  };
+
+  if (!window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+    Object.defineProperty(window, '__REACT_DEVTOOLS_GLOBAL_HOOK__', {
+      value: hookImpl, configurable: true, writable: true, enumerable: false,
+    });
+  } else {
+    // Wrap existing hook (e.g. browser DevTools extension)
+    const existing = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    const origCommit = existing.onCommitFiberRoot;
+    existing.onCommitFiberRoot = function(id, root, priority) {
+      hookImpl.onCommitFiberRoot(id, root);
+      if (origCommit) origCommit.call(this, id, root, priority);
+    };
+    const origPost = existing.onPostCommitFiberRoot;
+    existing.onPostCommitFiberRoot = function(id, root) {
+      hookImpl.onPostCommitFiberRoot(id, root);
+      if (origPost) origPost.call(this, id, root);
+    };
+  }
+};
+
+/**
+ * Extract the sourceMappingURL from a JS bundle's source text.
+ * Supports both inline data URIs and external URL references.
+ * @param {string} source - The JS bundle source text
+ * @param {string} scriptUrl - The URL of the JS bundle (for resolving relative paths)
+ * @returns {string|null} - Absolute URL to the source map, or null if not found
+ */
+function extractSourceMapUrl(source, scriptUrl) {
+  // Check last 500 chars for //# sourceMappingURL=...
+  const tail = source.slice(-500);
+  const match = tail.match(/\/\/[#@]\s*sourceMappingURL=(\S+)/);
+  if (!match) return null;
+  const raw = match[1];
+  // Skip inline data URIs (base64 source maps) — too large to process efficiently
+  if (raw.startsWith('data:')) return null;
+  try {
+    return new URL(raw, scriptUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Scan original (un-minified) source code for component/hook/function names.
+ * These patterns are reliable on un-minified code unlike on minified bundles.
+ */
+function scanOriginalSource(source, components, hooks, functions) {
+  if (!source || source.length === 0) return;
+  // Cap per-file scan to avoid runaway processing
+  const src = source.length > 500000 ? source.slice(0, 500000) : source;
+
+  // React components: function Name( or const Name = (arrow/memo/forwardRef)
+  for (const m of src.matchAll(/\bfunction\s+([A-Z][a-zA-Z0-9]{2,60})\s*\(/g)) {
+    if (!BUNDLE_NOISE_NAMES.has(m[1])) components.add(m[1]);
+  }
+  // const/let/var Name = React.memo|forwardRef|...
+  for (const m of src.matchAll(/\b(?:const|let|var)\s+([A-Z][a-zA-Z0-9]{2,60})\s*=/g)) {
+    if (!BUNDLE_NOISE_NAMES.has(m[1])) components.add(m[1]);
+  }
+  // export default class Name
+  for (const m of src.matchAll(/\bclass\s+([A-Z][a-zA-Z0-9]{2,60})\b/g)) {
+    if (!BUNDLE_NOISE_NAMES.has(m[1])) components.add(m[1]);
+  }
+
+  // Hooks: function useXxx( or const useXxx =
+  for (const m of src.matchAll(/\bfunction\s+(use[A-Z][a-zA-Z0-9]{1,60})\s*\(/g)) {
+    hooks.add(m[1]);
+  }
+  for (const m of src.matchAll(/\b(?:const|let)\s+(use[A-Z][a-zA-Z0-9]{1,60})\s*=/g)) {
+    hooks.add(m[1]);
+  }
+
+  // Utility functions: function camelCase( (5+ chars, exported or top-level)
+  for (const m of src.matchAll(/\b(?:export\s+)?function\s+([a-z][a-zA-Z0-9]{4,60})\s*\(/g)) {
+    if (!BUNDLE_NOISE_NAMES.has(m[1])) functions.add(m[1]);
+  }
+}
+
+/**
+ * Extract component/hook/function names from the source map's `names` array
+ * and `sources` file paths. Works even without `sourcesContent`.
+ */
+function extractNamesFromSourceMap(sourceMap, components, hooks, functions) {
+  // ── names array: contains all original identifiers before mangling ────
+  const names = sourceMap.names || [];
+  for (const name of names) {
+    if (typeof name !== 'string' || name.length < 3) continue;
+    if (BUNDLE_NOISE_NAMES.has(name)) continue;
+
+    if (/^use[A-Z][a-zA-Z0-9]+$/.test(name) && name.length >= 5) {
+      hooks.add(name);
+    } else if (/^[A-Z][a-zA-Z0-9]{2,}$/.test(name)) {
+      components.add(name);
+    } else if (/^[a-z][a-zA-Z0-9]{4,}$/.test(name) && name.length >= 6) {
+      functions.add(name);
+    }
+  }
+
+  // ── sources paths: extract component names from file names ────────────
+  // e.g. "../../src/components/Header.jsx" → "Header"
+  const sources = sourceMap.sources || [];
+  for (const filePath of sources) {
+    if (typeof filePath !== 'string') continue;
+    if (/node_modules[/\\]/.test(filePath)) continue;
+
+    // Extract the filename without extension
+    const match = filePath.match(/\/([^/]+?)\.(?:jsx?|tsx?|vue|svelte)$/);
+    if (!match) continue;
+    const fileName = match[1];
+
+    // Skip index/test/style files
+    if (/^(index|test|spec|style|__\w+)$/i.test(fileName)) continue;
+
+    // PascalCase filenames → components
+    if (/^[A-Z][a-zA-Z0-9]{2,}$/.test(fileName)) {
+      components.add(fileName);
+    }
+    // useXxx filenames → hooks
+    else if (/^use[A-Z][a-zA-Z0-9]+$/.test(fileName)) {
+      hooks.add(fileName);
+    }
+  }
+}
+
+/**
+ * Fetch loaded JS bundles server-side. Attempts three strategies in order:
+ * 1. Source map `sourcesContent` — scan original un-minified code
+ * 2. Source map `names` + `sources` — extract identifiers and file names
+ * 3. Minified bundle regex — last resort with strict length filters
+ */
+async function scanJsBundles(page) {
+  const scriptUrls = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('script[src]')).map((s) => s.src).filter(Boolean)
+  );
+
+  const bundleComponents = new Set();
+  const bundleHooks = new Set();
+  const bundleFunctions = new Set();
+  let hasSourceMaps = false;
+
+  // Prefer app bundles over vendor/runtime chunks; fall back to all if nothing matches
+  const appBundles = scriptUrls.filter(
+    (u) => !/\/(chunk-|runtime[.-]|polyfill|vendor[.-]|node_modules)/i.test(u)
+  );
+  const bundles = (appBundles.length > 0 ? appBundles : scriptUrls).slice(0, 8);
+  console.log(`[scanJsBundles] Found ${scriptUrls.length} scripts, scanning ${bundles.length} app bundles`);
+
+  const fetchOpts = {
+    headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' },
+    signal: AbortSignal.timeout(10000),
+  };
+
+  for (const scriptUrl of bundles) {
+    try {
+      const res = await fetch(scriptUrl, fetchOpts);
+      if (!res.ok) continue;
+      let source = await res.text();
+      if (source.length > 2000000) source = source.slice(0, 2000000);
+
+      // ── Try source map ───────────────────────────────────────────────
+      let sourceMapUrl = extractSourceMapUrl(source, scriptUrl);
+
+      // Speculative fallback: try <bundle>.map if no sourceMappingURL comment
+      if (!sourceMapUrl) {
+        const speculativeUrl = scriptUrl + '.map';
+        try {
+          const probe = await fetch(speculativeUrl, { method: 'HEAD', headers: fetchOpts.headers, signal: AbortSignal.timeout(3000) });
+          if (probe.ok && (probe.headers.get('content-type') || '').includes('json')) {
+            sourceMapUrl = speculativeUrl;
+            console.log(`[scanJsBundles] Found speculative source map at: ${speculativeUrl}`);
+          }
+        } catch { /* ignore */ }
+      }
+
+      if (sourceMapUrl) {
+        console.log(`[scanJsBundles] Found source map URL: ${sourceMapUrl}`);
+        try {
+          const mapRes = await fetch(sourceMapUrl, {
+            headers: fetchOpts.headers,
+            signal: AbortSignal.timeout(10000),
+          });
+          if (mapRes.ok) {
+            const sourceMap = await mapRes.json();
+            console.log(`[scanJsBundles] Source map loaded: ${(sourceMap.names || []).length} names, ${(sourceMap.sources || []).length} sources, sourcesContent: ${!!(sourceMap.sourcesContent && sourceMap.sourcesContent.length > 0)}`);
+
+            // Strategy 1: sourcesContent — scan original code
+            if (sourceMap.sourcesContent && sourceMap.sourcesContent.length > 0) {
+              hasSourceMaps = true;
+              const sources = sourceMap.sources || [];
+              for (let i = 0; i < sourceMap.sourcesContent.length; i++) {
+                const filePath = sources[i] || '';
+                if (/node_modules[/\\]/.test(filePath)) continue;
+                scanOriginalSource(sourceMap.sourcesContent[i], bundleComponents, bundleHooks, bundleFunctions);
+              }
+              console.log(`[scanJsBundles] After sourcesContent scan: ${bundleComponents.size} components, ${bundleHooks.size} hooks, ${bundleFunctions.size} functions`);
+              continue;
+            }
+
+            // Strategy 2: names array + sources paths
+            if ((sourceMap.names && sourceMap.names.length > 0) || (sourceMap.sources && sourceMap.sources.length > 0)) {
+              hasSourceMaps = true;
+              extractNamesFromSourceMap(sourceMap, bundleComponents, bundleHooks, bundleFunctions);
+              console.log(`[scanJsBundles] After names/sources scan: ${bundleComponents.size} components, ${bundleHooks.size} hooks, ${bundleFunctions.size} functions`);
+              continue;
+            }
+          } else {
+            console.log(`[scanJsBundles] Source map fetch failed: ${mapRes.status}`);
+          }
+        } catch (e) {
+          console.log(`[scanJsBundles] Source map fetch error: ${e.message}`);
+        }
+      }
+
+      // ── Strategy 3: Fallback — scan minified source ──────────────────
+      console.log(`[scanJsBundles] No source map, falling back to minified scan for ${scriptUrl.slice(-60)}`);
+      // .displayName = "MyComponent" — most reliable in production builds
+      for (const m of source.matchAll(/\.displayName\s*=\s*["']([A-Z][a-zA-Z0-9]{2,50})["']/g)) {
+        bundleComponents.add(m[1]);
+      }
+      // __name(fn, "OriginalName") — Vite/esbuild keepNames helper
+      for (const m of source.matchAll(/__name\s*\(\s*\w+\s*,\s*["']([A-Z][a-zA-Z0-9]{2,50})["']\s*\)/g)) {
+        if (!BUNDLE_NOISE_NAMES.has(m[1])) bundleComponents.add(m[1]);
+      }
+      // Named PascalCase function declarations (≥6 chars to avoid minified)
+      for (const m of source.matchAll(/\bfunction\s+([A-Z][a-zA-Z0-9]{5,50})\s*[({]/g)) {
+        if (!BUNDLE_NOISE_NAMES.has(m[1])) bundleComponents.add(m[1]);
+      }
+      // Hook definitions
+      for (const m of source.matchAll(/\bfunction\s+(use[A-Z][a-zA-Z0-9]{2,50})\s*[({]/g)) {
+        if (!BUNDLE_NOISE_NAMES.has(m[1])) bundleHooks.add(m[1]);
+      }
+      for (const m of source.matchAll(/\bconst\s+(use[A-Z][a-zA-Z0-9]{2,50})\s*=\s*(?:async\s*)?\(/g)) {
+        if (!BUNDLE_NOISE_NAMES.has(m[1])) bundleHooks.add(m[1]);
+      }
+      // Named camelCase utility functions (min 6 chars)
+      for (const m of source.matchAll(/\bfunction\s+([a-z][a-zA-Z0-9]{5,50})\s*[({]/g)) {
+        if (!BUNDLE_NOISE_NAMES.has(m[1])) bundleFunctions.add(m[1]);
+      }
+    } catch {
+      // ignore per-bundle failures
+    }
+  }
+
+  console.log(`[scanJsBundles] Final: hasSourceMaps=${hasSourceMaps}, ${bundleComponents.size} components, ${bundleHooks.size} hooks, ${bundleFunctions.size} functions`);
+  return { bundleComponents, bundleHooks, bundleFunctions, hasSourceMaps };
+}
+
 async function captureRuntimeTrace(page, durationMs) {
   const client = await page.createCDPSession();
 
-  // Enable relevant CDP domains
   await client.send('Network.enable');
   await client.send('Runtime.enable');
   await client.send('Profiler.enable');
@@ -702,30 +1047,22 @@ async function captureRuntimeTrace(page, durationMs) {
   await client.send('Profiler.start');
 
   const networkRequests = [];
-
   client.on('Network.requestWillBeSent', (params) => {
     const { request, type } = params;
     if (type === 'XHR' || type === 'Fetch') {
       try {
         const urlObj = new URL(request.url);
-        networkRequests.push({
-          method: request.method,
-          path: urlObj.pathname,
-          url: request.url,
-        });
-      } catch {
-        // ignore malformed URLs
-      }
+        networkRequests.push({ method: request.method, path: urlObj.pathname, url: request.url });
+      } catch { /* ignore malformed URLs */ }
     }
   });
 
-  // Wait for the configured capture duration
+  // Wait the configured capture window
   await new Promise((resolve) => setTimeout(resolve, durationMs));
 
-  // Stop profiler
   const profilerResult = await client.send('Profiler.stop');
 
-  // Detect framework and extract runtime data from the page
+  // ── Read all runtime data from the page ─────────────────────────────────
   const runtimeData = await page.evaluate(() => {
     const data = {
       framework: 'unknown',
@@ -737,8 +1074,9 @@ async function captureRuntimeTrace(page, durationMs) {
       eventHandlers: [],
     };
 
-    // ── Framework detection ────────────────────────────────────────────────
-    if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+    // ── Framework detection ──────────────────────────────────────────────
+    const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
+    if (hook) {
       data.framework = window.__NEXT_DATA__ ? 'Next.js' : 'React';
     } else if (window.__VUE_DEVTOOLS_GLOBAL_HOOK__ || (window.Vue && window.Vue.version)) {
       data.framework = 'Vue';
@@ -748,169 +1086,199 @@ async function captureRuntimeTrace(page, durationMs) {
       data.framework = 'Svelte';
     }
 
-    // ── React component tree via DevTools fiber ────────────────────────────
-    if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
-      const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
-      const seen = new Set();
+    // ── Components/hooks collected by the pre-injected DevTools hook ─────
+    // (hook was installed via evaluateOnNewDocument before React loaded,
+    //  so every onCommitFiberRoot call has already populated __hc_comps/__hc_hooks)
+    if (window.__hc_comps) {
+      for (const name of window.__hc_comps) data.components.push({ name });
+    }
+    if (window.__hc_hooks) {
+      for (const name of window.__hc_hooks) data.hooks.push({ name });
+    }
 
+    // ── Supplemental fiber walk (catches React present but not yet committed) ──
+    if (hook) {
+      const seen = new Set();
+      const getCompName = (type) => {
+        if (!type || typeof type === 'string') return null;
+        if (typeof type === 'function') return type.displayName || type.name || null;
+        if (typeof type === 'object') {
+          if (type.type) return (type.type.displayName || type.type.name) || null; // memo
+          if (type.render) return (type.render.displayName || type.render.name) || null; // forwardRef
+        }
+        return null;
+      };
       const walkFiber = (fiber) => {
         if (!fiber || seen.has(fiber)) return;
         seen.add(fiber);
-
-        const name = fiber.type && (fiber.type.displayName || fiber.type.name);
-        if (name && typeof name === 'string' && /^[A-Z]/.test(name)) {
-          if (!data.components.find((c) => c.name === name)) {
-            data.components.push({ name });
-          }
-
-          // Extract hook names from the fiber's memoized state chain
-          let memoState = fiber.memoizedState;
-          while (memoState) {
-            const queueDispatch = memoState.queue && memoState.queue.dispatch;
-            if (queueDispatch && queueDispatch._reactName) {
-              const hookName = queueDispatch._reactName;
-              if (!data.hooks.find((h) => h.name === hookName)) {
-                data.hooks.push({ name: hookName });
-              }
-            }
-            memoState = memoState.next;
-          }
+        const name = getCompName(fiber.type);
+        if (name && name.length > 1 && /^[A-Z]/.test(name) && name !== 'Object') {
+          if (!data.components.find((c) => c.name === name)) data.components.push({ name });
         }
-
+        // Hooks from memoized state chain
+        let s = fiber.memoizedState;
+        while (s) {
+          const dispatch = s.queue && s.queue.dispatch;
+          if (dispatch && dispatch._reactName && !data.hooks.find((h) => h.name === dispatch._reactName)) {
+            data.hooks.push({ name: dispatch._reactName });
+          }
+          s = s.next;
+        }
         walkFiber(fiber.child);
         walkFiber(fiber.sibling);
       };
-
       try {
-        hook.renderers && hook.renderers.forEach((renderer) => {
-          const root = renderer.currentDispatcherRef;
-          if (root && root.current) walkFiber(root.current);
-        });
-        // Also walk from the _roots map if present
         if (hook._roots) {
           hook._roots.forEach((root) => {
-            walkFiber(root.current && root.current.child);
+            if (root && root.current) walkFiber(root.current.child || root.current);
           });
         }
-        // Fallback: walk the fiber tree via the root container
-        const rootEl = document.getElementById('root') || document.getElementById('app') || document.body;
+        if (hook.renderers) {
+          hook.renderers.forEach((renderer) => {
+            if (renderer.getFiberRoots) {
+              renderer.getFiberRoots().forEach((root) => {
+                if (root.current) walkFiber(root.current.child || root.current);
+              });
+            }
+          });
+        }
+        // Root DOM element fallback
+        const rootEl = ['root', 'app', '__next', 'main'].map((id) => document.getElementById(id)).find(Boolean) || document.body;
         const fiberKey = Object.keys(rootEl).find(
           (k) => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')
         );
         if (fiberKey) walkFiber(rootEl[fiberKey]);
-      } catch {
-        // ignore DevTools access errors
-      }
+      } catch { /* ignore DevTools access errors */ }
     }
 
-    // ── State store detection ──────────────────────────────────────────────
-    if (window.__REDUX_DEVTOOLS_EXTENSION__) {
-      data.stateStores.push({ name: 'reduxStore' });
-    }
-    if (window.__zustand__) {
-      data.stateStores.push({ name: 'zustandStore' });
-    }
-    if (window.Vuex) {
-      data.stateStores.push({ name: 'vuexStore' });
-    }
-    if (window.MobX || window.mobx) {
-      data.stateStores.push({ name: 'mobxStore' });
-    }
+    // ── State store detection ────────────────────────────────────────────
+    if (window.__REDUX_DEVTOOLS_EXTENSION__) data.stateStores.push({ name: 'reduxStore' });
+    if (window.__zustand__) data.stateStores.push({ name: 'zustandStore' });
+    if (window.Vuex) data.stateStores.push({ name: 'vuexStore' });
+    if (window.MobX || window.mobx) data.stateStores.push({ name: 'mobxStore' });
+    if (window.Recoil) data.stateStores.push({ name: 'recoilStore' });
+    if (window.jotai) data.stateStores.push({ name: 'jotaiStore' });
 
-    // ── External library detection from <script> tags ──────────────────────
+    // ── Library detection — script tags + window globals ─────────────────
     const scriptSrcs = Array.from(document.querySelectorAll('script[src]')).map((s) => s.src);
     const knownLibs = [
-      { pattern: /lodash/i, name: 'lodash' },
-      { pattern: /jquery/i, name: 'jQuery' },
-      { pattern: /axios/i, name: 'axios' },
-      { pattern: /moment/i, name: 'moment' },
-      { pattern: /dayjs/i, name: 'dayjs' },
-      { pattern: /d3(\.min)?\.js/i, name: 'd3' },
-      { pattern: /three(\.min)?\.js/i, name: 'three' },
-      { pattern: /gsap/i, name: 'GSAP' },
-      { pattern: /bootstrap/i, name: 'bootstrap' },
-      { pattern: /tailwind/i, name: 'tailwind' },
-      { pattern: /framer-motion/i, name: 'framer-motion' },
-      { pattern: /redux/i, name: 'redux' },
-      { pattern: /mobx/i, name: 'MobX' },
-      { pattern: /graphql/i, name: 'GraphQL' },
-      { pattern: /socket\.io/i, name: 'socket.io' },
+      { pattern: /lodash/i, globals: ['_', 'lodash'], name: 'lodash' },
+      { pattern: /jquery/i, globals: ['$', 'jQuery'], name: 'jQuery' },
+      { pattern: /axios/i, globals: ['axios'], name: 'axios' },
+      { pattern: /moment/i, globals: ['moment'], name: 'moment' },
+      { pattern: /dayjs/i, globals: ['dayjs'], name: 'dayjs' },
+      { pattern: /\bd3(\.min)?\.js/i, globals: ['d3'], name: 'd3' },
+      { pattern: /three(\.min)?\.js/i, globals: ['THREE'], name: 'three' },
+      { pattern: /gsap/i, globals: ['gsap', 'TweenMax', 'TweenLite'], name: 'GSAP' },
+      { pattern: /bootstrap/i, globals: ['bootstrap'], name: 'bootstrap' },
+      { pattern: /tailwind/i, globals: [], name: 'tailwindcss' },
+      { pattern: /framer[_-]motion/i, globals: ['Motion', 'FramerMotion'], name: 'framer-motion' },
+      { pattern: /redux/i, globals: ['Redux'], name: 'redux' },
+      { pattern: /mobx/i, globals: ['MobX', 'mobx'], name: 'MobX' },
+      { pattern: /graphql/i, globals: ['GraphQL'], name: 'GraphQL' },
+      { pattern: /socket\.io/i, globals: ['io'], name: 'socket.io' },
+      { pattern: /firebase/i, globals: ['firebase'], name: 'firebase' },
+      { pattern: /supabase/i, globals: ['supabase'], name: 'supabase' },
+      { pattern: /tanstack|react-query/i, globals: [], name: 'tanstack-query' },
+      { pattern: /swr/i, globals: [], name: 'SWR' },
     ];
-    for (const src of scriptSrcs) {
-      for (const { pattern, name } of knownLibs) {
-        if (pattern.test(src) && !data.libraries.find((l) => l.name === name)) {
-          data.libraries.push({ name });
-        }
-      }
+    for (const { pattern, globals, name } of knownLibs) {
+      if (data.libraries.find((l) => l.name === name)) continue;
+      const inScript = scriptSrcs.some((s) => pattern.test(s));
+      const inGlobal = globals.some((g) => { try { return window[g] !== undefined; } catch { return false; } });
+      if (inScript || inGlobal) data.libraries.push({ name });
     }
 
-    // ── Web Worker detection ───────────────────────────────────────────────
+    // ── Web Worker detection ─────────────────────────────────────────────
     if (window.__workers) {
-      for (const w of window.__workers) {
-        data.workers.push({ name: w });
-      }
+      for (const w of window.__workers) data.workers.push({ name: w });
     }
 
-    // ── DOM-based component detection (fallback when no framework) ─────────
+    // ── DOM fallback (no framework detected) ────────────────────────────
     if (data.components.length === 0) {
-      const customElements = Array.from(document.querySelectorAll('*'))
-        .map((el) => el.tagName.toLowerCase())
-        .filter((tag) => tag.includes('-'));
-      const unique = [...new Set(customElements)].slice(0, 20);
-      for (const tag of unique) {
-        const name = tag.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-        data.components.push({ name });
+      const customEls = [...new Set(
+        Array.from(document.querySelectorAll('*')).map((el) => el.tagName.toLowerCase()).filter((t) => t.includes('-'))
+      )].slice(0, 20);
+      for (const tag of customEls) {
+        data.components.push({ name: tag.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) });
       }
-
-      // If still no components, create a Root component from the page title
       if (data.components.length === 0) {
         const title = document.title || 'Page';
         data.components.push({ name: title.replace(/[^a-zA-Z0-9]/g, '') || 'RootComponent' });
       }
     }
 
-    // ── Event handler detection ────────────────────────────────────────────
-    const eventTypes = ['click', 'submit', 'input', 'change', 'keydown', 'scroll', 'load'];
-    for (const type of eventTypes) {
-      const els = document.querySelectorAll(`[on${type}]`);
-      if (els.length > 0) {
+    // ── Inline DOM event handlers ────────────────────────────────────────
+    for (const type of ['click', 'submit', 'input', 'change', 'keydown', 'scroll', 'load']) {
+      if (document.querySelectorAll(`[on${type}]`).length > 0) {
         const name = `on${type.charAt(0).toUpperCase()}${type.slice(1)}`;
-        if (!data.eventHandlers.find((h) => h.name === name)) {
-          data.eventHandlers.push({ name });
-        }
+        if (!data.eventHandlers.find((h) => h.name === name)) data.eventHandlers.push({ name });
       }
     }
 
     return data;
   });
 
-  // ── Extract top-level function names from CPU profiler ────────────────────
+  // ── CPU profiler: classify by naming convention ──────────────────────────
   const profileNodes = profilerResult.profile ? profilerResult.profile.nodes : [];
-  const functionNames = new Set();
+  const seenFns = new Set();
   for (const node of profileNodes) {
     const fn = node.callFrame && node.callFrame.functionName;
-    if (fn && fn.length > 1 && !EXCLUDED_PROFILER_NAMES.has(fn)) {
-      functionNames.add(fn);
+    if (!fn || fn.length <= 1 || EXCLUDED_PROFILER_NAMES.has(fn) || seenFns.has(fn)) continue;
+    seenFns.add(fn);
+
+    if (/^use[A-Z]/.test(fn)) {
+      // Custom hook
+      if (!runtimeData.hooks.find((h) => h.name === fn)) runtimeData.hooks.push({ name: fn });
+    } else if (/^[A-Z][a-zA-Z0-9]+$/.test(fn) && !BUNDLE_NOISE_NAMES.has(fn)) {
+      // PascalCase → likely a component
+      if (!runtimeData.components.find((c) => c.name === fn)) runtimeData.components.push({ name: fn });
+    } else if (/^[a-z]/.test(fn)) {
+      // camelCase → utility / event handler
+      if (!runtimeData.eventHandlers.find((h) => h.name === fn)) runtimeData.eventHandlers.push({ name: fn });
     }
   }
 
-  // Merge profiled handlers into event handlers list (capped at 15 new entries)
-  let added = 0;
-  for (const fn of functionNames) {
-    if (added >= MAX_PROFILED_HANDLERS) break;
-    if (!runtimeData.eventHandlers.find((h) => h.name === fn)) {
-      runtimeData.eventHandlers.push({ name: fn });
-      added++;
+  // ── JS bundle scanning (server-side, prefers source maps) ─────────────────
+  const { bundleComponents, bundleHooks, bundleFunctions, hasSourceMaps } = await scanJsBundles(page);
+
+  console.log(`[captureRuntimeTrace] Pre-merge: fiber components=${runtimeData.components.length}, bundle components=${bundleComponents.size}, hasSourceMaps=${hasSourceMaps}`);
+  console.log(`[captureRuntimeTrace] Fiber component names: ${runtimeData.components.slice(0, 10).map(c => c.name).join(', ')}${runtimeData.components.length > 10 ? '...' : ''}`);
+  console.log(`[captureRuntimeTrace] Bundle component names: ${[...bundleComponents].slice(0, 10).join(', ')}${bundleComponents.size > 10 ? '...' : ''}`);
+
+  if (hasSourceMaps && bundleComponents.size > 0) {
+    // Source maps gave us real un-minified names — use those as the authoritative
+    // component list instead of the (possibly mangled) fiber-walked names.
+    runtimeData.components = [...bundleComponents].map((name) => ({ name }));
+  } else {
+    // No source maps: merge bundle-scanned names with fiber-walked names
+    for (const name of bundleComponents) {
+      if (!runtimeData.components.find((c) => c.name === name)) runtimeData.components.push({ name });
     }
   }
 
-  // Deduplicate and cap lists to keep diagram manageable
+  // Merge hooks from any source
+  for (const name of bundleHooks) {
+    if (!runtimeData.hooks.find((h) => h.name === name)) runtimeData.hooks.push({ name });
+  }
+
+  for (const name of bundleFunctions) {
+    if (runtimeData.eventHandlers.length >= MAX_EVENT_HANDLERS) break;
+    if (!BUNDLE_NOISE_NAMES.has(name) && !runtimeData.eventHandlers.find((h) => h.name === name)) {
+      runtimeData.eventHandlers.push({ name });
+    }
+  }
+
+  // ── Deduplicate (components/hooks uncapped; functions capped at MAX_EVENT_HANDLERS) ──
+  const dedup = (arr) => [...new Map(arr.map((x) => [x.name, x])).values()];
   runtimeData.apiCalls = deduplicateApiCalls(networkRequests).slice(0, MAX_API_CALLS);
-  runtimeData.components = runtimeData.components.slice(0, MAX_COMPONENTS);
-  runtimeData.eventHandlers = runtimeData.eventHandlers.slice(0, MAX_EVENT_HANDLERS);
-  runtimeData.hooks = runtimeData.hooks.slice(0, MAX_HOOKS);
+  runtimeData.components = dedup(runtimeData.components);
+  runtimeData.hooks = dedup(runtimeData.hooks);
+  runtimeData.eventHandlers = dedup(runtimeData.eventHandlers).slice(0, MAX_EVENT_HANDLERS);
 
-  // ── Build connections ──────────────────────────────────────────────────────
+  console.log(`[captureRuntimeTrace] Final: ${runtimeData.components.length} components, ${runtimeData.hooks.length} hooks, ${runtimeData.eventHandlers.length} functions, ${runtimeData.apiCalls.length} APIs`);
+
+  // ── Build connections ────────────────────────────────────────────────────
   runtimeData.connections = buildConnections(runtimeData);
 
   return runtimeData;
@@ -1004,21 +1372,38 @@ function buildConnections(traceData) {
   return connections;
 }
 
-export const scanWebsiteRuntime = onCall(
-  {
-    memory: '1GiB',
-    region: 'us-central1',
-    timeoutSeconds: 120,
-    maxInstances: 3,
-    cors: true,
-  },
-  async (request) => {
-    const { url, duration = 10 } = request.data || {};
+const ALLOWED_ORIGINS = [
+  'https://hoverchart.web.app',
+  'https://hoverchart.firebaseapp.com',
+  'http://localhost:5173',
+  'http://localhost:5000',
+  'https://space.volscape.com',
+  'https://volscape.com',
+];
+
+function createScanWebsiteRuntimeApp() {
+  const app = express();
+
+  app.use(cors({ origin: ALLOWED_ORIGINS }));
+  app.use(express.json());
+
+  app.post('/', async (req, res) => {
+    const { idToken, url, duration = 10 } = req.body;
+
+    if (!idToken) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    try {
+      await getAuth().verifyIdToken(idToken);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
 
     // Validate URL
     const validation = validateRuntimeScanUrl(url);
     if (!validation.valid) {
-      throw new HttpsError('invalid-argument', validation.error);
+      return res.status(400).json({ error: validation.error });
     }
 
     // Clamp duration between 5 and 30 seconds
@@ -1032,26 +1417,26 @@ export const scanWebsiteRuntime = onCall(
       console.log(`[scanWebsiteRuntime] Launching browser for: ${url}`);
 
       browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--single-process',
-        ],
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless,
       });
 
       const page = await browser.newPage();
-
-      // Set a realistic user agent and viewport
       await page.setUserAgent(
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       );
       await page.setViewport({ width: 1280, height: 800 });
 
-      // Hard navigation timeout of 30 s
+      // Inject our React DevTools-compatible hook BEFORE any scripts run,
+      // so React registers its renderer with us on startup.
+      await page.evaluateOnNewDocument(REACT_DEVTOOLS_INJECTION);
+
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+      // Short extra wait so lazy-loaded/deferred components have time to mount
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       console.log(`[scanWebsiteRuntime] Page loaded. Capturing for ${captureDuration}s...`);
 
@@ -1062,7 +1447,7 @@ export const scanWebsiteRuntime = onCall(
 
       const markdown = generateMerfolkFromRuntimeTrace(traceData, url);
 
-      return {
+      return res.json({
         success: true,
         markdown,
         metadata: {
@@ -1072,15 +1457,27 @@ export const scanWebsiteRuntime = onCall(
           connectionCount: traceData.connections.length,
           scanDuration,
         },
-      };
+      });
     } catch (error) {
       console.error('[scanWebsiteRuntime] Error:', error);
-      if (error instanceof HttpsError) throw error;
-      throw new HttpsError('internal', `Scan failed: ${error.message}`);
+      return res.status(500).json({ error: 'Scan failed', details: error.message });
     } finally {
       if (browser) {
         await browser.close().catch(() => {});
       }
     }
-  }
+  });
+
+  return app;
+}
+
+export const scanWebsiteRuntime = onRequest(
+  {
+    memory: '1GiB',
+    region: 'us-central1',
+    timeoutSeconds: 120,
+    maxInstances: 3,
+    cors: true,
+  },
+  createScanWebsiteRuntimeApp()
 );

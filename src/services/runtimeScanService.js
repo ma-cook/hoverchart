@@ -1,5 +1,4 @@
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../firebase';
+import { auth } from '../firebase';
 
 // ─── URL Validation ──────────────────────────────────────────────────────────
 
@@ -219,18 +218,27 @@ export const scanWebsiteAndGenerateDiagram = async (
 
   // 2. Call the Cloud Function
   if (onProgress) onProgress(15, 'Launching browser...');
-  const scanWebsiteRuntime = httpsCallable(functions, 'scanWebsiteRuntime', {
-    // Must exceed the Cloud Function's own timeoutSeconds (120 s) so that
-    // Firebase's client SDK receives the function error rather than timing out first.
-    timeout: 130000,
-  });
+
+  const SCAN_URL = 'https://us-central1-hoverchart.cloudfunctions.net/scanWebsiteRuntime';
 
   let cloudResult;
   try {
-    // Simulate incremental progress while the long-running function executes
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) throw new Error('Not authenticated');
+
     const progressInterval = simulateProgress(onProgress, 15, 75, duration * 1000 + 30000);
-    cloudResult = await scanWebsiteRuntime({ url, duration });
+    const response = await fetch(SCAN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken, url, duration }),
+    });
     clearInterval(progressInterval);
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      throw new Error(errBody.error || `HTTP ${response.status}`);
+    }
+    cloudResult = { data: await response.json() };
   } catch (error) {
     throw new Error(`Runtime scan failed: ${error.message}`);
   }

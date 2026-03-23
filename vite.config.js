@@ -8,6 +8,7 @@ export default defineConfig({
     global: 'globalThis',
   },
   build: {
+    sourcemap: 'hidden',
     chunkSizeWarningLimit: 1600,
     rollupOptions: {
       output: {
