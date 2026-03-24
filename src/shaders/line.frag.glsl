@@ -17,7 +17,7 @@ void main() {
     float alpha;
     if (dist <= coreEdge) {
         // Inside core line — fully opaque with a soft anti-aliased edge
-        alpha = 1.0;
+        alpha = 0.5;
     } else {
         // Glow region — exponential falloff from the core edge outward
         float t = (dist - coreEdge) / (1.0 - coreEdge); // 0 at core edge, 1 at quad edge
@@ -25,7 +25,7 @@ void main() {
     }
 
     // Bright glow bleed: slightly boost color toward white near the core
-    float brightBoost = (1.0 - smoothstep(0.0, coreEdge * 2.0, dist)) * 0.20;
+    float brightBoost = (1.0 - smoothstep(0.0, coreEdge * 2.0, dist)) * 0.10;
     vec3 col = min(vColor + brightBoost, vec3(1.0));
 
     gl_FragColor = vec4(col, opacity * alpha);

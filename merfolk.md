@@ -21,6 +21,18 @@ bulkImport[Function: bulkImport]
 fetchGithubToken[Function: fetchGithubToken]
 createBulkDeleteApp[Function: createBulkDeleteApp]
 bulkDelete[Function: bulkDelete]
+validateRuntimeScanUrl[Function: validateRuntimeScanUrl]
+sanitizeMerfolkId[Function: sanitizeMerfolkId]
+generateMerfolkFromRuntimeTrace[Function: generateMerfolkFromRuntimeTrace]
+extractSourceMapUrl[Function: extractSourceMapUrl]
+scanOriginalSource[Function: scanOriginalSource]
+extractNamesFromSourceMap[Function: extractNamesFromSourceMap]
+scanJsBundles[Function: scanJsBundles]
+captureRuntimeTrace[Function: captureRuntimeTrace]
+deduplicateApiCalls[Function: deduplicateApiCalls]
+buildConnections[Function: buildConnections]
+createScanWebsiteRuntimeApp[Function: createScanWebsiteRuntimeApp]
+scanWebsiteRuntime[Function: scanWebsiteRuntime]
 getSharedMaterial[Function: getSharedMaterial]
 numericCacheKey[Function: numericCacheKey]
 pathToSegments[Function: pathToSegments]
@@ -89,7 +101,10 @@ useSpaceManager[Function: useSpaceManager]
 useSpatialManager[Function: useSpatialManager]
 useTextureUpdater[Function: useTextureUpdater]
 useTimeoutManager[Function: useTimeoutManager]
+CreateOrganizationPopup[Function: CreateOrganizationPopup]
 CreateSpacePopup[Function: CreateSpacePopup]
+OrganizationManager[Function: OrganizationManager]
+OrgMemberDropdown[Function: OrgMemberDropdown]
 ShareSpacePopup[Function: ShareSpacePopup]
 SpacesTable[Function: SpacesTable]
 UserLoginSection[Function: UserLoginSection]
@@ -163,6 +178,11 @@ NODE_TYPE_CONTROL[Function: NODE_TYPE_CONTROL]
 NODE_TYPE_STATE[Function: NODE_TYPE_STATE]
 NODE_TYPE_DATA[Function: NODE_TYPE_DATA]
 NODE_TYPE_HOOK[Function: NODE_TYPE_HOOK]
+NODE_TYPE_MODULE[Function: NODE_TYPE_MODULE]
+NODE_TYPE_CLASS[Function: NODE_TYPE_CLASS]
+NODE_TYPE_INTERFACE[Function: NODE_TYPE_INTERFACE]
+NODE_TYPE_VARIABLE[Function: NODE_TYPE_VARIABLE]
+NODE_TYPE_CONSTANT[Function: NODE_TYPE_CONSTANT]
 OBJECT_TYPE_CUBE[Function: OBJECT_TYPE_CUBE]
 OBJECT_TYPE_DODECAHEDRON[Function: OBJECT_TYPE_DODECAHEDRON]
 OBJECT_TYPE_TETRAHEDRON[Function: OBJECT_TYPE_TETRAHEDRON]
@@ -187,10 +207,27 @@ positionMethods[Function: positionMethods]
 processMethods[Function: processMethods]
 scaleMethods[Function: scaleMethods]
 markdownDiagramService[Function: markdownDiagramService]
+PLAN_LIMITS[Function: PLAN_LIMITS]
+createOrganization[Function: createOrganization]
+getUserOrganizations[Function: getUserOrganizations]
+getOrganizationById[Function: getOrganizationById]
+getOrganizationMembers[Function: getOrganizationMembers]
+getMemberCount[Function: getMemberCount]
+isOrganizationAdmin[Function: isOrganizationAdmin]
+inviteUserToOrganization[Function: inviteUserToOrganization]
+getPendingInvitesForUser[Function: getPendingInvitesForUser]
+acceptInvite[Function: acceptInvite]
+declineInvite[Function: declineInvite]
+removeMemberFromOrganization[Function: removeMemberFromOrganization]
+leaveOrganization[Function: leaveOrganization]
+updateOrganizationPlan[Function: updateOrganizationPlan]
+deleteOrganization[Function: deleteOrganization]
 setUserPresence[Function: setUserPresence]
 setGuestPresence[Function: setGuestPresence]
 subscribeToSpacePresence[Function: subscribeToSpacePresence]
 resourceCleanupService[Function: resourceCleanupService]
+validateScanUrl[Function: validateScanUrl]
+scanWebsiteAndGenerateDiagram[Function: scanWebsiteAndGenerateDiagram]
 screenRecorder[Function: screenRecorder]
 sharedSpacesCacheSet[Function: sharedSpacesCacheSet]
 isSharedSpace[Function: isSharedSpace]
@@ -302,6 +339,8 @@ LOD_THRESHOLDS_PARENT_SQ[Function: LOD_THRESHOLDS_PARENT_SQ]
 LOD_LEVELS[Function: LOD_LEVELS]
 calculateLODLevel[Function: calculateLODLevel]
 calculateParentLODLevel[Function: calculateParentLODLevel]
+FACE_TEXT_DISTANCE[Function: FACE_TEXT_DISTANCE]
+FACE_TEXT_DISTANCE_SQ[Function: FACE_TEXT_DISTANCE_SQ]
 useStoreInitialization[Function: useStoreInitialization]
 useCubeSelectors[Function: useCubeSelectors]
 useCubeActions[Function: useCubeActions]
@@ -438,28 +477,28 @@ getTextAtlasWorker[Function: getTextAtlasWorker]
 terminateTextAtlasWorker[Function: terminateTextAtlasWorker]
 
 %% Services
-SpatialHash[Function: SpatialHash]
-CentralizedBroadcastManager[Function: CentralizedBroadcastManager]
-GlobalOptimizationCoordinator[Function: GlobalOptimizationCoordinator]
-MarkdownDiagramService[Function: MarkdownDiagramService]
-ResourceCleanupService[Function: ResourceCleanupService]
-ScreenRecordingService[Function: ScreenRecordingService]
-StreamlinedSpatialManager[Function: StreamlinedSpatialManager]
-UnifiedCacheManager[Function: UnifiedCacheManager]
-BroadcastSession[Function: BroadcastSession]
-BVHNode[Function: BVHNode]
-BVHAcceleratedRaycaster[Function: BVHAcceleratedRaycaster]
-FrameCounter[Function: FrameCounter]
-GPUResourceTracker[Function: GPUResourceTracker]
-ObjectVirtualizer[Function: ObjectVirtualizer]
-Point3D[Function: Point3D]
-BoundingBox[Function: BoundingBox]
-OptimizedSpatialGrid[Function: OptimizedSpatialGrid]
-TextAtlas[Function: TextAtlas]
-MultiPageTextAtlas[Function: MultiPageTextAtlas]
-WorkerMultiPageTextAtlas[Function: WorkerMultiPageTextAtlas]
-LayoutEngine[Function: LayoutEngine]
-AtlasPage[Function: AtlasPage]
+SpatialHash((Service: SpatialHash))
+CentralizedBroadcastManager((Service: CentralizedBroadcastManager))
+GlobalOptimizationCoordinator((Service: GlobalOptimizationCoordinator))
+MarkdownDiagramService((Service: MarkdownDiagramService))
+ResourceCleanupService((Service: ResourceCleanupService))
+ScreenRecordingService((Service: ScreenRecordingService))
+StreamlinedSpatialManager((Service: StreamlinedSpatialManager))
+UnifiedCacheManager((Service: UnifiedCacheManager))
+BroadcastSession((Service: BroadcastSession))
+BVHNode((Service: BVHNode))
+BVHAcceleratedRaycaster((Service: BVHAcceleratedRaycaster))
+FrameCounter((Service: FrameCounter))
+GPUResourceTracker((Service: GPUResourceTracker))
+ObjectVirtualizer((Service: ObjectVirtualizer))
+Point3D((Service: Point3D))
+BoundingBox((Service: BoundingBox))
+OptimizedSpatialGrid((Service: OptimizedSpatialGrid))
+TextAtlas((Service: TextAtlas))
+MultiPageTextAtlas((Service: MultiPageTextAtlas))
+WorkerMultiPageTextAtlas((Service: WorkerMultiPageTextAtlas))
+LayoutEngine((Service: LayoutEngine))
+AtlasPage((Service: AtlasPage))
 
 %% External Libraries
 @eslint/js<Library: @eslint/js>
@@ -472,6 +511,8 @@ firebase-admin/auth<Library: firebase-admin/auth>
 firebase-admin/firestore<Library: firebase-admin/firestore>
 firebase-functions/v2/https<Library: firebase-functions/v2/https>
 firebase-functions/params<Library: firebase-functions/params>
+puppeteer-core<Library: puppeteer-core>
+@sparticuz/chromium<Library: @sparticuz/chromium>
 express<Library: express>
 cors<Library: cors>
 dotenv<Library: dotenv>
@@ -537,6 +578,8 @@ landingappHandleDeleteSpace[Function: landingappHandleDeleteSpace]
 landingappHandleLeaveSpace[Function: landingappHandleLeaveSpace]
 landingappHandleFirstCubeComplete[Function: landingappHandleFirstCubeComplete]
 landingappHandleDodecahedronComplete[Function: landingappHandleDodecahedronComplete]
+landingappHandleAcceptInvite[Function: landingappHandleAcceptInvite]
+landingappHandleDeclineInvite[Function: landingappHandleDeclineInvite]
 landingappSpaceTableProps[Function: landingappSpaceTableProps]
 landingappCreateSpaceProps[Function: landingappCreateSpaceProps]
 landingappSharePopupProps[Function: landingappSharePopupProps]
@@ -568,6 +611,8 @@ LandingApp -.-> landingappHandleDeleteSpace : "internal function"
 LandingApp -.-> landingappHandleLeaveSpace : "internal function"
 LandingApp -.-> landingappHandleFirstCubeComplete : "internal function"
 LandingApp -.-> landingappHandleDodecahedronComplete : "internal function"
+LandingApp -.-> landingappHandleAcceptInvite : "internal function"
+LandingApp -.-> landingappHandleDeclineInvite : "internal function"
 LandingApp -.-> landingappSpaceTableProps : "render helper"
 LandingApp -.-> landingappCreateSpaceProps : "render helper"
 LandingApp -.-> landingappSharePopupProps : "render helper"
@@ -606,7 +651,10 @@ useSpaceManager_file[Function: useSpaceManager]
 useSpatialManager_file[Function: useSpatialManager]
 useTextureUpdater_file[Function: useTextureUpdater]
 useTimeoutManager_file[Function: useTimeoutManager]
+CreateOrganizationPopup_file[Function: CreateOrganizationPopup]
 CreateSpacePopup_file[Function: CreateSpacePopup]
+OrganizationManager_file[Function: OrganizationManager]
+OrgMemberDropdown_file[Function: OrgMemberDropdown]
 ShareSpacePopup_file[Function: ShareSpacePopup]
 SpacesTable_file[Function: SpacesTable]
 UserLoginSection_file[Function: UserLoginSection]
@@ -633,8 +681,10 @@ positionMethods_file[Function: positionMethods]
 processMethods_file[Function: processMethods]
 scaleMethods_file[Function: scaleMethods]
 markdownDiagramService_file[Function: markdownDiagramService]
+organizationService[Function: organizationService]
 presenceService[Function: presenceService]
 resourceCleanupService_file[Function: resourceCleanupService]
+runtimeScanService[Function: runtimeScanService]
 screenRecordingService[Function: screenRecordingService]
 sharingService[Function: sharingService]
 spacesService[Function: spacesService]
@@ -687,6 +737,18 @@ index -.-> bulkImport : "contains"
 index -.-> fetchGithubToken : "contains"
 index -.-> createBulkDeleteApp : "contains"
 index -.-> bulkDelete : "contains"
+index -.-> validateRuntimeScanUrl : "contains"
+index -.-> sanitizeMerfolkId : "contains"
+index -.-> generateMerfolkFromRuntimeTrace : "contains"
+index -.-> extractSourceMapUrl : "contains"
+index -.-> scanOriginalSource : "contains"
+index -.-> extractNamesFromSourceMap : "contains"
+index -.-> scanJsBundles : "contains"
+index -.-> captureRuntimeTrace : "contains"
+index -.-> deduplicateApiCalls : "contains"
+index -.-> buildConnections : "contains"
+index -.-> createScanWebsiteRuntimeApp : "contains"
+index -.-> scanWebsiteRuntime : "contains"
 AtlasTextSprite -.-> getSharedMaterial : "contains"
 BatchedCurvedLines -.-> numericCacheKey : "contains"
 BatchedCurvedLines -.-> pathToSegments : "contains"
@@ -756,7 +818,10 @@ useSpaceManager_file -.-> useSpaceManager : "contains"
 useSpatialManager_file -.-> useSpatialManager : "contains"
 useTextureUpdater_file -.-> useTextureUpdater : "contains"
 useTimeoutManager_file -.-> useTimeoutManager : "contains"
+CreateOrganizationPopup_file -.-> CreateOrganizationPopup : "contains"
 CreateSpacePopup_file -.-> CreateSpacePopup : "contains"
+OrganizationManager_file -.-> OrganizationManager : "contains"
+OrgMemberDropdown_file -.-> OrgMemberDropdown : "contains"
 ShareSpacePopup_file -.-> ShareSpacePopup : "contains"
 SpacesTable_file -.-> SpacesTable : "contains"
 UserLoginSection_file -.-> UserLoginSection : "contains"
@@ -832,6 +897,11 @@ constants -.-> NODE_TYPE_CONTROL : "contains"
 constants -.-> NODE_TYPE_STATE : "contains"
 constants -.-> NODE_TYPE_DATA : "contains"
 constants -.-> NODE_TYPE_HOOK : "contains"
+constants -.-> NODE_TYPE_MODULE : "contains"
+constants -.-> NODE_TYPE_CLASS : "contains"
+constants -.-> NODE_TYPE_INTERFACE : "contains"
+constants -.-> NODE_TYPE_VARIABLE : "contains"
+constants -.-> NODE_TYPE_CONSTANT : "contains"
 constants -.-> OBJECT_TYPE_CUBE : "contains"
 constants -.-> OBJECT_TYPE_DODECAHEDRON : "contains"
 constants -.-> OBJECT_TYPE_TETRAHEDRON : "contains"
@@ -857,11 +927,29 @@ processMethods_file -.-> processMethods : "contains"
 scaleMethods_file -.-> scaleMethods : "contains"
 markdownDiagramService_file -.-> MarkdownDiagramService : "contains"
 markdownDiagramService_file -.-> markdownDiagramService : "contains"
+organizationService -.-> PLAN_LIMITS : "contains"
+organizationService -.-> createOrganization : "contains"
+organizationService -.-> getUserOrganizations : "contains"
+organizationService -.-> getOrganizationById : "contains"
+organizationService -.-> getOrganizationMembers : "contains"
+organizationService -.-> getMemberCount : "contains"
+organizationService -.-> isOrganizationAdmin : "contains"
+organizationService -.-> inviteUserToOrganization : "contains"
+organizationService -.-> getPendingInvitesForUser : "contains"
+organizationService -.-> acceptInvite : "contains"
+organizationService -.-> declineInvite : "contains"
+organizationService -.-> removeMemberFromOrganization : "contains"
+organizationService -.-> leaveOrganization : "contains"
+organizationService -.-> updateOrganizationPlan : "contains"
+organizationService -.-> deleteOrganization : "contains"
 presenceService -.-> setUserPresence : "contains"
 presenceService -.-> setGuestPresence : "contains"
 presenceService -.-> subscribeToSpacePresence : "contains"
 resourceCleanupService_file -.-> ResourceCleanupService : "contains"
 resourceCleanupService_file -.-> resourceCleanupService : "contains"
+runtimeScanService -.-> validateScanUrl : "contains"
+runtimeScanService -.-> generateMerfolkFromRuntimeTrace : "contains"
+runtimeScanService -.-> scanWebsiteAndGenerateDiagram : "contains"
 screenRecordingService -.-> ScreenRecordingService : "contains"
 screenRecordingService -.-> screenRecorder : "contains"
 sharingService -.-> generateSharingUrl : "contains"
@@ -973,6 +1061,8 @@ lodStore -.-> LOD_THRESHOLDS_PARENT_SQ : "contains"
 lodStore -.-> LOD_LEVELS : "contains"
 lodStore -.-> calculateLODLevel : "contains"
 lodStore -.-> calculateParentLODLevel : "contains"
+lodStore -.-> FACE_TEXT_DISTANCE : "contains"
+lodStore -.-> FACE_TEXT_DISTANCE_SQ : "contains"
 storeUtils -.-> useStoreInitialization : "contains"
 storeUtils -.-> useCubeSelectors : "contains"
 storeUtils -.-> useCubeActions : "contains"
@@ -1129,29 +1219,29 @@ DiagramOverlay2D --> EdgeMarkerDefs : "uses"
 LandingApp --> OrderHeader : "windowSize"
 
 %% Component Dependencies
-DiagramOverlay2D --> useDiagramStore : "uses hook"
+DiagramOverlay2D --> useDiagramStore : "uses store"
 useDiagramStore --> useDiagramStore : "receives"
-DiagramOverlay2D --> useDiagramStore : "uses hook"
+DiagramOverlay2D --> useDiagramStore : "uses store"
 useDiagramStore --> useDiagramStore : "receives"
-DiagramOverlay2D --> useDiagramStore : "uses hook"
+DiagramOverlay2D --> useDiagramStore : "uses store"
 useDiagramStore --> useDiagramStore : "receives"
-DiagramOverlay2D --> useDiagramStore : "uses hook"
+DiagramOverlay2D --> useDiagramStore : "uses store"
 useDiagramStore --> useDiagramStore : "receives"
-DiagramOverlay2D --> useDiagramStore : "uses hook"
+DiagramOverlay2D --> useDiagramStore : "uses store"
 useDiagramStore --> useDiagramStore : "receives"
-DiagramOverlay2D --> useDiagramStore : "uses hook"
+DiagramOverlay2D --> useDiagramStore : "uses store"
 useDiagramStore --> useDiagramStore : "receives"
-DiagramOverlay2D --> useDiagramStore : "uses hook"
+DiagramOverlay2D --> useDiagramStore : "uses store"
 useDiagramStore --> useDiagramStore : "receives"
-DiagramOverlay2D --> useUIOverlayStore : "uses hook"
+DiagramOverlay2D --> useUIOverlayStore : "uses store"
 useUIOverlayStore --> useUIOverlayStore : "receives"
 DiagramOverlay2D --> useNodesState : "uses hook"
 useNodesState --> useNodesState : "receives"
-TextStyleUIContent --> useColorPickerStore : "uses hook"
+TextStyleUIContent --> useColorPickerStore : "uses store"
 useColorPickerStore --> useColorPickerStore : "receives"
-TextStyleUIContent --> useColorPickerStore : "uses hook"
+TextStyleUIContent --> useColorPickerStore : "uses store"
 useColorPickerStore --> useColorPickerStore : "receives"
-TextStyleUIContent --> useColorPickerStore : "uses hook"
+TextStyleUIContent --> useColorPickerStore : "uses store"
 useColorPickerStore --> useColorPickerStore : "receives"
 LandingApp --> useWindowSize_file : "uses hook"
 useWindowSize_file --> useWindowSize : "receives"
@@ -1161,12 +1251,46 @@ Model --> useGLTF : "{nodes, materials}"
 useGLTF --> useGLTF : "receives"
 
 %% Function Call Relationships
+scanJsBundles --> index : "calls extractSourceMapUrl"
+index --> extractSourceMapUrl : "receives"
+scanJsBundles --> index : "calls scanOriginalSource"
+index --> scanOriginalSource : "receives"
+scanJsBundles --> index : "calls extractNamesFromSourceMap"
+index --> extractNamesFromSourceMap : "receives"
+captureRuntimeTrace --> index : "calls scanJsBundles"
+index --> scanJsBundles : "receives"
+captureRuntimeTrace --> index : "calls deduplicateApiCalls"
+index --> deduplicateApiCalls : "receives"
+captureRuntimeTrace --> index : "calls buildConnections"
+index --> buildConnections : "receives"
+createScanWebsiteRuntimeApp --> index : "calls validateRuntimeScanUrl"
+index --> validateRuntimeScanUrl : "receives"
+createScanWebsiteRuntimeApp --> index : "calls captureRuntimeTrace"
+index --> captureRuntimeTrace : "receives"
+createScanWebsiteRuntimeApp --> runtimeScanService : "calls generateMerfolkFromRuntimeTrace"
+runtimeScanService --> generateMerfolkFromRuntimeTrace : "receives"
+computeVisibleCells --> spatialPartitioning : "calls getCellCoordinates"
+spatialPartitioning --> getCellCoordinates : "receives"
+resolveEndpointPosition --> facePositionUtils : "calls calculateFacePosition"
+facePositionUtils --> calculateFacePosition : "receives"
+getEdgeStyle --> EdgeTypes : "calls flowPathColor"
+EdgeTypes --> flowPathColor : "receives"
 MerfolkEdge --> EdgeTypes : "calls getEdgeStyle"
 EdgeTypes --> getEdgeStyle : "receives"
 MerfolkEdge --> EdgeTypes : "calls getSelectedStyle"
 EdgeTypes --> getSelectedStyle : "receives"
 MerfolkEdge --> EdgeTypes : "calls getUnselectedStyle"
 EdgeTypes --> getUnselectedStyle : "receives"
+MerfolkEdge --> EdgeTypes : "calls getEdgeStyle"
+EdgeTypes --> getEdgeStyle : "receives"
+MerfolkEdge --> EdgeTypes : "calls getSelectedStyle"
+EdgeTypes --> getSelectedStyle : "receives"
+MerfolkEdge --> EdgeTypes : "calls getUnselectedStyle"
+EdgeTypes --> getUnselectedStyle : "receives"
+buildPrecomputedNode --> NodeTypes : "calls buildNodeStyles"
+NodeTypes --> buildNodeStyles : "receives"
+filterEdges --> DiagramOverlay2D_file : "calls layerForType"
+DiagramOverlay2D_file --> layerForType : "receives"
 DiagramOverlay2D --> diagramLayoutWorkerClient : "calls getDiagramLayoutWorker"
 diagramLayoutWorkerClient --> getDiagramLayoutWorker : "receives"
 DiagramOverlay2D --> DiagramOverlay2D_file : "calls buildReactFlowNodes"
@@ -1175,7 +1299,171 @@ DiagramOverlay2D --> DiagramOverlay2D_file : "calls buildReactFlowEdges"
 DiagramOverlay2D_file --> buildReactFlowEdges : "receives"
 DiagramOverlay2D --> DiagramOverlay2D_file : "calls filterEdges"
 DiagramOverlay2D_file --> filterEdges : "receives"
+DiagramOverlay2D --> diagramLayoutWorkerClient : "calls getDiagramLayoutWorker"
+diagramLayoutWorkerClient --> getDiagramLayoutWorker : "receives"
+DiagramOverlay2D --> DiagramOverlay2D_file : "calls buildReactFlowNodes"
+DiagramOverlay2D_file --> buildReactFlowNodes : "receives"
+DiagramOverlay2D --> DiagramOverlay2D_file : "calls buildReactFlowEdges"
+DiagramOverlay2D_file --> buildReactFlowEdges : "receives"
+DiagramOverlay2D --> DiagramOverlay2D_file : "calls filterEdges"
+DiagramOverlay2D_file --> filterEdges : "receives"
+useConnections --> loadingState : "calls getIsInitialLoading"
+loadingState --> getIsInitialLoading : "receives"
+useConnections --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections --> loadingState : "calls getIsInitialLoading"
+loadingState --> getIsInitialLoading : "receives"
+useConnections --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+useConnections --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+useConnections --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+useConnections --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+isConnectionVisible --> spatialIndexWorker : "calls isPointInFrustum"
+spatialIndexWorker --> isPointInFrustum : "receives"
+isConnectionVisible --> spatialIndexWorker : "calls isPointInFrustum"
+spatialIndexWorker --> isPointInFrustum : "receives"
+LandingApp --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> organizationService : "calls getPendingInvitesForUser"
+organizationService --> getPendingInvitesForUser : "receives"
 LandingApp --> authService : "calls signOut"
 authService --> signOut : "receives"
+LandingApp --> organizationService : "calls acceptInvite"
+organizationService --> acceptInvite : "receives"
+LandingApp --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> organizationService : "calls declineInvite"
+organizationService --> declineInvite : "receives"
+LandingApp --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> organizationService : "calls getPendingInvitesForUser"
+organizationService --> getPendingInvitesForUser : "receives"
+LandingApp --> authService : "calls signOut"
+authService --> signOut : "receives"
+LandingApp --> organizationService : "calls acceptInvite"
+organizationService --> acceptInvite : "receives"
+LandingApp --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> organizationService : "calls declineInvite"
+organizationService --> declineInvite : "receives"
+removeAllSharedReferences --> sharedSpacesService : "calls removeSharedSpaceReference"
+sharedSpacesService --> removeSharedSpaceReference : "receives"
+flushSaveBatch --> spatialPartitioning : "calls getCellCoordinates"
+spatialPartitioning --> getCellCoordinates : "receives"
+flushSaveBatch --> spatialPartitioning : "calls getCellId"
+spatialPartitioning --> getCellId : "receives"
+flushSaveBatch --> spatialPartitioning : "calls addObjectToCell"
+spatialPartitioning --> addObjectToCell : "receives"
+checkObjectMovement --> pathfindingUtils : "calls roundForCache"
+pathfindingUtils --> roundForCache : "receives"
+generateCacheKey --> pathfindingUtils : "calls roundForCache"
+pathfindingUtils --> roundForCache : "receives"
+generateCacheKey --> pathfindingUtils : "calls roundForCache"
+pathfindingUtils --> roundForCache : "receives"
+checkLineIntersection --> pathfindingUtils : "calls cleanCaches"
+pathfindingUtils --> cleanCaches : "receives"
+checkLineIntersection --> pathfindingUtils : "calls generateCacheKey"
+pathfindingUtils --> generateCacheKey : "receives"
+generateCurvedPath --> pathfindingUtils : "calls generateCacheKey"
+pathfindingUtils --> generateCacheKey : "receives"
+generateCurvedPath --> pathfindingUtils : "calls lineIntersectsBoundingBox"
+pathfindingUtils --> lineIntersectsBoundingBox : "receives"
+generateCurvedPath --> pathfindingUtils : "calls generateMultiSegmentPath"
+pathfindingUtils --> generateMultiSegmentPath : "receives"
+generateCurvedPath --> pathfindingUtils : "calls checkCurveIntersections"
+pathfindingUtils --> checkCurveIntersections : "receives"
+precomputeCacheKey --> pathfindingUtils : "calls roundForCache"
+pathfindingUtils --> roundForCache : "receives"
+precomputeCacheKey --> pathfindingUtils : "calls roundForCache"
+pathfindingUtils --> roundForCache : "receives"
+getPrecomputedResult --> pathfindingUtils : "calls precomputeCacheKey"
+pathfindingUtils --> precomputeCacheKey : "receives"
+computeConnectionPath --> pathfindingUtils : "calls getPrecomputedResult"
+pathfindingUtils --> getPrecomputedResult : "receives"
+computeConnectionPath --> pathfindingUtils : "calls checkLineIntersection"
+pathfindingUtils --> checkLineIntersection : "receives"
+computeConnectionPath --> pathfindingUtils : "calls generateCurvedPath"
+pathfindingUtils --> generateCurvedPath : "receives"
+precomputePathsBatch --> pathfindingWorkerClient : "calls getPathfindingWorker"
+pathfindingWorkerClient --> getPathfindingWorker : "receives"
+precomputePathsBatch --> pathfindingUtils : "calls precomputeCacheKey"
+pathfindingUtils --> precomputeCacheKey : "receives"
+isCameraMovingRapidly --> renderWorkScheduler : "calls isCameraMoving"
+renderWorkScheduler --> isCameraMoving : "receives"
+benchmarkStreamlined --> streamlinedSpatialIndex : "calls createStreamlinedSpatialIndex"
+streamlinedSpatialIndex --> createStreamlinedSpatialIndex : "receives"
+getGlobalTextAtlas --> textAtlas : "calls isOffscreenCanvasTextSupported"
+textAtlas --> isOffscreenCanvasTextSupported : "receives"
+createAtlasTextMesh --> textAtlas : "calls getGlobalTextAtlas"
+textAtlas --> getGlobalTextAtlas : "receives"
+filterConnections --> diagramLayoutWorker : "calls isHierarchyConnection"
+diagramLayoutWorker --> isHierarchyConnection : "receives"
+filterConnections --> diagramLayoutWorker : "calls isHierarchyConnection"
+diagramLayoutWorker --> isHierarchyConnection : "receives"
+layoutNodes --> diagramLayoutWorker : "calls estimateNodeSize"
+diagramLayoutWorker --> estimateNodeSize : "receives"
+layoutNodes --> diagramLayoutWorker : "calls estimateNodeSize"
+diagramLayoutWorker --> estimateNodeSize : "receives"
+layoutEdges --> diagramLayoutWorker : "calls filterConnections"
+diagramLayoutWorker --> filterConnections : "receives"
+
+%% Classes
+SpatialHash[[Class: SpatialHash]]
+CentralizedBroadcastManager[[Class: CentralizedBroadcastManager]]
+GlobalOptimizationCoordinator[[Class: GlobalOptimizationCoordinator]]
+MarkdownDiagramService[[Class: MarkdownDiagramService]]
+ResourceCleanupService[[Class: ResourceCleanupService]]
+ScreenRecordingService[[Class: ScreenRecordingService]]
+StreamlinedSpatialManager[[Class: StreamlinedSpatialManager]]
+UnifiedCacheManager[[Class: UnifiedCacheManager]]
+BroadcastSession[[Class: BroadcastSession]]
+BVHNode[[Class: BVHNode]]
+BVHAcceleratedRaycaster[[Class: BVHAcceleratedRaycaster]]
+FrameCounter[[Class: FrameCounter]]
+GPUResourceTracker[[Class: GPUResourceTracker]]
+ObjectVirtualizer[[Class: ObjectVirtualizer]]
+Point3D[[Class: Point3D]]
+BoundingBox[[Class: BoundingBox]]
+OptimizedSpatialGrid[[Class: OptimizedSpatialGrid]]
+TextAtlas[[Class: TextAtlas]]
+MultiPageTextAtlas[[Class: MultiPageTextAtlas]]
+WorkerMultiPageTextAtlas[[Class: WorkerMultiPageTextAtlas]]
+LayoutEngine[[Class: LayoutEngine]]
+AtlasPage[[Class: AtlasPage]]
+
+%% Worker Modules
+diagramLayoutWorker[Worker: diagramLayoutWorker]
+diagramLayoutWorkerClient[Worker: diagramLayoutWorkerClient]
+markdownLayoutWorker[Worker: markdownLayoutWorker]
+markdownLayoutWorkerClient[Worker: markdownLayoutWorkerClient]
+pathfindingWorkerClient[Worker: pathfindingWorkerClient]
+spatialIndexWorker[Worker: spatialIndexWorker]
+spatialIndexWorkerClient[Worker: spatialIndexWorkerClient]
+textAtlasWorker[Worker: textAtlasWorker]
+textAtlasWorkerClient[Worker: textAtlasWorkerClient]
+
+%% Store Usage Details
+DiagramOverlay2D --> useDiagramStore : "{graphs, hierarchy, connectionTags, setLayout2D, nodeToObjectIdMap, selectedNodeId, setSelectedNodeId}"
+DiagramOverlay2D --> useUIOverlayStore : "{setViewMode}"
+TextStyleUIContent --> useColorPickerStore : "{openColorPicker, closeColorPicker}"
 
 ```
