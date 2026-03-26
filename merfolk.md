@@ -42,9 +42,7 @@ getTextParametricT[Function: getTextParametricT]
 redistributeFaces[Function: redistributeFaces]
 pathToLineSegments[Function: pathToLineSegments]
 resolveEndpointPosition[Function: resolveEndpointPosition]
-faceMaterialProps[Function: faceMaterialProps]
 getFaceIndicatorProps[Function: getFaceIndicatorProps]
-faces[Function: faces]
 calculateFaceWorldPosition[Function: calculateFaceWorldPosition]
 flowPathColor[Function: flowPathColor]
 getEdgeStyle[Function: getEdgeStyle]
@@ -54,7 +52,6 @@ getUnselectedStyle[Function: getUnselectedStyle]
 MerfolkEdge_file[Function: MerfolkEdge_file]
 EdgeMarkerDefs_file[Function: EdgeMarkerDefs_file]
 MerfolkEdgeMemo[Function: MerfolkEdgeMemo]
-customEdgeTypes[Function: customEdgeTypes]
 buildNodeStyles[Function: buildNodeStyles]
 buildContainerStyles[Function: buildContainerStyles]
 buildPrecomputedNode[Function: buildPrecomputedNode]
@@ -62,7 +59,6 @@ MerfolkNode_file[Function: MerfolkNode_file]
 ContainerNode_file[Function: ContainerNode_file]
 MerfolkNodeMemo[Function: MerfolkNodeMemo]
 ContainerNodeMemo[Function: ContainerNodeMemo]
-customNodeTypes[Function: customNodeTypes]
 buildReactFlowNodes[Function: buildReactFlowNodes]
 buildReactFlowEdges[Function: buildReactFlowEdges]
 layerForType[Function: layerForType]
@@ -75,7 +71,6 @@ cubeTransformMap[Function: cubeTransformMap]
 dodecahedronTransformMap[Function: dodecahedronTransformMap]
 tetrahedronTransformMap[Function: tetrahedronTransformMap]
 TextStyleUIContent_file[Function: TextStyleUIContent_file]
-isValidFirebaseConfig[Function: isValidFirebaseConfig]
 useAuth[Function: useAuth]
 useAuthState[Function: useAuthState]
 useCentralizedBroadcastManager[Function: useCentralizedBroadcastManager]
@@ -159,55 +154,13 @@ initializeOptimizationCoordinator[Function: initializeOptimizationCoordinator]
 getOptimizationStatus[Function: getOptimizationStatus]
 consolidateSystem[Function: consolidateSystem]
 cleanupOptimizationCoordinator[Function: cleanupOptimizationCoordinator]
-SUBSCRIPTION_TYPES[Function: SUBSCRIPTION_TYPES]
 getOrCreateSubscription[Function: getOrCreateSubscription]
 forceCleanupSubscription[Function: forceCleanupSubscription]
 getSubscriptionMetrics[Function: getSubscriptionMetrics]
 cleanupAllSubscriptions[Function: cleanupAllSubscriptions]
-generateSubscriptionKey[Function: generateSubscriptionKey]
-connectionMethods[Function: connectionMethods]
-NODE_TYPE_COMPONENT[Function: NODE_TYPE_COMPONENT]
-NODE_TYPE_FUNCTION[Function: NODE_TYPE_FUNCTION]
-NODE_TYPE_STORE[Function: NODE_TYPE_STORE]
-NODE_TYPE_SERVICE[Function: NODE_TYPE_SERVICE]
-NODE_TYPE_LIBRARY[Function: NODE_TYPE_LIBRARY]
-NODE_TYPE_UTILITY[Function: NODE_TYPE_UTILITY]
-NODE_TYPE_DATAPATH[Function: NODE_TYPE_DATAPATH]
-NODE_TYPE_HANDLER[Function: NODE_TYPE_HANDLER]
-NODE_TYPE_CONTROL[Function: NODE_TYPE_CONTROL]
-NODE_TYPE_STATE[Function: NODE_TYPE_STATE]
-NODE_TYPE_DATA[Function: NODE_TYPE_DATA]
-NODE_TYPE_HOOK[Function: NODE_TYPE_HOOK]
-NODE_TYPE_MODULE[Function: NODE_TYPE_MODULE]
-NODE_TYPE_CLASS[Function: NODE_TYPE_CLASS]
-NODE_TYPE_INTERFACE[Function: NODE_TYPE_INTERFACE]
-NODE_TYPE_VARIABLE[Function: NODE_TYPE_VARIABLE]
-NODE_TYPE_CONSTANT[Function: NODE_TYPE_CONSTANT]
-OBJECT_TYPE_CUBE[Function: OBJECT_TYPE_CUBE]
-OBJECT_TYPE_DODECAHEDRON[Function: OBJECT_TYPE_DODECAHEDRON]
-OBJECT_TYPE_TETRAHEDRON[Function: OBJECT_TYPE_TETRAHEDRON]
-UI_COMPONENTS[Function: UI_COMPONENTS]
-MAX_RECURSION_DEPTH[Function: MAX_RECURSION_DEPTH]
-BASE_DODECAHEDRON_SIZE[Function: BASE_DODECAHEDRON_SIZE]
-BASE_DODECAHEDRON_RADIUS[Function: BASE_DODECAHEDRON_RADIUS]
-DEFAULT_CAMERA_DISTANCE[Function: DEFAULT_CAMERA_DISTANCE]
-SPACING_BETWEEN_COMPONENTS[Function: SPACING_BETWEEN_COMPONENTS]
-DEFAULT_CUBE_SIZE[Function: DEFAULT_CUBE_SIZE]
-DEFAULT_SPHERE_SIZE[Function: DEFAULT_SPHERE_SIZE]
-DEFAULT_CONTAINER_SIZE[Function: DEFAULT_CONTAINER_SIZE]
-MIN_SCALE_FACTOR[Function: MIN_SCALE_FACTOR]
-DESIRED_GAP[Function: DESIRED_GAP]
-GROUP_CONTAINER_COLORS[Function: GROUP_CONTAINER_COLORS]
 getGroupDisplayName[Function: getGroupDisplayName]
 getGroupColor[Function: getGroupColor]
-containerMethods[Function: containerMethods]
-hierarchyMethods[Function: hierarchyMethods]
-objectMethods[Function: objectMethods]
-positionMethods[Function: positionMethods]
-processMethods[Function: processMethods]
-scaleMethods[Function: scaleMethods]
 markdownDiagramService[Function: markdownDiagramService]
-PLAN_LIMITS[Function: PLAN_LIMITS]
 createOrganization[Function: createOrganization]
 getUserOrganizations[Function: getUserOrganizations]
 getOrganizationById[Function: getOrganizationById]
@@ -268,10 +221,6 @@ updateObject[Function: updateObject]
 subscribeToObjects[Function: subscribeToObjects]
 getObjectDeletionStatus[Function: getObjectDeletionStatus]
 clearObjectDeletionBlacklist[Function: clearObjectDeletionBlacklist]
-CELL_SIZE[Function: CELL_SIZE]
-CELL_NEIGHBOR_RADIUS[Function: CELL_NEIGHBOR_RADIUS]
-CELL_UNLOAD_DISTANCE[Function: CELL_UNLOAD_DISTANCE]
-CELL_BOUNDARY_HYSTERESIS[Function: CELL_BOUNDARY_HYSTERESIS]
 getCellCoordinates[Function: getCellCoordinates]
 getCellCoordinatesWithHysteresis[Function: getCellCoordinatesWithHysteresis]
 getCellId[Function: getCellId]
@@ -316,9 +265,6 @@ uploadMarkdownToStorage[Function: uploadMarkdownToStorage]
 getStreamlinedSpatialManager[Function: getStreamlinedSpatialManager]
 initializeStreamlinedSpatialPartitioning[Function: initializeStreamlinedSpatialPartitioning]
 benchmarkStreamlinedSystem[Function: benchmarkStreamlinedSystem]
-cellExistenceCache[Function: cellExistenceCache]
-connectionCache[Function: connectionCache]
-memoizationCache[Function: memoizationCache]
 initWebRTC[Function: initWebRTC]
 startBroadcasting[Function: startBroadcasting]
 joinBroadcast[Function: joinBroadcast]
@@ -332,15 +278,8 @@ getCubeSelector[Function: getCubeSelector]
 getCubeFaceColorSelector[Function: getCubeFaceColorSelector]
 getCubeSelectedFaceSelector[Function: getCubeSelectedFaceSelector]
 getCubeFaceStateSelector[Function: getCubeFaceStateSelector]
-LOD_THRESHOLDS[Function: LOD_THRESHOLDS]
-LOD_THRESHOLDS_SQ[Function: LOD_THRESHOLDS_SQ]
-LOD_THRESHOLDS_PARENT[Function: LOD_THRESHOLDS_PARENT]
-LOD_THRESHOLDS_PARENT_SQ[Function: LOD_THRESHOLDS_PARENT_SQ]
-LOD_LEVELS[Function: LOD_LEVELS]
 calculateLODLevel[Function: calculateLODLevel]
 calculateParentLODLevel[Function: calculateParentLODLevel]
-FACE_TEXT_DISTANCE[Function: FACE_TEXT_DISTANCE]
-FACE_TEXT_DISTANCE_SQ[Function: FACE_TEXT_DISTANCE_SQ]
 useStoreInitialization[Function: useStoreInitialization]
 useCubeSelectors[Function: useCubeSelectors]
 useCubeActions[Function: useCubeActions]
@@ -372,7 +311,6 @@ isInConnectionCreationMode[Function: isInConnectionCreationMode]
 startConnectionCreation[Function: startConnectionCreation]
 completeConnectionCreation[Function: completeConnectionCreation]
 cancelConnectionCreation[Function: cancelConnectionCreation]
-ANIMATION_DEBUG[Function: ANIMATION_DEBUG]
 logAnimation[Function: logAnimation]
 forceAnimateConnection[Function: forceAnimateConnection]
 shouldAnimateConnection[Function: shouldAnimateConnection]
@@ -452,7 +390,6 @@ validateUrl[Function: validateUrl]
 validateEmail[Function: validateEmail]
 validateArray[Function: validateArray]
 validateMultiple[Function: validateMultiple]
-ValidationUtils[Function: ValidationUtils]
 estimateNodeSize[Function: estimateNodeSize]
 isHierarchyConnection[Function: isHierarchyConnection]
 filterConnections[Function: filterConnections]
@@ -634,7 +571,6 @@ GlobalCubeEdgesRenderer[Function: GlobalCubeEdgesRenderer]
 GlobalDodecahedronEdgesRenderer[Function: GlobalDodecahedronEdgesRenderer]
 GlobalTetrahedronEdgesRenderer[Function: GlobalTetrahedronEdgesRenderer]
 TextStyleUI[Function: TextStyleUI]
-firebase[Function: firebase]
 useAuth_file[Function: useAuth]
 useAuthState_file[Function: useAuthState]
 useCentralizedBroadcastManager_file[Function: useCentralizedBroadcastManager]
@@ -672,14 +608,7 @@ connectionsService[Function: connectionsService]
 githubRepoService[Function: githubRepoService]
 globalOptimizationCoordinator[Function: globalOptimizationCoordinator]
 globalSubscriptionManager[Function: globalSubscriptionManager]
-connectionMethods_file[Function: connectionMethods]
 constants[Function: constants]
-containerMethods_file[Function: containerMethods]
-hierarchyMethods_file[Function: hierarchyMethods]
-objectMethods_file[Function: objectMethods]
-positionMethods_file[Function: positionMethods]
-processMethods_file[Function: processMethods]
-scaleMethods_file[Function: scaleMethods]
 markdownDiagramService_file[Function: markdownDiagramService]
 organizationService[Function: organizationService]
 presenceService[Function: presenceService]
@@ -761,9 +690,7 @@ ConnectionsRenderer -.-> getTextParametricT : "contains"
 ConnectionsRenderer -.-> redistributeFaces : "contains"
 ConnectionsRenderer -.-> pathToLineSegments : "contains"
 ConnectionsRenderer -.-> resolveEndpointPosition : "contains"
-cubeHelpers -.-> faceMaterialProps : "contains"
 cubeHelpers -.-> getFaceIndicatorProps : "contains"
-cubeHelpers -.-> faces : "contains"
 cubeHelpers -.-> calculateFaceWorldPosition : "contains"
 EdgeTypes -.-> flowPathColor : "contains"
 EdgeTypes -.-> getEdgeStyle : "contains"
@@ -773,7 +700,6 @@ EdgeTypes -.-> getUnselectedStyle : "contains"
 EdgeTypes -.-> MerfolkEdge : "contains"
 EdgeTypes -.-> EdgeMarkerDefs : "contains"
 EdgeTypes -.-> MerfolkEdgeMemo : "contains"
-EdgeTypes -.-> customEdgeTypes : "contains"
 NodeTypes -.-> buildNodeStyles : "contains"
 NodeTypes -.-> buildContainerStyles : "contains"
 NodeTypes -.-> buildPrecomputedNode : "contains"
@@ -781,7 +707,6 @@ NodeTypes -.-> MerfolkNode : "contains"
 NodeTypes -.-> ContainerNode : "contains"
 NodeTypes -.-> MerfolkNodeMemo : "contains"
 NodeTypes -.-> ContainerNodeMemo : "contains"
-NodeTypes -.-> customNodeTypes : "contains"
 DiagramOverlay2D_file -.-> buildReactFlowNodes : "contains"
 DiagramOverlay2D_file -.-> buildReactFlowEdges : "contains"
 DiagramOverlay2D_file -.-> layerForType : "contains"
@@ -794,7 +719,6 @@ GlobalCubeEdgesRenderer -.-> cubeTransformMap : "contains"
 GlobalDodecahedronEdgesRenderer -.-> dodecahedronTransformMap : "contains"
 GlobalTetrahedronEdgesRenderer -.-> tetrahedronTransformMap : "contains"
 TextStyleUI -.-> TextStyleUIContent : "contains"
-firebase -.-> isValidFirebaseConfig : "contains"
 useAuth_file -.-> useAuth : "contains"
 useAuthState_file -.-> useAuthState : "contains"
 useCentralizedBroadcastManager_file -.-> useCentralizedBroadcastManager : "contains"
@@ -881,56 +805,14 @@ globalOptimizationCoordinator -.-> initializeOptimizationCoordinator : "contains
 globalOptimizationCoordinator -.-> getOptimizationStatus : "contains"
 globalOptimizationCoordinator -.-> consolidateSystem : "contains"
 globalOptimizationCoordinator -.-> cleanupOptimizationCoordinator : "contains"
-globalSubscriptionManager -.-> SUBSCRIPTION_TYPES : "contains"
 globalSubscriptionManager -.-> getOrCreateSubscription : "contains"
 globalSubscriptionManager -.-> forceCleanupSubscription : "contains"
 globalSubscriptionManager -.-> getSubscriptionMetrics : "contains"
 globalSubscriptionManager -.-> cleanupAllSubscriptions : "contains"
-globalSubscriptionManager -.-> generateSubscriptionKey : "contains"
-connectionMethods_file -.-> connectionMethods : "contains"
-constants -.-> NODE_TYPE_COMPONENT : "contains"
-constants -.-> NODE_TYPE_FUNCTION : "contains"
-constants -.-> NODE_TYPE_STORE : "contains"
-constants -.-> NODE_TYPE_SERVICE : "contains"
-constants -.-> NODE_TYPE_LIBRARY : "contains"
-constants -.-> NODE_TYPE_UTILITY : "contains"
-constants -.-> NODE_TYPE_DATAPATH : "contains"
-constants -.-> NODE_TYPE_HANDLER : "contains"
-constants -.-> NODE_TYPE_CONTROL : "contains"
-constants -.-> NODE_TYPE_STATE : "contains"
-constants -.-> NODE_TYPE_DATA : "contains"
-constants -.-> NODE_TYPE_HOOK : "contains"
-constants -.-> NODE_TYPE_MODULE : "contains"
-constants -.-> NODE_TYPE_CLASS : "contains"
-constants -.-> NODE_TYPE_INTERFACE : "contains"
-constants -.-> NODE_TYPE_VARIABLE : "contains"
-constants -.-> NODE_TYPE_CONSTANT : "contains"
-constants -.-> OBJECT_TYPE_CUBE : "contains"
-constants -.-> OBJECT_TYPE_DODECAHEDRON : "contains"
-constants -.-> OBJECT_TYPE_TETRAHEDRON : "contains"
-constants -.-> UI_COMPONENTS : "contains"
-constants -.-> MAX_RECURSION_DEPTH : "contains"
-constants -.-> BASE_DODECAHEDRON_SIZE : "contains"
-constants -.-> BASE_DODECAHEDRON_RADIUS : "contains"
-constants -.-> DEFAULT_CAMERA_DISTANCE : "contains"
-constants -.-> SPACING_BETWEEN_COMPONENTS : "contains"
-constants -.-> DEFAULT_CUBE_SIZE : "contains"
-constants -.-> DEFAULT_SPHERE_SIZE : "contains"
-constants -.-> DEFAULT_CONTAINER_SIZE : "contains"
-constants -.-> MIN_SCALE_FACTOR : "contains"
-constants -.-> DESIRED_GAP : "contains"
-constants -.-> GROUP_CONTAINER_COLORS : "contains"
 constants -.-> getGroupDisplayName : "contains"
 constants -.-> getGroupColor : "contains"
-containerMethods_file -.-> containerMethods : "contains"
-hierarchyMethods_file -.-> hierarchyMethods : "contains"
-objectMethods_file -.-> objectMethods : "contains"
-positionMethods_file -.-> positionMethods : "contains"
-processMethods_file -.-> processMethods : "contains"
-scaleMethods_file -.-> scaleMethods : "contains"
 markdownDiagramService_file -.-> MarkdownDiagramService : "contains"
 markdownDiagramService_file -.-> markdownDiagramService : "contains"
-organizationService -.-> PLAN_LIMITS : "contains"
 organizationService -.-> createOrganization : "contains"
 organizationService -.-> getUserOrganizations : "contains"
 organizationService -.-> getOrganizationById : "contains"
@@ -988,10 +870,6 @@ spatialObjectsService -.-> updateObject : "contains"
 spatialObjectsService -.-> subscribeToObjects : "contains"
 spatialObjectsService -.-> getObjectDeletionStatus : "contains"
 spatialObjectsService -.-> clearObjectDeletionBlacklist : "contains"
-spatialPartitioning -.-> CELL_SIZE : "contains"
-spatialPartitioning -.-> CELL_NEIGHBOR_RADIUS : "contains"
-spatialPartitioning -.-> CELL_UNLOAD_DISTANCE : "contains"
-spatialPartitioning -.-> CELL_BOUNDARY_HYSTERESIS : "contains"
 spatialPartitioning -.-> getCellCoordinates : "contains"
 spatialPartitioning -.-> getCellCoordinatesWithHysteresis : "contains"
 spatialPartitioning -.-> getCellId : "contains"
@@ -1039,10 +917,6 @@ streamlinedSpatialPartitioning -.-> getStreamlinedSpatialManager : "contains"
 streamlinedSpatialPartitioning -.-> initializeStreamlinedSpatialPartitioning : "contains"
 streamlinedSpatialPartitioning -.-> benchmarkStreamlinedSystem : "contains"
 unifiedCacheManager -.-> UnifiedCacheManager : "contains"
-unifiedCacheManager -.-> cellExistenceCache : "contains"
-unifiedCacheManager -.-> connectionCache : "contains"
-unifiedCacheManager -.-> objectsCache : "contains"
-unifiedCacheManager -.-> memoizationCache : "contains"
 webRservice -.-> initWebRTC : "contains"
 webRservice -.-> BroadcastSession : "contains"
 webRservice -.-> startBroadcasting : "contains"
@@ -1068,15 +942,8 @@ cubeStore -.-> getCubeSelector : "contains"
 cubeStore -.-> getCubeFaceColorSelector : "contains"
 cubeStore -.-> getCubeSelectedFaceSelector : "contains"
 cubeStore -.-> getCubeFaceStateSelector : "contains"
-lodStore -.-> LOD_THRESHOLDS : "contains"
-lodStore -.-> LOD_THRESHOLDS_SQ : "contains"
-lodStore -.-> LOD_THRESHOLDS_PARENT : "contains"
-lodStore -.-> LOD_THRESHOLDS_PARENT_SQ : "contains"
-lodStore -.-> LOD_LEVELS : "contains"
 lodStore -.-> calculateLODLevel : "contains"
 lodStore -.-> calculateParentLODLevel : "contains"
-lodStore -.-> FACE_TEXT_DISTANCE : "contains"
-lodStore -.-> FACE_TEXT_DISTANCE_SQ : "contains"
 storeUtils -.-> useStoreInitialization : "contains"
 storeUtils -.-> useCubeSelectors : "contains"
 storeUtils -.-> useCubeActions : "contains"
@@ -1110,7 +977,6 @@ connectionUtils -.-> isInConnectionCreationMode : "contains"
 connectionUtils -.-> startConnectionCreation : "contains"
 connectionUtils -.-> completeConnectionCreation : "contains"
 connectionUtils -.-> cancelConnectionCreation : "contains"
-debugUtils -.-> ANIMATION_DEBUG : "contains"
 debugUtils -.-> logAnimation : "contains"
 debugUtils -.-> forceAnimateConnection : "contains"
 debugUtils -.-> shouldAnimateConnection : "contains"
@@ -1201,7 +1067,6 @@ unifiedValidationUtils -.-> validateUrl : "contains"
 unifiedValidationUtils -.-> validateEmail : "contains"
 unifiedValidationUtils -.-> validateArray : "contains"
 unifiedValidationUtils -.-> validateMultiple : "contains"
-unifiedValidationUtils -.-> ValidationUtils : "contains"
 diagramLayoutWorker -.-> estimateNodeSize : "contains"
 diagramLayoutWorker -.-> isHierarchyConnection : "contains"
 diagramLayoutWorker -.-> filterConnections : "contains"
@@ -2014,31 +1879,270 @@ WorkerMultiPageTextAtlas[[Class: WorkerMultiPageTextAtlas]]
 LayoutEngine[[Class: LayoutEngine]]
 AtlasPage[[Class: AtlasPage]]
 
-%% Worker Modules
-diagramLayoutWorker[Worker: diagramLayoutWorker]
-diagramLayoutWorkerClient[Worker: diagramLayoutWorkerClient]
-markdownLayoutWorker[Worker: markdownLayoutWorker]
-markdownLayoutWorkerClient[Worker: markdownLayoutWorkerClient]
-pathfindingWorkerClient[Worker: pathfindingWorkerClient]
-spatialIndexWorker[Worker: spatialIndexWorker]
-spatialIndexWorkerClient[Worker: spatialIndexWorkerClient]
-textAtlasWorker[Worker: textAtlasWorker]
-textAtlasWorkerClient[Worker: textAtlasWorkerClient]
+%% Constants
+MAX_EVENT_HANDLERS[Constant: MAX_EVENT_HANDLERS]
+MAX_API_CALLS[Constant: MAX_API_CALLS]
+ALLOWED_ORIGINS[Constant: ALLOWED_ORIGINS]
+THROTTLE_FACE_TEXT[Constant: THROTTLE_FACE_TEXT]
+THROTTLE_HEADER_TEXT[Constant: THROTTLE_HEADER_TEXT]
+THROTTLE_CONNECTION_TEXT[Constant: THROTTLE_CONNECTION_TEXT]
+THROTTLE_STANDARD[Constant: THROTTLE_STANDARD]
+LINE_COLOR[Constant: LINE_COLOR]
+UPDATE_INTERVAL[Constant: UPDATE_INTERVAL]
+CUBE_FACE_NAMES[Constant: CUBE_FACE_NAMES]
+TETRA_FACE_NAMES[Constant: TETRA_FACE_NAMES]
+EMPTY_CONNECTIONS[Constant: EMPTY_CONNECTIONS]
+DEFAULT_COLOR[Constant: DEFAULT_COLOR]
+DEFAULT_TEXT_STYLE[Constant: DEFAULT_TEXT_STYLE]
+DEFAULT_FACE_TEXT_STYLES[Constant: DEFAULT_FACE_TEXT_STYLES]
+CUBE_SIZE[Constant: CUBE_SIZE]
+cubeEdges[Constant: cubeEdges]
+FACE_SIZE[Constant: FACE_SIZE]
+SELECTED_OPACITY[Constant: SELECTED_OPACITY]
+materialCache[Constant: materialCache]
+faceMaterialProps[Constant: faceMaterialProps]
+faces[Constant: faces]
+FLOW_PATH_COLORS[Constant: FLOW_PATH_COLORS]
+EDGE_STYLES[Constant: EDGE_STYLES]
+DEFAULT_EDGE_STYLE[Constant: DEFAULT_EDGE_STYLE]
+MARKER_ARROW[Constant: MARKER_ARROW]
+MARKER_INHERIT[Constant: MARKER_INHERIT]
+LABEL_CSS_CLASS[Constant: LABEL_CSS_CLASS]
+customEdgeTypes[Constant: customEdgeTypes]
+TYPE_STYLES[Constant: TYPE_STYLES]
+DEFAULT_STYLE[Constant: DEFAULT_STYLE]
+HIDDEN_HANDLE_STYLE[Constant: HIDDEN_HANDLE_STYLE]
+BOX_SHADOW_SELECTED[Constant: BOX_SHADOW_SELECTED]
+BOX_SHADOW_DEFAULT[Constant: BOX_SHADOW_DEFAULT]
+PRECOMPUTED_NODE[Constant: PRECOMPUTED_NODE]
+PRECOMPUTED_CONTAINER[Constant: PRECOMPUTED_CONTAINER]
+customNodeTypes[Constant: customNodeTypes]
+LAYER_DEFS[Constant: LAYER_DEFS]
+DEFAULT_LAYERS[Constant: DEFAULT_LAYERS]
+MINIMAP_COLORS[Constant: MINIMAP_COLORS]
+LEGEND_SWATCH_STYLES[Constant: LEGEND_SWATCH_STYLES]
+PRO_OPTIONS[Constant: PRO_OPTIONS]
+OVERLAY_STYLE[Constant: OVERLAY_STYLE]
+LOADING_OVERLAY_STYLE[Constant: LOADING_OVERLAY_STYLE]
+ERROR_STYLE[Constant: ERROR_STYLE]
+NO_DATA_OVERLAY_STYLE[Constant: NO_DATA_OVERLAY_STYLE]
+MINIMAP_STYLE[Constant: MINIMAP_STYLE]
+SELECTED_NODE_STYLE[Constant: SELECTED_NODE_STYLE]
+DIVIDER_STYLE[Constant: DIVIDER_STYLE]
+SECTION_HEADER_STYLE[Constant: SECTION_HEADER_STYLE]
+CHECKBOX_STYLE[Constant: CHECKBOX_STYLE]
+LEGEND_PANEL_STYLE[Constant: LEGEND_PANEL_STYLE]
+LEGEND_ITEM_STYLE[Constant: LEGEND_ITEM_STYLE]
+LEGEND_TEXT_STYLE[Constant: LEGEND_TEXT_STYLE]
+panelStyle[Constant: panelStyle]
+backButtonStyle[Constant: backButtonStyle]
+filterLabelStyle[Constant: filterLabelStyle]
+selectStyle[Constant: selectStyle]
+dodecahedronFaceMaterialCache[Constant: dodecahedronFaceMaterialCache]
+DEBUG[Constant: DEBUG]
+indicatorMaterialCache[Constant: indicatorMaterialCache]
+FRUSTUM_CULLING_THRESHOLD[Constant: FRUSTUM_CULLING_THRESHOLD]
+BASE_CUBE_EDGES[Constant: BASE_CUBE_EDGES]
+EDGES_PER_CUBE[Constant: EDGES_PER_CUBE]
+NORMAL_OFFSET[Constant: NORMAL_OFFSET]
+CUBE_FACES[Constant: CUBE_FACES]
+FACE_QUATERNIONS[Constant: FACE_QUATERNIONS]
+PHI[Constant: PHI]
+DODECA_SCALE[Constant: DODECA_SCALE]
+DODECA_EDGES[Constant: DODECA_EDGES]
+EDGES_PER_DODECAHEDRON[Constant: EDGES_PER_DODECAHEDRON]
+TETRAHEDRON_SIZE[Constant: TETRAHEDRON_SIZE]
+TETRA_VERTICES[Constant: TETRA_VERTICES]
+TETRA_EDGES[Constant: TETRA_EDGES]
+EDGES_PER_TETRAHEDRON[Constant: EDGES_PER_TETRAHEDRON]
+VERTEX_SHADER[Constant: VERTEX_SHADER]
+FRAGMENT_SHADER[Constant: FRAGMENT_SHADER]
+LOD_UPDATE_INTERVAL[Constant: LOD_UPDATE_INTERVAL]
+CAMERA_MOVE_THRESHOLD[Constant: CAMERA_MOVE_THRESHOLD]
+CAMERA_MOVE_THRESHOLD_SQ[Constant: CAMERA_MOVE_THRESHOLD_SQ]
+LOD_UPGRADE_BUDGET_PER_FRAME[Constant: LOD_UPGRADE_BUDGET_PER_FRAME]
+FRAME_TIME_THROTTLE_MS[Constant: FRAME_TIME_THROTTLE_MS]
+TRANSFORM_CONTROLS_CONFIG[Constant: TRANSFORM_CONTROLS_CONFIG]
+MOUNT_BUDGET[Constant: MOUNT_BUDGET]
+MOUNT_BUDGET_MOVING[Constant: MOUNT_BUDGET_MOVING]
+PROGRESSIVE_THRESHOLD[Constant: PROGRESSIVE_THRESHOLD]
+INITIAL_LOAD[Constant: INITIAL_LOAD]
+PAGE_SIZE[Constant: PAGE_SIZE]
+tetrahedronVertices[Constant: tetrahedronVertices]
+SHARED_TETRAHEDRON_FACES[Constant: SHARED_TETRAHEDRON_FACES]
+DEFAULT_OPACITY[Constant: DEFAULT_OPACITY]
+tetrahedronFaceMaterialCache[Constant: tetrahedronFaceMaterialCache]
+WEBCAM_CONSTRAINTS[Constant: WEBCAM_CONSTRAINTS]
+firebaseConfig[Constant: firebaseConfig]
+isValidFirebaseConfig[Constant: isValidFirebaseConfig]
+CLEANUP_INTERVAL[Constant: CLEANUP_INTERVAL]
+DEFAULT_EXCLUDE_SELECTORS[Constant: DEFAULT_EXCLUDE_SELECTORS]
+FONT_FAMILY[Constant: FONT_FAMILY]
+PLAN_LABELS[Constant: PLAN_LABELS]
+btnBase[Constant: btnBase]
+btnPrimary[Constant: btnPrimary]
+btnSecondary[Constant: btnSecondary]
+btnDanger[Constant: btnDanger]
+TABLE_STYLES[Constant: TABLE_STYLES]
+LINK_STYLES[Constant: LINK_STYLES]
+BTN_STYLES[Constant: BTN_STYLES]
+SHARE_BTN_STYLES[Constant: SHARE_BTN_STYLES]
+TRASH_BTN_STYLES[Constant: TRASH_BTN_STYLES]
+LEAVE_BTN_STYLES[Constant: LEAVE_BTN_STYLES]
+INVITE_BANNER_BASE[Constant: INVITE_BANNER_BASE]
+INVITE_TEXT_STYLES[Constant: INVITE_TEXT_STYLES]
+INVITE_BTN_ROW[Constant: INVITE_BTN_ROW]
+ACCEPT_BTN_STYLES[Constant: ACCEPT_BTN_STYLES]
+NO_SPACES_TEXT[Constant: NO_SPACES_TEXT]
+TIER_LIMITS[Constant: TIER_LIMITS]
+GITHUB_API_BASE[Constant: GITHUB_API_BASE]
+MAX_SUBSCRIPTION_AGE[Constant: MAX_SUBSCRIPTION_AGE]
+SUBSCRIPTION_TYPES[Constant: SUBSCRIPTION_TYPES]
+subscriptionMetrics[Constant: subscriptionMetrics]
+generateSubscriptionKey[Constant: generateSubscriptionKey]
+connectionMethods[Constant: connectionMethods]
+NODE_TYPE_COMPONENT[Constant: NODE_TYPE_COMPONENT]
+NODE_TYPE_FUNCTION[Constant: NODE_TYPE_FUNCTION]
+NODE_TYPE_STORE[Constant: NODE_TYPE_STORE]
+NODE_TYPE_SERVICE[Constant: NODE_TYPE_SERVICE]
+NODE_TYPE_LIBRARY[Constant: NODE_TYPE_LIBRARY]
+NODE_TYPE_UTILITY[Constant: NODE_TYPE_UTILITY]
+NODE_TYPE_DATAPATH[Constant: NODE_TYPE_DATAPATH]
+NODE_TYPE_HANDLER[Constant: NODE_TYPE_HANDLER]
+NODE_TYPE_CONTROL[Constant: NODE_TYPE_CONTROL]
+NODE_TYPE_STATE[Constant: NODE_TYPE_STATE]
+NODE_TYPE_DATA[Constant: NODE_TYPE_DATA]
+NODE_TYPE_HOOK[Constant: NODE_TYPE_HOOK]
+NODE_TYPE_MODULE[Constant: NODE_TYPE_MODULE]
+NODE_TYPE_CLASS[Constant: NODE_TYPE_CLASS]
+NODE_TYPE_INTERFACE[Constant: NODE_TYPE_INTERFACE]
+NODE_TYPE_VARIABLE[Constant: NODE_TYPE_VARIABLE]
+NODE_TYPE_CONSTANT[Constant: NODE_TYPE_CONSTANT]
+OBJECT_TYPE_CUBE[Constant: OBJECT_TYPE_CUBE]
+OBJECT_TYPE_DODECAHEDRON[Constant: OBJECT_TYPE_DODECAHEDRON]
+OBJECT_TYPE_TETRAHEDRON[Constant: OBJECT_TYPE_TETRAHEDRON]
+UI_COMPONENTS[Constant: UI_COMPONENTS]
+MAX_RECURSION_DEPTH[Constant: MAX_RECURSION_DEPTH]
+BASE_DODECAHEDRON_SIZE[Constant: BASE_DODECAHEDRON_SIZE]
+BASE_DODECAHEDRON_RADIUS[Constant: BASE_DODECAHEDRON_RADIUS]
+DEFAULT_CAMERA_DISTANCE[Constant: DEFAULT_CAMERA_DISTANCE]
+SPACING_BETWEEN_COMPONENTS[Constant: SPACING_BETWEEN_COMPONENTS]
+DEFAULT_CUBE_SIZE[Constant: DEFAULT_CUBE_SIZE]
+DEFAULT_SPHERE_SIZE[Constant: DEFAULT_SPHERE_SIZE]
+DEFAULT_CONTAINER_SIZE[Constant: DEFAULT_CONTAINER_SIZE]
+MIN_SCALE_FACTOR[Constant: MIN_SCALE_FACTOR]
+DESIRED_GAP[Constant: DESIRED_GAP]
+GROUP_CONTAINER_COLORS[Constant: GROUP_CONTAINER_COLORS]
+GROUP_DISPLAY_NAMES[Constant: GROUP_DISPLAY_NAMES]
+containerMethods[Constant: containerMethods]
+hierarchyMethods[Constant: hierarchyMethods]
+objectMethods[Constant: objectMethods]
+positionMethods[Constant: positionMethods]
+processMethods[Constant: processMethods]
+scaleMethods[Constant: scaleMethods]
+PLAN_LIMITS[Constant: PLAN_LIMITS]
+SHARED_SPACES_CACHE_MAX[Constant: SHARED_SPACES_CACHE_MAX]
+BATCH_FLUSH_DELAY[Constant: BATCH_FLUSH_DELAY]
+CELL_SIZE[Constant: CELL_SIZE]
+CELL_NEIGHBOR_RADIUS[Constant: CELL_NEIGHBOR_RADIUS]
+CELL_UNLOAD_DISTANCE[Constant: CELL_UNLOAD_DISTANCE]
+CELL_BOUNDARY_HYSTERESIS[Constant: CELL_BOUNDARY_HYSTERESIS]
+CACHE_DURATION[Constant: CACHE_DURATION]
+MAX_CACHE_SIZE[Constant: MAX_CACHE_SIZE]
+MOVE_TIMEOUT[Constant: MOVE_TIMEOUT]
+MAX_IMAGE_SIZE[Constant: MAX_IMAGE_SIZE]
+MAX_MODEL_SIZE[Constant: MAX_MODEL_SIZE]
+CACHE_CONFIG[Constant: CACHE_CONFIG]
+cellExistenceCache[Constant: cellExistenceCache]
+connectionCache[Constant: connectionCache]
+objectsCache[Constant: objectsCache]
+memoizationCache[Constant: memoizationCache]
+LOD_THRESHOLDS[Constant: LOD_THRESHOLDS]
+LOD_THRESHOLDS_SQ[Constant: LOD_THRESHOLDS_SQ]
+LOD_THRESHOLDS_PARENT[Constant: LOD_THRESHOLDS_PARENT]
+LOD_THRESHOLDS_PARENT_SQ[Constant: LOD_THRESHOLDS_PARENT_SQ]
+LOD_LEVELS[Constant: LOD_LEVELS]
+FACE_TEXT_DISTANCE[Constant: FACE_TEXT_DISTANCE]
+FACE_TEXT_DISTANCE_SQ[Constant: FACE_TEXT_DISTANCE_SQ]
+ANIMATION_DEBUG[Constant: ANIMATION_DEBUG]
+perfMetrics[Constant: perfMetrics]
+NUMERIC_FACE_RE[Constant: NUMERIC_FACE_RE]
+_PHI[Constant: _PHI]
+_DODECA_SCALE[Constant: _DODECA_SCALE]
+_DODECA_VERTICES[Constant: _DODECA_VERTICES]
+_DODECA_FACES[Constant: _DODECA_FACES]
+_TETRA_SIZE[Constant: _TETRA_SIZE]
+_TETRA_VERTICES[Constant: _TETRA_VERTICES]
+_TETRA_FACE_CENTERS[Constant: _TETRA_FACE_CENTERS]
+_NUMERIC_TO_CUBE_FACE[Constant: _NUMERIC_TO_CUBE_FACE]
+WARN_GEOMETRIES[Constant: WARN_GEOMETRIES]
+WARN_MATERIALS[Constant: WARN_MATERIALS]
+WARN_TEXTURES[Constant: WARN_TEXTURES]
+CACHE_LIFETIME[Constant: CACHE_LIFETIME]
+POSITION_PRECISION[Constant: POSITION_PRECISION]
+CLEAN_PROBABILITY[Constant: CLEAN_PROBABILITY]
+FRAME_TIME_BUDGET_MS[Constant: FRAME_TIME_BUDGET_MS]
+BAD_FRAME_THRESHOLD[Constant: BAD_FRAME_THRESHOLD]
+MOVE_COUNT_WINDOW_MS[Constant: MOVE_COUNT_WINDOW_MS]
+MOVE_SETTLE_MS[Constant: MOVE_SETTLE_MS]
+SNAP_THRESHOLD[Constant: SNAP_THRESHOLD]
+tempPoint[Constant: tempPoint]
+tempBounds[Constant: tempBounds]
+PAGE_MAX_SIZE[Constant: PAGE_MAX_SIZE]
+MAX_PAGES[Constant: MAX_PAGES]
+ValidationUtils[Constant: ValidationUtils]
+BASE_NODE_WIDTH[Constant: BASE_NODE_WIDTH]
+BASE_NODE_HEIGHT[Constant: BASE_NODE_HEIGHT]
+CHAR_WIDTH[Constant: CHAR_WIDTH]
+MIN_NODE_WIDTH[Constant: MIN_NODE_WIDTH]
+MAX_NODE_WIDTH[Constant: MAX_NODE_WIDTH]
+LAYER_SPACING[Constant: LAYER_SPACING]
+NODE_SPACING[Constant: NODE_SPACING]
+CONTAINER_PAD_TOP[Constant: CONTAINER_PAD_TOP]
+CONTAINER_PAD[Constant: CONTAINER_PAD]
+CONN_CONTROLFLOW[Constant: CONN_CONTROLFLOW]
+CONN_DOTTED[Constant: CONN_DOTTED]
+CONN_DATAFLOW[Constant: CONN_DATAFLOW]
+workerApi[Constant: workerApi]
+LOD_CHILD_FULL_SQ[Constant: LOD_CHILD_FULL_SQ]
+LOD_CHILD_MEDIUM_SQ[Constant: LOD_CHILD_MEDIUM_SQ]
+LOD_PARENT_FULL_SQ[Constant: LOD_PARENT_FULL_SQ]
+LOD_PARENT_MEDIUM_SQ[Constant: LOD_PARENT_MEDIUM_SQ]
+PADDING[Constant: PADDING]
+pages[Constant: pages]
 
-%% Web Workers
-estimateNodeSize[Worker: estimateNodeSize]
-isHierarchyConnection[Worker: isHierarchyConnection]
-filterConnections[Worker: filterConnections]
-layoutNodes[Worker: layoutNodes]
-layoutEdges[Worker: layoutEdges]
-parseFlowPaths[Worker: parseFlowPaths]
-stripFlowPathSyntax[Worker: stripFlowPathSyntax]
-computeHeaderStyle[Worker: computeHeaderStyle]
-childLOD[Worker: childLOD]
-parentLOD[Worker: parentLOD]
-isPointInFrustum[Worker: isPointInFrustum]
-getKey[Worker: getKey]
-addPage[Worker: addPage]
+%% Variables
+isNetworkEnabled[Variable: isNetworkEnabled]
+listenersArePaused[Variable: listenersArePaused]
+batchFlushTimer[Variable: batchFlushTimer]
+_storageInstance[Variable: _storageInstance]
+globalStreamlinedManager[Variable: globalStreamlinedManager]
+_pendingSetObjectsTimer[Variable: _pendingSetObjectsTimer]
+isAnimating[Variable: isAnimating]
+lastTimestamp[Variable: lastTimestamp]
+animationSpeed[Variable: animationSpeed]
+animationFrame[Variable: animationFrame]
+globalBVH[Variable: globalBVH]
+lastLODUpdateTime[Variable: lastLODUpdateTime]
+isInitialLoading[Variable: isInitialLoading]
+_workerBusy[Variable: _workerBusy]
+_frameBudget[Variable: _frameBudget]
+_frameUsed[Variable: _frameUsed]
+_resetScheduled[Variable: _resetScheduled]
+_prevFrameTs[Variable: _prevFrameTs]
+_smoothFrameTime[Variable: _smoothFrameTime]
+_consecutiveBadFrames[Variable: _consecutiveBadFrames]
+_moveCount[Variable: _moveCount]
+_moveCountResetTime[Variable: _moveCountResetTime]
+_frameTrackingRunning[Variable: _frameTrackingRunning]
+_lastMoveTs[Variable: _lastMoveTs]
+globalAtlas[Variable: globalAtlas]
+_offscreenCanvasSupported[Variable: _offscreenCanvasSupported]
+_proxy[Variable: _proxy]
+_worker[Variable: _worker]
+maxGPUTextureSize[Variable: maxGPUTextureSize]
+instance[Variable: instance]
+worker[Variable: worker]
 
 %% Shaders
 opacity[Shader: opacity]
@@ -2046,5 +2150,387 @@ glowWidth[Shader: glowWidth]
 glowIntensity[Shader: glowIntensity]
 linewidth[Shader: linewidth]
 resolution[Shader: resolution]
+
+%% Module Import Relationships
+App --> App : "imports"
+App --> CustomCamera : "imports"
+App --> UIOverlay : "imports"
+App --> RealTimeConnectionUpdater : "imports"
+App --> ObjectsRenderer : "imports"
+App --> ConnectionsRenderer : "imports"
+App --> CellBoundaryRenderer : "imports"
+App --> LODManager : "imports"
+App --> DiagramOverlay2D : "imports"
+App --> uiOverlayStore : "imports"
+App --> FrameTicker : "imports"
+App --> FrameloopController : "imports"
+App --> useAuthState : "imports"
+App --> useSpaceManager : "imports"
+App --> useObjects : "imports"
+App --> useIndicators : "imports"
+App --> useSpatialManager : "imports"
+App --> useCentralizedBroadcastManager : "imports"
+App --> useConnections : "imports"
+App --> useTimeoutManager : "imports"
+App --> spatialPartitioning : "imports"
+App --> stores : "imports"
+App --> useConnectionAnimationManager : "imports"
+App --> objectUpdateHandlers : "imports"
+App --> faceIndicatorUtils : "imports"
+App --> positionUtils : "imports"
+App --> unifiedPerformanceUtils : "imports"
+App --> renderWorkScheduler : "imports"
+App --> authService : "imports"
+App --> spatialObjectsService : "imports"
+App --> presenceService : "imports"
+App --> spacesService : "imports"
+App --> loadingState : "imports"
+App --> firebase : "imports"
+App --> webRservice : "imports"
+App --> animationUtils : "imports"
+App --> objectVirtualization : "imports"
+AppShell --> LandingApp : "imports"
+AnimatedConnectionLine --> stores : "imports"
+AnimatedConnectionLine --> useConnectionAnimationManager : "imports"
+AtlasTextSprite --> textAtlas : "imports"
+AtlasTextSprite --> textAtlasStore : "imports"
+AtlasTextSprite --> renderWorkScheduler : "imports"
+BatchedConnectionLines --> LineShaderMaterial : "imports"
+BatchedCurvedLines --> LineShaderMaterial : "imports"
+BatchedCurvedLines --> pathfindingUtils : "imports"
+CellBoundaryRenderer --> spatialPartitioning : "imports"
+CellBoundaryRenderer --> LineShaderMaterial : "imports"
+ColorPicker --> stores : "imports"
+ConnectionsRenderer --> renderWorkScheduler : "imports"
+ConnectionsRenderer --> InstancedLine : "imports"
+ConnectionsRenderer --> BatchedConnectionLines : "imports"
+ConnectionsRenderer --> BatchedCurvedLines : "imports"
+ConnectionsRenderer --> AtlasTextSprite : "imports"
+ConnectionsRenderer --> DistanceFilteredTextLabels : "imports"
+ConnectionsRenderer --> LineUI : "imports"
+ConnectionsRenderer --> HeaderInput : "imports"
+ConnectionsRenderer --> TextStyleUI : "imports"
+ConnectionsRenderer --> AnimatedConnectionLine : "imports"
+ConnectionsRenderer --> pathfindingUtils : "imports"
+ConnectionsRenderer --> positionUtils : "imports"
+ConnectionsRenderer --> facePositionUtils : "imports"
+ConnectionsRenderer --> connectionsService : "imports"
+ConnectionsRenderer --> useConnectionObjects : "imports"
+ConnectionsRenderer --> useConnectionsRendererStore : "imports"
+ConnectionsRenderer --> useFrustumCulling : "imports"
+ConnectionsRenderer --> connectionStore : "imports"
+Cube --> InstancedLine : "imports"
+Cube --> stores : "imports"
+Cube --> CubeFace : "imports"
+Cube --> AtlasTextSprite : "imports"
+Cube --> ObjectUI : "imports"
+Cube --> FaceUI : "imports"
+Cube --> HeaderInput : "imports"
+Cube --> TextStyleUI : "imports"
+Cube --> FaceTextInput : "imports"
+Cube --> cubeHelpers : "imports"
+Cube --> snappingUtils : "imports"
+Cube --> SnapLineIndicator : "imports"
+Cube --> useDebouncedUpdate : "imports"
+Cube --> useGlobalClickHandler : "imports"
+Cube --> unifiedPerformanceUtils : "imports"
+Cube --> GlobalCubeEdgesRenderer : "imports"
+Cube --> lodStore : "imports"
+CubeFace --> stores : "imports"
+CubeFace --> cubeStore : "imports"
+CubeFace --> FaceIndicator : "imports"
+DiagramOverlay2D --> diagramStore : "imports"
+DiagramOverlay2D --> uiOverlayStore : "imports"
+DiagramOverlay2D --> objectsStore : "imports"
+DiagramOverlay2D --> diagramLayoutWorkerClient : "imports"
+DiagramOverlay2D --> NodeTypes : "imports"
+DiagramOverlay2D --> EdgeTypes : "imports"
+DistanceFilteredTextLabels --> InstancedAtlasText : "imports"
+Dodecahedron --> InstancedLine : "imports"
+Dodecahedron --> ObjectUI : "imports"
+Dodecahedron --> AtlasTextSprite : "imports"
+Dodecahedron --> HeaderInput : "imports"
+Dodecahedron --> stores : "imports"
+Dodecahedron --> lodStore : "imports"
+Dodecahedron --> snappingUtils : "imports"
+Dodecahedron --> SnapLineIndicator : "imports"
+Dodecahedron --> useDebouncedUpdate : "imports"
+Dodecahedron --> useGlobalClickHandler : "imports"
+Dodecahedron --> GlobalDodecahedronEdgesRenderer : "imports"
+Dodecahedron --> TextStyleUI : "imports"
+Dodecahedron --> FaceUI : "imports"
+Dodecahedron --> DodecahedronFace : "imports"
+DodecahedronFace --> stores : "imports"
+DodecahedronFace --> FaceIndicator : "imports"
+DodecahedronFace --> AtlasTextSprite : "imports"
+DodecahedronFace --> FaceTextInput : "imports"
+FaceIndicator --> stores : "imports"
+FaceTextInput --> stores : "imports"
+FaceUI --> ColorPicker : "imports"
+FaceUI --> stores : "imports"
+FrameloopController --> uiOverlayStore : "imports"
+FrameTicker --> frameCounter : "imports"
+GlobalCubeEdgesRenderer --> LineShaderMaterial : "imports"
+GlobalCubeEdgesRenderer --> lodStore : "imports"
+GlobalCubeFaceRenderer --> stores : "imports"
+GlobalCubeFaceRenderer --> lodStore : "imports"
+GlobalCubeFaceRenderer --> GlobalCubeEdgesRenderer : "imports"
+GlobalCubeMediumLODRenderer --> lodStore : "imports"
+GlobalCubeMediumLODRenderer --> GlobalCubeEdgesRenderer : "imports"
+GlobalDodecahedronEdgesRenderer --> LineShaderMaterial : "imports"
+GlobalDodecahedronEdgesRenderer --> lodStore : "imports"
+GlobalDodecahedronMediumLODRenderer --> lodStore : "imports"
+GlobalDodecahedronMediumLODRenderer --> GlobalDodecahedronEdgesRenderer : "imports"
+GlobalTetrahedronEdgesRenderer --> LineShaderMaterial : "imports"
+GlobalTetrahedronEdgesRenderer --> lodStore : "imports"
+GlobalTetrahedronMediumLODRenderer --> lodStore : "imports"
+GlobalTetrahedronMediumLODRenderer --> GlobalTetrahedronEdgesRenderer : "imports"
+HeaderInput --> stores : "imports"
+InstancedAtlasText --> renderWorkScheduler : "imports"
+InstancedAtlasText --> textAtlas : "imports"
+InstancedAtlasText --> textAtlasStore : "imports"
+InstancedLine --> LineShaderMaterial : "imports"
+LineShaderMaterial --> line.vert : "imports"
+LineShaderMaterial --> line.frag : "imports"
+LineUI --> ColorPicker : "imports"
+LineUI --> stores : "imports"
+LODManager --> lodStore : "imports"
+LODManager --> objectsStore : "imports"
+LODManager --> spatialIndexWorkerClient : "imports"
+LODManager --> renderWorkScheduler : "imports"
+ObjectRenderer --> Cube : "imports"
+ObjectRenderer --> Tetrahedron : "imports"
+ObjectRenderer --> Dodecahedron : "imports"
+ObjectRenderer --> Plane : "imports"
+ObjectRenderer --> TextObject : "imports"
+ObjectRenderer --> ModelObject : "imports"
+ObjectsRenderer --> ObjectRenderer : "imports"
+ObjectsRenderer --> GlobalCubeEdgesRenderer : "imports"
+ObjectsRenderer --> GlobalDodecahedronEdgesRenderer : "imports"
+ObjectsRenderer --> GlobalTetrahedronEdgesRenderer : "imports"
+ObjectsRenderer --> GlobalCubeMediumLODRenderer : "imports"
+ObjectsRenderer --> GlobalDodecahedronMediumLODRenderer : "imports"
+ObjectsRenderer --> GlobalTetrahedronMediumLODRenderer : "imports"
+ObjectsRenderer --> GlobalCubeFaceRenderer : "imports"
+ObjectsRenderer --> AtlasTextSprite : "imports"
+ObjectsRenderer --> renderWorkScheduler : "imports"
+ObjectsRenderer --> uiOverlayStore : "imports"
+ObjectUI --> ColorPicker : "imports"
+ObjectUI --> stores : "imports"
+Plane --> InstancedLine : "imports"
+Plane --> FaceUI : "imports"
+Plane --> AtlasTextSprite : "imports"
+Plane --> FaceTextInput : "imports"
+Plane --> TextStyleUI : "imports"
+Plane --> HeaderInput : "imports"
+Plane --> FaceIndicator : "imports"
+Plane --> WebcamStream : "imports"
+Plane --> ScreenShareStream : "imports"
+Plane --> storageService : "imports"
+Plane --> stores : "imports"
+Plane --> snappingUtils : "imports"
+Plane --> SnapLineIndicator : "imports"
+Plane --> useDebouncedUpdate : "imports"
+Plane --> resourceCleanupService : "imports"
+Plane --> frameCounter : "imports"
+RealTimeConnectionUpdater --> stores : "imports"
+RealTimeConnectionUpdater --> facePositionUtils : "imports"
+ScreenShareStream --> webRservice : "imports"
+ScreenShareStream --> stores : "imports"
+ScreenShareStream --> resourceCleanupService : "imports"
+ScreenShareStream --> useTextureUpdater : "imports"
+SnapLineIndicator --> InstancedLine : "imports"
+SpaceChat --> firebase : "imports"
+SpacePresenceAvatars --> presenceService : "imports"
+Tetrahedron --> TetrahedronFace : "imports"
+Tetrahedron --> stores : "imports"
+Tetrahedron --> AtlasTextSprite : "imports"
+Tetrahedron --> ObjectUI : "imports"
+Tetrahedron --> HeaderInput : "imports"
+Tetrahedron --> TextStyleUI : "imports"
+Tetrahedron --> InstancedLine : "imports"
+Tetrahedron --> GlobalTetrahedronEdgesRenderer : "imports"
+Tetrahedron --> lodStore : "imports"
+Tetrahedron --> snappingUtils : "imports"
+Tetrahedron --> SnapLineIndicator : "imports"
+Tetrahedron --> useDebouncedUpdate : "imports"
+Tetrahedron --> unifiedPerformanceUtils : "imports"
+TetrahedronFace --> stores : "imports"
+TetrahedronFace --> FaceIndicator : "imports"
+TetrahedronFace --> FaceUI : "imports"
+TetrahedronFace --> FaceTextInput : "imports"
+TetrahedronFace --> AtlasTextSprite : "imports"
+TetrahedronFace --> TextStyleUI : "imports"
+TextObject --> renderWorkScheduler : "imports"
+TextObject --> FaceIndicator : "imports"
+TextObject --> TextObjectUI : "imports"
+TextObject --> stores : "imports"
+TextObject --> snappingUtils : "imports"
+TextObject --> SnapLineIndicator : "imports"
+TextObject --> useGlobalClickHandler : "imports"
+TextObjectUI --> TextStyleUI : "imports"
+TextObjectUI --> ColorPicker : "imports"
+TextObjectUI --> stores : "imports"
+TextSprite --> renderWorkScheduler : "imports"
+TextSprite --> stores : "imports"
+TextSprite --> frameCounter : "imports"
+TextStyleUI --> ColorPicker : "imports"
+TextStyleUI --> stores : "imports"
+TextStyleUIContainer --> TextStyleUI : "imports"
+UIOverlay --> stores : "imports"
+UIOverlay --> connectionStore : "imports"
+UIOverlay --> objectsStore : "imports"
+UIOverlay --> storageService : "imports"
+UIOverlay --> screenRecordingService : "imports"
+UIOverlay --> markdownDiagramService : "imports"
+UIOverlay --> uiOverlayStore : "imports"
+UIOverlay --> spatialObjectsService : "imports"
+UIOverlay --> firebase : "imports"
+UIOverlay --> githubRepoService : "imports"
+UIOverlay --> runtimeScanService : "imports"
+UIOverlay --> SpacePresenceAvatars : "imports"
+UIOverlay --> SpaceChat : "imports"
+WebcamStream --> webRservice : "imports"
+WebcamStream --> stores : "imports"
+WebcamStream --> resourceCleanupService : "imports"
+useAuth --> stores : "imports"
+useAuthState --> stores : "imports"
+useCentralizedBroadcastManager --> centralizedBroadcastManager : "imports"
+useConnectionObjects --> objectsStore : "imports"
+useConnections --> connectionStore : "imports"
+useConnections --> connectionsService : "imports"
+useConnections --> loadingState : "imports"
+useConnectionsRendererStore --> connectionStore : "imports"
+useDebouncedUpdate --> stores : "imports"
+useFrustumCulling --> spatialIndexWorkerClient : "imports"
+useIndicators --> stores : "imports"
+useObjects --> stores : "imports"
+useObjects --> connectionStore : "imports"
+useSpaceManager --> stores : "imports"
+useSpatialManager --> stores : "imports"
+CreateSpacePopup --> OrgMemberDropdown : "imports"
+OrganizationManager --> organizationService : "imports"
+LandingApp --> firebase : "imports"
+LandingApp --> Order : "imports"
+LandingApp --> CustomCamera : "imports"
+LandingApp --> WhitePlane : "imports"
+LandingApp --> CubeOutline : "imports"
+LandingApp --> DodecahedronWireframe : "imports"
+LandingApp --> DodecahedronWireframe2 : "imports"
+LandingApp --> CreateSpacePopup : "imports"
+LandingApp --> ShareSpacePopup : "imports"
+LandingApp --> SpacesTable : "imports"
+LandingApp --> UserLoginSection : "imports"
+LandingApp --> WelcomeOverlay : "imports"
+LandingApp --> OrganizationManager : "imports"
+LandingApp --> UpgradePrompt : "imports"
+LandingApp --> organizationService : "imports"
+LandingApp --> useWindowSize : "imports"
+LandingApp --> LandingApp : "imports"
+UpdatesContainer --> firebase : "imports"
+UpdatesContainer --> UpdatesViewer : "imports"
+UpdatesEditor --> firebase : "imports"
+main --> index : "imports"
+main --> AppShell : "imports"
+authService --> firebase : "imports"
+authService --> spacesService : "imports"
+authService --> sharedSpacesService : "imports"
+connectionPositionResolver --> cubeHelpers : "imports"
+connectionPositionResolver --> facePositionUtils : "imports"
+connectionsService --> firebase : "imports"
+connectionsService --> sharedSpacesService : "imports"
+connectionsService --> spatialPartitioning : "imports"
+connectionsService --> connectionStore : "imports"
+connectionsService --> unifiedValidationUtils : "imports"
+connectionsService --> globalSubscriptionManager : "imports"
+githubRepoService --> firebase : "imports"
+globalOptimizationCoordinator --> unifiedMathUtils : "imports"
+globalOptimizationCoordinator --> unifiedDebugUtils : "imports"
+globalOptimizationCoordinator --> unifiedValidationUtils : "imports"
+connectionMethods --> connectionStore : "imports"
+connectionMethods --> stores : "imports"
+connectionMethods --> connectionsService : "imports"
+connectionMethods --> spatialPartitioning : "imports"
+connectionMethods --> firebase : "imports"
+containerMethods --> constants : "imports"
+containerMethods --> stores : "imports"
+containerMethods --> spatialPartitioning : "imports"
+hierarchyMethods --> constants : "imports"
+objectMethods --> stores : "imports"
+objectMethods --> diagramStore : "imports"
+objectMethods --> spatialPartitioning : "imports"
+positionMethods --> constants : "imports"
+processMethods --> constants : "imports"
+processMethods --> markdownLayoutWorkerClient : "imports"
+processMethods --> diagramStore : "imports"
+processMethods --> objectsStore : "imports"
+scaleMethods --> constants : "imports"
+markdownDiagramService --> hierarchyMethods : "imports"
+markdownDiagramService --> scaleMethods : "imports"
+markdownDiagramService --> positionMethods : "imports"
+markdownDiagramService --> containerMethods : "imports"
+markdownDiagramService --> objectMethods : "imports"
+markdownDiagramService --> connectionMethods : "imports"
+markdownDiagramService --> processMethods : "imports"
+organizationService --> firebase : "imports"
+presenceService --> firebase : "imports"
+runtimeScanService --> firebase : "imports"
+sharedSpacesService --> firebase : "imports"
+sharingService --> firebase : "imports"
+spacesService --> firebase : "imports"
+spacesService --> sharedSpacesService : "imports"
+spatialObjectsService --> firebase : "imports"
+spatialObjectsService --> sharedSpacesService : "imports"
+spatialObjectsService --> spatialPartitioning : "imports"
+spatialObjectsService --> loadingState : "imports"
+spatialObjectsService --> globalSubscriptionManager : "imports"
+spatialPartitioning --> firebase : "imports"
+spatialPartitioning --> connectionStore : "imports"
+spatialPartitioning --> globalSubscriptionManager : "imports"
+spatialPartitioning --> loadingState : "imports"
+streamlinedSpatialPartitioning --> streamlinedSpatialIndex : "imports"
+streamlinedSpatialPartitioning --> spatialPartitioning : "imports"
+webRservice --> firebase : "imports"
+webRservice --> globalSubscriptionManager : "imports"
+webRservice --> spatialPartitioning : "imports"
+authStore --> firebase : "imports"
+authStore --> authService : "imports"
+connectionStore --> firebase : "imports"
+connectionStore --> spaceManagerStore : "imports"
+objectsStore --> spatialObjectsService : "imports"
+objectsStore --> connectionStore : "imports"
+objectsStore --> spatialPartitioning : "imports"
+objectsStore --> connectionsService : "imports"
+publicSpaceStore --> connectionsService : "imports"
+publicSpaceStore --> connectionStore : "imports"
+publicSpaceStore --> objectsStore : "imports"
+spaceManagerStore --> firebase : "imports"
+spaceManagerStore --> sharedSpacesService : "imports"
+spaceManagerStore --> webRservice : "imports"
+spaceManagerStore --> presenceService : "imports"
+spatialManagerStore --> spatialPartitioning : "imports"
+spatialManagerStore --> spatialObjectsService : "imports"
+spatialManagerStore --> loadingState : "imports"
+spatialManagerStore --> globalSubscriptionManager : "imports"
+spatialManagerStore --> objectsStore : "imports"
+spatialManagerStore --> connectionStore : "imports"
+bvhRaycasting --> lodStore : "imports"
+connectionUtils --> stores : "imports"
+faceIndicatorUtils --> connectionsService : "imports"
+faceIndicatorUtils --> connectionStore : "imports"
+faceIndicatorUtils --> facePositionUtils : "imports"
+faceIndicatorUtils --> connectionUtils : "imports"
+objectUpdateHandlers --> spatialObjectsService : "imports"
+objectUpdateHandlers --> objectsStore : "imports"
+objectUpdateHandlers --> stores : "imports"
+textAtlas --> textAtlasStore : "imports"
+diagramLayoutWorkerClient --> diagramLayoutWorker : "imports"
+markdownLayoutWorker --> hierarchyMethods : "imports"
+markdownLayoutWorker --> scaleMethods : "imports"
+markdownLayoutWorker --> positionMethods : "imports"
+markdownLayoutWorkerClient --> markdownLayoutWorker : "imports"
+pathfindingWorker --> pathfindingUtils : "imports"
+pathfindingWorkerClient --> pathfindingWorker : "imports"
+spatialIndexWorkerClient --> spatialIndexWorker : "imports"
 
 ```
