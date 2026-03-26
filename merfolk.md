@@ -14,7 +14,6 @@ BVHIntegration{Component: BVHIntegration}
 CellBoundaryRenderer{Component: CellBoundaryRenderer}
 ColorPicker{Component: ColorPicker}
 DistanceFilteredConnectionText{Component: DistanceFilteredConnectionText}
-resolveEndpointPosition{Component: resolveEndpointPosition}
 Connection{Component: Connection}
 ConnectionsRenderer{Component: ConnectionsRenderer}
 Cube{Component: Cube}
@@ -24,7 +23,6 @@ MerfolkEdge{Component: MerfolkEdge}
 EdgeMarkerDefs{Component: EdgeMarkerDefs}
 MerfolkNode{Component: MerfolkNode}
 ContainerNode{Component: ContainerNode}
-layerForType{Component: layerForType}
 DiagramOverlay2D{Component: DiagramOverlay2D}
 DistanceFilteredTextLabels{Component: DistanceFilteredTextLabels}
 Sphere{Component: Sphere}
@@ -91,6 +89,15 @@ UserForm{Component: UserForm}
 Model{Component: Model}
 WhitePlane{Component: WhitePlane}
 
+%% Internal Helper Components
+AtlasTextSprite -.-> StaticBillboardMesh : "internal"
+AtlasTextSprite -.-> DynamicBillboardMesh : "internal"
+Connection -.-> DistanceFilteredConnectionText : "internal"
+ConnectionsRenderer -.-> Connection : "internal"
+InstancedAtlasText -.-> PageInstancedMesh : "internal"
+SpacePresenceAvatars -.-> Avatar : "internal"
+TextStyleUI -.-> TextStyleUIContent : "internal"
+
 %% Functions
 createVerifyAuthTokenApp[Function: createVerifyAuthTokenApp]
 verifyAuthToken[Function: verifyAuthToken]
@@ -101,6 +108,7 @@ createBulkDeleteApp[Function: createBulkDeleteApp]
 bulkDelete[Function: bulkDelete]
 validateRuntimeScanUrl[Function: validateRuntimeScanUrl]
 sanitizeMerfolkId[Function: sanitizeMerfolkId]
+generateMerfolkFromRuntimeTrace[Function: generateMerfolkFromRuntimeTrace]
 extractSourceMapUrl[Function: extractSourceMapUrl]
 scanOriginalSource[Function: scanOriginalSource]
 extractNamesFromSourceMap[Function: extractNamesFromSourceMap]
@@ -110,6 +118,47 @@ deduplicateApiCalls[Function: deduplicateApiCalls]
 buildConnections[Function: buildConnections]
 createScanWebsiteRuntimeApp[Function: createScanWebsiteRuntimeApp]
 scanWebsiteRuntime[Function: scanWebsiteRuntime]
+getFileStem[Function: getFileStem]
+addToSet[Function: addToSet]
+addToFileContainer[Function: addToFileContainer]
+isNonLiteralInit[Function: isNonLiteralInit]
+classifyName[Function: classifyName]
+detectEventEmitterCreation[Function: detectEventEmitterCreation]
+detectEventListenerRegistration[Function: detectEventListenerRegistration]
+detectDbModelCreation[Function: detectDbModelCreation]
+extractObjectKeys[Function: extractObjectKeys]
+detectAuthGuardPattern[Function: detectAuthGuardPattern]
+detectApiEndpointRegistration[Function: detectApiEndpointRegistration]
+processVanillaNode[Function: processVanillaNode]
+traverseVanillaAST[Function: traverseVanillaAST]
+unwrapToFunction[Function: unwrapToFunction]
+getInternalFunctionLabel[Function: getInternalFunctionLabel]
+collectContainedComponents[Function: collectContainedComponents]
+walkNodeForJSX[Function: walkNodeForJSX]
+deepWalkForCallSites[Function: deepWalkForCallSites]
+analyzeComponentBody[Function: analyzeComponentBody]
+processReactDecl[Function: processReactDecl]
+traverseReactAST[Function: traverseReactAST]
+deriveNextjsRoutePath[Function: deriveNextjsRoutePath]
+buildNextjsRouteMap[Function: buildNextjsRouteMap]
+classifyPython[Function: classifyPython]
+traversePythonSource[Function: traversePythonSource]
+extractPythonModelFields[Function: extractPythonModelFields]
+parseJS[Function: parseJS]
+traverseVueSource[Function: traverseVueSource]
+extractShaderSymbols[Function: extractShaderSymbols]
+analyzeFile[Function: analyzeFile]
+containsJSX[Function: containsJSX]
+generateRoutedConnection[Function: generateRoutedConnection]
+generateMerfolkMarkdown[Function: generateMerfolkMarkdown]
+walkDir[Function: walkDir]
+fileExists[Function: fileExists]
+readPackageJson[Function: readPackageJson]
+getDeps[Function: getDeps]
+getProdDeps[Function: getProdDeps]
+detectRepoType[Function: detectRepoType]
+getFileType[Function: getFileType]
+scanWorkspace[Function: scanWorkspace]
 getSharedMaterial[Function: getSharedMaterial]
 numericCacheKey[Function: numericCacheKey]
 pathToSegments[Function: pathToSegments]
@@ -117,6 +166,7 @@ computeVisibleCells[Function: computeVisibleCells]
 getTextParametricT[Function: getTextParametricT]
 redistributeFaces[Function: redistributeFaces]
 pathToLineSegments[Function: pathToLineSegments]
+resolveEndpointPosition[Function: resolveEndpointPosition]
 getFaceIndicatorProps[Function: getFaceIndicatorProps]
 calculateFaceWorldPosition[Function: calculateFaceWorldPosition]
 flowPathColor[Function: flowPathColor]
@@ -132,6 +182,7 @@ MerfolkNodeMemo[Function: MerfolkNodeMemo]
 ContainerNodeMemo[Function: ContainerNodeMemo]
 buildReactFlowNodes[Function: buildReactFlowNodes]
 buildReactFlowEdges[Function: buildReactFlowEdges]
+layerForType[Function: layerForType]
 filterEdges[Function: filterEdges]
 minimapNodeColor[Function: minimapNodeColor]
 cubeTransformMap[Function: cubeTransformMap]
@@ -157,282 +208,219 @@ getPathfindingWorker[Function: getPathfindingWorker]
 terminatePathfindingWorker[Function: terminatePathfindingWorker]
 childLOD[Function: childLOD]
 parentLOD[Function: parentLOD]
+isPointInFrustum[Function: isPointInFrustum]
 getSpatialIndexWorker[Function: getSpatialIndexWorker]
 terminateSpatialIndexWorker[Function: terminateSpatialIndexWorker]
 getKey[Function: getKey]
 addPage[Function: addPage]
 getTextAtlasWorker[Function: getTextAtlasWorker]
 terminateTextAtlasWorker[Function: terminateTextAtlasWorker]
-Order[Function: Order]
-Volspace[Function: Volspace]
-line_frag[Function: line_frag]
-shaders[Function: shaders]
-line_vert[Function: line_vert]
-animationUtils[Function: animationUtils]
-bvhRaycasting[Function: bvhRaycasting]
-connectionUtils[Function: connectionUtils]
-debugUtils[Function: debugUtils]
-faceIndicatorUtils[Function: faceIndicatorUtils]
-facePositionUtils[Function: facePositionUtils]
-gpuResourceTracker[Function: gpuResourceTracker]
-loadingState[Function: loadingState]
-objectUpdateHandlers[Function: objectUpdateHandlers]
-objectVirtualization[Function: objectVirtualization]
-pathfindingUtils[Function: pathfindingUtils]
-positionUtils[Function: positionUtils]
-renderWorkScheduler[Function: renderWorkScheduler]
-snappingUtils[Function: snappingUtils]
-streamlinedSpatialIndex[Function: streamlinedSpatialIndex]
-textAtlas[Function: textAtlas]
-textureLoader[Function: textureLoader]
-unifiedPerformanceUtils[Function: unifiedPerformanceUtils]
-unifiedValidationUtils[Function: unifiedValidationUtils]
-diagramLayoutWorker[Function: diagramLayoutWorker]
-diagramLayoutWorkerClient[Function: diagramLayoutWorkerClient]
-markdownLayoutWorker[Function: markdownLayoutWorker]
-markdownLayoutWorkerClient[Function: markdownLayoutWorkerClient]
-pathfindingWorkerClient[Function: pathfindingWorkerClient]
-spatialIndexWorker[Function: spatialIndexWorker]
-spatialIndexWorkerClient[Function: spatialIndexWorkerClient]
-textAtlasWorker[Function: textAtlasWorker]
-textAtlasWorkerClient[Function: textAtlasWorkerClient]
 
 %% Hooks
-isPointInFrustum[Hook: isPointInFrustum]
-useAuth[Hook: useAuth]
-useAuthState[Hook: useAuthState]
-useCentralizedBroadcastManager[Hook: useCentralizedBroadcastManager]
-ConnectionAnimationManager[Hook: ConnectionAnimationManager]
-useAnimatedLine[Hook: useAnimatedLine]
-useAnimationStats[Hook: useAnimationStats]
-useConnectionObjects[Hook: useConnectionObjects]
-usePathfindingObjects[Hook: usePathfindingObjects]
-useConnectionObjectPositions[Hook: useConnectionObjectPositions]
-useConnections[Hook: useConnections]
-useConnectionsRendererStore[Hook: useConnectionsRendererStore]
-useConnectionState[Hook: useConnectionState]
-useConnectionActions[Hook: useConnectionActions]
-useDebouncedUpdate[Hook: useDebouncedUpdate]
-isConnectionVisible[Hook: isConnectionVisible]
-useFrustumCulledConnections[Hook: useFrustumCulledConnections]
-useDynamicFrustumCulling[Hook: useDynamicFrustumCulling]
-useGlobalClickHandler[Hook: useGlobalClickHandler]
-useIndicators[Hook: useIndicators]
-useObjects[Hook: useObjects]
-useSpaceManager[Hook: useSpaceManager]
-useSpatialManager[Hook: useSpatialManager]
-useTextureUpdater[Hook: useTextureUpdater]
-useTimeoutManager[Hook: useTimeoutManager]
-useWindowSize[Hook: useWindowSize]
-useConnectionAnimationManager[Hook: useConnectionAnimationManager]
-useFrustumCulling[Hook: useFrustumCulling]
+useAuth[Function: useAuth]
+useAuthState[Function: useAuthState]
+useCentralizedBroadcastManager[Function: useCentralizedBroadcastManager]
+ConnectionAnimationManager[Function: ConnectionAnimationManager]
+useAnimatedLine[Function: useAnimatedLine]
+useAnimationStats[Function: useAnimationStats]
+useConnectionObjects[Function: useConnectionObjects]
+usePathfindingObjects[Function: usePathfindingObjects]
+useConnectionObjectPositions[Function: useConnectionObjectPositions]
+useConnections[Function: useConnections]
+useConnectionsRendererStore[Function: useConnectionsRendererStore]
+useConnectionState[Function: useConnectionState]
+useConnectionActions[Function: useConnectionActions]
+useDebouncedUpdate[Function: useDebouncedUpdate]
+isConnectionVisible[Function: isConnectionVisible]
+useFrustumCulledConnections[Function: useFrustumCulledConnections]
+useDynamicFrustumCulling[Function: useDynamicFrustumCulling]
+useGlobalClickHandler[Function: useGlobalClickHandler]
+useIndicators[Function: useIndicators]
+useObjects[Function: useObjects]
+useSpaceManager[Function: useSpaceManager]
+useSpatialManager[Function: useSpatialManager]
+useTextureUpdater[Function: useTextureUpdater]
+useTimeoutManager[Function: useTimeoutManager]
+useWindowSize[Function: useWindowSize]
+
+%% Internal Hooks (same name as parent)
+useAuth_file -.-> useAuth : "internal hook"
+useAuthState_file -.-> useAuthState : "internal hook"
+useCentralizedBroadcastManager_file -.-> useCentralizedBroadcastManager : "internal hook"
+useConnectionObjects_file -.-> useConnectionObjects : "internal hook"
+useConnections_file -.-> useConnections : "internal hook"
+useConnectionsRendererStore_file -.-> useConnectionsRendererStore : "internal hook"
+useDebouncedUpdate_file -.-> useDebouncedUpdate : "internal hook"
+useGlobalClickHandler_file -.-> useGlobalClickHandler : "internal hook"
+useIndicators_file -.-> useIndicators : "internal hook"
+useObjects_file -.-> useObjects : "internal hook"
+useSpaceManager_file -.-> useSpaceManager : "internal hook"
+useSpatialManager_file -.-> useSpatialManager : "internal hook"
+useTextureUpdater_file -.-> useTextureUpdater : "internal hook"
+useTimeoutManager_file -.-> useTimeoutManager : "internal hook"
+useWindowSize_file -.-> useWindowSize : "internal hook"
 
 %% Services
-generateMerfolkFromRuntimeTrace((Service: generateMerfolkFromRuntimeTrace))
-SpatialHash((Service: SpatialHash))
-signInUser((Service: signInUser))
-handlePostLoginRedirect((Service: handlePostLoginRedirect))
-signOut((Service: signOut))
-handleRedirectResult((Service: handleRedirectResult))
-observeAuthState((Service: observeAuthState))
-validateAuthToken((Service: validateAuthToken))
-handleUrlAuth((Service: handleUrlAuth))
-CentralizedBroadcastManager((Service: CentralizedBroadcastManager))
-subscribePlaneToBroadcasts((Service: subscribePlaneToBroadcasts))
-getBroadcastManagerDebugInfo((Service: getBroadcastManagerDebugInfo))
-cleanupBroadcastManager((Service: cleanupBroadcastManager))
-resolveConnectionPositions((Service: resolveConnectionPositions))
-connectionNeedsPositionResolution((Service: connectionNeedsPositionResolution))
-pauseConnectionListeners((Service: pauseConnectionListeners))
-resumeConnectionListeners((Service: resumeConnectionListeners))
-addConnectionStateListener((Service: addConnectionStateListener))
-enableConnectionNetwork((Service: enableConnectionNetwork))
-disableConnectionNetwork((Service: disableConnectionNetwork))
-getConnectionNetworkState((Service: getConnectionNetworkState))
-saveConnection((Service: saveConnection))
-subscribeToConnections((Service: subscribeToConnections))
-deleteConnection((Service: deleteConnection))
-deleteConnectionEnhanced((Service: deleteConnectionEnhanced))
-exchangeGithubCode((Service: exchangeGithubCode))
-fetchRepositories((Service: fetchRepositories))
-fetchFileContent((Service: fetchFileContent))
-fetchLatestCommitSha((Service: fetchLatestCommitSha))
-fetchChangedFiles((Service: fetchChangedFiles))
-fetchRepositoryStructure((Service: fetchRepositoryStructure))
-generateMerfolkFromRepository((Service: generateMerfolkFromRepository))
-getGithubToken((Service: getGithubToken))
-setGithubToken((Service: setGithubToken))
-isGithubAuthenticated((Service: isGithubAuthenticated))
-getGithubOAuthUrl((Service: getGithubOAuthUrl))
-handleGithubCallback((Service: handleGithubCallback))
-scanRepositoryAndGenerateDiagram((Service: scanRepositoryAndGenerateDiagram))
-mergeMerfolkMarkdown((Service: mergeMerfolkMarkdown))
-rescanRepositoryForChanges((Service: rescanRepositoryForChanges))
-GlobalOptimizationCoordinator((Service: GlobalOptimizationCoordinator))
-initializeOptimizationCoordinator((Service: initializeOptimizationCoordinator))
-getOptimizationStatus((Service: getOptimizationStatus))
-consolidateSystem((Service: consolidateSystem))
-cleanupOptimizationCoordinator((Service: cleanupOptimizationCoordinator))
-getOrCreateSubscription((Service: getOrCreateSubscription))
-forceCleanupSubscription((Service: forceCleanupSubscription))
-getSubscriptionMetrics((Service: getSubscriptionMetrics))
-cleanupAllSubscriptions((Service: cleanupAllSubscriptions))
-getGroupDisplayName((Service: getGroupDisplayName))
-getGroupColor((Service: getGroupColor))
-MarkdownDiagramService((Service: MarkdownDiagramService))
-markdownDiagramService((Service: markdownDiagramService))
-createOrganization((Service: createOrganization))
-getUserOrganizations((Service: getUserOrganizations))
-getOrganizationById((Service: getOrganizationById))
-getOrganizationMembers((Service: getOrganizationMembers))
-getMemberCount((Service: getMemberCount))
-isOrganizationAdmin((Service: isOrganizationAdmin))
-inviteUserToOrganization((Service: inviteUserToOrganization))
-getPendingInvitesForUser((Service: getPendingInvitesForUser))
-acceptInvite((Service: acceptInvite))
-declineInvite((Service: declineInvite))
-removeMemberFromOrganization((Service: removeMemberFromOrganization))
-leaveOrganization((Service: leaveOrganization))
-updateOrganizationPlan((Service: updateOrganizationPlan))
-deleteOrganization((Service: deleteOrganization))
-setUserPresence((Service: setUserPresence))
-setGuestPresence((Service: setGuestPresence))
-subscribeToSpacePresence((Service: subscribeToSpacePresence))
-ResourceCleanupService((Service: ResourceCleanupService))
-resourceCleanupService((Service: resourceCleanupService))
-validateScanUrl((Service: validateScanUrl))
-scanWebsiteAndGenerateDiagram((Service: scanWebsiteAndGenerateDiagram))
-ScreenRecordingService((Service: ScreenRecordingService))
-screenRecorder((Service: screenRecorder))
-sharedSpacesCacheSet((Service: sharedSpacesCacheSet))
-isSharedSpace((Service: isSharedSpace))
-checkSpaceExists((Service: checkSpaceExists))
-registerSharedSpaceFromUrl((Service: registerSharedSpaceFromUrl))
-getSpaceOwner((Service: getSpaceOwner))
-findSpaceOwner((Service: findSpaceOwner))
-generateSharingUrl((Service: generateSharingUrl))
-getSharedSpaceInfo((Service: getSharedSpaceInfo))
-getSpaceById((Service: getSpaceById))
-createSpace((Service: createSpace))
-getOrCreateDefaultSpace((Service: getOrCreateDefaultSpace))
-migrateToDefaultSpace((Service: migrateToDefaultSpace))
-getUserSpaces((Service: getUserSpaces))
-deleteSpace((Service: deleteSpace))
-hasSpaceAccess((Service: hasSpaceAccess))
-getPublicSpaceMetadata((Service: getPublicSpaceMetadata))
-objectsCache((Service: objectsCache))
-saveTimeouts((Service: saveTimeouts))
-updateThrottles((Service: updateThrottles))
-lastReceivedObjects((Service: lastReceivedObjects))
-movingObjects((Service: movingObjects))
-objectCellMap((Service: objectCellMap))
-cancelPendingSave((Service: cancelPendingSave))
-enqueueSave((Service: enqueueSave))
-flushSaveBatch((Service: flushSaveBatch))
-clearAllObjectCaches((Service: clearAllObjectCaches))
-saveObjectToCell((Service: saveObjectToCell))
-deleteObjectFromSpatialCell((Service: deleteObjectFromSpatialCell))
-updateObjectInSpatialCell((Service: updateObjectInSpatialCell))
-subscribeToSpatialObjects((Service: subscribeToSpatialObjects))
-updateCellSubscriptions((Service: updateCellSubscriptions))
-moveObjectBetweenCells((Service: moveObjectBetweenCells))
-loadObjectsFromCells((Service: loadObjectsFromCells))
-saveObject((Service: saveObject))
-deleteObject((Service: deleteObject))
-updateObject((Service: updateObject))
-subscribeToObjects((Service: subscribeToObjects))
-getObjectDeletionStatus((Service: getObjectDeletionStatus))
-clearObjectDeletionBlacklist((Service: clearObjectDeletionBlacklist))
-getCellCoordinates((Service: getCellCoordinates))
-getCellCoordinatesWithHysteresis((Service: getCellCoordinatesWithHysteresis))
-getCellId((Service: getCellId))
-parseCellId((Service: parseCellId))
-getCellBounds((Service: getCellBounds))
-createCell((Service: createCell))
-createCellsBatch((Service: createCellsBatch))
-cellExists((Service: cellExists))
-cellExistsBulk((Service: cellExistsBulk))
-getCell((Service: getCell))
-addObjectToCell((Service: addObjectToCell))
-removeObjectFromCell((Service: removeObjectFromCell))
-getLoadedCells((Service: getLoadedCells))
-getObjectsFromCells((Service: getObjectsFromCells))
-updateObjectInCell((Service: updateObjectInCell))
-deleteObjectFromCell((Service: deleteObjectFromCell))
-subscribeToCells((Service: subscribeToCells))
-getOccupiedCells((Service: getOccupiedCells))
-getCellDistance((Service: getCellDistance))
-getCellsToUnload((Service: getCellsToUnload))
-addConnectionToCells((Service: addConnectionToCells))
-bulkSaveConnectionsToCell((Service: bulkSaveConnectionsToCell))
-addConnectionToCell((Service: addConnectionToCell))
-removeConnectionFromAllCells((Service: removeConnectionFromAllCells))
-removeConnectionFromCells((Service: removeConnectionFromCells))
-removeConnectionFromCell((Service: removeConnectionFromCell))
-getConnectionsFromCells((Service: getConnectionsFromCells))
-updateConnectionInCells((Service: updateConnectionInCells))
-getCellsInRadius((Service: getCellsInRadius))
-getNeighborCells((Service: getNeighborCells))
-debugCellRadius((Service: debugCellRadius))
-debugNeighborCells((Service: debugNeighborCells))
-debugCurrentCellLoading((Service: debugCurrentCellLoading))
-findObjectInCells((Service: findObjectInCells))
-getAllObjectsInSpace((Service: getAllObjectsInSpace))
-findConnectionInCells((Service: findConnectionInCells))
-purgeConnectionFromAllCells((Service: purgeConnectionFromAllCells))
-deleteAllCellsInSpace((Service: deleteAllCellsInSpace))
-uploadImageToStorage((Service: uploadImageToStorage))
-uploadModelToStorage((Service: uploadModelToStorage))
-uploadMarkdownToStorage((Service: uploadMarkdownToStorage))
-StreamlinedSpatialManager((Service: StreamlinedSpatialManager))
-getStreamlinedSpatialManager((Service: getStreamlinedSpatialManager))
-initializeStreamlinedSpatialPartitioning((Service: initializeStreamlinedSpatialPartitioning))
-benchmarkStreamlinedSystem((Service: benchmarkStreamlinedSystem))
-UnifiedCacheManager((Service: UnifiedCacheManager))
-initWebRTC((Service: initWebRTC))
-BroadcastSession((Service: BroadcastSession))
-startBroadcasting((Service: startBroadcasting))
-joinBroadcast((Service: joinBroadcast))
-isPlaneBeingBroadcast((Service: isPlaneBeingBroadcast))
-findAvailableBroadcasts((Service: findAvailableBroadcasts))
-cleanupWebRTC((Service: cleanupWebRTC))
-registerUserPresence((Service: registerUserPresence))
-subscribeToUsersInSpace((Service: subscribeToUsersInSpace))
-BVHNode((Service: BVHNode))
-BVHAcceleratedRaycaster((Service: BVHAcceleratedRaycaster))
-FrameCounter((Service: FrameCounter))
-GPUResourceTracker((Service: GPUResourceTracker))
-ObjectVirtualizer((Service: ObjectVirtualizer))
-Point3D((Service: Point3D))
-BoundingBox((Service: BoundingBox))
-OptimizedSpatialGrid((Service: OptimizedSpatialGrid))
-TextAtlas((Service: TextAtlas))
-MultiPageTextAtlas((Service: MultiPageTextAtlas))
-WorkerMultiPageTextAtlas((Service: WorkerMultiPageTextAtlas))
-LayoutEngine((Service: LayoutEngine))
-AtlasPage((Service: AtlasPage))
-index((Service: index))
-sharedSpacesService((Service: sharedSpacesService))
-authService((Service: authService))
-centralizedBroadcastManager((Service: centralizedBroadcastManager))
-connectionPositionResolver((Service: connectionPositionResolver))
-connectionsService((Service: connectionsService))
-githubRepoService((Service: githubRepoService))
-globalOptimizationCoordinator((Service: globalOptimizationCoordinator))
-globalSubscriptionManager((Service: globalSubscriptionManager))
-constants((Service: constants))
-organizationService((Service: organizationService))
-presenceService((Service: presenceService))
-runtimeScanService((Service: runtimeScanService))
-screenRecordingService((Service: screenRecordingService))
-sharingService((Service: sharingService))
-spacesService((Service: spacesService))
-spatialObjectsService((Service: spatialObjectsService))
-spatialPartitioning((Service: spatialPartitioning))
-storageService((Service: storageService))
-streamlinedSpatialPartitioning((Service: streamlinedSpatialPartitioning))
-unifiedCacheManager((Service: unifiedCacheManager))
-webRservice((Service: webRservice))
+signInUser[Function: signInUser]
+handlePostLoginRedirect[Function: handlePostLoginRedirect]
+signOut[Function: signOut]
+handleRedirectResult[Function: handleRedirectResult]
+observeAuthState[Function: observeAuthState]
+validateAuthToken[Function: validateAuthToken]
+handleUrlAuth[Function: handleUrlAuth]
+subscribePlaneToBroadcasts[Function: subscribePlaneToBroadcasts]
+getBroadcastManagerDebugInfo[Function: getBroadcastManagerDebugInfo]
+cleanupBroadcastManager[Function: cleanupBroadcastManager]
+resolveConnectionPositions[Function: resolveConnectionPositions]
+connectionNeedsPositionResolution[Function: connectionNeedsPositionResolution]
+pauseConnectionListeners[Function: pauseConnectionListeners]
+resumeConnectionListeners[Function: resumeConnectionListeners]
+addConnectionStateListener[Function: addConnectionStateListener]
+enableConnectionNetwork[Function: enableConnectionNetwork]
+disableConnectionNetwork[Function: disableConnectionNetwork]
+getConnectionNetworkState[Function: getConnectionNetworkState]
+saveConnection[Function: saveConnection]
+subscribeToConnections[Function: subscribeToConnections]
+deleteConnection[Function: deleteConnection]
+deleteConnectionEnhanced[Function: deleteConnectionEnhanced]
+exchangeGithubCode[Function: exchangeGithubCode]
+fetchRepositories[Function: fetchRepositories]
+fetchFileContent[Function: fetchFileContent]
+fetchLatestCommitSha[Function: fetchLatestCommitSha]
+fetchChangedFiles[Function: fetchChangedFiles]
+fetchRepositoryStructure[Function: fetchRepositoryStructure]
+generateMerfolkFromRepository[Function: generateMerfolkFromRepository]
+getGithubToken[Function: getGithubToken]
+setGithubToken[Function: setGithubToken]
+isGithubAuthenticated[Function: isGithubAuthenticated]
+getGithubOAuthUrl[Function: getGithubOAuthUrl]
+handleGithubCallback[Function: handleGithubCallback]
+scanRepositoryAndGenerateDiagram[Function: scanRepositoryAndGenerateDiagram]
+mergeMerfolkMarkdown[Function: mergeMerfolkMarkdown]
+rescanRepositoryForChanges[Function: rescanRepositoryForChanges]
+initializeOptimizationCoordinator[Function: initializeOptimizationCoordinator]
+getOptimizationStatus[Function: getOptimizationStatus]
+consolidateSystem[Function: consolidateSystem]
+cleanupOptimizationCoordinator[Function: cleanupOptimizationCoordinator]
+getOrCreateSubscription[Function: getOrCreateSubscription]
+forceCleanupSubscription[Function: forceCleanupSubscription]
+getSubscriptionMetrics[Function: getSubscriptionMetrics]
+cleanupAllSubscriptions[Function: cleanupAllSubscriptions]
+getGroupDisplayName[Function: getGroupDisplayName]
+getGroupColor[Function: getGroupColor]
+markdownDiagramService[Function: markdownDiagramService]
+createOrganization[Function: createOrganization]
+getUserOrganizations[Function: getUserOrganizations]
+getOrganizationById[Function: getOrganizationById]
+getOrganizationMembers[Function: getOrganizationMembers]
+getMemberCount[Function: getMemberCount]
+isOrganizationAdmin[Function: isOrganizationAdmin]
+inviteUserToOrganization[Function: inviteUserToOrganization]
+getPendingInvitesForUser[Function: getPendingInvitesForUser]
+acceptInvite[Function: acceptInvite]
+declineInvite[Function: declineInvite]
+removeMemberFromOrganization[Function: removeMemberFromOrganization]
+leaveOrganization[Function: leaveOrganization]
+updateOrganizationPlan[Function: updateOrganizationPlan]
+deleteOrganization[Function: deleteOrganization]
+setUserPresence[Function: setUserPresence]
+setGuestPresence[Function: setGuestPresence]
+subscribeToSpacePresence[Function: subscribeToSpacePresence]
+resourceCleanupService[Function: resourceCleanupService]
+validateScanUrl[Function: validateScanUrl]
+scanWebsiteAndGenerateDiagram[Function: scanWebsiteAndGenerateDiagram]
+screenRecorder[Function: screenRecorder]
+sharedSpacesCacheSet[Function: sharedSpacesCacheSet]
+isSharedSpace[Function: isSharedSpace]
+checkSpaceExists[Function: checkSpaceExists]
+registerSharedSpaceFromUrl[Function: registerSharedSpaceFromUrl]
+getSpaceOwner[Function: getSpaceOwner]
+findSpaceOwner[Function: findSpaceOwner]
+generateSharingUrl[Function: generateSharingUrl]
+getSharedSpaceInfo[Function: getSharedSpaceInfo]
+getSpaceById[Function: getSpaceById]
+createSpace[Function: createSpace]
+getOrCreateDefaultSpace[Function: getOrCreateDefaultSpace]
+migrateToDefaultSpace[Function: migrateToDefaultSpace]
+getUserSpaces[Function: getUserSpaces]
+deleteSpace[Function: deleteSpace]
+hasSpaceAccess[Function: hasSpaceAccess]
+getPublicSpaceMetadata[Function: getPublicSpaceMetadata]
+objectsCache[Function: objectsCache]
+saveTimeouts[Function: saveTimeouts]
+updateThrottles[Function: updateThrottles]
+lastReceivedObjects[Function: lastReceivedObjects]
+movingObjects[Function: movingObjects]
+objectCellMap[Function: objectCellMap]
+cancelPendingSave[Function: cancelPendingSave]
+enqueueSave[Function: enqueueSave]
+flushSaveBatch[Function: flushSaveBatch]
+clearAllObjectCaches[Function: clearAllObjectCaches]
+saveObjectToCell[Function: saveObjectToCell]
+deleteObjectFromSpatialCell[Function: deleteObjectFromSpatialCell]
+updateObjectInSpatialCell[Function: updateObjectInSpatialCell]
+subscribeToSpatialObjects[Function: subscribeToSpatialObjects]
+updateCellSubscriptions[Function: updateCellSubscriptions]
+moveObjectBetweenCells[Function: moveObjectBetweenCells]
+loadObjectsFromCells[Function: loadObjectsFromCells]
+saveObject[Function: saveObject]
+deleteObject[Function: deleteObject]
+updateObject[Function: updateObject]
+subscribeToObjects[Function: subscribeToObjects]
+getObjectDeletionStatus[Function: getObjectDeletionStatus]
+clearObjectDeletionBlacklist[Function: clearObjectDeletionBlacklist]
+getCellCoordinates[Function: getCellCoordinates]
+getCellCoordinatesWithHysteresis[Function: getCellCoordinatesWithHysteresis]
+getCellId[Function: getCellId]
+parseCellId[Function: parseCellId]
+getCellBounds[Function: getCellBounds]
+createCell[Function: createCell]
+createCellsBatch[Function: createCellsBatch]
+cellExists[Function: cellExists]
+cellExistsBulk[Function: cellExistsBulk]
+getCell[Function: getCell]
+addObjectToCell[Function: addObjectToCell]
+removeObjectFromCell[Function: removeObjectFromCell]
+getLoadedCells[Function: getLoadedCells]
+getObjectsFromCells[Function: getObjectsFromCells]
+updateObjectInCell[Function: updateObjectInCell]
+deleteObjectFromCell[Function: deleteObjectFromCell]
+subscribeToCells[Function: subscribeToCells]
+getOccupiedCells[Function: getOccupiedCells]
+getCellDistance[Function: getCellDistance]
+getCellsToUnload[Function: getCellsToUnload]
+addConnectionToCells[Function: addConnectionToCells]
+bulkSaveConnectionsToCell[Function: bulkSaveConnectionsToCell]
+addConnectionToCell[Function: addConnectionToCell]
+removeConnectionFromAllCells[Function: removeConnectionFromAllCells]
+removeConnectionFromCells[Function: removeConnectionFromCells]
+removeConnectionFromCell[Function: removeConnectionFromCell]
+getConnectionsFromCells[Function: getConnectionsFromCells]
+updateConnectionInCells[Function: updateConnectionInCells]
+getCellsInRadius[Function: getCellsInRadius]
+getNeighborCells[Function: getNeighborCells]
+debugCellRadius[Function: debugCellRadius]
+debugNeighborCells[Function: debugNeighborCells]
+debugCurrentCellLoading[Function: debugCurrentCellLoading]
+findObjectInCells[Function: findObjectInCells]
+getAllObjectsInSpace[Function: getAllObjectsInSpace]
+findConnectionInCells[Function: findConnectionInCells]
+purgeConnectionFromAllCells[Function: purgeConnectionFromAllCells]
+deleteAllCellsInSpace[Function: deleteAllCellsInSpace]
+uploadImageToStorage[Function: uploadImageToStorage]
+uploadModelToStorage[Function: uploadModelToStorage]
+uploadMarkdownToStorage[Function: uploadMarkdownToStorage]
+getStreamlinedSpatialManager[Function: getStreamlinedSpatialManager]
+initializeStreamlinedSpatialPartitioning[Function: initializeStreamlinedSpatialPartitioning]
+benchmarkStreamlinedSystem[Function: benchmarkStreamlinedSystem]
+initWebRTC[Function: initWebRTC]
+startBroadcasting[Function: startBroadcasting]
+joinBroadcast[Function: joinBroadcast]
+isPlaneBeingBroadcast[Function: isPlaneBeingBroadcast]
+findAvailableBroadcasts[Function: findAvailableBroadcasts]
+cleanupWebRTC[Function: cleanupWebRTC]
+registerUserPresence[Function: registerUserPresence]
+subscribeToUsersInSpace[Function: subscribeToUsersInSpace]
 
 %% Stores
 useAnimatedConnectionLineStore[[Store: useAnimatedConnectionLineStore]]
@@ -455,67 +443,143 @@ usePlaneActions[[Store: usePlaneActions]]
 useGlobalStoreUtils[[Store: useGlobalStoreUtils]]
 useTextAtlasStore[[Store: useTextAtlasStore]]
 setCellBoundariesVisible[[Store: setCellBoundariesVisible]]
-connectionStore[[Store: connectionStore]]
-cubeStore[[Store: cubeStore]]
-lodStore[[Store: lodStore]]
-storeUtils[[Store: storeUtils]]
-uiOverlayStore[[Store: uiOverlayStore]]
 
-%% External Libraries
-@eslint/js<Library: @eslint/js>
-globals<Library: globals>
-eslint_plugin_react<Library: eslint_plugin_react>
-eslint_plugin_react_hooks<Library: eslint_plugin_react_hooks>
-eslint_plugin_react_refresh<Library: eslint_plugin_react_refresh>
-firebase_admin/app<Library: firebase_admin/app>
-firebase_admin/auth<Library: firebase_admin/auth>
-firebase_admin/firestore<Library: firebase_admin/firestore>
-firebase_functions/v2/https<Library: firebase_functions/v2/https>
-firebase_functions/params<Library: firebase_functions/params>
-puppeteer_core<Library: puppeteer_core>
-@sparticuz/chromium<Library: @sparticuz/chromium>
-express<Library: express>
-cors<Library: cors>
-dotenv<Library: dotenv>
-react<Library: react>
-@react_three/fiber<Library: @react_three/fiber>
-@react_three/postprocessing<Library: @react_three/postprocessing>
-@react_three/drei/core/Stats<Library: @react_three/drei/core/Stats>
-lodash/isEqual<Library: lodash/isEqual>
-@react_three/drei<Library: @react_three/drei>
-three<Library: three>
-react_colorful<Library: react_colorful>
-zustand/shallow<Library: zustand/shallow>
-@xyflow/react<Library: @xyflow/react>
-@xyflow/react/dist/style_css<Library: @xyflow/react/dist/style_css>
-three/examples/jsm/loaders/GLTFLoader<Library: three/examples/jsm/loaders/GLTFLoader>
-three/examples/jsm/loaders/DRACOLoader<Library: three/examples/jsm/loaders/DRACOLoader>
-firebase/database<Library: firebase/database>
-firebase/auth<Library: firebase/auth>
-firebase/firestore<Library: firebase/firestore>
-firebase/app<Library: firebase/app>
-firebase/storage<Library: firebase/storage>
-firebase/functions<Library: firebase/functions>
-zustand<Library: zustand>
-prop_types<Library: prop_types>
-draft_js<Library: draft_js>
-draft_js/dist/Draft_css<Library: draft_js/dist/Draft_css>
-react_dom/client<Library: react_dom/client>
-@babel/parser<Library: @babel/parser>
-_3d_ast_generator<Library: _3d_ast_generator>
-fix_webm_duration<Library: fix_webm_duration>
-uuid<Library: uuid>
-zustand/traditional<Library: zustand/traditional>
-comlink<Library: comlink>
-vite<Library: vite>
-@vitejs/plugin_react<Library: @vitejs/plugin_react>
-vite_plugin_glsl<Library: vite_plugin_glsl>
-vite_plugin_wasm<Library: vite_plugin_wasm>
+%% Utilities
+registerMaterial[Function: registerMaterial]
+unregisterMaterial[Function: unregisterMaterial]
+setAnimationSpeed[Function: setAnimationSpeed]
+initAnimationSystem[Function: initAnimationSystem]
+initBVHRaycasting[Function: initBVHRaycasting]
+getBVH[Function: getBVH]
+updateBVHObjects[Function: updateBVHObjects]
+bvhIntersectObjects[Function: bvhIntersectObjects]
+getBVHStats[Function: getBVHStats]
+updateLODLevels[Function: updateLODLevels]
+registerObjectRelationships[Function: registerObjectRelationships]
+validateConnection[Function: validateConnection]
+getIndicatorId[Function: getIndicatorId]
+getConnectionKey[Function: getConnectionKey]
+prepareTextObjectIndicator[Function: prepareTextObjectIndicator]
+objectsAreConnectedInStore[Function: objectsAreConnectedInStore]
+getConnectionsForObject[Function: getConnectionsForObject]
+createConnectionInStore[Function: createConnectionInStore]
+updateConnectionPositionsInStore[Function: updateConnectionPositionsInStore]
+removeConnectionsForObject[Function: removeConnectionsForObject]
+isInConnectionCreationMode[Function: isInConnectionCreationMode]
+startConnectionCreation[Function: startConnectionCreation]
+completeConnectionCreation[Function: completeConnectionCreation]
+cancelConnectionCreation[Function: cancelConnectionCreation]
+logAnimation[Function: logAnimation]
+forceAnimateConnection[Function: forceAnimateConnection]
+shouldAnimateConnection[Function: shouldAnimateConnection]
+recordFrameTime[Function: recordFrameTime]
+recordStateUpdate[Function: recordStateUpdate]
+getPerfStats[Function: getPerfStats]
+resetPerfStats[Function: resetPerfStats]
+handleFaceIndicatorClick[Function: handleFaceIndicatorClick]
+calculateFacePosition[Function: calculateFacePosition]
+frameCounter[Function: frameCounter]
+gpuTracker[Function: gpuTracker]
+getIsInitialLoading[Function: getIsInitialLoading]
+setIsInitialLoading[Function: setIsInitialLoading]
+handleObjectMove[Function: handleObjectMove]
+handleObjectUpdate[Function: handleObjectUpdate]
+objectVirtualizer[Function: objectVirtualizer]
+invalidatePathfindingCaches[Function: invalidatePathfindingCaches]
+checkObjectMovement[Function: checkObjectMovement]
+cleanCaches[Function: cleanCaches]
+roundForCache[Function: roundForCache]
+lineIntersectsBoundingBox[Function: lineIntersectsBoundingBox]
+generateCacheKey[Function: generateCacheKey]
+havePositionsChanged[Function: havePositionsChanged]
+checkLineIntersection[Function: checkLineIntersection]
+generateCurvedPath[Function: generateCurvedPath]
+checkCurveIntersections[Function: checkCurveIntersections]
+generateMultiSegmentPath[Function: generateMultiSegmentPath]
+precomputeCacheKey[Function: precomputeCacheKey]
+getPrecomputedResult[Function: getPrecomputedResult]
+computeConnectionPath[Function: computeConnectionPath]
+precomputePathsBatch[Function: precomputePathsBatch]
+calculateMidpoint[Function: calculateMidpoint]
+calculateMidpointVector[Function: calculateMidpointVector]
+lerp[Function: lerp]
+checkPositionJitter[Function: checkPositionJitter]
+_frameTimeTracker[Function: _frameTimeTracker]
+_resetForNextFrame[Function: _resetForNextFrame]
+acquireBudget[Function: acquireBudget]
+setFrameBudget[Function: setFrameBudget]
+getFrameBudget[Function: getFrameBudget]
+notifyCameraMove[Function: notifyCameraMove]
+isCameraMoving[Function: isCameraMoving]
+isCameraMovingRapidly[Function: isCameraMovingRapidly]
+isFrameBudgetExhausted[Function: isFrameBudgetExhausted]
+getSmoothedFrameTime[Function: getSmoothedFrameTime]
+calculateAxisSnap[Function: calculateAxisSnap]
+distanceToAxis[Function: distanceToAxis]
+projectPointOntoAxis[Function: projectPointOntoAxis]
+createStreamlinedSpatialIndex[Function: createStreamlinedSpatialIndex]
+benchmarkStreamlined[Function: benchmarkStreamlined]
+isOffscreenCanvasTextSupported[Function: isOffscreenCanvasTextSupported]
+_switchToSyncAtlas[Function: _switchToSyncAtlas]
+getGlobalTextAtlas[Function: getGlobalTextAtlas]
+resetGlobalTextAtlas[Function: resetGlobalTextAtlas]
+createAtlasTextMesh[Function: createAtlasTextMesh]
+loadTextureFromFirebaseUrl[Function: loadTextureFromFirebaseUrl]
+loadTextureFromBlob[Function: loadTextureFromBlob]
+throttle[Function: throttle]
+debounce[Function: debounce]
+measurePerformance[Function: measurePerformance]
+scheduleWork[Function: scheduleWork]
+memoize[Function: memoize]
+trackLCP[Function: trackLCP]
+cleanObject[Function: cleanObject]
+validateRequiredProperties[Function: validateRequiredProperties]
+validateObjectSchema[Function: validateObjectSchema]
+isValidPosition[Function: isValidPosition]
+validatePosition[Function: validatePosition]
+validatePositionBounds[Function: validatePositionBounds]
+validateConnectionData[Function: validateConnectionData]
+validateIndicator[Function: validateIndicator]
+validateFile[Function: validateFile]
+validateObjectId[Function: validateObjectId]
+validateSpaceId[Function: validateSpaceId]
+validateUserId[Function: validateUserId]
+validateUrl[Function: validateUrl]
+validateEmail[Function: validateEmail]
+validateArray[Function: validateArray]
+validateMultiple[Function: validateMultiple]
+
+%% Classes
+SpatialHash[[Class: SpatialHash]]
+CentralizedBroadcastManager[[Class: CentralizedBroadcastManager]]
+GlobalOptimizationCoordinator[[Class: GlobalOptimizationCoordinator]]
+MarkdownDiagramService[[Class: MarkdownDiagramService]]
+ResourceCleanupService[[Class: ResourceCleanupService]]
+ScreenRecordingService[[Class: ScreenRecordingService]]
+StreamlinedSpatialManager[[Class: StreamlinedSpatialManager]]
+UnifiedCacheManager[[Class: UnifiedCacheManager]]
+BroadcastSession[[Class: BroadcastSession]]
+BVHNode[[Class: BVHNode]]
+BVHAcceleratedRaycaster[[Class: BVHAcceleratedRaycaster]]
+FrameCounter[[Class: FrameCounter]]
+GPUResourceTracker[[Class: GPUResourceTracker]]
+ObjectVirtualizer[[Class: ObjectVirtualizer]]
+Point3D[[Class: Point3D]]
+BoundingBox[[Class: BoundingBox]]
+OptimizedSpatialGrid[[Class: OptimizedSpatialGrid]]
+TextAtlas[[Class: TextAtlas]]
+MultiPageTextAtlas[[Class: MultiPageTextAtlas]]
+WorkerMultiPageTextAtlas[[Class: WorkerMultiPageTextAtlas]]
+LayoutEngine[[Class: LayoutEngine]]
+AtlasPage[[Class: AtlasPage]]
 
 %% Constants
 MAX_EVENT_HANDLERS[Constant: MAX_EVENT_HANDLERS]
 MAX_API_CALLS[Constant: MAX_API_CALLS]
 ALLOWED_ORIGINS[Constant: ALLOWED_ORIGINS]
+nonSourceDirPattern[Constant: nonSourceDirPattern]
+pythonSignalFiles[Constant: pythonSignalFiles]
+EXCLUDED_DIRS[Constant: EXCLUDED_DIRS]
 THROTTLE_FACE_TEXT[Constant: THROTTLE_FACE_TEXT]
 THROTTLE_HEADER_TEXT[Constant: THROTTLE_HEADER_TEXT]
 THROTTLE_CONNECTION_TEXT[Constant: THROTTLE_CONNECTION_TEXT]
@@ -776,7 +840,60 @@ maxGPUTextureSize[Variable: maxGPUTextureSize]
 instance[Variable: instance]
 worker[Variable: worker]
 
-%% Child Nodes (Component Internal Functions)
+%% External Libraries
+@eslint/js<Library: @eslint/js>
+globals<Library: globals>
+eslint-plugin-react<Library: eslint-plugin-react>
+eslint-plugin-react-hooks<Library: eslint-plugin-react-hooks>
+eslint-plugin-react-refresh<Library: eslint-plugin-react-refresh>
+firebase-admin/app<Library: firebase-admin/app>
+firebase-admin/auth<Library: firebase-admin/auth>
+firebase-admin/firestore<Library: firebase-admin/firestore>
+firebase-functions/v2/https<Library: firebase-functions/v2/https>
+firebase-functions/params<Library: firebase-functions/params>
+puppeteer-core<Library: puppeteer-core>
+@sparticuz/chromium<Library: @sparticuz/chromium>
+express<Library: express>
+cors<Library: cors>
+dotenv<Library: dotenv>
+@babel/parser<Library: @babel/parser>
+fs/promises<Library: fs/promises>
+path<Library: path>
+react<Library: react>
+@react-three/fiber<Library: @react-three/fiber>
+@react-three/postprocessing<Library: @react-three/postprocessing>
+@react-three/drei/core/Stats<Library: @react-three/drei/core/Stats>
+lodash/isEqual<Library: lodash/isEqual>
+@react-three/drei<Library: @react-three/drei>
+three<Library: three>
+react-colorful<Library: react-colorful>
+zustand/shallow<Library: zustand/shallow>
+@xyflow/react<Library: @xyflow/react>
+@xyflow/react/dist/style.css<Library: @xyflow/react/dist/style.css>
+three/examples/jsm/loaders/GLTFLoader<Library: three/examples/jsm/loaders/GLTFLoader>
+three/examples/jsm/loaders/DRACOLoader<Library: three/examples/jsm/loaders/DRACOLoader>
+firebase/database<Library: firebase/database>
+firebase/auth<Library: firebase/auth>
+firebase/firestore<Library: firebase/firestore>
+firebase/app<Library: firebase/app>
+firebase/storage<Library: firebase/storage>
+firebase/functions<Library: firebase/functions>
+zustand<Library: zustand>
+prop-types<Library: prop-types>
+draft-js<Library: draft-js>
+draft-js/dist/Draft.css<Library: draft-js/dist/Draft.css>
+react-dom/client<Library: react-dom/client>
+3d-ast-generator<Library: 3d-ast-generator>
+fix-webm-duration<Library: fix-webm-duration>
+uuid<Library: uuid>
+zustand/traditional<Library: zustand/traditional>
+comlink<Library: comlink>
+vite<Library: vite>
+@vitejs/plugin-react<Library: @vitejs/plugin-react>
+vite-plugin-glsl<Library: vite-plugin-glsl>
+vite-plugin-wasm<Library: vite-plugin-wasm>
+
+%% Component Internal Functions
 appObjects[Function: appObjects]
 appCanViewSpace[Function: appCanViewSpace]
 appShouldRedirect[Function: appShouldRedirect]
@@ -1191,395 +1308,58 @@ updatesviewerFormattedTimestamp[Function: updatesviewerFormattedTimestamp]
 whiteplanePlaneGeometry[Function: whiteplanePlaneGeometry]
 whiteplaneGridTexture[Function: whiteplaneGridTexture]
 
-%% Boundaries
-Suspense[/Boundary: Suspense/]
-
-%% Shaders
-
-%% Web Workers
-
-%% Relationships
-App --> useTimeoutManager : "{setRedirectTimeout, clearRedirectTimeout, clearLoadingTimeout, setObjectLoadingTimeout, clearObjectLoadingTimeout}"
-App --> useSpatialManagerStore : "uses store"
-App --> useAuthState : "{user, isAuthReady, isCheckingUrlAuth}"
-App --> useSpaceManager : "{currentSpaceId}"
-App --> useSpatialManager : "{loadedCells, isInitialized, currentCellCoords, trackObjectInCell, untrackObjectInCell}"
-App --> useConnectionStore : "uses store"
-App --> useConnections : "{connections, handleLineStyleChange, handleLineColorChange, handleConnectionClick, handleLineTextClick, handleLineTextSubmit, handleLineTextStyleChange}"
-App --> useObjects : "{selectedId, setSelectedId, handleCreateObject, handleObjectDelete, lastUpdateRef, draggingObjectsRef, registerTransformingObject, transformingObjectsRef, getTransformStartPosition}"
-App --> useIndicators : "{showAllCubesIndicators, setShowAllCubesIndicators, activeIndicator, setActiveIndicator, indicatorMode, setIndicatorMode, selectedIndicators, setSelectedIndicators, isConnectMode, setIsConnectMode, globalIndicatorSelected, setGlobalIndicatorSelected, selectedIndicatorsRef, handleToggleIndicators, handleIndicatorSelected, handleIndicatorDeselected}"
-AnimatedConnectionLine --> useAnimatedConnectionLineStore : "uses store"
-AtlasTextSprite --> useTextAtlasStore : "uses store"
-Connection --> useConnectionObjectPositions : "{startObject, endObject}"
-Connection --> useConnectionState : "uses hook"
-Connection --> useConnectionActions : "uses hook"
-ConnectionsRenderer --> useConnectionsRendererStore : "uses store"
-ConnectionsRenderer --> useFrustumCulledConnections : "{visibleConnections}"
-Cube --> useLODStore : "uses store"
-Cube --> useConnectionStore : "uses store"
-Sphere --> useConnectionStore : "uses store"
-Sphere --> useLODStore : "uses store"
-GlobalCubeEdgesRenderer --> useLODStore : "uses store"
-GlobalCubeFaceRenderer --> useLODStore : "uses store"
-GlobalCubeMediumLODRenderer --> useLODStore : "uses store"
-GlobalDodecahedronEdgesRenderer --> useLODStore : "uses store"
-GlobalDodecahedronMediumLODRenderer --> useLODStore : "uses store"
-GlobalTetrahedronEdgesRenderer --> useLODStore : "uses store"
-GlobalTetrahedronMediumLODRenderer --> useLODStore : "uses store"
-InstancedAtlasText --> useTextAtlasStore : "uses store"
-LineUI --> useConnectionStore : "uses store"
-LODManager --> useLODStore : "uses store"
-Plane --> useConnectionStore : "uses store"
-RealTimeConnectionUpdater --> useConnectionStore : "uses store"
-RealTimeConnectionUpdater --> useSpatialManagerStore : "uses store"
-Tetrahedron --> useConnectionStore : "uses store"
-Tetrahedron --> useLODStore : "uses store"
-TextObject --> useConnectionStore : "uses store"
-UIOverlay --> useConnectionStore : "uses store"
-LandingApp --> useWindowSize : "uses hook"
-createVerifyAuthTokenApp --> express : "calls express"
-createVerifyAuthTokenApp --> cors : "calls cors"
-createBulkImportApp --> express : "calls express"
-createBulkImportApp --> cors : "calls cors"
-createBulkDeleteApp --> express : "calls express"
-createBulkDeleteApp --> cors : "calls cors"
-scanJsBundles --> extractSourceMapUrl : "calls extractSourceMapUrl"
-scanJsBundles --> scanOriginalSource : "calls scanOriginalSource"
-scanJsBundles --> extractNamesFromSourceMap : "calls extractNamesFromSourceMap"
-captureRuntimeTrace --> scanJsBundles : "calls scanJsBundles"
-captureRuntimeTrace --> deduplicateApiCalls : "calls deduplicateApiCalls"
-captureRuntimeTrace --> buildConnections : "calls buildConnections"
-createScanWebsiteRuntimeApp --> express : "calls express"
-createScanWebsiteRuntimeApp --> cors : "calls cors"
-createScanWebsiteRuntimeApp --> validateRuntimeScanUrl : "calls validateRuntimeScanUrl"
-createScanWebsiteRuntimeApp --> captureRuntimeTrace : "calls captureRuntimeTrace"
-createScanWebsiteRuntimeApp --> generateMerfolkFromRuntimeTrace : "calls generateMerfolkFromRuntimeTrace"
-App --> initAnimationSystem : "calls initAnimationSystem"
-App --> checkPositionJitter : "calls checkPositionJitter"
-App --> getPublicSpaceMetadata : "calls getPublicSpaceMetadata"
-App --> getObjectsFromCells : "calls getObjectsFromCells"
-App --> subscribeToSpatialObjects : "calls subscribeToSpatialObjects"
-App --> getCellCoordinates : "calls getCellCoordinates"
-App --> signInUser : "calls signInUser"
-App --> useConnectionStore : "calls .getState()"
-App --> handleObjectMove : "calls handleObjectMove"
-App --> handleObjectUpdate : "calls handleObjectUpdate"
-App --> handleFaceIndicatorClick : "calls handleFaceIndicatorClick"
-App --> throttle : "calls throttle"
-App --> isCameraMovingRapidly : "calls isCameraMovingRapidly"
-App --> notifyCameraMove : "calls notifyCameraMove"
-App --> initWebRTC : "calls initWebRTC"
-AtlasTextSprite --> getGlobalTextAtlas : "calls getGlobalTextAtlas"
-AtlasTextSprite --> getSharedMaterial : "calls getSharedMaterial"
-DynamicBillboardMesh --> isFrameBudgetExhausted : "calls isFrameBudgetExhausted"
-BatchedCurvedLines --> numericCacheKey : "calls numericCacheKey"
-BatchedCurvedLines --> computeConnectionPath : "calls computeConnectionPath"
-BatchedCurvedLines --> pathToSegments : "calls pathToSegments"
-CellBoundaryRenderer --> getCellBounds : "calls getCellBounds"
-CellBoundaryRenderer --> computeVisibleCells : "calls computeVisibleCells"
-DistanceFilteredConnectionText --> isFrameBudgetExhausted : "calls isFrameBudgetExhausted"
-resolveEndpointPosition --> calculateFacePosition : "calls calculateFacePosition"
-Connection --> useConnectionStore : "calls .getState()"
-Connection --> saveConnection : "calls saveConnection"
-Connection --> calculateFacePosition : "calls calculateFacePosition"
-Connection --> calculateMidpoint : "calls calculateMidpoint"
-Connection --> computeConnectionPath : "calls computeConnectionPath"
-Connection --> getTextParametricT : "calls getTextParametricT"
-ConnectionsRenderer --> isCameraMoving : "calls isCameraMoving"
-ConnectionsRenderer --> acquireBudget : "calls acquireBudget"
-ConnectionsRenderer --> invalidatePathfindingCaches : "calls invalidatePathfindingCaches"
-ConnectionsRenderer --> resolveEndpointPosition : "calls resolveEndpointPosition"
-ConnectionsRenderer --> computeConnectionPath : "calls computeConnectionPath"
-ConnectionsRenderer --> precomputePathsBatch : "calls precomputePathsBatch"
-ConnectionsRenderer --> redistributeFaces : "calls redistributeFaces"
-ConnectionsRenderer --> getTextParametricT : "calls getTextParametricT"
-ConnectionsRenderer --> useConnectionStore : "calls .getState()"
-Cube --> getFaceIndicatorProps : "calls getFaceIndicatorProps"
-Cube --> debounce : "calls debounce"
-Cube --> calculateAxisSnap : "calls calculateAxisSnap"
-CubeFace --> getCubeFaceStateSelector : "calls getCubeFaceStateSelector"
-MerfolkEdge --> getEdgeStyle : "calls getEdgeStyle"
-MerfolkEdge --> getSelectedStyle : "calls getSelectedStyle"
-MerfolkEdge --> getUnselectedStyle : "calls getUnselectedStyle"
-DiagramOverlay2D --> getDiagramLayoutWorker : "calls getDiagramLayoutWorker"
-DiagramOverlay2D --> buildReactFlowNodes : "calls buildReactFlowNodes"
-DiagramOverlay2D --> buildReactFlowEdges : "calls buildReactFlowEdges"
-DiagramOverlay2D --> filterEdges : "calls filterEdges"
-Sphere --> calculateAxisSnap : "calls calculateAxisSnap"
-InstancedAtlasText --> getGlobalTextAtlas : "calls getGlobalTextAtlas"
-PageInstancedMesh --> isFrameBudgetExhausted : "calls isFrameBudgetExhausted"
-LODManager --> useLODStore : "calls .getState()"
-LODManager --> getSpatialIndexWorker : "calls getSpatialIndexWorker"
-LODManager --> calculateParentLODLevel : "calls calculateParentLODLevel"
-LODManager --> calculateLODLevel : "calls calculateLODLevel"
-LODManager --> isCameraMoving : "calls isCameraMoving"
-LODManager --> getSmoothedFrameTime : "calls getSmoothedFrameTime"
-ObjectRenderer --> handleObjectMove : "calls handleObjectMove"
-ObjectsRenderer --> isCameraMoving : "calls isCameraMoving"
-ObjectsRenderer --> acquireBudget : "calls acquireBudget"
-Plane --> calculateAxisSnap : "calls calculateAxisSnap"
-Plane --> uploadImageToStorage : "calls uploadImageToStorage"
-RealTimeConnectionUpdater --> useConnectionStore : "calls .getState()"
-RealTimeConnectionUpdater --> calculateFacePosition : "calls calculateFacePosition"
-ScreenShareStream --> startBroadcasting : "calls startBroadcasting"
-ScreenShareStream --> joinBroadcast : "calls joinBroadcast"
-SpacePresenceAvatars --> subscribeToSpacePresence : "calls subscribeToSpacePresence"
-Tetrahedron --> debounce : "calls debounce"
-Tetrahedron --> getFaceIndicatorProps : "calls getFaceIndicatorProps"
-Tetrahedron --> calculateAxisSnap : "calls calculateAxisSnap"
-TextObject --> calculateAxisSnap : "calls calculateAxisSnap"
-TextObject --> isFrameBudgetExhausted : "calls isFrameBudgetExhausted"
-TextSprite --> isFrameBudgetExhausted : "calls isFrameBudgetExhausted"
-UIOverlay --> scanRepositoryAndGenerateDiagram : "calls scanRepositoryAndGenerateDiagram"
-UIOverlay --> rescanRepositoryForChanges : "calls rescanRepositoryForChanges"
-UIOverlay --> uploadMarkdownToStorage : "calls uploadMarkdownToStorage"
-UIOverlay --> validateScanUrl : "calls validateScanUrl"
-UIOverlay --> scanWebsiteAndGenerateDiagram : "calls scanWebsiteAndGenerateDiagram"
-UIOverlay --> fetchRepositories : "calls fetchRepositories"
-UIOverlay --> handleGithubCallback : "calls handleGithubCallback"
-UIOverlay --> clearAllObjectCaches : "calls clearAllObjectCaches"
-UIOverlay --> uploadModelToStorage : "calls uploadModelToStorage"
-WebcamStream --> startBroadcasting : "calls startBroadcasting"
-WebcamStream --> joinBroadcast : "calls joinBroadcast"
-useConnections --> useConnectionStore : "calls .getState()"
-useConnections --> getIsInitialLoading : "calls getIsInitialLoading"
-useConnections --> subscribeToConnections : "calls subscribeToConnections"
-useConnections --> saveConnection : "calls saveConnection"
-isConnectionVisible --> isPointInFrustum : "calls isPointInFrustum"
-useObjects --> useConnectionStore : "calls .getState()"
-useSpaceManager --> useSpaceManagerStore : "calls .getState()"
-OrganizationManager --> getUserOrganizations : "calls getUserOrganizations"
-OrganizationManager --> getPendingInvitesForUser : "calls getPendingInvitesForUser"
-OrganizationManager --> createOrganization : "calls createOrganization"
-OrganizationManager --> inviteUserToOrganization : "calls inviteUserToOrganization"
-OrganizationManager --> removeMemberFromOrganization : "calls removeMemberFromOrganization"
-OrganizationManager --> leaveOrganization : "calls leaveOrganization"
-OrganizationManager --> updateOrganizationPlan : "calls updateOrganizationPlan"
-OrganizationManager --> deleteOrganization : "calls deleteOrganization"
-OrganizationManager --> acceptInvite : "calls acceptInvite"
-OrganizationManager --> declineInvite : "calls declineInvite"
-LandingApp --> getOrganizationMembers : "calls getOrganizationMembers"
-LandingApp --> getUserOrganizations : "calls getUserOrganizations"
-LandingApp --> getPendingInvitesForUser : "calls getPendingInvitesForUser"
-LandingApp --> signOut : "calls signOut"
-LandingApp --> acceptInvite : "calls acceptInvite"
-LandingApp --> declineInvite : "calls declineInvite"
-removeAllSharedReferences --> removeSharedSpaceReference : "calls removeSharedSpaceReference"
-flushSaveBatch --> getCellCoordinates : "calls getCellCoordinates"
-flushSaveBatch --> getCellId : "calls getCellId"
-flushSaveBatch --> addObjectToCell : "calls addObjectToCell"
-checkObjectMovement --> roundForCache : "calls roundForCache"
-generateCacheKey --> roundForCache : "calls roundForCache"
-checkLineIntersection --> cleanCaches : "calls cleanCaches"
-checkLineIntersection --> generateCacheKey : "calls generateCacheKey"
-generateCurvedPath --> generateCacheKey : "calls generateCacheKey"
-generateCurvedPath --> lineIntersectsBoundingBox : "calls lineIntersectsBoundingBox"
-generateCurvedPath --> generateMultiSegmentPath : "calls generateMultiSegmentPath"
-generateCurvedPath --> checkCurveIntersections : "calls checkCurveIntersections"
-precomputeCacheKey --> roundForCache : "calls roundForCache"
-getPrecomputedResult --> precomputeCacheKey : "calls precomputeCacheKey"
-computeConnectionPath --> getPrecomputedResult : "calls getPrecomputedResult"
-computeConnectionPath --> checkLineIntersection : "calls checkLineIntersection"
-computeConnectionPath --> generateCurvedPath : "calls generateCurvedPath"
-precomputePathsBatch --> getPathfindingWorker : "calls getPathfindingWorker"
-precomputePathsBatch --> precomputeCacheKey : "calls precomputeCacheKey"
-isCameraMovingRapidly --> isCameraMoving : "calls isCameraMoving"
-benchmarkStreamlined --> createStreamlinedSpatialIndex : "calls createStreamlinedSpatialIndex"
-_switchToSyncAtlas --> useTextAtlasStore : "calls .getState()"
-getGlobalTextAtlas --> isOffscreenCanvasTextSupported : "calls isOffscreenCanvasTextSupported"
-createAtlasTextMesh --> getGlobalTextAtlas : "calls getGlobalTextAtlas"
-filterConnections --> isHierarchyConnection : "calls isHierarchyConnection"
-layoutNodes --> estimateNodeSize : "calls estimateNodeSize"
-layoutEdges --> filterConnections : "calls filterConnections"
-App --> FrameTicker : "renders"
-App --> FrameloopController : "renders"
-App --> LODManager : "renders"
-App --> ConnectionAnimationManager : "renders"
-App --> CustomCamera : "renders"
-App --> RealTimeConnectionUpdater : "renders"
-App --> ConnectionsRenderer : "renders"
-App --> ObjectsRenderer : "renders"
-App --> CellBoundaryRenderer : "renders"
-App --> DiagramOverlay2D : "renders"
-App --> UIOverlay : "renders"
-AppShell --> LandingApp : "renders"
-AtlasTextSprite --> StaticBillboardMesh : "renders"
-AtlasTextSprite --> DynamicBillboardMesh : "renders"
-Connection --> InstancedLine : "renders"
-Connection --> AnimatedConnectionLine : "renders"
-Connection --> DistanceFilteredConnectionText : "renders"
-Connection --> AtlasTextSprite : "renders"
-Connection --> HeaderInput : "renders"
-Connection --> TextStyleUI : "renders"
-Connection --> LineUI : "renders"
-ConnectionsRenderer --> BatchedConnectionLines : "renders"
-ConnectionsRenderer --> BatchedCurvedLines : "renders"
-ConnectionsRenderer --> DistanceFilteredTextLabels : "renders"
-ConnectionsRenderer --> Connection : "renders"
-Cube --> CubeFace : "renders"
-Cube --> FaceUI : "renders"
-Cube --> FaceTextInput : "renders"
-Cube --> AtlasTextSprite : "renders"
-Cube --> TextStyleUI : "renders"
-Cube --> SnapLineIndicator : "renders"
-Cube --> InstancedLine : "renders"
-Cube --> HeaderInput : "renders"
-Cube --> ObjectUI : "renders"
-CubeFace --> FaceIndicator : "renders"
-DiagramOverlay2D --> EdgeMarkerDefs : "renders"
-DistanceFilteredTextLabels --> InstancedAtlasText : "renders"
-Sphere --> SnapLineIndicator : "renders"
-Sphere --> DodecahedronFace : "renders"
-Sphere --> InstancedLine : "renders"
-Sphere --> ObjectUI : "renders"
-Sphere --> FaceUI : "renders"
-Sphere --> HeaderInput : "renders"
-Sphere --> AtlasTextSprite : "renders"
-Sphere --> TextStyleUI : "renders"
-DodecahedronFace --> FaceIndicator : "renders"
-DodecahedronFace --> AtlasTextSprite : "renders"
-DodecahedronFace --> FaceTextInput : "renders"
-FaceUI --> ColorPicker : "renders"
-InstancedAtlasText --> PageInstancedMesh : "renders"
-LineUI --> ColorPicker : "renders"
-ObjectRenderer --> Cube : "renders"
-ObjectRenderer --> Tetrahedron : "renders"
-ObjectRenderer --> Sphere : "renders"
-ObjectRenderer --> Plane : "renders"
-ObjectRenderer --> TextObject : "renders"
-ObjectRenderer --> ModelObject : "renders"
-ObjectsRenderer --> ObjectRenderer : "renders"
-ObjectsRenderer --> GlobalCubeEdgesRenderer : "renders"
-ObjectsRenderer --> GlobalCubeFaceRenderer : "renders"
-ObjectsRenderer --> GlobalCubeMediumLODRenderer : "renders"
-ObjectsRenderer --> GlobalDodecahedronEdgesRenderer : "renders"
-ObjectsRenderer --> GlobalDodecahedronMediumLODRenderer : "renders"
-ObjectsRenderer --> GlobalTetrahedronEdgesRenderer : "renders"
-ObjectsRenderer --> GlobalTetrahedronMediumLODRenderer : "renders"
-ObjectsRenderer --> AtlasTextSprite : "renders"
-ObjectUI --> ColorPicker : "renders"
-Plane --> SnapLineIndicator : "renders"
-Plane --> WebcamStream : "renders"
-Plane --> ScreenShareStream : "renders"
-Plane --> InstancedLine : "renders"
-Plane --> FaceIndicator : "renders"
-Plane --> AtlasTextSprite : "renders"
-Plane --> TextStyleUI : "renders"
-Plane --> FaceUI : "renders"
-Plane --> FaceTextInput : "renders"
-Plane --> HeaderInput : "renders"
-SnapLineIndicator --> InstancedLine : "renders"
-SpacePresenceAvatars --> Avatar : "renders"
-Tetrahedron --> AtlasTextSprite : "renders"
-Tetrahedron --> TextStyleUI : "renders"
-Tetrahedron --> TetrahedronFace : "renders"
-Tetrahedron --> SnapLineIndicator : "renders"
-Tetrahedron --> InstancedLine : "renders"
-Tetrahedron --> HeaderInput : "renders"
-Tetrahedron --> ObjectUI : "renders"
-TetrahedronFace --> AtlasTextSprite : "renders"
-TetrahedronFace --> TextStyleUI : "renders"
-TetrahedronFace --> FaceUI : "renders"
-TetrahedronFace --> FaceTextInput : "renders"
-TetrahedronFace --> FaceIndicator : "renders"
-TextObject --> SnapLineIndicator : "renders"
-TextObject --> FaceIndicator : "renders"
-TextObject --> TextObjectUI : "renders"
-TextObjectUI --> TextStyleUIContent : "renders"
-TextObjectUI --> ColorPicker : "renders"
-TextStyleUIContent --> ColorPicker : "renders"
-TextStyleUI --> TextStyleUIContent : "renders"
-TextStyleUIContainer --> TextStyleUIContent : "renders"
-UIOverlay --> SpaceChat : "renders"
-UIOverlay --> SpacePresenceAvatars : "renders"
-CreateSpacePopup --> OrgMemberDropdown : "renders"
-LandingApp --> CreateSpacePopup : "renders"
-LandingApp --> UpgradePrompt : "renders"
-LandingApp --> ShareSpacePopup : "renders"
-LandingApp --> OrganizationManager : "renders"
-LandingApp --> SpacesTable : "renders"
-LandingApp --> UserLoginSection : "renders"
-LandingApp --> WelcomeOverlay : "renders"
-LandingApp --> OrderHeader : "renders"
-LandingApp --> CustomCamera : "renders"
-LandingApp --> WhitePlane : "renders"
-LandingApp --> CubeOutline : "renders"
-LandingApp --> DodecahedronWireframe : "renders"
-LandingApp --> DodecahedronWireframe2 : "renders"
-UpdatesContainer --> UpdatesViewer : "renders"
-App --> useConnectionStore : "uses useConnectionStore"
-AnimatedConnectionLine --> useAnimatedConnectionLineStore : "uses useAnimatedConnectionLineStore"
-AtlasTextSprite --> useTextAtlasStore : "uses useTextAtlasStore"
-ConnectionsRenderer --> useConnectionsRendererStore : "uses useConnectionsRendererStore"
-ConnectionsRenderer --> useConnectionStore : "uses useConnectionStore"
-GlobalCubeEdgesRenderer --> useLODStore : "uses useLODStore"
-GlobalCubeFaceRenderer --> useLODStore : "uses useLODStore"
-GlobalCubeMediumLODRenderer --> useLODStore : "uses useLODStore"
-GlobalDodecahedronEdgesRenderer --> useLODStore : "uses useLODStore"
-GlobalDodecahedronMediumLODRenderer --> useLODStore : "uses useLODStore"
-GlobalTetrahedronEdgesRenderer --> useLODStore : "uses useLODStore"
-GlobalTetrahedronMediumLODRenderer --> useLODStore : "uses useLODStore"
-InstancedAtlasText --> useTextAtlasStore : "uses useTextAtlasStore"
-LineUI --> useConnectionStore : "uses useConnectionStore"
-LODManager --> useLODStore : "uses useLODStore"
-RealTimeConnectionUpdater --> useConnectionStore : "uses useConnectionStore"
-RealTimeConnectionUpdater --> useSpatialManagerStore : "uses useSpatialManagerStore"
-UIOverlay --> useConnectionStore : "uses useConnectionStore"
-useConnections --> useConnectionStore : "uses useConnectionStore"
-useSpaceManager --> useSpaceManagerStore : "uses useSpaceManagerStore"
-
 %% Component-Function Relationships
-App -.-> appObjects : "render helper"
-App -.-> appCanViewSpace : "render helper"
-App -.-> appShouldRedirect : "render helper"
-App -.-> appHandleSpatialObjectChange : "internal function"
-App -.-> appSpatialManagerDebug : "render helper"
-App -.-> appCheckPositionJitterWithHistory : "internal function"
-App -.-> appLoadedCellsKey : "render helper"
-App -.-> appHandleObjectMatrixChanged : "internal function"
-App -.-> appDisableOrbitControls : "internal function"
+App -.-> appObjects : "internal function"
+App -.-> appCanViewSpace : "internal function"
+App -.-> appShouldRedirect : "boolean check"
+App -.-> appHandleSpatialObjectChange : "event handler"
+App -.-> appSpatialManagerDebug : "internal function"
+App -.-> appCheckPositionJitterWithHistory : "boolean check"
+App -.-> appLoadedCellsKey : "internal function"
+App -.-> appHandleObjectMatrixChanged : "event handler"
+App -.-> appDisableOrbitControls : "boolean check"
 App -.-> appEnableOrbitControls : "internal function"
-App -.-> appHandleLogin : "internal function"
-App -.-> appHandleObjectClick : "internal function"
-App -.-> appHandleObjectMoveCallback : "internal function"
-App -.-> appHandleObjectUpdateCallback : "update helper"
-App -.-> appHandleFaceIndicatorClickCallback : "internal function"
-App -.-> appHandleFaceClick : "internal function"
-App -.-> appHandleCanvasClick : "internal function"
+App -.-> appHandleLogin : "event handler"
+App -.-> appHandleObjectClick : "event handler"
+App -.-> appHandleObjectMoveCallback : "event handler"
+App -.-> appHandleObjectUpdateCallback : "event handler"
+App -.-> appHandleFaceIndicatorClickCallback : "event handler"
+App -.-> appHandleFaceClick : "event handler"
+App -.-> appHandleCanvasClick : "event handler"
 App -.-> appUpdateVisibleObjects : "update helper"
-App -.-> appThrottledUpdateVisibility : "render helper"
-App -.-> appDeviceInfo : "render helper"
-App -.-> appCanvasSettings : "render helper"
-AppShell -.-> appshellHandleOpenSpace : "internal function"
-AppShell -.-> appshellHandleBackToLanding : "internal function"
-AnimatedConnectionLine -.-> animatedconnectionlineStructuralKey : "render helper"
-AtlasTextSprite -.-> atlastextspriteAtlas : "render helper"
-AtlasTextSprite -.-> atlastextspriteCalculatedPosition : "render helper"
-BatchedConnectionLines -.-> batchedconnectionlinesStraightConnections : "render helper"
+App -.-> appThrottledUpdateVisibility : "update helper"
+App -.-> appDeviceInfo : "internal function"
+App -.-> appCanvasSettings : "setter function"
+AppShell -.-> appshellHandleOpenSpace : "event handler"
+AppShell -.-> appshellHandleBackToLanding : "event handler"
+AnimatedConnectionLine -.-> animatedconnectionlineStructuralKey : "internal function"
+AtlasTextSprite -.-> atlastextspriteAtlas : "internal function"
+AtlasTextSprite -.-> atlastextspriteCalculatedPosition : "calculation helper"
+BatchedConnectionLines -.-> batchedconnectionlinesStraightConnections : "internal function"
 BatchedConnectionLines -.-> batchedconnectionlinesCustomRaycast : "internal function"
-BatchedConnectionLines -.-> batchedconnectionlinesHandleClick : "internal function"
-BatchedConnectionLines -.-> batchedconnectionlinesHandlePointerOver : "internal function"
-BatchedConnectionLines -.-> batchedconnectionlinesHandlePointerOut : "internal function"
-BatchedCurvedLines -.-> batchedcurvedlinesPathsData : "render helper"
+BatchedConnectionLines -.-> batchedconnectionlinesHandleClick : "event handler"
+BatchedConnectionLines -.-> batchedconnectionlinesHandlePointerOver : "event handler"
+BatchedConnectionLines -.-> batchedconnectionlinesHandlePointerOut : "event handler"
+BatchedCurvedLines -.-> batchedcurvedlinesPathsData : "internal function"
 BatchedCurvedLines -.-> batchedcurvedlinesCustomRaycast : "internal function"
-BatchedCurvedLines -.-> batchedcurvedlinesHandleClick : "internal function"
-BatchedCurvedLines -.-> batchedcurvedlinesHandlePointerOver : "internal function"
-BatchedCurvedLines -.-> batchedcurvedlinesHandlePointerOut : "internal function"
-CellBoundaryRenderer -.-> cellboundaryrendererBuildGeometry : "internal function"
-ColorPicker -.-> colorpickerHandleColorChange : "internal function"
-ColorPicker -.-> colorpickerHandleContainerClick : "internal function"
-ColorPicker -.-> colorpickerHandleApplyColor : "internal function"
-ColorPicker -.-> colorpickerHandleCancel : "internal function"
+BatchedCurvedLines -.-> batchedcurvedlinesHandleClick : "event handler"
+BatchedCurvedLines -.-> batchedcurvedlinesHandlePointerOver : "event handler"
+BatchedCurvedLines -.-> batchedcurvedlinesHandlePointerOut : "event handler"
+CellBoundaryRenderer -.-> cellboundaryrendererBuildGeometry : "render helper"
+ColorPicker -.-> colorpickerHandleColorChange : "event handler"
+ColorPicker -.-> colorpickerHandleContainerClick : "event handler"
+ColorPicker -.-> colorpickerHandleApplyColor : "event handler"
+ColorPicker -.-> colorpickerHandleCancel : "event handler"
 Connection -.-> connectionGetLineWidth : "getter function"
-Connection -.-> connectionHandleConnectionClick : "internal function"
-Connection -.-> connectionHandleLineTextClick : "internal function"
-Connection -.-> connectionHandleLineTextSubmit : "internal function"
-Connection -.-> connectionHandleLineTextStyleChange : "internal function"
-Connection -.-> connectionHandleLineStyleChange : "internal function"
-Connection -.-> connectionHandleLineColorChange : "internal function"
-Connection -.-> connectionConnectionData : "render helper"
-Connection -.-> connectionPathData : "render helper"
-Connection -.-> connectionTextPositionData : "render helper"
+Connection -.-> connectionHandleConnectionClick : "event handler"
+Connection -.-> connectionHandleLineTextClick : "event handler"
+Connection -.-> connectionHandleLineTextSubmit : "event handler"
+Connection -.-> connectionHandleLineTextStyleChange : "event handler"
+Connection -.-> connectionHandleLineStyleChange : "event handler"
+Connection -.-> connectionHandleLineColorChange : "event handler"
+Connection -.-> connectionConnectionData : "internal function"
+Connection -.-> connectionPathData : "internal function"
+Connection -.-> connectionTextPositionData : "internal function"
 ConnectionsRenderer -.-> connectionsrendererAvailableObjectIds : "render helper"
 ConnectionsRenderer -.-> connectionsrendererPathfindingObjects : "render helper"
 ConnectionsRenderer -.-> connectionsrendererObjectsPositionHash : "render helper"
@@ -1592,415 +1372,536 @@ ConnectionsRenderer -.-> connectionsrendererObjectPositions : "render helper"
 ConnectionsRenderer -.-> connectionsrendererAllStraightConnections : "render helper"
 ConnectionsRenderer -.-> connectionsrendererFaceOverrides : "render helper"
 ConnectionsRenderer -.-> connectionsrendererTextLabels : "render helper"
-ConnectionsRenderer -.-> connectionsrendererHandleBatchedConnectionClick : "internal function"
-Cube -.-> cubeCubeData : "render helper"
-Cube -.-> cubeIsIndicatorConnected : "internal function"
-Cube -.-> cubeIsIndicatorActive : "internal function"
-Cube -.-> cubeGetUIPositions : "render helper"
-Cube -.-> cubeShouldShowIndicator : "internal function"
-Cube -.-> cubeHasConnectedIndicators : "render helper"
+ConnectionsRenderer -.-> connectionsrendererHandleBatchedConnectionClick : "event handler"
+Cube -.-> cubeCubeData : "internal function"
+Cube -.-> cubeIsIndicatorConnected : "boolean check"
+Cube -.-> cubeIsIndicatorActive : "boolean check"
+Cube -.-> cubeGetUIPositions : "getter function"
+Cube -.-> cubeShouldShowIndicator : "boolean check"
+Cube -.-> cubeHasConnectedIndicators : "internal function"
 Cube -.-> cubeGetFaceTextOffset : "getter function"
-Cube -.-> cubeHandleSceneClick : "internal function"
+Cube -.-> cubeHandleSceneClick : "event handler"
 Cube -.-> cubeUpdateDatabase : "update helper"
 Cube -.-> cubeOnClickOutside : "internal function"
-Cube -.-> cubeHandleFaceClick : "internal function"
-Cube -.-> cubeHandleColoredFaceClick : "internal function"
-Cube -.-> cubeHandleIndicatorClick : "internal function"
-Cube -.-> cubeHandleTransformToggle : "internal function"
-Cube -.-> cubeHandleResizeToggle : "internal function"
-Cube -.-> cubeHandleHeaderToggle : "internal function"
-Cube -.-> cubeHandleHeaderSubmit : "internal function"
-Cube -.-> cubeDebouncedUpdate : "render helper"
-Cube -.-> cubeHandleLineColorChange : "internal function"
-Cube -.-> cubeHandleFaceColorChange : "internal function"
-Cube -.-> cubeHandleTextClick : "internal function"
-Cube -.-> cubeHandleFaceTextClick : "internal function"
-Cube -.-> cubeHandleFaceTextSubmit : "internal function"
-Cube -.-> cubeHandleFaceTextStyleClick : "internal function"
-Cube -.-> cubeHandleStyleChange : "internal function"
-Cube -.-> cubeHandleDrag : "internal function"
-Cube -.-> cubeHandleScale : "internal function"
+Cube -.-> cubeHandleFaceClick : "event handler"
+Cube -.-> cubeHandleColoredFaceClick : "event handler"
+Cube -.-> cubeHandleIndicatorClick : "event handler"
+Cube -.-> cubeHandleTransformToggle : "event handler"
+Cube -.-> cubeHandleResizeToggle : "event handler"
+Cube -.-> cubeHandleHeaderToggle : "event handler"
+Cube -.-> cubeHandleHeaderSubmit : "event handler"
+Cube -.-> cubeDebouncedUpdate : "update helper"
+Cube -.-> cubeHandleLineColorChange : "event handler"
+Cube -.-> cubeHandleFaceColorChange : "event handler"
+Cube -.-> cubeHandleTextClick : "event handler"
+Cube -.-> cubeHandleFaceTextClick : "event handler"
+Cube -.-> cubeHandleFaceTextSubmit : "event handler"
+Cube -.-> cubeHandleFaceTextStyleClick : "event handler"
+Cube -.-> cubeHandleStyleChange : "event handler"
+Cube -.-> cubeHandleDrag : "event handler"
+Cube -.-> cubeHandleScale : "event handler"
 Cube -.-> cubeRenderFaces : "render helper"
 Cube -.-> cubeRenderFaceTexts : "render helper"
-CubeFace -.-> cubefaceFaceStateSelector : "render helper"
-CubeFace -.-> cubefaceFaceMaterial : "render helper"
-CubeFace -.-> cubefaceHandleClick : "internal function"
-CubeFace -.-> cubefaceOffsetMultiplier : "render helper"
-CubeFace -.-> cubefaceOffsetPosition : "render helper"
-CustomCamera -.-> customcameraMemoizedTarget : "render helper"
-CustomCamera -.-> customcameraControlsRefCallback : "render helper"
-DiagramOverlay2D -.-> diagramoverlay2dFlowPathNames : "render helper"
-DiagramOverlay2D -.-> diagramoverlay2dSerialisedGraphData : "render helper"
-DiagramOverlay2D -.-> diagramoverlay2dSerialisedHierarchy : "render helper"
-DiagramOverlay2D -.-> diagramoverlay2dFilteredEdges : "render helper"
+CubeFace -.-> cubefaceFaceStateSelector : "internal function"
+CubeFace -.-> cubefaceFaceMaterial : "internal function"
+CubeFace -.-> cubefaceHandleClick : "event handler"
+CubeFace -.-> cubefaceOffsetMultiplier : "setter function"
+CubeFace -.-> cubefaceOffsetPosition : "setter function"
+CustomCamera -.-> customcameraMemoizedTarget : "getter function"
+CustomCamera -.-> customcameraControlsRefCallback : "internal function"
+DiagramOverlay2D -.-> diagramoverlay2dFlowPathNames : "internal function"
+DiagramOverlay2D -.-> diagramoverlay2dSerialisedGraphData : "boolean check"
+DiagramOverlay2D -.-> diagramoverlay2dSerialisedHierarchy : "boolean check"
+DiagramOverlay2D -.-> diagramoverlay2dFilteredEdges : "internal function"
 DiagramOverlay2D -.-> diagramoverlay2dToggleLayer : "internal function"
-DiagramOverlay2D -.-> diagramoverlay2dToggleLayerHandlers : "render helper"
-DiagramOverlay2D -.-> diagramoverlay2dHandleNodeClick : "internal function"
-DiagramOverlay2D -.-> diagramoverlay2dHandleBackTo3D : "internal function"
-Sphere -.-> sphereDodecahedronData : "render helper"
+DiagramOverlay2D -.-> diagramoverlay2dToggleLayerHandlers : "event handler"
+DiagramOverlay2D -.-> diagramoverlay2dHandleNodeClick : "event handler"
+DiagramOverlay2D -.-> diagramoverlay2dHandleBackTo3D : "event handler"
+Sphere -.-> sphereDodecahedronData : "internal function"
 Sphere -.-> sphereUpdateObjectAndStores : "update helper"
 Sphere -.-> sphereUpdateFaceProperty : "update helper"
-Sphere -.-> sphereIsIndicatorConnected : "internal function"
+Sphere -.-> sphereIsIndicatorConnected : "boolean check"
 Sphere -.-> sphereOnClickOutside : "internal function"
 Sphere -.-> sphereUpdateDatabase : "update helper"
-Sphere -.-> sphereHandleTransformToggle : "internal function"
-Sphere -.-> sphereHandleHeaderToggle : "internal function"
-Sphere -.-> sphereHandleHeaderSubmit : "internal function"
-Sphere -.-> sphereHandleResizeToggle : "internal function"
-Sphere -.-> sphereHandleDrag : "internal function"
-Sphere -.-> sphereHandleScale : "internal function"
-Sphere -.-> sphereHandleFaceClick : "internal function"
-Sphere -.-> sphereHandleIndicatorClick : "internal function"
-Sphere -.-> sphereHandleHeaderClick : "internal function"
-Sphere -.-> sphereHandleStyleChange : "internal function"
-Sphere -.-> sphereHandleLineColorChange : "internal function"
-Sphere -.-> sphereHandleBackgroundClick : "internal function"
-Sphere -.-> sphereHandleFaceTextSubmit : "internal function"
-Sphere -.-> sphereHandleFaceTextButtonClick : "internal function"
-Sphere -.-> sphereHandleFaceTextClick : "internal function"
-Sphere -.-> sphereHandleFaceTextStyleChange : "internal function"
+Sphere -.-> sphereHandleTransformToggle : "event handler"
+Sphere -.-> sphereHandleHeaderToggle : "event handler"
+Sphere -.-> sphereHandleHeaderSubmit : "event handler"
+Sphere -.-> sphereHandleResizeToggle : "event handler"
+Sphere -.-> sphereHandleDrag : "event handler"
+Sphere -.-> sphereHandleScale : "event handler"
+Sphere -.-> sphereHandleFaceClick : "event handler"
+Sphere -.-> sphereHandleIndicatorClick : "event handler"
+Sphere -.-> sphereHandleHeaderClick : "event handler"
+Sphere -.-> sphereHandleStyleChange : "event handler"
+Sphere -.-> sphereHandleLineColorChange : "event handler"
+Sphere -.-> sphereHandleBackgroundClick : "event handler"
+Sphere -.-> sphereHandleFaceTextSubmit : "event handler"
+Sphere -.-> sphereHandleFaceTextButtonClick : "event handler"
+Sphere -.-> sphereHandleFaceTextClick : "event handler"
+Sphere -.-> sphereHandleFaceTextStyleChange : "event handler"
 Sphere -.-> sphereGetUIPosition : "getter function"
 Sphere -.-> sphereGetHeaderPosition : "getter function"
 Sphere -.-> sphereGetFaceUIPosition : "getter function"
 Sphere -.-> sphereGetFaceTextPosition : "getter function"
 Sphere -.-> sphereGetFaceInfo : "getter function"
 Sphere -.-> sphereGetFaceRotation : "getter function"
-Sphere -.-> sphereShouldShowFaceIndicator : "internal function"
+Sphere -.-> sphereShouldShowFaceIndicator : "boolean check"
 Sphere -.-> sphereGetHeaderInputPosition : "getter function"
-DodecahedronFace -.-> dodecahedronfaceFaceMaterial : "render helper"
-DodecahedronFace -.-> dodecahedronfaceHandleClick : "internal function"
-DodecahedronFace -.-> dodecahedronfaceHandleTextClick : "internal function"
-DodecahedronFace -.-> dodecahedronfaceInverseScale : "render helper"
-DodecahedronFace -.-> dodecahedronfaceAdjustedTextPosition : "render helper"
-FaceIndicator -.-> faceindicatorMaterial : "render helper"
-FaceTextInput -.-> facetextinputHandleKeyDown : "internal function"
-FaceTextInput -.-> facetextinputHandleChange : "internal function"
-FaceTextInput -.-> facetextinputHandleFocus : "internal function"
-FaceTextInput -.-> facetextinputHandleBlur : "internal function"
-FaceUI -.-> faceuiHandleBorderStyleClick : "internal function"
-FaceUI -.-> faceuiHandleBorderColorClick : "internal function"
-FaceUI -.-> faceuiHandleLineThicknessClick : "internal function"
-FaceUI -.-> faceuiHandleColorSelect : "internal function"
-FaceUI -.-> faceuiHandleToolClick : "internal function"
+DodecahedronFace -.-> dodecahedronfaceFaceMaterial : "internal function"
+DodecahedronFace -.-> dodecahedronfaceHandleClick : "event handler"
+DodecahedronFace -.-> dodecahedronfaceHandleTextClick : "event handler"
+DodecahedronFace -.-> dodecahedronfaceInverseScale : "internal function"
+DodecahedronFace -.-> dodecahedronfaceAdjustedTextPosition : "internal function"
+FaceIndicator -.-> faceindicatorMaterial : "internal function"
+FaceTextInput -.-> facetextinputHandleKeyDown : "event handler"
+FaceTextInput -.-> facetextinputHandleChange : "event handler"
+FaceTextInput -.-> facetextinputHandleFocus : "event handler"
+FaceTextInput -.-> facetextinputHandleBlur : "event handler"
+FaceUI -.-> faceuiHandleBorderStyleClick : "event handler"
+FaceUI -.-> faceuiHandleBorderColorClick : "event handler"
+FaceUI -.-> faceuiHandleLineThicknessClick : "event handler"
+FaceUI -.-> faceuiHandleColorSelect : "event handler"
+FaceUI -.-> faceuiHandleToolClick : "event handler"
 GlobalCubeEdgesRenderer -.-> globalcubeedgesrendererFilteredCubes : "render helper"
 GlobalCubeEdgesRenderer -.-> globalcubeedgesrendererCubeIds : "render helper"
-GlobalCubeEdgesRenderer -.-> globalcubeedgesrendererIsCubeVisible : "internal function"
-GlobalCubeEdgesRenderer -.-> globalcubeedgesrendererUpdateCubeEdges : "update helper"
+GlobalCubeEdgesRenderer -.-> globalcubeedgesrendererIsCubeVisible : "render helper"
+GlobalCubeEdgesRenderer -.-> globalcubeedgesrendererUpdateCubeEdges : "render helper"
 GlobalCubeFaceRenderer -.-> globalcubefacerendererFilteredCubes : "render helper"
 GlobalCubeMediumLODRenderer -.-> globalcubemediumlodrendererMediumCubes : "render helper"
 GlobalCubeMediumLODRenderer -.-> globalcubemediumlodrendererCubeIds : "render helper"
 GlobalDodecahedronEdgesRenderer -.-> globaldodecahedronedgesrendererFilteredDodecahedrons : "render helper"
 GlobalDodecahedronEdgesRenderer -.-> globaldodecahedronedgesrendererDodecahedronIds : "render helper"
-GlobalDodecahedronEdgesRenderer -.-> globaldodecahedronedgesrendererIsDodecahedronVisible : "internal function"
-GlobalDodecahedronEdgesRenderer -.-> globaldodecahedronedgesrendererUpdateDodecahedronEdges : "update helper"
+GlobalDodecahedronEdgesRenderer -.-> globaldodecahedronedgesrendererIsDodecahedronVisible : "render helper"
+GlobalDodecahedronEdgesRenderer -.-> globaldodecahedronedgesrendererUpdateDodecahedronEdges : "render helper"
 GlobalDodecahedronMediumLODRenderer -.-> globaldodecahedronmediumlodrendererMediumDodecahedrons : "render helper"
 GlobalDodecahedronMediumLODRenderer -.-> globaldodecahedronmediumlodrendererDodecaIds : "render helper"
 GlobalTetrahedronEdgesRenderer -.-> globaltetrahedronedgesrendererFilteredTetrahedrons : "render helper"
 GlobalTetrahedronEdgesRenderer -.-> globaltetrahedronedgesrendererTetrahedronIds : "render helper"
-GlobalTetrahedronEdgesRenderer -.-> globaltetrahedronedgesrendererIsTetrahedronVisible : "internal function"
-GlobalTetrahedronEdgesRenderer -.-> globaltetrahedronedgesrendererUpdateTetrahedronEdges : "update helper"
+GlobalTetrahedronEdgesRenderer -.-> globaltetrahedronedgesrendererIsTetrahedronVisible : "render helper"
+GlobalTetrahedronEdgesRenderer -.-> globaltetrahedronedgesrendererUpdateTetrahedronEdges : "render helper"
 GlobalTetrahedronMediumLODRenderer -.-> globaltetrahedronmediumlodrendererMediumTetrahedrons : "render helper"
 GlobalTetrahedronMediumLODRenderer -.-> globaltetrahedronmediumlodrendererTetraIds : "render helper"
-HeaderInput -.-> headerinputHandleKeyDown : "internal function"
-HeaderInput -.-> headerinputHandleChange : "internal function"
-HeaderInput -.-> headerinputHandleFocus : "internal function"
-HeaderInput -.-> headerinputHandleBlur : "internal function"
-InstancedAtlasText -.-> instancedatlastextAtlas : "render helper"
-InstancedAtlasText -.-> instancedatlastextPageGroups : "render helper"
-PageInstancedMesh -.-> pageinstancedmeshGeometry : "render helper"
-PageInstancedMesh -.-> pageinstancedmeshMaterial : "render helper"
-PageInstancedMesh -.-> pageinstancedmeshHandleClick : "internal function"
-InstancedLine -.-> instancedlineFlatPoints : "render helper"
-InstancedLine -.-> instancedlineGeometry : "render helper"
+HeaderInput -.-> headerinputHandleKeyDown : "event handler"
+HeaderInput -.-> headerinputHandleChange : "event handler"
+HeaderInput -.-> headerinputHandleFocus : "event handler"
+HeaderInput -.-> headerinputHandleBlur : "event handler"
+InstancedAtlasText -.-> instancedatlastextAtlas : "internal function"
+InstancedAtlasText -.-> instancedatlastextPageGroups : "internal function"
+PageInstancedMesh -.-> pageinstancedmeshGeometry : "internal function"
+PageInstancedMesh -.-> pageinstancedmeshMaterial : "internal function"
+PageInstancedMesh -.-> pageinstancedmeshHandleClick : "event handler"
+InstancedLine -.-> instancedlineFlatPoints : "internal function"
+InstancedLine -.-> instancedlineGeometry : "internal function"
 InstancedLine -.-> instancedlineCustomRaycast : "internal function"
-InstancedLine -.-> instancedlineMaterial : "render helper"
+InstancedLine -.-> instancedlineMaterial : "internal function"
 LineUI -.-> lineuiGetFullStyle : "getter function"
 LineUI -.-> lineuiGetBaseStyle : "getter function"
-LineUI -.-> lineuiHandleToolClick : "internal function"
-LineUI -.-> lineuiHandleLineStyleClick : "internal function"
-LineUI -.-> lineuiHandleArrowClick : "internal function"
-LODManager -.-> lodmanagerContainersKey : "render helper"
-LODManager -.-> lodmanagerComputeContainmentSync : "internal function"
-ModelObject -.-> modelobjectHandleClick : "internal function"
-ModelObject -.-> modelobjectHandlePointerDown : "internal function"
-ModelObject -.-> modelobjectHandlePointerUp : "internal function"
-ObjectRenderer -.-> objectrendererOnClickStable : "internal function"
-ObjectRenderer -.-> objectrendererOnDeleteStable : "internal function"
-ObjectRenderer -.-> objectrendererOnTransformStartStable : "internal function"
-ObjectRenderer -.-> objectrendererOnTransformEndStable : "internal function"
-ObjectRenderer -.-> objectrendererOnMatrixChangedStable : "internal function"
-ObjectRenderer -.-> objectrendererOnMoveStable : "internal function"
+LineUI -.-> lineuiHandleToolClick : "event handler"
+LineUI -.-> lineuiHandleLineStyleClick : "event handler"
+LineUI -.-> lineuiHandleArrowClick : "event handler"
+LODManager -.-> lodmanagerContainersKey : "internal function"
+LODManager -.-> lodmanagerComputeContainmentSync : "calculation helper"
+ModelObject -.-> modelobjectHandleClick : "event handler"
+ModelObject -.-> modelobjectHandlePointerDown : "event handler"
+ModelObject -.-> modelobjectHandlePointerUp : "event handler"
+ObjectRenderer -.-> objectrendererOnClickStable : "render helper"
+ObjectRenderer -.-> objectrendererOnDeleteStable : "render helper"
+ObjectRenderer -.-> objectrendererOnTransformStartStable : "render helper"
+ObjectRenderer -.-> objectrendererOnTransformEndStable : "render helper"
+ObjectRenderer -.-> objectrendererOnMatrixChangedStable : "render helper"
+ObjectRenderer -.-> objectrendererOnMoveStable : "render helper"
 ObjectsRenderer -.-> objectsrendererProgressiveVisibleObjects : "render helper"
 ObjectsRenderer -.-> objectsrendererCubeObjects : "render helper"
 ObjectsRenderer -.-> objectsrendererContainerHeaders : "render helper"
 ObjectsRenderer -.-> objectsrendererDodecahedronObjects : "render helper"
 ObjectsRenderer -.-> objectsrendererTetrahedronObjects : "render helper"
 ObjectsRenderer -.-> objectsrendererRenderedObjects : "render helper"
-ObjectUI -.-> objectuiHandleEyeClick : "internal function"
-ObjectUI -.-> objectuiHandleColorPick : "internal function"
-ObjectUI -.-> objectuiHandleToolClick : "internal function"
-Plane -.-> planePlaneData : "render helper"
-Plane -.-> planeCloseAllUIs : "internal function"
+ObjectUI -.-> objectuiHandleEyeClick : "event handler"
+ObjectUI -.-> objectuiHandleColorPick : "event handler"
+ObjectUI -.-> objectuiHandleToolClick : "event handler"
+Plane -.-> planePlaneData : "internal function"
+Plane -.-> planeCloseAllUIs : "boolean check"
 Plane -.-> planeUpdateDatabase : "update helper"
-Plane -.-> planeHandleScale : "internal function"
-Plane -.-> planeHandleResizeEnd : "internal function"
-Plane -.-> planeHandleDrag : "internal function"
-Plane -.-> planeHandleTransformStart : "internal function"
-Plane -.-> planeHandleTransformEnd : "internal function"
-Plane -.-> planeHandleClick : "internal function"
-Plane -.-> planeHandleTextClick : "internal function"
-Plane -.-> planeHandleTextSubmit : "internal function"
-Plane -.-> planeHandleTextStyleChange : "internal function"
-Plane -.-> planeHandleTextSpriteClick : "internal function"
-Plane -.-> planeHandleTransformToggle : "internal function"
-Plane -.-> planeHandleResizeToggle : "internal function"
-Plane -.-> planeHandleColorChange : "internal function"
-Plane -.-> planeHandleHeaderToggle : "internal function"
-Plane -.-> planeHandleHeaderSubmit : "internal function"
-Plane -.-> planeHandleHeaderTextClick : "internal function"
-Plane -.-> planeHandleHeaderStyleChange : "internal function"
-Plane -.-> planeHandleBorderToggle : "internal function"
-Plane -.-> planeHandleIndicatorClick : "internal function"
-Plane -.-> planeIsIndicatorConnected : "render helper"
-Plane -.-> planeShouldShowIndicator : "render helper"
-Plane -.-> planeHandleBroadcastStopped : "internal function"
-Plane -.-> planeHandleWebcamToggle : "internal function"
-Plane -.-> planeHandleScreenShareToggle : "internal function"
-Plane -.-> planeHandlePinToggle : "internal function"
-Plane -.-> planeHandleImageUpload : "internal function"
-Plane -.-> planeHandleBroadcastStarted : "internal function"
-Plane -.-> planeHandleViewerCountChange : "internal function"
-Plane -.-> planeUiPositions : "render helper"
-Plane -.-> planeIndicatorPosition : "render helper"
-Plane -.-> planeMeshMaterial : "render helper"
-Plane -.-> planeLineMaterialProps : "render helper"
-Plane -.-> planeBorderEdgePoints : "render helper"
+Plane -.-> planeHandleScale : "event handler"
+Plane -.-> planeHandleResizeEnd : "event handler"
+Plane -.-> planeHandleDrag : "event handler"
+Plane -.-> planeHandleTransformStart : "event handler"
+Plane -.-> planeHandleTransformEnd : "event handler"
+Plane -.-> planeHandleClick : "event handler"
+Plane -.-> planeHandleTextClick : "event handler"
+Plane -.-> planeHandleTextSubmit : "event handler"
+Plane -.-> planeHandleTextStyleChange : "event handler"
+Plane -.-> planeHandleTextSpriteClick : "event handler"
+Plane -.-> planeHandleTransformToggle : "event handler"
+Plane -.-> planeHandleResizeToggle : "event handler"
+Plane -.-> planeHandleColorChange : "event handler"
+Plane -.-> planeHandleHeaderToggle : "event handler"
+Plane -.-> planeHandleHeaderSubmit : "event handler"
+Plane -.-> planeHandleHeaderTextClick : "event handler"
+Plane -.-> planeHandleHeaderStyleChange : "event handler"
+Plane -.-> planeHandleBorderToggle : "event handler"
+Plane -.-> planeHandleIndicatorClick : "event handler"
+Plane -.-> planeIsIndicatorConnected : "boolean check"
+Plane -.-> planeShouldShowIndicator : "boolean check"
+Plane -.-> planeHandleBroadcastStopped : "event handler"
+Plane -.-> planeHandleWebcamToggle : "event handler"
+Plane -.-> planeHandleScreenShareToggle : "event handler"
+Plane -.-> planeHandlePinToggle : "event handler"
+Plane -.-> planeHandleImageUpload : "event handler"
+Plane -.-> planeHandleBroadcastStarted : "event handler"
+Plane -.-> planeHandleViewerCountChange : "event handler"
+Plane -.-> planeUiPositions : "internal function"
+Plane -.-> planeIndicatorPosition : "internal function"
+Plane -.-> planeMeshMaterial : "internal function"
+Plane -.-> planeLineMaterialProps : "internal function"
+Plane -.-> planeBorderEdgePoints : "internal function"
 RealTimeConnectionUpdater -.-> realtimeconnectionupdaterRunConnectionUpdate : "update helper"
-RealTimeConnectionUpdater -.-> realtimeconnectionupdaterRebuildConnectionMap : "internal function"
-ScreenShareStream -.-> screensharestreamScreenShareConstraints : "render helper"
-SpaceChat -.-> spacechatHandleScroll : "internal function"
-SpaceChat -.-> spacechatHandleSend : "internal function"
-SpaceChat -.-> spacechatHandleKeyDown : "internal function"
-Tetrahedron -.-> tetrahedronTetrahedronFaces : "render helper"
-Tetrahedron -.-> tetrahedronPosition : "render helper"
-Tetrahedron -.-> tetrahedronScale : "render helper"
-Tetrahedron -.-> tetrahedronTextStyle : "render helper"
-Tetrahedron -.-> tetrahedronFaceColors : "render helper"
-Tetrahedron -.-> tetrahedronFaceTexts : "render helper"
-Tetrahedron -.-> tetrahedronFaceTextStyles : "render helper"
-Tetrahedron -.-> tetrahedronDebouncedUpdate : "render helper"
-Tetrahedron -.-> tetrahedronIsIndicatorConnected : "internal function"
-Tetrahedron -.-> tetrahedronIsIndicatorActive : "internal function"
-Tetrahedron -.-> tetrahedronGetUIPositions : "render helper"
-Tetrahedron -.-> tetrahedronShouldShowIndicator : "internal function"
-Tetrahedron -.-> tetrahedronHasConnectedIndicators : "render helper"
-Tetrahedron -.-> tetrahedronTetrahedronEdgePoints : "render helper"
-Tetrahedron -.-> tetrahedronHandleSceneClick : "internal function"
+RealTimeConnectionUpdater -.-> realtimeconnectionupdaterRebuildConnectionMap : "update helper"
+ScreenShareStream -.-> screensharestreamScreenShareConstraints : "internal function"
+SpaceChat -.-> spacechatHandleScroll : "event handler"
+SpaceChat -.-> spacechatHandleSend : "event handler"
+SpaceChat -.-> spacechatHandleKeyDown : "event handler"
+Tetrahedron -.-> tetrahedronTetrahedronFaces : "internal function"
+Tetrahedron -.-> tetrahedronPosition : "internal function"
+Tetrahedron -.-> tetrahedronScale : "internal function"
+Tetrahedron -.-> tetrahedronTextStyle : "internal function"
+Tetrahedron -.-> tetrahedronFaceColors : "internal function"
+Tetrahedron -.-> tetrahedronFaceTexts : "internal function"
+Tetrahedron -.-> tetrahedronFaceTextStyles : "internal function"
+Tetrahedron -.-> tetrahedronDebouncedUpdate : "update helper"
+Tetrahedron -.-> tetrahedronIsIndicatorConnected : "boolean check"
+Tetrahedron -.-> tetrahedronIsIndicatorActive : "boolean check"
+Tetrahedron -.-> tetrahedronGetUIPositions : "getter function"
+Tetrahedron -.-> tetrahedronShouldShowIndicator : "boolean check"
+Tetrahedron -.-> tetrahedronHasConnectedIndicators : "internal function"
+Tetrahedron -.-> tetrahedronTetrahedronEdgePoints : "internal function"
+Tetrahedron -.-> tetrahedronHandleSceneClick : "event handler"
 Tetrahedron -.-> tetrahedronUpdateDatabase : "update helper"
-Tetrahedron -.-> tetrahedronHandleFaceClick : "internal function"
-Tetrahedron -.-> tetrahedronHandleColoredFaceClick : "internal function"
-Tetrahedron -.-> tetrahedronHandleIndicatorClick : "internal function"
-Tetrahedron -.-> tetrahedronHandleTransformToggle : "internal function"
-Tetrahedron -.-> tetrahedronHandleResizeToggle : "internal function"
-Tetrahedron -.-> tetrahedronHandleHeaderToggle : "internal function"
-Tetrahedron -.-> tetrahedronHandleHeaderSubmit : "internal function"
-Tetrahedron -.-> tetrahedronHandleLineColorChange : "internal function"
-Tetrahedron -.-> tetrahedronHandleDrag : "internal function"
-Tetrahedron -.-> tetrahedronHandleScale : "internal function"
+Tetrahedron -.-> tetrahedronHandleFaceClick : "event handler"
+Tetrahedron -.-> tetrahedronHandleColoredFaceClick : "event handler"
+Tetrahedron -.-> tetrahedronHandleIndicatorClick : "event handler"
+Tetrahedron -.-> tetrahedronHandleTransformToggle : "event handler"
+Tetrahedron -.-> tetrahedronHandleResizeToggle : "event handler"
+Tetrahedron -.-> tetrahedronHandleHeaderToggle : "event handler"
+Tetrahedron -.-> tetrahedronHandleHeaderSubmit : "event handler"
+Tetrahedron -.-> tetrahedronHandleLineColorChange : "event handler"
+Tetrahedron -.-> tetrahedronHandleDrag : "event handler"
+Tetrahedron -.-> tetrahedronHandleScale : "event handler"
 Tetrahedron -.-> tetrahedronGetFaceTextOffset : "getter function"
-Tetrahedron -.-> tetrahedronHandleFaceTextStyleClick : "internal function"
-Tetrahedron -.-> tetrahedronHandleFaceTextStyleChange : "internal function"
+Tetrahedron -.-> tetrahedronHandleFaceTextStyleClick : "event handler"
+Tetrahedron -.-> tetrahedronHandleFaceTextStyleChange : "event handler"
 Tetrahedron -.-> tetrahedronRenderFaceTexts : "render helper"
 Tetrahedron -.-> tetrahedronRenderFaces : "render helper"
-TetrahedronFace -.-> tetrahedronfaceFaceMaterial : "render helper"
-TetrahedronFace -.-> tetrahedronfaceHandleClick : "internal function"
-TetrahedronFace -.-> tetrahedronfaceHandleIndicatorClickLocal : "internal function"
+TetrahedronFace -.-> tetrahedronfaceFaceMaterial : "internal function"
+TetrahedronFace -.-> tetrahedronfaceHandleClick : "event handler"
+TetrahedronFace -.-> tetrahedronfaceHandleIndicatorClickLocal : "event handler"
 TetrahedronFace -.-> tetrahedronfaceGetFaceTextOffset : "getter function"
-TetrahedronFace -.-> tetrahedronfaceHandleFaceTextStyleClick : "internal function"
-TetrahedronFace -.-> tetrahedronfaceHandleFaceTextStyleChange : "internal function"
-TetrahedronFace -.-> tetrahedronfaceFaceTextElement : "render helper"
-TextObject -.-> textobjectText : "render helper"
-TextObject -.-> textobjectTextStyle : "render helper"
-TextObject -.-> textobjectScale : "render helper"
-TextObject -.-> textobjectSetOrbitControlsEnabled : "internal function"
-TextObject -.-> textobjectSetText : "internal function"
-TextObject -.-> textobjectSetTextStyle : "internal function"
-TextObject -.-> textobjectSetScale : "internal function"
-TextObject -.-> textobjectSetIsEditing : "internal function"
-TextObject -.-> textobjectSetIsActivelyEditing : "internal function"
-TextObject -.-> textobjectSetIndicatorSelected : "internal function"
-TextObject -.-> textobjectSetContentHeight : "internal function"
-TextObject -.-> textobjectSetShowTransform : "internal function"
-TextObject -.-> textobjectSetShowResizeControls : "internal function"
-TextObject -.-> textobjectSetBulletPointMode : "internal function"
-TextObject -.-> textobjectHandleTransformToggle : "internal function"
-TextObject -.-> textobjectHandleResizeToggle : "internal function"
+TetrahedronFace -.-> tetrahedronfaceHandleFaceTextStyleClick : "event handler"
+TetrahedronFace -.-> tetrahedronfaceHandleFaceTextStyleChange : "event handler"
+TetrahedronFace -.-> tetrahedronfaceFaceTextElement : "internal function"
+TextObject -.-> textobjectText : "internal function"
+TextObject -.-> textobjectTextStyle : "internal function"
+TextObject -.-> textobjectScale : "internal function"
+TextObject -.-> textobjectSetOrbitControlsEnabled : "setter function"
+TextObject -.-> textobjectSetText : "setter function"
+TextObject -.-> textobjectSetTextStyle : "setter function"
+TextObject -.-> textobjectSetScale : "setter function"
+TextObject -.-> textobjectSetIsEditing : "setter function"
+TextObject -.-> textobjectSetIsActivelyEditing : "setter function"
+TextObject -.-> textobjectSetIndicatorSelected : "setter function"
+TextObject -.-> textobjectSetContentHeight : "setter function"
+TextObject -.-> textobjectSetShowTransform : "setter function"
+TextObject -.-> textobjectSetShowResizeControls : "setter function"
+TextObject -.-> textobjectSetBulletPointMode : "setter function"
+TextObject -.-> textobjectHandleTransformToggle : "event handler"
+TextObject -.-> textobjectHandleResizeToggle : "event handler"
 TextObject -.-> textobjectGetIndicatorOffset : "getter function"
-TextObject -.-> textobjectIsIndicatorConnected : "internal function"
-TextObject -.-> textobjectShouldShowIndicator : "render helper"
+TextObject -.-> textobjectIsIndicatorConnected : "boolean check"
+TextObject -.-> textobjectShouldShowIndicator : "boolean check"
 TextObject -.-> textobjectGetIndicatorPositions : "getter function"
 TextObject -.-> textobjectUpdateWorldMatrix : "update helper"
-TextObject -.-> textobjectCloseAllUIs : "internal function"
+TextObject -.-> textobjectCloseAllUIs : "boolean check"
 TextObject -.-> textobjectUpdateDatabase : "update helper"
 TextObject -.-> textobjectAutoResizeTextAreaOnly : "internal function"
 TextObject -.-> textobjectAutoResizeTextArea : "internal function"
-TextObject -.-> textobjectHandleBlur : "internal function"
-TextObject -.-> textobjectHandleDivClick : "internal function"
-TextObject -.-> textobjectHandleTextClick : "internal function"
-TextObject -.-> textobjectHandleIndicatorClick : "internal function"
-TextObject -.-> textobjectHandleDrag : "internal function"
-TextObject -.-> textobjectHandleScale : "internal function"
-TextObject -.-> textobjectHandleKeyDown : "internal function"
-TextObject -.-> textobjectHandleStyleChange : "internal function"
-TextObject -.-> textobjectHandleTextSelection : "internal function"
+TextObject -.-> textobjectHandleBlur : "event handler"
+TextObject -.-> textobjectHandleDivClick : "event handler"
+TextObject -.-> textobjectHandleTextClick : "event handler"
+TextObject -.-> textobjectHandleIndicatorClick : "event handler"
+TextObject -.-> textobjectHandleDrag : "event handler"
+TextObject -.-> textobjectHandleScale : "event handler"
+TextObject -.-> textobjectHandleKeyDown : "event handler"
+TextObject -.-> textobjectHandleStyleChange : "event handler"
+TextObject -.-> textobjectHandleTextSelection : "event handler"
 TextObject -.-> textobjectGetTextAreaStyle : "getter function"
 TextObject -.-> textobjectGetContainerStyle : "getter function"
 TextObject -.-> textobjectGetEffectivePosition : "getter function"
-TextObjectUI -.-> textobjectuiHandleUIClick : "internal function"
-TextObjectUI -.-> textobjectuiHandleResizeToggle : "internal function"
-TextObjectUI -.-> textobjectuiHandleEyeClick : "internal function"
-TextSprite -.-> textspriteSpriteId : "render helper"
-TextSprite -.-> textspriteSetIsDragging : "render helper"
-TextSprite -.-> textspriteCalculatedPosition : "render helper"
+TextObjectUI -.-> textobjectuiHandleUIClick : "event handler"
+TextObjectUI -.-> textobjectuiHandleResizeToggle : "event handler"
+TextObjectUI -.-> textobjectuiHandleEyeClick : "event handler"
+TextSprite -.-> textspriteSpriteId : "internal function"
+TextSprite -.-> textspriteSetIsDragging : "setter function"
+TextSprite -.-> textspriteCalculatedPosition : "calculation helper"
 TextSprite -.-> textspriteGetFontSize : "getter function"
-TextStyleUIContent -.-> textstyleuicontentHandleSizeChange : "internal function"
-TextStyleUIContent -.-> textstyleuicontentHandleFontSizeInputChange : "internal function"
-TextStyleUIContent -.-> textstyleuicontentHandleWheel : "internal function"
-TextStyleUIContent -.-> textstyleuicontentHandleButtonClick : "internal function"
-TextStyleUIContent -.-> textstyleuicontentHandleColorSelect : "internal function"
-TextStyleUIContent -.-> textstyleuicontentHandleSelectChange : "internal function"
+TextStyleUIContent -.-> textstyleuicontentHandleSizeChange : "event handler"
+TextStyleUIContent -.-> textstyleuicontentHandleFontSizeInputChange : "event handler"
+TextStyleUIContent -.-> textstyleuicontentHandleWheel : "event handler"
+TextStyleUIContent -.-> textstyleuicontentHandleButtonClick : "event handler"
+TextStyleUIContent -.-> textstyleuicontentHandleColorSelect : "event handler"
+TextStyleUIContent -.-> textstyleuicontentHandleSelectChange : "event handler"
 TextStyleUIContent -.-> textstyleuicontentGetUIScale : "getter function"
-UIOverlay -.-> uioverlaySetIsRecording : "internal function"
-UIOverlay -.-> uioverlayHandleCellBoundariesToggle : "internal function"
+UIOverlay -.-> uioverlaySetIsRecording : "setter function"
+UIOverlay -.-> uioverlayHandleCellBoundariesToggle : "event handler"
 UIOverlay -.-> uioverlayFetchRepositories : "internal function"
 UIOverlay -.-> uioverlayFetchAppJsxFromRepo : "internal function"
-UIOverlay -.-> uioverlayHandleRescan : "internal function"
-UIOverlay -.-> uioverlayHandleDownloadMarkdown : "internal function"
-UIOverlay -.-> uioverlayHandleScreenClick : "internal function"
-UIOverlay -.-> uioverlayHandleRuntimeScan : "internal function"
-UIOverlay -.-> uioverlayHandleRecordClick : "internal function"
-UIOverlay -.-> uioverlayHandleDeleteAllCells : "internal function"
-UIOverlay -.-> uioverlayHandleModelUpload : "internal function"
-UIOverlay -.-> uioverlayHandleModelFileSelect : "internal function"
-UIOverlay -.-> uioverlayHandleMarkdownUpload : "internal function"
-UIOverlay -.-> uioverlayHandleMarkdownFileSelect : "internal function"
-UIOverlay -.-> uioverlayHandleMenuToggle : "internal function"
-UIOverlay -.-> uioverlayHandleArrowClick : "internal function"
-UIOverlay -.-> uioverlayHandleUnpinWebcam : "internal function"
-UIOverlay -.-> uioverlayHandleTemplateConfigChange : "internal function"
+UIOverlay -.-> uioverlayHandleRescan : "event handler"
+UIOverlay -.-> uioverlayHandleDownloadMarkdown : "event handler"
+UIOverlay -.-> uioverlayHandleScreenClick : "event handler"
+UIOverlay -.-> uioverlayHandleRuntimeScan : "event handler"
+UIOverlay -.-> uioverlayHandleRecordClick : "event handler"
+UIOverlay -.-> uioverlayHandleDeleteAllCells : "event handler"
+UIOverlay -.-> uioverlayHandleModelUpload : "event handler"
+UIOverlay -.-> uioverlayHandleModelFileSelect : "event handler"
+UIOverlay -.-> uioverlayHandleMarkdownUpload : "event handler"
+UIOverlay -.-> uioverlayHandleMarkdownFileSelect : "event handler"
+UIOverlay -.-> uioverlayHandleMenuToggle : "event handler"
+UIOverlay -.-> uioverlayHandleArrowClick : "event handler"
+UIOverlay -.-> uioverlayHandleUnpinWebcam : "event handler"
+UIOverlay -.-> uioverlayHandleTemplateConfigChange : "event handler"
 UIOverlay -.-> uioverlayCreateTemplate : "internal function"
-CreateOrganizationPopup -.-> createorganizationpopupHandleKeyPress : "internal function"
-CreateOrganizationPopup -.-> createorganizationpopupHandleSubmit : "internal function"
-CreateSpacePopup -.-> createspacepopupHandleSpaceNameChange : "internal function"
-CreateSpacePopup -.-> createspacepopupHandleEmailChange : "internal function"
-CreateSpacePopup -.-> createspacepopupHandleMemberSelect : "internal function"
-CreateSpacePopup -.-> createspacepopupHandleKeyPress : "internal function"
-CreateSpacePopup -.-> createspacepopupHandleSubmit : "internal function"
+CreateOrganizationPopup -.-> createorganizationpopupHandleKeyPress : "event handler"
+CreateOrganizationPopup -.-> createorganizationpopupHandleSubmit : "event handler"
+CreateSpacePopup -.-> createspacepopupHandleSpaceNameChange : "event handler"
+CreateSpacePopup -.-> createspacepopupHandleEmailChange : "event handler"
+CreateSpacePopup -.-> createspacepopupHandleMemberSelect : "event handler"
+CreateSpacePopup -.-> createspacepopupHandleKeyPress : "event handler"
+CreateSpacePopup -.-> createspacepopupHandleSubmit : "event handler"
 DodecahedronWireframe2 -.-> dodecahedronwireframe2GenerateDodecahedronEdges : "internal function"
 OrganizationManager -.-> organizationmanagerRefresh : "internal function"
-OrganizationManager -.-> organizationmanagerHandleCreateOrg : "internal function"
-OrganizationManager -.-> organizationmanagerHandleInvite : "internal function"
-OrganizationManager -.-> organizationmanagerHandleRemoveMember : "internal function"
-OrganizationManager -.-> organizationmanagerHandleLeave : "internal function"
-OrganizationManager -.-> organizationmanagerHandleUpgradePlan : "internal function"
-OrganizationManager -.-> organizationmanagerHandleDeleteOrg : "internal function"
-OrganizationManager -.-> organizationmanagerHandleAcceptInvite : "internal function"
-OrganizationManager -.-> organizationmanagerHandleDeclineInvite : "internal function"
-OrgMemberDropdown -.-> orgmemberdropdownHandleInputFocus : "internal function"
-OrgMemberDropdown -.-> orgmemberdropdownHandleInputChange : "internal function"
-OrgMemberDropdown -.-> orgmemberdropdownHandleSelect : "internal function"
-ShareSpacePopup -.-> sharespacepopupFilteredMembers : "render helper"
+OrganizationManager -.-> organizationmanagerHandleCreateOrg : "event handler"
+OrganizationManager -.-> organizationmanagerHandleInvite : "event handler"
+OrganizationManager -.-> organizationmanagerHandleRemoveMember : "event handler"
+OrganizationManager -.-> organizationmanagerHandleLeave : "event handler"
+OrganizationManager -.-> organizationmanagerHandleUpgradePlan : "event handler"
+OrganizationManager -.-> organizationmanagerHandleDeleteOrg : "event handler"
+OrganizationManager -.-> organizationmanagerHandleAcceptInvite : "event handler"
+OrganizationManager -.-> organizationmanagerHandleDeclineInvite : "event handler"
+OrgMemberDropdown -.-> orgmemberdropdownHandleInputFocus : "event handler"
+OrgMemberDropdown -.-> orgmemberdropdownHandleInputChange : "event handler"
+OrgMemberDropdown -.-> orgmemberdropdownHandleSelect : "event handler"
+ShareSpacePopup -.-> sharespacepopupFilteredMembers : "internal function"
 ShareSpacePopup -.-> sharespacepopupToggleMember : "internal function"
-ShareSpacePopup -.-> sharespacepopupHandleShare : "internal function"
-SpacesTable -.-> spacestableHandleSpaceClick : "internal function"
-SpacesTable -.-> spacestableThStyles : "render helper"
-SpacesTable -.-> spacestableTdStyles : "render helper"
-SpacesTable -.-> spacestableCategoryRowStyles : "render helper"
-SpacesTable -.-> spacestableInviteBannerStyle : "render helper"
+ShareSpacePopup -.-> sharespacepopupHandleShare : "event handler"
+SpacesTable -.-> spacestableHandleSpaceClick : "event handler"
+SpacesTable -.-> spacestableThStyles : "internal function"
+SpacesTable -.-> spacestableTdStyles : "internal function"
+SpacesTable -.-> spacestableCategoryRowStyles : "internal function"
+SpacesTable -.-> spacestableInviteBannerStyle : "internal function"
 DodecahedronWireframe -.-> dodecahedronwireframeGenerateDodecahedronEdges : "internal function"
-FakeGlowMaterial -.-> fakeglowmaterialFakeGlowMaterial : "render helper"
+FakeGlowMaterial -.-> fakeglowmaterialFakeGlowMaterial : "internal function"
 LandingApp -.-> landingappCreateUserDocument : "internal function"
-LandingApp -.-> landingappHandleLogin : "internal function"
-LandingApp -.-> landingappHandleLogout : "internal function"
+LandingApp -.-> landingappHandleLogin : "event handler"
+LandingApp -.-> landingappHandleLogout : "event handler"
 LandingApp -.-> landingappNavigateToSpace : "internal function"
 LandingApp -.-> landingappFetchUserSpaces : "internal function"
 LandingApp -.-> landingappCreateNewSpace : "internal function"
-LandingApp -.-> landingappHandleShareSpace : "internal function"
-LandingApp -.-> landingappHandleDeleteSpace : "internal function"
-LandingApp -.-> landingappHandleLeaveSpace : "internal function"
-LandingApp -.-> landingappHandleFirstCubeComplete : "internal function"
-LandingApp -.-> landingappHandleDodecahedronComplete : "internal function"
-LandingApp -.-> landingappHandleAcceptInvite : "internal function"
-LandingApp -.-> landingappHandleDeclineInvite : "internal function"
-LandingApp -.-> landingappSpaceTableProps : "render helper"
-LandingApp -.-> landingappCreateSpaceProps : "render helper"
-LandingApp -.-> landingappSharePopupProps : "render helper"
-UpdatesEditor -.-> updateseditorHandleKeyCommand : "internal function"
-UpdatesEditor -.-> updateseditorToggleInlineStyle : "internal function"
-UpdatesEditor -.-> updateseditorHandleSave : "internal function"
-UpdatesViewer -.-> updatesviewerParsedContent : "render helper"
-UpdatesViewer -.-> updatesviewerFormattedTimestamp : "render helper"
-WhitePlane -.-> whiteplanePlaneGeometry : "render helper"
-WhitePlane -.-> whiteplaneGridTexture : "render helper"
+LandingApp -.-> landingappHandleShareSpace : "event handler"
+LandingApp -.-> landingappHandleDeleteSpace : "event handler"
+LandingApp -.-> landingappHandleLeaveSpace : "event handler"
+LandingApp -.-> landingappHandleFirstCubeComplete : "event handler"
+LandingApp -.-> landingappHandleDodecahedronComplete : "event handler"
+LandingApp -.-> landingappHandleAcceptInvite : "event handler"
+LandingApp -.-> landingappHandleDeclineInvite : "event handler"
+LandingApp -.-> landingappSpaceTableProps : "internal function"
+LandingApp -.-> landingappCreateSpaceProps : "internal function"
+LandingApp -.-> landingappSharePopupProps : "internal function"
+UpdatesEditor -.-> updateseditorHandleKeyCommand : "event handler"
+UpdatesEditor -.-> updateseditorToggleInlineStyle : "update helper"
+UpdatesEditor -.-> updateseditorHandleSave : "event handler"
+UpdatesViewer -.-> updatesviewerParsedContent : "update helper"
+UpdatesViewer -.-> updatesviewerFormattedTimestamp : "update helper"
+WhitePlane -.-> whiteplanePlaneGeometry : "internal function"
+WhitePlane -.-> whiteplaneGridTexture : "internal function"
 
-%% Internal Helper Components
-AtlasTextSprite -.-> StaticBillboardMesh : "internal"
-AtlasTextSprite -.-> DynamicBillboardMesh : "internal"
-Connection -.-> DistanceFilteredConnectionText : "internal"
-ConnectionsRenderer -.-> Connection : "internal"
-InstancedAtlasText -.-> PageInstancedMesh : "internal"
-SpacePresenceAvatars -.-> Avatar : "internal"
-TextStyleUI -.-> TextStyleUIContent : "internal"
+%% File Container Nodes
+backend_index((Service: index))
+astTraversal[Function: astTraversal]
+fileAnalyzer[Function: fileAnalyzer]
+merfolkGenerator[Function: merfolkGenerator]
+repoTypeDetector[Function: repoTypeDetector]
+workspaceScanner[Function: workspaceScanner]
+useAuth_file[Function: useAuth]
+useAuthState_file[Function: useAuthState]
+useCentralizedBroadcastManager_file[Function: useCentralizedBroadcastManager]
+useConnectionAnimationManager[Function: useConnectionAnimationManager]
+useConnectionObjects_file[Function: useConnectionObjects]
+useConnections_file[Function: useConnections]
+useConnectionsRendererStore_file[Function: useConnectionsRendererStore]
+useDebouncedUpdate_file[Function: useDebouncedUpdate]
+useFrustumCulling[Function: useFrustumCulling]
+useGlobalClickHandler_file[Function: useGlobalClickHandler]
+useIndicators_file[Function: useIndicators]
+useObjects_file[Function: useObjects]
+useSpaceManager_file[Function: useSpaceManager]
+useSpatialManager_file[Function: useSpatialManager]
+useTextureUpdater_file[Function: useTextureUpdater]
+useTimeoutManager_file[Function: useTimeoutManager]
+useWindowSize_file[Function: useWindowSize]
+LandingApp_file[Function: LandingApp]
+Loader_file[Function: Loader]
+Order[Function: Order]
+sharedSpacesService[Function: sharedSpacesService]
+Volspace[Function: Volspace]
+authService[Function: authService]
+centralizedBroadcastManager[Function: centralizedBroadcastManager]
+connectionPositionResolver[Function: connectionPositionResolver]
+connectionsService[Function: connectionsService]
+githubRepoService[Function: githubRepoService]
+globalOptimizationCoordinator[Function: globalOptimizationCoordinator]
+globalSubscriptionManager[Function: globalSubscriptionManager]
+constants[Function: constants]
+markdownDiagramService_file[Function: markdownDiagramService]
+organizationService[Function: organizationService]
+presenceService[Function: presenceService]
+resourceCleanupService_file[Function: resourceCleanupService]
+runtimeScanService[Function: runtimeScanService]
+screenRecordingService[Function: screenRecordingService]
+sharingService[Function: sharingService]
+spacesService[Function: spacesService]
+spatialObjectsService[Function: spatialObjectsService]
+spatialPartitioning[Function: spatialPartitioning]
+storageService[Function: storageService]
+streamlinedSpatialPartitioning[Function: streamlinedSpatialPartitioning]
+unifiedCacheManager[Function: unifiedCacheManager]
+webRservice[Function: webRservice]
+line.frag[Function: line.frag]
+shaders[Function: shaders]
+line.vert[Function: line.vert]
+connectionStore[Function: connectionStore]
+cubeStore[Function: cubeStore]
+lodStore[Function: lodStore]
+storeUtils[Function: storeUtils]
+uiOverlayStore[Function: uiOverlayStore]
+animationUtils[Function: animationUtils]
+bvhRaycasting[Function: bvhRaycasting]
+connectionUtils[Function: connectionUtils]
+debugUtils[Function: debugUtils]
+faceIndicatorUtils[Function: faceIndicatorUtils]
+facePositionUtils[Function: facePositionUtils]
+frameCounter_file[Function: frameCounter]
+gpuResourceTracker[Function: gpuResourceTracker]
+loadingState[Function: loadingState]
+objectUpdateHandlers[Function: objectUpdateHandlers]
+objectVirtualization[Function: objectVirtualization]
+pathfindingUtils[Function: pathfindingUtils]
+positionUtils[Function: positionUtils]
+renderWorkScheduler[Function: renderWorkScheduler]
+snappingUtils[Function: snappingUtils]
+streamlinedSpatialIndex[Function: streamlinedSpatialIndex]
+textAtlas[Function: textAtlas]
+textureLoader[Function: textureLoader]
+unifiedPerformanceUtils[Function: unifiedPerformanceUtils]
+unifiedValidationUtils[Function: unifiedValidationUtils]
+diagramLayoutWorker[Function: diagramLayoutWorker]
+diagramLayoutWorkerClient[Function: diagramLayoutWorkerClient]
+markdownLayoutWorker[Function: markdownLayoutWorker]
+markdownLayoutWorkerClient[Function: markdownLayoutWorkerClient]
+pathfindingWorkerClient[Function: pathfindingWorkerClient]
+spatialIndexWorker[Function: spatialIndexWorker]
+spatialIndexWorkerClient[Function: spatialIndexWorkerClient]
+textAtlasWorker[Function: textAtlasWorker]
+textAtlasWorkerClient[Function: textAtlasWorkerClient]
 
 %% File-Function Relationships
-index -.-> createVerifyAuthTokenApp : "contains"
-index -.-> verifyAuthToken : "contains"
-index -.-> createBulkImportApp : "contains"
-index -.-> bulkImport : "contains"
-index -.-> fetchGithubToken : "contains"
-index -.-> createBulkDeleteApp : "contains"
-index -.-> bulkDelete : "contains"
-index -.-> validateRuntimeScanUrl : "contains"
-index -.-> sanitizeMerfolkId : "contains"
-index -.-> generateMerfolkFromRuntimeTrace : "contains"
-index -.-> extractSourceMapUrl : "contains"
-index -.-> scanOriginalSource : "contains"
-index -.-> extractNamesFromSourceMap : "contains"
-index -.-> scanJsBundles : "contains"
-index -.-> captureRuntimeTrace : "contains"
-index -.-> deduplicateApiCalls : "contains"
-index -.-> buildConnections : "contains"
-index -.-> createScanWebsiteRuntimeApp : "contains"
-index -.-> scanWebsiteRuntime : "contains"
-useAuth -.-> useAuth : "contains"
-useAuthState -.-> useAuthState : "contains"
-useCentralizedBroadcastManager -.-> useCentralizedBroadcastManager : "contains"
+backend_index -.-> createVerifyAuthTokenApp : "contains"
+backend_index -.-> verifyAuthToken : "contains"
+backend_index -.-> createBulkImportApp : "contains"
+backend_index -.-> bulkImport : "contains"
+backend_index -.-> fetchGithubToken : "contains"
+backend_index -.-> createBulkDeleteApp : "contains"
+backend_index -.-> bulkDelete : "contains"
+backend_index -.-> validateRuntimeScanUrl : "contains"
+backend_index -.-> sanitizeMerfolkId : "contains"
+backend_index -.-> generateMerfolkFromRuntimeTrace : "contains"
+backend_index -.-> extractSourceMapUrl : "contains"
+backend_index -.-> scanOriginalSource : "contains"
+backend_index -.-> extractNamesFromSourceMap : "contains"
+backend_index -.-> scanJsBundles : "contains"
+backend_index -.-> captureRuntimeTrace : "contains"
+backend_index -.-> deduplicateApiCalls : "contains"
+backend_index -.-> buildConnections : "contains"
+backend_index -.-> createScanWebsiteRuntimeApp : "contains"
+backend_index -.-> scanWebsiteRuntime : "contains"
+astTraversal -.-> getFileStem : "contains"
+astTraversal -.-> addToSet : "contains"
+astTraversal -.-> addToFileContainer : "contains"
+astTraversal -.-> isNonLiteralInit : "contains"
+astTraversal -.-> classifyName : "contains"
+astTraversal -.-> detectEventEmitterCreation : "contains"
+astTraversal -.-> detectEventListenerRegistration : "contains"
+astTraversal -.-> detectDbModelCreation : "contains"
+astTraversal -.-> extractObjectKeys : "contains"
+astTraversal -.-> detectAuthGuardPattern : "contains"
+astTraversal -.-> detectApiEndpointRegistration : "contains"
+astTraversal -.-> processVanillaNode : "contains"
+astTraversal -.-> traverseVanillaAST : "contains"
+astTraversal -.-> unwrapToFunction : "contains"
+astTraversal -.-> getInternalFunctionLabel : "contains"
+astTraversal -.-> collectContainedComponents : "contains"
+astTraversal -.-> walkNodeForJSX : "contains"
+astTraversal -.-> deepWalkForCallSites : "contains"
+astTraversal -.-> analyzeComponentBody : "contains"
+astTraversal -.-> processReactDecl : "contains"
+astTraversal -.-> traverseReactAST : "contains"
+astTraversal -.-> deriveNextjsRoutePath : "contains"
+astTraversal -.-> buildNextjsRouteMap : "contains"
+astTraversal -.-> classifyPython : "contains"
+astTraversal -.-> traversePythonSource : "contains"
+astTraversal -.-> extractPythonModelFields : "contains"
+astTraversal -.-> parseJS : "contains"
+astTraversal -.-> traverseVueSource : "contains"
+astTraversal -.-> extractShaderSymbols : "contains"
+fileAnalyzer -.-> analyzeFile : "contains"
+fileAnalyzer -.-> containsJSX : "contains"
+merfolkGenerator -.-> generateRoutedConnection : "contains"
+merfolkGenerator -.-> generateMerfolkMarkdown : "contains"
+repoTypeDetector -.-> walkDir : "contains"
+repoTypeDetector -.-> fileExists : "contains"
+repoTypeDetector -.-> readPackageJson : "contains"
+repoTypeDetector -.-> getDeps : "contains"
+repoTypeDetector -.-> getProdDeps : "contains"
+repoTypeDetector -.-> detectRepoType : "contains"
+workspaceScanner -.-> getFileType : "contains"
+workspaceScanner -.-> scanWorkspace : "contains"
+useAuth_file -.-> useAuth : "contains"
+useAuthState_file -.-> useAuthState : "contains"
+useCentralizedBroadcastManager_file -.-> useCentralizedBroadcastManager : "contains"
 useConnectionAnimationManager -.-> ConnectionAnimationManager : "contains"
 useConnectionAnimationManager -.-> useAnimatedLine : "contains"
 useConnectionAnimationManager -.-> useAnimationStats : "contains"
-useConnectionObjects -.-> useConnectionObjects : "contains"
-useConnectionObjects -.-> usePathfindingObjects : "contains"
-useConnectionObjects -.-> useConnectionObjectPositions : "contains"
-useConnections -.-> useConnections : "contains"
-useConnectionsRendererStore -.-> useConnectionsRendererStore : "contains"
-useConnectionsRendererStore -.-> useConnectionState : "contains"
-useConnectionsRendererStore -.-> useConnectionActions : "contains"
-useDebouncedUpdate -.-> useDebouncedUpdate : "contains"
+useConnectionObjects_file -.-> useConnectionObjects : "contains"
+useConnectionObjects_file -.-> usePathfindingObjects : "contains"
+useConnectionObjects_file -.-> useConnectionObjectPositions : "contains"
+useConnections_file -.-> useConnections : "contains"
+useConnectionsRendererStore_file -.-> useConnectionsRendererStore : "contains"
+useConnectionsRendererStore_file -.-> useConnectionState : "contains"
+useConnectionsRendererStore_file -.-> useConnectionActions : "contains"
+useDebouncedUpdate_file -.-> useDebouncedUpdate : "contains"
 useFrustumCulling -.-> isPointInFrustum : "contains"
 useFrustumCulling -.-> isConnectionVisible : "contains"
 useFrustumCulling -.-> SpatialHash : "contains"
 useFrustumCulling -.-> useFrustumCulledConnections : "contains"
 useFrustumCulling -.-> useDynamicFrustumCulling : "contains"
-useGlobalClickHandler -.-> useGlobalClickHandler : "contains"
-useIndicators -.-> useIndicators : "contains"
-useObjects -.-> useObjects : "contains"
-useSpaceManager -.-> useSpaceManager : "contains"
-useSpatialManager -.-> useSpatialManager : "contains"
-useTextureUpdater -.-> useTextureUpdater : "contains"
-useTimeoutManager -.-> useTimeoutManager : "contains"
-useWindowSize -.-> useWindowSize : "contains"
-LandingApp -.-> LandingApp : "contains"
-Loader -.-> Loader : "contains"
+useGlobalClickHandler_file -.-> useGlobalClickHandler : "contains"
+useIndicators_file -.-> useIndicators : "contains"
+useObjects_file -.-> useObjects : "contains"
+useSpaceManager_file -.-> useSpaceManager : "contains"
+useSpatialManager_file -.-> useSpatialManager : "contains"
+useTextureUpdater_file -.-> useTextureUpdater : "contains"
+useTimeoutManager_file -.-> useTimeoutManager : "contains"
+useWindowSize_file -.-> useWindowSize : "contains"
+LandingApp_file -.-> LandingApp : "contains"
+Loader_file -.-> Loader : "contains"
 Order -.-> OrderHeader : "contains"
 sharedSpacesService -.-> addSharedSpaceReference : "contains"
 sharedSpacesService -.-> removeSharedSpaceReference : "contains"
@@ -2056,8 +1957,8 @@ globalSubscriptionManager -.-> getSubscriptionMetrics : "contains"
 globalSubscriptionManager -.-> cleanupAllSubscriptions : "contains"
 constants -.-> getGroupDisplayName : "contains"
 constants -.-> getGroupColor : "contains"
-markdownDiagramService -.-> MarkdownDiagramService : "contains"
-markdownDiagramService -.-> markdownDiagramService : "contains"
+markdownDiagramService_file -.-> MarkdownDiagramService : "contains"
+markdownDiagramService_file -.-> markdownDiagramService : "contains"
 organizationService -.-> createOrganization : "contains"
 organizationService -.-> getUserOrganizations : "contains"
 organizationService -.-> getOrganizationById : "contains"
@@ -2075,8 +1976,8 @@ organizationService -.-> deleteOrganization : "contains"
 presenceService -.-> setUserPresence : "contains"
 presenceService -.-> setGuestPresence : "contains"
 presenceService -.-> subscribeToSpacePresence : "contains"
-resourceCleanupService -.-> ResourceCleanupService : "contains"
-resourceCleanupService -.-> resourceCleanupService : "contains"
+resourceCleanupService_file -.-> ResourceCleanupService : "contains"
+resourceCleanupService_file -.-> resourceCleanupService : "contains"
 runtimeScanService -.-> validateScanUrl : "contains"
 runtimeScanService -.-> generateMerfolkFromRuntimeTrace : "contains"
 runtimeScanService -.-> scanWebsiteAndGenerateDiagram : "contains"
@@ -2177,11 +2078,22 @@ webRservice -.-> findAvailableBroadcasts : "contains"
 webRservice -.-> cleanupWebRTC : "contains"
 webRservice -.-> registerUserPresence : "contains"
 webRservice -.-> subscribeToUsersInSpace : "contains"
+opacity[Function: opacity]
+line.frag -.-> opacity : "contains"
+glowWidth[Function: glowWidth]
+line.frag -.-> glowWidth : "contains"
+glowIntensity[Function: glowIntensity]
+line.frag -.-> glowIntensity : "contains"
 shaders -.-> opacity : "contains"
 shaders -.-> glowWidth : "contains"
 shaders -.-> glowIntensity : "contains"
+linewidth[Function: linewidth]
 shaders -.-> linewidth : "contains"
+resolution[Function: resolution]
 shaders -.-> resolution : "contains"
+line.vert -.-> linewidth : "contains"
+line.vert -.-> resolution : "contains"
+line.vert -.-> glowWidth : "contains"
 connectionStore -.-> _buildConnectionsByObjectId : "contains"
 cubeStore -.-> getCubeSelector : "contains"
 cubeStore -.-> getCubeFaceColorSelector : "contains"
@@ -2231,8 +2143,8 @@ debugUtils -.-> getPerfStats : "contains"
 debugUtils -.-> resetPerfStats : "contains"
 faceIndicatorUtils -.-> handleFaceIndicatorClick : "contains"
 facePositionUtils -.-> calculateFacePosition : "contains"
-frameCounter -.-> FrameCounter : "contains"
-frameCounter -.-> frameCounter : "contains"
+frameCounter_file -.-> FrameCounter : "contains"
+frameCounter_file -.-> frameCounter : "contains"
 gpuResourceTracker -.-> GPUResourceTracker : "contains"
 gpuResourceTracker -.-> gpuTracker : "contains"
 loadingState -.-> getIsInitialLoading : "contains"
@@ -2338,4 +2250,765 @@ textAtlasWorker -.-> addPage : "contains"
 textAtlasWorkerClient -.-> getTextAtlasWorker : "contains"
 textAtlasWorkerClient -.-> terminateTextAtlasWorker : "contains"
 
+%% Component Relationships
+App --> FrameTicker : "uses"
+App --> FrameloopController : "uses"
+App --> LODManager : "enabled"
+App --> CustomCamera : "ref"
+App --> RealTimeConnectionUpdater : "connections"
+App --> ConnectionsRenderer : "objects, allObjectsForPathfinding, visibleObjectIds..."
+App --> ObjectsRenderer : "objects, visibleObjectIds, selectedId..."
+App --> CellBoundaryRenderer : "visible"
+App --> DiagramOverlay2D : "uses"
+App --> UIOverlay : "onCreateObject, onToggleIndicators, user..."
+AppShell --> LandingApp_file : "onOpenSpace"
+LandingApp_file --> LandingApp : "receives"
+AtlasTextSprite --> AtlasTextSprite : "meshRef, position, geometry..."
+AtlasTextSprite --> StaticBillboardMesh : "receives"
+AtlasTextSprite --> AtlasTextSprite : "meshRef, position, calculatedPosition..."
+AtlasTextSprite --> DynamicBillboardMesh : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> InstancedLine : "key, points, color..."
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> AnimatedConnectionLine : "key, points, connectionId..."
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> Connection : "position, maxDistance"
+Connection --> DistanceFilteredConnectionText : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> AtlasTextSprite : "key, text, position..."
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> HeaderInput : "position, onTextSubmit, inputId..."
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> TextStyleUI : "position, onStyleChange, onClose..."
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> LineUI : "position, onColorChange, onToggleDashed..."
+ConnectionsRenderer --> BatchedConnectionLines : "connections, objectPositions, selectedConnectionId..."
+ConnectionsRenderer --> BatchedCurvedLines : "connections, objectPositions, pathfindingObjects..."
+ConnectionsRenderer --> DistanceFilteredTextLabels : "labels, maxDistance, onLabelClick"
+ConnectionsRenderer --> ConnectionsRenderer : "key, connection, allObjectsForPathfinding..."
+ConnectionsRenderer --> Connection : "receives"
+Cube --> CubeFace : "cubeId, faceName, faceData..."
+Cube --> FaceUI : "position, normal, onColorChange..."
+Cube --> FaceTextInput : "position, onTextSubmit, inputId"
+Cube --> AtlasTextSprite : "text, position, onClick..."
+Cube --> TextStyleUI : "position, onStyleChange, onClose..."
+Cube --> SnapLineIndicator : "points, axis, visible"
+Cube --> InstancedLine : "points, color, lineWidth"
+Cube --> HeaderInput : "position, onTextSubmit, inputId..."
+Cube --> ObjectUI : "onTransformToggle, onHeaderToggle, onResizeToggle..."
+CubeFace --> FaceIndicator : "position, rotation, onClick..."
+DiagramOverlay2D --> EdgeMarkerDefs : "uses"
+DistanceFilteredTextLabels --> InstancedAtlasText : "labels, maxDistance, onLabelClick..."
+Sphere --> SnapLineIndicator : "points, axis, visible"
+Sphere --> DodecahedronFace : "key, dodecahedronId, faceIndex..."
+Sphere --> InstancedLine : "points, color, lineWidth"
+Sphere --> ObjectUI : "position, onTransformToggle, onHeaderToggle..."
+Sphere --> FaceUI : "position, onColorChange, face..."
+Sphere --> HeaderInput : "position, onTextSubmit, inputId..."
+Sphere --> AtlasTextSprite : "key, text, position..."
+Sphere --> TextStyleUI : "position, followTarget, onStyleChange..."
+DodecahedronFace --> FaceIndicator : "id, position, rotation..."
+DodecahedronFace --> AtlasTextSprite : "text, position, style..."
+DodecahedronFace --> FaceTextInput : "position, onTextSubmit, inputId"
+FaceUI --> ColorPicker : "onColorSelect, onClose"
+InstancedAtlasText --> InstancedAtlasText : "key, atlas, texture..."
+InstancedAtlasText --> PageInstancedMesh : "receives"
+LineUI --> ColorPicker : "onColorSelect, onClose"
+ObjectRenderer --> Cube : "key, id, selected..."
+ObjectRenderer --> Tetrahedron : "key, id, selected..."
+ObjectRenderer --> Sphere : "key, id, selected..."
+ObjectRenderer --> Plane : "key, id, position..."
+ObjectRenderer --> TextObject : "key, id, position..."
+ObjectRenderer --> ModelObject : "key, obj, isSelected..."
+ObjectsRenderer --> ObjectRenderer : "key, obj, selectedId..."
+ObjectsRenderer --> GlobalCubeEdgesRenderer : "cubes, defaultLineWidth"
+ObjectsRenderer --> GlobalCubeFaceRenderer : "cubes"
+ObjectsRenderer --> GlobalCubeMediumLODRenderer : "cubes"
+ObjectsRenderer --> GlobalDodecahedronEdgesRenderer : "dodecahedrons, defaultLineWidth"
+ObjectsRenderer --> GlobalDodecahedronMediumLODRenderer : "dodecahedrons"
+ObjectsRenderer --> GlobalTetrahedronEdgesRenderer : "tetrahedrons, defaultLineWidth"
+ObjectsRenderer --> GlobalTetrahedronMediumLODRenderer : "tetrahedrons"
+ObjectsRenderer --> AtlasTextSprite : "key, text, position..."
+ObjectUI --> ColorPicker : "pickerId, onColorSelect, onClose"
+Plane --> SnapLineIndicator : "points, axis, visible"
+Plane --> WebcamStream : "key, meshRef, active..."
+Plane --> ScreenShareStream : "key, meshRef, active..."
+Plane --> InstancedLine : "points, color, lineWidth..."
+Plane --> FaceIndicator : "position, onClick, isActive..."
+Plane --> AtlasTextSprite : "text, position, style..."
+Plane --> TextStyleUI : "position, onStyleChange, onClose..."
+Plane --> FaceUI : "position, onColorChange, onTextClick..."
+Plane --> FaceTextInput : "position, onTextSubmit, inputId..."
+Plane --> HeaderInput : "position, onTextSubmit, inputId..."
+SnapLineIndicator --> InstancedLine : "points, color, lineWidth"
+SpacePresenceAvatars --> SpacePresenceAvatars : "key, user"
+SpacePresenceAvatars --> Avatar : "receives"
+Tetrahedron --> AtlasTextSprite : "text, position, onClick..."
+Tetrahedron --> TextStyleUI : "position, onStyleChange, onClose..."
+Tetrahedron --> TetrahedronFace : "key, id, faceName..."
+Tetrahedron --> SnapLineIndicator : "points, axis, visible"
+Tetrahedron --> InstancedLine : "points, color, lineWidth"
+Tetrahedron --> HeaderInput : "position, onTextSubmit, inputId..."
+Tetrahedron --> ObjectUI : "onTransformToggle, onHeaderToggle, onResizeToggle..."
+TetrahedronFace --> AtlasTextSprite : "text, position, followTarget..."
+TetrahedronFace --> TextStyleUI : "position, onStyleChange, onClose..."
+TetrahedronFace --> FaceUI : "position, normal, onColorChange..."
+TetrahedronFace --> FaceTextInput : "position, onTextSubmit, inputId"
+TetrahedronFace --> FaceIndicator : "position, rotation, onClick..."
+TextObject --> SnapLineIndicator : "points, axis, visible"
+TextObject --> FaceIndicator : "position, rotation, onClick..."
+TextObject --> TextObjectUI : "ref, id, textStyle..."
+TextObjectUI --> TextStyleUI : "uiType, textStyle, onStyleChange..."
+TextStyleUI --> TextStyleUIContent : "receives"
+TextObjectUI --> ColorPicker : "onColorSelect, onClose"
+TextStyleUIContent --> TextStyleUI : "calls out"
+TextStyleUI --> ColorPicker : "pickerId, onColorSelect, onClose"
+TextStyleUI --> TextStyleUI : "onStyleChange, distance, onClose"
+TextStyleUI --> TextStyleUIContent : "receives"
+TextStyleUIContainer --> TextStyleUI : "onStyleChange"
+TextStyleUI --> TextStyleUIContent : "receives"
+UIOverlay --> SpaceChat : "spaceId, user, isOpen..."
+UIOverlay --> SpacePresenceAvatars : "spaceId"
+CreateSpacePopup --> OrgMemberDropdown : "members, selectedUserId, onSelect..."
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> CreateSpacePopup : "uses"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> UpgradePrompt : "show, onClose, currentTier"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> ShareSpacePopup : "uses"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> OrganizationManager : "user, show, onClose"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> SpacesTable : "uses"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> UserLoginSection : "user, windowSize, onLogin..."
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> WelcomeOverlay : "windowSize, onLogin"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> Order : "windowSize"
+Order --> OrderHeader : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> CustomCamera : "camera"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> WhitePlane : "uses"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> CubeOutline : "size, color, targetPosition..."
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> DodecahedronWireframe : "size, color, targetPosition..."
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> DodecahedronWireframe2 : "size, color, targetPosition..."
+UpdatesContainer --> UpdatesViewer : "content, timestamp"
+
+%% Component Dependencies
+App --> useTimeoutManager_file : "{setRedirectTimeout, clearRedirectTimeout, clearLoadingTimeout...}"
+useTimeoutManager_file --> useTimeoutManager_file : "receives"
+App --> useSpatialManagerStore : "uses store"
+App --> useAuthState_file : "{user, isAuthReady, isCheckingUrlAuth}"
+useAuthState_file --> useAuthState_file : "receives"
+App --> useSpaceManager_file : "{currentSpaceId}"
+useSpaceManager_file --> useSpaceManager_file : "receives"
+App --> useSpatialManager_file : "{loadedCells, isInitialized, currentCellCoords...}"
+useSpatialManager_file --> useSpatialManager_file : "receives"
+App --> useConnectionStore : "uses store"
+App --> useConnectionStore : "uses store"
+App --> useConnectionStore : "uses store"
+App --> useConnectionStore : "uses store"
+App --> useConnections_file : "{connections, handleLineStyleChange, handleLineColorChange...}"
+useConnections_file --> useConnections_file : "receives"
+App --> useObjects_file : "{selectedId, setSelectedId, handleCreateObject...}"
+useObjects_file --> useObjects_file : "receives"
+App --> useIndicators_file : "{showAllCubesIndicators, setShowAllCubesIndicators, activeIndicator...}"
+useIndicators_file --> useIndicators_file : "receives"
+AnimatedConnectionLine --> useAnimatedConnectionLineStore : "uses store"
+AtlasTextSprite --> useTextAtlasStore : "uses store"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> useConnectionObjects_file : "{startObject, endObject}"
+useConnectionObjects_file --> useConnectionObjectPositions : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> useConnectionsRendererStore_file : "uses hook"
+useConnectionsRendererStore_file --> useConnectionState : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> useConnectionsRendererStore_file : "uses hook"
+useConnectionsRendererStore_file --> useConnectionActions : "receives"
+ConnectionsRenderer --> useConnectionsRendererStore_file : "uses store"
+useConnectionsRendererStore_file --> useConnectionsRendererStore_file : "receives"
+ConnectionsRenderer --> useFrustumCulling : "{visibleConnections}"
+useFrustumCulling --> useFrustumCulledConnections : "receives"
+Cube --> useLODStore : "uses store"
+Cube --> useLODStore : "uses store"
+Cube --> useLODStore : "uses store"
+Cube --> useLODStore : "uses store"
+Cube --> useConnectionStore : "uses store"
+Sphere --> useConnectionStore : "uses store"
+Sphere --> useLODStore : "uses store"
+Sphere --> useLODStore : "uses store"
+Sphere --> useLODStore : "uses store"
+Sphere --> useLODStore : "uses store"
+GlobalCubeEdgesRenderer --> useLODStore : "uses store"
+GlobalCubeFaceRenderer --> useLODStore : "uses store"
+GlobalCubeMediumLODRenderer --> useLODStore : "uses store"
+GlobalDodecahedronEdgesRenderer --> useLODStore : "uses store"
+GlobalDodecahedronMediumLODRenderer --> useLODStore : "uses store"
+GlobalTetrahedronEdgesRenderer --> useLODStore : "uses store"
+GlobalTetrahedronMediumLODRenderer --> useLODStore : "uses store"
+InstancedAtlasText --> useTextAtlasStore : "uses store"
+LineUI --> useConnectionStore : "uses store"
+LineUI --> useConnectionStore : "uses store"
+LineUI --> useConnectionStore : "uses store"
+LineUI --> useConnectionStore : "uses store"
+LineUI --> useConnectionStore : "uses store"
+LODManager --> useLODStore : "uses store"
+Plane --> useConnectionStore : "uses store"
+RealTimeConnectionUpdater --> useConnectionStore : "uses store"
+RealTimeConnectionUpdater --> useSpatialManagerStore : "uses store"
+Tetrahedron --> useConnectionStore : "uses store"
+Tetrahedron --> useLODStore : "uses store"
+Tetrahedron --> useLODStore : "uses store"
+Tetrahedron --> useLODStore : "uses store"
+Tetrahedron --> useLODStore : "uses store"
+TextObject --> useConnectionStore : "uses store"
+UIOverlay --> useConnectionStore : "uses store"
+UIOverlay --> useConnectionStore : "uses store"
+UIOverlay --> useConnectionStore : "uses store"
+UIOverlay --> useConnectionStore : "uses store"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> useWindowSize_file : "uses hook"
+useWindowSize_file --> useWindowSize_file : "receives"
+
+%% Function Call Relationships
+createVerifyAuthTokenApp --> backend_index : "calls out"
+backend_index --> express : "calls express"
+createVerifyAuthTokenApp --> backend_index : "calls out"
+backend_index --> cors : "calls cors"
+createBulkImportApp --> backend_index : "calls out"
+backend_index --> express : "calls express"
+createBulkImportApp --> backend_index : "calls out"
+backend_index --> cors : "calls cors"
+createBulkDeleteApp --> backend_index : "calls out"
+backend_index --> express : "calls express"
+createBulkDeleteApp --> backend_index : "calls out"
+backend_index --> cors : "calls cors"
+scanJsBundles --> extractSourceMapUrl : "calls extractSourceMapUrl"
+scanJsBundles --> scanOriginalSource : "calls scanOriginalSource"
+scanJsBundles --> extractNamesFromSourceMap : "calls extractNamesFromSourceMap"
+captureRuntimeTrace --> scanJsBundles : "calls scanJsBundles"
+captureRuntimeTrace --> deduplicateApiCalls : "calls deduplicateApiCalls"
+captureRuntimeTrace --> buildConnections : "calls buildConnections"
+createScanWebsiteRuntimeApp --> backend_index : "calls out"
+backend_index --> express : "calls express"
+createScanWebsiteRuntimeApp --> backend_index : "calls out"
+backend_index --> cors : "calls cors"
+createScanWebsiteRuntimeApp --> validateRuntimeScanUrl : "calls validateRuntimeScanUrl"
+createScanWebsiteRuntimeApp --> captureRuntimeTrace : "calls captureRuntimeTrace"
+createScanWebsiteRuntimeApp --> backend_index : "calls out"
+backend_index --> runtimeScanService : "calls generateMerfolkFromRuntimeTrace"
+runtimeScanService --> generateMerfolkFromRuntimeTrace : "receives"
+classifyName --> addToSet : "calls addToSet"
+classifyName --> addToFileContainer : "calls addToFileContainer"
+classifyName --> addToSet : "calls addToSet"
+classifyName --> addToSet : "calls addToSet"
+classifyName --> addToSet : "calls addToSet"
+classifyName --> addToSet : "calls addToSet"
+classifyName --> addToSet : "calls addToSet"
+classifyName --> addToFileContainer : "calls addToFileContainer"
+detectDbModelCreation --> extractObjectKeys : "calls extractObjectKeys"
+detectDbModelCreation --> extractObjectKeys : "calls extractObjectKeys"
+processVanillaNode --> classifyName : "calls classifyName"
+processVanillaNode --> isNonLiteralInit : "calls isNonLiteralInit"
+processVanillaNode --> detectEventEmitterCreation : "calls detectEventEmitterCreation"
+processVanillaNode --> detectDbModelCreation : "calls detectDbModelCreation"
+processVanillaNode --> detectAuthGuardPattern : "calls detectAuthGuardPattern"
+processVanillaNode --> detectApiEndpointRegistration : "calls detectApiEndpointRegistration"
+processVanillaNode --> classifyName : "calls classifyName"
+processVanillaNode --> deepWalkForCallSites : "calls deepWalkForCallSites"
+processVanillaNode --> getFileStem : "calls getFileStem"
+processVanillaNode --> classifyName : "calls classifyName"
+processVanillaNode --> deepWalkForCallSites : "calls deepWalkForCallSites"
+processVanillaNode --> getFileStem : "calls getFileStem"
+processVanillaNode --> classifyName : "calls classifyName"
+processVanillaNode --> deepWalkForCallSites : "calls deepWalkForCallSites"
+processVanillaNode --> classifyName : "calls classifyName"
+processVanillaNode --> detectApiEndpointRegistration : "calls detectApiEndpointRegistration"
+processVanillaNode --> detectEventListenerRegistration : "calls detectEventListenerRegistration"
+processVanillaNode --> isNonLiteralInit : "calls isNonLiteralInit"
+processVanillaNode --> detectEventEmitterCreation : "calls detectEventEmitterCreation"
+processVanillaNode --> detectDbModelCreation : "calls detectDbModelCreation"
+processVanillaNode --> detectAuthGuardPattern : "calls detectAuthGuardPattern"
+traverseVanillaAST --> processVanillaNode : "calls processVanillaNode"
+unwrapToFunction --> unwrapToFunction : "calls unwrapToFunction"
+collectContainedComponents --> collectContainedComponents : "calls collectContainedComponents"
+collectContainedComponents --> collectContainedComponents : "calls collectContainedComponents"
+collectContainedComponents --> collectContainedComponents : "calls collectContainedComponents"
+walkNodeForJSX --> collectContainedComponents : "calls collectContainedComponents"
+walkNodeForJSX --> collectContainedComponents : "calls collectContainedComponents"
+walkNodeForJSX --> walkNodeForJSX : "calls walkNodeForJSX"
+walkNodeForJSX --> walkNodeForJSX : "calls walkNodeForJSX"
+walkNodeForJSX --> walkNodeForJSX : "calls walkNodeForJSX"
+walkNodeForJSX --> walkNodeForJSX : "calls walkNodeForJSX"
+walkNodeForJSX --> walkNodeForJSX : "calls walkNodeForJSX"
+deepWalkForCallSites --> deepWalkForCallSites : "calls deepWalkForCallSites"
+deepWalkForCallSites --> deepWalkForCallSites : "calls deepWalkForCallSites"
+deepWalkForCallSites --> deepWalkForCallSites : "calls deepWalkForCallSites"
+deepWalkForCallSites --> deepWalkForCallSites : "calls deepWalkForCallSites"
+deepWalkForCallSites --> deepWalkForCallSites : "calls deepWalkForCallSites"
+deepWalkForCallSites --> deepWalkForCallSites : "calls deepWalkForCallSites"
+analyzeComponentBody --> walkNodeForJSX : "calls walkNodeForJSX"
+analyzeComponentBody --> getInternalFunctionLabel : "calls getInternalFunctionLabel"
+analyzeComponentBody --> getInternalFunctionLabel : "calls getInternalFunctionLabel"
+analyzeComponentBody --> getInternalFunctionLabel : "calls getInternalFunctionLabel"
+analyzeComponentBody --> walkNodeForJSX : "calls walkNodeForJSX"
+analyzeComponentBody --> deepWalkForCallSites : "calls deepWalkForCallSites"
+processReactDecl --> addToSet : "calls addToSet"
+processReactDecl --> analyzeComponentBody : "calls analyzeComponentBody"
+processReactDecl --> astTraversal : "calls out"
+astTraversal --> fileAnalyzer : "calls containsJSX"
+fileAnalyzer --> containsJSX : "receives"
+processReactDecl --> addToSet : "calls addToSet"
+processReactDecl --> analyzeComponentBody : "calls analyzeComponentBody"
+processReactDecl --> astTraversal : "calls out"
+astTraversal --> fileAnalyzer : "calls containsJSX"
+fileAnalyzer --> containsJSX : "receives"
+processReactDecl --> addToSet : "calls addToSet"
+processReactDecl --> analyzeComponentBody : "calls analyzeComponentBody"
+processReactDecl --> astTraversal : "calls out"
+astTraversal --> fileAnalyzer : "calls containsJSX"
+fileAnalyzer --> containsJSX : "receives"
+processReactDecl --> addToSet : "calls addToSet"
+processReactDecl --> unwrapToFunction : "calls unwrapToFunction"
+processReactDecl --> analyzeComponentBody : "calls analyzeComponentBody"
+processReactDecl --> astTraversal : "calls out"
+astTraversal --> fileAnalyzer : "calls containsJSX"
+fileAnalyzer --> containsJSX : "receives"
+processReactDecl --> addToSet : "calls addToSet"
+processReactDecl --> addToSet : "calls addToSet"
+processReactDecl --> analyzeComponentBody : "calls analyzeComponentBody"
+processReactDecl --> astTraversal : "calls out"
+astTraversal --> fileAnalyzer : "calls containsJSX"
+fileAnalyzer --> containsJSX : "receives"
+processReactDecl --> unwrapToFunction : "calls unwrapToFunction"
+processReactDecl --> addToSet : "calls addToSet"
+processReactDecl --> analyzeComponentBody : "calls analyzeComponentBody"
+processReactDecl --> astTraversal : "calls out"
+astTraversal --> fileAnalyzer : "calls containsJSX"
+fileAnalyzer --> containsJSX : "receives"
+traverseReactAST --> traverseVanillaAST : "calls traverseVanillaAST"
+traverseReactAST --> processReactDecl : "calls processReactDecl"
+traverseReactAST --> processReactDecl : "calls processReactDecl"
+traverseReactAST --> addToSet : "calls addToSet"
+traverseReactAST --> processReactDecl : "calls processReactDecl"
+traverseReactAST --> getFileStem : "calls getFileStem"
+traverseReactAST --> deriveNextjsRoutePath : "calls deriveNextjsRoutePath"
+classifyPython --> addToSet : "calls addToSet"
+classifyPython --> addToSet : "calls addToSet"
+classifyPython --> addToSet : "calls addToSet"
+classifyPython --> addToFileContainer : "calls addToFileContainer"
+traversePythonSource --> addToSet : "calls addToSet"
+traversePythonSource --> addToFileContainer : "calls addToFileContainer"
+traversePythonSource --> extractPythonModelFields : "calls extractPythonModelFields"
+traversePythonSource --> addToSet : "calls addToSet"
+traversePythonSource --> classifyPython : "calls classifyPython"
+parseJS --> traverseVanillaAST : "calls traverseVanillaAST"
+traverseVueSource --> parseJS : "calls parseJS"
+traverseVueSource --> addToSet : "calls addToSet"
+traverseVueSource --> parseJS : "calls parseJS"
+extractShaderSymbols --> addToFileContainer : "calls addToFileContainer"
+extractShaderSymbols --> addToFileContainer : "calls addToFileContainer"
+extractShaderSymbols --> addToFileContainer : "calls addToFileContainer"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+generateMerfolkMarkdown --> generateRoutedConnection : "calls generateRoutedConnection"
+generateMerfolkMarkdown --> generateRoutedConnection : "calls generateRoutedConnection"
+generateMerfolkMarkdown --> generateRoutedConnection : "calls generateRoutedConnection"
+generateMerfolkMarkdown --> generateRoutedConnection : "calls generateRoutedConnection"
+walkDir --> walkDir : "calls walkDir"
+detectRepoType --> fileExists : "calls fileExists"
+detectRepoType --> walkDir : "calls walkDir"
+detectRepoType --> readPackageJson : "calls readPackageJson"
+detectRepoType --> getDeps : "calls getDeps"
+detectRepoType --> getProdDeps : "calls getProdDeps"
+detectRepoType --> fileExists : "calls fileExists"
+detectRepoType --> fileExists : "calls fileExists"
+detectRepoType --> fileExists : "calls fileExists"
+detectRepoType --> fileExists : "calls fileExists"
+detectRepoType --> fileExists : "calls fileExists"
+scanWorkspace --> getFileType : "calls getFileType"
+App --> presenceService : "calls setGuestPresence"
+presenceService --> setGuestPresence : "receives"
+App --> animationUtils : "calls initAnimationSystem"
+animationUtils --> initAnimationSystem : "receives"
+App --> positionUtils : "calls checkPositionJitter"
+positionUtils --> checkPositionJitter : "receives"
+App --> spacesService : "calls getPublicSpaceMetadata"
+spacesService --> getPublicSpaceMetadata : "receives"
+App --> spatialPartitioning : "calls getObjectsFromCells"
+spatialPartitioning --> getObjectsFromCells : "receives"
+App --> loadingState : "calls setIsInitialLoading"
+loadingState --> setIsInitialLoading : "receives"
+App --> spatialObjectsService : "calls subscribeToSpatialObjects"
+spatialObjectsService --> subscribeToSpatialObjects : "receives"
+App --> spatialPartitioning : "calls getCellCoordinates"
+spatialPartitioning --> getCellCoordinates : "receives"
+App --> spatialPartitioning : "calls getCellCoordinates"
+spatialPartitioning --> getCellCoordinates : "receives"
+App --> authService : "calls signInUser"
+authService --> signInUser : "receives"
+App --> objectUpdateHandlers : "calls handleObjectMove"
+objectUpdateHandlers --> handleObjectMove : "receives"
+App --> objectUpdateHandlers : "calls handleObjectUpdate"
+objectUpdateHandlers --> handleObjectUpdate : "receives"
+App --> objectUpdateHandlers : "calls handleObjectUpdate"
+objectUpdateHandlers --> handleObjectUpdate : "receives"
+App --> objectUpdateHandlers : "calls handleObjectUpdate"
+objectUpdateHandlers --> handleObjectUpdate : "receives"
+App --> faceIndicatorUtils : "calls handleFaceIndicatorClick"
+faceIndicatorUtils --> handleFaceIndicatorClick : "receives"
+App --> unifiedPerformanceUtils : "calls throttle"
+unifiedPerformanceUtils --> throttle : "receives"
+App --> renderWorkScheduler : "calls isCameraMovingRapidly"
+renderWorkScheduler --> isCameraMovingRapidly : "receives"
+App --> renderWorkScheduler : "calls notifyCameraMove"
+renderWorkScheduler --> notifyCameraMove : "receives"
+App --> webRservice : "calls initWebRTC"
+webRservice --> initWebRTC : "receives"
+AtlasTextSprite --> textAtlas : "calls getGlobalTextAtlas"
+textAtlas --> getGlobalTextAtlas : "receives"
+AtlasTextSprite --> getSharedMaterial : "calls getSharedMaterial"
+DynamicBillboardMesh --> AtlasTextSprite : "calls out"
+AtlasTextSprite --> renderWorkScheduler : "calls isFrameBudgetExhausted"
+renderWorkScheduler --> isFrameBudgetExhausted : "receives"
+BatchedCurvedLines --> numericCacheKey : "calls numericCacheKey"
+BatchedCurvedLines --> pathfindingUtils : "calls computeConnectionPath"
+pathfindingUtils --> computeConnectionPath : "receives"
+BatchedCurvedLines --> pathToSegments : "calls pathToSegments"
+CellBoundaryRenderer --> spatialPartitioning : "calls getCellBounds"
+spatialPartitioning --> getCellBounds : "receives"
+CellBoundaryRenderer --> computeVisibleCells : "calls computeVisibleCells"
+DistanceFilteredConnectionText --> Connection : "calls out"
+Connection --> renderWorkScheduler : "calls isFrameBudgetExhausted"
+renderWorkScheduler --> isFrameBudgetExhausted : "receives"
+resolveEndpointPosition --> facePositionUtils : "calls calculateFacePosition"
+facePositionUtils --> calculateFacePosition : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> facePositionUtils : "calls calculateFacePosition"
+facePositionUtils --> calculateFacePosition : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> facePositionUtils : "calls calculateFacePosition"
+facePositionUtils --> calculateFacePosition : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> positionUtils : "calls calculateMidpoint"
+positionUtils --> calculateMidpoint : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> pathfindingUtils : "calls computeConnectionPath"
+pathfindingUtils --> computeConnectionPath : "receives"
+Connection --> ConnectionsRenderer : "calls out"
+ConnectionsRenderer --> getTextParametricT : "calls getTextParametricT"
+ConnectionsRenderer --> renderWorkScheduler : "calls isCameraMoving"
+renderWorkScheduler --> isCameraMoving : "receives"
+ConnectionsRenderer --> renderWorkScheduler : "calls acquireBudget"
+renderWorkScheduler --> acquireBudget : "receives"
+ConnectionsRenderer --> pathfindingUtils : "calls invalidatePathfindingCaches"
+pathfindingUtils --> invalidatePathfindingCaches : "receives"
+ConnectionsRenderer --> resolveEndpointPosition : "calls resolveEndpointPosition"
+ConnectionsRenderer --> resolveEndpointPosition : "calls resolveEndpointPosition"
+ConnectionsRenderer --> pathfindingUtils : "calls computeConnectionPath"
+pathfindingUtils --> computeConnectionPath : "receives"
+ConnectionsRenderer --> resolveEndpointPosition : "calls resolveEndpointPosition"
+ConnectionsRenderer --> resolveEndpointPosition : "calls resolveEndpointPosition"
+ConnectionsRenderer --> pathfindingUtils : "calls precomputePathsBatch"
+pathfindingUtils --> precomputePathsBatch : "receives"
+ConnectionsRenderer --> redistributeFaces : "calls redistributeFaces"
+ConnectionsRenderer --> resolveEndpointPosition : "calls resolveEndpointPosition"
+ConnectionsRenderer --> resolveEndpointPosition : "calls resolveEndpointPosition"
+ConnectionsRenderer --> getTextParametricT : "calls getTextParametricT"
+Cube --> getFaceIndicatorProps : "calls getFaceIndicatorProps"
+Cube --> unifiedPerformanceUtils : "calls debounce"
+unifiedPerformanceUtils --> debounce : "receives"
+Cube --> snappingUtils : "calls calculateAxisSnap"
+snappingUtils --> calculateAxisSnap : "receives"
+Cube --> getFaceIndicatorProps : "calls getFaceIndicatorProps"
+Cube --> getFaceIndicatorProps : "calls getFaceIndicatorProps"
+CubeFace --> cubeStore : "calls getCubeFaceStateSelector"
+cubeStore --> getCubeFaceStateSelector : "receives"
+MerfolkEdge --> getEdgeStyle : "calls getEdgeStyle"
+MerfolkEdge --> getSelectedStyle : "calls getSelectedStyle"
+MerfolkEdge --> getUnselectedStyle : "calls getUnselectedStyle"
+DiagramOverlay2D --> diagramLayoutWorkerClient : "calls getDiagramLayoutWorker"
+diagramLayoutWorkerClient --> getDiagramLayoutWorker : "receives"
+DiagramOverlay2D --> buildReactFlowNodes : "calls buildReactFlowNodes"
+DiagramOverlay2D --> buildReactFlowEdges : "calls buildReactFlowEdges"
+DiagramOverlay2D --> filterEdges : "calls filterEdges"
+Sphere --> snappingUtils : "calls calculateAxisSnap"
+snappingUtils --> calculateAxisSnap : "receives"
+InstancedAtlasText --> textAtlas : "calls getGlobalTextAtlas"
+textAtlas --> getGlobalTextAtlas : "receives"
+PageInstancedMesh --> InstancedAtlasText : "calls out"
+InstancedAtlasText --> renderWorkScheduler : "calls isFrameBudgetExhausted"
+renderWorkScheduler --> isFrameBudgetExhausted : "receives"
+LODManager --> spatialIndexWorkerClient : "calls getSpatialIndexWorker"
+spatialIndexWorkerClient --> getSpatialIndexWorker : "receives"
+LODManager --> spatialIndexWorkerClient : "calls getSpatialIndexWorker"
+spatialIndexWorkerClient --> getSpatialIndexWorker : "receives"
+LODManager --> spatialIndexWorkerClient : "calls getSpatialIndexWorker"
+spatialIndexWorkerClient --> getSpatialIndexWorker : "receives"
+LODManager --> lodStore : "calls calculateParentLODLevel"
+lodStore --> calculateParentLODLevel : "receives"
+LODManager --> lodStore : "calls calculateLODLevel"
+lodStore --> calculateLODLevel : "receives"
+LODManager --> renderWorkScheduler : "calls isCameraMoving"
+renderWorkScheduler --> isCameraMoving : "receives"
+LODManager --> renderWorkScheduler : "calls getSmoothedFrameTime"
+renderWorkScheduler --> getSmoothedFrameTime : "receives"
+ObjectRenderer --> objectUpdateHandlers : "calls handleObjectMove"
+objectUpdateHandlers --> handleObjectMove : "receives"
+ObjectsRenderer --> renderWorkScheduler : "calls isCameraMoving"
+renderWorkScheduler --> isCameraMoving : "receives"
+ObjectsRenderer --> renderWorkScheduler : "calls acquireBudget"
+renderWorkScheduler --> acquireBudget : "receives"
+ObjectsRenderer --> renderWorkScheduler : "calls acquireBudget"
+renderWorkScheduler --> acquireBudget : "receives"
+Plane --> snappingUtils : "calls calculateAxisSnap"
+snappingUtils --> calculateAxisSnap : "receives"
+Plane --> storageService : "calls uploadImageToStorage"
+storageService --> uploadImageToStorage : "receives"
+RealTimeConnectionUpdater --> facePositionUtils : "calls calculateFacePosition"
+facePositionUtils --> calculateFacePosition : "receives"
+ScreenShareStream --> webRservice : "calls startBroadcasting"
+webRservice --> startBroadcasting : "receives"
+ScreenShareStream --> webRservice : "calls joinBroadcast"
+webRservice --> joinBroadcast : "receives"
+SpacePresenceAvatars --> presenceService : "calls subscribeToSpacePresence"
+presenceService --> subscribeToSpacePresence : "receives"
+Tetrahedron --> unifiedPerformanceUtils : "calls debounce"
+unifiedPerformanceUtils --> debounce : "receives"
+Tetrahedron --> getFaceIndicatorProps : "calls getFaceIndicatorProps"
+Tetrahedron --> snappingUtils : "calls calculateAxisSnap"
+snappingUtils --> calculateAxisSnap : "receives"
+Tetrahedron --> getFaceIndicatorProps : "calls getFaceIndicatorProps"
+TextObject --> snappingUtils : "calls calculateAxisSnap"
+snappingUtils --> calculateAxisSnap : "receives"
+TextObject --> renderWorkScheduler : "calls isFrameBudgetExhausted"
+renderWorkScheduler --> isFrameBudgetExhausted : "receives"
+TextSprite --> renderWorkScheduler : "calls isFrameBudgetExhausted"
+renderWorkScheduler --> isFrameBudgetExhausted : "receives"
+UIOverlay --> uiOverlayStore : "calls setCellBoundariesVisible"
+uiOverlayStore --> setCellBoundariesVisible : "receives"
+UIOverlay --> githubRepoService : "calls scanRepositoryAndGenerateDiagram"
+githubRepoService --> scanRepositoryAndGenerateDiagram : "receives"
+UIOverlay --> githubRepoService : "calls rescanRepositoryForChanges"
+githubRepoService --> rescanRepositoryForChanges : "receives"
+UIOverlay --> storageService : "calls uploadMarkdownToStorage"
+storageService --> uploadMarkdownToStorage : "receives"
+UIOverlay --> runtimeScanService : "calls validateScanUrl"
+runtimeScanService --> validateScanUrl : "receives"
+UIOverlay --> runtimeScanService : "calls scanWebsiteAndGenerateDiagram"
+runtimeScanService --> scanWebsiteAndGenerateDiagram : "receives"
+UIOverlay --> githubRepoService : "calls fetchRepositories"
+githubRepoService --> fetchRepositories : "receives"
+UIOverlay --> githubRepoService : "calls handleGithubCallback"
+githubRepoService --> handleGithubCallback : "receives"
+UIOverlay --> spatialObjectsService : "calls clearAllObjectCaches"
+spatialObjectsService --> clearAllObjectCaches : "receives"
+UIOverlay --> storageService : "calls uploadModelToStorage"
+storageService --> uploadModelToStorage : "receives"
+WebcamStream --> webRservice : "calls startBroadcasting"
+webRservice --> startBroadcasting : "receives"
+WebcamStream --> webRservice : "calls joinBroadcast"
+webRservice --> joinBroadcast : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> loadingState : "calls getIsInitialLoading"
+loadingState --> getIsInitialLoading : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> loadingState : "calls getIsInitialLoading"
+loadingState --> getIsInitialLoading : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls subscribeToConnections"
+connectionsService --> subscribeToConnections : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> connectionsService : "calls saveConnection"
+connectionsService --> saveConnection : "receives"
+isConnectionVisible --> useFrustumCulling : "calls out"
+useFrustumCulling --> spatialIndexWorker : "calls isPointInFrustum"
+spatialIndexWorker --> isPointInFrustum : "receives"
+isConnectionVisible --> useFrustumCulling : "calls out"
+useFrustumCulling --> spatialIndexWorker : "calls isPointInFrustum"
+spatialIndexWorker --> isPointInFrustum : "receives"
+OrganizationManager --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+OrganizationManager --> organizationService : "calls getPendingInvitesForUser"
+organizationService --> getPendingInvitesForUser : "receives"
+OrganizationManager --> organizationService : "calls createOrganization"
+organizationService --> createOrganization : "receives"
+OrganizationManager --> organizationService : "calls inviteUserToOrganization"
+organizationService --> inviteUserToOrganization : "receives"
+OrganizationManager --> organizationService : "calls removeMemberFromOrganization"
+organizationService --> removeMemberFromOrganization : "receives"
+OrganizationManager --> organizationService : "calls leaveOrganization"
+organizationService --> leaveOrganization : "receives"
+OrganizationManager --> organizationService : "calls updateOrganizationPlan"
+organizationService --> updateOrganizationPlan : "receives"
+OrganizationManager --> organizationService : "calls deleteOrganization"
+organizationService --> deleteOrganization : "receives"
+OrganizationManager --> organizationService : "calls acceptInvite"
+organizationService --> acceptInvite : "receives"
+OrganizationManager --> organizationService : "calls declineInvite"
+organizationService --> declineInvite : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getPendingInvitesForUser"
+organizationService --> getPendingInvitesForUser : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> authService : "calls signOut"
+authService --> signOut : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls acceptInvite"
+organizationService --> acceptInvite : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls declineInvite"
+organizationService --> declineInvite : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getPendingInvitesForUser"
+organizationService --> getPendingInvitesForUser : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> authService : "calls signOut"
+authService --> signOut : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls acceptInvite"
+organizationService --> acceptInvite : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getUserOrganizations"
+organizationService --> getUserOrganizations : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls getOrganizationMembers"
+organizationService --> getOrganizationMembers : "receives"
+LandingApp --> LandingApp_file : "calls out"
+LandingApp_file --> organizationService : "calls declineInvite"
+organizationService --> declineInvite : "receives"
+removeAllSharedReferences --> removeSharedSpaceReference : "calls removeSharedSpaceReference"
+flushSaveBatch --> spatialObjectsService : "calls out"
+spatialObjectsService --> spatialPartitioning : "calls getCellCoordinates"
+spatialPartitioning --> getCellCoordinates : "receives"
+flushSaveBatch --> spatialObjectsService : "calls out"
+spatialObjectsService --> spatialPartitioning : "calls getCellId"
+spatialPartitioning --> getCellId : "receives"
+flushSaveBatch --> spatialObjectsService : "calls out"
+spatialObjectsService --> spatialPartitioning : "calls addObjectToCell"
+spatialPartitioning --> addObjectToCell : "receives"
+checkObjectMovement --> roundForCache : "calls roundForCache"
+generateCacheKey --> roundForCache : "calls roundForCache"
+generateCacheKey --> roundForCache : "calls roundForCache"
+checkLineIntersection --> cleanCaches : "calls cleanCaches"
+checkLineIntersection --> generateCacheKey : "calls generateCacheKey"
+generateCurvedPath --> generateCacheKey : "calls generateCacheKey"
+generateCurvedPath --> lineIntersectsBoundingBox : "calls lineIntersectsBoundingBox"
+generateCurvedPath --> generateMultiSegmentPath : "calls generateMultiSegmentPath"
+generateCurvedPath --> checkCurveIntersections : "calls checkCurveIntersections"
+precomputeCacheKey --> roundForCache : "calls roundForCache"
+precomputeCacheKey --> roundForCache : "calls roundForCache"
+getPrecomputedResult --> precomputeCacheKey : "calls precomputeCacheKey"
+computeConnectionPath --> getPrecomputedResult : "calls getPrecomputedResult"
+computeConnectionPath --> checkLineIntersection : "calls checkLineIntersection"
+computeConnectionPath --> generateCurvedPath : "calls generateCurvedPath"
+precomputePathsBatch --> pathfindingUtils : "calls out"
+pathfindingUtils --> pathfindingWorkerClient : "calls getPathfindingWorker"
+pathfindingWorkerClient --> getPathfindingWorker : "receives"
+precomputePathsBatch --> precomputeCacheKey : "calls precomputeCacheKey"
+isCameraMovingRapidly --> isCameraMoving : "calls isCameraMoving"
+benchmarkStreamlined --> createStreamlinedSpatialIndex : "calls createStreamlinedSpatialIndex"
+getGlobalTextAtlas --> isOffscreenCanvasTextSupported : "calls isOffscreenCanvasTextSupported"
+createAtlasTextMesh --> getGlobalTextAtlas : "calls getGlobalTextAtlas"
+filterConnections --> isHierarchyConnection : "calls isHierarchyConnection"
+filterConnections --> isHierarchyConnection : "calls isHierarchyConnection"
+layoutNodes --> estimateNodeSize : "calls estimateNodeSize"
+layoutNodes --> estimateNodeSize : "calls estimateNodeSize"
+layoutEdges --> filterConnections : "calls filterConnections"
+
+%% Store Usage Details
+App --> useConnectionStore : "selectConnection, setShowLineTextStyleUI, connectionsVisible, setFocusedObjectId"
+AnimatedConnectionLine --> useAnimatedConnectionLineStore : "globalAnimationEnabled"
+AtlasTextSprite --> useTextAtlasStore : "atlasVersion"
+ConnectionsRenderer --> useConnectionsRendererStore_file : "connections, connectionsVisible, focusedObjectId, selectedConnection..."
+useConnectionsRendererStore_file --> useConnectionsRendererStore_file : "receives"
+ConnectionsRenderer --> useConnectionStore : "selectConnectionWithFlowPath"
+GlobalCubeEdgesRenderer --> useLODStore : "lodLevels, childParentMap, parentIds, lodEnabled..."
+GlobalCubeFaceRenderer --> useLODStore : "lodLevels, childParentMap, parentIds, lodEnabled..."
+GlobalCubeMediumLODRenderer --> useLODStore : "lodLevels, childParentMap, parentIds, lodEnabled..."
+GlobalDodecahedronEdgesRenderer --> useLODStore : "lodLevels, childParentMap, parentIds, lodEnabled..."
+GlobalDodecahedronMediumLODRenderer --> useLODStore : "lodLevels, childParentMap, parentIds, lodEnabled..."
+GlobalTetrahedronEdgesRenderer --> useLODStore : "lodLevels, childParentMap, parentIds, lodEnabled..."
+GlobalTetrahedronMediumLODRenderer --> useLODStore : "lodLevels, childParentMap, parentIds, lodEnabled..."
+InstancedAtlasText --> useTextAtlasStore : "atlasVersion"
+LineUI --> useConnectionStore : "toggleLineStylesMenu, toggleArrowDropdown, closeAllLineUIMenus, setLineUIMenuState"
+LODManager --> useLODStore : "childParentMap, parentIds, lodEnabled, batchSetLODLevels..."
+RealTimeConnectionUpdater --> useConnectionStore : "updateConnections"
+RealTimeConnectionUpdater --> useSpatialManagerStore : "isInitialized"
+UIOverlay --> useConnectionStore : "connectionsVisible, toggleConnectionsVisible, resetConnections, length"
+useConnections_file --> useConnections_file : "calls out"
+useConnections_file --> useConnectionStore : "connections, addConnection, updateConnection, removeConnection..."
+useSpaceManager_file --> useSpaceManager_file : "calls out"
+useSpaceManager_file --> useSpaceManagerStore : "currentSpaceId, setCurrentSpaceId, fetchCurrentSpace, setIntentionalSpaceChange"
+
+%% Error Boundaries
+Suspense[Boundary: Suspense]
+
+%% Error Containment
 ```
