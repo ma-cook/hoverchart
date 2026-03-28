@@ -516,15 +516,18 @@ const useObjectsStore = createWithEqualityFn(
       // Log if we disabled initial loading
 
       // Save to database (this handles spatial partitioning automatically)
-      const spaceOwnerId = window.currentSpaceOwner || user.uid;
-      saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
+      // Skip saving in trial mode — objects live in memory only
+      if (!window.isTrialMode) {
+        const spaceOwnerId = window.currentSpaceOwner || user.uid;
+        saveObjectToCell(spaceOwnerId, currentSpaceId, newObject);
 
-      // Track object in spatial system for dynamic objects
-      const spatialManager = (await import('./spatialManagerStore')).default.getState();
-      if (spatialManager.trackObjectInCell) {
-        const cellCoords = getCellCoordinates(position);
-        const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
-        spatialManager.trackObjectInCell(uniqueId.toString(), cellId);
+        // Track object in spatial system for dynamic objects
+        const spatialManager = (await import('./spatialManagerStore')).default.getState();
+        if (spatialManager.trackObjectInCell) {
+          const cellCoords = getCellCoordinates(position);
+          const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+          spatialManager.trackObjectInCell(uniqueId.toString(), cellId);
+        }
       }
 
       // Return the created object ID
@@ -676,7 +679,7 @@ const useObjectsStore = createWithEqualityFn(
       cameraRef,
       extraData = {}
     ) => {
-      if (!user || !currentSpaceId) return null;
+      if (!window.isTrialMode && (!user || !currentSpaceId)) return null;
 
       try {
         // If a position is provided (e.g., from template creation), use it directly

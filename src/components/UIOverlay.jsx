@@ -40,6 +40,7 @@ const UIOverlay = ({
   isConnectMode,
   currentCell, // Add currentCell prop
   currentSpaceId, // Add currentSpaceId prop for model uploads
+  trialMode, // Trial mode - no account, local-only objects
 }) => {
   // Use UI overlay store
   const [selectedRepo, setSelectedRepo] = useState(null);
@@ -1288,70 +1289,82 @@ const UIOverlay = ({
       <div className="ui-overlay" onClick={(e) => e.stopPropagation()}>
         {isLoading ? (
           <div>Loading...</div>
-        ) : !user && showLoginButton ? (
+        ) : !user && !trialMode && showLoginButton ? (
           <div className="login-container">
             <button onClick={onLogin} className="login-button">
               Login with Google
             </button>
           </div>
-        ) : user ? (
-          <div className="tools-container">
-            <button
-              className="shape-button"
-              onClick={() => onCreateObject('cube')}
-              title="Add Cube"
-            >
-              □
-            </button>
-            <button
-              className="shape-button"
-              onClick={() => onCreateObject('tetrahedron')}
-              title="Add Tetrahedron"
-            >
-              ▲
-            </button>
-            <button
-              className="shape-button"
-              onClick={() => onCreateObject('dodecahedron')}
-              title="Add Dodecahedron"
-            >
-              ○
-            </button>
-            <button
-              className="shape-button"
-              onClick={() => onCreateObject('plane')}
-              title="Add Plane"
-            >
-              ▭
-            </button>
-            <button
-              className="shape-button"
-              onClick={() => onCreateObject('text')}
-              title="Add Text"
-            >
-              T
-            </button>{' '}
-            <button
-              className="shape-button"
-              onClick={handleModelUpload}
-              title="Add 3D Model"
-              disabled={isUploadingModel}
-            >
-              {isUploadingModel ? '...' : '3D'}
-            </button>
-            {/* Hidden file input for model upload */}
-            <input
-              ref={modelFileInputRef}
-              type="file"
-              accept=".glb,.gltf"
-              style={{ display: 'none' }}
-              onChange={handleModelFileSelect}
-            />
-          </div>
+        ) : (user || trialMode) ? (
+          <>
+            {/* In trial mode, show a login button in the top right */}
+            {trialMode && !user && (
+              <div style={{ marginBottom: '8px' }}>
+                <button onClick={onLogin} className="login-button" style={{ fontSize: '12px', padding: '6px 12px' }}>
+                  Login with Google
+                </button>
+              </div>
+            )}
+            <div className="tools-container">
+              <button
+                className="shape-button"
+                onClick={() => onCreateObject('cube')}
+                title="Add Cube"
+              >
+                □
+              </button>
+              <button
+                className="shape-button"
+                onClick={() => onCreateObject('tetrahedron')}
+                title="Add Tetrahedron"
+              >
+                ▲
+              </button>
+              <button
+                className="shape-button"
+                onClick={() => onCreateObject('dodecahedron')}
+                title="Add Dodecahedron"
+              >
+                ○
+              </button>
+              <button
+                className="shape-button"
+                onClick={() => onCreateObject('plane')}
+                title="Add Plane"
+              >
+                ▭
+              </button>
+              <button
+                className="shape-button"
+                onClick={() => onCreateObject('text')}
+                title="Add Text"
+              >
+                T
+              </button>{' '}
+              {!trialMode && (
+                <button
+                  className="shape-button"
+                  onClick={handleModelUpload}
+                  title="Add 3D Model"
+                  disabled={isUploadingModel}
+                >
+                  {isUploadingModel ? '...' : '3D'}
+                </button>
+              )}
+              {/* Hidden file input for model upload */}
+              <input
+                ref={modelFileInputRef}
+                type="file"
+                accept=".glb,.gltf"
+                style={{ display: 'none' }}
+                onChange={handleModelFileSelect}
+              />
+            </div>
+          </>
         ) : null}
 
-        {/* Comms container - sits below tools-container inside the right panel */}
-        {currentSpaceId && (
+        {/* Comms container - sits below tools-container inside the right panel, hidden in trial mode */}
+        {currentSpaceId && !trialMode && (
           <div className="coms-container">
             <button
               className="shape-button"
@@ -1370,9 +1383,9 @@ const UIOverlay = ({
       </div>
 
       {/* Group chat window - pops out to the left of the right panel */}
-      <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} />
+      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} />}
       {/* Visual tools container positioned at bottom center */}
-      {user && (
+      {(user || trialMode) && (
         <div className="visual-tools-container" onClick={(e) => e.stopPropagation()}>
           <button
             className={`record-button ${isRecording ? 'recording' : ''}`}

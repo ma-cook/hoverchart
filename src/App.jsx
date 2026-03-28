@@ -67,7 +67,7 @@ import { objectVirtualizer } from './utils/objectVirtualization';
 /**
  * Main application component
  */
-const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
+const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = false }) => {
   // Base state
   const [backgroundColor] = useState('white');
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
@@ -162,6 +162,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
   // Memoize canViewSpace calculation to prevent unnecessary recalculations
   const canViewSpace = useMemo(() => {
     return !!(
+      trialMode ||
       user ||
       (publicSpaceId &&
         (currentSpaceOwner || publicSpaceReady || isLookingUpPublicSpace)) ||
@@ -169,6 +170,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
       (publicSpaceId && window.currentSpaceOwner)
     );
   }, [
+    trialMode,
     user,
     publicSpaceId,
     currentSpaceOwner,
@@ -503,13 +505,14 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
   // Check for unauthorized access and redirect to volscape.com
   useEffect(() => {
     // If we have a currentSpaceId but no authentication and no public space access
-    // BUT don't redirect if we're currently looking up a public space
+    // BUT don't redirect if we're currently looking up a public space or in trial mode
     if (
       currentSpaceId &&
       !user &&
       !publicSpaceId &&
       isAuthReady &&
-      !isLookingUpPublicSpace
+      !isLookingUpPublicSpace &&
+      !trialMode
     ) {
       console.log(
         '🔄 [App] Redirecting to landing - no auth and no public space access'
@@ -1575,13 +1578,13 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
 
   // Initialize Canvas rendering after initial auth/space setup
   useEffect(() => {
-    if (canViewSpace && (isAuthReady || publicSpaceId)) {
+    if (canViewSpace && (isAuthReady || publicSpaceId || trialMode)) {
       // Defer canvas rendering to next frame for better LCP
       requestAnimationFrame(() => {
         setShouldRenderCanvas(true);
       });
     }
-  }, [canViewSpace, isAuthReady, publicSpaceId]);
+  }, [canViewSpace, isAuthReady, publicSpaceId, trialMode]);
 
   // Initialize WebRTC service with user ID when available
   useEffect(() => {
@@ -1590,11 +1593,11 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
     }
   }, [user?.uid]);
   // Show loading screens when authenticating
-  if (isCheckingUrlAuth && !publicSpaceId) {
+  if (isCheckingUrlAuth && !publicSpaceId && !trialMode) {
     return <div className="auth-loading">Authenticating...</div>;
   }
 
-  if (!isAuthReady && !publicSpaceId) {
+  if (!isAuthReady && !publicSpaceId && !trialMode) {
     return <div className="loading">Loading...</div>;
   }
 
@@ -1759,11 +1762,12 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null }) => {
         user={user}
         onLogin={handleLogin}
         isAuthReady={isAuthReady}
-        isLoading={!isAuthReady}
+        isLoading={!isAuthReady && !trialMode}
         showLoginButton={!isCheckingUrlAuth && !user}
         isConnectMode={isConnectMode}
         currentCell={currentCellCoords}
         currentSpaceId={effectiveSpaceId}
+        trialMode={trialMode}
       />
     </>
   );

@@ -7,6 +7,7 @@ const DiagramApp = lazy(() => import('./App.jsx'));
 const AppShell = () => {
   const [activeView, setActiveView] = useState('landing'); // 'landing' | 'diagram'
   const [spaceContext, setSpaceContext] = useState(null);
+  const [trialMode, setTrialMode] = useState(false);
 
   // Check URL on mount — if spaceId/space/code exists, go straight to diagram
   useEffect(() => {
@@ -28,8 +29,18 @@ const AppShell = () => {
   // Called when user wants to go back to the platform page
   const handleBackToLanding = useCallback(() => {
     window.history.pushState({}, '', window.location.pathname);
+    window.isTrialMode = false;
+    setTrialMode(false);
     setSpaceContext(null);
     setActiveView('landing');
+  }, []);
+
+  // Called when user clicks "Try Without Account"
+  const handleTryWithoutAccount = useCallback(() => {
+    window.isTrialMode = true;
+    setTrialMode(true);
+    setSpaceContext(null);
+    setActiveView('diagram');
   }, []);
 
   // Handle browser back/forward
@@ -61,7 +72,7 @@ const AppShell = () => {
         }}
       >
         {activeView === 'landing' && (
-          <LandingApp onOpenSpace={handleOpenSpace} />
+          <LandingApp onOpenSpace={handleOpenSpace} onTryWithoutAccount={handleTryWithoutAccount} />
         )}
       </div>
 
@@ -78,6 +89,7 @@ const AppShell = () => {
             <DiagramApp
               initialSpaceContext={spaceContext}
               onBackToLanding={handleBackToLanding}
+              trialMode={trialMode}
             />
           </div>
         </Suspense>

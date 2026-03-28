@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const WelcomeOverlay = React.memo(({ windowSize, onLogin }) => {
+export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAccount }) => {
   const isMobile = windowSize.width <= 768;
   const isSmallMobile = windowSize.width <= 480;
 
@@ -136,7 +136,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin }) => {
       {/* Action Buttons */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <button
-          onClick={onLogin}
+          onClick={onTryWithoutAccount}
           className="welcome-btn-primary"
           style={{
             width: '100%',
@@ -153,7 +153,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin }) => {
             boxShadow: '0 2px 8px rgba(0, 102, 204, 0.24)',
           }}
         >
-          Get Started
+          Try Without Account
         </button>
         <button
           onClick={onLogin}

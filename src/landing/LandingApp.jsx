@@ -45,7 +45,7 @@ import {
 import { useWindowSize } from './hooks/useWindowSize';
 import './LandingApp.css';
 
-function LandingApp({ onOpenSpace, onBackToLanding }) {
+function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   // Core state
   const [backgroundColor] = useState('white');
   const [user, setUser] = useState(null);
@@ -894,7 +894,7 @@ function LandingApp({ onOpenSpace, onBackToLanding }) {
 
       {/* Welcome overlay */}
       {!user && (
-        <WelcomeOverlay windowSize={windowSize} onLogin={handleLogin} />
+        <WelcomeOverlay windowSize={windowSize} onLogin={handleLogin} onTryWithoutAccount={onTryWithoutAccount} />
       )}
 
       {/* 3D Canvas */}
