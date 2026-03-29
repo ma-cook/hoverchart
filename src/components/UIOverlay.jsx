@@ -8,6 +8,7 @@ import {
 } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
+import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches } from '../services/spatialObjectsService';
 import { getAuth } from 'firebase/auth';
@@ -174,6 +175,10 @@ const UIOverlay = ({
 
   // Markdown upload functionality
   const markdownFileInputRef = useRef(null);
+
+  // CSV upload functionality
+  const csvFileInputRef = useRef(null);
+  const [isProcessingCsv, setIsProcessingCsv] = useState(false);
 
   const cellBoundariesVisible = useUIOverlayStore((state) => {
     const overlay = state.overlays['main'];
@@ -761,6 +766,42 @@ const UIOverlay = ({
     [onCreateObject, currentSpaceId, user, setIsProcessingMarkdown]
   );
 
+  // CSV upload handlers
+  const handleCsvUpload = useCallback(() => {
+    if (csvFileInputRef.current) {
+      csvFileInputRef.current.click();
+    }
+  }, []);
+
+  const handleCsvFileSelect = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      setIsProcessingCsv(true);
+      try {
+        const result = await processCsvFile(file, onCreateObject, currentSpaceId, user);
+        if (result.success) {
+          setNotification({
+            show: true,
+            message: `CSV processed! Created ${result.objectsCreated} objects in ${result.groupCount} group(s). Sized by: ${result.numericColumn}`,
+          });
+          setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+        } else {
+          setNotification({ show: true, message: 'No objects created from CSV. Check the file format.' });
+          setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+        }
+      } catch (error) {
+        setNotification({ show: true, message: `CSV error: ${error.message}` });
+        setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+      } finally {
+        setIsProcessingCsv(false);
+        if (csvFileInputRef.current) csvFileInputRef.current.value = '';
+      }
+    },
+    [onCreateObject, currentSpaceId, user]
+  );
+
   // Get store state for main overlay - use direct selectors for better reactivity
   const menuOpen = useUIOverlayStore((state) => {
     const overlay = state.overlays['main'];
@@ -1189,6 +1230,24 @@ const UIOverlay = ({
             >
               📥 Download Markdown
             </button>
+          </div>
+          {/* CSV Upload Section */}
+          <div className="markdown-section">
+            <button
+              className="markdown-upload-button"
+              onClick={handleCsvUpload}
+              disabled={isProcessingCsv}
+              title="Upload CSV to create a 3D data visualization"
+            >
+              {isProcessingCsv ? 'Processing...' : '📊 Upload CSV'}
+            </button>
+            <input
+              ref={csvFileInputRef}
+              type="file"
+              accept=".csv"
+              style={{ display: 'none' }}
+              onChange={handleCsvFileSelect}
+            />
           </div>
           {/* GitHub repo section */}
           {isGithubAuthenticated ? (
