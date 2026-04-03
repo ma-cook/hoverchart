@@ -3,8 +3,12 @@ import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 
 extend({ LineShaderMaterial });
+
+// Initialise the wasm module as early as possible (non-blocking)
+initWasmKernels();
 
 const CUBE_SIZE = 5;
 
@@ -49,6 +53,42 @@ const BASE_CUBE_EDGES = [
 
 const EDGES_PER_CUBE = 12;
 const IDENTITY_MATRIX = new THREE.Matrix4();
+
+// ---------------------------------------------------------------------------
+// Wasm edge-kernel: pre-computed flat template arrays (local-space, one time)
+// BASE_CUBE_EDGES is laid out as [start0, end0, start1, end1, ...] so
+// even indices are starts and odd indices are ends.
+// ---------------------------------------------------------------------------
+const CUBE_TEMPLATE_START = new Float32Array(EDGES_PER_CUBE * 3);
+const CUBE_TEMPLATE_END = new Float32Array(EDGES_PER_CUBE * 3);
+for (let i = 0; i < EDGES_PER_CUBE; i++) {
+  const s = BASE_CUBE_EDGES[i * 2];
+  const e = BASE_CUBE_EDGES[i * 2 + 1];
+  CUBE_TEMPLATE_START[i * 3] = s[0];
+  CUBE_TEMPLATE_START[i * 3 + 1] = s[1];
+  CUBE_TEMPLATE_START[i * 3 + 2] = s[2];
+  CUBE_TEMPLATE_END[i * 3] = e[0];
+  CUBE_TEMPLATE_END[i * 3 + 1] = e[1];
+  CUBE_TEMPLATE_END[i * 3 + 2] = e[2];
+}
+
+// Reusable wasm-kernel input buffers — grown lazily, never shrunk.
+// Module-level so they survive React re-renders without reallocation.
+let _cubeWasmPositions = new Float32Array(0);
+let _cubeWasmScales = new Float32Array(0);
+let _cubeWasmColors = new Float32Array(0);
+let _cubeWasmVisible = new Uint8Array(0);
+const _cubeWasmColor = new THREE.Color(); // reusable for hex→RGB conversion
+
+function _ensureCubeWasmBuffers(n) {
+  if (_cubeWasmPositions.length < n * 3) {
+    const cap = Math.max(n, 64) * 2; // grow with headroom
+    _cubeWasmPositions = new Float32Array(cap * 3);
+    _cubeWasmScales = new Float32Array(cap * 3);
+    _cubeWasmColors = new Float32Array(cap * 3);
+    _cubeWasmVisible = new Uint8Array(cap);
+  }
+}
 
 // Reusable objects to avoid GC pressure during frame updates
 const tempVec = new THREE.Vector3();
@@ -281,7 +321,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     const instanceColor = geometry.getAttribute('instanceColor');
 
     let needsUpdate = needsFullUpdateRef.current;
-    
+
     // Update frustum from camera (only if culling is enabled)
     if (enableCulling) {
       camera.updateMatrixWorld();
@@ -291,69 +331,128 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       );
       tempFrustum.setFromProjectionMatrix(tempProjectionMatrix);
     }
-    
-    filteredCubes.forEach((cube, cubeIndex) => {
-      const cubeId = cube.id?.toString();
-      
-      // Check if there's a real-time transform position from the Cube component
-      const realtimeTransform = cubeTransformMap.get(cubeId);
-      
-      // Use real-time position if available, otherwise use prop position
-      const position = realtimeTransform?.position || cube.position || [0, 0, 0];
-      const scale = realtimeTransform?.scale || cube.scale || [1, 1, 1];
-      const color = cube.color || '#000000';
 
-      // Check visibility (only if culling is enabled)
-      let isVisible = true;
-      let visibilityChanged = false;
-      if (enableCulling) {
-        isVisible = isCubeVisible(position, scale);
-        const wasVisible = visibilityRef.current.get(cubeId);
-        
-        // If visibility changed (or first time seeing this cube), force update
-        // Note: wasVisible is undefined on first check, so we treat undefined as "needs update"
-        if (wasVisible === undefined || wasVisible !== isVisible) {
-          visibilityRef.current.set(cubeId, isVisible);
-          visibilityChanged = true;
+    // -------------------------------------------------------------------------
+    // Tier-2: Wasm batch path
+    // Build flat input arrays for ALL cubes, delegate transform math to wasm,
+    // then bulk-copy the outputs into the Three.js buffer attributes.
+    // This replaces N×EDGES_PER_CUBE individual `applyMatrix4` calls.
+    // -------------------------------------------------------------------------
+    const count = filteredCubes.length;
+
+    if (isWasmReady()) {
+      _ensureCubeWasmBuffers(count);
+
+      let anyChanged = needsInitialSetup;
+      for (let i = 0; i < count; i++) {
+        const cube = filteredCubes[i];
+        const cubeId = cube.id?.toString();
+        const realtimeTransform = cubeTransformMap.get(cubeId);
+        const position = realtimeTransform?.position || cube.position || [0, 0, 0];
+        const scale = realtimeTransform?.scale || cube.scale || [1, 1, 1];
+        const color = cube.color || '#000000';
+
+        // Frustum visibility
+        let isVisible = true;
+        if (enableCulling) {
+          isVisible = isCubeVisible(position, scale);
+          const wasVisible = visibilityRef.current.get(cubeId);
+          if (wasVisible === undefined || wasVisible !== isVisible) {
+            visibilityRef.current.set(cubeId, isVisible);
+            anyChanged = true;
+          }
         }
+
+        // Dirty check — only flag if something actually changed
+        const lastKnown = lastPositionsRef.current.get(cubeId);
+        if (!lastKnown ||
+          lastKnown.px !== position[0] || lastKnown.py !== position[1] || lastKnown.pz !== position[2] ||
+          lastKnown.sx !== scale[0] || lastKnown.sy !== scale[1] || lastKnown.sz !== scale[2] ||
+          lastKnown.color !== color) {
+          lastPositionsRef.current.set(cubeId, {
+            px: position[0], py: position[1], pz: position[2],
+            sx: scale[0], sy: scale[1], sz: scale[2],
+            color,
+          });
+          anyChanged = true;
+        }
+
+        // Fill flat input buffers
+        const pi = i * 3;
+        _cubeWasmPositions[pi] = position[0]; _cubeWasmPositions[pi + 1] = position[1]; _cubeWasmPositions[pi + 2] = position[2];
+        _cubeWasmScales[pi] = scale[0]; _cubeWasmScales[pi + 1] = scale[1]; _cubeWasmScales[pi + 2] = scale[2];
+        _cubeWasmColor.set(color);
+        _cubeWasmColors[pi] = _cubeWasmColor.r; _cubeWasmColors[pi + 1] = _cubeWasmColor.g; _cubeWasmColors[pi + 2] = _cubeWasmColor.b;
+        _cubeWasmVisible[i] = (enableCulling && !isVisible) ? 0 : 1;
       }
 
-      // Check if this cube's position/scale changed
-      const lastKnown = lastPositionsRef.current.get(cubeId);
-      const positionChanged = !lastKnown || 
-        lastKnown.px !== position[0] ||
-        lastKnown.py !== position[1] ||
-        lastKnown.pz !== position[2] ||
-        lastKnown.sx !== scale[0] ||
-        lastKnown.sy !== scale[1] ||
-        lastKnown.sz !== scale[2] ||
-        lastKnown.color !== color;
+      if (anyChanged) {
+        fillEdgeBuffers(
+          _cubeWasmPositions.subarray(0, count * 3),
+          _cubeWasmScales.subarray(0, count * 3),
+          _cubeWasmColors.subarray(0, count * 3),
+          _cubeWasmVisible.subarray(0, count),
+          CUBE_TEMPLATE_START,
+          CUBE_TEMPLATE_END,
+          EDGES_PER_CUBE,
+        );
 
-      // Update if position changed, visibility changed, or doing full update
-      if (positionChanged || visibilityChanged || needsFullUpdateRef.current) {
-        // If not visible and culling enabled, render with zero-size edges (effectively hidden)
-        if (enableCulling && !isVisible) {
-          // Set edges to a single point (zero length = invisible)
-          const edgeStartIndex = cubeIndex * EDGES_PER_CUBE;
-          for (let i = 0; i < EDGES_PER_CUBE; i++) {
-            const edgeIndex = edgeStartIndex + i;
-            instanceStart.setXYZ(edgeIndex, 0, 0, 0);
-            instanceEnd.setXYZ(edgeIndex, 0, 0, 0);
-            instanceColor.setXYZ(edgeIndex, 0, 0, 0);
-          }
-        } else {
-          // Cube is visible or culling disabled - render normally
-          updateCubeEdges(cubeIndex, position, scale, color, instanceStart, instanceEnd, instanceColor);
-        }
-        
-        lastPositionsRef.current.set(cubeId, { 
-          px: position[0], py: position[1], pz: position[2],
-          sx: scale[0], sy: scale[1], sz: scale[2],
-          color 
-        });
+        const totalF = count * EDGES_PER_CUBE * 3;
+        instanceStart.array.set(getScratchStartView(totalF));
+        instanceEnd.array.set(getScratchEndView(totalF));
+        instanceColor.array.set(getScratchColorView(totalF));
         needsUpdate = true;
       }
-    });
+    } else {
+      // -----------------------------------------------------------------------
+      // JS fallback: per-cube matrix math (existing implementation)
+      // -----------------------------------------------------------------------
+      filteredCubes.forEach((cube, cubeIndex) => {
+        const cubeId = cube.id?.toString();
+
+        const realtimeTransform = cubeTransformMap.get(cubeId);
+        const position = realtimeTransform?.position || cube.position || [0, 0, 0];
+        const scale = realtimeTransform?.scale || cube.scale || [1, 1, 1];
+        const color = cube.color || '#000000';
+
+        let isVisible = true;
+        let visibilityChanged = false;
+        if (enableCulling) {
+          isVisible = isCubeVisible(position, scale);
+          const wasVisible = visibilityRef.current.get(cubeId);
+          if (wasVisible === undefined || wasVisible !== isVisible) {
+            visibilityRef.current.set(cubeId, isVisible);
+            visibilityChanged = true;
+          }
+        }
+
+        const lastKnown = lastPositionsRef.current.get(cubeId);
+        const positionChanged = !lastKnown ||
+          lastKnown.px !== position[0] || lastKnown.py !== position[1] || lastKnown.pz !== position[2] ||
+          lastKnown.sx !== scale[0] || lastKnown.sy !== scale[1] || lastKnown.sz !== scale[2] ||
+          lastKnown.color !== color;
+
+        if (positionChanged || visibilityChanged || needsFullUpdateRef.current) {
+          if (enableCulling && !isVisible) {
+            const edgeStartIndex = cubeIndex * EDGES_PER_CUBE;
+            for (let i = 0; i < EDGES_PER_CUBE; i++) {
+              const edgeIndex = edgeStartIndex + i;
+              instanceStart.setXYZ(edgeIndex, 0, 0, 0);
+              instanceEnd.setXYZ(edgeIndex, 0, 0, 0);
+              instanceColor.setXYZ(edgeIndex, 0, 0, 0);
+            }
+          } else {
+            updateCubeEdges(cubeIndex, position, scale, color, instanceStart, instanceEnd, instanceColor);
+          }
+          lastPositionsRef.current.set(cubeId, {
+            px: position[0], py: position[1], pz: position[2],
+            sx: scale[0], sy: scale[1], sz: scale[2],
+            color,
+          });
+          needsUpdate = true;
+        }
+      });
+    }
 
     if (needsUpdate) {
       instanceStart.needsUpdate = true;

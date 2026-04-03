@@ -3,8 +3,12 @@ import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 
 extend({ LineShaderMaterial });
+
+// Initialise the wasm module as early as possible (non-blocking)
+initWasmKernels();
 
 // Threshold for enabling frustum culling (only cull when count exceeds this)
 const FRUSTUM_CULLING_THRESHOLD = 50;
@@ -64,6 +68,39 @@ const BASE_DODECA_EDGES = DODECA_EDGES.map(([a, b]) => [
 
 const EDGES_PER_DODECAHEDRON = 30;
 const IDENTITY_MATRIX = new THREE.Matrix4();
+
+// ---------------------------------------------------------------------------
+// Wasm edge-kernel: pre-computed flat template arrays (local-space, one time)
+// BASE_DODECA_EDGES is [[startPt, endPt], ...] so index [i][0] = start, [i][1] = end
+// ---------------------------------------------------------------------------
+const DODECA_TEMPLATE_START = new Float32Array(EDGES_PER_DODECAHEDRON * 3);
+const DODECA_TEMPLATE_END = new Float32Array(EDGES_PER_DODECAHEDRON * 3);
+for (let i = 0; i < EDGES_PER_DODECAHEDRON; i++) {
+  const [s, e] = BASE_DODECA_EDGES[i];
+  DODECA_TEMPLATE_START[i * 3] = s[0];
+  DODECA_TEMPLATE_START[i * 3 + 1] = s[1];
+  DODECA_TEMPLATE_START[i * 3 + 2] = s[2];
+  DODECA_TEMPLATE_END[i * 3] = e[0];
+  DODECA_TEMPLATE_END[i * 3 + 1] = e[1];
+  DODECA_TEMPLATE_END[i * 3 + 2] = e[2];
+}
+
+// Reusable wasm-kernel input buffers — grown lazily, never shrunk.
+let _dodecaWasmPositions = new Float32Array(0);
+let _dodecaWasmScales = new Float32Array(0);
+let _dodecaWasmColors = new Float32Array(0);
+let _dodecaWasmVisible = new Uint8Array(0);
+const _dodecaWasmColor = new THREE.Color();
+
+function _ensureDodecaWasmBuffers(n) {
+  if (_dodecaWasmPositions.length < n * 3) {
+    const cap = Math.max(n, 64) * 2;
+    _dodecaWasmPositions = new Float32Array(cap * 3);
+    _dodecaWasmScales = new Float32Array(cap * 3);
+    _dodecaWasmColors = new Float32Array(cap * 3);
+    _dodecaWasmVisible = new Uint8Array(cap);
+  }
+}
 
 // Reusable objects to avoid GC pressure during frame updates
 const tempVec = new THREE.Vector3();
@@ -282,7 +319,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
     const instanceColor = geometry.getAttribute('instanceColor');
 
     let needsUpdate = needsFullUpdateRef.current;
-    
+
     if (enableCulling) {
       camera.updateMatrixWorld();
       tempProjectionMatrix.multiplyMatrices(
@@ -291,63 +328,122 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
       );
       tempFrustum.setFromProjectionMatrix(tempProjectionMatrix);
     }
-    
-    filteredDodecahedrons.forEach((dodeca, dodecaIndex) => {
-      const dodecaId = dodeca.id?.toString();
-      
-      // Check if there's a real-time transform position
-      const realtimeTransform = dodecahedronTransformMap.get(dodecaId);
-      
-      const position = realtimeTransform?.position || dodeca.position || [0, 0, 0];
-      const scale = realtimeTransform?.scale || dodeca.scale || [1, 1, 1];
-      const color = dodeca.lineColor || dodeca.color || '#000000';
 
-      // Check visibility (only if culling is enabled)
-      let isVisible = true;
-      let visibilityChanged = false;
-      if (enableCulling) {
-        isVisible = isDodecahedronVisible(position, scale);
-        const wasVisible = visibilityRef.current.get(dodecaId);
-        
-        if (wasVisible === undefined || wasVisible !== isVisible) {
-          visibilityRef.current.set(dodecaId, isVisible);
-          visibilityChanged = true;
+    const count = filteredDodecahedrons.length;
+
+    // -------------------------------------------------------------------------
+    // Tier-2: Wasm batch path
+    // -------------------------------------------------------------------------
+    if (isWasmReady()) {
+      _ensureDodecaWasmBuffers(count);
+
+      let anyChanged = needsInitialSetup;
+      for (let i = 0; i < count; i++) {
+        const dodeca = filteredDodecahedrons[i];
+        const dodecaId = dodeca.id?.toString();
+        const realtimeTransform = dodecahedronTransformMap.get(dodecaId);
+        const position = realtimeTransform?.position || dodeca.position || [0, 0, 0];
+        const scale = realtimeTransform?.scale || dodeca.scale || [1, 1, 1];
+        const color = dodeca.lineColor || dodeca.color || '#000000';
+
+        let isVisible = true;
+        if (enableCulling) {
+          isVisible = isDodecahedronVisible(position, scale);
+          const wasVisible = visibilityRef.current.get(dodecaId);
+          if (wasVisible === undefined || wasVisible !== isVisible) {
+            visibilityRef.current.set(dodecaId, isVisible);
+            anyChanged = true;
+          }
         }
+
+        const lastKnown = lastPositionsRef.current.get(dodecaId);
+        if (!lastKnown ||
+          lastKnown.px !== position[0] || lastKnown.py !== position[1] || lastKnown.pz !== position[2] ||
+          lastKnown.sx !== scale[0] || lastKnown.sy !== scale[1] || lastKnown.sz !== scale[2] ||
+          lastKnown.color !== color) {
+          lastPositionsRef.current.set(dodecaId, {
+            px: position[0], py: position[1], pz: position[2],
+            sx: scale[0], sy: scale[1], sz: scale[2],
+            color,
+          });
+          anyChanged = true;
+        }
+
+        const pi = i * 3;
+        _dodecaWasmPositions[pi] = position[0]; _dodecaWasmPositions[pi + 1] = position[1]; _dodecaWasmPositions[pi + 2] = position[2];
+        _dodecaWasmScales[pi] = scale[0]; _dodecaWasmScales[pi + 1] = scale[1]; _dodecaWasmScales[pi + 2] = scale[2];
+        _dodecaWasmColor.set(color);
+        _dodecaWasmColors[pi] = _dodecaWasmColor.r; _dodecaWasmColors[pi + 1] = _dodecaWasmColor.g; _dodecaWasmColors[pi + 2] = _dodecaWasmColor.b;
+        _dodecaWasmVisible[i] = (enableCulling && !isVisible) ? 0 : 1;
       }
 
-      // Check if this dodecahedron's position/scale/color changed
-      const lastKnown = lastPositionsRef.current.get(dodecaId);
-      const positionChanged = !lastKnown || 
-        lastKnown.px !== position[0] ||
-        lastKnown.py !== position[1] ||
-        lastKnown.pz !== position[2] ||
-        lastKnown.sx !== scale[0] ||
-        lastKnown.sy !== scale[1] ||
-        lastKnown.sz !== scale[2] ||
-        lastKnown.color !== color;
+      if (anyChanged) {
+        fillEdgeBuffers(
+          _dodecaWasmPositions.subarray(0, count * 3),
+          _dodecaWasmScales.subarray(0, count * 3),
+          _dodecaWasmColors.subarray(0, count * 3),
+          _dodecaWasmVisible.subarray(0, count),
+          DODECA_TEMPLATE_START,
+          DODECA_TEMPLATE_END,
+          EDGES_PER_DODECAHEDRON,
+        );
 
-      if (positionChanged || visibilityChanged || needsFullUpdateRef.current) {
-        if (enableCulling && !isVisible) {
-          // Set edges to zero length (invisible)
-          const edgeStartIndex = dodecaIndex * EDGES_PER_DODECAHEDRON;
-          for (let i = 0; i < EDGES_PER_DODECAHEDRON; i++) {
-            const edgeIndex = edgeStartIndex + i;
-            instanceStart.setXYZ(edgeIndex, 0, 0, 0);
-            instanceEnd.setXYZ(edgeIndex, 0, 0, 0);
-            instanceColor.setXYZ(edgeIndex, 0, 0, 0);
-          }
-        } else {
-          updateDodecahedronEdges(dodecaIndex, position, scale, color, instanceStart, instanceEnd, instanceColor);
-        }
-        
-        lastPositionsRef.current.set(dodecaId, { 
-          px: position[0], py: position[1], pz: position[2],
-          sx: scale[0], sy: scale[1], sz: scale[2],
-          color 
-        });
+        const totalF = count * EDGES_PER_DODECAHEDRON * 3;
+        instanceStart.array.set(getScratchStartView(totalF));
+        instanceEnd.array.set(getScratchEndView(totalF));
+        instanceColor.array.set(getScratchColorView(totalF));
         needsUpdate = true;
       }
-    });
+    } else {
+      // -----------------------------------------------------------------------
+      // JS fallback: per-object matrix math (existing implementation)
+      // -----------------------------------------------------------------------
+      filteredDodecahedrons.forEach((dodeca, dodecaIndex) => {
+        const dodecaId = dodeca.id?.toString();
+
+        const realtimeTransform = dodecahedronTransformMap.get(dodecaId);
+        const position = realtimeTransform?.position || dodeca.position || [0, 0, 0];
+        const scale = realtimeTransform?.scale || dodeca.scale || [1, 1, 1];
+        const color = dodeca.lineColor || dodeca.color || '#000000';
+
+        let isVisible = true;
+        let visibilityChanged = false;
+        if (enableCulling) {
+          isVisible = isDodecahedronVisible(position, scale);
+          const wasVisible = visibilityRef.current.get(dodecaId);
+          if (wasVisible === undefined || wasVisible !== isVisible) {
+            visibilityRef.current.set(dodecaId, isVisible);
+            visibilityChanged = true;
+          }
+        }
+
+        const lastKnown = lastPositionsRef.current.get(dodecaId);
+        const positionChanged = !lastKnown ||
+          lastKnown.px !== position[0] || lastKnown.py !== position[1] || lastKnown.pz !== position[2] ||
+          lastKnown.sx !== scale[0] || lastKnown.sy !== scale[1] || lastKnown.sz !== scale[2] ||
+          lastKnown.color !== color;
+
+        if (positionChanged || visibilityChanged || needsFullUpdateRef.current) {
+          if (enableCulling && !isVisible) {
+            const edgeStartIndex = dodecaIndex * EDGES_PER_DODECAHEDRON;
+            for (let i = 0; i < EDGES_PER_DODECAHEDRON; i++) {
+              const edgeIndex = edgeStartIndex + i;
+              instanceStart.setXYZ(edgeIndex, 0, 0, 0);
+              instanceEnd.setXYZ(edgeIndex, 0, 0, 0);
+              instanceColor.setXYZ(edgeIndex, 0, 0, 0);
+            }
+          } else {
+            updateDodecahedronEdges(dodecaIndex, position, scale, color, instanceStart, instanceEnd, instanceColor);
+          }
+          lastPositionsRef.current.set(dodecaId, {
+            px: position[0], py: position[1], pz: position[2],
+            sx: scale[0], sy: scale[1], sz: scale[2],
+            color,
+          });
+          needsUpdate = true;
+        }
+      });
+    }
 
     if (needsUpdate) {
       instanceStart.needsUpdate = true;

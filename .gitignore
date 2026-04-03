@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .env
+
+# Rust/Wasm build artifacts — only the compiled pkg/ output is committed
+src/wasm/target/
