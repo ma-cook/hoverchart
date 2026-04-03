@@ -1,0 +1,15 @@
+{
+  "name": "hoverchart-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "hoverchart_wasm_bg.wasm",
+    "hoverchart_wasm.js",
+    "hoverchart_wasm.d.ts"
+  ],
+  "main": "hoverchart_wasm.js",
+  "types": "hoverchart_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
