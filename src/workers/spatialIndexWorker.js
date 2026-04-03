@@ -60,7 +60,12 @@ const objectMerfolkData = new Map(); // id (string) -> { isContainer, isParent, 
 let objectIdList = [];              // string[]
 let positionsFlat = new Float32Array(0);  // N×3
 let scalesFlat = new Float32Array(0);     // N×3
-let metaFlagsFlat = new Uint8Array(0);    // N: bit0=isContainer, bit1=isParent
+// metaFlagsFlat: bit0=isContainer, bit1=isParent (structural, from merfolkData).
+// Only set during _rebuildFlatBuffers; dynamic parent overrides from
+// computeLODLevels are applied on top of metaFlagsBase each call so
+// stale parent flags never accumulate across calls.
+let metaFlagsFlat = new Uint8Array(0);    // N: per-object flags
+let metaFlagsBase = new Uint8Array(0);    // clean copy — no dynamic overrides
 let currentLevelsFlat = new Uint8Array(0); // N: current LOD level cache
 const idToIndex = new Map();        // id -> index in flat arrays
 
@@ -98,6 +103,10 @@ function _rebuildFlatBuffers(objects) {
     }
     metaFlagsFlat[i] = flags;
   }
+
+  // Save a clean copy of the flags (no dynamic parent overrides).
+  // computeLODLevels resets metaFlagsFlat from this base before each call.
+  metaFlagsBase = new Uint8Array(metaFlagsFlat);
 }
 
 // ---------------------------------------------------------------------------
@@ -183,26 +192,32 @@ const workerApi = {
     const cy = cameraPos[1];
     const cz = cameraPos[2];
 
-    // Sync current LOD levels into the flat buffer so the wasm kernel can
-    // compare against them and return only deltas.
-    const currentMap = new Map(currentLodEntries);
-    const n = objectIdList.length;
-    for (let i = 0; i < n; i++) {
-      const lvl = currentMap.get(objectIdList[i]);
-      currentLevelsFlat[i] = lvl !== undefined ? lvl : 0;
-    }
+    // Reset metaFlagsFlat to the clean base (structural flags only) so that
+    // stale parent overrides from the previous call don't accumulate.
+    metaFlagsFlat.set(metaFlagsBase);
 
-    // Also bake parentId list into the metaFlags so the wasm kernel sees it.
-    // parentIdList comes from the main thread's Zustand store which may have
-    // registered parents AFTER the last syncObjects() call.
+    // Apply dynamic parent overrides for this call
     if (parentIdList.length > 0) {
       for (const pid of parentIdList) {
         const idx = idToIndex.get(pid);
         if (idx !== undefined) {
-          metaFlagsFlat[idx] |= 0x02; // mark as parent
+          metaFlagsFlat[idx] |= 0x02;
         }
       }
     }
+
+    // Sync current LOD levels into the flat buffer so the wasm kernel can
+    // compare against them and return only deltas.
+    // Iterate the entries directly via idToIndex — no intermediate Map needed.
+    for (let i = 0; i < currentLodEntries.length; i++) {
+      const [id, level] = currentLodEntries[i];
+      const idx = idToIndex.get(id);
+      if (idx !== undefined) {
+        currentLevelsFlat[idx] = level;
+      }
+    }
+
+    const n = objectIdList.length;
 
     // --- Tier-2: Wasm kernel (preferred) ---
     if (_wasmMod) {
@@ -232,7 +247,8 @@ const workerApi = {
     }
 
     // --- Tier-1: JS path with flat buffers (cache-friendly scalar loop) ---
-    const parentIds = new Set(parentIdList);
+    // The parent bits are already set in metaFlagsFlat from the parentIdList
+    // overrides applied above, so no separate Set is needed.
     const updates = [];
 
     for (let i = 0; i < n; i++) {
@@ -245,13 +261,12 @@ const workerApi = {
       const dz = cz - positionsFlat[pi + 2];
       const distanceSq = dx * dx + dy * dy + dz * dz;
 
-      const id = objectIdList[i];
-      const isParent = (flags & 0x02) !== 0 || parentIds.has(id);
+      const isParent = (flags & 0x02) !== 0;
       const newLevel = isParent ? parentLOD(distanceSq) : childLOD(distanceSq);
 
       const currentLevel = currentLevelsFlat[i];
       if (newLevel !== currentLevel) {
-        updates.push([id, newLevel]);
+        updates.push([objectIdList[i], newLevel]);
         currentLevelsFlat[i] = newLevel;
       }
     }

@@ -125,17 +125,19 @@ export function fillEdgeBuffers(
  * @returns {Float32Array}
  */
 export function getScratchStartView(len) {
-  // eslint-disable-next-line no-underscore-dangle
+  if (!_ready) return null;
   return _wasm.get_scratch_start_view(len);
 }
 
-/** @param {number} len @returns {Float32Array} */
+/** @param {number} len @returns {Float32Array|null} */
 export function getScratchEndView(len) {
+  if (!_ready) return null;
   return _wasm.get_scratch_end_view(len);
 }
 
-/** @param {number} len @returns {Float32Array} */
+/** @param {number} len @returns {Float32Array|null} */
 export function getScratchColorView(len) {
+  if (!_ready) return null;
   return _wasm.get_scratch_color_view(len);
 }
 

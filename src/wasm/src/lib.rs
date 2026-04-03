@@ -151,21 +151,27 @@ pub fn fill_edge_buffers(
 /// (i.e. until the next call to this module that triggers a heap resize).
 /// JS must consume it before calling any other wasm function.
 ///
-/// `len` must equal `count * edges_per_object * 3`.
+/// `len` must not exceed `count * edges_per_object * 3` from the last call.
+/// Panics if `len` exceeds the scratch buffer length.
 #[wasm_bindgen]
 pub unsafe fn get_scratch_start_view(len: usize) -> Float32Array {
+    assert!(len <= SCRATCH_START.len(), "get_scratch_start_view: len out of bounds");
     Float32Array::view(&SCRATCH_START[..len])
 }
 
 /// Zero-copy view of the instanceEnd scratch buffer.
+/// Panics if `len` exceeds the scratch buffer length.
 #[wasm_bindgen]
 pub unsafe fn get_scratch_end_view(len: usize) -> Float32Array {
+    assert!(len <= SCRATCH_END.len(), "get_scratch_end_view: len out of bounds");
     Float32Array::view(&SCRATCH_END[..len])
 }
 
 /// Zero-copy view of the instanceColor scratch buffer.
+/// Panics if `len` exceeds the scratch buffer length.
 #[wasm_bindgen]
 pub unsafe fn get_scratch_color_view(len: usize) -> Float32Array {
+    assert!(len <= SCRATCH_COLOR.len(), "get_scratch_color_view: len out of bounds");
     Float32Array::view(&SCRATCH_COLOR[..len])
 }
 
@@ -204,8 +210,9 @@ pub fn compute_lod_updates(
     parent_medium_sq: f32,
 ) -> Vec<u32> {
     let count = meta_flags.len();
-    // Worst case: every object changed → 2 u32 per object
-    let mut updates: Vec<u32> = Vec::with_capacity(count * 2);
+    // Start with a modest capacity — typically only a fraction of objects
+    // change LOD in any single call. Vec grows dynamically if needed.
+    let mut updates: Vec<u32> = Vec::with_capacity(count / 4 + 8);
 
     for i in 0..count {
         let flags = unsafe { *meta_flags.get_unchecked(i) };

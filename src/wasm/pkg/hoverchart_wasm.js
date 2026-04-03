@@ -125,6 +125,7 @@ export function frustum_cull_connections(start_positions, end_positions, planes)
 
 /**
  * Zero-copy view of the instanceColor scratch buffer.
+ * Panics if `len` exceeds the scratch buffer length.
  * @param {number} len
  * @returns {Float32Array}
  */
@@ -135,6 +136,7 @@ export function get_scratch_color_view(len) {
 
 /**
  * Zero-copy view of the instanceEnd scratch buffer.
+ * Panics if `len` exceeds the scratch buffer length.
  * @param {number} len
  * @returns {Float32Array}
  */
@@ -149,7 +151,8 @@ export function get_scratch_end_view(len) {
  * (i.e. until the next call to this module that triggers a heap resize).
  * JS must consume it before calling any other wasm function.
  *
- * `len` must equal `count * edges_per_object * 3`.
+ * `len` must not exceed `count * edges_per_object * 3` from the last call.
+ * Panics if `len` exceeds the scratch buffer length.
  * @param {number} len
  * @returns {Float32Array}
  */
