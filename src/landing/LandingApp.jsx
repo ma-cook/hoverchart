@@ -208,12 +208,12 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
 
   // Navigate to a space — client-side transition, no redirect
   const navigateToSpace = useCallback(
-    async (spaceId, ownerId = null) => {
+    async (spaceId, ownerId = null, spaceType = 'diagram') => {
       if (!user) return;
       const effectiveOwner =
         ownerId && ownerId !== user.uid ? ownerId : user.uid;
       if (onOpenSpace) {
-        onOpenSpace(spaceId, effectiveOwner);
+        onOpenSpace(spaceId, effectiveOwner, spaceType);
       }
     },
     [user, onOpenSpace]
@@ -272,7 +272,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
 
   // Create new space
   const createNewSpace = useCallback(
-    async (spaceName, email) => {
+    async (spaceName, email, spaceType = 'diagram') => {
       const finalSpaceName = spaceName || newSpaceName;
       const finalEmail = email || sharedEmail;
 
@@ -288,6 +288,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         const timestamp = Date.now();
         const spaceData = {
           name: finalSpaceName.trim(),
+          type: spaceType,
           ownerId: user.uid,
           ownerEmail: user.email,
           createdAt: new Date().toISOString(),

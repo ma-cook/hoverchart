@@ -86,12 +86,12 @@ export const SpacesTable = React.memo(
     const [navigatingSpaceId, setNavigatingSpaceId] = useState(null);
 
     const handleSpaceClick = useCallback(
-      async (e, spaceId, ownerId) => {
+      async (e, spaceId, ownerId, spaceType) => {
         e.preventDefault();
         if (navigatingSpaceId) return;
         setNavigatingSpaceId(spaceId);
         try {
-          await onNavigateToSpace(spaceId, ownerId);
+          await onNavigateToSpace(spaceId, ownerId, spaceType);
         } finally {
           setNavigatingSpaceId(null);
         }
@@ -189,11 +189,11 @@ export const SpacesTable = React.memo(
                           opacity: navigatingSpaceId === space.id ? 0.5 : 1,
                           pointerEvents: navigatingSpaceId ? 'none' : 'auto',
                         }}
-                        onClick={(e) => handleSpaceClick(e, space.id)}
+                        onClick={(e) => handleSpaceClick(e, space.id, undefined, space.type)}
                       >
                         {navigatingSpaceId === space.id
                           ? 'Opening...'
-                          : space.name}
+                          : `${space.type === 'earth' ? '🌍 ' : ''}${space.name}`}
                       </a>
                     </td>
                     <td style={tdStyles}>
@@ -260,12 +260,12 @@ export const SpacesTable = React.memo(
                           pointerEvents: navigatingSpaceId ? 'none' : 'auto',
                         }}
                         onClick={(e) =>
-                          handleSpaceClick(e, space.id, space.ownerId)
+                          handleSpaceClick(e, space.id, space.ownerId, space.type)
                         }
                       >
                         {navigatingSpaceId === space.id
                           ? 'Opening...'
-                          : space.name}
+                          : `${space.type === 'earth' ? '🌍 ' : ''}${space.name}`}
                       </a>
                     </td>
                     <td style={tdStyles}>

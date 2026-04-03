@@ -18,8 +18,8 @@ const AppShell = () => {
   }, []);
 
   // Called by LandingApp when user clicks a space
-  const handleOpenSpace = useCallback((spaceId, ownerId) => {
-    setSpaceContext({ spaceId, ownerId });
+  const handleOpenSpace = useCallback((spaceId, ownerId, spaceType = 'diagram') => {
+    setSpaceContext({ spaceId, ownerId, spaceType });
     // Update URL without reload
     const newUrl = `${window.location.pathname}?spaceId=${encodeURIComponent(spaceId)}`;
     window.history.pushState({}, '', newUrl);
@@ -90,6 +90,7 @@ const AppShell = () => {
               initialSpaceContext={spaceContext}
               onBackToLanding={handleBackToLanding}
               trialMode={trialMode}
+              spaceType={spaceContext?.spaceType || 'diagram'}
             />
           </div>
         </Suspense>

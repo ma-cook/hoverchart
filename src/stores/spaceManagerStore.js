@@ -8,6 +8,7 @@ import { setUserPresence } from '../services/presenceService';
 const useSpaceManagerStore = create((set, get) => ({
   // State
   currentSpaceId: null,
+  spaceType: 'diagram',
   isLoadingSpace: false,
   spaceError: null,
   intentionalSpaceChange: false,
@@ -15,6 +16,10 @@ const useSpaceManagerStore = create((set, get) => ({
   // Actions
   setCurrentSpaceId: (spaceId) => {
     set({ currentSpaceId: spaceId });
+  },
+
+  setSpaceType: (spaceType) => {
+    set({ spaceType });
   },
 
   setIsLoadingSpace: (loading) => {
@@ -141,7 +146,7 @@ const useSpaceManagerStore = create((set, get) => ({
                   urlOwnerUid
                 );
                 window.currentSpaceOwner = urlOwnerUid;
-                set({ isLoadingSpace: false });
+                set({ spaceType: spaceData.type || 'diagram', isLoadingSpace: false });
                 return;
               }
             }
@@ -153,7 +158,7 @@ const useSpaceManagerStore = create((set, get) => ({
 
           if (userSpaceDoc.exists()) {
             window.currentSpaceOwner = user.uid;
-            set({ isLoadingSpace: false });
+            set({ spaceType: userSpaceDoc.data().type || 'diagram', isLoadingSpace: false });
             return;
           }
 
@@ -379,6 +384,7 @@ const useSpaceManagerStore = create((set, get) => ({
   resetSpace: () => {
     set({
       currentSpaceId: null,
+      spaceType: 'diagram',
       isLoadingSpace: false,
       spaceError: null,
       intentionalSpaceChange: false,

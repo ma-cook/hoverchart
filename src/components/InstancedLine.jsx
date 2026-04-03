@@ -32,6 +32,8 @@ const InstancedLine = forwardRef(
       points = [],
       color = 'black',
       lineWidth = 1,
+      depthWrite: depthWriteProp,
+      materialOpacity: materialOpacityProp,
       onClick,
       onPointerOver,
       onPointerOut,
@@ -253,6 +255,13 @@ const InstancedLine = forwardRef(
         material.uniforms.linewidth.value = lineWidth;
       }
     }, [material, lineWidth]);
+
+    // Apply optional depthWrite / opacity overrides (e.g. for opaque globe wireframe)
+    useEffect(() => {
+      if (!material) return;
+      if (depthWriteProp != null) material.depthWrite = depthWriteProp;
+      if (materialOpacityProp != null) material.uniforms.opacity.value = materialOpacityProp;
+    }, [material, depthWriteProp, materialOpacityProp]);
 
     // PERFORMANCE: Initialize instance matrices ONCE instead of every frame
     useEffect(() => {

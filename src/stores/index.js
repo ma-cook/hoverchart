@@ -21,6 +21,7 @@ export { default as useSpaceManagerStore } from './spaceManagerStore.js';
 export { default as useObjectsStore } from './objectsStore.js';
 export { default as useSpatialManagerStore } from './spatialManagerStore.js';
 export { default as useDiagramStore } from './diagramStore.js';
+export { default as useEarthSettingsStore } from './earthSettingsStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';

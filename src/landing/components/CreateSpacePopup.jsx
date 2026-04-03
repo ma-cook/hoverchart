@@ -14,6 +14,7 @@ export const CreateSpacePopup = React.memo(
   }) => {
     const [localSpaceName, setLocalSpaceName] = useState(initialSpaceName);
     const [localEmail, setLocalEmail] = useState(initialEmail);
+    const [spaceType, setSpaceType] = useState('diagram');
     const [selectedMember, setSelectedMember] = useState(null);
     const spaceNameRef = useRef(null);
     const formRef = useRef(null);
@@ -65,7 +66,7 @@ export const CreateSpacePopup = React.memo(
         : localEmail.trim();
 
       try {
-        await onSubmit(localSpaceName.trim(), emailToSubmit);
+        await onSubmit(localSpaceName.trim(), emailToSubmit, spaceType);
       } catch (error) {
         console.error('Error submitting form:', error);
       }
@@ -116,6 +117,39 @@ export const CreateSpacePopup = React.memo(
             onSubmit={handleSubmit}
             style={{ margin: 0, padding: 0 }}
           >
+            <div style={{ marginBottom: '15px' }}>
+              <label
+                htmlFor="spaceType"
+                style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontWeight: '500',
+                  fontSize: '14px',
+                }}
+              >
+                Space Type:
+              </label>
+              <select
+                id="spaceType"
+                value={spaceType}
+                onChange={(e) => setSpaceType(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  boxSizing: 'border-box',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  backgroundColor: 'white',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="diagram">Diagram Space</option>
+                <option value="earth">Earth Space</option>
+              </select>
+            </div>
+
             <div style={{ marginBottom: '15px' }}>
               <label
                 htmlFor="spaceName"

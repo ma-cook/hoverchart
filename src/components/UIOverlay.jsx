@@ -29,6 +29,181 @@ import {
 } from '../services/runtimeScanService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import SpaceChat from './SpaceChat';
+import useEarthSettingsStore from '../stores/earthSettingsStore';
+
+const PRESET_LOCATIONS = [
+  { name: 'Himalayas', lat: 27.99, lon: 86.93 },
+  { name: 'Grand Canyon', lat: 36.1, lon: -112.1 },
+  { name: 'Alps', lat: 46.85, lon: 9.83 },
+  { name: 'Andes', lat: -13.16, lon: -72.55 },
+  { name: 'Mariana Trench', lat: 11.35, lon: 142.2 },
+  { name: 'Rockies', lat: 39.11, lon: -106.45 },
+  { name: 'Great Rift Valley', lat: -1.95, lon: 36.0 },
+  { name: 'Mid-Atlantic Ridge', lat: 23.0, lon: -45.0 },
+];
+
+const EarthSidebarSections = () => {
+  const {
+    radius, setRadius,
+    exaggeration, setExaggeration,
+    colorScheme, setColorScheme,
+    showOceanFloor, setShowOceanFloor,
+    lineWidth, setLineWidth,
+    targetLatitude, setTargetLatitude,
+    targetLongitude, setTargetLongitude,
+  } = useEarthSettingsStore();
+
+  const [globeOpen, setGlobeOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [displayOpen, setDisplayOpen] = useState(false);
+
+  return (
+    <>
+      {/* Globe Settings */}
+      <div className="template-section">
+        <button
+          className="template-toggle-button"
+          onClick={() => setGlobeOpen((v) => !v)}
+        >
+          Globe Settings {globeOpen ? '▼' : '▶'}
+        </button>
+        {globeOpen && (
+          <div className="template-dropdown">
+            <div className="template-config">
+              <div className="config-group">
+                <label>Radius:</label>
+                <input
+                  type="number"
+                  min="10"
+                  max="500"
+                  value={radius}
+                  onChange={(e) => setRadius(Number(e.target.value))}
+                />
+              </div>
+              <div className="config-group">
+                <label>Altitude Exaggeration:</label>
+                <input
+                  type="range"
+                  min="1"
+                  max="30"
+                  value={exaggeration}
+                  onChange={(e) => setExaggeration(Number(e.target.value))}
+                />
+                <span style={{ fontSize: '12px', marginLeft: '6px' }}>{exaggeration}×</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Position Navigation */}
+      <div className="template-section">
+        <button
+          className="template-toggle-button"
+          onClick={() => setNavOpen((v) => !v)}
+        >
+          Position Navigation {navOpen ? '▼' : '▶'}
+        </button>
+        {navOpen && (
+          <div className="template-dropdown">
+            <div className="template-config">
+              <div className="config-group">
+                <label>Latitude:</label>
+                <input
+                  type="number"
+                  min="-90"
+                  max="90"
+                  step="0.01"
+                  value={targetLatitude}
+                  onChange={(e) => setTargetLatitude(Number(e.target.value))}
+                />
+              </div>
+              <div className="config-group">
+                <label>Longitude:</label>
+                <input
+                  type="number"
+                  min="-180"
+                  max="180"
+                  step="0.01"
+                  value={targetLongitude}
+                  onChange={(e) => setTargetLongitude(Number(e.target.value))}
+                />
+              </div>
+              <div className="config-group">
+                <label>Presets:</label>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const loc = PRESET_LOCATIONS.find((l) => l.name === e.target.value);
+                    if (loc) {
+                      setTargetLatitude(loc.lat);
+                      setTargetLongitude(loc.lon);
+                    }
+                  }}
+                >
+                  <option value="" disabled>Select location…</option>
+                  {PRESET_LOCATIONS.map((loc) => (
+                    <option key={loc.name} value={loc.name}>{loc.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Display Settings */}
+      <div className="template-section">
+        <button
+          className="template-toggle-button"
+          onClick={() => setDisplayOpen((v) => !v)}
+        >
+          Display Settings {displayOpen ? '▼' : '▶'}
+        </button>
+        {displayOpen && (
+          <div className="template-dropdown">
+            <div className="template-config">
+              <div className="config-group">
+                <label>Color Scheme:</label>
+                <select
+                  value={colorScheme}
+                  onChange={(e) => setColorScheme(e.target.value)}
+                >
+                  <option value="terrain">Terrain</option>
+                  <option value="monochrome">Monochrome</option>
+                  <option value="ocean">Ocean Emphasis</option>
+                  <option value="elevation">Elevation Only</option>
+                </select>
+              </div>
+              <div className="config-group">
+                <label>Line Width:</label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="5"
+                  step="0.5"
+                  value={lineWidth}
+                  onChange={(e) => setLineWidth(Number(e.target.value))}
+                />
+                <span style={{ fontSize: '12px', marginLeft: '6px' }}>{lineWidth}px</span>
+              </div>
+              <div className="config-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={showOceanFloor}
+                    onChange={(e) => setShowOceanFloor(e.target.checked)}
+                  />
+                  Show Ocean Floor
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+};
 
 const UIOverlay = ({
   onCreateObject,
@@ -42,6 +217,7 @@ const UIOverlay = ({
   currentCell, // Add currentCell prop
   currentSpaceId, // Add currentSpaceId prop for model uploads
   trialMode, // Trial mode - no account, local-only objects
+  spaceType = 'diagram', // Space type - 'diagram' or 'earth'
 }) => {
   // Use UI overlay store
   const [selectedRepo, setSelectedRepo] = useState(null);
@@ -1102,6 +1278,8 @@ const UIOverlay = ({
             </span>
           </div>
           {/* Template Section */}{' '}
+          {spaceType !== 'earth' && (
+          <>
           <div className="template-section">
             <button
               className="template-toggle-button"
@@ -1342,6 +1520,12 @@ const UIOverlay = ({
                 </p>
               )}
             </div>
+          )}
+          </>
+          )}
+          {/* Earth Space Sections */}
+          {spaceType === 'earth' && (
+            <EarthSidebarSections />
           )}
         </div>
       </div>

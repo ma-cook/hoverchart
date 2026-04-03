@@ -13,6 +13,7 @@ import ObjectsRenderer from './components/ObjectsRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 import LODManager from './components/LODManager';
+import EarthGlobe from './components/EarthGlobe';
 import DiagramOverlay2D from './components/DiagramOverlay2D';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
@@ -67,7 +68,7 @@ import { objectVirtualizer } from './utils/objectVirtualization';
 /**
  * Main application component
  */
-const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = false }) => {
+const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = false, spaceType: spaceTypeProp = 'diagram' }) => {
   // Base state
   const [backgroundColor] = useState('white');
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
@@ -1713,6 +1714,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
               onLineTextStyleChange={handleLineTextStyleChange}
             />{' '}
             {/* Render all objects with batched cube edges */}
+            {spaceTypeProp === 'earth' && <EarthGlobe />}
             <ObjectsRenderer
               objects={objects}
               visibleObjectIds={visibleObjectIds}
@@ -1768,6 +1770,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
         currentCell={currentCellCoords}
         currentSpaceId={effectiveSpaceId}
         trialMode={trialMode}
+        spaceType={spaceTypeProp}
       />
     </>
   );

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://volscape.com/sitemap.xml
