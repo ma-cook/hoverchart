@@ -244,10 +244,7 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
 const analyzeFile = (filePath, repoType = 'react') => {
   // Use regex to match folder names at any level, including repo root (no leading slash)
   // e.g. matches both 'utils/foo.js' and 'src/utils/foo.js'
-  const isComponent =
-    /(?:^|\/)components\//.test(filePath) ||
-    filePath.endsWith('/App.jsx') ||
-    filePath === 'App.jsx';
+  // NOTE: isComponent is computed last so it can use the other flags for its jsx fallback.
   const isHook    = /(?:^|\/)hooks\//.test(filePath);
   const isService = /(?:^|\/)services\//.test(filePath);
   const isStore   = /(?:^|\/)stores\//.test(filePath) || /(?:^|\/)store\//.test(filePath);
@@ -266,6 +263,19 @@ const analyzeFile = (filePath, repoType = 'react') => {
     /(?:^|\/)backend\//.test(filePath) ||
     /(?:^|\/)lambda\//.test(filePath) ||
     /(?:^|\/)routes\//.test(filePath);
+  // A file is treated as a component if it lives in /components/, is App.jsx, or is any
+  // .jsx/.tsx file that does NOT belong to another recognised category (hooks, services,
+  // stores, utils, workers, backends, shaders).  This ensures files in non-standard
+  // folders (e.g. /landing/, /pages/, /features/) are classified as component files so
+  // their internal helper functions and event handlers get proper containment arrows
+  // instead of appearing as isolated orphaned nodes in the diagram.
+  const isComponent =
+    /(?:^|\/)components\//.test(filePath) ||
+    filePath.endsWith('/App.jsx') ||
+    filePath === 'App.jsx' ||
+    (/\.(jsx|tsx)$/.test(filePath) &&
+      !isHook && !isService && !isStore && !isUtil &&
+      !isWorker && !isBackend && !isShader);
 
   // Next.js route files: files inside `app/` or `pages/` that are NOT in
   // api/, components/, hooks/, services/, stores/, utils/, lib/, or workers/
@@ -1677,6 +1687,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             // ── React / framework path ────────────────────────────────────────
 
             let currentComponent = null;
+            // Functions encountered in a component file before the first component declaration
+            // are deferred here and retroactively assigned to componentFunctions once the
+            // component is found, so they receive proper containment arrows.
+            const prePendingFunctions = [];
             const fileImports = {
               stores: [],
               services: [],
@@ -1787,6 +1801,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       currentComponent = funcName;
                     }
                     componentFunctions.set(funcName, new Set());
+                    // Retroactively assign any module-level helpers encountered before
+                    // this component declaration so they get containment arrows
+                    if (prePendingFunctions.length > 0) {
+                      prePendingFunctions.forEach((fn) => componentFunctions.get(funcName).add(fn));
+                      prePendingFunctions.length = 0;
+                    }
 
                     // Associate file imports with this component
                     if (!componentDependencies.has(funcName)) {
@@ -1893,11 +1913,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   // Default: treat as function
                   // If we're inside a component OR in a component file, track this function as belonging to it
                   if ((parentIsComponent || fileContext.isComponent) && currentComponent) {
-                    // Skip event handlers (handleX, onX) and trivial names
-                    const isEventHandler = /^(handle|on)[A-Z]/.test(funcName);
+                    // Skip trivial single/double-letter names
                     const isTrivial = funcName.length <= 2;
 
-                    if (!isEventHandler && !isTrivial) {
+                    if (!isTrivial) {
                       // Prefix the function name with the component name
                       const prefixedFuncName =
                         currentComponent.toLowerCase() +
@@ -1937,6 +1956,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     if (!foundItems.functions.has(funcName)) {
                       foundItems.functions.add(funcName);
                       elements.functions.push(funcName);
+                      // If we're in a component file but haven't found the component yet,
+                      // defer this function so it will be assigned once the component is found
+                      if (fileContext.isComponent && !currentComponent) {
+                        prePendingFunctions.push(funcName);
+                      }
                     }
                   }
                 }
@@ -2096,6 +2120,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                           }
 
                           componentFunctions.set(varName, new Set());
+                          // Retroactively assign any module-level helpers encountered before
+                          // this component declaration so they get containment arrows
+                          if (prePendingFunctions.length > 0) {
+                            prePendingFunctions.forEach((fn) => componentFunctions.get(varName).add(fn));
+                            prePendingFunctions.length = 0;
+                          }
 
                           // Associate file imports with this component
                           if (!componentDependencies.has(varName)) {
@@ -2206,12 +2236,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         // Default: treat as function
                         // If we're inside a component OR in a component file, track this function as belonging to it
                         if ((parentIsComponent || fileContext.isComponent) && currentComponent) {
-                          // Only track functions that look meaningful (not event handlers or callbacks)
-                          // Skip functions starting with 'handle', 'on', or single-letter names
-                          const isEventHandler = /^(handle|on)[A-Z]/.test(varName);
+                          // Skip trivial single/double-letter names
                           const isTrivial = varName.length <= 2;
 
-                          if (!isEventHandler && !isTrivial && isFunction) {
+                          if (!isTrivial && isFunction) {
                             // Prefix the function name with the component name
                             const prefixedVarName =
                               currentComponent.toLowerCase() +
@@ -2258,6 +2286,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                           if (!foundItems.functions.has(varName)) {
                             foundItems.functions.add(varName);
                             elements.functions.push(varName);
+                            // If we're in a component file but haven't found the component yet,
+                            // defer this function so it will be assigned once the component is found
+                            if (fileContext.isComponent && !currentComponent) {
+                              prePendingFunctions.push(varName);
+                            }
                           }
                         }
                       }

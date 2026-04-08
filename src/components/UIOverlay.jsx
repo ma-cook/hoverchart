@@ -412,6 +412,7 @@ const UIOverlay = ({
   // Function to scan repository and generate Merfolk diagram
   const fetchAppJsxFromRepo = async (repo) => {
     try {
+      diagramIsBeingGenerated.current = true;
       setScanProgress({ isScanning: true, progress: 0, stage: 'Starting...' });
       
       const result = await scanRepositoryAndGenerateDiagram(
@@ -535,6 +536,7 @@ const UIOverlay = ({
       }
 
       // Process the new merfolk section to create additional 3D objects
+      diagramIsBeingGenerated.current = true;
       setScanProgress({ isScanning: true, progress: 65, stage: 'Creating new objects from changes...' });
       const newBlob = new Blob([rescanResult.newMerfolk], { type: 'text/markdown' });
       const newFile = new File([newBlob], `${repo.name}-changes.md`, { type: 'text/markdown' });
@@ -902,6 +904,7 @@ const UIOverlay = ({
       }
 
       setIsProcessingMarkdown(true);
+      diagramIsBeingGenerated.current = true;
 
       try {
         const result = await markdownDiagramService.processMarkdownFile(
@@ -999,20 +1002,26 @@ const UIOverlay = ({
 
   // Track whether the user has explicitly toggled visibility so auto-show doesn't override them
   const userHasManuallyToggled = useRef(false);
+  // Suppress auto-show when a diagram was auto-generated (GitHub scan, markdown upload, etc.)
+  const diagramIsBeingGenerated = useRef(false);
 
   const handleArrowClick = () => {
     userHasManuallyToggled.current = true;
+    diagramIsBeingGenerated.current = false;
     toggleConnectionsVisible();
   };
 
   // Auto-show connections when there are 100 or fewer (on startup or after a GitHub scan)
+  // Skip auto-show when a diagram was auto-generated or the space already has one
   useEffect(() => {
     if (userHasManuallyToggled.current) return;
+    if (diagramIsBeingGenerated.current) return;
+    if (latestMarkdownUrl) return;
     if (connectionCount > 0 && connectionCount <= CONNECTION_RENDER_THRESHOLD && !connectionsVisible) {
       toggleConnectionsVisible();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionCount]);
+  }, [connectionCount, latestMarkdownUrl]);
 
   // Pinned webcam overlay
   const pinnedWebcamPlaneId = useUIOverlayStore((state) => state.pinnedWebcamPlaneId);
