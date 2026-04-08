@@ -187,6 +187,17 @@ export const containerMethods = {
       allObjectsToSave.push(containerForSave);
     };
 
+    // ── Build set of group types that already have containers in the store ─
+    // This prevents duplicate containers when rescan calls createObjectsFromDiagram
+    // on top of an already-populated space.
+    const existingGroupTypes = new Set();
+    const existingObjectsSnapshot = useObjectsStore.getState().objects;
+    for (const obj of existingObjectsSnapshot) {
+      if (obj.merfolkData?.isContainer && obj.merfolkData?.groupType) {
+        existingGroupTypes.add(obj.merfolkData.groupType);
+      }
+    }
+
     // ── Create containers dynamically for each discovered group ─────────
     const sortedGroups = Array.from(groupedByType.entries())
       .filter(([, nodes]) => nodes.length > 0)
@@ -194,12 +205,15 @@ export const containerMethods = {
 
     sortedGroups.forEach(([groupKey, nodes], index) => {
       const displayName = getGroupDisplayName(groupKey);
+      if (existingGroupTypes.has(displayName)) return; // already exists — skip
       const color = getGroupColor(index);
       createContainerForGroup(nodes, displayName, color);
     });
 
     // Ungrouped components always get the grey container
-    createContainerForGroup(ungroupedComponents, 'Ungrouped Components', '#757575');
+    if (!existingGroupTypes.has('Ungrouped Components')) {
+      createContainerForGroup(ungroupedComponents, 'Ungrouped Components', '#757575');
+    }
 
     if (containerCubes.length > 0) {
       const currentObjects = useObjectsStore.getState().objects;
@@ -211,6 +225,15 @@ export const containerMethods = {
    * Create container for root-level component hierarchy
    */
   async createRootHierarchyContainer(context, allObjectsToSave) {
+    // Skip if a Component Hierarchy container already exists in the store.
+    // This prevents duplicates when rescan runs createObjectsFromDiagram on
+    // a space that already has a full diagram.
+    const existingObjectsForHierarchy = useObjectsStore.getState().objects;
+    const hierarchyContainerExists = existingObjectsForHierarchy.some(
+      (obj) => obj.merfolkData?.isContainer && obj.merfolkData?.groupType === 'Component Hierarchy'
+    );
+    if (hierarchyContainerExists) return;
+
     const { graphNodes, childParentMap, nodePositions, nodeScales, rootNodes } =
       context;
 
@@ -659,7 +682,18 @@ export const containerMethods = {
   ) {
     const containerCubes = [];
 
+    // Build set of parentNodeIds that already have a container so we don't
+    // create duplicates during rescan.
+    const existingParentNodeIds = new Set();
+    const existingObjectsForContainers = useObjectsStore.getState().objects;
+    for (const obj of existingObjectsForContainers) {
+      if (obj.merfolkData?.isContainer && obj.merfolkData?.parentNodeId) {
+        existingParentNodeIds.add(obj.merfolkData.parentNodeId);
+      }
+    }
+
     for (const [parentNodeId, containerInfo] of containerDimensions.entries()) {
+      if (existingParentNodeIds.has(parentNodeId)) continue; // already exists — skip
       const parentNode = graphNodes.get(parentNodeId);
       if (!parentNode) continue;
 
