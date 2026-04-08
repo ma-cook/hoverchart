@@ -1427,6 +1427,8 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
 
     // Track component-function relationships for "contains" connections
     const componentFunctions = new Map();
+    // Maps prefixed node ID -> original function name for display (avoids showing the component prefix)
+    const componentFuncDisplayNames = new Map();
 
     // Track component-to-component relationships (which components use which other components)
     const componentRelationships = new Map();
@@ -1814,7 +1816,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     // Retroactively assign any module-level helpers encountered before
                     // this component declaration so they get containment arrows
                     if (prePendingFunctions.length > 0) {
-                      prePendingFunctions.forEach((fn) => componentFunctions.get(funcName).add(fn));
+                      prePendingFunctions.forEach((fn) => {
+                        const prefixed = funcName.toLowerCase() + fn.charAt(0).toUpperCase() + fn.slice(1);
+                        componentFunctions.get(funcName).add(prefixed);
+                        componentFuncDisplayNames.set(prefixed, fn);
+                      });
                       prePendingFunctions.length = 0;
                     }
 
@@ -1937,6 +1943,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       if (!foundItems.functions.has(prefixedFuncName)) {
                         foundItems.functions.add(prefixedFuncName);
                         componentFunctions.get(currentComponent).add(prefixedFuncName);
+                        componentFuncDisplayNames.set(prefixedFuncName, funcName);
                       }
                     }
                   } else if (fileContext.isUtil) {
@@ -2133,7 +2140,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                           // Retroactively assign any module-level helpers encountered before
                           // this component declaration so they get containment arrows
                           if (prePendingFunctions.length > 0) {
-                            prePendingFunctions.forEach((fn) => componentFunctions.get(varName).add(fn));
+                            prePendingFunctions.forEach((fn) => {
+                              const prefixed = varName.toLowerCase() + fn.charAt(0).toUpperCase() + fn.slice(1);
+                              componentFunctions.get(varName).add(prefixed);
+                              componentFuncDisplayNames.set(prefixed, fn);
+                            });
                             prePendingFunctions.length = 0;
                           }
 
@@ -2260,6 +2271,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                             if (!foundItems.functions.has(prefixedVarName)) {
                               foundItems.functions.add(prefixedVarName);
                               componentFunctions.get(currentComponent).add(prefixedVarName);
+                              componentFuncDisplayNames.set(prefixedVarName, varName);
                             }
                           }
                         } else if (fileContext.isUtil && isFunction) {
@@ -3065,7 +3077,13 @@ const generateMerfolkMarkdown = (
   // These will be handled via componentFunctions relationships
   const componentInternalFunctions = new Set();
   componentFunctions.forEach((functions) => {
-    functions.forEach((func) => componentInternalFunctions.add(func));
+    functions.forEach((func) => {
+      componentInternalFunctions.add(func);
+      // Also add the original name so pre-pending functions (stored in elements.functions
+      // by their raw name before being retroactively prefixed) are also filtered out
+      const displayName = componentFuncDisplayNames.get(func);
+      if (displayName) componentInternalFunctions.add(displayName);
+    });
   });
   elements.functions = elements.functions.filter((func) => !componentInternalFunctions.has(func));
 
@@ -3354,12 +3372,20 @@ const generateMerfolkMarkdown = (
   }
 
   // Add utilities (utilities are just top-level functions that get grouped separately)
+  // Skip any utility that belongs to a file container (store/hook/service/utility file) —
+  // those will be declared inline in the File-Function Relationships section, right before
+  // their containment arrow, so they nest visually inside their parent container.
   if (elements.utilities.length > 0) {
     markdown += `\n%% Utilities\n`;
     elements.utilities.forEach((util) => {
       if (nodeIds.has(util)) {
         // Skip duplicate - node already defined, this is just a reference
         // This is expected when multiple files contain functions with the same name
+        return;
+      }
+      // If this utility is a child of a file container, defer its declaration to
+      // the File-Function Relationships section so it appears nested in its parent.
+      if (childToParentMap.has(util)) {
         return;
       }
       nodeIds.add(util);
@@ -3446,7 +3472,8 @@ const generateMerfolkMarkdown = (
         return;
       }
       nodeIds.add(func);
-      markdown += `${func}[Function: ${func}]\n`;
+      const displayName = componentFuncDisplayNames.get(func) || func;
+      markdown += `${func}[Function: ${displayName}]\n`;
     });
 
     // Then add arrow relationships with descriptive labels
@@ -3457,25 +3484,27 @@ const generateMerfolkMarkdown = (
       const componentNodeId = componentNeedsSuffix ? `${component}_file` : component;
       
       functions.forEach((func) => {
+        // Use original display name for pattern matching so labels don't include the component prefix
+        const displayName = componentFuncDisplayNames.get(func) || func;
         // Generate descriptive relationship label based on function name patterns
         let label = 'internal function';
 
         // Handle common patterns
-        if (func.toLowerCase().includes('handle')) {
+        if (displayName.toLowerCase().includes('handle')) {
           label = 'event handler';
-        } else if (func.toLowerCase().includes('render')) {
+        } else if (displayName.toLowerCase().includes('render')) {
           label = 'render helper';
-        } else if (func.toLowerCase().includes('update')) {
+        } else if (displayName.toLowerCase().includes('update')) {
           label = 'update helper';
-        } else if (func.toLowerCase().includes('get')) {
+        } else if (displayName.toLowerCase().includes('get')) {
           label = 'getter function';
-        } else if (func.toLowerCase().includes('set')) {
+        } else if (displayName.toLowerCase().includes('set')) {
           label = 'setter function';
-        } else if (func.toLowerCase().includes('calculate') || func.toLowerCase().includes('compute')) {
+        } else if (displayName.toLowerCase().includes('calculate') || displayName.toLowerCase().includes('compute')) {
           label = 'calculation helper';
-        } else if (func.toLowerCase().includes('should') || func.toLowerCase().includes('is')) {
+        } else if (displayName.toLowerCase().includes('should') || displayName.toLowerCase().includes('is')) {
           label = 'boolean check';
-        } else if (func.toLowerCase().includes('debounced')) {
+        } else if (displayName.toLowerCase().includes('debounced')) {
           label = 'debounced helper';
         }
 
