@@ -250,8 +250,9 @@ const analyzeFile = (filePath, repoType = 'react') => {
   const isStore   = /(?:^|\/)stores\//.test(filePath) || /(?:^|\/)store\//.test(filePath);
   const isUtil    = /(?:^|\/)utils\//.test(filePath) || /(?:^|\/)helpers\//.test(filePath) ||
     /(?:^|\/)lib\//.test(filePath);
-  // Worker folders/files
-  const isWorker  = /(?:^|\/)workers\//.test(filePath) || /[Ww]orker\.(js|ts|jsx|tsx)$/.test(filePath);
+  // Worker folders/files (including /wasm/ which houses WebAssembly compute modules)
+  const isWorker  = /(?:^|\/)workers\//.test(filePath) || /[Ww]orker\.(js|ts|jsx|tsx)$/.test(filePath) ||
+    /(?:^|\/)wasm\//.test(filePath);
   // Shader folders/files
   const isShader  = /(?:^|\/)shaders\//.test(filePath) ||
     /\.(glsl|wgsl|hlsl|vert|frag|comp)$/.test(filePath);
@@ -304,7 +305,16 @@ const analyzeFile = (filePath, repoType = 'react') => {
   const isPage = /(?:^|\/)pages?\//.test(filePath) || /(?:^|\/)views?\//.test(filePath);
   const isRouter = /(?:^|\/)router\//.test(filePath);
 
-  return { isComponent, isHook, isService, isStore, isUtil, isWorker, isShader, isBackend, isNextRoute,
+  // Generic fallback: any plain .js/.ts file that doesn't belong to any other recognised
+  // category is treated as a utility so its top-level functions get a proper file container
+  // (with containment arrows) rather than appearing as orphaned standalone nodes.
+  // This mirrors the .jsx/.tsx → isComponent fallback added for Bug 1, ensuring files like
+  // /landing/sharedSpacesService.js or /wasm/pkg/hoverchart_wasm.js are never left uncategorised.
+  const isUtilFinal = isUtil ||
+    (/\.(js|ts)$/.test(filePath) &&
+      !isHook && !isService && !isStore && !isWorker && !isBackend && !isShader && !isComponent);
+
+  return { isComponent, isHook, isService, isStore, isUtil: isUtilFinal, isWorker, isShader, isBackend, isNextRoute,
     isModel, isView, isController, isMiddleware, isConfig, isMigration, isCommand, isSerializer, isTask,
     isComposable, isPlugin, isDirective, isMixin, isLayout, isPage, isRouter };
 };
