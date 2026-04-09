@@ -21,7 +21,7 @@ import {
 } from 'firebase/firestore';
 import { OrderHeader } from './Order';
 import CustomCamera from './CustomCamera';
-import WhitePlane from './WhitePlane';
+import PerspectiveGrid from './PerspectiveGrid';
 import { Canvas } from '@react-three/fiber';
 
 import CubeOutline from './CubeOutline';
@@ -43,6 +43,7 @@ import {
   declineInvite,
 } from '../services/organizationService';
 import { useWindowSize } from './hooks/useWindowSize';
+import { LandingScrollContent } from './components/LandingScrollContent';
 import './LandingApp.css';
 
 function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
@@ -70,6 +71,64 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   // Animation state
   const [showDodecahedron, setShowDodecahedron] = useState(true);
   const [showSecondCube, setShowSecondCube] = useState(true);
+
+  // Scroll-driven camera and overlay progression
+  const MAX_SCROLL = 3000;
+  const rawScrollRef = useRef(0);
+  const touchStartYRef = useRef(0);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  // Ref so camera reads scroll every R3F frame without waiting for React re-renders
+  const scrollProgressRef = useRef(0);
+  const rafPendingRef = useRef(null);
+
+  // Update ref immediately (for camera) and throttle state update to one rAF per frame
+  // (for overlay panels) — prevents 10-20 re-renders per scroll gesture
+  const scheduleScrollUpdate = useCallback((value) => {
+    scrollProgressRef.current = value;
+    if (!rafPendingRef.current) {
+      rafPendingRef.current = requestAnimationFrame(() => {
+        setScrollProgress(scrollProgressRef.current);
+        rafPendingRef.current = null;
+      });
+    }
+  }, []);
+
+  // Wheel handler — intercepts scroll to drive camera/overlays
+  useEffect(() => {
+    if (user) {
+      rawScrollRef.current = 0;
+      scrollProgressRef.current = 0;
+      setScrollProgress(0);
+      return;
+    }
+    const handleWheel = (e) => {
+      e.preventDefault();
+      rawScrollRef.current = Math.max(0, Math.min(MAX_SCROLL, rawScrollRef.current + e.deltaY));
+      scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
+    };
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, [user, scheduleScrollUpdate]);
+
+  // Touch handler for mobile scroll
+  useEffect(() => {
+    if (user) return;
+    const handleTouchStart = (e) => {
+      touchStartYRef.current = e.touches[0].clientY;
+    };
+    const handleTouchMove = (e) => {
+      const delta = touchStartYRef.current - e.touches[0].clientY;
+      touchStartYRef.current = e.touches[0].clientY;
+      rawScrollRef.current = Math.max(0, Math.min(MAX_SCROLL, rawScrollRef.current + delta * 1.5));
+      scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
+    };
+    window.addEventListener('touchstart', handleTouchStart, { passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [user, scheduleScrollUpdate]);
 
   // Share popup state
   const [showSharePopup, setShowSharePopup] = useState(false);
@@ -822,17 +881,16 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     ]
   );
 
+  const isMobile = windowSize.width <= 768;
+
   return (
     <div
       className="landing-view"
       style={{
         height: '100vh',
         width: '100vw',
-        position: 'relative',
-        backgroundColor: 'white',
-        margin: 0,
-        padding: 0,
         overflow: 'hidden',
+        position: 'relative',
         fontFamily:
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
       }}
@@ -851,110 +909,143 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         onClose={() => setShowOrgManager(false)}
       />
 
-      {/* Spaces container */}
-      {user && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: (() => {
-              if (windowSize.width <= 480) return '95%';
-              if (windowSize.width <= 768) return '90%';
-              if (windowSize.width <= 1200) return '75%';
-              return '65%';
-            })(),
-            maxWidth: '80rem',
-            maxHeight: '80vh',
-            backgroundColor: 'rgba(255, 255, 255, 0.7)',
-            borderRadius: '8px',
-            border: '1px solid rgba(0, 0, 0, 0.2)',
-            zIndex: 10,
-            display: 'flex',
-            padding: windowSize.width > 768 ? '1.5rem' : '0.75rem',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-            overflow: 'auto',
-          }}
-        >
-          <SpacesTable {...spaceTableProps} />
-        </div>
-      )}
-
-      {/* Login/user section */}
-      {user && (
-        <UserLoginSection
-          user={user}
-          windowSize={windowSize}
-          onLogin={handleLogin}
-          onLogout={handleLogout}
-          onOpenOrgManager={() => setShowOrgManager(true)}
-          pendingInviteCount={pendingInvites.length}
-        />
-      )}
-
-      {/* Welcome overlay */}
-      {!user && (
-        <WelcomeOverlay windowSize={windowSize} onLogin={handleLogin} onTryWithoutAccount={onTryWithoutAccount} />
-      )}
-
-      {/* 3D Canvas */}
+      {/* Fixed 3D Canvas — always fills viewport behind all 2D content */}
       <Canvas
         ref={canvasRef}
         style={{
-          background: backgroundColor,
-          width: '100%',
-          height: '100%',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          zIndex: 0,
+          far: 10000,
+          pointerEvents: 'none',
+          background: 'white',
         }}
         resize={{ scroll: false }}
         antialias="true"
         pixelratio={window.devicePixelRatio}
         dpr={[1, 2]}
       >
-        <fog attach="fog" args={[backgroundColor, 10, 300]} />
         <ambientLight intensity={2} />
         <OrderHeader windowSize={windowSize} />
-
-        <CustomCamera />
-        <WhitePlane />
-
-        {/* Only render 3D objects when user is NOT logged in */}
+        <CustomCamera scrollProgressRef={!user ? scrollProgressRef : null} />
+        <PerspectiveGrid />
         {!user && (
           <>
-            <CubeOutline
-              size={10}
-              color="#333333"
-              targetPosition={[-100, 40, 400]}
-              visible={true}
-              onAnimationComplete={handleFirstCubeComplete}
-            />
-
-            <DodecahedronWireframe
-              size={10}
-              color="#333333"
-              targetPosition={[-80, -10, 440]}
-              visible={true}
-              onAnimationComplete={handleDodecahedronComplete}
-            />
-            <DodecahedronWireframe2
-              size={10}
-              color="#333333"
-              targetPosition={[80, -10, 440]}
-              visible={true}
-              onAnimationComplete={handleDodecahedronComplete}
-            />
-
-            <CubeOutline
-              size={10}
-              color="#333333"
-              targetPosition={[100, 40, 400]}
-              visible={true}
-              textLabel="Wireframe"
-              isLastObject={true}
-            />
+           
           </>
         )}
       </Canvas>
+
+      {/* Logged-in UI */}
+      {user && (
+        <>
+          <div
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: (() => {
+                if (windowSize.width <= 480) return '95%';
+                if (windowSize.width <= 768) return '90%';
+                if (windowSize.width <= 1200) return '75%';
+                return '65%';
+              })(),
+              maxWidth: '80rem',
+              maxHeight: '80vh',
+              backgroundColor: 'rgba(255, 255, 255, 0.7)',
+              borderRadius: '8px',
+              border: '1px solid rgba(0, 0, 0, 0.2)',
+              zIndex: 10,
+              display: 'flex',
+              padding: windowSize.width > 768 ? '1.5rem' : '0.75rem',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+              overflow: 'auto',
+            }}
+          >
+            <SpacesTable {...spaceTableProps} />
+          </div>
+          <UserLoginSection
+            user={user}
+            windowSize={windowSize}
+            onLogin={handleLogin}
+            onLogout={handleLogout}
+            onOpenOrgManager={() => setShowOrgManager(true)}
+            pendingInviteCount={pendingInvites.length}
+          />
+        </>
+      )}
+
+      {/* Pre-login UI */}
+      {!user && (
+        <>
+          {/* Welcome overlay — fades out as user scrolls */}
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 15,
+              opacity: Math.max(0, 1 - scrollProgress * 12),
+              pointerEvents: scrollProgress > 0.08 ? 'none' : 'auto',
+              transition: 'opacity 0.3s ease',
+            }}
+          >
+            <WelcomeOverlay
+              windowSize={windowSize}
+              onLogin={handleLogin}
+              onTryWithoutAccount={onTryWithoutAccount}
+            />
+            {/* Scroll hint */}
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '28px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '6px',
+                zIndex: 50,
+                animation: 'scrollBounce 2s ease-in-out infinite',
+                cursor: 'pointer',
+                opacity: 0.65,
+                pointerEvents: 'auto',
+              }}
+              onClick={() => {
+                rawScrollRef.current = Math.min(MAX_SCROLL, rawScrollRef.current + 500);
+                scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  letterSpacing: '1.2px',
+                  textTransform: 'uppercase',
+                  color: '#444',
+                }}
+              >
+                Explore
+              </span>
+              <svg width="20" height="12" viewBox="0 0 20 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M1 1L10 10L19 1" stroke="#444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+          </div>
+
+          {/* Scroll-driven content sections */}
+          <LandingScrollContent
+            scrollProgress={scrollProgress}
+            isMobile={isMobile}
+            onLogin={handleLogin}
+            onTryWithoutAccount={onTryWithoutAccount}
+          />
+        </>
+      )}
     </div>
   );
 }

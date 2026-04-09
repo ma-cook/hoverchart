@@ -38,6 +38,12 @@
   border-color: #020202 !important;
 }
 
+/* Scroll hint bounce animation */
+@keyframes scrollBounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(6px); }
+}
+
 /* SpacesTable leave button */
 .leave-space-btn:hover:not(:disabled) {
   background-color: rgba(255, 235, 235, 0.9) !important;
