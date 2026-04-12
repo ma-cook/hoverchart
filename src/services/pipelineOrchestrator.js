@@ -160,19 +160,28 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
   });
 }
 
-export async function startPipeline(spaceOwnerId, spaceId, tasks) {
+export async function startPipeline(spaceOwnerId, spaceId, tasks, repoSlug) {
   const store = usePipelineStore.getState();
-  const { connectedRepo } = store;
 
-  if (!connectedRepo?.owner || !connectedRepo?.repo) {
-    console.error('[pipelineOrchestrator] No repo connected');
-    return;
+  let owner, repo;
+  if (repoSlug) {
+    const repoInfo = store.repos?.get(repoSlug);
+    if (repoInfo) {
+      ({ owner, repo } = repoInfo);
+    }
+  }
+  if (!owner || !repo) {
+    const { connectedRepo } = store;
+    if (!connectedRepo?.owner || !connectedRepo?.repo) {
+      console.error('[pipelineOrchestrator] No repo connected');
+      return;
+    }
+    ({ owner, repo } = connectedRepo);
   }
 
   store.startPipeline();
   store.setTaskOrder(tasks.map((t) => t.id));
 
-  const { owner, repo } = connectedRepo;
 
   let currentTask = getNextQueuedTask(tasks);
   while (currentTask) {

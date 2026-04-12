@@ -44,6 +44,14 @@ export function getPipelineTasks(objects) {
     .sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
 }
 
+export function getPipelineTasksForRepo(objects, repoSlug) {
+  if (!objects) return [];
+  if (!repoSlug) return getPipelineTasks(objects);
+  return objects
+    .filter((obj) => isTaskObject(obj) && obj.merfolkData?.repoSlug === repoSlug)
+    .sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
+}
+
 export function getNextQueuedTask(tasks) {
   return tasks.find(
     (task) => task.merfolkData?.status === TASK_STATUS.QUEUED
