@@ -6,8 +6,12 @@ import {
 } from './pipelineTaskService';
 import {
   createIssue,
-  assignCopilotToIssue,
-  findPullRequestForIssue,
+  getRepoInfo,
+  getBranchRef,
+  createBranchRef,
+  createFileOnBranch,
+  createPullRequest,
+  addComment,
   approvePullRequest,
   mergePullRequest,
   getPullRequest,
@@ -32,91 +36,138 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
 
   store.setCurrentTaskId(objectId);
 
-  // Step 1: Create GitHub Issue if not yet created
+  const title = task.headerText || `Task #${task.merfolkData.planTaskIndex}`;
+  const body = task.text || '';
+
+  // Step 1: Create GitHub Issue for tracking (if not yet created)
   let issueNumber = task.merfolkData?.githubIssueNumber;
   if (!issueNumber) {
-    const title = task.headerText || `Task #${task.merfolkData.planTaskIndex}`;
-    const body = task.text || '';
-    const result = await createIssue(token, owner, repo, { title, body });
-    if (!result.ok) {
-      console.error('[pipelineOrchestrator] Failed to create issue:', result.error);
+    const issueResult = await createIssue(token, owner, repo, { title, body });
+    if (!issueResult.ok) {
+      console.error('[pipelineOrchestrator] Failed to create issue:', issueResult.error);
       return false;
     }
-    issueNumber = result.data.number;
+    issueNumber = issueResult.data.number;
   }
 
-  // Step 2: Update status to in-progress with issue number
+  // Step 2: Create branch + PR + @copilot comment (if no PR yet)
+  let prNumber = task.merfolkData?.githubPrNumber;
+  if (!prNumber) {
+    // Get default branch SHA
+    const repoInfo = await getRepoInfo(token, owner, repo);
+    if (!repoInfo.ok) {
+      console.error('[pipelineOrchestrator] Failed to get repo info:', repoInfo.error);
+      return false;
+    }
+    const defaultBranch = repoInfo.data.default_branch;
+
+    const branchRef = await getBranchRef(token, owner, repo, defaultBranch);
+    if (!branchRef.ok) {
+      console.error('[pipelineOrchestrator] Failed to get branch ref:', branchRef.error);
+      return false;
+    }
+    const baseSha = branchRef.data.object.sha;
+
+    // Create a new branch for this task
+    const branchName = `copilot/issue-${issueNumber}`;
+    const branchResult = await createBranchRef(token, owner, repo, branchName, baseSha);
+    if (!branchResult.ok) {
+      console.error('[pipelineOrchestrator] Failed to create branch:', branchResult.error);
+      return false;
+    }
+
+    // Create a task spec file to give the PR a diff
+    const taskSpec = `# Task: ${title}\n\nResolves #${issueNumber}\n\n${body}`;
+    const fileResult = await createFileOnBranch(
+      token, owner, repo,
+      `.github/copilot-tasks/issue-${issueNumber}.md`,
+      taskSpec,
+      branchName,
+      `task(#${issueNumber}): ${title}`
+    );
+    if (!fileResult.ok) {
+      console.error('[pipelineOrchestrator] Failed to create task file:', fileResult.error);
+      return false;
+    }
+
+    // Open a PR from the branch
+    const prBody = `Resolves #${issueNumber}\n\n${body}`;
+    const prResult = await createPullRequest(token, owner, repo, {
+      title,
+      body: prBody,
+      head: branchName,
+      base: defaultBranch,
+    });
+    if (!prResult.ok) {
+      console.error('[pipelineOrchestrator] Failed to create PR:', prResult.error);
+      return false;
+    }
+    prNumber = prResult.data.number;
+
+    // Comment @copilot on the PR to trigger implementation
+    const copilotPrompt = `@copilot Please implement the changes described in this PR.\n\n**Task:** ${title}\n\n${body}`;
+    await addComment(token, owner, repo, prNumber, copilotPrompt);
+  }
+
+  // Step 3: Update status to in-progress with issue + PR numbers
   await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.IN_PROGRESS, {
     githubIssueNumber: issueNumber,
+    githubPrNumber: prNumber,
   });
 
-  // Step 3: Assign Copilot to the issue
-  await assignCopilotToIssue(token, owner, repo, issueNumber);
+  // Step 4: Update status to pr-open
+  await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.PR_OPEN, {
+    githubPrNumber: prNumber,
+  });
 
-  // Step 4: Poll for linked PR
+  // Step 5: Poll for Copilot to push commits and/or for merge
   return new Promise((resolve) => {
-    const pollForPR = async () => {
+    const pollPR = async () => {
       const currentState = usePipelineStore.getState();
       if (!currentState.isRunning || currentState.isPaused) {
         resolve(false);
         return;
       }
 
-      // Check for linked PR
-      const prResult = await findPullRequestForIssue(token, owner, repo, issueNumber);
-      if (prResult.ok && prResult.data) {
-        const prNumber = prResult.data.number;
-
-        // Update status to pr-open
-        await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.PR_OPEN, {
-          githubPrNumber: prNumber,
-        });
-
-        // Auto-approve if enabled
-        if (currentState.autoApprove) {
-          await approvePullRequest(token, owner, repo, prNumber);
-
-          // Merge
-          const mergeResult = await mergePullRequest(token, owner, repo, prNumber);
-          if (mergeResult.ok) {
-            await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED);
-            resolve(true);
-            return;
-          }
-        }
-
-        // If not auto-approve, poll for merge
-        const pollForMerge = async () => {
-          const state2 = usePipelineStore.getState();
-          if (!state2.isRunning || state2.isPaused) {
-            resolve(false);
-            return;
-          }
-
-          const prCheck = await getPullRequest(token, owner, repo, prNumber);
-          if (prCheck.ok && prCheck.data?.merged) {
-            await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED);
-            resolve(true);
-            return;
-          }
-
-          // Continue polling
-          const mergeIntervalId = setTimeout(pollForMerge, POLL_INTERVAL_MS);
-          usePipelineStore.getState().setPollIntervalId(mergeIntervalId);
-        };
-
-        const mergeIntervalId = setTimeout(pollForMerge, POLL_INTERVAL_MS);
-        usePipelineStore.getState().setPollIntervalId(mergeIntervalId);
+      const prCheck = await getPullRequest(token, owner, repo, prNumber);
+      if (!prCheck.ok) {
+        const intervalId = setTimeout(pollPR, POLL_INTERVAL_MS);
+        usePipelineStore.getState().setPollIntervalId(intervalId);
         return;
       }
 
-      // No PR yet — keep polling
-      const intervalId = setTimeout(pollForPR, POLL_INTERVAL_MS);
+      // PR was merged
+      if (prCheck.data.merged) {
+        await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED);
+        resolve(true);
+        return;
+      }
+
+      // PR was closed without merging
+      if (prCheck.data.state === 'closed') {
+        await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.CLOSED);
+        resolve(true);
+        return;
+      }
+
+      // Auto-approve if enabled and Copilot has pushed commits (more than our initial one)
+      if (currentState.autoApprove && prCheck.data.commits > 1) {
+        await approvePullRequest(token, owner, repo, prNumber);
+        const mergeResult = await mergePullRequest(token, owner, repo, prNumber);
+        if (mergeResult.ok) {
+          await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED);
+          resolve(true);
+          return;
+        }
+      }
+
+      // Continue polling
+      const intervalId = setTimeout(pollPR, POLL_INTERVAL_MS);
       usePipelineStore.getState().setPollIntervalId(intervalId);
     };
 
     // Start first poll
-    const initialId = setTimeout(pollForPR, POLL_INTERVAL_MS);
+    const initialId = setTimeout(pollPR, POLL_INTERVAL_MS);
     usePipelineStore.getState().setPollIntervalId(initialId);
   });
 }
