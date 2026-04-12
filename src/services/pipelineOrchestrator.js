@@ -5,7 +5,6 @@ import {
   updateTaskStatus,
 } from './pipelineTaskService';
 import {
-  createIssue,
   getRepoInfo,
   getBranchRef,
   createBranchRef,
@@ -37,20 +36,9 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
   store.setCurrentTaskId(objectId);
 
   const title = task.headerText || `Task #${task.merfolkData.planTaskIndex}`;
-  const body = task.text || '';
+  const body = task.content || task.text || '';
 
-  // Step 1: Create GitHub Issue for tracking (if not yet created)
-  let issueNumber = task.merfolkData?.githubIssueNumber;
-  if (!issueNumber) {
-    const issueResult = await createIssue(token, owner, repo, { title, body });
-    if (!issueResult.ok) {
-      console.error('[pipelineOrchestrator] Failed to create issue:', issueResult.error);
-      return false;
-    }
-    issueNumber = issueResult.data.number;
-  }
-
-  // Step 2: Create branch + PR + @copilot comment (if no PR yet)
+  // Step 1: Create branch + PR + @copilot comment (if no PR yet)
   let prNumber = task.merfolkData?.githubPrNumber;
   if (!prNumber) {
     // Get default branch SHA
@@ -68,8 +56,10 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
     }
     const baseSha = branchRef.data.object.sha;
 
+    const taskIndex = task.merfolkData.planTaskIndex;
+
     // Create a new branch for this task
-    const branchName = `copilot/issue-${issueNumber}`;
+    const branchName = `copilot/task-${taskIndex}`;
     const branchResult = await createBranchRef(token, owner, repo, branchName, baseSha);
     if (!branchResult.ok) {
       console.error('[pipelineOrchestrator] Failed to create branch:', branchResult.error);
@@ -77,13 +67,13 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
     }
 
     // Create a task spec file to give the PR a diff
-    const taskSpec = `# Task: ${title}\n\nResolves #${issueNumber}\n\n${body}`;
+    const taskSpec = `# Task: ${title}\n\n${body}`;
     const fileResult = await createFileOnBranch(
       token, owner, repo,
-      `.github/copilot-tasks/issue-${issueNumber}.md`,
+      `.github/copilot-tasks/task-${taskIndex}.md`,
       taskSpec,
       branchName,
-      `task(#${issueNumber}): ${title}`
+      `task(${taskIndex}): ${title}`
     );
     if (!fileResult.ok) {
       console.error('[pipelineOrchestrator] Failed to create task file:', fileResult.error);
@@ -91,10 +81,9 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
     }
 
     // Open a PR from the branch
-    const prBody = `Resolves #${issueNumber}\n\n${body}`;
     const prResult = await createPullRequest(token, owner, repo, {
       title,
-      body: prBody,
+      body,
       head: branchName,
       base: defaultBranch,
     });
@@ -109,18 +98,17 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
     await addComment(token, owner, repo, prNumber, copilotPrompt);
   }
 
-  // Step 3: Update status to in-progress with issue + PR numbers
+  // Step 2: Update status to in-progress with PR number
   await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.IN_PROGRESS, {
-    githubIssueNumber: issueNumber,
     githubPrNumber: prNumber,
   });
 
-  // Step 4: Update status to pr-open
+  // Step 3: Update status to pr-open
   await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.PR_OPEN, {
     githubPrNumber: prNumber,
   });
 
-  // Step 5: Poll for Copilot to push commits and/or for merge
+  // Step 4: Poll for Copilot to push commits and/or for merge
   return new Promise((resolve) => {
     const pollPR = async () => {
       const currentState = usePipelineStore.getState();
