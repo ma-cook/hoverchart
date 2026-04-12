@@ -1319,6 +1319,12 @@ const UIOverlay = ({
                 ? `${currentCell.x},${currentCell.y},${currentCell.z}`
                 : '0,0,0'}
             </span>
+            {spaceType === 'github_control_panel' && user?.uid && (
+              <div style={{ marginTop: '4px', fontSize: '11px', color: '#888' }}>
+                <span>UUID: </span>
+                <span style={{ fontFamily: 'monospace', userSelect: 'all' }}>{user.uid}</span>
+              </div>
+            )}
           </div>
           {/* Template Section */}{' '}
           {spaceType !== 'earth' && spaceType !== 'github_control_panel' && (
