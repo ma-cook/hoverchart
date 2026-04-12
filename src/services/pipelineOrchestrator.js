@@ -36,7 +36,7 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
   let issueNumber = task.merfolkData?.githubIssueNumber;
   if (!issueNumber) {
     const title = task.headerText || `Task #${task.merfolkData.planTaskIndex}`;
-    const body = task.text || '';
+    const body = task.content || '';
     const result = await createIssue(token, owner, repo, { title, body });
     if (!result.ok) {
       console.error('[pipelineOrchestrator] Failed to create issue:', result.error);
@@ -51,7 +51,10 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
   });
 
   // Step 3: Assign Copilot to the issue
-  await assignCopilotToIssue(token, owner, repo, issueNumber);
+  const assignResult = await assignCopilotToIssue(token, owner, repo, issueNumber);
+  if (!assignResult.ok) {
+    console.error('[pipelineOrchestrator] Failed to assign Copilot:', assignResult.error);
+  }
 
   // Step 4: Poll for linked PR
   return new Promise((resolve) => {
