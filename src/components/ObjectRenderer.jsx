@@ -5,6 +5,7 @@ import Sphere from './Dodecahedron';
 import Plane from './Plane';
 import TextObject from './TextObject';
 import ModelObject from './ModelObject';
+import { isCubeUnmodified } from './GlobalCubeFullLODInstancedRenderer';
 
 // Module-level constant to avoid creating new object on every render
 const TRANSFORM_CONTROLS_CONFIG = {
@@ -38,6 +39,7 @@ const ObjectRenderer = React.memo(
     handleObjectDelete,
     user, // Add this prop
     currentSpaceId, // Add this prop
+    unmodifiedCubeIds, // Set of cube IDs rendered by instanced renderer
   }) => {
     // Stable callback references — prevents new closures per render from
     // breaking React.memo on child 3D components (Cube, Tetrahedron, etc.).
@@ -52,6 +54,12 @@ const ObjectRenderer = React.memo(
     // Container cubes now have their edges rendered by GlobalCubeEdgesRenderer
     // They don't need any other rendering (no faces, no interaction)
     if (obj.type === 'cube' && obj.merfolkData?.isContainer) {
+      return null;
+    }
+
+    // Unmodified cubes at FULL LOD are rendered by GlobalCubeFullLODInstancedRenderer
+    // Skip mounting the heavy <Cube> component unless selected or modified
+    if (obj.type === 'cube' && unmodifiedCubeIds?.has(obj.id) && selectedId !== obj.id) {
       return null;
     }
 
@@ -242,7 +250,8 @@ const ObjectRenderer = React.memo(
       prevProps.activeTextStyleUI === nextProps.activeTextStyleUI &&
       prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
       (prevProps.selectedIndicators?.length || 0) ===
-        (nextProps.selectedIndicators?.length || 0)
+        (nextProps.selectedIndicators?.length || 0) &&
+      prevProps.unmodifiedCubeIds === nextProps.unmodifiedCubeIds
     );
   }
 );

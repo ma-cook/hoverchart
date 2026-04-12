@@ -8,7 +8,9 @@ import GlobalCubeMediumLODRenderer from './GlobalCubeMediumLODRenderer';
 import GlobalDodecahedronMediumLODRenderer from './GlobalDodecahedronMediumLODRenderer';
 import GlobalTetrahedronMediumLODRenderer from './GlobalTetrahedronMediumLODRenderer';
 import GlobalCubeFaceRenderer from './GlobalCubeFaceRenderer';
+import GlobalCubeFullLODInstancedRenderer, { isCubeUnmodified } from './GlobalCubeFullLODInstancedRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
+import { useCubeStore } from '../stores';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 
@@ -381,6 +383,28 @@ const ObjectsRenderer = React.memo(({
     return progressiveVisibleObjects.filter((obj) => obj.type === 'tetrahedron');
   }, [progressiveVisibleObjects]);
 
+  // Compute set of unmodified cube IDs for instanced full-LOD rendering.
+  // These cubes skip mounting individual <Cube> components — their wireframe
+  // edges come from GlobalCubeEdgesRenderer and their transparent clickable
+  // faces from GlobalCubeFullLODInstancedRenderer.
+  const cubesMap = useCubeStore((s) => s.cubes);
+  const unmodifiedCubeIds = useMemo(() => {
+    const ids = new Set();
+    for (const cube of cubeObjects) {
+      if (cube.merfolkData?.isContainer) continue;
+      if (isCubeUnmodified(cube.id, cubesMap)) {
+        ids.add(cube.id);
+      }
+    }
+    return ids;
+  }, [cubeObjects, cubesMap]);
+
+  // Click handler for the instanced full-LOD renderer — selects the cube,
+  // which promotes it to a full <Cube> component on next render.
+  const handleInstancedCubeClick = useMemo(() => {
+    return (cubeId) => handleObjectClick(cubeId);
+  }, [handleObjectClick]);
+
   // Render individual objects (progressively mounted to prevent freezes)
   const renderedObjects = useMemo(() => {
     return progressiveVisibleObjects.map((obj) => (
@@ -412,6 +436,7 @@ const ObjectsRenderer = React.memo(({
         getTransformStartPosition={getTransformStartPosition}
         checkPositionJitter={checkPositionJitter}
         useLOD={useLOD}
+        unmodifiedCubeIds={unmodifiedCubeIds}
       />
     ));
   }, [
@@ -441,6 +466,7 @@ const ObjectsRenderer = React.memo(({
     getTransformStartPosition,
     checkPositionJitter,
     useLOD,
+    unmodifiedCubeIds,
   ]);
 
   return (
@@ -453,6 +479,9 @@ const ObjectsRenderer = React.memo(({
       
       {/* PERFORMANCE: Render all medium-LOD cubes as simple boxes in 1 draw call */}
       <GlobalCubeMediumLODRenderer cubes={cubeObjects} />
+      
+      {/* PERFORMANCE: Instanced transparent faces for unmodified full-LOD cubes (1 draw call) */}
+      <GlobalCubeFullLODInstancedRenderer cubes={cubeObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* PERFORMANCE: Render all dodecahedron edges in a single draw call */}
       <GlobalDodecahedronEdgesRenderer dodecahedrons={dodecahedronObjects} defaultLineWidth={1} />

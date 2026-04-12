@@ -193,7 +193,7 @@ export const SpacesTable = React.memo(
                       >
                         {navigatingSpaceId === space.id
                           ? 'Opening...'
-                          : `${space.type === 'earth' ? '🌍 ' : ''}${space.name}`}
+                          : `${space.type === 'earth' ? '🌍 ' : space.type === 'github_control_panel' ? '🐙 ' : ''}${space.name}`}
                       </a>
                     </td>
                     <td style={tdStyles}>
@@ -265,7 +265,7 @@ export const SpacesTable = React.memo(
                       >
                         {navigatingSpaceId === space.id
                           ? 'Opening...'
-                          : `${space.type === 'earth' ? '🌍 ' : ''}${space.name}`}
+                          : `${space.type === 'earth' ? '🌍 ' : space.type === 'github_control_panel' ? '🐙 ' : ''}${space.name}`}
                       </a>
                     </td>
                     <td style={tdStyles}>

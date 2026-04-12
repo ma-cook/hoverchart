@@ -28,6 +28,7 @@ import { calculateAxisSnap } from '../utils/snappingUtils';
 import SnapLineIndicator from './SnapLineIndicator';
 // Import unified global click handler
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
+import { getStatusColor, getStatusLabel, isTaskObject } from '../services/pipelineTaskService';
 
 const EMPTY_CONNECTIONS = [];
 
@@ -89,6 +90,10 @@ const TextObject = React.memo(
       () => objectData?.scale || [15, 10, 1],
       [objectData?.scale]
     );
+
+    // Pipeline task metadata
+    const merfolkData = objectData?.merfolkData;
+    const isPipelineTask = merfolkData?.planTaskIndex != null;
 
     // --- Real-time visual scale state ---
     const [visualScale, setVisualScale] = useState(scale);
@@ -1698,6 +1703,9 @@ const TextObject = React.memo(
       transform: 'scale(1)',
       opacity: showTransform || showResizeControls ? 0.5 : 1, // Add opacity when controls are active
       transition: 'opacity 0.2s ease', // Smooth opacity transition
+      ...(isPipelineTask && {
+        borderLeft: `4px solid ${getStatusColor(merfolkData?.status)}`,
+      }),
     });
 
     // Effect to synchronize invisible mesh scale with visualScale
@@ -2185,6 +2193,47 @@ const TextObject = React.memo(
                     })(),
                   }}
                 />
+              )}
+              {isPipelineTask && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '4px 8px',
+                  borderTop: '1px solid #e0e0e0',
+                  fontSize: '11px',
+                  fontFamily: 'Arial, sans-serif',
+                  color: '#666',
+                  background: '#fafafa',
+                }}>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}>
+                    <span style={{
+                      fontWeight: 'bold',
+                      color: '#333',
+                    }}>#{merfolkData.planTaskIndex}</span>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '1px 6px',
+                      borderRadius: '8px',
+                      backgroundColor: getStatusColor(merfolkData.status),
+                      color: '#fff',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                    }}>{getStatusLabel(merfolkData.status)}</span>
+                  </span>
+                  <span style={{ display: 'inline-flex', gap: '6px' }}>
+                    {merfolkData.githubIssueNumber && (
+                      <span style={{ color: '#0366d6' }}>#{merfolkData.githubIssueNumber}</span>
+                    )}
+                    {merfolkData.githubPrNumber && (
+                      <span style={{ color: '#6f42c1' }}>PR #{merfolkData.githubPrNumber}</span>
+                    )}
+                  </span>
+                </div>
               )}
             </div>
           </Html>

@@ -22,6 +22,7 @@ export { default as useObjectsStore } from './objectsStore.js';
 export { default as useSpatialManagerStore } from './spatialManagerStore.js';
 export { default as useDiagramStore } from './diagramStore.js';
 export { default as useEarthSettingsStore } from './earthSettingsStore.js';
+export { default as usePipelineStore } from './pipelineStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';
