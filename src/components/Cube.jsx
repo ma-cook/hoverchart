@@ -34,8 +34,8 @@ import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import usePipelineStore from '../stores/pipelineStore';
 import { startPipeline, stopPipeline } from '../services/pipelineOrchestrator';
-import { getPipelineTasksForRepo } from '../services/pipelineTaskService';
-import { clearRepoTasks } from '../services/repoContainerService';
+import { getPipelineTasksForRepo, getPipelineTasks } from '../services/pipelineTaskService';
+import { clearRepoTasks, assignRepoSlugToOrphanTasks, repositionIncomingTasks } from '../services/repoContainerService';
 
 const EMPTY_CONNECTIONS = [];
 
@@ -205,6 +205,20 @@ const Cube = ({
   const [showRepoMenu, setShowRepoMenu] = useState(false);
   const pipelineIsRunning = usePipelineStore((state) => state.isRunning);
   const repoSlug = objectData?.merfolkData?.repoSlug;
+
+  // Count pipeline tasks for this repo container
+  const repoTaskCount = useObjectsStore(
+    useCallback(
+      (state) => {
+        if (!isRepoContainer || !repoSlug) return 0;
+        return (state.objects || []).filter(
+          (obj) => obj.merfolkData?.planTaskIndex != null &&
+            (obj.merfolkData?.repoSlug === repoSlug || !obj.merfolkData?.repoSlug)
+        ).length;
+      },
+      [isRepoContainer, repoSlug]
+    )
+  );
   // const setIndicatorConnected = useFaceIndicatorStore(
   //   (state) => state.setIndicatorConnected
   // );
@@ -1438,7 +1452,11 @@ const Cube = ({
             position={getUIPositions.headerText}
           >
             <AtlasTextSprite
-              text={cube?.headerText || headerText}
+              text={
+                isRepoContainer && repoTaskCount > 0
+                  ? `${cube?.headerText || headerText}  (${repoTaskCount} tasks)`
+                  : (cube?.headerText || headerText)
+              }
               position={[0, 0, 0]}
               followTarget={meshRef}
               onClick={(e) => {
@@ -1608,11 +1626,26 @@ const Cube = ({
                   if (pipelineIsRunning) {
                     stopPipeline();
                   } else {
+                    // Assign repoSlug to orphan tasks and reposition into container
+                    assignRepoSlugToOrphanTasks();
+                    repositionIncomingTasks(repoSlug);
                     const allObjs = useObjectsStore.getState().objects || [];
-                    const repoTasks = getPipelineTasksForRepo(allObjs, repoSlug);
+                    // Try repo-scoped tasks first, fall back to all tasks
+                    let repoTasks = getPipelineTasksForRepo(allObjs, repoSlug);
+                    if (repoTasks.length === 0) {
+                      repoTasks = getPipelineTasks(allObjs);
+                    }
                     const spaceOwnerId = window.currentSpaceOwner;
                     const spaceId = window.currentSpaceId;
                     if (repoTasks.length > 0 && spaceOwnerId && spaceId) {
+                      // Ensure repo is in connectedRepos (may be lost on refresh)
+                      if (repoSlug && !usePipelineStore.getState().getRepo(repoSlug)) {
+                        const [rOwner, rRepo] = repoSlug.split('/');
+                        if (rOwner && rRepo) {
+                          usePipelineStore.getState().addRepo(rOwner, rRepo);
+                          usePipelineStore.getState().persistState(spaceId);
+                        }
+                      }
                       startPipeline(spaceOwnerId, spaceId, repoTasks, repoSlug);
                     }
                   }

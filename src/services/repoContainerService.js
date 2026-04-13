@@ -31,6 +31,62 @@ export function findRepoContainer(repoSlug) {
 }
 
 /**
+ * Get all repo containers in the objects store.
+ */
+export function getAllRepoContainers() {
+  const objects = useObjectsStore.getState().objects || [];
+  return objects.filter((obj) => obj.merfolkData?.isRepoContainer);
+}
+
+/**
+ * Assign repoSlug to orphan tasks (tasks with planTaskIndex but no repoSlug).
+ * If only one repo container exists, assigns all orphans to it.
+ * Returns the repoSlug that was assigned, or null.
+ */
+export function assignRepoSlugToOrphanTasks() {
+  const containers = getAllRepoContainers();
+  if (containers.length === 0) {
+    console.warn('[repoContainerService] assignRepoSlugToOrphanTasks: no repo containers found');
+    return null;
+  }
+
+  // Use the first (or only) container's repoSlug
+  const targetSlug = containers[0].merfolkData.repoSlug;
+  if (!targetSlug) return null;
+
+  const store = useObjectsStore.getState();
+  const allObjects = store.objects || [];
+
+  const orphans = allObjects.filter(
+    (obj) => obj.merfolkData?.planTaskIndex != null && !obj.merfolkData?.repoSlug
+  );
+  if (orphans.length === 0) return null;
+
+  const orphanIds = new Set(orphans.map((o) => o.id));
+  const spaceOwnerId = window.currentSpaceOwner;
+  const currentSpaceId = window.currentSpaceId;
+
+  const updatedObjects = allObjects.map((obj) => {
+    if (!orphanIds.has(obj.id)) return obj;
+    const updated = {
+      ...obj,
+      merfolkData: {
+        ...obj.merfolkData,
+        repoSlug: targetSlug,
+      },
+    };
+    if (spaceOwnerId && currentSpaceId) {
+      saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
+    }
+    return updated;
+  });
+
+  useObjectsStore.setState({ objects: updatedObjects });
+  console.log(`[repoContainerService] Assigned repoSlug "${targetSlug}" to ${orphans.length} orphan tasks`);
+  return targetSlug;
+}
+
+/**
  * Count how many repo containers already exist, for positioning offset.
  */
 function countRepoContainers() {
@@ -111,6 +167,113 @@ export async function createRepoContainer(owner, repo, user, currentSpaceId, pos
   }
 
   return containerId;
+}
+
+/**
+ * Reposition incoming tasks (from planScape bulkImport) into the repo container.
+ * Tasks arriving via bulkImport have arbitrary positions; this moves them
+ * to the correct container-relative layout and marks them as positioned.
+ */
+export function repositionIncomingTasks(repoSlug) {
+  const container = findRepoContainer(repoSlug);
+  if (!container) {
+    console.warn('[repoContainerService] repositionIncomingTasks: no container for', repoSlug);
+    return 0;
+  }
+
+  const store = useObjectsStore.getState();
+  const allObjects = store.objects || [];
+
+  // Find tasks for this repo that haven't been positioned yet
+  const unpositioned = allObjects.filter(
+    (obj) =>
+      obj.merfolkData?.planTaskIndex != null &&
+      obj.merfolkData?.repoSlug === repoSlug &&
+      !obj.merfolkData?.positioned
+  );
+  if (unpositioned.length === 0) {
+    console.log('[repoContainerService] repositionIncomingTasks: no unpositioned tasks for', repoSlug);
+    return 0;
+  }
+
+  // Sort by planTaskIndex so order is deterministic
+  unpositioned.sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
+
+  // Count already-positioned tasks so new ones stack after them
+  const positionedCount = allObjects.filter(
+    (obj) =>
+      obj.merfolkData?.planTaskIndex != null &&
+      obj.merfolkData?.repoSlug === repoSlug &&
+      obj.merfolkData?.positioned
+  ).length;
+
+  const containerPos = container.position;
+  const containerScale = container.scale;
+  const frontZ = containerPos[2] + containerScale[2] * 5 - 3;
+  const taskStartX = containerPos[0] - containerScale[0] * 4;
+
+  const spaceOwnerId = window.currentSpaceOwner;
+  const currentSpaceId = window.currentSpaceId;
+
+  const unpositionedIds = new Set(unpositioned.map((t) => t.id));
+
+  const updatedObjects = allObjects.map((obj) => {
+    if (!unpositionedIds.has(obj.id)) return obj;
+
+    const taskIndex = unpositioned.findIndex((t) => t.id === obj.id);
+    const overallIndex = positionedCount + taskIndex;
+    const newPos = [
+      taskStartX,
+      containerPos[1] + TASK_OFFSET_Y,
+      frontZ - overallIndex * TASK_SPACING_Z,
+    ];
+    const bodyText = obj.content || obj.text || '';
+
+    const updated = {
+      ...obj,
+      type: 'text',
+      position: newPos,
+      cellId: getCellId(newPos),
+      scale: obj.scale && obj.scale[0] >= 10 ? obj.scale : [...COLLAPSED_TASK_SCALE],
+      color: obj.color || '#ffffff',
+      content: bodyText,
+      text: bodyText,
+      headerText: obj.headerText || `Task ${obj.merfolkData.planTaskIndex}`,
+      headerStyle: obj.headerStyle || { fontSize: 2, color: 'black' },
+      textStyle: obj.textStyle || { fontSize: TASK_FONT_SIZE, color: 'black' },
+      merfolkData: {
+        ...obj.merfolkData,
+        positioned: true,
+        isExpanded: false,
+      },
+    };
+
+    if (spaceOwnerId && currentSpaceId) {
+      saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
+    }
+    return updated;
+  });
+
+  // Expand container to fit all tasks
+  const totalTasks = positionedCount + unpositioned.length;
+  const neededDepth = Math.max(CONTAINER_BASE_SCALE[2], (totalTasks * TASK_SPACING_Z + 6) / 10);
+  const neededWidth = Math.max(CONTAINER_BASE_SCALE[0], 20);
+  const neededHeight = Math.max(CONTAINER_BASE_SCALE[1], 15);
+
+  const finalObjects = updatedObjects.map((obj) => {
+    if (obj.id === container.id) {
+      const updated = { ...obj, scale: [neededWidth, neededHeight, neededDepth] };
+      if (spaceOwnerId && currentSpaceId) {
+        saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
+      }
+      return updated;
+    }
+    return obj;
+  });
+
+  useObjectsStore.setState({ objects: finalObjects });
+  console.log(`[repoContainerService] Repositioned ${unpositioned.length} tasks into container for ${repoSlug}`);
+  return unpositioned.length;
 }
 
 /**

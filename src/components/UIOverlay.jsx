@@ -33,7 +33,7 @@ import useEarthSettingsStore from '../stores/earthSettingsStore';
 import usePipelineStore from '../stores/pipelineStore';
 import { getPipelineTasks, getStatusColor, getStatusLabel, TASK_STATUS } from '../services/pipelineTaskService';
 import { startPipeline, pausePipeline, resumePipeline, stopPipeline } from '../services/pipelineOrchestrator';
-import { createRepoContainer } from '../services/repoContainerService';
+import { createRepoContainer, repositionIncomingTasks, findRepoContainer, assignRepoSlugToOrphanTasks } from '../services/repoContainerService';
 
 const PRESET_LOCATIONS = [
   { name: 'Himalayas', lat: 27.99, lon: 86.93 },
@@ -263,6 +263,39 @@ const UIOverlay = ({
       usePipelineStore.getState().restoreState(currentSpaceId);
     }
   }, [currentSpaceId, spaceType]);
+
+  // Auto-assign repoSlug to orphan tasks and reposition into containers
+  useEffect(() => {
+    if (spaceType !== 'github_control_panel') return;
+    if (pipelineTasks.length === 0) return;
+
+    console.log('[UIOverlay] Pipeline tasks effect: ', pipelineTasks.length, 'tasks');
+
+    // Step 1: Assign repoSlug to tasks that don't have one
+    const hasOrphans = pipelineTasks.some((t) => !t.merfolkData?.repoSlug);
+    if (hasOrphans) {
+      console.log('[UIOverlay] Found orphan tasks without repoSlug, assigning...');
+      const result = assignRepoSlugToOrphanTasks();
+      console.log('[UIOverlay] assignRepoSlugToOrphanTasks result:', result);
+      if (result) return; // State will update, triggering this effect again
+    }
+
+    // Step 2: Reposition tasks that have repoSlug but haven't been positioned yet
+    const repoSlugs = new Set(
+      pipelineTasks.map((t) => t.merfolkData?.repoSlug).filter(Boolean)
+    );
+    console.log('[UIOverlay] Repo slugs from tasks:', [...repoSlugs]);
+    for (const slug of repoSlugs) {
+      const hasUnpositioned = pipelineTasks.some(
+        (t) => t.merfolkData?.repoSlug === slug && !t.merfolkData?.positioned
+      );
+      const container = findRepoContainer(slug);
+      console.log(`[UIOverlay] Slug ${slug}: unpositioned=${hasUnpositioned}, container=${!!container}`);
+      if (hasUnpositioned && container) {
+        repositionIncomingTasks(slug);
+      }
+    }
+  }, [pipelineTasks, spaceType]);
 
   // Load persisted repo + markdown URL for this space on mount / space change
   useEffect(() => {
@@ -1743,18 +1776,7 @@ const UIOverlay = ({
                 </div>
               )}
 
-              {/* Pipeline Summary */}
-              {pipelineTasks.length > 0 && (
-                <div style={{ fontSize: '12px', color: '#ccc' }}>
-                  {Object.entries(pipelineStatusCounts).map(([status, count], i) => (
-                    <span key={status}>
-                      {i > 0 && ' · '}
-                      <span style={{ color: getStatusColor(status) }}>{count}</span>{' '}
-                      {getStatusLabel(status).toLowerCase()}
-                    </span>
-                  ))}
-                </div>
-              )}
+
 
               {/* Auto-approve toggle */}
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#ccc', cursor: 'pointer' }}>
