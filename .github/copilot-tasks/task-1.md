@@ -1,4 +1,4 @@
-# Task: 1. Data Model — Save Merge Commit SHA
+# Task: 1. GitHub API — Add revertCommit Function
 
 ## TL;DR
 Replace click-to-expand on pipeline task TextObjects with a custom UI menu (black-bordered). Menu has Revert (force-resets main via merge_commit_sha), Delete (removes task), and Expand/Collapse buttons. Requires saving merge_commit_sha when PRs merge, adding revertCommit API function, and modifying TextObject click + render logic.
@@ -12,9 +12,12 @@ Replace click-to-expand on pipeline task TextObjects with a custom UI menu (blac
 
 ---
 
-**Why:** The revert feature needs to know which commit to revert. GitHub's PR response includes `merge_commit_sha` but we don't currently store it.
+**Why:** No revert function exists in the GitHub service. Need to fetch a commit's parent and force-update the branch ref.
 
-1. Modify `pipelineOrchestrator.js` line 129 — pass `{ mergeCommitSha: prCheck.data.merge_commit_sha }` as the `extraFields` arg to `updateTaskStatus()`. The function already supports `extraFields` that get merged into `merfolkData` in Firestore.
+2. Add `revertCommit(token, owner, repo, commitSha, branch = 'main')` to `githubIssuesService.js` after line 173, using existing `githubFetch` helper:
+   - GET `/repos/:owner/:repo/git/commits/:commitSha` → extract `parents[0].sha`
+   - PATCH `/repos/:owner/:repo/git/refs/heads/:branch` with `{ sha: parentSha, force: true }`
+   - Return `{ ok, data, error }` matching all other service functions
 
 **Files:**
-- `src/services/pipelineOrchestrator.js` — add mergeCommitSha to updateTaskStatus call
+- `src/services/githubIssuesService.js` — add `revertCommit()` function after `enableAutoMerge()`

@@ -183,3 +183,18 @@ export async function enableAutoMerge(token, pullRequestNodeId, mergeMethod = 'S
   }
   return { ok: true, data: data.data, error: null };
 }
+
+export async function revertCommit(token, owner, repo, commitSha, branch = 'main') {
+  const commitRes = await githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/commits/${enc(commitSha)}`);
+  if (!commitRes.ok) return commitRes;
+
+  const parentSha = commitRes.data?.parents?.[0]?.sha;
+  if (!parentSha) {
+    return { ok: false, data: null, error: 'No parent commit found' };
+  }
+
+  return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/refs/heads/${enc(branch)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ sha: parentSha, force: true }),
+  });
+}
