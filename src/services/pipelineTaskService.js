@@ -46,7 +46,11 @@ export function getPipelineTasks(objects) {
 
 export function getNextQueuedTask(tasks) {
   return tasks.find(
-    (task) => task.merfolkData?.status === TASK_STATUS.QUEUED
+    (task) => {
+      const status = task.merfolkData?.status;
+      // Treat tasks with no status as queued (legacy tasks positioned before status was added)
+      return !status || status === TASK_STATUS.QUEUED;
+    }
   ) || null;
 }
 
