@@ -30,6 +30,7 @@ import SnapLineIndicator from './SnapLineIndicator';
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
 import { getStatusColor, getStatusLabel, isTaskObject } from '../services/pipelineTaskService';
 import { toggleTaskExpansion } from '../services/repoContainerService';
+import { revertCommit } from '../services/githubIssuesService';
 
 const EMPTY_CONNECTIONS = [];
 
@@ -994,12 +995,6 @@ const TextObject = React.memo(
       e.stopPropagation();
       e.preventDefault();
 
-      // Pipeline task click: toggle expand/collapse instead of editing
-      if (isPipelineTask && !isEditing) {
-        toggleTaskExpansion(id);
-        return;
-      }
-
       onClick();
 
       // CRITICAL FIX: Prevent double-click from accidentally clearing text
@@ -1713,7 +1708,7 @@ const TextObject = React.memo(
       opacity: showTransform || showResizeControls ? 0.5 : 1, // Add opacity when controls are active
       transition: 'opacity 0.2s ease', // Smooth opacity transition
       ...(isPipelineTask && {
-        borderLeft: `4px solid ${getStatusColor(merfolkData?.status)}`,
+        border: '2px solid black',
       }),
     });
 
@@ -2332,8 +2327,123 @@ const TextObject = React.memo(
                   size={0.5}
                 />
               )}
-              {/* Text style UI */}
-              {selected && (
+              {/* Text style UI — pipeline tasks get a custom action menu */}
+              {selected && isPipelineTask ? (
+                <Html
+                  center
+                  style={{
+                    pointerEvents: 'auto',
+                    transform: 'translate3d(0, -120%, 0)',
+                    zIndex: 100000,
+                  }}
+                >
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      display: 'flex',
+                      gap: '6px',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      background: 'rgba(10, 10, 10, 0.97)',
+                      border: '2px solid black',
+                      backdropFilter: 'blur(8px)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {/* Revert button — only active when mergeCommitSha is available */}
+                    <button
+                      disabled={!merfolkData?.mergeCommitSha}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const token = localStorage.getItem('github_token');
+                        const repoSlug = merfolkData?.repoSlug;
+                        if (!token || !repoSlug) {
+                          console.error('[TextObject] Revert failed: missing token or repoSlug');
+                          return;
+                        }
+                        const [owner, repo] = repoSlug.split('/');
+                        if (!owner || !repo) {
+                          console.error('[TextObject] Revert failed: invalid repoSlug format');
+                          return;
+                        }
+                        const result = await revertCommit(token, owner, repo, merfolkData.mergeCommitSha);
+                        if (!result.ok) {
+                          console.error('[TextObject] Revert failed:', result.error);
+                        }
+                      }}
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '13px',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: merfolkData?.mergeCommitSha ? 'pointer' : 'not-allowed',
+                        background: merfolkData?.mergeCommitSha ? '#f44336' : '#555',
+                        color: '#fff',
+                        fontWeight: 600,
+                        opacity: merfolkData?.mergeCommitSha ? 1 : 0.5,
+                      }}
+                    >
+                      ↩ Revert
+                    </button>
+                    {/* Delete button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onDelete) onDelete(id);
+                      }}
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '13px',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        background: '#ff9800',
+                        color: '#fff',
+                        fontWeight: 600,
+                      }}
+                    >
+                      🗑 Delete
+                    </button>
+                    {/* Expand/Collapse button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleTaskExpansion(id);
+                      }}
+                      style={{
+                        padding: '6px 14px',
+                        fontSize: '13px',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        background: 'rgba(255,255,255,0.15)',
+                        color: '#fff',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {isTaskExpanded ? '▲ Collapse' : '▼ Expand'}
+                    </button>
+                    {/* Close button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onClick();
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        fontSize: '13px',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        background: 'rgba(255,255,255,0.1)',
+                        color: '#aaa',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </Html>
+              ) : selected ? (
                 <TextObjectUI
                   ref={uiMenuRef}
                   id={id}
@@ -2345,7 +2455,7 @@ const TextObject = React.memo(
                   showTransform={showTransform}
                   followTarget={groupRef}
                 />
-              )}
+              ) : null}
             </>
           );
         })()}

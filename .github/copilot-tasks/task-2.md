@@ -1,42 +1,29 @@
-# Task: 2. Pipeline Store — Multi-Repo State
+# Task: 2. TextObject — Black Border & Custom Task Menu
 
 ## TL;DR
-Enhance GitHub Control Panel spaces to support multiple repos simultaneously. Each repo gets its own 3D task cluster (~200 units apart), its own independent pipeline, and the sidebar uses the same GitHub repo dropdown pattern as the diagram space. merfolkData gains a `repoSlug` field to tag tasks per-repo; pipelineStore becomes multi-repo with a Map of per-repo states.
+Replace click-to-expand on pipeline task TextObjects with a custom UI menu (black-bordered). Menu has Revert (force-resets main via merge_commit_sha), Delete (removes task), and Expand/Collapse buttons. Requires saving merge_commit_sha when PRs merge, adding revertCommit API function, and modifying TextObject click + render logic.
 
 ## Decisions
-- Layout: Separate clusters ~200 units apart along X axis, all within cell 0,0,0
-- Pipelines: Independent per-repo (each has own start/pause/stop/auto-approve)
-- Repo selection: Additive — selecting a repo from dropdown adds a new filing group
-- Repo dropdown: Reuse the existing `fetchGithubRepositories` + dropdown list pattern from diagram space
+- Revert is force-push (destructive) — matches user intent
+- Token from localStorage('github_token') — same as pipelineOrchestrator
+- Owner/repo from merfolkData.repoSlug (format: owner/repo)
+- Expand/collapse moved from click-to-toggle to menu button
+- Custom menu styled like Cube repo menu (Html overlay)
 
 ---
 
-**Why:** Current store has single `connectedRepo`, `isRunning`, etc. Need per-repo pipeline state.
+**Why:** Pipeline tasks need a distinct visual style (black border) and a custom action menu instead of the text formatting toolbar.
 
-4. Restructure `pipelineStore.js`:
-   - Replace single-repo fields with a `repos` Map keyed by repoSlug:
-     ```
-     repos: Map<repoSlug, {
-       owner: string,
-       repo: string,
-       isRunning: false,
-       isPaused: false,
-       autoApprove: false,
-       currentTaskId: null,
-       pollIntervalId: null,
-     }>
-     ```
-   - Add `activeRepoSlug: null` — the repo currently selected in the sidebar for viewing controls
-   - Keep `taskOrder: []` global (ordered list of all task IDs)
-   - New actions:
-     - `addRepo(owner, repo)` — adds to `repos` Map
-     - `removeRepo(repoSlug)` — removes from Map, stops pipeline if running
-     - `setActiveRepo(repoSlug)` — sets sidebar focus
-     - `startRepoPipeline(repoSlug)`, `pauseRepoPipeline(repoSlug)`, `resumeRepoPipeline(repoSlug)`, `stopRepoPipeline(repoSlug)`
-     - `setRepoAutoApprove(repoSlug, bool)`
-     - `setRepoCurrentTaskId(repoSlug, taskId)`
-     - `setRepoPollIntervalId(repoSlug, intervalId)`
-   - Persist/restore: serialize entire `repos` Map + `activeRepoSlug` per-space in localStorage keyed by `pipeline_${spaceId}`
+3. Add imports to `TextObject.jsx` — `revertCommit` from githubIssuesService, `deleteObject` from spatialObjectsService
+4. Change pipeline task border styling at line ~1715 — replace `borderLeft: 4px solid ${getStatusColor()}` with `border: 2px solid black`
+5. Modify click handler at lines 993-1000 — remove the early return that calls `toggleTaskExpansion()` on click; let pipeline tasks follow the normal click → select flow so `selected` becomes `true`
+6. Modify render block at lines 2337-2346 — when `selected && isPipelineTask`, render a custom `Html` menu instead of `TextObjectUI`:
+   - **Revert button** — enabled only when `merfolkData.mergeCommitSha` exists; reads token from `localStorage.getItem('github_token')`, parses owner/repo from `merfolkData.repoSlug`; calls `revertCommit()`
+   - **Delete button** — calls `onDelete(id)` (existing prop from parent)
+   - **Expand/Collapse button** — calls existing `toggleTaskExpansion(id)`
+   - **Close button** — deselects the task
 
 **Files:**
-- `src/stores/pipelineStore.js` — restructure from single-repo to multi-repo Map
+- `src/components/TextObject.jsx` — imports, border styling, click handler, custom menu render
+
+---
