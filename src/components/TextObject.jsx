@@ -29,6 +29,7 @@ import SnapLineIndicator from './SnapLineIndicator';
 // Import unified global click handler
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
 import { getStatusColor, getStatusLabel, isTaskObject } from '../services/pipelineTaskService';
+import { toggleTaskExpansion } from '../services/repoContainerService';
 
 const EMPTY_CONNECTIONS = [];
 
@@ -94,6 +95,8 @@ const TextObject = React.memo(
     // Pipeline task metadata
     const merfolkData = objectData?.merfolkData;
     const isPipelineTask = merfolkData?.planTaskIndex != null;
+    const isTaskExpanded = merfolkData?.isExpanded === true;
+    const taskColor = objectData?.color;
 
     // --- Real-time visual scale state ---
     const [visualScale, setVisualScale] = useState(scale);
@@ -991,6 +994,12 @@ const TextObject = React.memo(
       e.stopPropagation();
       e.preventDefault();
 
+      // Pipeline task click: toggle expand/collapse instead of editing
+      if (isPipelineTask && !isEditing) {
+        toggleTaskExpansion(id);
+        return;
+      }
+
       onClick();
 
       // CRITICAL FIX: Prevent double-click from accidentally clearing text
@@ -1670,7 +1679,7 @@ const TextObject = React.memo(
       width: '100%',
       height: contentHeight,
       minHeight: '2em', // Start with small height, will expand
-      background: 'rgb(255, 255, 255)',
+      background: isPipelineTask && taskColor ? taskColor : 'rgb(255, 255, 255)',
       color: textStyle.color || 'black',
       border: 'none',
       padding: '8px',
@@ -2145,12 +2154,16 @@ const TextObject = React.memo(
                   style={{
                     ...getTextAreaStyle(),
                     userSelect: 'none',
-                    cursor: 'text',
+                    cursor: isPipelineTask ? 'pointer' : 'text',
                     width: '100%',
-                    background: 'white', // Slightly different for display mode
+                    background: isPipelineTask && taskColor ? taskColor : 'white',
                   }}
                   dangerouslySetInnerHTML={{
                     __html: (() => {
+                      // Pipeline task collapsed: show title only
+                      if (isPipelineTask && !isTaskExpanded) {
+                        return objectData?.headerText || `Task #${merfolkData.planTaskIndex}`;
+                      }
                       // Priority: textContentRef > localText > store text
                       // Only show placeholder if ALL sources are empty or contain placeholder
                       const contentRef = textContentRef.current;
