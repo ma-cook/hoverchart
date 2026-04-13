@@ -138,3 +138,35 @@ export async function addComment(token, owner, repo, issueOrPrNumber, body) {
     body: JSON.stringify({ body }),
   });
 }
+
+export async function enableAutoMerge(token, pullRequestNodeId, mergeMethod = 'SQUASH') {
+  const query = `
+    mutation EnableAutoMerge($prId: ID!, $method: PullRequestMergeMethod!) {
+      enablePullRequestAutoMerge(input: { pullRequestId: $prId, mergeMethod: $method }) {
+        pullRequest { autoMergeRequest { enabledAt mergeMethod } }
+      }
+    }
+  `;
+  const response = await fetch(`${GITHUB_API}/graphql`, {
+    method: 'POST',
+    headers: {
+      Authorization: `bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      query,
+      variables: { prId: pullRequestNodeId, method: mergeMethod },
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text().catch(() => response.statusText);
+    return { ok: false, data: null, error: `${response.status}: ${error}` };
+  }
+
+  const data = await response.json();
+  if (data.errors) {
+    return { ok: false, data: null, error: data.errors[0]?.message || 'GraphQL error' };
+  }
+  return { ok: true, data: data.data, error: null };
+}

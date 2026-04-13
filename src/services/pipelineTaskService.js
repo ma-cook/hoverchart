@@ -50,6 +50,23 @@ export function getNextQueuedTask(tasks) {
   ) || null;
 }
 
+export function getPipelineTasksForRepo(objects, repoSlug) {
+  return getPipelineTasks(objects).filter(
+    (obj) => obj.merfolkData?.repoSlug === repoSlug
+  );
+}
+
+export function getRepoSlugsFromTasks(objects) {
+  const tasks = getPipelineTasks(objects);
+  const slugs = new Set();
+  for (const task of tasks) {
+    if (task.merfolkData?.repoSlug) {
+      slugs.add(task.merfolkData.repoSlug);
+    }
+  }
+  return [...slugs];
+}
+
 export async function updateTaskStatus(
   spaceOwnerId,
   spaceId,

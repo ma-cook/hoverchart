@@ -137,7 +137,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     
     return cubes.filter(cube => {
       // Grouping containers are excluded from LOD - always render
-      const isGroupingContainer = cube.merfolkData?.isContainer === true;
+      const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
       if (isGroupingContainer) {
         return true;
       }

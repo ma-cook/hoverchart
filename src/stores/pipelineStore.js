@@ -6,6 +6,7 @@ const usePipelineStore = createWithEqualityFn((set, get) => ({
   autoApprove: false,
   currentTaskId: null,
   connectedRepo: null,
+  connectedRepos: [],
   pollIntervalId: null,
   taskOrder: [],
 
@@ -46,13 +47,32 @@ const usePipelineStore = createWithEqualityFn((set, get) => ({
 
   setPollIntervalId: (id) => set({ pollIntervalId: id }),
 
+  // Multi-repo management
+  addRepo: (owner, repo) => {
+    const slug = `${owner}/${repo}`;
+    const { connectedRepos } = get();
+    if (connectedRepos.some((r) => r.slug === slug)) return;
+    const updated = [...connectedRepos, { owner, repo, slug }];
+    set({ connectedRepos: updated, connectedRepo: updated[0] });
+  },
+
+  removeRepo: (slug) => {
+    const { connectedRepos } = get();
+    const updated = connectedRepos.filter((r) => r.slug !== slug);
+    set({ connectedRepos: updated, connectedRepo: updated[0] || null });
+  },
+
+  getRepo: (slug) => {
+    return get().connectedRepos.find((r) => r.slug === slug) || null;
+  },
+
   // Persist/restore per-space state from localStorage
   persistState: (spaceId) => {
-    const { connectedRepo, autoApprove, taskOrder } = get();
+    const { connectedRepo, connectedRepos, autoApprove, taskOrder } = get();
     try {
       localStorage.setItem(
         `pipeline_${spaceId}`,
-        JSON.stringify({ connectedRepo, autoApprove, taskOrder })
+        JSON.stringify({ connectedRepo, connectedRepos, autoApprove, taskOrder })
       );
     } catch {
       // localStorage may be unavailable
@@ -63,9 +83,10 @@ const usePipelineStore = createWithEqualityFn((set, get) => ({
     try {
       const stored = localStorage.getItem(`pipeline_${spaceId}`);
       if (stored) {
-        const { connectedRepo, autoApprove, taskOrder } = JSON.parse(stored);
+        const { connectedRepo, connectedRepos, autoApprove, taskOrder } = JSON.parse(stored);
         set({
           connectedRepo: connectedRepo || null,
+          connectedRepos: connectedRepos || [],
           autoApprove: autoApprove || false,
           taskOrder: taskOrder || [],
         });

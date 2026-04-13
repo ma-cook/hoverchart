@@ -33,6 +33,7 @@ import useEarthSettingsStore from '../stores/earthSettingsStore';
 import usePipelineStore from '../stores/pipelineStore';
 import { getPipelineTasks, getStatusColor, getStatusLabel, TASK_STATUS } from '../services/pipelineTaskService';
 import { startPipeline, pausePipeline, resumePipeline, stopPipeline } from '../services/pipelineOrchestrator';
+import { createRepoContainer } from '../services/repoContainerService';
 
 const PRESET_LOCATIONS = [
   { name: 'Himalayas', lat: 27.99, lon: 86.93 },
@@ -240,8 +241,9 @@ const UIOverlay = ({
   const pipelineIsPaused = usePipelineStore((s) => s.isPaused);
   const pipelineAutoApprove = usePipelineStore((s) => s.autoApprove);
   const pipelineConnectedRepo = usePipelineStore((s) => s.connectedRepo);
+  const pipelineConnectedRepos = usePipelineStore((s) => s.connectedRepos);
   const pipelineCurrentTaskId = usePipelineStore((s) => s.currentTaskId);
-  const [pipelineRepoInput, setPipelineRepoInput] = useState('');
+  const [selectedRepoSlugs, setSelectedRepoSlugs] = useState(new Set());
 
   // Pipeline tasks derived from objects store
   const allObjects = useObjectsStore((s) => s.objects);
@@ -259,10 +261,6 @@ const UIOverlay = ({
   useEffect(() => {
     if (currentSpaceId && spaceType === 'github_control_panel') {
       usePipelineStore.getState().restoreState(currentSpaceId);
-      const repo = usePipelineStore.getState().connectedRepo;
-      if (repo) {
-        setPipelineRepoInput(`${repo.owner}/${repo.repo}`);
-      }
     }
   }, [currentSpaceId, spaceType]);
 
@@ -1589,53 +1587,161 @@ const UIOverlay = ({
                 </button>
               )}
 
-              {/* Repo Selector */}
+              {/* Repo Dropdown with Checkboxes */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '12px', color: '#888' }}>Repository (owner/repo)</label>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <input
-                    type="text"
-                    value={pipelineRepoInput}
-                    onChange={(e) => setPipelineRepoInput(e.target.value)}
-                    placeholder="owner/repo"
-                    style={{
-                      flex: 1,
-                      padding: '4px 8px',
-                      fontSize: '13px',
-                      border: '1px solid #555',
-                      borderRadius: '4px',
-                      background: '#2a2a2a',
-                      color: '#eee',
-                    }}
-                  />
+                <button
+                  className="repos-toggle-button"
+                  onClick={() => {
+                    if (!showRepos) { fetchRepositories(); }
+                    setShowRepos((prev) => !prev);
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    border: '1px solid #555',
+                    borderRadius: '4px',
+                    background: '#333',
+                    color: '#eee',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  {showRepos ? 'Hide Repositories ▼' : 'Show Repositories ▶'}
+                </button>
+                {showRepos && (
+                  <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #444', borderRadius: '4px', background: '#1e1e1e' }}>
+                    {repositories.map((repo) => {
+                      const slug = `${repo.owner.login}/${repo.name}`;
+                      const isSelected = selectedRepoSlugs.has(slug);
+                      const alreadyConnected = pipelineConnectedRepos.some((r) => r.slug === slug);
+                      return (
+                        <label
+                          key={repo.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '4px 8px',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            color: alreadyConnected ? '#4caf50' : '#ccc',
+                            background: isSelected ? '#2a3a4a' : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected || alreadyConnected}
+                            disabled={alreadyConnected}
+                            onChange={() => {
+                              setSelectedRepoSlugs((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(slug)) next.delete(slug);
+                                else next.add(slug);
+                                return next;
+                              });
+                            }}
+                          />
+                          {repo.name}
+                          {alreadyConnected && <span style={{ fontSize: '10px', color: '#4caf50' }}>✓</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {selectedRepoSlugs.size > 0 && (
                   <button
-                    onClick={() => {
-                      const parts = pipelineRepoInput.split('/');
-                      if (parts.length === 2 && parts[0] && parts[1]) {
-                        const repo = { owner: parts[0].trim(), repo: parts[1].trim() };
-                        usePipelineStore.getState().setConnectedRepo(repo);
-                        usePipelineStore.getState().persistState(currentSpaceId);
+                    onClick={async () => {
+                      // Compute camera position & forward direction
+                      const camera =
+                        window.cameraRef?.current?.camera ||
+                        window.camera ||
+                        window.orbitControls?.object;
+                      let basePos = [0, 0, -100];
+                      let rightDir = [1, 0, 0];
+                      if (camera) {
+                        const camPos = camera.position;
+                        const fwd = new THREE.Vector3();
+                        camera.getWorldDirection(fwd);
+                        // Base position: 300 units in front of camera
+                        basePos = [
+                          camPos.x + fwd.x * 300,
+                          camPos.y + fwd.y * 300,
+                          camPos.z + fwd.z * 300,
+                        ];
+                        // Right vector for spacing multiple containers
+                        const up = new THREE.Vector3(0, 1, 0);
+                        const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+                        // If camera looks straight up/down, fall back to world X
+                        if (right.length() < 0.01) right.set(1, 0, 0);
+                        rightDir = [right.x, right.y, right.z];
                       }
+
+                      const slugs = [...selectedRepoSlugs];
+                      const spacing = 50;
+                      const totalWidth = (slugs.length - 1) * spacing;
+
+                      for (let i = 0; i < slugs.length; i++) {
+                        const [owner, repo] = slugs[i].split('/');
+                        // Center the group: offset from -totalWidth/2 to +totalWidth/2
+                        const offset = -totalWidth / 2 + i * spacing;
+                        const pos = [
+                          basePos[0] + rightDir[0] * offset,
+                          basePos[1] + rightDir[1] * offset,
+                          basePos[2] + rightDir[2] * offset,
+                        ];
+                        usePipelineStore.getState().addRepo(owner, repo);
+                        await createRepoContainer(owner, repo, user, currentSpaceId, pos);
+                      }
+                      usePipelineStore.getState().persistState(currentSpaceId);
+                      setSelectedRepoSlugs(new Set());
                     }}
                     style={{
-                      padding: '4px 8px',
+                      padding: '6px 12px',
                       fontSize: '12px',
-                      border: '1px solid #555',
+                      border: 'none',
                       borderRadius: '4px',
-                      background: '#333',
-                      color: '#eee',
+                      background: '#2196f3',
+                      color: '#fff',
                       cursor: 'pointer',
                     }}
                   >
-                    Set
+                    Create Containers ({selectedRepoSlugs.size})
                   </button>
-                </div>
-                {pipelineConnectedRepo && (
-                  <span style={{ fontSize: '11px', color: '#4caf50' }}>
-                    Connected: {pipelineConnectedRepo.owner}/{pipelineConnectedRepo.repo}
-                  </span>
                 )}
               </div>
+
+              {/* Connected Repos */}
+              {pipelineConnectedRepos.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                  {pipelineConnectedRepos.map((r) => (
+                    <span
+                      key={r.slug}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '2px 8px',
+                        fontSize: '11px',
+                        borderRadius: '12px',
+                        background: '#2a3a2a',
+                        color: '#4caf50',
+                        border: '1px solid #4caf50',
+                      }}
+                    >
+                      {r.repo}
+                      <span
+                        style={{ cursor: 'pointer', marginLeft: '2px' }}
+                        onClick={() => {
+                          usePipelineStore.getState().removeRepo(r.slug);
+                          usePipelineStore.getState().persistState(currentSpaceId);
+                        }}
+                      >
+                        ×
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {/* Pipeline Summary */}
               {pipelineTasks.length > 0 && (
@@ -1650,78 +1756,6 @@ const UIOverlay = ({
                 </div>
               )}
 
-              {/* Pipeline Controls */}
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                {!pipelineIsRunning ? (
-                  <button
-                    onClick={() => {
-                      const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-                      if (spaceOwnerId && currentSpaceId && pipelineTasks.length > 0) {
-                        startPipeline(spaceOwnerId, currentSpaceId, pipelineTasks);
-                      }
-                    }}
-                    disabled={!pipelineConnectedRepo || pipelineTasks.length === 0}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      border: 'none',
-                      borderRadius: '4px',
-                      background: pipelineConnectedRepo && pipelineTasks.length > 0 ? '#2196f3' : '#555',
-                      color: '#fff',
-                      cursor: pipelineConnectedRepo && pipelineTasks.length > 0 ? 'pointer' : 'not-allowed',
-                    }}
-                  >
-                    ▶ Start Pipeline
-                  </button>
-                ) : pipelineIsPaused ? (
-                  <button
-                    onClick={() => resumePipeline()}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      border: 'none',
-                      borderRadius: '4px',
-                      background: '#2196f3',
-                      color: '#fff',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ▶ Resume
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => pausePipeline()}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      border: 'none',
-                      borderRadius: '4px',
-                      background: '#ff9800',
-                      color: '#fff',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ⏸ Pause
-                  </button>
-                )}
-                {pipelineIsRunning && (
-                  <button
-                    onClick={() => stopPipeline()}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      border: 'none',
-                      borderRadius: '4px',
-                      background: '#f44336',
-                      color: '#fff',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    ■ Stop
-                  </button>
-                )}
-              </div>
-
               {/* Auto-approve toggle */}
               <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#ccc', cursor: 'pointer' }}>
                 <input
@@ -1732,71 +1766,8 @@ const UIOverlay = ({
                     usePipelineStore.getState().persistState(currentSpaceId);
                   }}
                 />
-                Auto-approve PRs
+                Auto-approve & merge PRs
               </label>
-
-              {/* Currently Processing */}
-              {pipelineCurrentTaskId && (
-                <div style={{ fontSize: '12px', color: '#aaa', borderTop: '1px solid #444', paddingTop: '8px' }}>
-                  <span style={{ color: '#2196f3' }}>Processing: </span>
-                  {(() => {
-                    const task = pipelineTasks.find((t) => t.id === pipelineCurrentTaskId);
-                    if (!task) return pipelineCurrentTaskId;
-                    return (
-                      <span>
-                        {task.headerText || `Task #${task.merfolkData?.planTaskIndex}`}
-                        {task.merfolkData?.githubIssueNumber && (
-                          <span style={{ color: '#0366d6', marginLeft: '6px' }}>#{task.merfolkData.githubIssueNumber}</span>
-                        )}
-                        {task.merfolkData?.githubPrNumber && (
-                          <span style={{ color: '#6f42c1', marginLeft: '6px' }}>PR #{task.merfolkData.githubPrNumber}</span>
-                        )}
-                      </span>
-                    );
-                  })()}
-                </div>
-              )}
-
-              {/* Task List */}
-              {pipelineTasks.length > 0 && (
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px',
-                  maxHeight: '200px',
-                  overflowY: 'auto',
-                  borderTop: '1px solid #444',
-                  paddingTop: '8px',
-                }}>
-                  <span style={{ fontSize: '11px', color: '#888', marginBottom: '2px' }}>Tasks</span>
-                  {pipelineTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '3px 6px',
-                        borderRadius: '3px',
-                        background: task.id === pipelineCurrentTaskId ? '#333' : 'transparent',
-                        fontSize: '12px',
-                        color: '#ccc',
-                      }}
-                    >
-                      <span style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        background: getStatusColor(task.merfolkData?.status),
-                        flexShrink: 0,
-                      }} />
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        #{task.merfolkData?.planTaskIndex} {task.headerText || 'Untitled'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
           {/* Earth Space Sections */}

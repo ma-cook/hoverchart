@@ -13,6 +13,12 @@ const AppShell = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('spaceId') || params.get('space') || params.get('code')) {
+      // Restore spaceType from URL if available
+      const urlSpaceType = params.get('type');
+      const urlSpaceId = params.get('spaceId') || params.get('space');
+      if (urlSpaceId && urlSpaceType) {
+        setSpaceContext((prev) => prev || { spaceId: urlSpaceId, ownerId: null, spaceType: urlSpaceType });
+      }
       setActiveView('diagram');
     }
   }, []);
@@ -20,8 +26,11 @@ const AppShell = () => {
   // Called by LandingApp when user clicks a space
   const handleOpenSpace = useCallback((spaceId, ownerId, spaceType = 'diagram') => {
     setSpaceContext({ spaceId, ownerId, spaceType });
-    // Update URL without reload
-    const newUrl = `${window.location.pathname}?spaceId=${encodeURIComponent(spaceId)}`;
+    // Update URL without reload — include type if not default
+    let newUrl = `${window.location.pathname}?spaceId=${encodeURIComponent(spaceId)}`;
+    if (spaceType && spaceType !== 'diagram') {
+      newUrl += `&type=${encodeURIComponent(spaceType)}`;
+    }
     window.history.pushState({}, '', newUrl);
     setActiveView('diagram');
   }, []);

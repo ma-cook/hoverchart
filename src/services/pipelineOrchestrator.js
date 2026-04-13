@@ -12,7 +12,7 @@ import {
   createPullRequest,
   addComment,
   approvePullRequest,
-  mergePullRequest,
+  enableAutoMerge,
   getPullRequest,
 } from './githubIssuesService';
 
@@ -139,13 +139,15 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
       }
 
       // Auto-approve if enabled and Copilot has pushed commits (more than our initial one)
-      if (currentState.autoApprove && prCheck.data.commits > 1) {
+      if (currentState.autoApprove && prCheck.data.commits > 1 && !prCheck.data.auto_merge) {
         await approvePullRequest(token, owner, repo, prNumber);
-        const mergeResult = await mergePullRequest(token, owner, repo, prNumber);
-        if (mergeResult.ok) {
-          await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED);
-          resolve(true);
-          return;
+        // Enable auto-merge via GraphQL using the PR node_id
+        const nodeId = prCheck.data.node_id;
+        if (nodeId) {
+          const autoMergeResult = await enableAutoMerge(token, nodeId);
+          if (!autoMergeResult.ok) {
+            console.warn('[pipelineOrchestrator] Auto-merge not available, will keep polling:', autoMergeResult.error);
+          }
         }
       }
 
@@ -160,19 +162,30 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
   });
 }
 
-export async function startPipeline(spaceOwnerId, spaceId, tasks) {
+export async function startPipeline(spaceOwnerId, spaceId, tasks, repoSlug) {
   const store = usePipelineStore.getState();
-  const { connectedRepo } = store;
 
-  if (!connectedRepo?.owner || !connectedRepo?.repo) {
-    console.error('[pipelineOrchestrator] No repo connected');
-    return;
+  // Resolve owner/repo from repoSlug or fallback to connectedRepo
+  let owner, repo;
+  if (repoSlug) {
+    const repoEntry = store.getRepo(repoSlug);
+    if (repoEntry) {
+      owner = repoEntry.owner;
+      repo = repoEntry.repo;
+    }
+  }
+  if (!owner || !repo) {
+    const { connectedRepo } = store;
+    if (!connectedRepo?.owner || !connectedRepo?.repo) {
+      console.error('[pipelineOrchestrator] No repo connected');
+      return;
+    }
+    owner = connectedRepo.owner;
+    repo = connectedRepo.repo;
   }
 
   store.startPipeline();
   store.setTaskOrder(tasks.map((t) => t.id));
-
-  const { owner, repo } = connectedRepo;
 
   let currentTask = getNextQueuedTask(tasks);
   while (currentTask) {

@@ -1,6 +1,6 @@
-import React, { useRef, useMemo, useEffect, useCallback } from 'react';
+import React, { useRef, useMemo, useEffect, useCallback, useState } from 'react';
 
-import { TransformControls as DreiTransformControls } from '@react-three/drei';
+import { TransformControls as DreiTransformControls, Html } from '@react-three/drei';
 import InstancedLine from './InstancedLine';
 import * as THREE from 'three';
 import { useFaceIndicatorStore } from '../stores';
@@ -32,6 +32,10 @@ import { shallow } from 'zustand/shallow';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 // Import LOD store for level of detail rendering
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import usePipelineStore from '../stores/pipelineStore';
+import { startPipeline, stopPipeline } from '../services/pipelineOrchestrator';
+import { getPipelineTasksForRepo } from '../services/pipelineTaskService';
+import { clearRepoTasks } from '../services/repoContainerService';
 
 const EMPTY_CONNECTIONS = [];
 
@@ -195,6 +199,12 @@ const Cube = ({
   const setIndicatorActive = useFaceIndicatorStore(
     (state) => state.setIndicatorActive
   );
+
+  // Repo container state — must be declared before handleSceneClick
+  const isRepoContainer = objectData?.merfolkData?.isRepoContainer === true;
+  const [showRepoMenu, setShowRepoMenu] = useState(false);
+  const pipelineIsRunning = usePipelineStore((state) => state.isRunning);
+  const repoSlug = objectData?.merfolkData?.repoSlug;
   // const setIndicatorConnected = useFaceIndicatorStore(
   //   (state) => state.setIndicatorConnected
   // );
@@ -513,6 +523,11 @@ const Cube = ({
   }, []);
   // Event handlers
   const handleSceneClick = useCallback(() => {
+    if (isRepoContainer) {
+      // Toggle repo menu instead of normal UI
+      setShowRepoMenu((prev) => !prev);
+      return;
+    }
     setCubeShowObjectUI(id, true);
     setCubeShowHeaderTextStyleUI(id, false); // Close header text style UI
     setCubeActiveTextFace(id, null); // Reset active text face for face text UI
@@ -525,6 +540,7 @@ const Cube = ({
     setCubeShowObjectUI,
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
+    isRepoContainer,
   ]); // Add useCallback for updating database (same pattern as Dodecahedron)
   const updateDatabase = useCallback(() => {
     if (!onUpdate || !id || !objectData) return;
@@ -1339,16 +1355,16 @@ const Cube = ({
   // LOD-based rendering decisions
   // Grouping containers are excluded from LOD system - always render at full detail
   const isGroupingContainer = objectData?.merfolkData?.isContainer === true;
-  
-  // If LOD level is LOW (2), don't render (except grouping containers)
-  if (!isGroupingContainer && lodLevel === LOD_LEVELS.LOW) {
+
+  // If LOD level is LOW (2), don't render (except grouping containers and repo containers)
+  if (!isGroupingContainer && !isRepoContainer && lodLevel === LOD_LEVELS.LOW) {
     return null; // Don't render at long distance
   }
 
   // Determine what to render based on LOD level
-  // Grouping containers always render at full detail
+  // Grouping containers and repo containers always render at full detail
   // All other objects: full detail at FULL LOD, basic mesh at MEDIUM, hidden at LOW
-  const isLODRestricted = !isGroupingContainer;
+  const isLODRestricted = !isGroupingContainer && !isRepoContainer;
   const shouldRenderEdges = renderEdges && (!isLODRestricted || lodLevel === LOD_LEVELS.FULL);
   const shouldRenderFaces = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
   const shouldRenderText = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
@@ -1560,6 +1576,104 @@ const Cube = ({
           mode="scale"
           size={0.5}
         />
+      )}
+      {/* Repo container click menu */}
+      {isRepoContainer && showRepoMenu && (
+        <group position={position}>
+          <Html
+            center
+            style={{
+              pointerEvents: 'auto',
+              transform: 'translate3d(0, -120%, 0)',
+              zIndex: 100000,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                display: 'flex',
+                gap: '6px',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                background: 'rgba(30, 30, 40, 0.95)',
+                border: '1px solid rgba(74, 158, 255, 0.4)',
+                backdropFilter: 'blur(8px)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {/* Play / Stop toggle */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (pipelineIsRunning) {
+                    stopPipeline();
+                  } else {
+                    const allObjs = useObjectsStore.getState().objects || [];
+                    const repoTasks = getPipelineTasksForRepo(allObjs, repoSlug);
+                    const spaceOwnerId = window.currentSpaceOwner;
+                    const spaceId = window.currentSpaceId;
+                    if (repoTasks.length > 0 && spaceOwnerId && spaceId) {
+                      startPipeline(spaceOwnerId, spaceId, repoTasks, repoSlug);
+                    }
+                  }
+                }}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '13px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  background: pipelineIsRunning ? '#f44336' : '#4caf50',
+                  color: '#fff',
+                  fontWeight: 600,
+                }}
+              >
+                {pipelineIsRunning ? '■ Stop' : '▶ Play'}
+              </button>
+              {/* Clear tasks */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (repoSlug) {
+                    const user = window.currentUser;
+                    const spaceId = window.currentSpaceId;
+                    clearRepoTasks(repoSlug, user, spaceId);
+                  }
+                }}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: '13px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  background: '#ff9800',
+                  color: '#fff',
+                  fontWeight: 600,
+                }}
+              >
+                Clear Tasks
+              </button>
+              {/* Close menu */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowRepoMenu(false);
+                }}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '13px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  background: 'rgba(255,255,255,0.1)',
+                  color: '#aaa',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </Html>
+        </group>
       )}
     </>
   );
