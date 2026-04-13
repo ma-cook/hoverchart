@@ -63,22 +63,21 @@ export function assignRepoSlugToOrphanTasks() {
   if (orphans.length === 0) return null;
 
   const orphanIds = new Set(orphans.map((o) => o.id));
-  const spaceOwnerId = window.currentSpaceOwner;
-  const currentSpaceId = window.currentSpaceId;
 
   const updatedObjects = allObjects.map((obj) => {
     if (!orphanIds.has(obj.id)) return obj;
-    const updated = {
+    // Only update in-memory — do NOT save to Firebase here.
+    // repositionIncomingTasks will save the COMPLETE data (type:'text',
+    // TextObject fields, final positions). Saving partial data here causes
+    // a race: the 800ms throttle blocks the full save, and the Firebase
+    // snapshot then overwrites our store with this incomplete data.
+    return {
       ...obj,
       merfolkData: {
         ...obj.merfolkData,
         repoSlug: targetSlug,
       },
     };
-    if (spaceOwnerId && currentSpaceId) {
-      saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
-    }
-    return updated;
   });
 
   useObjectsStore.setState({ objects: updatedObjects });

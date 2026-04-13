@@ -277,27 +277,36 @@ const UIOverlay = ({
     }
   }, [currentSpaceId, spaceType]);
 
-  // Auto-assign repoSlug to orphan tasks and reposition into containers
+  // Auto-assign repoSlug to orphan tasks and reposition into containers.
+  // CRITICAL: Both steps run in one synchronous pass so only ONE save
+  // (with complete TextObject data) reaches Firebase.  An earlier design
+  // saved partial data in step-1 and the 800ms throttle blocked the
+  // full save in step-2, causing the snapshot to overwrite the store.
   const repositionedSlugsRef = useRef(new Set());
   useEffect(() => {
     if (spaceType !== 'github_control_panel') return;
     if (pipelineTasks.length === 0) return;
 
-    // Step 1: Assign repoSlug to tasks that don't have one
+    // Step 1: Assign repoSlug to tasks that don't have one (in-memory only)
+    let assignedSlug = null;
     const hasOrphans = pipelineTasks.some((t) => !t.merfolkData?.repoSlug);
     if (hasOrphans) {
       console.log('[UIOverlay] Found orphan tasks without repoSlug, assigning...');
-      assignRepoSlugToOrphanTasks();
-      return; // State will update, triggering this effect again
+      assignedSlug = assignRepoSlugToOrphanTasks();
+      if (!assignedSlug) return; // No container exists yet
     }
 
-    // Step 2: Reposition tasks that have repoSlug but haven't been positioned yet
+    // Step 2: Reposition tasks that have repoSlug but haven't been positioned yet.
+    // After step 1, the store already has updated repoSlugs (setState is sync),
+    // so repositionIncomingTasks will find them with the correct slug.
+    // Read fresh slugs from the store in case step 1 just assigned them.
+    const freshTasks = getPipelineTasks(useObjectsStore.getState().objects || []);
     const repoSlugs = new Set(
-      pipelineTasks.map((t) => t.merfolkData?.repoSlug).filter(Boolean)
+      freshTasks.map((t) => t.merfolkData?.repoSlug).filter(Boolean)
     );
     for (const slug of repoSlugs) {
       if (repositionedSlugsRef.current.has(slug)) continue;
-      const hasUnpositioned = pipelineTasks.some(
+      const hasUnpositioned = freshTasks.some(
         (t) => t.merfolkData?.repoSlug === slug && !t.merfolkData?.positioned
       );
       const container = findRepoContainer(slug);
