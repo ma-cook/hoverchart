@@ -126,7 +126,7 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
 
       // PR was merged
       if (prCheck.data.merged) {
-        await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED);
+        await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED, { mergeCommitSha: prCheck.data.merge_commit_sha });
         resolve(true);
         return;
       }
