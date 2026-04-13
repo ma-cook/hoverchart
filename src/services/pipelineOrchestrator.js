@@ -8,6 +8,8 @@ import {
   getRepoInfo,
   getBranchRef,
   createBranchRef,
+  deleteBranchRef,
+  getFileContents,
   createFileOnBranch,
   createPullRequest,
   addComment,
@@ -58,22 +60,33 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
 
     const taskIndex = task.merfolkData.planTaskIndex;
 
-    // Create a new branch for this task
+    // Create a new branch for this task (delete stale branch from previous runs if it exists)
     const branchName = `copilot/task-${taskIndex}`;
-    const branchResult = await createBranchRef(token, owner, repo, branchName, baseSha);
+    let branchResult = await createBranchRef(token, owner, repo, branchName, baseSha);
+    if (!branchResult.ok && branchResult.status === 422) {
+      // Branch already exists — delete it and retry
+      console.log('[pipelineOrchestrator] Branch already exists, deleting and recreating:', branchName);
+      await deleteBranchRef(token, owner, repo, branchName);
+      branchResult = await createBranchRef(token, owner, repo, branchName, baseSha);
+    }
     if (!branchResult.ok) {
       console.error('[pipelineOrchestrator] Failed to create branch:', branchResult.error);
       return false;
     }
 
-    // Create a task spec file to give the PR a diff
+    // Create/update a task spec file to give the PR a diff
     const taskSpec = `# Task: ${title}\n\n${body}`;
+    const taskFilePath = `.github/copilot-tasks/task-${taskIndex}.md`;
+    // Check if file already exists on the new branch (inherited from default branch)
+    const existingFile = await getFileContents(token, owner, repo, taskFilePath, branchName);
+    const existingSha = existingFile.ok ? existingFile.data.sha : undefined;
     const fileResult = await createFileOnBranch(
       token, owner, repo,
-      `.github/copilot-tasks/task-${taskIndex}.md`,
+      taskFilePath,
       taskSpec,
       branchName,
-      `task(${taskIndex}): ${title}`
+      `task(${taskIndex}): ${title}`,
+      existingSha
     );
     if (!fileResult.ok) {
       console.error('[pipelineOrchestrator] Failed to create task file:', fileResult.error);

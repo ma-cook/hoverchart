@@ -479,7 +479,8 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
     window._firebaseDb = db;
 
     // Setup global context for stores that need it
-    window.currentSpaceId = currentSpaceId;
+    // Use effectiveSpaceId so public-space and direct-space both work
+    window.currentSpaceId = effectiveSpaceId || currentSpaceId;
     window.currentUser = user;
 
     // Debug logging for space ID availability
@@ -494,6 +495,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   }, [
     user,
     currentSpaceId,
+    effectiveSpaceId,
     isAuthReady,
     isLookingUpPublicSpace,
     setIsLookingUpPublicSpace,

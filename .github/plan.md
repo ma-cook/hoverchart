@@ -12,16 +12,7 @@ Replace click-to-expand on pipeline task TextObjects with a custom UI menu (blac
 
 ---
 
-## Phase 1: Data Model — Save Merge Commit SHA
-
-**Why:** The revert feature needs to know which commit to revert. GitHub's PR response includes `merge_commit_sha` but we don't currently store it.
-
-1. Modify `pipelineOrchestrator.js` line 129 — pass `{ mergeCommitSha: prCheck.data.merge_commit_sha }` as the `extraFields` arg to `updateTaskStatus()`. The function already supports `extraFields` that get merged into `merfolkData` in Firestore.
-
-**Files:**
-- `src/services/pipelineOrchestrator.js` — add mergeCommitSha to updateTaskStatus call
-
-## Phase 2: GitHub API — Add revertCommit Function
+## Phase 1: GitHub API — Add revertCommit Function
 
 **Why:** No revert function exists in the GitHub service. Need to fetch a commit's parent and force-update the branch ref.
 
@@ -33,7 +24,7 @@ Replace click-to-expand on pipeline task TextObjects with a custom UI menu (blac
 **Files:**
 - `src/services/githubIssuesService.js` — add `revertCommit()` function after `enableAutoMerge()`
 
-## Phase 3: TextObject — Black Border & Custom Task Menu
+## Phase 2: TextObject — Black Border & Custom Task Menu
 
 **Why:** Pipeline tasks need a distinct visual style (black border) and a custom action menu instead of the text formatting toolbar.
 

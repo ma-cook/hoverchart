@@ -17,11 +17,11 @@ async function githubFetch(token, url, options = {}) {
 
   if (!response.ok) {
     const error = await response.text().catch(() => response.statusText);
-    return { ok: false, data: null, error: `${response.status}: ${error}` };
+    return { ok: false, data: null, error: `${response.status}: ${error}`, status: response.status };
   }
 
   const data = await response.json().catch(() => null);
-  return { ok: true, data, error: null };
+  return { ok: true, data, error: null, status: response.status };
 }
 
 export async function createIssue(token, owner, repo, { title, body }) {
@@ -114,14 +114,27 @@ export async function createBranchRef(token, owner, repo, branch, sha) {
   });
 }
 
-export async function createFileOnBranch(token, owner, repo, path, content, branch, message) {
+export async function deleteBranchRef(token, owner, repo, branch) {
+  return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/refs/heads/${enc(branch)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function getFileContents(token, owner, repo, path, branch) {
+  const query = branch ? `?ref=${enc(branch)}` : '';
+  return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/contents/${path}${query}`);
+}
+
+export async function createFileOnBranch(token, owner, repo, path, content, branch, message, sha) {
+  const payload = {
+    message,
+    content: btoa(unescape(encodeURIComponent(content))),
+    branch,
+  };
+  if (sha) payload.sha = sha;
   return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/contents/${path}`, {
     method: 'PUT',
-    body: JSON.stringify({
-      message,
-      content: btoa(unescape(encodeURIComponent(content))),
-      branch,
-    }),
+    body: JSON.stringify(payload),
   });
 }
 

@@ -33,6 +33,7 @@ import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 // Import LOD store for level of detail rendering
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import usePipelineStore from '../stores/pipelineStore';
+import { useSpaceManagerStore } from '../stores';
 import { startPipeline, stopPipeline } from '../services/pipelineOrchestrator';
 import { getPipelineTasksForRepo, getPipelineTasks } from '../services/pipelineTaskService';
 import { clearRepoTasks, assignRepoSlugToOrphanTasks, repositionIncomingTasks } from '../services/repoContainerService';
@@ -1636,7 +1637,7 @@ const Cube = ({
                       repoTasks = getPipelineTasks(allObjs);
                     }
                     const spaceOwnerId = window.currentSpaceOwner;
-                    const spaceId = window.currentSpaceId;
+                    const spaceId = useSpaceManagerStore.getState().currentSpaceId || window.currentSpaceId;
                     if (repoTasks.length > 0 && spaceOwnerId && spaceId) {
                       // Ensure repo is in connectedRepos (may be lost on refresh)
                       if (repoSlug && !usePipelineStore.getState().getRepo(repoSlug)) {
@@ -1669,7 +1670,7 @@ const Cube = ({
                   e.stopPropagation();
                   if (repoSlug) {
                     const user = window.currentUser;
-                    const spaceId = window.currentSpaceId;
+                    const spaceId = useSpaceManagerStore.getState().currentSpaceId || window.currentSpaceId;
                     clearRepoTasks(repoSlug, user, spaceId);
                   }
                 }}
