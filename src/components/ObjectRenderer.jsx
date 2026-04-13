@@ -53,7 +53,7 @@ const ObjectRenderer = React.memo(
 
     // Container cubes now have their edges rendered by GlobalCubeEdgesRenderer
     // They don't need any other rendering (no faces, no interaction)
-    if (obj.type === 'cube' && obj.merfolkData?.isContainer) {
+    if (obj.type === 'cube' && (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer)) {
       return null;
     }
 

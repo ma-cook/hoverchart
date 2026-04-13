@@ -86,7 +86,7 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     const instancedCubes = useMemo(() => {
       return cubes.filter((cube) => {
         // Containers are handled separately
-        if (cube.merfolkData?.isContainer === true) return false;
+        if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return false;
 
         // LOD check: only FULL LOD cubes
         if (lodEnabled) {

@@ -1995,7 +1995,7 @@ const TextObject = React.memo(
             transform
             position={[0, 0, 0.1]}
             center
-            occlude={!showTransform && !showResizeControls}
+            occlude={isPipelineTask ? false : (!showTransform && !showResizeControls)}
           >
             <div
               style={getContainerStyle()}

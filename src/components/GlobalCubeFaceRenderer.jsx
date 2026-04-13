@@ -69,7 +69,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
   const filteredCubes = useMemo(() => {
     if (!lodEnabled) return cubes;
     return cubes.filter(cube => {
-      if (cube.merfolkData?.isContainer === true) return true;
+      if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return true;
       const isParent = parentIds.has(cube.id);
       const isChild = childParentMap.has(cube.id);
       if (!isParent && !isChild) return true;

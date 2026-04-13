@@ -208,8 +208,11 @@ export function repositionIncomingTasks(repoSlug) {
 
   const containerPos = container.position;
   const containerScale = container.scale;
-  const frontZ = containerPos[2] + containerScale[2] * 5 - 3;
-  const taskStartX = containerPos[0] - containerScale[0] * 4;
+  // Position tasks OUTSIDE the container, in front of it.
+  // Container face is at containerPos[2] + containerScale[2] * CUBE_SIZE (=5).
+  // Place tasks 5 units past the front face so they're not occluded.
+  const frontZ = containerPos[2] + containerScale[2] * 5 + 5;
+  const taskStartX = containerPos[0];
 
   const spaceOwnerId = window.currentSpaceOwner;
   const currentSpaceId = window.currentSpaceId;
@@ -244,6 +247,7 @@ export function repositionIncomingTasks(repoSlug) {
         ...obj.merfolkData,
         positioned: true,
         isExpanded: false,
+        status: obj.merfolkData?.status || TASK_STATUS.QUEUED,
       },
     };
 
@@ -326,11 +330,11 @@ export async function createTaskObjects(tasks, repoSlug, user, currentSpaceId) {
     return obj;
   });
 
-  // Create new task objects at the front of the container
+  // Create new task objects OUTSIDE the front face of the container
   const containerPos = container.position;
   const containerScale = container.scale;
-  const frontZ = containerPos[2] + containerScale[2] * 5 - 3;
-  const taskStartX = containerPos[0] - containerScale[0] * 4;
+  const frontZ = containerPos[2] + containerScale[2] * 5 + 5;
+  const taskStartX = containerPos[0];
 
   const newTaskObjects = tasks.map((task, i) => {
     const taskPosition = [

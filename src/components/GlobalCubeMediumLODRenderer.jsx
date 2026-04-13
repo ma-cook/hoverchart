@@ -48,7 +48,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [] }) => {
     if (!lodEnabled) return [];
 
     return cubes.filter(cube => {
-      const isGroupingContainer = cube.merfolkData?.isContainer === true;
+      const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
       if (isGroupingContainer) return false;
 
       const isParent = parentIds.has(cube.id);
