@@ -714,6 +714,10 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
                     if (window._currentTransformingObjects?.has(obj.id?.toString())) {
                       return obj;
                     }
+                    // DEBUG: Log pipeline task overwrites from Firebase
+                    if (obj.merfolkData?.planTaskIndex != null) {
+                      console.log(`[App batch-added] Overwriting pipeline task ${obj.id}: storeType=${obj.type} fbType=${updated.type}, storePos=${JSON.stringify(obj.position)} fbPos=${JSON.stringify(updated.position)}`);
+                    }
                     return { ...obj, ...updated };
                   }
                   return obj;

@@ -245,9 +245,22 @@ const UIOverlay = ({
   const pipelineCurrentTaskId = usePipelineStore((s) => s.currentTaskId);
   const [selectedRepoSlugs, setSelectedRepoSlugs] = useState(new Set());
 
-  // Pipeline tasks derived from objects store
+  // Pipeline tasks derived from objects store — stabilized reference
   const allObjects = useObjectsStore((s) => s.objects);
-  const pipelineTasks = useMemo(() => getPipelineTasks(allObjects), [allObjects]);
+  const pipelineTasksRef = useRef([]);
+  const pipelineTasks = useMemo(() => {
+    const newTasks = getPipelineTasks(allObjects);
+    const prev = pipelineTasksRef.current;
+    // Stable reference: only update when task list actually changes
+    if (
+      newTasks.length === prev.length &&
+      newTasks.every((t, i) => t.id === prev[i]?.id && t.merfolkData?.positioned === prev[i]?.merfolkData?.positioned && t.merfolkData?.repoSlug === prev[i]?.merfolkData?.repoSlug)
+    ) {
+      return prev;
+    }
+    pipelineTasksRef.current = newTasks;
+    return newTasks;
+  }, [allObjects]);
   const pipelineStatusCounts = useMemo(() => {
     const counts = {};
     for (const task of pipelineTasks) {
@@ -265,34 +278,33 @@ const UIOverlay = ({
   }, [currentSpaceId, spaceType]);
 
   // Auto-assign repoSlug to orphan tasks and reposition into containers
+  const repositionedSlugsRef = useRef(new Set());
   useEffect(() => {
     if (spaceType !== 'github_control_panel') return;
     if (pipelineTasks.length === 0) return;
-
-    console.log('[UIOverlay] Pipeline tasks effect: ', pipelineTasks.length, 'tasks');
 
     // Step 1: Assign repoSlug to tasks that don't have one
     const hasOrphans = pipelineTasks.some((t) => !t.merfolkData?.repoSlug);
     if (hasOrphans) {
       console.log('[UIOverlay] Found orphan tasks without repoSlug, assigning...');
-      const result = assignRepoSlugToOrphanTasks();
-      console.log('[UIOverlay] assignRepoSlugToOrphanTasks result:', result);
-      if (result) return; // State will update, triggering this effect again
+      assignRepoSlugToOrphanTasks();
+      return; // State will update, triggering this effect again
     }
 
     // Step 2: Reposition tasks that have repoSlug but haven't been positioned yet
     const repoSlugs = new Set(
       pipelineTasks.map((t) => t.merfolkData?.repoSlug).filter(Boolean)
     );
-    console.log('[UIOverlay] Repo slugs from tasks:', [...repoSlugs]);
     for (const slug of repoSlugs) {
+      if (repositionedSlugsRef.current.has(slug)) continue;
       const hasUnpositioned = pipelineTasks.some(
         (t) => t.merfolkData?.repoSlug === slug && !t.merfolkData?.positioned
       );
       const container = findRepoContainer(slug);
-      console.log(`[UIOverlay] Slug ${slug}: unpositioned=${hasUnpositioned}, container=${!!container}`);
       if (hasUnpositioned && container) {
+        console.log(`[UIOverlay] Repositioning tasks for ${slug}`);
         repositionIncomingTasks(slug);
+        repositionedSlugsRef.current.add(slug);
       }
     }
   }, [pipelineTasks, spaceType]);

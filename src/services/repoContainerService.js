@@ -272,6 +272,14 @@ export function repositionIncomingTasks(repoSlug) {
   });
 
   useObjectsStore.setState({ objects: finalObjects });
+
+  // Log repositioned task details for debugging
+  const repoTasks = finalObjects.filter(
+    (o) => o.merfolkData?.repoSlug === repoSlug && o.merfolkData?.planTaskIndex != null
+  );
+  for (const t of repoTasks) {
+    console.log(`[repoContainerService] Task ${t.id}: type=${t.type}, pos=${JSON.stringify(t.position)}, scale=${JSON.stringify(t.scale)}, positioned=${t.merfolkData?.positioned}`);
+  }
   console.log(`[repoContainerService] Repositioned ${unpositioned.length} tasks into container for ${repoSlug}`);
   return unpositioned.length;
 }
