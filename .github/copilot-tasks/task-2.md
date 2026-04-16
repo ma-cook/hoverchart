@@ -1,29 +1,28 @@
-# Task: 2. TextObject — Black Border & Custom Task Menu
+# Task: 2. Replace Auto-Merge Logic
 
 ## TL;DR
-Replace click-to-expand on pipeline task TextObjects with a custom UI menu (black-bordered). Menu has Revert (force-resets main via merge_commit_sha), Delete (removes task), and Expand/Collapse buttons. Requires saving merge_commit_sha when PRs merge, adding revertCommit API function, and modifying TextObject click + render logic.
+GitHub's `enablePullRequestAutoMerge` GraphQL mutation requires "Allow auto-merge" in repo settings, which is only available on paid plans for private repos. The codebase already has `mergePullRequest()` defined but never called. Switch the orchestrator to use it directly via REST API — works on all plans, no repo settings needed.
 
 ## Decisions
-- Revert is force-push (destructive) — matches user intent
-- Token from localStorage('github_token') — same as pipelineOrchestrator
-- Owner/repo from merfolkData.repoSlug (format: owner/repo)
-- Expand/collapse moved from click-to-toggle to menu button
-- Custom menu styled like Cube repo menu (Html overlay)
+- Use existing `mergePullRequest()` (squash merge via `PUT /repos/{owner}/{repo}/pulls/{number}/merge`)
+- Keep `approvePullRequest()` call before merge (unchanged)
+- `enableAutoMerge` can remain in githubIssuesService.js (just unused) — no need to delete
 
 ---
 
-**Why:** Pipeline tasks need a distinct visual style (black border) and a custom action menu instead of the text formatting toolbar.
+**File:** `src/services/pipelineOrchestrator.js` (lines ~155-165)
 
-3. Add imports to `TextObject.jsx` — `revertCommit` from githubIssuesService, `deleteObject` from spatialObjectsService
-4. Change pipeline task border styling at line ~1715 — replace `borderLeft: 4px solid ${getStatusColor()}` with `border: 2px solid black`
-5. Modify click handler at lines 993-1000 — remove the early return that calls `toggleTaskExpansion()` on click; let pipeline tasks follow the normal click → select flow so `selected` becomes `true`
-6. Modify render block at lines 2337-2346 — when `selected && isPipelineTask`, render a custom `Html` menu instead of `TextObjectUI`:
-   - **Revert button** — enabled only when `merfolkData.mergeCommitSha` exists; reads token from `localStorage.getItem('github_token')`, parses owner/repo from `merfolkData.repoSlug`; calls `revertCommit()`
-   - **Delete button** — calls `onDelete(id)` (existing prop from parent)
-   - **Expand/Collapse button** — calls existing `toggleTaskExpansion(id)`
-   - **Close button** — deselects the task
+Replace the `enableAutoMerge(token, nodeId)` GraphQL call with `mergePullRequest(token, owner, repo, prNumber)`:
 
-**Files:**
-- `src/components/TextObject.jsx` — imports, border styling, click handler, custom menu render
+```js
+      // Auto-approve and merge if enabled and Copilot has pushed commits
+      if (currentState.autoApprove && prCheck.data.commits > 1 && !prCheck.data.auto_merge) {
+        await approvePullRequest(token, owner, repo, prNumber);
+        const mergeResult = await mergePullRequest(token, owner, repo, prNumber);
+        if (!mergeResult.ok) {
+          console.warn('[pipelineOrchestrator] Direct merge failed, will keep polling:', mergeResult.error);
+        }
+      }
+```
 
 ---
