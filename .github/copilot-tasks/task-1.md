@@ -1,24 +1,31 @@
-# Task: 1. GitHub API — Add revertCommit Function
+# Task: 1. Update Import
 
 ## TL;DR
-Replace click-to-expand on pipeline task TextObjects with a custom UI menu (black-bordered). Menu has Revert (force-resets main via merge_commit_sha), Delete (removes task), and Expand/Collapse buttons. Also fix pipeline task sizing — tasks are currently ~4x wider than the container and text is unreadably small due to oversized scale constants.
+GitHub's `enablePullRequestAutoMerge` GraphQL mutation requires "Allow auto-merge" in repo settings, which is only available on paid plans for private repos. The codebase already has `mergePullRequest()` defined but never called. Switch the orchestrator to use it directly via REST API — works on all plans, no repo settings needed.
 
 ## Decisions
-- Revert is force-push (destructive) — matches user intent
-- Token from localStorage('github_token') — same as pipelineOrchestrator
-- Owner/repo from merfolkData.repoSlug (format: owner/repo)
-- Expand/collapse moved from click-to-toggle to menu button
-- Custom menu styled like Cube repo menu (Html overlay)
-- Task width from fixed scale constants (not dynamic text measurement) — simpler and consistent
+- Use existing `mergePullRequest()` (squash merge via `PUT /repos/{owner}/{repo}/pulls/{number}/merge`)
+- Keep `approvePullRequest()` call before merge (unchanged)
+- `enableAutoMerge` can remain in githubIssuesService.js (just unused) — no need to delete
 
 ---
 
-**Why:** No revert function exists in the GitHub service. Need to fetch a commit's parent and force-update the branch ref.
+**File:** `src/services/pipelineOrchestrator.js` (lines 7-19)
 
-5. Add `revertCommit(token, owner, repo, commitSha, branch = 'main')` to `githubIssuesService.js` after line 173, using existing `githubFetch` helper:
-   - GET `/repos/:owner/:repo/git/commits/:commitSha` → extract `parents[0].sha`
-   - PATCH `/repos/:owner/:repo/git/refs/heads/:branch` with `{ sha: parentSha, force: true }`
-   - Return `{ ok, data, error }` matching all other service functions
+Replace `enableAutoMerge` with `mergePullRequest` in the import block:
 
-**Files:**
-- `src/services/githubIssuesService.js` — add `revertCommit()` function after `enableAutoMerge()`
+```js
+import {
+  getRepoInfo,
+  getBranchRef,
+  createBranchRef,
+  deleteBranchRef,
+  getFileContents,
+  createFileOnBranch,
+  createPullRequest,
+  addComment,
+  approvePullRequest,
+  mergePullRequest,
+  getPullRequest,
+} from './githubIssuesService';
+```
