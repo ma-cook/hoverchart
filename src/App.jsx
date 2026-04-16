@@ -15,6 +15,7 @@ import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 import LODManager from './components/LODManager';
 import EarthGlobe from './components/EarthGlobe';
 import DiagramOverlay2D from './components/DiagramOverlay2D';
+import RepoGrid from './components/RepoGrid';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
 import FrameloopController from './components/FrameloopController';
@@ -1750,6 +1751,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
               checkPositionJitter={checkPositionJitterWithHistory}
               useLOD={useLOD}
             />
+            <RepoGrid />
             {/* Render cell boundaries */}
             <CellBoundaryRenderer
               visible={cellBoundariesVisible}

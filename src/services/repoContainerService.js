@@ -4,12 +4,15 @@ import { getCellCoordinates } from './spatialPartitioning';
 import { TASK_STATUS } from './pipelineTaskService';
 
 const CONTAINER_BASE_SCALE = [15, 15, 15];
-const TASK_SPACING_Z = 4;
-const TASK_OFFSET_Y = -1;
 const REPO_OFFSET_X = 200;
-const COLLAPSED_TASK_SCALE = [15, 3, 1];
-const EXPANDED_TASK_SCALE = [25, 18, 1];
-const TASK_FONT_SIZE = 42; // 30% larger than default 32
+const COLLAPSED_TASK_SCALE = [4, 3, 1];
+const EXPANDED_TASK_SCALE = [8, 18, 1];
+const TASK_FONT_SIZE = 72;
+
+// Grid layout constants
+const GRID_COLS = 2;
+const GRID_DEFAULT_ROWS = 2;
+const GRID_CELL_PADDING = 5; // world units from container edge
 
 function generateId() {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
@@ -18,6 +21,174 @@ function generateId() {
 function getCellId(position) {
   const coords = getCellCoordinates(position);
   return `${coords.x},${coords.y},${coords.z}`;
+}
+
+/**
+ * Compute grid dimensions from active and merged task counts.
+ * Front layer(s) hold active tasks; back layer(s) hold merged tasks.
+ * Each layer is GRID_COLS wide × N rows tall.
+ */
+export function computeGridLayout(activeCount, mergedCount) {
+  const activeRows = Math.max(GRID_DEFAULT_ROWS, Math.ceil(activeCount / GRID_COLS));
+  const mergedPerLayer = GRID_COLS * GRID_DEFAULT_ROWS; // 4 per back layer
+  const backLayers = mergedCount > 0 ? Math.max(1, Math.ceil(mergedCount / mergedPerLayer)) : 0;
+  const totalLayers = 1 + backLayers; // 1 front + N back
+  const totalRows = Math.max(GRID_DEFAULT_ROWS, activeRows);
+  return { activeRows, backLayers, totalLayers, totalRows, cols: GRID_COLS };
+}
+
+/**
+ * Compute container scale to fit the grid.
+ */
+function computeContainerScale(activeCount, mergedCount) {
+  const { totalRows, totalLayers } = computeGridLayout(activeCount, mergedCount);
+  // Each axis: scale * 10 = full extent in world units
+  // Default [15,15,15] = 150 wu per axis, fits 2×2×2 grid (75 wu per cell)
+  const baseCell = 75; // world units per cell at default scale
+  const neededX = (GRID_COLS * baseCell + GRID_CELL_PADDING * 2) / 10;
+  const neededY = (totalRows * baseCell + GRID_CELL_PADDING * 2) / 10;
+  const neededZ = (Math.max(2, totalLayers) * baseCell + GRID_CELL_PADDING * 2) / 10;
+  return [
+    Math.max(CONTAINER_BASE_SCALE[0], neededX),
+    Math.max(CONTAINER_BASE_SCALE[1], neededY),
+    Math.max(CONTAINER_BASE_SCALE[2], neededZ),
+  ];
+}
+
+/**
+ * Get the 3D position for a task in a grid cell.
+ * @param {number[]} containerPos - Container center [x,y,z]
+ * @param {number[]} containerScale - Container scale [sx,sy,sz]
+ * @param {number} col - Column index (0-based, left to right)
+ * @param {number} row - Row index (0-based, top to bottom)
+ * @param {number} layerIndex - Layer index (0 = front)
+ * @param {number} totalRows - Total rows in the grid
+ * @param {number} totalLayers - Total layers (front + back)
+ */
+function getGridCellPosition(containerPos, containerScale, col, row, layerIndex, totalRows, totalLayers) {
+  const halfW = containerScale[0] * 5;
+  const halfH = containerScale[1] * 5;
+  const halfD = containerScale[2] * 5;
+
+  const pad = GRID_CELL_PADDING;
+  const usableW = halfW * 2 - pad * 2;
+  const usableH = halfH * 2 - pad * 2;
+  const usableD = halfD * 2 - pad * 2;
+
+  const cellW = usableW / GRID_COLS;
+  const cellH = usableH / totalRows;
+
+  const x = containerPos[0] - halfW + pad + cellW * (col + 0.5);
+  const y = containerPos[1] + halfH - pad - cellH * (row + 0.5);
+
+  let z;
+  if (totalLayers <= 1) {
+    // 2D mode: place on front face
+    z = containerPos[2] + halfD - pad;
+  } else {
+    // 3D mode: distribute layers evenly from front to back
+    const layerSpacing = usableD / totalLayers;
+    z = containerPos[2] + halfD - pad - layerSpacing * (layerIndex + 0.5);
+  }
+
+  return [x, y, z];
+}
+
+/**
+ * Reposition ALL tasks for a repo into the grid layout.
+ * Active tasks go in the front layer; merged tasks go in back layer(s).
+ * Also updates container scale and cleans up any stale divider planes.
+ */
+export function repositionAllTasks(repoSlug) {
+  const container = findRepoContainer(repoSlug);
+  if (!container) return;
+
+  const store = useObjectsStore.getState();
+  const allObjects = store.objects || [];
+
+  const repoTasks = allObjects.filter(
+    (obj) => obj.merfolkData?.planTaskIndex != null && obj.merfolkData?.repoSlug === repoSlug
+  );
+
+  const activeTasks = repoTasks
+    .filter((t) => t.merfolkData?.status !== TASK_STATUS.MERGED)
+    .sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
+  const mergedTasks = repoTasks
+    .filter((t) => t.merfolkData?.status === TASK_STATUS.MERGED)
+    .sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
+
+  const newScale = computeContainerScale(activeTasks.length, mergedTasks.length);
+  const layout = computeGridLayout(activeTasks.length, mergedTasks.length);
+
+  const spaceOwnerId = window.currentSpaceOwner;
+  const currentSpaceId = window.currentSpaceId;
+
+  // Clean up any existing divider planes for this repo
+  const dividerIds = new Set(
+    allObjects
+      .filter((obj) => obj.merfolkData?.isDividerGrid && obj.merfolkData?.repoSlug === repoSlug)
+      .map((d) => d.id)
+  );
+  if (dividerIds.size > 0 && spaceOwnerId && currentSpaceId) {
+    for (const d of allObjects.filter((obj) => dividerIds.has(obj.id))) {
+      deleteObject(spaceOwnerId, currentSpaceId, d.id, d.position);
+    }
+  }
+
+  // Build a set of task IDs for quick lookup
+  const activeIds = new Set(activeTasks.map((t) => t.id));
+  const mergedIds = new Set(mergedTasks.map((t) => t.id));
+
+  const updatedObjects = allObjects
+    .filter((obj) => !dividerIds.has(obj.id)) // remove dividers
+    .map((obj) => {
+      // Update container scale
+      if (obj.id === container.id) {
+        const updated = { ...obj, scale: newScale };
+        if (spaceOwnerId && currentSpaceId) {
+          saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
+        }
+        return updated;
+      }
+      // Position active tasks in front layer
+      if (activeIds.has(obj.id)) {
+        const idx = activeTasks.findIndex((t) => t.id === obj.id);
+        const col = idx % GRID_COLS;
+        const row = Math.floor(idx / GRID_COLS);
+        const pos = getGridCellPosition(container.position, newScale, col, row, 0, layout.totalRows, layout.totalLayers);
+        const updated = { ...obj, position: pos, cellId: getCellId(pos) };
+        if (spaceOwnerId && currentSpaceId) {
+          saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
+        }
+        return updated;
+      }
+      // Position merged tasks in back layer(s)
+      if (mergedIds.has(obj.id)) {
+        const idx = mergedTasks.findIndex((t) => t.id === obj.id);
+        const perLayer = GRID_COLS * layout.totalRows;
+        const layerIndex = 1 + Math.floor(idx / perLayer); // layers 1, 2, ...
+        const withinLayer = idx % perLayer;
+        const col = withinLayer % GRID_COLS;
+        const row = Math.floor(withinLayer / GRID_COLS);
+        const pos = getGridCellPosition(container.position, newScale, col, row, layerIndex, layout.totalRows, layout.totalLayers);
+        const updated = {
+          ...obj,
+          position: pos,
+          cellId: getCellId(pos),
+          color: '#c8e6c9', // light green for merged
+        };
+        if (spaceOwnerId && currentSpaceId) {
+          saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
+        }
+        return updated;
+      }
+      return obj;
+    });
+
+  const newCreatedIds = new Set(store.createdObjectIds);
+  dividerIds.forEach((id) => newCreatedIds.delete(id));
+
+  useObjectsStore.setState({ objects: updatedObjects, createdObjectIds: newCreatedIds });
 }
 
 /**
@@ -171,7 +342,7 @@ export async function createRepoContainer(owner, repo, user, currentSpaceId, pos
 /**
  * Reposition incoming tasks (from planScape bulkImport) into the repo container.
  * Tasks arriving via bulkImport have arbitrary positions; this moves them
- * to the correct container-relative layout and marks them as positioned.
+ * to the correct grid layout and marks them as positioned.
  */
 export function repositionIncomingTasks(repoSlug) {
   const container = findRepoContainer(repoSlug);
@@ -198,45 +369,20 @@ export function repositionIncomingTasks(repoSlug) {
   // Sort by planTaskIndex so order is deterministic
   unpositioned.sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
 
-  // Count already-positioned tasks so new ones stack after them
-  const positionedCount = allObjects.filter(
-    (obj) =>
-      obj.merfolkData?.planTaskIndex != null &&
-      obj.merfolkData?.repoSlug === repoSlug &&
-      obj.merfolkData?.positioned
-  ).length;
-
-  const containerPos = container.position;
-  const containerScale = container.scale;
-  // Position tasks OUTSIDE the container, in front of it.
-  // Container face is at containerPos[2] + containerScale[2] * CUBE_SIZE (=5).
-  // Place tasks 5 units past the front face so they're not occluded.
-  const frontZ = containerPos[2] + containerScale[2] * 5 + 5;
-  const taskStartX = containerPos[0];
-
   const spaceOwnerId = window.currentSpaceOwner;
   const currentSpaceId = window.currentSpaceId;
 
   const unpositionedIds = new Set(unpositioned.map((t) => t.id));
 
+  // Mark unpositioned tasks as positioned with correct type/style, then reposition all
   const updatedObjects = allObjects.map((obj) => {
     if (!unpositionedIds.has(obj.id)) return obj;
 
-    const taskIndex = unpositioned.findIndex((t) => t.id === obj.id);
-    const overallIndex = positionedCount + taskIndex;
-    const newPos = [
-      taskStartX,
-      containerPos[1] + TASK_OFFSET_Y,
-      frontZ - overallIndex * TASK_SPACING_Z,
-    ];
     const bodyText = obj.content || obj.text || '';
-
-    const updated = {
+    return {
       ...obj,
       type: 'text',
-      position: newPos,
-      cellId: getCellId(newPos),
-      scale: obj.scale && obj.scale[0] >= 10 ? obj.scale : [...COLLAPSED_TASK_SCALE],
+      scale: obj.scale && obj.scale[0] >= 3 ? obj.scale : [...COLLAPSED_TASK_SCALE],
       color: obj.color || '#ffffff',
       content: bodyText,
       text: bodyText,
@@ -250,46 +396,20 @@ export function repositionIncomingTasks(repoSlug) {
         status: obj.merfolkData?.status || TASK_STATUS.QUEUED,
       },
     };
-
-    if (spaceOwnerId && currentSpaceId) {
-      saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
-    }
-    return updated;
   });
 
-  // Expand container to fit all tasks
-  const totalTasks = positionedCount + unpositioned.length;
-  const neededDepth = Math.max(CONTAINER_BASE_SCALE[2], (totalTasks * TASK_SPACING_Z + 6) / 10);
-  const neededWidth = Math.max(CONTAINER_BASE_SCALE[0], 20);
-  const neededHeight = Math.max(CONTAINER_BASE_SCALE[1], 15);
+  useObjectsStore.setState({ objects: updatedObjects });
 
-  const finalObjects = updatedObjects.map((obj) => {
-    if (obj.id === container.id) {
-      const updated = { ...obj, scale: [neededWidth, neededHeight, neededDepth] };
-      if (spaceOwnerId && currentSpaceId) {
-        saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
-      }
-      return updated;
-    }
-    return obj;
-  });
+  // Now reposition all tasks (including newly positioned ones) into grid
+  repositionAllTasks(repoSlug);
 
-  useObjectsStore.setState({ objects: finalObjects });
-
-  // Log repositioned task details for debugging
-  const repoTasks = finalObjects.filter(
-    (o) => o.merfolkData?.repoSlug === repoSlug && o.merfolkData?.planTaskIndex != null
-  );
-  for (const t of repoTasks) {
-    console.log(`[repoContainerService] Task ${t.id}: type=${t.type}, pos=${JSON.stringify(t.position)}, scale=${JSON.stringify(t.scale)}, positioned=${t.merfolkData?.positioned}`);
-  }
   console.log(`[repoContainerService] Repositioned ${unpositioned.length} tasks into container for ${repoSlug}`);
   return unpositioned.length;
 }
 
 /**
  * Create task TextObjects inside a repo container.
- * New tasks are placed at the front; existing tasks are pushed backward.
+ * Tasks are placed in a grid layout; repositionAllTasks handles final positioning.
  * Returns array of created task object IDs.
  */
 export async function createTaskObjects(tasks, repoSlug, user, currentSpaceId) {
@@ -300,58 +420,20 @@ export async function createTaskObjects(tasks, repoSlug, user, currentSpaceId) {
   }
 
   const store = useObjectsStore.getState();
-  const allObjects = store.objects || [];
-
-  // Find existing tasks for this repo
-  const existingTasks = allObjects.filter(
-    (obj) => obj.merfolkData?.planTaskIndex != null && obj.merfolkData?.repoSlug === repoSlug
-  );
-
-  const newTaskCount = tasks.length;
   const spaceOwnerId = !window.isTrialMode && user
     ? (window.currentSpaceOwner || user.uid)
     : null;
 
-  // Push existing tasks backward
-  const updatedObjects = allObjects.map((obj) => {
-    if (existingTasks.some((t) => t.id === obj.id)) {
-      const newPos = [
-        obj.position[0],
-        obj.position[1],
-        obj.position[2] - newTaskCount * TASK_SPACING_Z,
-      ];
-      const updated = { ...obj, position: newPos, cellId: getCellId(newPos) };
-      // Persist position change
-      if (spaceOwnerId) {
-        saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
-      }
-      return updated;
-    }
-    return obj;
-  });
-
-  // Create new task objects OUTSIDE the front face of the container
-  const containerPos = container.position;
-  const containerScale = container.scale;
-  const frontZ = containerPos[2] + containerScale[2] * 5 + 5;
-  const taskStartX = containerPos[0];
-
-  const newTaskObjects = tasks.map((task, i) => {
-    const taskPosition = [
-      taskStartX,
-      containerPos[1] + TASK_OFFSET_Y,
-      frontZ - i * TASK_SPACING_Z,
-    ];
-    const taskCellId = getCellId(taskPosition);
-    // Preserve all fields from planScape's TextObject format
+  // Create new task objects with temporary positions (repositionAllTasks will fix them)
+  const newTaskObjects = tasks.map((task) => {
     const bodyText = task.content || task.description || task.body || task.text || '';
     return {
       id: task.id || generateId(),
       type: 'text',
-      position: taskPosition,
+      position: [...container.position], // temporary, will be grid-positioned
       scale: task.scale || [...COLLAPSED_TASK_SCALE],
       color: task.color || '#ffffff',
-      cellId: taskCellId,
+      cellId: getCellId(container.position),
       createdAt: task.createdAt || Date.now(),
       headerText: task.headerText || `${task.index}. ${task.title}`,
       headerStyle: task.headerStyle || { fontSize: 2, color: 'black' },
@@ -362,6 +444,7 @@ export async function createTaskObjects(tasks, repoSlug, user, currentSpaceId) {
         planTaskIndex: task.index ?? task.merfolkData?.planTaskIndex,
         status: task.merfolkData?.status || 'queued',
         repoSlug,
+        positioned: true,
         isExpanded: false,
         githubIssueNumber: task.merfolkData?.githubIssueNumber || null,
         githubPrNumber: task.merfolkData?.githubPrNumber || null,
@@ -369,30 +452,12 @@ export async function createTaskObjects(tasks, repoSlug, user, currentSpaceId) {
     };
   });
 
-  // Expand container to fit all tasks
-  const totalTasks = existingTasks.length + newTaskCount;
-  const neededDepth = Math.max(CONTAINER_BASE_SCALE[2], (totalTasks * TASK_SPACING_Z + 6) / 10);
-  const neededHeight = Math.max(CONTAINER_BASE_SCALE[1], 15);
-  const neededWidth = Math.max(CONTAINER_BASE_SCALE[0], 20);
-
-  const updatedContainerScale = [neededWidth, neededHeight, neededDepth];
-  const finalObjects = updatedObjects.map((obj) => {
-    if (obj.id === container.id) {
-      const updated = { ...obj, scale: updatedContainerScale };
-      if (spaceOwnerId) {
-        saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
-      }
-      return updated;
-    }
-    return obj;
-  });
-
-  // Add new task objects
+  // Add new task objects to store
   const newCreatedIds = new Set(store.createdObjectIds);
   newTaskObjects.forEach((obj) => newCreatedIds.add(obj.id));
 
   useObjectsStore.setState({
-    objects: [...finalObjects, ...newTaskObjects],
+    objects: [...(store.objects || []), ...newTaskObjects],
     createdObjectIds: newCreatedIds,
     isInitialLoading: false,
   });
@@ -404,11 +469,14 @@ export async function createTaskObjects(tasks, repoSlug, user, currentSpaceId) {
     }
   }
 
+  // Reposition all tasks into grid (including the new ones)
+  repositionAllTasks(repoSlug);
+
   return newTaskObjects.map((obj) => obj.id);
 }
 
 /**
- * Clear tasks for a repo: delete unmerged tasks entirely, bump merged tasks backward.
+ * Clear tasks for a repo: delete unmerged tasks, reposition merged tasks to back grid layer(s).
  * @param {string} repoSlug
  * @param {object} user - Firebase user
  * @param {string} currentSpaceId
@@ -437,25 +505,12 @@ export async function clearRepoTasks(repoSlug, user, currentSpaceId) {
     }
   }
 
-  // Bump merged tasks backward and change their background to light green
-  const bumpDistance = unmerged.length * TASK_SPACING_Z;
+  // Remove unmerged from store, mark merged as light green
   const updatedObjects = allObjects
     .filter((obj) => !unmergedIds.has(obj.id))
     .map((obj) => {
       if (merged.some((m) => m.id === obj.id)) {
-        const newPos = bumpDistance > 0
-          ? [obj.position[0], obj.position[1], obj.position[2] - bumpDistance]
-          : [...obj.position];
-        const updated = {
-          ...obj,
-          position: newPos,
-          cellId: getCellId(newPos),
-          color: '#c8e6c9', // Light green for completed/merged tasks
-        };
-        if (spaceOwnerId) {
-          saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
-        }
-        return updated;
+        return { ...obj, color: '#c8e6c9' };
       }
       return obj;
     });
@@ -468,97 +523,12 @@ export async function clearRepoTasks(repoSlug, user, currentSpaceId) {
     createdObjectIds: newCreatedIds,
   });
 
-  // Create divider grid between current and merged tasks
+  // Reposition remaining tasks (merged) into grid back layer(s)
   if (merged.length > 0) {
-    await createDividerGrid(repoSlug, user, currentSpaceId);
+    repositionAllTasks(repoSlug);
   }
 
   return { deleted: unmerged.length, bumped: merged.length };
-}
-
-/**
- * Create a divider grid plane inside a repo container, separating current from previous tasks.
- * Placed between the last current task and the first merged task.
- */
-export async function createDividerGrid(repoSlug, user, currentSpaceId) {
-  const container = findRepoContainer(repoSlug);
-  if (!container) return null;
-
-  const store = useObjectsStore.getState();
-  const allObjects = store.objects || [];
-
-  // Find current (non-merged) and merged tasks
-  const repoTasks = allObjects.filter(
-    (obj) => obj.merfolkData?.planTaskIndex != null && obj.merfolkData?.repoSlug === repoSlug
-  );
-  const currentTasks = repoTasks.filter((t) => t.merfolkData?.status !== TASK_STATUS.MERGED);
-  const mergedTasks = repoTasks.filter((t) => t.merfolkData?.status === TASK_STATUS.MERGED);
-
-  if (mergedTasks.length === 0) return null;
-
-  // Remove any existing divider
-  const existingDividers = allObjects.filter(
-    (obj) => obj.merfolkData?.isDividerGrid && obj.merfolkData?.repoSlug === repoSlug
-  );
-  const dividerIds = new Set(existingDividers.map((d) => d.id));
-
-  // Position divider between last current task and first merged task
-  const containerPos = container.position;
-  // Find the boundary Z position
-  const currentMinZ = currentTasks.length > 0
-    ? Math.min(...currentTasks.map((t) => t.position[2]))
-    : containerPos[2];
-  const mergedMaxZ = Math.max(...mergedTasks.map((t) => t.position[2]));
-  const dividerZ = (currentMinZ + mergedMaxZ) / 2;
-
-  const dividerPosition = [
-    containerPos[0],
-    containerPos[1],
-    dividerZ,
-  ];
-  const dividerCellId = getCellId(dividerPosition);
-  const dividerId = generateId();
-
-  const dividerObj = {
-    id: dividerId,
-    type: 'plane',
-    position: dividerPosition,
-    scale: [container.scale[0] * 8, 1, container.scale[1] * 8],
-    rotation: [Math.PI / 2, 0, 0],
-    color: '#d0d0d0',
-    opacity: 0.4,
-    cellId: dividerCellId,
-    createdAt: Date.now(),
-    merfolkData: {
-      isDividerGrid: true,
-      repoSlug,
-    },
-  };
-
-  const spaceOwnerId = !window.isTrialMode && user
-    ? (window.currentSpaceOwner || user.uid)
-    : null;
-
-  // Remove old dividers, add new one
-  const filteredObjects = allObjects.filter((obj) => !dividerIds.has(obj.id));
-  const newCreatedIds = new Set(store.createdObjectIds);
-  dividerIds.forEach((did) => newCreatedIds.delete(did));
-  newCreatedIds.add(dividerId);
-
-  useObjectsStore.setState({
-    objects: [...filteredObjects, dividerObj],
-    createdObjectIds: newCreatedIds,
-  });
-
-  // Delete old dividers from Firebase
-  if (spaceOwnerId) {
-    for (const d of existingDividers) {
-      deleteObject(spaceOwnerId, currentSpaceId, d.id, d.position);
-    }
-    saveObjectToCell(spaceOwnerId, currentSpaceId, dividerObj);
-  }
-
-  return dividerId;
 }
 
 /**
