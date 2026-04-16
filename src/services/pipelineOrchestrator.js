@@ -14,7 +14,7 @@ import {
   createPullRequest,
   addComment,
   approvePullRequest,
-  enableAutoMerge,
+  mergePullRequest,
   getPullRequest,
 } from './githubIssuesService';
 
@@ -152,15 +152,12 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
       }
 
       // Auto-approve if enabled and Copilot has pushed commits (more than our initial one)
-      if (currentState.autoApprove && prCheck.data.commits > 1 && !prCheck.data.auto_merge) {
+      if (currentState.autoApprove && prCheck.data.commits > 1 && !prCheck.data.merged) {
         await approvePullRequest(token, owner, repo, prNumber);
-        // Enable auto-merge via GraphQL using the PR node_id
-        const nodeId = prCheck.data.node_id;
-        if (nodeId) {
-          const autoMergeResult = await enableAutoMerge(token, nodeId);
-          if (!autoMergeResult.ok) {
-            console.warn('[pipelineOrchestrator] Auto-merge not available, will keep polling:', autoMergeResult.error);
-          }
+        // Merge the PR directly via REST API (works on all plans)
+        const mergeResult = await mergePullRequest(token, owner, repo, prNumber);
+        if (!mergeResult.ok) {
+          console.warn('[pipelineOrchestrator] Merge not available, will keep polling:', mergeResult.error);
         }
       }
 
