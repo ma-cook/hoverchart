@@ -537,6 +537,11 @@ const Cube = ({
   }, []);
   // Event handlers
   const handleSceneClick = useCallback(() => {
+    if (isRepoContainer) {
+      // Repo containers use their own menu — don't show ObjectUI
+      onClick();
+      return;
+    }
     setCubeShowObjectUI(id, true);
     setCubeShowHeaderTextStyleUI(id, false); // Close header text style UI
     setCubeActiveTextFace(id, null); // Reset active text face for face text UI
@@ -549,6 +554,7 @@ const Cube = ({
     setCubeShowObjectUI,
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
+    isRepoContainer,
   ]); // Add useCallback for updating database (same pattern as Dodecahedron)
   const updateDatabase = useCallback(() => {
     if (!onUpdate || !id || !objectData) return;
@@ -1491,9 +1497,105 @@ const Cube = ({
             initialText={cube?.headerText || headerText}
           />
         )}
+        {/* Repo container menu — inside main cube group so it inherits position */}
+        {isRepoContainer && shouldRenderText && (
+          <group
+            scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
+            position={[0, CUBE_SIZE + 10 / (cube?.scale || scale)[1], 0.01]}
+          >
+            <Html
+              transform
+              center
+              style={{
+                pointerEvents: 'auto',
+              }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  display: 'flex',
+                  gap: '18px',
+                  padding: '24px 36px',
+                  borderRadius: '24px',
+                  background: 'rgba(30, 30, 40, 0.95)',
+                  border: '3px solid rgba(74, 158, 255, 0.4)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {/* Start / Stop toggle */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (pipelineIsRunning) {
+                      stopPipeline();
+                    } else {
+                      // Assign repoSlug to orphan tasks and reposition into container
+                      assignRepoSlugToOrphanTasks();
+                      repositionIncomingTasks(repoSlug);
+                      const allObjs = useObjectsStore.getState().objects || [];
+                      // Try repo-scoped tasks first, fall back to all tasks
+                      let repoTasks = getPipelineTasksForRepo(allObjs, repoSlug);
+                      if (repoTasks.length === 0) {
+                        repoTasks = getPipelineTasks(allObjs);
+                      }
+                      const spaceOwnerId = window.currentSpaceOwner;
+                      const spaceId = useSpaceManagerStore.getState().currentSpaceId || window.currentSpaceId;
+                      if (repoTasks.length > 0 && spaceOwnerId && spaceId) {
+                        // Ensure repo is in connectedRepos (may be lost on refresh)
+                        if (repoSlug && !usePipelineStore.getState().getRepo(repoSlug)) {
+                          const [rOwner, rRepo] = repoSlug.split('/');
+                          if (rOwner && rRepo) {
+                            usePipelineStore.getState().addRepo(rOwner, rRepo);
+                            usePipelineStore.getState().persistState(spaceId);
+                          }
+                        }
+                        startPipeline(spaceOwnerId, spaceId, repoTasks, repoSlug);
+                      }
+                    }
+                  }}
+                  style={{
+                    padding: '18px 42px',
+                    fontSize: '40px',
+                    border: 'none',
+                    borderRadius: '12px',
+                    cursor: 'pointer',
+                    background: pipelineIsRunning ? '#f44336' : '#4caf50',
+                    color: '#fff',
+                    fontWeight: 600,
+                  }}
+                >
+                  {pipelineIsRunning ? '\u25a0 Stop' : 'Start'}
+                </button>
+                {/* Clear tasks */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (repoSlug) {
+                      const user = window.currentUser;
+                      const spaceId = useSpaceManagerStore.getState().currentSpaceId || window.currentSpaceId;
+                      clearRepoTasks(repoSlug, user, spaceId);
+                    }
+                  }}
+                  style={{
+                    padding: '18px 42px',
+                    fontSize: '40px',
+                    border: 'none',
+                    borderRadius: '12px',
+                    cursor: 'pointer',
+                    background: '#ff9800',
+                    color: '#fff',
+                    fontWeight: 600,
+                  }}
+                >
+                  Clear Tasks
+                </button>
+              </div>
+            </Html>
+          </group>
+        )}
       </group>{' '}
       {/* Object UI - moved outside the cube group to avoid scale transformation - only at full LOD */}
-      {shouldRenderUI && selected && !cube?.showHeader && cube?.showObjectUI && (
+      {shouldRenderUI && selected && !isRepoContainer && !cube?.showHeader && cube?.showObjectUI && (
         <ObjectUI
           onTransformToggle={handleTransformToggle}
           onHeaderToggle={handleHeaderToggle}
@@ -1588,102 +1690,6 @@ const Cube = ({
           mode="scale"
           size={0.5}
         />
-      )}
-      {/* Repo container menu — always visible above header, scales as 3D object */}
-      {isRepoContainer && shouldRenderText && (
-        <group
-          scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
-          position={[0, CUBE_SIZE + 10 / (cube?.scale || scale)[1], 0.01]}
-        >
-          <Html
-            transform
-            center
-            style={{
-              pointerEvents: 'auto',
-            }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                display: 'flex',
-                gap: '18px',
-                padding: '24px 36px',
-                borderRadius: '24px',
-                background: 'rgba(30, 30, 40, 0.95)',
-                border: '3px solid rgba(74, 158, 255, 0.4)',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {/* Start / Stop toggle */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (pipelineIsRunning) {
-                    stopPipeline();
-                  } else {
-                    // Assign repoSlug to orphan tasks and reposition into container
-                    assignRepoSlugToOrphanTasks();
-                    repositionIncomingTasks(repoSlug);
-                    const allObjs = useObjectsStore.getState().objects || [];
-                    // Try repo-scoped tasks first, fall back to all tasks
-                    let repoTasks = getPipelineTasksForRepo(allObjs, repoSlug);
-                    if (repoTasks.length === 0) {
-                      repoTasks = getPipelineTasks(allObjs);
-                    }
-                    const spaceOwnerId = window.currentSpaceOwner;
-                    const spaceId = useSpaceManagerStore.getState().currentSpaceId || window.currentSpaceId;
-                    if (repoTasks.length > 0 && spaceOwnerId && spaceId) {
-                      // Ensure repo is in connectedRepos (may be lost on refresh)
-                      if (repoSlug && !usePipelineStore.getState().getRepo(repoSlug)) {
-                        const [rOwner, rRepo] = repoSlug.split('/');
-                        if (rOwner && rRepo) {
-                          usePipelineStore.getState().addRepo(rOwner, rRepo);
-                          usePipelineStore.getState().persistState(spaceId);
-                        }
-                      }
-                      startPipeline(spaceOwnerId, spaceId, repoTasks, repoSlug);
-                    }
-                  }
-                }}
-                style={{
-                  padding: '18px 42px',
-                  fontSize: '40px',
-                  border: 'none',
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  background: pipelineIsRunning ? '#f44336' : '#4caf50',
-                  color: '#fff',
-                  fontWeight: 600,
-                }}
-              >
-                {pipelineIsRunning ? '■ Stop' : 'Start'}
-              </button>
-              {/* Clear tasks */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (repoSlug) {
-                    const user = window.currentUser;
-                    const spaceId = useSpaceManagerStore.getState().currentSpaceId || window.currentSpaceId;
-                    clearRepoTasks(repoSlug, user, spaceId);
-                  }
-                }}
-                style={{
-                  padding: '18px 42px',
-                  fontSize: '40px',
-                  border: 'none',
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  background: '#ff9800',
-                  color: '#fff',
-                  fontWeight: 600,
-                }}
-              >
-                Clear Tasks
-              </button>
-            </div>
-          </Html>
-        </group>
       )}
     </>
   );

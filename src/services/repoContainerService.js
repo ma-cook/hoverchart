@@ -156,7 +156,7 @@ export function repositionAllTasks(repoSlug) {
         const col = idx % GRID_COLS;
         const row = Math.floor(idx / GRID_COLS);
         const pos = getGridCellPosition(container.position, newScale, col, row, 0, layout.totalRows, layout.totalLayers);
-        const updated = { ...obj, position: pos, cellId: getCellId(pos) };
+        const updated = { ...obj, position: pos, cellId: getCellId(pos), _repoLocalUpdate: Date.now() };
         if (spaceOwnerId && currentSpaceId) {
           saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
         }
@@ -176,6 +176,7 @@ export function repositionAllTasks(repoSlug) {
           position: pos,
           cellId: getCellId(pos),
           color: '#c8e6c9', // light green for merged
+          _repoLocalUpdate: Date.now(),
         };
         if (spaceOwnerId && currentSpaceId) {
           saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
@@ -389,6 +390,7 @@ export function repositionIncomingTasks(repoSlug) {
       headerText: obj.headerText || `Task ${obj.merfolkData.planTaskIndex}`,
       headerStyle: obj.headerStyle || { fontSize: 2, color: 'black' },
       textStyle: obj.textStyle || { fontSize: TASK_FONT_SIZE, color: 'black' },
+      _repoLocalUpdate: Date.now(),
       merfolkData: {
         ...obj.merfolkData,
         positioned: true,
