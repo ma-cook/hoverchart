@@ -18,9 +18,9 @@ const STATUS_COLORS = {
 };
 
 const STATUS_LABELS = {
-  [TASK_STATUS.QUEUED]: 'Queued',
+  [TASK_STATUS.QUEUED]: 'Not Started',
   [TASK_STATUS.IN_PROGRESS]: 'In Progress',
-  [TASK_STATUS.PR_OPEN]: 'PR Open',
+  [TASK_STATUS.PR_OPEN]: 'Pending Merge',
   [TASK_STATUS.MERGED]: 'Merged',
   [TASK_STATUS.CLOSED]: 'Closed',
 };

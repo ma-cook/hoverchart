@@ -4,6 +4,7 @@ import {
   getNextQueuedTask,
   updateTaskStatus,
 } from './pipelineTaskService';
+import { repositionAllTasks } from './repoContainerService';
 import {
   getRepoInfo,
   getBranchRef,
@@ -140,6 +141,11 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
       // PR was merged
       if (prCheck.data.merged) {
         await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED, { mergeCommitSha: prCheck.data.merge_commit_sha });
+        // Reposition tasks so merged task moves to back layer
+        const taskRepoSlug = task.merfolkData?.repoSlug;
+        if (taskRepoSlug) {
+          repositionAllTasks(taskRepoSlug);
+        }
         resolve(true);
         return;
       }

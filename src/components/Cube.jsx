@@ -203,7 +203,6 @@ const Cube = ({
 
   // Repo container state — must be declared before handleSceneClick
   const isRepoContainer = objectData?.merfolkData?.isRepoContainer === true;
-  const [showRepoMenu, setShowRepoMenu] = useState(false);
   const pipelineIsRunning = usePipelineStore((state) => state.isRunning);
   const repoSlug = objectData?.merfolkData?.repoSlug;
 
@@ -538,11 +537,6 @@ const Cube = ({
   }, []);
   // Event handlers
   const handleSceneClick = useCallback(() => {
-    if (isRepoContainer) {
-      // Toggle repo menu instead of normal UI
-      setShowRepoMenu((prev) => !prev);
-      return;
-    }
     setCubeShowObjectUI(id, true);
     setCubeShowHeaderTextStyleUI(id, false); // Close header text style UI
     setCubeActiveTextFace(id, null); // Reset active text face for face text UI
@@ -555,7 +549,6 @@ const Cube = ({
     setCubeShowObjectUI,
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
-    isRepoContainer,
   ]); // Add useCallback for updating database (same pattern as Dodecahedron)
   const updateDatabase = useCallback(() => {
     if (!onUpdate || !id || !objectData) return;
@@ -1596,14 +1589,16 @@ const Cube = ({
           size={0.5}
         />
       )}
-      {/* Repo container click menu */}
-      {isRepoContainer && showRepoMenu && (
-        <group position={position}>
+      {/* Repo container menu — always visible above header */}
+      {isRepoContainer && shouldRenderText && (
+        <group
+          scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
+          position={[getUIPositions.headerText[0], getUIPositions.headerText[1] + 3 / (cube?.scale || scale)[1], getUIPositions.headerText[2]]}
+        >
           <Html
             center
             style={{
               pointerEvents: 'auto',
-              transform: 'translate3d(0, -120%, 0)',
               zIndex: 100000,
             }}
           >
@@ -1620,7 +1615,7 @@ const Cube = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              {/* Play / Stop toggle */}
+              {/* Start / Stop toggle */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1662,7 +1657,7 @@ const Cube = ({
                   fontWeight: 600,
                 }}
               >
-                {pipelineIsRunning ? '■ Stop' : '▶ Play'}
+                {pipelineIsRunning ? '■ Stop' : 'Start'}
               </button>
               {/* Clear tasks */}
               <button
@@ -1686,24 +1681,6 @@ const Cube = ({
                 }}
               >
                 Clear Tasks
-              </button>
-              {/* Close menu */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowRepoMenu(false);
-                }}
-                style={{
-                  padding: '6px 10px',
-                  fontSize: '13px',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.1)',
-                  color: '#aaa',
-                }}
-              >
-                ✕
               </button>
             </div>
           </Html>

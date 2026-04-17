@@ -732,6 +732,11 @@ const TextObject = React.memo(
         setIndicatorSelected(false);
         onIndicatorDeselected?.();
 
+        // Auto-collapse expanded pipeline tasks when deselected
+        if (isPipelineTask && isTaskExpanded) {
+          toggleTaskExpansion(id);
+        }
+
         // Save pending changes when deselected - but ensure it's a complete object
         if (pendingChangesRef.current && onUpdate) {
           // FIXED: Create a complete object instead of partial update
@@ -758,6 +763,8 @@ const TextObject = React.memo(
       scale,
       textStyle,
       setIndicatorSelected,
+      isPipelineTask,
+      isTaskExpanded,
     ]); // Optimized database update to reduce unnecessary saves
     const updateDatabase = useCallback(() => {
       if (!onUpdate || !id) return; // CRITICAL: Always ensure type is included in every update
