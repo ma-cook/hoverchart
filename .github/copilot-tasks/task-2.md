@@ -1,28 +1,22 @@
-# Task: 2. Replace Auto-Merge Logic
+# Task: 2. Clear Tasks — Bump Instead of Delete
 
-## TL;DR
-GitHub's `enablePullRequestAutoMerge` GraphQL mutation requires "Allow auto-merge" in repo settings, which is only available on paid plans for private repos. The codebase already has `mergePullRequest()` defined but never called. Switch the orchestrator to use it directly via REST API — works on all plans, no repo settings needed.
+### Step 2.1 — Rewrite clearRepoTasks to bump all tasks (*depends on Step 1.5*)
+- **File:** `src/services/repoContainerService.js` `clearRepoTasks()`
+- Current: DELETES non-merged tasks, only bumps merged ones
+- New behavior: Keep ALL tasks, mark them all as "cleared" (add `merfolkData.cleared: true`), move them ALL to back layer(s)
+- Set color to `#c8e6c9` (light green) for all bumped tasks
+- Update Firebase with new position/color for each task
+- Call `repositionAllTasks()` which will place them in back layers
 
-## Decisions
-- Use existing `mergePullRequest()` (squash merge via `PUT /repos/{owner}/{repo}/pulls/{number}/merge`)
-- Keep `approvePullRequest()` call before merge (unchanged)
-- `enableAutoMerge` can remain in githubIssuesService.js (just unused) — no need to delete
+### Step 2.2 — Update repositionAllTasks to handle cleared tasks
+- **File:** `src/services/repoContainerService.js` `repositionAllTasks()`
+- Current split: active (status !== MERGED) vs merged (status === MERGED)
+- New split: active (not cleared AND status !== MERGED) vs archived (cleared OR status === MERGED)
+- This ensures bumped-but-not-merged tasks go to back layers too
 
----
-
-**File:** `src/services/pipelineOrchestrator.js` (lines ~155-165)
-
-Replace the `enableAutoMerge(token, nodeId)` GraphQL call with `mergePullRequest(token, owner, repo, prNumber)`:
-
-```js
-      // Auto-approve and merge if enabled and Copilot has pushed commits
-      if (currentState.autoApprove && prCheck.data.commits > 1 && !prCheck.data.auto_merge) {
-        await approvePullRequest(token, owner, repo, prNumber);
-        const mergeResult = await mergePullRequest(token, owner, repo, prNumber);
-        if (!mergeResult.ok) {
-          console.warn('[pipelineOrchestrator] Direct merge failed, will keep polling:', mergeResult.error);
-        }
-      }
-```
+### Step 2.3 — Update RepoGrid to count cleared tasks in merged layer
+- **File:** `src/components/RepoGrid.jsx`
+- Grid visualization should count cleared tasks as part of the back layer count
+- Check how activeCount/mergedCount are derived and update to include cleared tasks
 
 ---
