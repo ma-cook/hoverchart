@@ -1,5 +1,5 @@
 import useObjectsStore from '../stores/objectsStore';
-import { saveObjectToCell, deleteObject } from './spatialObjectsService';
+import { saveObjectToCell, deleteObject, updateThrottles } from './spatialObjectsService';
 import { getCellCoordinates } from './spatialPartitioning';
 import { TASK_STATUS } from './pipelineTaskService';
 
@@ -158,6 +158,7 @@ export function repositionAllTasks(repoSlug) {
         const pos = getGridCellPosition(container.position, newScale, col, row, 0, layout.totalRows, layout.totalLayers);
         const updated = { ...obj, position: pos, cellId: getCellId(pos), _repoLocalUpdate: Date.now() };
         if (spaceOwnerId && currentSpaceId) {
+          updateThrottles.delete(`${currentSpaceId}_${obj.id}`);
           saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
         }
         return updated;
@@ -179,6 +180,7 @@ export function repositionAllTasks(repoSlug) {
           _repoLocalUpdate: Date.now(),
         };
         if (spaceOwnerId && currentSpaceId) {
+          updateThrottles.delete(`${currentSpaceId}_${obj.id}`);
           saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
         }
         return updated;
@@ -401,6 +403,14 @@ export function repositionIncomingTasks(repoSlug) {
   });
 
   useObjectsStore.setState({ objects: updatedObjects });
+
+  // Clear throttle entries for all repositioned tasks so their saves aren't
+  // silently dropped by the 800ms throttle in saveObjectToCell.
+  if (currentSpaceId) {
+    for (const id of unpositionedIds) {
+      updateThrottles.delete(`${currentSpaceId}_${id}`);
+    }
+  }
 
   // Now reposition all tasks (including newly positioned ones) into grid
   repositionAllTasks(repoSlug);

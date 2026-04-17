@@ -282,7 +282,6 @@ const UIOverlay = ({
   // (with complete TextObject data) reaches Firebase.  An earlier design
   // saved partial data in step-1 and the 800ms throttle blocked the
   // full save in step-2, causing the snapshot to overwrite the store.
-  const repositionedSlugsRef = useRef(new Set());
   useEffect(() => {
     if (spaceType !== 'github_control_panel') return;
     if (pipelineTasks.length === 0) return;
@@ -305,7 +304,6 @@ const UIOverlay = ({
       freshTasks.map((t) => t.merfolkData?.repoSlug).filter(Boolean)
     );
     for (const slug of repoSlugs) {
-      if (repositionedSlugsRef.current.has(slug)) continue;
       const hasUnpositioned = freshTasks.some(
         (t) => t.merfolkData?.repoSlug === slug && !t.merfolkData?.positioned
       );
@@ -313,7 +311,6 @@ const UIOverlay = ({
       if (hasUnpositioned && container) {
         console.log(`[UIOverlay] Repositioning tasks for ${slug}`);
         repositionIncomingTasks(slug);
-        repositionedSlugsRef.current.add(slug);
       }
     }
   }, [pipelineTasks, spaceType]);
