@@ -1004,6 +1004,12 @@ const TextObject = React.memo(
 
       onClick();
 
+      // Pipeline task collapsed: toggle expansion instead of editing
+      if (isPipelineTask && !isTaskExpanded) {
+        toggleTaskExpansion(id);
+        return;
+      }
+
       // CRITICAL FIX: Prevent double-click from accidentally clearing text
       // If this is a double-click and we're not currently editing, be extra careful
       if (e.detail >= 2 && !isEditing) {
@@ -2162,9 +2168,16 @@ const TextObject = React.memo(
                   }}
                   dangerouslySetInnerHTML={{
                     __html: (() => {
-                      // Pipeline task collapsed: show title only
+                      const headerFontSize = textStyle.fontSize ? `${textStyle.fontSize * 2}px` : '64px';
+                      const headerHtml = `<div style="font-size:${headerFontSize};font-weight:bold;margin-bottom:8px">${objectData?.headerText || `Task #${merfolkData.planTaskIndex}`}</div>`;
+                      // Pipeline task collapsed: show header only
                       if (isPipelineTask && !isTaskExpanded) {
-                        return objectData?.headerText || `Task #${merfolkData.planTaskIndex}`;
+                        return headerHtml;
+                      }
+                      // Pipeline task expanded: show header + content
+                      if (isPipelineTask && isTaskExpanded) {
+                        const body = textContentRef.current || localText || text || '';
+                        return headerHtml + (body && body !== 'Click to edit text...' ? body : '');
                       }
                       // Priority: textContentRef > localText > store text
                       // Only show placeholder if ALL sources are empty or contain placeholder
