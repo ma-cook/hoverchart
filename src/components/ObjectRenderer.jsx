@@ -58,11 +58,6 @@ const ObjectRenderer = React.memo(
       return null;
     }
 
-    // DEBUG: Log pipeline task rendering
-    if (obj.merfolkData?.planTaskIndex != null) {
-      console.log(`[ObjectRenderer] Rendering pipeline task ${obj.id}: type=${obj.type}, pos=${JSON.stringify(obj.position)}, scale=${JSON.stringify(obj.scale)}`);
-    }
-
     // Unmodified cubes at FULL LOD are rendered by GlobalCubeFullLODInstancedRenderer
     // Skip mounting the heavy <Cube> component unless selected or modified
     if (obj.type === 'cube' && unmodifiedCubeIds?.has(obj.id) && selectedId !== obj.id) {
@@ -244,6 +239,7 @@ const ObjectRenderer = React.memo(
     // Only re-render if critical props change
     return (
       prevProps.obj.id === nextProps.obj.id &&
+      prevProps.obj.type === nextProps.obj.type &&
       prevProps.selectedId === nextProps.selectedId &&
       arraysEqual(prevProps.obj.position, nextProps.obj.position) &&
       arraysEqual(prevProps.obj.scale, nextProps.obj.scale) &&

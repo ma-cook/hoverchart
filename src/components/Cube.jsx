@@ -1589,29 +1589,28 @@ const Cube = ({
           size={0.5}
         />
       )}
-      {/* Repo container menu — always visible above header */}
+      {/* Repo container menu — always visible above header, scales as 3D object */}
       {isRepoContainer && shouldRenderText && (
         <group
           scale={(cube?.scale || scale).map((s) => 1 / Math.max(0.0001, s))}
-          position={[getUIPositions.headerText[0], getUIPositions.headerText[1] + 3 / (cube?.scale || scale)[1], getUIPositions.headerText[2]]}
+          position={[0, CUBE_SIZE + 10 / (cube?.scale || scale)[1], 0.01]}
         >
           <Html
+            transform
             center
             style={{
               pointerEvents: 'auto',
-              zIndex: 100000,
             }}
           >
             <div
               onClick={(e) => e.stopPropagation()}
               style={{
                 display: 'flex',
-                gap: '6px',
-                padding: '8px 12px',
-                borderRadius: '8px',
+                gap: '18px',
+                padding: '24px 36px',
+                borderRadius: '24px',
                 background: 'rgba(30, 30, 40, 0.95)',
-                border: '1px solid rgba(74, 158, 255, 0.4)',
-                backdropFilter: 'blur(8px)',
+                border: '3px solid rgba(74, 158, 255, 0.4)',
                 whiteSpace: 'nowrap',
               }}
             >
@@ -1647,10 +1646,10 @@ const Cube = ({
                   }
                 }}
                 style={{
-                  padding: '6px 14px',
-                  fontSize: '13px',
+                  padding: '18px 42px',
+                  fontSize: '40px',
                   border: 'none',
-                  borderRadius: '4px',
+                  borderRadius: '12px',
                   cursor: 'pointer',
                   background: pipelineIsRunning ? '#f44336' : '#4caf50',
                   color: '#fff',
@@ -1670,10 +1669,10 @@ const Cube = ({
                   }
                 }}
                 style={{
-                  padding: '6px 14px',
-                  fontSize: '13px',
+                  padding: '18px 42px',
+                  fontSize: '40px',
                   border: 'none',
-                  borderRadius: '4px',
+                  borderRadius: '12px',
                   cursor: 'pointer',
                   background: '#ff9800',
                   color: '#fff',
