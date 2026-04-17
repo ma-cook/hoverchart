@@ -28,8 +28,8 @@ export default function RepoGrid() {
       const tasks = objects.filter(
         (o) => o.merfolkData?.planTaskIndex != null && o.merfolkData?.repoSlug === slug
       );
-      const activeCount = tasks.filter((t) => t.merfolkData?.status !== TASK_STATUS.MERGED).length;
-      const mergedCount = tasks.filter((t) => t.merfolkData?.status === TASK_STATUS.MERGED).length;
+      const activeCount = tasks.filter((t) => !t.merfolkData?.cleared && t.merfolkData?.status !== TASK_STATUS.MERGED).length;
+      const mergedCount = tasks.filter((t) => t.merfolkData?.cleared || t.merfolkData?.status === TASK_STATUS.MERGED).length;
       const layout = computeGridLayout(activeCount, mergedCount);
 
       return {
