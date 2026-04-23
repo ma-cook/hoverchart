@@ -55,6 +55,7 @@ import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle 
 import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkScheduler';
 
 import { signInUser } from './services/authService';
+import { toggleTaskExpansion } from './services/repoContainerService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
 import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning'; // Import CELL_SIZE constant
 import { setGuestPresence } from './services/presenceService';
@@ -1115,6 +1116,15 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   // Object click handler
   const handleObjectClick = useCallback(
     (id) => {
+      // Collapse any previously-selected expanded pipeline task before switching selection
+      const prevSelectedId = useObjectsStore.getState().selectedId;
+      if (prevSelectedId && prevSelectedId !== id) {
+        const prevObj = useObjectsStore.getState().objects.find((o) => o.id === prevSelectedId);
+        if (prevObj?.merfolkData?.planTaskIndex != null && prevObj?.merfolkData?.isExpanded) {
+          toggleTaskExpansion(prevSelectedId);
+        }
+      }
+
       setSelectedId(id);
       setShowLineTextStyleUI(null);
       setSelectedConnection(null);
@@ -1288,6 +1298,15 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
 
   // Canvas click handler - memoized to prevent re-creation
   const handleCanvasClick = useCallback(() => {
+    // Collapse any expanded pipeline task before clearing selection
+    const currentSelectedId = useObjectsStore.getState().selectedId;
+    if (currentSelectedId) {
+      const selectedObj = useObjectsStore.getState().objects.find((o) => o.id === currentSelectedId);
+      if (selectedObj?.merfolkData?.planTaskIndex != null && selectedObj?.merfolkData?.isExpanded) {
+        toggleTaskExpansion(currentSelectedId);
+      }
+    }
+
     // Close any active text styling menus
     setActiveTextStyleUI(null);
     setSelectedConnection(null);

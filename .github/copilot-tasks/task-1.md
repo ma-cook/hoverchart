@@ -1,31 +1,9 @@
-# Task: 1. Update Import
+# Task: 1. Task collapse-on-deselect
 
-## TL;DR
-GitHub's `enablePullRequestAutoMerge` GraphQL mutation requires "Allow auto-merge" in repo settings, which is only available on paid plans for private repos. The codebase already has `mergePullRequest()` defined but never called. Switch the orchestrator to use it directly via REST API — works on all plans, no repo settings needed.
+The collapse code already exists at TextObject.jsx:735-738: when selected becomes false, toggleTaskExpansion(id) runs. The bug is upstream — the selected prop isn't being set back to false when clicking elsewhere.
 
-## Decisions
-- Use existing `mergePullRequest()` (squash merge via `PUT /repos/{owner}/{repo}/pulls/{number}/merge`)
-- Keep `approvePullRequest()` call before merge (unchanged)
-- `enableAutoMerge` can remain in githubIssuesService.js (just unused) — no need to delete
+Steps
 
----
-
-**File:** `src/services/pipelineOrchestrator.js` (lines 7-19)
-
-Replace `enableAutoMerge` with `mergePullRequest` in the import block:
-
-```js
-import {
-  getRepoInfo,
-  getBranchRef,
-  createBranchRef,
-  deleteBranchRef,
-  getFileContents,
-  createFileOnBranch,
-  createPullRequest,
-  addComment,
-  approvePullRequest,
-  mergePullRequest,
-  getPullRequest,
-} from './githubIssuesService';
-```
+Trace where selected comes from (selection store) and identify why empty-space clicks / other-object clicks don't clear it for text objects specifically.
+Apply the fix at the layer that already deselects other object types (likely a canvas onPointerMissed or the selection store's setter).
+Verify all three collapse triggers: empty click, different-object click, context-menu button.

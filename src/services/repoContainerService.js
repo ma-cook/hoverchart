@@ -8,6 +8,7 @@ const REPO_OFFSET_X = 200;
 const COLLAPSED_TASK_SCALE = [4, 3, 1];
 const EXPANDED_TASK_SCALE = [8, 18, 1];
 const TASK_FONT_SIZE = 72;
+const ARCHIVED_TASK_COLOR = '#c8e6c9'; // light green for cleared/merged tasks
 
 // Grid layout constants
 const GRID_COLS = 2;
@@ -111,10 +112,10 @@ export function repositionAllTasks(repoSlug) {
   );
 
   const activeTasks = repoTasks
-    .filter((t) => t.merfolkData?.status !== TASK_STATUS.MERGED)
+    .filter((t) => !t.merfolkData?.cleared && t.merfolkData?.status !== TASK_STATUS.MERGED)
     .sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
   const mergedTasks = repoTasks
-    .filter((t) => t.merfolkData?.status === TASK_STATUS.MERGED)
+    .filter((t) => t.merfolkData?.cleared || t.merfolkData?.status === TASK_STATUS.MERGED)
     .sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
 
   const newScale = computeContainerScale(activeTasks.length, mergedTasks.length);
@@ -176,7 +177,7 @@ export function repositionAllTasks(repoSlug) {
           ...obj,
           position: pos,
           cellId: getCellId(pos),
-          color: '#c8e6c9', // light green for merged
+          color: ARCHIVED_TASK_COLOR, // light green for merged
           _repoLocalUpdate: Date.now(),
         };
         if (spaceOwnerId && currentSpaceId) {
@@ -488,11 +489,12 @@ export async function createTaskObjects(tasks, repoSlug, user, currentSpaceId) {
 }
 
 /**
- * Clear tasks for a repo: delete unmerged tasks, reposition merged tasks to back grid layer(s).
+ * Clear tasks for a repo: mark ALL tasks as cleared (add merfolkData.cleared: true),
+ * set color to light green, and reposition them all to back layer(s).
  * @param {string} repoSlug
  * @param {object} user - Firebase user
  * @param {string} currentSpaceId
- * @returns {{ deleted: number, bumped: number }}
+ * @returns {{ bumped: number }}
  */
 export async function clearRepoTasks(repoSlug, user, currentSpaceId) {
   const store = useObjectsStore.getState();
@@ -502,45 +504,41 @@ export async function clearRepoTasks(repoSlug, user, currentSpaceId) {
     (obj) => obj.merfolkData?.planTaskIndex != null && obj.merfolkData?.repoSlug === repoSlug
   );
 
-  const merged = repoTasks.filter((t) => t.merfolkData?.status === TASK_STATUS.MERGED);
-  const unmerged = repoTasks.filter((t) => t.merfolkData?.status !== TASK_STATUS.MERGED);
-  const unmergedIds = new Set(unmerged.map((t) => t.id));
+  const taskIds = new Set(repoTasks.map((t) => t.id));
 
   const spaceOwnerId = !window.isTrialMode && user
     ? (window.currentSpaceOwner || user.uid)
     : null;
 
-  // Delete unmerged from Firebase
+  // Mark all tasks as cleared with light green color
+  const updatedObjects = allObjects.map((obj) => {
+    if (taskIds.has(obj.id)) {
+      return {
+        ...obj,
+        color: ARCHIVED_TASK_COLOR,
+        merfolkData: { ...obj.merfolkData, cleared: true },
+      };
+    }
+    return obj;
+  });
+
+  useObjectsStore.setState({ objects: updatedObjects });
+
+  // Persist each cleared task to Firebase
   if (spaceOwnerId) {
-    for (const task of unmerged) {
-      deleteObject(spaceOwnerId, currentSpaceId, task.id, task.position);
+    const updatedById = new Map(updatedObjects.map((o) => [o.id, o]));
+    for (const task of repoTasks) {
+      const updated = updatedById.get(task.id);
+      if (updated) {
+        saveObjectToCell(spaceOwnerId, currentSpaceId, updated);
+      }
     }
   }
 
-  // Remove unmerged from store, mark merged as light green
-  const updatedObjects = allObjects
-    .filter((obj) => !unmergedIds.has(obj.id))
-    .map((obj) => {
-      if (merged.some((m) => m.id === obj.id)) {
-        return { ...obj, color: '#c8e6c9' };
-      }
-      return obj;
-    });
+  // Reposition all tasks (cleared ones go to back layers)
+  repositionAllTasks(repoSlug);
 
-  const newCreatedIds = new Set(store.createdObjectIds);
-  unmergedIds.forEach((id) => newCreatedIds.delete(id));
-
-  useObjectsStore.setState({
-    objects: updatedObjects,
-    createdObjectIds: newCreatedIds,
-  });
-
-  // Reposition remaining tasks (merged) into grid back layer(s)
-  if (merged.length > 0) {
-    repositionAllTasks(repoSlug);
-  }
-
-  return { deleted: unmerged.length, bumped: merged.length };
+  return { bumped: repoTasks.length };
 }
 
 /**
