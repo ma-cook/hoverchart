@@ -1976,6 +1976,7 @@ const TextObject = React.memo(
             // Use the same pattern as in Cube - don't set _transformActive flag here
             initialPosition: position ? [...position] : null,
           }}
+          onClick={onClick}
           onPointerEnter={(e) => {
             e.stopPropagation();
             setHoveredObjectId(id);
