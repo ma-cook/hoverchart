@@ -54,6 +54,27 @@ export function getNextQueuedTask(tasks) {
   ) || null;
 }
 
+/**
+ * Returns the next task that still needs pipeline work. This includes not only
+ * freshly QUEUED tasks but also IN_PROGRESS / PR_OPEN tasks that were left
+ * in-flight on a prior run (e.g. the app was refreshed while GitHub auto-merged
+ * the PR). The pipeline must pick these up again so the merge can be detected
+ * and the next queued task can advance.
+ */
+export function getNextActionableTask(tasks) {
+  return tasks.find(
+    (task) => {
+      const status = task.merfolkData?.status;
+      if (!status) return true; // legacy tasks with no status
+      return (
+        status === TASK_STATUS.QUEUED ||
+        status === TASK_STATUS.IN_PROGRESS ||
+        status === TASK_STATUS.PR_OPEN
+      );
+    }
+  ) || null;
+}
+
 export function getPipelineTasksForRepo(objects, repoSlug) {
   return getPipelineTasks(objects).filter(
     (obj) => obj.merfolkData?.repoSlug === repoSlug

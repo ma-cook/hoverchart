@@ -129,8 +129,22 @@ function createBulkImportApp() {
 
         // Group objects by cellId
         for (const obj of objects) {
-          if (!obj.cellId || !obj.id) {
-            console.warn('⚠️  Skipping object without cellId or id:', obj);
+          if (!obj.id) {
+            console.warn('⚠️  Skipping object without id:', obj);
+            continue;
+          }
+
+          // Pipeline tasks from planScape arrive without position/cellId.
+          // Assign defaults so they land in Firestore; the client-side
+          // UIOverlay will reposition them into the repo container grid.
+          if (!obj.cellId && obj.merfolkData?.planTaskIndex != null) {
+            obj.cellId = '0,0,0';
+            if (!obj.position) {
+              obj.position = [0, 0, 0];
+            }
+            console.log(`📋 Auto-assigned cellId for pipeline task ${obj.id}`);
+          } else if (!obj.cellId) {
+            console.warn('⚠️  Skipping object without cellId:', obj);
             continue;
           }
 
@@ -160,7 +174,7 @@ function createBulkImportApp() {
                 position: obj.position,
                 scale: obj.size || obj.scale || [1, 1, 1],
                 type: obj.type,
-                color: obj.color,
+                color: obj.color || null,
                 content: obj.content || '',
                 createdAt: obj.createdAt || Date.now(),
                 updatedAt: Date.now(),

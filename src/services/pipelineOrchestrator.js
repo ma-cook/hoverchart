@@ -1,7 +1,10 @@
 import usePipelineStore from '../stores/pipelineStore';
+import useObjectsStore from '../stores/objectsStore';
 import {
   TASK_STATUS,
-  getNextQueuedTask,
+  getNextActionableTask,
+  getPipelineTasks,
+  getPipelineTasksForRepo,
   updateTaskStatus,
 } from './pipelineTaskService';
 import { repositionAllTasks } from './repoContainerService';
@@ -112,15 +115,23 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
     await addComment(token, owner, repo, prNumber, copilotPrompt);
   }
 
-  // Step 2: Update status to in-progress with PR number
-  await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.IN_PROGRESS, {
-    githubPrNumber: prNumber,
-  });
-
-  // Step 3: Update status to pr-open
-  await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.PR_OPEN, {
-    githubPrNumber: prNumber,
-  });
+  // Step 2/3: Update status to in-progress then pr-open with PR number.
+  // Skip these writes when resuming an existing PR so we don't overwrite a
+  // status (e.g. MERGED / CLOSED) that the polling branch below is about to
+  // reconcile on its first tick.
+  const existingStatus = task.merfolkData?.status;
+  const isResumingExistingPr =
+    task.merfolkData?.githubPrNumber &&
+    (existingStatus === TASK_STATUS.IN_PROGRESS ||
+      existingStatus === TASK_STATUS.PR_OPEN);
+  if (!isResumingExistingPr) {
+    await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.IN_PROGRESS, {
+      githubPrNumber: prNumber,
+    });
+    await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.PR_OPEN, {
+      githubPrNumber: prNumber,
+    });
+  }
 
   // Step 4: Poll for Copilot to push commits and/or for merge
   return new Promise((resolve) => {
@@ -203,7 +214,19 @@ export async function startPipeline(spaceOwnerId, spaceId, tasks, repoSlug) {
   store.startPipeline();
   store.setTaskOrder(tasks.map((t) => t.id));
 
-  let currentTask = getNextQueuedTask(tasks);
+  // Re-read tasks from the live store each iteration so status changes written
+  // to Firestore (and synced back into the objects store) are respected. This
+  // also lets the pipeline resume IN_PROGRESS / PR_OPEN tasks that were left
+  // in-flight before a refresh.
+  const getLatestTasks = () => {
+    const objs = useObjectsStore.getState().objects || [];
+    return repoSlug
+      ? getPipelineTasksForRepo(objs, repoSlug)
+      : getPipelineTasks(objs);
+  };
+
+  const processed = new Set();
+  let currentTask = getNextActionableTask(getLatestTasks());
   while (currentTask) {
     const currentState = usePipelineStore.getState();
     if (!currentState.isRunning) break;
@@ -225,6 +248,7 @@ export async function startPipeline(spaceOwnerId, spaceId, tasks, repoSlug) {
       if (!afterPause.isRunning) break;
     }
 
+    processed.add(currentTask.id);
     const success = await processTask(spaceOwnerId, spaceId, currentTask, owner, repo);
     if (!success) {
       // Task failed or paused — check if we should continue
@@ -234,12 +258,11 @@ export async function startPipeline(spaceOwnerId, spaceId, tasks, repoSlug) {
       break;
     }
 
-    // Re-fetch tasks to get updated statuses
-    // The caller should re-read objects from the store
-    // For now, just find the next queued task from the original list
-    currentTask = getNextQueuedTask(
-      tasks.filter((t) => t.id !== currentTask.id)
-    );
+    // Re-read tasks from the store to pick up merged/closed statuses that the
+    // polling loop just wrote. Skip tasks we've already processed this run to
+    // avoid re-opening a PR that we just resolved.
+    const latest = getLatestTasks().filter((t) => !processed.has(t.id));
+    currentTask = getNextActionableTask(latest);
   }
 
   // Pipeline complete
