@@ -2228,9 +2228,9 @@ const TextObject = React.memo(
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  padding: '4px 8px',
+                  padding: '6px 10px',
                   borderTop: '1px solid #e0e0e0',
-                  fontSize: '11px',
+                  fontSize: '13px',
                   fontFamily: 'Arial, sans-serif',
                   color: '#666',
                   background: '#fafafa',
@@ -2246,11 +2246,11 @@ const TextObject = React.memo(
                     }}>#{merfolkData.planTaskIndex}</span>
                     <span style={{
                       display: 'inline-block',
-                      padding: '1px 6px',
-                      borderRadius: '8px',
+                      padding: '4px 12px',
+                      borderRadius: '10px',
                       backgroundColor: getStatusColor(merfolkData.status),
                       color: '#fff',
-                      fontSize: '10px',
+                      fontSize: '16px',
                       fontWeight: 'bold',
                     }}>{getStatusLabel(merfolkData.status)}</span>
                   </span>
