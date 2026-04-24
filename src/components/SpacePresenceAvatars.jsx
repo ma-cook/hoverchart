@@ -64,7 +64,7 @@ const Avatar = ({ user }) => {
  * Displays small round avatars for all users currently present in the given space.
  * Rendered in the top-right corner of the screen.
  */
-const SpacePresenceAvatars = ({ spaceId }) => {
+const SpacePresenceAvatars = ({ spaceId, currentCell }) => {
   const [presentUsers, setPresentUsers] = useState([]);
 
   useEffect(() => {
@@ -80,21 +80,35 @@ const SpacePresenceAvatars = ({ spaceId }) => {
     return unsubscribe;
   }, [spaceId]);
 
-  if (presentUsers.length === 0) return null;
+  const cellLabel = currentCell
+    ? `${currentCell.x},${currentCell.y},${currentCell.z}`
+    : '0,0,0';
+
+  const containerStyle = {
+    position: 'fixed',
+    top: 12,
+    right: 12,
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 6,
+    zIndex: 9999,
+    alignItems: 'center',
+  };
+
+  const pillStyle = {
+    background: 'rgba(0,0,0,0.55)',
+    color: '#fff',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    padding: '3px 8px',
+    borderRadius: 12,
+    userSelect: 'none',
+    whiteSpace: 'nowrap',
+  };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 12,
-        right: 12,
-        display: 'flex',
-        flexDirection: 'row',
-        gap: 6,
-        zIndex: 9999,
-        alignItems: 'center',
-      }}
-    >
+    <div style={containerStyle}>
+      <div style={pillStyle}>{cellLabel}</div>
       {presentUsers.map((u) => (
         <Avatar key={u.userId} user={u} />
       ))}
