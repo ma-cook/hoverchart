@@ -323,8 +323,9 @@ const UIOverlay = ({
       setLastGeneratedMarkdown(null);
       return;
     }
+    let stored = null;
     try {
-      const stored = localStorage.getItem(`diagramRepo_${currentSpaceId}`);
+      stored = localStorage.getItem(`diagramRepo_${currentSpaceId}`);
       setCurrentDiagramRepo(stored ? JSON.parse(stored) : null);
     } catch {
       setCurrentDiagramRepo(null);
