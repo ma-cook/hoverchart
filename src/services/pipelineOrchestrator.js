@@ -131,6 +131,26 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
     await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.PR_OPEN, {
       githubPrNumber: prNumber,
     });
+  } else {
+    // Immediately check PR state once before entering the 30s poll loop so
+    // an already-merged PR is reconciled right away rather than after a full
+    // poll interval. This is the common case after a refresh where GitHub
+    // merged the PR while the app was closed.
+    const immediate = await getPullRequest(token, owner, repo, prNumber);
+    if (immediate.ok) {
+      if (immediate.data.merged) {
+        await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.MERGED, {
+          mergeCommitSha: immediate.data.merge_commit_sha,
+        });
+        const taskRepoSlug = task.merfolkData?.repoSlug;
+        if (taskRepoSlug) repositionAllTasks(taskRepoSlug);
+        return true;
+      }
+      if (immediate.data.state === 'closed') {
+        await updateTaskStatus(spaceOwnerId, spaceId, objectId, cellId, TASK_STATUS.CLOSED);
+        return true;
+      }
+    }
   }
 
   // Step 4: Poll for Copilot to push commits and/or for merge
@@ -225,6 +245,12 @@ export async function startPipeline(spaceOwnerId, spaceId, tasks, repoSlug) {
       : getPipelineTasks(objs);
   };
 
+  // One-shot reconciliation: before the main loop, check every PR_OPEN /
+  // IN_PROGRESS task against GitHub. This catches PRs that were merged while
+  // the app was closed or the pipeline was stopped, so their status flips to
+  // MERGED before the loop picks a task to work on.
+  await reconcilePendingTasks(spaceOwnerId, spaceId, getLatestTasks(), owner, repo);
+
   const processed = new Set();
   let currentTask = getNextActionableTask(getLatestTasks());
   while (currentTask) {
@@ -275,6 +301,44 @@ export function pausePipeline() {
 
 export function resumePipeline() {
   usePipelineStore.getState().resumePipeline();
+}
+
+/**
+ * Check every PR_OPEN / IN_PROGRESS task with a githubPrNumber against GitHub
+ * and update its status if the PR has since been merged or closed. Safe to
+ * call without the pipeline running; used for background reconciliation when
+ * GitHub auto-merges a PR while hoverchart isn't actively polling.
+ */
+export async function reconcilePendingTasks(spaceOwnerId, spaceId, tasks, owner, repo) {
+  const token = getGithubToken();
+  if (!token || !owner || !repo) return;
+
+  const pending = (tasks || []).filter((t) => {
+    const s = t.merfolkData?.status;
+    return (
+      t.merfolkData?.githubPrNumber &&
+      (s === TASK_STATUS.PR_OPEN || s === TASK_STATUS.IN_PROGRESS)
+    );
+  });
+
+  const repoSlugsToReposition = new Set();
+  for (const task of pending) {
+    const prNumber = task.merfolkData.githubPrNumber;
+    const prCheck = await getPullRequest(token, owner, repo, prNumber);
+    if (!prCheck.ok) continue;
+    const cellId = task.cellId || '0,0,0';
+    if (prCheck.data.merged) {
+      await updateTaskStatus(spaceOwnerId, spaceId, task.id, cellId, TASK_STATUS.MERGED, {
+        mergeCommitSha: prCheck.data.merge_commit_sha,
+      });
+      if (task.merfolkData?.repoSlug) repoSlugsToReposition.add(task.merfolkData.repoSlug);
+    } else if (prCheck.data.state === 'closed') {
+      await updateTaskStatus(spaceOwnerId, spaceId, task.id, cellId, TASK_STATUS.CLOSED);
+    }
+  }
+  for (const slug of repoSlugsToReposition) {
+    repositionAllTasks(slug);
+  }
 }
 
 export function stopPipeline() {

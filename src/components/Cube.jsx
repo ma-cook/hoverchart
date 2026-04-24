@@ -34,8 +34,8 @@ import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import usePipelineStore from '../stores/pipelineStore';
 import { useSpaceManagerStore } from '../stores';
-import { startPipeline, stopPipeline } from '../services/pipelineOrchestrator';
-import { getPipelineTasksForRepo, getPipelineTasks } from '../services/pipelineTaskService';
+import { startPipeline, stopPipeline, reconcilePendingTasks } from '../services/pipelineOrchestrator';
+import { getPipelineTasksForRepo, getPipelineTasks, TASK_STATUS } from '../services/pipelineTaskService';
 import { clearRepoTasks, assignRepoSlugToOrphanTasks, repositionIncomingTasks } from '../services/repoContainerService';
 
 const EMPTY_CONNECTIONS = [];
@@ -219,6 +219,40 @@ const Cube = ({
       [isRepoContainer, repoSlug]
     )
   );
+
+  // Auto-reconcile PR statuses against GitHub for this repo container. Runs on
+  // mount and then every 60s while the container exists, so PRs merged outside
+  // an active pipeline run (e.g. GitHub auto-merge while the app was closed)
+  // are picked up and flipped from PR_OPEN -> MERGED without requiring the
+  // user to manually restart the pipeline.
+  useEffect(() => {
+    if (!isRepoContainer || !repoSlug) return;
+
+    const runReconcile = () => {
+      const [owner, repo] = repoSlug.split('/');
+      if (!owner || !repo) return;
+      const spaceOwnerId = window.currentSpaceOwner;
+      const spaceId = useSpaceManagerStore.getState().currentSpaceId || window.currentSpaceId;
+      if (!spaceOwnerId || !spaceId) return;
+      const allObjs = useObjectsStore.getState().objects || [];
+      const tasks = getPipelineTasksForRepo(allObjs, repoSlug);
+      const hasPending = tasks.some((t) => {
+        const s = t.merfolkData?.status;
+        return (
+          t.merfolkData?.githubPrNumber &&
+          (s === TASK_STATUS.PR_OPEN || s === TASK_STATUS.IN_PROGRESS)
+        );
+      });
+      if (!hasPending) return;
+      reconcilePendingTasks(spaceOwnerId, spaceId, tasks, owner, repo).catch(
+        (err) => console.warn('[Cube] reconcilePendingTasks failed:', err)
+      );
+    };
+
+    runReconcile();
+    const intervalId = setInterval(runReconcile, 60_000);
+    return () => clearInterval(intervalId);
+  }, [isRepoContainer, repoSlug]);
   // const setIndicatorConnected = useFaceIndicatorStore(
   //   (state) => state.setIndicatorConnected
   // );
