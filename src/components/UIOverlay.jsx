@@ -331,19 +331,28 @@ const UIOverlay = ({
     }
     const localUrl = localStorage.getItem(`diagramMarkdownUrl_${currentSpaceId}`) || null;
     setLatestMarkdownUrl(localUrl);
-    setLastCommitSha(localStorage.getItem(`diagramCommitSha_${currentSpaceId}`) || null);
+    const localSha = localStorage.getItem(`diagramCommitSha_${currentSpaceId}`) || null;
+    setLastCommitSha(localSha);
     setLastGeneratedMarkdown(null);
 
-    // If localStorage doesn't have the URL, try loading from Firestore (cross-device support)
-    if (!localUrl) {
+    // Hydrate any missing pieces from Firestore (cross-device support)
+    const needsFirestoreFetch = !localUrl || !localSha || !stored;
+    if (needsFirestoreFetch) {
       const spaceOwnerId = window.currentSpaceOwner || user?.uid;
       if (spaceOwnerId) {
         getDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId))
           .then((snap) => {
-            const url = snap.exists() ? snap.data().markdownStorageUrl : null;
-            if (url) {
-              setLatestMarkdownUrl(url);
-              localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, url);
+            if (!snap.exists()) return;
+            const data = snap.data();
+            if (!localUrl && data.markdownStorageUrl) {
+              setLatestMarkdownUrl(data.markdownStorageUrl);
+              localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, data.markdownStorageUrl);
+            }
+            if (!localSha && data.diagramCommitSha) {
+              setLastCommitSha(data.diagramCommitSha);
+            }
+            if (!stored && data.diagramRepo) {
+              setCurrentDiagramRepo(data.diagramRepo);
             }
           })
           .catch(() => { /* ignore – space doc may not exist */ });
@@ -518,13 +527,17 @@ const UIOverlay = ({
         if (result.markdown) setLastGeneratedMarkdown(result.markdown);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
-          // Persist to Firestore so the URL is available on other devices
-          const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-          if (spaceOwnerId && currentSpaceId) {
-            setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), { markdownStorageUrl: result.storageUrl }, { merge: true }).catch(() => {});
-          }
         }
         if (result.commitSha) setLastCommitSha(result.commitSha);
+
+        // Persist diagram metadata to Firestore so rescan works across devices / after localStorage clear
+        const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+        if (spaceOwnerId && currentSpaceId) {
+          const payload = { diagramRepo: repo };
+          if (result.storageUrl) payload.markdownStorageUrl = result.storageUrl;
+          if (result.commitSha) payload.diagramCommitSha = result.commitSha;
+          setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), payload, { merge: true }).catch(() => {});
+        }
 
         setNotification({
           show: true,
@@ -638,11 +651,15 @@ const UIOverlay = ({
       setLastGeneratedMarkdown(rescanResult.mergedMarkdown);
       if (storageUrl) {
         setLatestMarkdownUrl(storageUrl);
-        // Persist to Firestore so the URL is available on other devices
-        const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-        if (spaceOwnerId && currentSpaceId) {
-          setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), { markdownStorageUrl: storageUrl }, { merge: true }).catch(() => {});
-        }
+      }
+
+      // Persist updated diagram metadata to Firestore
+      const spaceOwnerId = window.currentSpaceOwner || user?.uid;
+      if (spaceOwnerId && currentSpaceId) {
+        const payload = { diagramRepo: repo };
+        if (storageUrl) payload.markdownStorageUrl = storageUrl;
+        if (rescanResult.commitSha) payload.diagramCommitSha = rescanResult.commitSha;
+        setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), payload, { merge: true }).catch(() => {});
       }
 
       const parts = [];
