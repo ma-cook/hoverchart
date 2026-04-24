@@ -1362,14 +1362,8 @@ const UIOverlay = ({
       <div className={`sidebar-menu ${menuOpen ? 'open' : ''}`}>
         <div className="menu-content">
           <div className="current-cell-info">
-            <span>Current cell: </span>
-            <span className="cell-coordinates">
-              {currentCell
-                ? `${currentCell.x},${currentCell.y},${currentCell.z}`
-                : '0,0,0'}
-            </span>
             {spaceType === 'github_control_panel' && user?.uid && (
-              <div style={{ marginTop: '4px', fontSize: '11px', color: '#888' }}>
+              <div style={{ fontSize: '11px', color: '#888' }}>
                 <span>UUID: </span>
                 <span style={{ fontFamily: 'monospace', userSelect: 'all' }}>{user.uid}</span>
               </div>
@@ -2051,7 +2045,7 @@ const UIOverlay = ({
         </div>
       )}
       {/* Space presence avatars */}
-      <SpacePresenceAvatars spaceId={currentSpaceId} />
+      <SpacePresenceAvatars spaceId={currentSpaceId} currentCell={currentCell} />
     </>
   );
 };
