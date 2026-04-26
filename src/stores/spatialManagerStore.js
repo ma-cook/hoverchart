@@ -33,6 +33,7 @@ const useSpatialManagerStore = create((set, get) => ({
   // State
   loadedCells: new Set(),
   currentCellCoords: { x: 0, y: 0, z: 0 },
+  cameraCellCoords: { x: 0, y: 0, z: 0 },
   isInitialized: false,
 
   // Internal tracking state
@@ -85,6 +86,10 @@ const useSpatialManagerStore = create((set, get) => ({
 
   setCurrentCellCoords: (coords) => {
     set({ currentCellCoords: coords });
+  },
+
+  setCameraCellCoords: (coords) => {
+    set({ cameraCellCoords: coords });
   },
 
   setIsInitialized: (initialized) => {
@@ -727,6 +732,7 @@ const useSpatialManagerStore = create((set, get) => ({
     set({
       loadedCells: new Set(),
       currentCellCoords: { x: 0, y: 0, z: 0 },
+      cameraCellCoords: { x: 0, y: 0, z: 0 },
       isInitialized: false,
       lastCameraPosition: [0, 0, 0],
       cameraVelocity: [0, 0, 0],

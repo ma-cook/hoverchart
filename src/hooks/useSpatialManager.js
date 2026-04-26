@@ -20,11 +20,13 @@ export const useSpatialManager = ({
     isInitialized,
     loadedCells: loadedCellsSet,
     currentCellCoords,
+    cameraCellCoords,
   } = useSpatialManagerStore(
     (s) => ({
       isInitialized: s.isInitialized,
       loadedCells: s.loadedCells,
       currentCellCoords: s.currentCellCoords,
+      cameraCellCoords: s.cameraCellCoords,
     }),
     shallow
   );
@@ -130,6 +132,16 @@ export const useSpatialManager = ({
           currentPos.z,
         ]);
 
+        // Compute camera-position cell for the UI indicator (separate from
+        // loading logic which uses the target/focus cell above).
+        const camPos = camera.position;
+        const camCellCoords = getCellForPosition([
+          camPos.x,
+          camPos.y,
+          camPos.z,
+        ]);
+        useSpatialManagerStore.getState().setCameraCellCoords(camCellCoords);
+
         // Only trigger update when crossing cell boundaries
         if (
           !lastCellCoords ||
@@ -222,6 +234,7 @@ export const useSpatialManager = ({
     // State
     loadedCells: memoizedLoadedCells, // Use memoized array to prevent constant re-renders
     currentCellCoords: currentCellCoords || { x: 0, y: 0 },
+    cameraCellCoords: cameraCellCoords || { x: 0, y: 0, z: 0 },
     isInitialized: isInitialized || false,
 
     // Methods
