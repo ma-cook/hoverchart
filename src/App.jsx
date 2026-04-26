@@ -208,6 +208,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
     loadedCells,
     isInitialized: isSpatialInitialized,
     currentCellCoords,
+    cameraCellCoords,
     trackObjectInCell,
     untrackObjectInCell,
   } = useSpatialManager({
@@ -1799,7 +1800,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
         isLoading={!isAuthReady && !trialMode}
         showLoginButton={!isCheckingUrlAuth && !user}
         isConnectMode={isConnectMode}
-        currentCell={currentCellCoords}
+        currentCell={cameraCellCoords}
         currentSpaceId={effectiveSpaceId}
         trialMode={trialMode}
         spaceType={spaceTypeProp}
