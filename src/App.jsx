@@ -645,6 +645,10 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
             // arrive together. This replaces N individual array spreads with
             // one single spread, eliminating O(n²) array copying.
             case 'batch-added': {
+              // Short-circuit: bulk-delete in progress — discard all incoming adds
+              // to prevent deleted objects from being re-inserted by stale subscriptions.
+              if (window._bulkDeleteInProgress) return prev;
+
               const validObjects = [];
               const updatedObjects = new Map(); // Track updates to existing objects
               const existingIds = new Set(prev.map(o => o.id));
