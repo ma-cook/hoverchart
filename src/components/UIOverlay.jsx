@@ -893,10 +893,8 @@ const UIOverlay = ({
       // --- Step 2: force-cleanup all active spatial-object subscriptions ---
       // This prevents stale Firebase listeners from re-emitting deleted docs
       // into the store after the lock is released.
-      const loadedCellsSet = useSpatialManagerStore.getState().loadedCells;
-      const loadedCellIds = loadedCellsSet instanceof Set
-        ? Array.from(loadedCellsSet)
-        : (Array.isArray(loadedCellsSet) ? loadedCellsSet : []);
+      // `loadedCells` is always a Set in spatialManagerStore; Array.from handles it and arrays alike.
+      const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
       cleanupSpatialObjectSubscriptions(loadedCellIds);
 
       // --- Step 3: reset the spatial manager so it re-initialises from scratch ---
@@ -912,12 +910,14 @@ const UIOverlay = ({
       let remainingObjects = [];
       try {
         remainingObjects = await getObjectsFromCells(ownerUserId, currentSpaceId, cellCoords);
-      } catch (_) { /* non-fatal */ }
+      } catch (sanityErr) {
+        console.warn('[BulkDelete] Sanity check query failed (non-fatal):', sanityErr);
+      }
 
       if (remainingObjects.length > 0) {
         console.warn(`[BulkDelete] Sanity check found ${remainingObjects.length} remaining objects — retrying…`);
         try {
-          const freshToken = await auth.currentUser?.getIdToken(/* forceRefresh */ true);
+          const freshToken = await auth.currentUser?.getIdToken(true);
           if (freshToken) await callBulkDelete(freshToken);
         } catch (retryErr) {
           console.error('[BulkDelete] Retry failed:', retryErr);
