@@ -1,15 +1,10 @@
-# Task: 2. Enlarge task status bar
+# Task: 2. Bulk-delete ghost objects (correctness)
 
-Steps
+Likely cause: handleDeleteAllCells in UIOverlay.jsx:839 releases _bulkDeleteInProgress after a fixed 5s, but the cloud function may still be deleting. During the gap, active spatial subscriptions in spatialObjectsService.js:614 can re-emit batch-added to the App reducer at App.jsx:647, repopulating the store.
 
-At TextObject.jsx:2248-2259: badge fontSize 10px→16px, padding 1px 6px→4px 12px, borderRadius 8px→10px.
-At TextObject.jsx:2235-2241: container padding 4px 8px→6px 10px, fontSize 11px→13px.
-Verify legibility at default collapsed scale [4, 3, 1].
+Steps:
 
----
-
-## Verification
-
-Send plan tasks → click task expands → click empty space collapses → click different task swaps selection (Phase 1).
-Move camera between cells — top-right updates, UUID remains in sidebar (Phase 2).
-Status label readable at normal distance (Phase 3).
+Replace the 5s setTimeout unlock with awaited backend completion.
+In the batch-added reducer in App.jsx:647, short-circuit to no-op when _bulkDeleteInProgress is set.
+After the function resolves, force-cleanup spatial-objects subscriptions for the loaded cells, then call useSpatialManagerStore.getState().resetSpatialManager() (see spatialManagerStore.js:671) and re-init.
+Run a getObjectsFromCells sanity pass; if any docs remain, retry once.
