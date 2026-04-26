@@ -1,25 +1,11 @@
-# Task: 3. Pipeline Orchestrator — Per-Repo Pipelines
+# Task: 3. Bulk-delete non-blocking UX (performance)
 
-## TL;DR
-Enhance GitHub Control Panel spaces to support multiple repos simultaneously. Each repo gets its own 3D task cluster (~200 units apart), its own independent pipeline, and the sidebar uses the same GitHub repo dropdown pattern as the diagram space. merfolkData gains a `repoSlug` field to tag tasks per-repo; pipelineStore becomes multi-repo with a Map of per-repo states.
+Backend uses a collectionGroup('objects') scan + path-prefix filter in index.js:394, expensive on large datasets, and the UI awaits the whole thing.
 
-## Decisions
-- Layout: Separate clusters ~200 units apart along X axis, all within cell 0,0,0
-- Pipelines: Independent per-repo (each has own start/pause/stop/auto-approve)
-- Repo selection: Additive — selecting a repo from dropdown adds a new filing group
-- Repo dropdown: Reuse the existing `fetchGithubRepositories` + dropdown list pattern from diagram space
+Steps:
 
----
-
-**Why:** Current orchestrator runs one pipeline globally. Need independent per-repo pipelines.
-
-5. Modify `pipelineOrchestrator.js`:
-   - `startPipeline(spaceOwnerId, spaceId, tasks)` → `startPipeline(spaceOwnerId, spaceId, tasks, repoSlug)`
-   - Read pipeline state from `pipelineStore.repos.get(repoSlug)` rather than top-level store fields
-   - Use `pipelineStore.startRepoPipeline(repoSlug)` instead of `pipelineStore.startPipeline()`
-   - `processTask()` — reads owner/repo from the repo entry in the store, not a global `connectedRepo`
-   - `pausePipeline(repoSlug)`, `resumePipeline(repoSlug)`, `stopPipeline(repoSlug)` — all scoped
-   - Multiple repo pipelines can run concurrently (each has its own polling intervals)
-
-**Files:**
-- `src/services/pipelineOrchestrator.js` — add repoSlug parameter to all functions, read from repos Map
+Refactor bulkDelete to iterate users/{uid}/spaces/{spaceId}/cells directly and parallelize per-cell objects/connections deletion in batches of 500.
+Add async-job mode: endpoint returns jobId immediately; status persisted at users/{uid}/spaces/{spaceId}/_deleteJobs/{jobId}. Add a getDeleteJobStatus endpoint.
+Frontend: clear local state immediately, return UI control, poll job status with a small toast.
+Cutoff protection: backend reads jobStartTime from job doc and skips any docs with lastUpdated > cutoff so newly-created objects are preserved.
+Split locks: keep blocking incoming snapshot adds, but allow saves of new objects (loosen the guard at spatialObjectsService.js:189).
