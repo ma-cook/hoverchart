@@ -186,11 +186,6 @@ const computeNonPositionFingerprint = (obj) => {
  * Save object to the appropriate cell based on its position
  */
 export const saveObjectToCell = async (userId, spaceId, object) => {
-  // CRITICAL: Block ALL saves during bulk delete operation
-  if (window._bulkDeleteInProgress) {
-    return;
-  }
-
   // Check if we're still in initial loading phase - no saves during app startup
   if (getIsInitialLoading()) {
     return;

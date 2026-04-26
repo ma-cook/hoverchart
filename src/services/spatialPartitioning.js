@@ -618,11 +618,6 @@ export const getCell = async (userId, spaceId, cellX, cellY, cellZ) => {
  * @returns {Promise<boolean>} - Success status
  */
 export const addObjectToCell = async (userId, spaceId, objectData) => {
-  // CRITICAL: Block adding objects during bulk delete
-  if (window._bulkDeleteInProgress) {
-    return false;
-  }
-
   if (
     !userId ||
     !spaceId ||

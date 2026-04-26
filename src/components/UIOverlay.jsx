@@ -11,7 +11,6 @@ import { markdownDiagramService } from '../services/markdownDiagramService';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions } from '../services/spatialObjectsService';
-import { getObjectsFromCells } from '../services/spatialPartitioning';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -840,6 +839,12 @@ const UIOverlay = ({
       return;
     }
 
+    // Prevent concurrent delete operations
+    if (window._bulkDeleteInProgress) {
+      alert('A delete operation is already in progress. Please wait for it to finish.');
+      return;
+    }
+
     const confirmed = window.confirm(
       'Are you sure you want to delete ALL objects in this space? This action cannot be undone.'
     );
@@ -855,86 +860,100 @@ const UIOverlay = ({
 
     setIsDeleting(true);
 
-    // CRITICAL: Set global flag to prevent ANY saves or store re-adds during deletion
+    // Set global flag to block stale snapshot re-adds during deletion.
+    // Saves of new objects are still permitted — the per-save guard in
+    // spatialObjectsService/spatialPartitioning has been removed so that newly
+    // created objects can be persisted.  The backend cutoff protection (skipping
+    // docs with lastUpdated > jobStartTime) ensures they are not deleted.
     window._bulkDeleteInProgress = true;
 
-    // Helper: call the bulk-delete cloud function once and return the parsed result
-    const callBulkDelete = async (idToken) => {
-      const functionUrl = 'https://bulkdelete-qtk2xsi74a-uc.a.run.app';
-      const response = await fetch(functionUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken, userId: user.uid, spaceId: currentSpaceId }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Bulk delete failed');
-      return data;
-    };
+    const BULK_DELETE_URL = 'https://bulkdelete-qtk2xsi74a-uc.a.run.app';
+    const POLL_INTERVAL_MS = 3000;
+    const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+    const auth = getAuth();
 
     try {
-      // Clear ALL local state FIRST to prevent any saves during the delete operation
+      // --- Step 1: Clear local state immediately so UI is responsive ---
       clearAllObjectCaches();
       resetObjects();
       resetConnections();
 
-      // Get the current user's ID token for authentication
-      const auth = getAuth();
+      const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
+      cleanupSpatialObjectSubscriptions(loadedCellIds);
+      useSpatialManagerStore.getState().resetSpatialManager();
+
+      setNotification({ show: true, message: '🗑️ Deleting space objects…' });
+
+      // --- Step 2: Fire the cloud function — it returns jobId immediately ---
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) throw new Error('Unable to get authentication token');
 
-      // --- Step 1: call the cloud function and await its completion ---
-      const result = await callBulkDelete(idToken);
-
-      if (!result.success) {
-        alert(`Failed to delete cells: ${result.error}`);
-        return;
-      }
-
-      // --- Step 2: force-cleanup all active spatial-object subscriptions ---
-      // This prevents stale Firebase listeners from re-emitting deleted docs
-      // into the store after the lock is released.
-      // `loadedCells` is always a Set in spatialManagerStore; Array.from handles it and arrays alike.
-      const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
-      cleanupSpatialObjectSubscriptions(loadedCellIds);
-
-      // --- Step 3: reset the spatial manager so it re-initialises from scratch ---
-      useSpatialManagerStore.getState().resetSpatialManager();
-
-      // --- Step 4: sanity-check — if any docs remain, retry once ---
-      const ownerUserId = user.uid;
-      const cellCoords = loadedCellIds.map((cellId) => {
-        const [x, y, z] = cellId.split(',').map(Number);
-        return { x, y, z: z || 0 };
+      const startRes = await fetch(BULK_DELETE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, userId: user.uid, spaceId: currentSpaceId }),
       });
+      const startData = await startRes.json();
+      if (!startRes.ok) throw new Error(startData.error || 'Bulk delete failed to start');
 
-      let remainingObjects = [];
-      try {
-        remainingObjects = await getObjectsFromCells(ownerUserId, currentSpaceId, cellCoords);
-      } catch (sanityErr) {
-        console.warn('[BulkDelete] Sanity check query failed (non-fatal):', sanityErr);
-      }
+      const { jobId } = startData;
 
-      if (remainingObjects.length > 0) {
-        console.warn(`[BulkDelete] Sanity check found ${remainingObjects.length} remaining objects — retrying…`);
-        try {
-          const freshToken = await auth.currentUser?.getIdToken(true);
-          if (freshToken) await callBulkDelete(freshToken);
-        } catch (retryErr) {
-          console.error('[BulkDelete] Retry failed:', retryErr);
-        }
-      }
-
+      // --- Step 3: Return UI control to the user ---
+      // isDeleting stays true until the background job finishes so the button
+      // remains disabled and prevents accidental concurrent operations.
       setCurrentDiagramRepo(null);
-      alert(
-        `Successfully deleted ${result.cellsDeleted} cells, ${result.objectsDeleted} objects, and ${result.connectionsDeleted} connections.`
-      );
+
+      // --- Step 4: Poll job status in the background ---
+      const pollDeadline = Date.now() + POLL_TIMEOUT_MS;
+
+      const pollStatus = async () => {
+        if (Date.now() > pollDeadline) {
+          setNotification({ show: true, message: '⚠️ Delete job timed out — check space manually.' });
+          setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+          window._bulkDeleteInProgress = false;
+          setIsDeleting(false);
+          return;
+        }
+
+        try {
+          const freshToken = await auth.currentUser?.getIdToken();
+          const statusRes = await fetch(
+            `${BULK_DELETE_URL}/job/${jobId}?idToken=${encodeURIComponent(freshToken)}&userId=${encodeURIComponent(user.uid)}&spaceId=${encodeURIComponent(currentSpaceId)}`
+          );
+          const statusData = await statusRes.json();
+
+          if (statusData.status === 'done') {
+            window._bulkDeleteInProgress = false;
+            setIsDeleting(false);
+            setNotification({
+              show: true,
+              message: `✅ Deleted ${statusData.cellsDeleted ?? 0} cells, ${statusData.objectsDeleted ?? 0} objects, ${statusData.connectionsDeleted ?? 0} connections.`,
+            });
+            setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+          } else if (statusData.status === 'error') {
+            window._bulkDeleteInProgress = false;
+            setIsDeleting(false);
+            setNotification({ show: true, message: `❌ Delete job failed: ${statusData.error ?? 'unknown error'}` });
+            setTimeout(() => setNotification({ show: false, message: '' }), 6000);
+          } else {
+            // Still running — poll again
+            setTimeout(pollStatus, POLL_INTERVAL_MS);
+          }
+        } catch (pollErr) {
+          console.warn('[BulkDelete] Poll error (retrying):', pollErr);
+          setTimeout(pollStatus, POLL_INTERVAL_MS);
+        }
+      };
+
+      // Start polling immediately for fast completions, then every POLL_INTERVAL_MS
+      pollStatus();
     } catch (error) {
       console.error('Bulk delete error:', error);
-      alert(`Error deleting cells: ${error.message}`);
-    } finally {
-      // Release the delete lock only after all cleanup steps above have completed
       window._bulkDeleteInProgress = false;
       setIsDeleting(false);
+      setNotification({ show: true, message: `❌ Error deleting space: ${error.message}` });
+      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
     }
   }, [user, currentSpaceId, resetObjects, resetConnections]);
 

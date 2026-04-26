@@ -391,127 +391,200 @@ export const fetchGithubToken = onCall(
 );
 
 // ============= BULK DELETE FUNCTION =============
+
+/** Generate a short random job ID. */
+function generateJobId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * Return the millisecond timestamp from a Firestore Timestamp object
+ * (`toMillis()`), a plain JS `Date`, a raw epoch number, or null when the
+ * value is missing / unrecognisable.
+ */
+function toMillis(value) {
+  if (!value) return null;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  return null;
+}
+
+/**
+ * Delete all objects and connections inside a single cell whose lastUpdated
+ * timestamp is at or before `cutoff` (ms).  Returns { objectsDeleted,
+ * connectionsDeleted }.
+ */
+async function deleteCellContents(cellRef, cutoff, BATCH_SIZE) {
+  const [objsSnap, connsSnap] = await Promise.all([
+    cellRef.collection('objects').get(),
+    cellRef.collection('connections').get(),
+  ]);
+
+  const objsToDelete = objsSnap.docs.filter((d) => {
+    const ms = toMillis(d.data().lastUpdated);
+    return ms === null || ms <= cutoff;
+  });
+
+  const connsToDelete = connsSnap.docs.filter((d) => {
+    const ms = toMillis(d.data().lastUpdated);
+    return ms === null || ms <= cutoff;
+  });
+
+  let objectsDeleted = 0;
+  let connectionsDeleted = 0;
+
+  for (let i = 0; i < objsToDelete.length; i += BATCH_SIZE) {
+    const chunk = objsToDelete.slice(i, i + BATCH_SIZE);
+    const batch = db.batch();
+    for (const d of chunk) batch.delete(d.ref);
+    await batch.commit();
+    objectsDeleted += chunk.length;
+  }
+
+  for (let i = 0; i < connsToDelete.length; i += BATCH_SIZE) {
+    const chunk = connsToDelete.slice(i, i + BATCH_SIZE);
+    const batch = db.batch();
+    for (const d of chunk) batch.delete(d.ref);
+    await batch.commit();
+    connectionsDeleted += chunk.length;
+  }
+
+  return { objectsDeleted, connectionsDeleted };
+}
+
 function createBulkDeleteApp() {
   const app = express();
 
   app.use(cors({ origin: true }));
   app.use(express.json());
 
+  // ---- POST / — start an async delete job and return jobId immediately ----
   app.post('/', async (req, res) => {
+    const { idToken, userId, spaceId } = req.body;
+
+    if (!idToken || !userId || !spaceId) {
+      return res.status(400).json({
+        error: 'Missing required fields: idToken, userId, spaceId',
+      });
+    }
+
+    let decodedToken;
     try {
-      const { idToken, userId, spaceId } = req.body;
+      decodedToken = await getAuth().verifyIdToken(idToken);
+    } catch (authErr) {
+      return res.status(401).json({ error: 'Invalid auth token', details: authErr.message });
+    }
 
-      // Validate required fields
-      if (!idToken || !userId || !spaceId) {
-        return res.status(400).json({
-          error: 'Missing required fields: idToken, userId, spaceId',
-        });
-      }
+    if (decodedToken.uid !== userId) {
+      return res.status(403).json({
+        error: 'Token user ID does not match provided userId',
+      });
+    }
 
-      // Verify authentication token
-      const decodedToken = await getAuth().verifyIdToken(idToken);
-      if (decodedToken.uid !== userId) {
-        return res.status(403).json({
-          error: 'Token user ID does not match provided userId',
-        });
-      }
+    const jobId = generateJobId();
+    const jobStartTime = Date.now();
+    const jobRef = db.doc(`users/${userId}/spaces/${spaceId}/_deleteJobs/${jobId}`);
 
-      console.log(`🗑️  Starting bulk delete for user ${userId}, space ${spaceId}`);
+    await jobRef.set({
+      status: 'running',
+      jobStartTime,
+      objectsDeleted: 0,
+      connectionsDeleted: 0,
+      cellsDeleted: 0,
+      createdAt: jobStartTime,
+    });
 
-      const startTime = Date.now();
+    // Return jobId immediately so the frontend can poll status.
+    res.json({ jobId, jobStartTime });
+
+    // ---- Background deletion (Cloud Function stays alive until this resolves) ----
+    try {
+      const BATCH_SIZE = 500;
+      const CELL_CONCURRENCY = 5; // process 5 cells in parallel
       let cellsDeleted = 0;
       let objectsDeleted = 0;
       let connectionsDeleted = 0;
 
-      const BATCH_SIZE = 500;
+      console.log(`🗑️  [${jobId}] Starting bulk delete for user ${userId}, space ${spaceId}`);
 
-      // PHASE 1: Use collectionGroup queries to find ALL objects and connections
-      // This catches orphaned subcollections where the parent cell document doesn't exist
-      console.log('   Phase 1: Deleting all objects via collectionGroup query...');
-      
-      // Query all objects in this space using collectionGroup
-      // We need to filter by the path pattern since collectionGroup returns ALL 'objects' collections
-      const allObjectsQuery = db.collectionGroup('objects');
-      const allObjectsSnapshot = await allObjectsQuery.get();
-      
-      // Filter to only objects in this user's space
-      const spacePrefix = `users/${userId}/spaces/${spaceId}/cells/`;
-      const objectsToDelete = allObjectsSnapshot.docs.filter(doc => 
-        doc.ref.path.startsWith(spacePrefix)
-      );
-      
-      console.log(`   Found ${objectsToDelete.length} objects to delete`);
-      
-      // Delete objects in batches
-      for (let i = 0; i < objectsToDelete.length; i += BATCH_SIZE) {
-        const batch = db.batch();
-        const chunk = objectsToDelete.slice(i, i + BATCH_SIZE);
-        for (const objDoc of chunk) {
-          batch.delete(objDoc.ref);
-        }
-        await batch.commit();
-        objectsDeleted += chunk.length;
-      }
-
-      // Query all connections in this space using collectionGroup
-      console.log('   Phase 1: Deleting all connections via collectionGroup query...');
-      const allConnectionsQuery = db.collectionGroup('connections');
-      const allConnectionsSnapshot = await allConnectionsQuery.get();
-      
-      // Filter to only connections in this user's space
-      const connectionsToDelete = allConnectionsSnapshot.docs.filter(doc => 
-        doc.ref.path.startsWith(spacePrefix)
-      );
-      
-      console.log(`   Found ${connectionsToDelete.length} connections to delete`);
-      
-      // Delete connections in batches
-      for (let i = 0; i < connectionsToDelete.length; i += BATCH_SIZE) {
-        const batch = db.batch();
-        const chunk = connectionsToDelete.slice(i, i + BATCH_SIZE);
-        for (const connDoc of chunk) {
-          batch.delete(connDoc.ref);
-        }
-        await batch.commit();
-        connectionsDeleted += chunk.length;
-      }
-
-      // PHASE 2: Delete all cell documents
-      console.log('   Phase 2: Deleting cell documents...');
       const cellsRef = db.collection(`users/${userId}/spaces/${spaceId}/cells`);
-      const cellsSnapshot = await cellsRef.get();
+      const cellsSnap = await cellsRef.get();
+      const cellDocs = cellsSnap.docs;
 
-      if (!cellsSnapshot.empty) {
-        const cellDocs = cellsSnapshot.docs;
-        for (let i = 0; i < cellDocs.length; i += BATCH_SIZE) {
-          const batch = db.batch();
-          const chunk = cellDocs.slice(i, i + BATCH_SIZE);
-          for (const cellDoc of chunk) {
-            batch.delete(cellDoc.ref);
-          }
-          await batch.commit();
-          cellsDeleted += chunk.length;
+      console.log(`   [${jobId}] Found ${cellDocs.length} cells to process`);
+
+      // Process cells in parallel batches of CELL_CONCURRENCY
+      for (let i = 0; i < cellDocs.length; i += CELL_CONCURRENCY) {
+        const chunk = cellDocs.slice(i, i + CELL_CONCURRENCY);
+        const results = await Promise.all(
+          chunk.map((cellDoc) => deleteCellContents(cellDoc.ref, jobStartTime, BATCH_SIZE))
+        );
+        for (const r of results) {
+          objectsDeleted += r.objectsDeleted;
+          connectionsDeleted += r.connectionsDeleted;
         }
       }
 
-      const duration = Date.now() - startTime;
-      console.log(`✅ Bulk delete completed in ${duration}ms (${(duration / 1000).toFixed(2)}s)`);
+      // Delete cell documents themselves
+      for (let i = 0; i < cellDocs.length; i += BATCH_SIZE) {
+        const chunk = cellDocs.slice(i, i + BATCH_SIZE);
+        const batch = db.batch();
+        for (const d of chunk) batch.delete(d.ref);
+        await batch.commit();
+        cellsDeleted += chunk.length;
+      }
+
+      const duration = Date.now() - jobStartTime;
+      console.log(`✅ [${jobId}] Bulk delete completed in ${duration}ms`);
       console.log(`   Cells: ${cellsDeleted}, Objects: ${objectsDeleted}, Connections: ${connectionsDeleted}`);
 
-      res.json({
-        success: true,
+      await jobRef.update({
+        status: 'done',
         cellsDeleted,
         objectsDeleted,
         connectionsDeleted,
+        finishedAt: Date.now(),
         duration,
       });
-    } catch (error) {
-      console.error('❌ Bulk delete error:', error);
-      res.status(500).json({
-        error: 'Bulk delete failed',
-        details: error.message,
-      });
+    } catch (err) {
+      console.error(`❌ [${jobId}] Background delete error:`, err);
+      try {
+        await jobRef.update({ status: 'error', error: err.message });
+      } catch (updateErr) {
+        console.error(`❌ [${jobId}] Failed to update job status to error:`, updateErr);
+      }
     }
+  });
+
+  // ---- GET /job/:jobId — poll delete job status ----
+  app.get('/job/:jobId', async (req, res) => {
+    const { jobId } = req.params;
+    const { userId, spaceId, idToken } = req.query;
+
+    if (!idToken || !userId || !spaceId || !jobId) {
+      return res.status(400).json({ error: 'Missing required query params: idToken, userId, spaceId' });
+    }
+
+    let decodedToken;
+    try {
+      decodedToken = await getAuth().verifyIdToken(idToken);
+    } catch (authErr) {
+      return res.status(401).json({ error: 'Invalid auth token', details: authErr.message });
+    }
+
+    if (decodedToken.uid !== userId) {
+      return res.status(403).json({ error: 'Token user ID does not match provided userId' });
+    }
+
+    const jobRef = db.doc(`users/${userId}/spaces/${spaceId}/_deleteJobs/${jobId}`);
+    const snap = await jobRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    res.json({ jobId, ...snap.data() });
   });
 
   return app;
