@@ -609,6 +609,26 @@ const clearCellCache = (spaceId, cellId) => {
 const objectSubscriptionsByCell = new Map(); // cellId -> Set of object subscription keys
 
 /**
+ * Force-cleanup all active spatial-object subscriptions for the given cell IDs
+ * (or all cells when no argument is provided). Used after a bulk-delete to
+ * prevent Firebase listeners from re-emitting stale docs into the store.
+ */
+export const cleanupSpatialObjectSubscriptions = (cellIds) => {
+  const targets = cellIds
+    ? new Set(Array.isArray(cellIds) ? cellIds : [cellIds])
+    : null;
+
+  objectSubscriptionsByCell.forEach((subscriptions, cellId) => {
+    if (!targets || targets.has(cellId)) {
+      subscriptions.forEach((subKey) => {
+        forceCleanupSubscription(subKey);
+      });
+      objectSubscriptionsByCell.delete(cellId);
+    }
+  });
+};
+
+/**
  * Subscribe to objects in loaded cells with deduplication
  */
 export const subscribeToSpatialObjects = (

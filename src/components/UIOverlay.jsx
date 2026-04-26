@@ -1,4 +1,4 @@
-import { useUIOverlayStore, useDiagramStore } from '../stores';
+import { useUIOverlayStore, useDiagramStore, useSpatialManagerStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
@@ -10,7 +10,8 @@ import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
-import { clearAllObjectCaches } from '../services/spatialObjectsService';
+import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions } from '../services/spatialObjectsService';
+import { getObjectsFromCells } from '../services/spatialPartitioning';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -854,61 +855,85 @@ const UIOverlay = ({
 
     setIsDeleting(true);
 
+    // CRITICAL: Set global flag to prevent ANY saves or store re-adds during deletion
+    window._bulkDeleteInProgress = true;
+
+    // Helper: call the bulk-delete cloud function once and return the parsed result
+    const callBulkDelete = async (idToken) => {
+      const functionUrl = 'https://bulkdelete-qtk2xsi74a-uc.a.run.app';
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, userId: user.uid, spaceId: currentSpaceId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Bulk delete failed');
+      return data;
+    };
+
     try {
-      // CRITICAL: Set global flag to prevent ANY saves during deletion
-      window._bulkDeleteInProgress = true;
-      
       // Clear ALL local state FIRST to prevent any saves during the delete operation
       clearAllObjectCaches();
       resetObjects();
       resetConnections();
-      
+
       // Get the current user's ID token for authentication
       const auth = getAuth();
       const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error('Unable to get authentication token');
 
-      if (!idToken) {
-        throw new Error('Unable to get authentication token');
+      // --- Step 1: call the cloud function and await its completion ---
+      const result = await callBulkDelete(idToken);
+
+      if (!result.success) {
+        alert(`Failed to delete cells: ${result.error}`);
+        return;
       }
 
-      // Call the cloud function for bulk delete
-      const functionUrl = 'https://bulkdelete-qtk2xsi74a-uc.a.run.app';
+      // --- Step 2: force-cleanup all active spatial-object subscriptions ---
+      // This prevents stale Firebase listeners from re-emitting deleted docs
+      // into the store after the lock is released.
+      // `loadedCells` is always a Set in spatialManagerStore; Array.from handles it and arrays alike.
+      const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
+      cleanupSpatialObjectSubscriptions(loadedCellIds);
 
-      const response = await fetch(functionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          idToken,
-          userId: user.uid,
-          spaceId: currentSpaceId,
-        }),
+      // --- Step 3: reset the spatial manager so it re-initialises from scratch ---
+      useSpatialManagerStore.getState().resetSpatialManager();
+
+      // --- Step 4: sanity-check — if any docs remain, retry once ---
+      const ownerUserId = user.uid;
+      const cellCoords = loadedCellIds.map((cellId) => {
+        const [x, y, z] = cellId.split(',').map(Number);
+        return { x, y, z: z || 0 };
       });
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Bulk delete failed');
+      let remainingObjects = [];
+      try {
+        remainingObjects = await getObjectsFromCells(ownerUserId, currentSpaceId, cellCoords);
+      } catch (sanityErr) {
+        console.warn('[BulkDelete] Sanity check query failed (non-fatal):', sanityErr);
       }
 
-      if (result.success) {
-        setCurrentDiagramRepo(null);
-        alert(
-          `Successfully deleted ${result.cellsDeleted} cells, ${result.objectsDeleted} objects, and ${result.connectionsDeleted} connections.`
-        );
-      } else {
-        alert(`Failed to delete cells: ${result.error}`);
+      if (remainingObjects.length > 0) {
+        console.warn(`[BulkDelete] Sanity check found ${remainingObjects.length} remaining objects — retrying…`);
+        try {
+          const freshToken = await auth.currentUser?.getIdToken(true);
+          if (freshToken) await callBulkDelete(freshToken);
+        } catch (retryErr) {
+          console.error('[BulkDelete] Retry failed:', retryErr);
+        }
       }
+
+      setCurrentDiagramRepo(null);
+      alert(
+        `Successfully deleted ${result.cellsDeleted} cells, ${result.objectsDeleted} objects, and ${result.connectionsDeleted} connections.`
+      );
     } catch (error) {
       console.error('Bulk delete error:', error);
       alert(`Error deleting cells: ${error.message}`);
     } finally {
-      // Release the delete lock after a longer delay to ensure all pending operations complete
-      // Keep the lock for 5 seconds to block any stragglers
-      setTimeout(() => {
-        window._bulkDeleteInProgress = false;
-      }, 5000);
+      // Release the delete lock only after all cleanup steps above have completed
+      window._bulkDeleteInProgress = false;
       setIsDeleting(false);
     }
   }, [user, currentSpaceId, resetObjects, resetConnections]);
