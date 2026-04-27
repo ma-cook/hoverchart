@@ -19,6 +19,7 @@ import RepoGrid from './components/RepoGrid';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
 import FrameloopController from './components/FrameloopController';
+import HandsRenderer from './components/HandsRenderer';
 
 // Hook imports
 import { useAuthState } from './hooks/useAuthState';
@@ -1782,6 +1783,8 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
               visible={cellBoundariesVisible}
             />
           </group>
+          {/* Debug: render hand-tracking joints when hand tracking is enabled */}
+          <HandsRenderer />
           {canvasQuality !== 'low' && (
           <EffectComposer>
             <SMAA />
