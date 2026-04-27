@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { startBroadcasting, joinBroadcast } from '../services/webRservice';
@@ -45,6 +45,8 @@ const ScreenShareStream = ({
   const viewerConnectionRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const isMounted = useRef(true);
+  // Guard: prevents a second getDisplayMedia call while one is already in-flight
+  const acquisitionInFlightRef = useRef(false);
 
   // Stable refs for callback functions to avoid effect re-runs
   const onBroadcastStartedRef = useRef(onBroadcastStarted);
@@ -56,28 +58,18 @@ const ScreenShareStream = ({
   onViewerCountChangeRef.current = onViewerCountChange;
   onBroadcastStoppedRef.current = onBroadcastStopped;
 
-  // Screen share constraints for better performance
-  const screenShareConstraints = useMemo(
-    () => ({
-      video: {
-        width: { ideal: 1920, max: 2560 },
-        height: { ideal: 1080, max: 1440 },
-        frameRate: { ideal: 15, max: 30 }, // Lower frame rate for screen sharing
-      },
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    }),
-    []
-  );
+  // Single primitive that gates the screen-sharing effect
+  const shouldStart = active && isScreenSharing && !!userId && !!spaceId && !!planeId;
 
   // Screen sharing effect
   useEffect(() => {
-    if (!active || !isScreenSharing || !userId || !spaceId || !planeId) {
+    if (!shouldStart) {
       return;
     }
+
+    // Guard: don't open a second picker if one is already in-flight for this streamId
+    if (acquisitionInFlightRef.current) return;
+    acquisitionInFlightRef.current = true;
 
     let effectCancelled = false; // Capture current values to avoid re-runs when these change
     const currentMeshRef = meshRef.current;
@@ -99,7 +91,18 @@ const ScreenShareStream = ({
 
     // Start screen share stream
     navigator.mediaDevices
-      .getDisplayMedia(screenShareConstraints)
+      .getDisplayMedia({
+        video: {
+          width: { ideal: 1920, max: 2560 },
+          height: { ideal: 1080, max: 1440 },
+          frameRate: { ideal: 15, max: 30 },
+        },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
       .then((stream) => {
         console.log('Screen share stream obtained:', stream);
 
@@ -123,6 +126,7 @@ const ScreenShareStream = ({
           });
         } catch (error) {
           console.error('Error in screen share setup:', error);
+          acquisitionInFlightRef.current = false;
           setScreenShareError(
             streamId,
             true,
@@ -237,11 +241,6 @@ const ScreenShareStream = ({
         };
 
         // Add event listeners
-        video.addEventListener('canplay', () => {
-          console.log('Screen share video canplay event fired');
-          attemptPlay();
-        });
-
         video.addEventListener('error', (e) => {
           console.log('Screen share video error event fired:', e);
         });
@@ -257,8 +256,13 @@ const ScreenShareStream = ({
       })
       .catch((error) => {
         console.log('getDisplayMedia failed:', error);
+        acquisitionInFlightRef.current = false;
         if (effectCancelled) return;
         setScreenShareLoading(streamId, false);
+        // User dismissed the screen-picker — don't show an error banner
+        if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+          return;
+        }
         setScreenShareError(
           streamId,
           true,
@@ -271,19 +275,10 @@ const ScreenShareStream = ({
         'Screen sharing effect cleanup - setting effectCancelled to true'
       );
       effectCancelled = true;
+      acquisitionInFlightRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    active,
-    isScreenSharing,
-    userId,
-    spaceId,
-    planeId,
-    retryTrigger,
-    meshRef,
-    screenShareConstraints,
-    streamId,
-  ]);
+  }, [shouldStart, retryTrigger, streamId]);
 
   // Receiving effect (same as WebcamStream)
   useEffect(() => {
