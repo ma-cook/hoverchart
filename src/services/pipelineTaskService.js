@@ -1,5 +1,6 @@
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import useObjectsStore from '../stores/objectsStore';
 
 export const TASK_STATUS = {
   QUEUED: 'queued',
@@ -126,5 +127,30 @@ export async function updateTaskStatus(
   };
 
   await updateDoc(docRef, { merfolkData: updatedMerfolkData });
+
+  // Synchronously mirror the new status into the local objects store. Without
+  // this, callers that immediately invoke repositionAllTasks() after a status
+  // change would re-sort using stale local data (the Firestore snapshot
+  // listener hasn't fired yet, and the _repoLocalUpdate shield in App.jsx
+  // would even ignore the snapshot once it does arrive). That caused merged
+  // tasks to land in active grid slots and active tasks to bump backwards.
+  const objectsState = useObjectsStore.getState();
+  const currentObjects = objectsState.objects || [];
+  let didUpdate = false;
+  const nextObjects = currentObjects.map((obj) => {
+    if (obj.id !== objectId) return obj;
+    didUpdate = true;
+    return {
+      ...obj,
+      merfolkData: {
+        ...(obj.merfolkData || {}),
+        ...updatedMerfolkData,
+      },
+    };
+  });
+  if (didUpdate) {
+    useObjectsStore.setState({ objects: nextObjects });
+  }
+
   return true;
 }

@@ -373,16 +373,59 @@ export function repositionIncomingTasks(repoSlug) {
   // Sort by planTaskIndex so order is deterministic
   unpositioned.sort((a, b) => a.merfolkData.planTaskIndex - b.merfolkData.planTaskIndex);
 
+  const unpositionedIds = new Set(unpositioned.map((t) => t.id));
+
+  // Renumber incoming tasks so they continue from the highest existing
+  // planTaskIndex for this repo. PlanScape always emits 1-based indices for a
+  // new plan, but if the repo already has tasks (active OR merged), restarting
+  // at 1 makes the orchestrator point Copilot at task numbers it has already
+  // completed. Build a renumber map: incoming task id -> { newIndex, oldIndex }.
+  const existingForRepo = allObjects.filter(
+    (obj) =>
+      obj.merfolkData?.planTaskIndex != null &&
+      obj.merfolkData?.repoSlug === repoSlug &&
+      !unpositionedIds.has(obj.id)
+  );
+  const maxExistingIndex = existingForRepo.reduce(
+    (max, o) => Math.max(max, Number(o.merfolkData.planTaskIndex) || 0),
+    0
+  );
+  const renumberMap = new Map();
+  if (maxExistingIndex > 0) {
+    let nextIndex = maxExistingIndex + 1;
+    for (const t of unpositioned) {
+      const oldIndex = t.merfolkData.planTaskIndex;
+      renumberMap.set(t.id, { oldIndex, newIndex: nextIndex });
+      nextIndex += 1;
+    }
+  }
+
+  // Rewrite a header like "1. Build login" to "5. Build login" when the task
+  // is being renumbered. Falls back to leaving the header alone if it doesn't
+  // match the expected `<oldIndex>. ` prefix.
+  const rewriteHeader = (headerText, oldIndex, newIndex) => {
+    if (!headerText) return `Task ${newIndex}`;
+    const prefix = `${oldIndex}. `;
+    if (headerText.startsWith(prefix)) {
+      return `${newIndex}. ${headerText.slice(prefix.length)}`;
+    }
+    return headerText;
+  };
+
   const spaceOwnerId = window.currentSpaceOwner;
   const currentSpaceId = window.currentSpaceId;
-
-  const unpositionedIds = new Set(unpositioned.map((t) => t.id));
 
   // Mark unpositioned tasks as positioned with correct type/style, then reposition all
   const updatedObjects = allObjects.map((obj) => {
     if (!unpositionedIds.has(obj.id)) return obj;
 
     const bodyText = obj.content || obj.text || '';
+    const renumber = renumberMap.get(obj.id);
+    const oldIndex = obj.merfolkData.planTaskIndex;
+    const newIndex = renumber ? renumber.newIndex : oldIndex;
+    const headerText = renumber
+      ? rewriteHeader(obj.headerText, renumber.oldIndex, renumber.newIndex)
+      : (obj.headerText || `Task ${oldIndex}`);
     return {
       ...obj,
       type: 'text',
@@ -390,18 +433,25 @@ export function repositionIncomingTasks(repoSlug) {
       color: obj.color || '#ffffff',
       content: bodyText,
       text: bodyText,
-      headerText: obj.headerText || `Task ${obj.merfolkData.planTaskIndex}`,
+      headerText,
       headerStyle: obj.headerStyle || { fontSize: 2, color: 'black' },
       textStyle: obj.textStyle || { fontSize: TASK_FONT_SIZE, color: 'black' },
       _repoLocalUpdate: Date.now(),
       merfolkData: {
         ...obj.merfolkData,
+        planTaskIndex: newIndex,
         positioned: true,
         isExpanded: false,
         status: obj.merfolkData?.status || TASK_STATUS.QUEUED,
       },
     };
   });
+
+  if (renumberMap.size > 0) {
+    console.log(
+      `[repoContainerService] Renumbered ${renumberMap.size} incoming tasks for ${repoSlug} (existing max index: ${maxExistingIndex})`
+    );
+  }
 
   useObjectsStore.setState({ objects: updatedObjects });
 
