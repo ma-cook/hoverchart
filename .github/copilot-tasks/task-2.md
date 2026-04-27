@@ -1,10 +1,21 @@
-# Task: 2. Bulk-delete ghost objects (correctness)
+# Task: 2. Scaffold the Comlink worker and client
 
-Likely cause: handleDeleteAllCells in UIOverlay.jsx:839 releases _bulkDeleteInProgress after a fixed 5s, but the cloud function may still be deleting. During the gap, active spatial subscriptions in spatialObjectsService.js:614 can re-emit batch-added to the App reducer at App.jsx:647, repopulating the store.
+**Why:** Hoverchart's worker convention (per `.github/copilot-instructions.md`) is one `*Worker.js` plus a matching `*WorkerClient.js` that provides a lazy singleton proxy. Mirroring `markdownLayoutWorker` exactly avoids surprises in Vite bundling and lifecycle.
 
-Steps:
+Create two files:
 
-Replace the 5s setTimeout unlock with awaited backend completion.
-In the batch-added reducer in App.jsx:647, short-circuit to no-op when _bulkDeleteInProgress is set.
-After the function resolves, force-cleanup spatial-objects subscriptions for the loaded cells, then call useSpatialManagerStore.getState().resetSpatialManager() (see spatialManagerStore.js:671) and re-init.
-Run a getObjectsFromCells sanity pass; if any docs remain, retry once.
+**`src/workers/handTrackingWorker.js`** — body:
+- `import { expose } from 'comlink';`
+- Module-level `let landmarker = null;`
+- `init(modelUrl)` — dynamic `import('@mediapipe/tasks-vision')` so the SDK lands in the worker chunk only. Build `FilesetResolver` from the SDK's `wasm` directory (CDN URL or bundled), construct `HandLandmarker` with `numHands: 2`, `runningMode: 'VIDEO'`, `modelAssetPath: modelUrl`.
+- `detect(imageBitmap, timestampMs)` — calls `landmarker.detectForVideo(imageBitmap, timestampMs)`, returns a fully serializable `{ hands: [{ handedness: 'Left'|'Right', landmarks: Array<{x,y,z}>(21), worldLandmarks: Array<{x,y,z}>(21) }] }`. Calls `imageBitmap.close()` before returning.
+- `dispose()` — `landmarker?.close()`, null it out.
+- `expose({ init, detect, dispose });`
+
+**`src/workers/handTrackingWorkerClient.js`** — copy [src/workers/markdownLayoutWorkerClient.js](src/workers/markdownLayoutWorkerClient.js) verbatim, swapping names: `getHandTrackingWorker()` / `terminateHandTrackingWorker()`, `import HandTrackingWorkerConstructor from './handTrackingWorker.js?worker';`.
+
+If Vite's `?worker` import surfaces issues with MediaPipe's WASM resolution, fall back to the `new Worker(new URL('./handTrackingWorker.js', import.meta.url), { type: 'module' })` pattern used in [src/workers/textAtlasWorkerClient.js](src/workers/textAtlasWorkerClient.js).
+
+**Files:**
+- `src/workers/handTrackingWorker.js` — new.
+- `src/workers/handTrackingWorkerClient.js` — new.
