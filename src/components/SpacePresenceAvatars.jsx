@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 import { subscribeToSpacePresence } from '../services/presenceService';
+import useHandTrackingStore from '../stores/handTrackingStore';
+import {
+  startHandTracking,
+  stopHandTracking,
+} from '../services/handTrackingService';
 
 /**
  * Derives up-to-two initials from a display name.
@@ -61,6 +66,58 @@ const Avatar = ({ user }) => {
 };
 
 /**
+ * Toggle button that enables / disables hand tracking.
+ * Reads state from handTrackingStore; calls service functions on click.
+ */
+const HandTrackingToggle = () => {
+  const enabled = useHandTrackingStore((s) => s.enabled);
+  const fps = useHandTrackingStore((s) => s.fps);
+  const error = useHandTrackingStore((s) => s.error);
+  const [transitioning, setTransitioning] = useState(false);
+
+  const handleClick = async () => {
+    setTransitioning(true);
+    try {
+      if (enabled) {
+        await stopHandTracking();
+      } else {
+        await startHandTracking();
+      }
+    } finally {
+      setTransitioning(false);
+    }
+  };
+
+  const label = enabled ? `🖐 Hands · ${fps} fps` : '🖐 Hands';
+
+  const btnStyle = {
+    background: 'rgba(0,0,0,0.55)',
+    color: '#fff',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    padding: '3px 8px',
+    borderRadius: 12,
+    border: error ? '1.5px solid #e74c3c' : '1.5px solid transparent',
+    cursor: transitioning ? 'wait' : 'pointer',
+    userSelect: 'none',
+    whiteSpace: 'nowrap',
+    outline: 'none',
+    opacity: transitioning ? 0.6 : 1,
+  };
+
+  return (
+    <button
+      style={btnStyle}
+      onClick={handleClick}
+      disabled={transitioning}
+      title={error}
+    >
+      {label}
+    </button>
+  );
+};
+
+/**
  * Displays small round avatars for all users currently present in the given space.
  * Rendered in the top-right corner of the screen.
  */
@@ -108,6 +165,7 @@ const SpacePresenceAvatars = ({ spaceId, currentCell }) => {
 
   return (
     <div style={containerStyle}>
+      <HandTrackingToggle />
       <div style={pillStyle}>{cellLabel}</div>
       {presentUsers.map((u) => (
         <Avatar key={u.userId} user={u} />
