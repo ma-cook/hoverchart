@@ -15,10 +15,6 @@
 
 import { wrap, releaseProxy } from 'comlink';
 
-// Vite's `?worker` suffix bundles the file as a separate worker chunk and
-// returns a Worker constructor – no extra plugins required.
-import HandTrackingWorkerConstructor from './handTrackingWorker.js?worker';
-
 /** @type {import('comlink').Remote<{ init: Function, detect: Function, dispose: Function }> | null} */
 let _proxy = null;
 /** @type {Worker | null} */
@@ -27,10 +23,17 @@ let _worker = null;
 /**
  * Return the singleton Comlink proxy for the hand-tracking worker.
  * The underlying Worker is created on first call.
+ *
+ * NOTE: must be a module worker (`type: 'module'`) because MediaPipe's
+ * `@mediapipe/tasks-vision` bundle uses dynamic `import()` internally to
+ * load its WASM loader. Classic workers throw `self.import is not a function`.
  */
 export function getHandTrackingWorker() {
   if (!_proxy) {
-    _worker = new HandTrackingWorkerConstructor();
+    _worker = new Worker(
+      new URL('./handTrackingWorker.js', import.meta.url),
+      { type: 'module' }
+    );
     _proxy = wrap(_worker);
   }
   return _proxy;

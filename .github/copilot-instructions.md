@@ -136,3 +136,112 @@ The app maintains two spatial systems:
 
 ### Text Atlas Capacity
 The `textAtlasWorker` renders text into atlas pages (4096×4096 OffscreenCanvas each, max 32 pages). Large repo scans can produce enough objects to exhaust atlas capacity. Warnings are throttled to once per 5 seconds to prevent console spam.
+
+# Copilot Instructions
+
+## Plan mode output format
+
+When writing a plan (in plan mode, or any time the user asks for a multi-step plan), write the plan to `.github/plan.md` so the **planScape** VS Code extension can parse it into numbered tasks and export them to Hoverchart.
+
+The parser in `src/planParser.ts` is strict. Follow these rules exactly.
+
+### File location
+
+- Always save plans to `.github/plan.md` (overwrite the existing file).
+- Do not split a plan across multiple files.
+
+### Task headings (required)
+
+Every task **must** be a level-2 heading (`##`) in one of these exact shapes:
+
+```markdown
+## 1. Set up the database
+## Phase 1: Set up the database
+## Phase 1 — Set up the database
+## Step 1: Set up the database
+```
+
+- Number tasks sequentially starting at `1`. The parser sorts by the number, so gaps or reordering will reorder the exported tasks.
+- Do **not** use `###` for tasks — only `##`. Sub-points under a task can use `###`, bullets, or prose; they all become part of that task's description.
+- Do not nest tasks. Plans are a flat, numbered list.
+
+### Task description
+
+Everything between a numbered `##` heading and the next `##` heading becomes that task's description. This includes:
+
+- Plain prose paragraphs
+- Bullet lists, numbered sub-lists, code fences
+- `###` sub-headings (e.g. `### Files`, `### Why`)
+
+Keep each task self-contained — the description is what gets sent to Hoverchart as the task body, so it should fully describe the work without relying on surrounding context.
+
+### Allowed non-task sections
+
+The parser **ignores** `##` sections with these exact names (case-insensitive). Use them freely for context that should not become a task:
+
+- `## TL;DR`
+- `## Decisions`
+- `## Notes`
+- `## Relevant Files`
+- `## Further Considerations`
+- `## Background`
+- `## Context`
+- `## Overview`
+- `## Summary`
+
+Any other unnumbered `##` heading is also ignored, but prefer the names above so intent is clear.
+
+### Verification section (optional)
+
+A `## Verification` section, if present, is appended to the **last** numbered task's description. Use it for acceptance criteria that apply to the whole plan:
+
+```markdown
+## Verification
+
+- All endpoints return 200 for valid input
+- Tests pass in CI
+```
+
+Place `## Verification` after the final numbered task.
+
+### Recommended skeleton
+
+```markdown
+# Plan: <short title>
+
+## TL;DR
+One- or two-sentence summary.
+
+## Decisions
+- Key choice 1
+- Key choice 2
+
+---
+
+## Phase 1: <task title>
+
+**Why:** <one sentence>
+
+<description, bullets, code, sub-headings — anything goes>
+
+**Files:**
+- `path/to/file.ts` — what changes
+
+## Phase 2: <task title>
+
+...
+
+## Verification
+
+- <acceptance criterion>
+- <acceptance criterion>
+```
+
+### Things to avoid
+
+- ❌ `### 1. Title` — must be `##`, not `###`.
+- ❌ `## Task 1: Title` — only `Phase`, `Step`, or a bare leading number is recognized.
+- ❌ `## 1) Title` — must be `1.` (dot), not `1)`.
+- ❌ Putting numbered tasks under an ignored section — section boundaries close the previous task.
+- ❌ Body text before the first numbered `##` heading — it will be dropped. Put preamble inside `## TL;DR`, `## Overview`, etc.
+- ❌ Trailing prose after `## Verification` that isn't part of verification — it will be folded into the last task's verification block.
