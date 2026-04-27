@@ -27,3 +27,6 @@ dist-ssr
 
 # Rust/Wasm build artifacts — only the compiled pkg/ output is committed
 src/wasm/target/
+
+# MediaPipe model binaries — download via `npm run download:models`
+public/assets/mediapipe/*.task
