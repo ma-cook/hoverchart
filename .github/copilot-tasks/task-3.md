@@ -1,11 +1,15 @@
-# Task: 3. Bulk-delete non-blocking UX (performance)
+# Task: 3. Add the transient Zustand store
 
-Backend uses a collectionGroup('objects') scan + path-prefix filter in index.js:394, expensive on large datasets, and the UI awaits the whole thing.
+**Why:** The renderer and the toggle UI both need read access; the capture loop needs write access. The pattern matches `lodStore` / `faceIndicatorStore` — runtime-only state, never persisted to Firebase, no subscriptions through `subscribeToSpatialObjects`.
 
-Steps:
+Create `src/stores/handTrackingStore.js`:
 
-Refactor bulkDelete to iterate users/{uid}/spaces/{spaceId}/cells directly and parallelize per-cell objects/connections deletion in batches of 500.
-Add async-job mode: endpoint returns jobId immediately; status persisted at users/{uid}/spaces/{spaceId}/_deleteJobs/{jobId}. Add a getDeleteJobStatus endpoint.
-Frontend: clear local state immediately, return UI control, poll job status with a small toast.
-Cutoff protection: backend reads jobStartTime from job doc and skips any docs with lastUpdated > cutoff so newly-created objects are preserved.
-Split locks: keep blocking incoming snapshot adds, but allow saves of new objects (loosen the guard at spatialObjectsService.js:189).
+- Default state: `{ enabled: false, leftHand: null, rightHand: null, lastUpdate: 0, fps: 0, error: null }`.
+- Actions: `setEnabled(bool)`, `setHands({ left, right })`, `setFps(num)`, `setError(string|null)`, `reset()`.
+- Use `createWithEqualityFn` (matching the project's existing Zustand setup) so `HandsRenderer` can subscribe with `shallow`.
+
+Re-export from [src/stores/index.js](src/stores/index.js) following the alphabetical ordering already present in that file.
+
+**Files:**
+- `src/stores/handTrackingStore.js` — new.
+- `src/stores/index.js` — add re-export line.
