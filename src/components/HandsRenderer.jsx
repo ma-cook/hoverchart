@@ -1,87 +1,141 @@
-import { memo, useMemo } from 'react';
-import { useThree } from '@react-three/fiber';
+import { memo, useRef, useEffect } from 'react';
+import { useThree, useFrame } from '@react-three/fiber';
 import { shallow } from 'zustand/shallow';
+import * as THREE from 'three';
 import useHandTrackingStore from '../stores/handTrackingStore';
-import InstancedLine from './InstancedLine';
 
-// Coordinate mapping: normalized MediaPipe landmark [0,1] → world-space offset from camera
-const HAND_SCALE_X = 200;   // horizontal spread in world units
-const HAND_SCALE_Y = 150;   // vertical spread in world units
-const HAND_SCALE_Z = 100;   // depth spread in world units
+// The hand-tracking group lives in the scene graph (NOT parented to the
+// camera, because R3F cameras aren't always children of the scene tree).
+// Each frame we copy the camera's world transform onto the group, then
+// offset HAND_DISTANCE units along the camera's forward axis. Inside that
+// group, normalized [0,1] image-space landmarks are scaled by HAND_WORLD_SCALE.
+const HAND_DISTANCE = 500;     // units in front of camera
+const HAND_WORLD_SCALE = 600;  // multiplier for normalized [0,1] → world units
+const JOINT_RADIUS = 20;
+const MAX_JOINTS_PER_HAND = 21;
 
-// Debug geometry settings — kept intentionally low-poly for performance
-const JOINT_SPHERE_RADIUS = 0.4;
-const JOINT_SPHERE_WIDTH_SEGMENTS = 8;
-const JOINT_SPHERE_HEIGHT_SEGMENTS = 6;
-const BONE_LINE_WIDTH = 1;
+const LEFT_COLOR = '#ff6b6b';
+const RIGHT_COLOR = '#4dabf7';
 
-// Standard MediaPipe HAND_CONNECTIONS topology (20 bones)
-const HAND_CONNECTIONS = [
-  // Thumb chain
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  // Index finger chain
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  // Middle finger chain
-  [0, 9], [9, 10], [10, 11], [11, 12],
-  // Ring finger chain
-  [0, 13], [13, 14], [14, 15], [15, 16],
-  // Pinky chain
-  [0, 17], [17, 18], [18, 19], [19, 20],
-];
+// Shared geometry across both hands so we only allocate once.
+const JOINT_GEOMETRY = new THREE.SphereGeometry(JOINT_RADIUS, 8, 6);
+const HIDDEN_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
+const _tmpMatrix = new THREE.Matrix4();
 
-function HandJoints({ landmarks, color, camera }) {
-  // Map normalized landmarks to world space anchored at camera position.
-  // camera reference is stable; landmarks change each hand-tracking frame.
-  const worldPoints = useMemo(
-    () =>
-      landmarks.map((lm) => [
-        camera.position.x + (lm.x - 0.5) * HAND_SCALE_X,
-        camera.position.y - (lm.y - 0.5) * HAND_SCALE_Y,
-        camera.position.z - lm.z * HAND_SCALE_Z,
-      ]),
-    [landmarks, camera]
-  );
+/**
+ * Apply landmarks to an InstancedMesh. Landmarks may be:
+ *   - Array of {x,y,z} objects (current store format), or
+ *   - Float32Array of length >=63 (future worker format).
+ */
+function applyLandmarks(mesh, landmarks) {
+  if (!mesh) return;
+  if (!landmarks || landmarks.length === 0) {
+    mesh.count = 0;
+    return;
+  }
+  const count = MAX_JOINTS_PER_HAND;
+  const isTyped =
+    landmarks.length >= 3 && typeof landmarks[0] === 'number';
+  const lmCount = isTyped
+    ? Math.min(count, (landmarks.length / 3) | 0)
+    : Math.min(count, landmarks.length);
 
-  // Build flat point array for InstancedLine: [x0,y0,z0, x1,y1,z1, ...] per bone
-  const bonePoints = useMemo(() => {
-    const pts = [];
-    for (const [a, b] of HAND_CONNECTIONS) {
-      pts.push(...worldPoints[a], ...worldPoints[b]);
+  for (let i = 0; i < count; i++) {
+    if (i < lmCount) {
+      let x, y;
+      if (isTyped) {
+        x = landmarks[i * 3 + 0];
+        y = landmarks[i * 3 + 1];
+      } else {
+        const lm = landmarks[i];
+        x = lm.x;
+        y = lm.y;
+      }
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        mesh.setMatrixAt(i, HIDDEN_MATRIX);
+        continue;
+      }
+      _tmpMatrix.makeTranslation(
+        (x - 0.5) * HAND_WORLD_SCALE,
+        -(y - 0.5) * HAND_WORLD_SCALE,
+        0
+      );
+      mesh.setMatrixAt(i, _tmpMatrix);
+    } else {
+      mesh.setMatrixAt(i, HIDDEN_MATRIX);
     }
-    return pts;
-  }, [worldPoints]);
-
-  return (
-    <>
-      {worldPoints.map((pos, i) => (
-        <mesh key={i} position={pos}>
-          <sphereGeometry args={[JOINT_SPHERE_RADIUS, JOINT_SPHERE_WIDTH_SEGMENTS, JOINT_SPHERE_HEIGHT_SEGMENTS]} />
-          <meshBasicMaterial color={color} />
-        </mesh>
-      ))}
-      <InstancedLine points={bonePoints} color={color} lineWidth={BONE_LINE_WIDTH} />
-    </>
-  );
+  }
+  mesh.count = count;
+  mesh.instanceMatrix.needsUpdate = true;
 }
 
 const HandsRenderer = memo(function HandsRenderer() {
   const { enabled, leftHand, rightHand } = useHandTrackingStore(
-    (s) => ({ enabled: s.enabled, leftHand: s.leftHand, rightHand: s.rightHand }),
+    (s) => ({
+      enabled: s.enabled,
+      leftHand: s.leftHand,
+      rightHand: s.rightHand,
+    }),
     shallow
   );
-  const { camera } = useThree();
+  const { camera, invalidate } = useThree();
+  const groupRef = useRef(null);
+  const leftMeshRef = useRef(null);
+  const rightMeshRef = useRef(null);
 
-  if (!enabled || (!leftHand && !rightHand)) return null;
+  // Each frame the scene renders, copy the camera's transform onto the
+  // group and push it HAND_DISTANCE units forward. Cheap — useFrame only
+  // runs when an invalidate() actually causes a render (the app uses an
+  // on-demand frame loop), and we only do a quaternion copy + position set.
+  useFrame(() => {
+    const g = groupRef.current;
+    if (!g) return;
+    g.quaternion.copy(camera.quaternion);
+    g.position
+      .set(0, 0, -HAND_DISTANCE)
+      .applyQuaternion(camera.quaternion)
+      .add(camera.position);
+  });
+
+  // Push landmarks into the instanced meshes whenever hand data changes,
+  // and request one render so useFrame above runs at least once.
+  useEffect(() => {
+    applyLandmarks(leftMeshRef.current, leftHand?.landmarks);
+    applyLandmarks(rightMeshRef.current, rightHand?.landmarks);
+    invalidate();
+  }, [leftHand, rightHand, invalidate]);
+
+  if (!enabled) return null;
 
   return (
-    <>
-      {leftHand && (
-        <HandJoints landmarks={leftHand} color="#ff6b6b" camera={camera} />
-      )}
-      {rightHand && (
-        <HandJoints landmarks={rightHand} color="#4dabf7" camera={camera} />
-      )}
-    </>
+    <group ref={groupRef}>
+      <instancedMesh
+        ref={leftMeshRef}
+        args={[JOINT_GEOMETRY, undefined, MAX_JOINTS_PER_HAND]}
+        frustumCulled={false}
+        renderOrder={9998}
+      >
+        <meshBasicMaterial
+          attach="material"
+          color={LEFT_COLOR}
+          depthTest={false}
+          depthWrite={false}
+        />
+      </instancedMesh>
+      <instancedMesh
+        ref={rightMeshRef}
+        args={[JOINT_GEOMETRY, undefined, MAX_JOINTS_PER_HAND]}
+        frustumCulled={false}
+        renderOrder={9998}
+      >
+        <meshBasicMaterial
+          attach="material"
+          color={RIGHT_COLOR}
+          depthTest={false}
+          depthWrite={false}
+        />
+      </instancedMesh>
+    </group>
   );
 });
 
