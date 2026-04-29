@@ -32,9 +32,11 @@ const REFERENCE_HAND_DIAG = 0.4;
 // values <1 dampen the effect, >1 exaggerate it.
 const INVERSE_SCALE_GAMMA = 1.0;
 // Extra forward/backward push, in world units, per unit of (size/ref - 1).
-// Positive means a close-to-webcam hand gets pushed further from the scene
-// camera, reinforcing the reversed depth cue.
-const INVERSE_DEPTH_GAIN = 600;
+// Set to 0 by default: per-frame bbox jitter on the active hand makes the
+// z-target wobble, which is perceived as the hand drifting along the
+// camera's forward axis. The scale-flip below already conveys the reversed
+// depth cue convincingly. Raise this if you want a stronger parallax.
+const INVERSE_DEPTH_GAIN = 0;
 // Clamp the resulting scale so a tiny detection bbox doesn't blow up to
 // absurd sizes and a huge one doesn't collapse to zero.
 const MIN_GROUP_SCALE = 0.4;
