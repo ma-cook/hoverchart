@@ -26,22 +26,37 @@ import {
 } from '../services/handTracking/imageOps.js';
 
 const HAND_PRESENCE_THRESHOLD = 0.5;
-const MAX_HANDS = 2;
+/**
+ * Stricter score required for a tracked ROI to remain in `prevHandsState`.
+ * Higher than the initial-detection presence threshold because the landmark
+ * model returns spurious mid-range scores on background crops; without this
+ * the tracking branch can latch on to nothing and never re-arm the palm
+ * detector. 0.7 was the smallest value that reliably dropped phantom hands
+ * within ~1 second of the real hand leaving frame.
+ */
+const TRACKED_HAND_KEEP_THRESHOLD = 0.7;
+const MAX_HANDS = 1;
+
+/**
+ * Two ROIs are considered the same physical hand if their centers are within
+ * `ROI_DEDUP_CENTER_FRAC * min(scale_a, scale_b)` pixels of each other. The
+ * palm detector's NMS (IoU 0.3) sometimes leaves overlapping detections of a
+ * single hand at slightly different orientations, which would otherwise both
+ * propagate into tracking and report `currentTrackedHands: 2` for one hand.
+ */
+const ROI_DEDUP_CENTER_FRAC = 0.5;
 
 /**
  * Confidence above which we trust the previous frame's landmarks enough to
  * skip the palm detector and derive next frame's ROI directly. Mirrors the
  * "tracking" branch in MediaPipe's hands graph.
+ *
+ * Set equal to HAND_PRESENCE_THRESHOLD: if the landmark model considers a
+ * hand present at all, we trust its ROI. A higher threshold (e.g. 0.8)
+ * causes the tracking branch to fail on most frames and forces the
+ * expensive palm detector to run every frame, which destroys FPS.
  */
-const TRACKING_CONFIDENCE_THRESHOLD = 0.8;
-
-/**
- * When tracking succeeds for at least one hand but not both, we *could* run
- * palm detection every frame to look for a newly-appearing second hand.
- * That's catastrophically expensive on single-thread WASM, so instead we run
- * the top-up palm pass only every Nth frame.
- */
-const SINGLE_HAND_TOPUP_INTERVAL = 30;
+const TRACKING_CONFIDENCE_THRESHOLD = 0.5;
 
 /** ROI derivation from landmarks 0 (wrist) and 9 (middle finger MCP). */
 const KP_WRIST = 0;
@@ -67,7 +82,6 @@ let roiCtx = null;
  * to run the landmark model directly using `prevRoi` and skip palm detection.
  */
 let prevHandsState = []; // [{ roi, score, handedness }]
-let topUpCounter = 0;
 
 /**
  * Pooled tensor buffers — each frame would otherwise allocate two
@@ -153,31 +167,79 @@ function sigmoid(x) {
 }
 
 /**
+ * Drop hands whose ROI centers are within ROI_DEDUP_CENTER_FRAC of each
+ * other's scale — these are duplicate detections of the same physical hand.
+ * Keeps the higher-scoring entry of any colliding pair.
+ */
+function dedupeByRoi(hands) {
+  if (hands.length <= 1) return hands;
+  // Sort high → low so the survivor of any collision is the strongest.
+  const sorted = hands.slice().sort((a, b) => b.score - a.score);
+  const kept = [];
+  for (const h of sorted) {
+    const roi = h._roi || roiFromLandmarks(h.rawNormalized, h._vw, h._vh);
+    if (!roi) continue;
+    let collides = false;
+    for (const k of kept) {
+      const dx = roi.xc - k._roi.xc;
+      const dy = roi.yc - k._roi.yc;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const limit = Math.min(roi.scale, k._roi.scale) * ROI_DEDUP_CENTER_FRAC;
+      if (dist < limit) { collides = true; break; }
+    }
+    if (!collides) {
+      h._roi = roi;
+      kept.push(h);
+    }
+  }
+  return kept;
+}
+
+/**
  * Build a rotated ROI (in source-video pixel space) from a previous frame's
- * landmarks. Mirrors palmDecode's `detectionToRoi`, but using landmark 0
- * (wrist) and landmark 9 (middle MCP) instead of palm keypoints.
+ * landmarks. We use the bounding box of all 21 landmarks (centered, squared,
+ * with a safety margin) — same approach as MediaPipe's HandLandmarkSubgraph.
+ *
+ * The earlier implementation reused the palm-detector's parameters
+ * (DSCALE=2.6, DY=-0.5) on landmarks 0/9. Those constants were tuned for
+ * BlazePalm's kp1/kp2 keypoints, not for the landmark model's wrist/MCP, so
+ * the ROI was systematically mispositioned. Each tracking iteration pushed
+ * the ROI further off the hand, producing unbounded drift.
  */
 function roiFromLandmarks(landmarks, vw, vh) {
-  // landmarks are normalized [0,1] of source video
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < landmarks.length; i++) {
+    const lm = landmarks[i];
+    if (!lm) continue;
+    const x = lm.x * vw;
+    const y = lm.y * vh;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+
+  const xc = (minX + maxX) * 0.5;
+  const yc = (minY + maxY) * 0.5;
+  const sideBB = Math.max(maxX - minX, maxY - minY);
+  // Margin so the next-frame hand stays inside the crop even if it moves a
+  // bit. 1.8x is roughly what MediaPipe uses for the landmark-tracking ROI.
+  const scale = sideBB * 1.8;
+  if (!(scale > 0)) return null;
+
+  // Orient so wrist (lm 0) -> middle MCP (lm 9) points "up" in the ROI.
   const w = landmarks[KP_WRIST];
   const m = landmarks[KP_MIDDLE_MCP];
-  if (!w || !m) return null;
+  let theta = 0;
+  if (w && m) {
+    const dx = w.x * vw - m.x * vw;
+    const dy = w.y * vh - m.y * vh;
+    theta = Math.atan2(dy, dx) - ROI_THETA0;
+  }
 
-  const x1 = w.x * vw;
-  const y1 = w.y * vh;
-  const x2 = m.x * vw;
-  const y2 = m.y * vh;
-
-  const dx = x1 - x2;
-  const dy = y1 - y2;
-  const theta = Math.atan2(dy, dx) - ROI_THETA0;
-
-  let scale = Math.sqrt(dx * dx + dy * dy) * 2;
-  const xc = x1;
-  const yc = y1 + ROI_DY * scale;
-  scale *= ROI_DSCALE;
-
-  if (!Number.isFinite(xc) || !Number.isFinite(yc) || scale <= 0) return null;
   return { xc, yc, scale, theta };
 }
 
@@ -274,67 +336,73 @@ async function detect(bitmap, vw, vh) {
     return { hands: [] };
   }
 
+  const stats = self.__handStats || (self.__handStats = {
+    palmCalls: 0,
+    landmarkCalls: 0,
+    frames: 0,
+    lastReport: performance.now(),
+  });
+  stats.frames++;
+
   try {
     // ---- Tracking branch: try to skip palm detection ---------------------
+    // We require TRACKED_HAND_KEEP_THRESHOLD here (rather than the looser
+    // presence threshold) so a phantom ROI that latches on to background
+    // can't keep the tracking branch alive forever.
     const trackingResults = [];
     if (prevHandsState.length > 0) {
       for (const prev of prevHandsState) {
         if (!prev || prev.score < TRACKING_CONFIDENCE_THRESHOLD) continue;
+        stats.landmarkCalls++;
         const result = await runLandmarks(bitmap, prev.roi, vw, vh);
-        if (result) trackingResults.push(result);
+        if (result && result.score >= TRACKED_HAND_KEEP_THRESHOLD) {
+          result._vw = vw; result._vh = vh;
+          trackingResults.push(result);
+        }
       }
     }
 
-    let hands = trackingResults;
+    let hands = dedupeByRoi(trackingResults).slice(0, MAX_HANDS);
 
-    // ---- Detection branch: only if tracking failed or didn't run ---------
+    // ---- Detection branch: only if tracking failed entirely -------------
     if (hands.length === 0) {
+      stats.palmCalls++;
       const detections = await runPalmDetection(bitmap, vw, vh);
+      const palmResults = [];
       const limit = Math.min(detections.length, MAX_HANDS);
       for (let d = 0; d < limit; d++) {
+        stats.landmarkCalls++;
         const result = await runLandmarks(bitmap, detections[d].videoRoi, vw, vh);
-        if (result) hands.push(result);
+        if (result) {
+          result._vw = vw; result._vh = vh;
+          palmResults.push(result);
+        }
       }
-    } else if (hands.length < MAX_HANDS && (++topUpCounter % SINGLE_HAND_TOPUP_INTERVAL) === 0) {
-      // Tracking found one hand. Look for a newly-appearing second hand,
-      // but only every SINGLE_HAND_TOPUP_INTERVAL frames — palm detection
-      // is by far the most expensive stage on single-thread WASM, so
-      // running it every frame would tank the FPS.
-      const detections = await runPalmDetection(bitmap, vw, vh);
-      // Only add detections whose ROI is far from any tracked hand.
-      for (const det of detections) {
-        if (hands.length >= MAX_HANDS) break;
-        const tooClose = hands.some((h) => {
-          // Compare wrist landmarks if available
-          const w = h.rawNormalized[KP_WRIST];
-          const dx = (det.videoRoi.xc / vw) - w.x;
-          const dy = (det.videoRoi.yc / vh) - w.y;
-          return dx * dx + dy * dy < 0.04; // ~0.2 normalized distance
-        });
-        if (tooClose) continue;
-        const result = await runLandmarks(bitmap, det.videoRoi, vw, vh);
-        if (result) hands.push(result);
-      }
+      hands = dedupeByRoi(palmResults).slice(0, MAX_HANDS);
     }
 
-    // Update previous-frame state from the hands we kept.
+    // Update previous-frame state from the (deduped) hands we kept.
     prevHandsState = hands.map((h) => ({
       score: h.score,
       handedness: h.handedness,
-      roi: roiFromLandmarks(h.rawNormalized, vw, vh),
+      roi: h._roi || roiFromLandmarks(h.rawNormalized, vw, vh),
     })).filter((h) => h.roi);
 
-    // One-time diagnostic so we can see whether the pipeline is producing
-    // hands. Drop after Phase 0 verification.
-    if (!self.__handsDetectLogged && hands.length > 0) {
+    // Report pipeline stats once per second so we can see exactly which
+    // branches are running.
+    const now = performance.now();
+    if (now - stats.lastReport >= 1000) {
       // eslint-disable-next-line no-console
-      console.info('[handTrackingWorker] first hand detected', {
-        count: hands.length,
-        handedness: hands[0].handedness,
-        score: hands[0].score,
-        firstLandmark: [hands[0].landmarks[0], hands[0].landmarks[1], hands[0].landmarks[2]],
+      console.info('[handTrackingWorker]', {
+        frames: stats.frames,
+        palmCallsPerSec: stats.palmCalls,
+        landmarkCallsPerSec: stats.landmarkCalls,
+        currentTrackedHands: prevHandsState.length,
       });
-      self.__handsDetectLogged = true;
+      stats.frames = 0;
+      stats.palmCalls = 0;
+      stats.landmarkCalls = 0;
+      stats.lastReport = now;
     }
 
     // Build the response — strip rawNormalized, transfer Float32Array buffers.

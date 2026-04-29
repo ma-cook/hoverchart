@@ -626,7 +626,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
       }, 1000); // Objects load faster than connections
     };
     const spaceToLoad = effectiveSpaceId;
-    const ownerUserId = currentSpaceOwner || user?.uid;
 
     // Capture current refs and functions to avoid dependency issues
     const currentLastUpdateRef = lastUpdateRef;
@@ -636,8 +635,12 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
     const currentSetIsInitialLoading = setIsInitialLoading;
     const currentTrackObjectInCell = trackObjectInCell;
     const currentUntrackObjectInCell = untrackObjectInCell;
+    // Pass the actual signed-in user's uid (undefined for anonymous access).
+    // The subscription internally uses window.currentSpaceOwner to resolve
+    // the data path for anonymous users. Passing the owner's uid here would
+    // make isAnonymous=false and trigger an unauthorized isSharedSpace lookup.
     const unsubscribe = subscribeToSpatialObjects(
-      ownerUserId, // May be null for anonymous access
+      user?.uid, // undefined for anonymous access — handled via window.currentSpaceOwner
       spaceToLoad,
       loadedCells,
       (change) => {
