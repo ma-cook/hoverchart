@@ -1157,11 +1157,14 @@ const UIOverlay = ({
   };
 
   // Auto-show connections when there are 100 or fewer (on startup or after a GitHub scan)
-  // Skip auto-show when a diagram was auto-generated or the space already has one
+  // Skip auto-show when a diagram was auto-generated or the space already has one,
+  // and ALSO skip for shared / public spaces — visitors should land with the same
+  // "connections off by default" view as authenticated users.
   useEffect(() => {
     if (userHasManuallyToggled.current) return;
     if (diagramIsBeingGenerated.current) return;
     if (latestMarkdownUrl) return;
+    if (window.publicAccessSpace) return;
     if (connectionCount > 0 && connectionCount <= CONNECTION_RENDER_THRESHOLD && !connectionsVisible) {
       toggleConnectionsVisible();
     }

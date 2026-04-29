@@ -1,4 +1,4 @@
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import {
   enableNetwork,
   disableNetwork,
@@ -357,12 +357,17 @@ const subscribeToCellConnections = (
 
   const startCellSubscriptions = async () => {
     try {
-      // Check if this is a shared space
-      const sharedStatus = await isSharedSpace(userId, spaceId);
-      if (!isSubscribed) return;
-
-      // Use the owner's ID to get connections from the correct cells
-      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+      // For anonymous users, `userId` here is already the owner UID resolved
+      // from window.currentSpaceOwner upstream. We must NOT call isSharedSpace
+      // in that case — it issues queries on /spaces and /sharedSpaces that
+      // are gated on `isAuthenticated()` in firestore.rules and produce a
+      // "Missing or insufficient permissions" error for anonymous viewers.
+      let ownerUserId = userId;
+      if (auth.currentUser) {
+        const sharedStatus = await isSharedSpace(userId, spaceId);
+        if (!isSubscribed) return;
+        ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+      }
 
       // For each cell, set up a subscription if we don't already have one
       for (const cellId of effectiveCells) {
