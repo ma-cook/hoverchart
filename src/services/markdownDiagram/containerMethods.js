@@ -5,6 +5,10 @@ import {
   NODE_TYPE_SERVICE,
   NODE_TYPE_STORE,
   NODE_TYPE_DATAPATH,
+  NODE_TYPE_MODULE,
+  NODE_TYPE_LIBRARY,
+  NODE_TYPE_CLASS,
+  NODE_TYPE_INTERFACE,
   BASE_DODECAHEDRON_RADIUS,
   getGroupDisplayName,
   getGroupColor,
@@ -249,7 +253,7 @@ export const containerMethods = {
       if (reachableFromRootModules.has(nodeId)) return;
       const node = graphNodes.get(nodeId);
       if (!node) return;
-      if (node.type === NODE_TYPE_COMPONENT) {
+      if (node.type !== NODE_TYPE_DATAPATH) {
         reachableFromRootModules.add(nodeId);
       }
       const children = context.parentChildMap.get(nodeId) || new Set();
@@ -295,6 +299,18 @@ export const containerMethods = {
       });
     });
 
+    const includableTypes = new Set([
+      NODE_TYPE_COMPONENT,
+      NODE_TYPE_FUNCTION,
+      NODE_TYPE_HOOK,
+      NODE_TYPE_CLASS,
+      NODE_TYPE_INTERFACE,
+      NODE_TYPE_STORE,
+      NODE_TYPE_SERVICE,
+      NODE_TYPE_MODULE,
+      NODE_TYPE_LIBRARY,
+    ]);
+
     for (const [nodeId, position] of nodePositions.entries()) {
       if (!position) continue;
       if (nodesInChildContainers.has(nodeId)) continue;
@@ -304,13 +320,13 @@ export const containerMethods = {
 
       const nodeType = (node.type || '').toLowerCase().trim();
 
-      if (nodeType === NODE_TYPE_COMPONENT) {
-        if (reachableFromRootModules.has(nodeId)) {
-          hierarchyNodes.push(nodeId);
-        }
-      } else if (nodeType === NODE_TYPE_FUNCTION) {
+      if (includableTypes.has(nodeType)) {
         const parentId = childParentMap.get(nodeId);
-        if (parentId && reachableFromRootModules.has(parentId)) {
+        if (nodeType === NODE_TYPE_COMPONENT) {
+          if (reachableFromRootModules.has(nodeId)) {
+            hierarchyNodes.push(nodeId);
+          }
+        } else if (parentId && reachableFromRootModules.has(parentId)) {
           hierarchyNodes.push(nodeId);
         }
       }
@@ -517,13 +533,24 @@ export const containerMethods = {
   ) {
     const containerDimensions = new Map();
 
+    const containerEligibleTypes = new Set([
+      NODE_TYPE_COMPONENT,
+      NODE_TYPE_SERVICE,
+      NODE_TYPE_STORE,
+      NODE_TYPE_HOOK,
+      NODE_TYPE_MODULE,
+      NODE_TYPE_LIBRARY,
+      NODE_TYPE_CLASS,
+      NODE_TYPE_INTERFACE,
+    ]);
+
     for (const [parentNodeId, children] of parentChildMap.entries()) {
       const parentNode = graphNodes.get(parentNodeId);
-      if (!parentNode || parentNode.type !== NODE_TYPE_COMPONENT) continue;
+      if (!parentNode || !containerEligibleTypes.has(parentNode.type)) continue;
 
-      const componentChildren = this.filterComponentChildren(children, graphNodes);
+      const containerChildren = this.filterContainerChildren(children, graphNodes);
 
-      const externalComponentChildren = componentChildren.filter(
+      const externalComponentChildren = containerChildren.filter(
         (childId) => !internalComponentChildren.has(childId)
       );
 

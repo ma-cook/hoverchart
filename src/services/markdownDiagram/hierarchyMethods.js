@@ -51,6 +51,16 @@ export const hierarchyMethods = {
   },
 
   /**
+   * Filter children by any non-DATAPATH type (for container dimension calculation)
+   */
+  filterContainerChildren(children, graphNodes) {
+    return Array.from(children).filter((childId) => {
+      const childNode = graphNodes.get(childId);
+      return childNode && childNode.type !== NODE_TYPE_DATAPATH;
+    });
+  },
+
+  /**
    * Build hierarchical relationships from connections
    * @param {Object} graph - The graph object from the processed diagram
    * @returns {Object} - Object containing parentChildMap, childParentMap, rootNodes, internalComponentChildren
@@ -119,11 +129,22 @@ export const hierarchyMethods = {
         let isInternalComponent = false;
 
         if (sourceNode && targetNode) {
-          // Helper: is this a "cube-child" type (function-like nodes that nest inside containers)
+          // Helper: is this a "cube-child" type (leaf nodes that nest inside containers)
           const isCubeChild = (type) =>
             type === NODE_TYPE_FUNCTION || type === NODE_TYPE_CLASS ||
             type === NODE_TYPE_INTERFACE || type === NODE_TYPE_VARIABLE ||
-            type === NODE_TYPE_CONSTANT;
+            type === NODE_TYPE_CONSTANT || type === NODE_TYPE_STORE ||
+            type === NODE_TYPE_HOOK;
+
+          // Helper: is this a "container-like" type that can parent cube-child nodes
+          const isContainerType = (type) =>
+            type === NODE_TYPE_SERVICE ||
+            type === NODE_TYPE_MODULE ||
+            type === NODE_TYPE_STORE ||
+            type === NODE_TYPE_LIBRARY ||
+            type === NODE_TYPE_HOOK ||
+            type === NODE_TYPE_CLASS ||
+            type === NODE_TYPE_INTERFACE;
 
           if (
             isCubeChild(sourceNode.type) &&
@@ -146,13 +167,7 @@ export const hierarchyMethods = {
               childId = targetId;
             }
           } else if (
-            (sourceNode.type === NODE_TYPE_SERVICE || sourceNode.type === NODE_TYPE_MODULE) &&
-            isCubeChild(targetNode.type)
-          ) {
-            parentId = sourceId;
-            childId = targetId;
-          } else if (
-            sourceNode.type === NODE_TYPE_HOOK &&
+            isContainerType(sourceNode.type) &&
             isCubeChild(targetNode.type)
           ) {
             parentId = sourceId;
