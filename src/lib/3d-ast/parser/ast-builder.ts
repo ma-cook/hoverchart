@@ -708,6 +708,6 @@ export class ASTBuilder {
    * Generate unique ID
    */
   private generateId(): string {
-    return `graph_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `graph_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   }
 }
