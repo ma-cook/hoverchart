@@ -18,7 +18,7 @@ The app can scan a GitHub repository and generate an interactive 3D architecture
 2. **Repo structure scan** — `fetchRepositoryStructure()` recursively fetches all JS/TS/shader files from the GitHub API
 3. **AST analysis** — `generateMerfolkFromRepository()` fetches each file's content, parses it with `@babel/parser` (JSX/TS plugins, error recovery), traverses the AST to extract components, hooks, services, stores, utilities, workers, shaders, and libraries, then tracks relationships (calls, props, store usage, hook returns, imports)
 4. **Merfolk markdown generation** — The extracted data is emitted as a `merfolk` fenced code block using the syntax below (components as `{Component:}`, functions as `[Function:]`, etc.)
-5. **Merfolk parsing** — `markdownDiagramService.processMarkdownFile()` hands the markdown to the `3d-ast-generator` library's `MarkdownProcessor`, which parses the Merfolk syntax into a graph of typed nodes and connections
+5. **Merfolk parsing** — `markdownDiagramService.processMarkdownFile()` hands the markdown to the vendored `MarkdownProcessor` (from `src/lib/3d-ast/`), which parses the Merfolk syntax into a graph of typed nodes and connections
 6. **Hierarchy building** — `buildHierarchicalRelationships()` determines parent-child nesting from connection types and node types (e.g. dashed arrow between components = internal nesting)
 7. **Layout & positioning** — `positionNodeHierarchy()` recursively positions the component tree, then `positionGroupedNodes()` arranges non-component groups (services, hooks, stores, functions, workers, shaders) in a circle around the root hierarchy. `resolveCollisions()` prevents overlap
 8. **3D object creation** — `createObjectsFromDiagram()` builds 3D objects (dodecahedrons, cubes, tetrahedrons) and writes them to the Zustand store and Firebase
@@ -27,9 +27,9 @@ The app can scan a GitHub repository and generate an interactive 3D architecture
 
 Steps 5–7 are offloaded to the `markdownLayoutWorker` (Web Worker via Comlink) when possible, falling back to main thread on failure. The worker uses a `LayoutEngine` that mixes in only pure methods (hierarchy, scale, position) — it deliberately excludes container/object/connection methods that touch Zustand, Firebase, or DOM.
 
-### Key External Dependency: `3d-ast-generator`
+### Vendored Parser: `src/lib/3d-ast/`
 
-The `3d-ast-generator` package (v1.0.18) is a TypeScript library that parses Merfolk syntax into graph structures. It is a critical black box that constrains the available node types.
+The Merfolk parser lives in-tree at `src/lib/3d-ast/` — a minimal subset vendored from [`ma-cook/3DAST`](https://github.com/ma-cook/3DAST) (MIT). The `3d-ast-generator` npm package is no longer a runtime dependency.
 
 **How it's used:** Imported as `MarkdownProcessor` in `processMethods.js` and `markdownLayoutWorker.js`. It extracts `` ```merfolk `` code blocks, validates the syntax, and returns `Graph` objects containing typed `Node` and `Connection` instances.
 
@@ -42,7 +42,7 @@ The `3d-ast-generator` package (v1.0.18) is a TypeScript library that parses Mer
 | `((...))` double parens | Tetrahedron |
 | `[...]` / `[[...]]` / `<...>` | Cube |
 
-**Of these, the app actively uses:** `function`, `component`, `store`, `service`, `library`, `hook`, `datapath`. The parser types `module`, `class`, `interface`, `variable`, `constant` are recognized by 3d-ast-generator but fall to a default Cube in the app's `getObjectTypeForNode()`.
+**Of these, the app actively uses:** `function`, `component`, `store`, `service`, `library`, `hook`, `datapath`. The parser types `module`, `class`, `interface`, `variable`, `constant` are recognized by the vendored parser but fall to a default Cube in the app's `getObjectTypeForNode()`.
 
 ### Merfolk Syntax Quick Reference
 
@@ -90,7 +90,7 @@ For the full syntax specification, see [merfolk-markdown-instructions.md](../mer
 - **Build**: Vite
 - **Spatial System**: Custom spatial partitioning with cell-based loading
 - **Web Workers**: Comlink-based workers for layout, pathfinding, spatial indexing, and text atlas rendering (see `src/workers/`)
-- **Merfolk Parsing**: `3d-ast-generator` NPM package (parses Merfolk syntax into typed graph structures)
+- **Merfolk Parsing**: vendored parser in `src/lib/3d-ast/` (sourced from [ma-cook/3DAST](https://github.com/ma-cook/3DAST), MIT; the `3d-ast-generator` npm package is no longer a runtime dependency)
 
 ## Key Conventions
 

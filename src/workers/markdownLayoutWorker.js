@@ -15,7 +15,7 @@
  *   - hierarchyMethods.js  (only imports constants.js)
  *   - scaleMethods.js      (only imports constants.js)
  *   - positionMethods.js   (only imports constants.js)
- *   - MarkdownProcessor from '3d-ast-generator'  (pure JS parser)
+ *   - MarkdownProcessor from '../lib/3d-ast'  (vendored pure JS parser)
  *
  * NOT imported here (they touch Zustand / Firebase / DOM):
  *   - connectionMethods.js
@@ -25,7 +25,7 @@
  */
 
 import { expose } from 'comlink';
-import { MarkdownProcessor } from '3d-ast-generator';
+import { MarkdownProcessor } from '../lib/3d-ast';
 
 import { hierarchyMethods } from '../services/markdownDiagram/hierarchyMethods.js';
 import { scaleMethods } from '../services/markdownDiagram/scaleMethods.js';

@@ -130,5 +130,5 @@ Two spatial systems work together:
 - **Backend**: Firebase (Firestore, Auth, Storage, Realtime Database, Cloud Functions)
 - **Build**: Vite
 - **AST Parsing**: Babel with JSX/TypeScript plugins
-- **Merfolk Parsing**: `3d-ast-generator` package
+- **Merfolk Parsing**: vendored parser in `src/lib/3d-ast/` (sourced from [ma-cook/3DAST](https://github.com/ma-cook/3DAST), MIT)
 - **Worker Communication**: Comlink

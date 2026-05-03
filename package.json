@@ -23,7 +23,6 @@
     "@tensorflow/tfjs-converter": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "@xyflow/react": "^12.10.1",
-    "3d-ast-generator": "^1.0.18",
     "comlink": "^4.4.2",
     "draft-js": "^0.11.7",
     "firebase": "^11.0.1",
