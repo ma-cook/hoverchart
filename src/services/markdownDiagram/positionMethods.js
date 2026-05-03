@@ -7,6 +7,12 @@ import {
   NODE_TYPE_SERVICE,
   NODE_TYPE_STORE,
   NODE_TYPE_DATAPATH,
+  NODE_TYPE_CLASS,
+  NODE_TYPE_INTERFACE,
+  NODE_TYPE_VARIABLE,
+  NODE_TYPE_CONSTANT,
+  NODE_TYPE_LIBRARY,
+  NODE_TYPE_MODULE,
   OBJECT_TYPE_DODECAHEDRON,
   DEFAULT_CONTAINER_SIZE,
   BASE_DODECAHEDRON_RADIUS,
@@ -229,10 +235,18 @@ export const positionMethods = {
       return;
     }
 
-    if (
+    // Top-level STORE/SERVICE/HOOK/MODULE/LIBRARY that have no parent are handled
+    // by positionGroupedNodes — skip them here. But if they have a parent (i.e. they
+    // are children of a COMPONENT), we must still position them and recurse into
+    // their own children.
+    const isGroupedType =
       nodeType === NODE_TYPE_SERVICE ||
-      nodeType === NODE_TYPE_STORE
-    ) {
+      nodeType === NODE_TYPE_STORE ||
+      nodeType === NODE_TYPE_HOOK ||
+      nodeType === NODE_TYPE_LIBRARY ||
+      nodeType === NODE_TYPE_MODULE;
+
+    if (isGroupedType && isTopLevel) {
       return;
     }
 
@@ -577,7 +591,7 @@ export const positionMethods = {
       if (reachableFromRootModules.has(nodeId)) return;
       const node = graphNodes.get(nodeId);
       if (!node) return;
-      if (node.type === NODE_TYPE_COMPONENT) {
+      if (node.type !== NODE_TYPE_DATAPATH) {
         reachableFromRootModules.add(nodeId);
       }
       const children = context.parentChildMap.get(nodeId) || new Set();
@@ -623,6 +637,20 @@ export const positionMethods = {
       });
     });
 
+    const includableTypes = new Set([
+      NODE_TYPE_COMPONENT,
+      NODE_TYPE_FUNCTION,
+      NODE_TYPE_HOOK,
+      NODE_TYPE_CLASS,
+      NODE_TYPE_INTERFACE,
+      NODE_TYPE_VARIABLE,
+      NODE_TYPE_CONSTANT,
+      NODE_TYPE_STORE,
+      NODE_TYPE_SERVICE,
+      NODE_TYPE_MODULE,
+      NODE_TYPE_LIBRARY,
+    ]);
+
     for (const [nodeId, position] of nodePositions.entries()) {
       if (!position) continue;
       if (nodesInChildContainers.has(nodeId)) continue;
@@ -632,13 +660,13 @@ export const positionMethods = {
 
       const nodeType = (node.type || '').toLowerCase().trim();
 
-      if (nodeType === NODE_TYPE_COMPONENT) {
-        if (reachableFromRootModules.has(nodeId)) {
-          hierarchyNodes.push(nodeId);
-        }
-      } else if (nodeType === NODE_TYPE_FUNCTION) {
+      if (includableTypes.has(nodeType)) {
         const parentId = childParentMap.get(nodeId);
-        if (parentId && reachableFromRootModules.has(parentId)) {
+        if (nodeType === NODE_TYPE_COMPONENT) {
+          if (reachableFromRootModules.has(nodeId)) {
+            hierarchyNodes.push(nodeId);
+          }
+        } else if (parentId && reachableFromRootModules.has(parentId)) {
           hierarchyNodes.push(nodeId);
         }
       }

@@ -122,6 +122,23 @@ export const objectMethods = {
     let objectsCreated = 0;
     const nodeEntries = Array.from(nodePositions);
 
+    const DEBUG_OBJECT_HISTOGRAM = true; // toggle off after verification
+    if (DEBUG_OBJECT_HISTOGRAM) {
+      const positionedTypes = {};
+      const unpositionedTypes = {};
+      for (const [nodeId, node] of graph.nodes.entries()) {
+        const t = (node.type || 'unknown').toLowerCase();
+        if (nodePositions.has(nodeId)) {
+          positionedTypes[t] = (positionedTypes[t] || 0) + 1;
+        } else {
+          unpositionedTypes[t] = (unpositionedTypes[t] || 0) + 1;
+        }
+      }
+      console.log('[object-histogram] graph nodes total =', graph.nodes.size);
+      console.log('[object-histogram] positioned by type =', positionedTypes);
+      console.log('[object-histogram] UNPOSITIONED by type =', unpositionedTypes);
+    }
+
     const OBJECT_BATCH_SIZE = 50;
 
     // Collect all objects for this diagram before adding to store
