@@ -214,13 +214,16 @@ export class MermaidParser {
     // D<Datapath: eventStream>
     // E[[Class: UserModel]]
 
-    // IMPORTANT: Order matters! Check double brackets BEFORE single brackets
+    // NOTE: Pattern order matches npm 3d-ast-generator@1.0.18 (commit 5c0d60f) for
+    // behavioural compatibility with hoverchart's downstream pipeline. The "more
+    // correct" double-bracket-first order from main is reverted here pending a
+    // downstream fix in src/services/markdownDiagram/. See PR #64 follow-up.
     const patterns = [
-      /^([A-Za-z0-9_]+)\[\[([^:]+):\s*([^\]]+)\]\]/, // Double square brackets (must be first!)
-      /^([A-Za-z0-9_]+)\(\(([^:]+):\s*([^\)]+)\)\)/, // Double parentheses (must be before single)
-      /^([A-Za-z0-9_]+)\[([^:]+):\s*([^\]]+)\]/, // Square brackets
-      /^([A-Za-z0-9_]+)\{([^:]+):\s*([^\}]+)\}/, // Curly brackets
-      /^([A-Za-z0-9_]+)<([^:]+):\s*([^>]+)>/, // Angle brackets
+      /^([A-Za-z0-9_]+)\[([^:]+):\s*([^\]]+)\]/,      // Square brackets
+      /^([A-Za-z0-9_]+)\{([^:]+):\s*([^\}]+)\}/,      // Curly brackets
+      /^([A-Za-z0-9_]+)\(\(([^:]+):\s*([^\)]+)\)\)/,  // Double parentheses
+      /^([A-Za-z0-9_]+)<([^:]+):\s*([^>]+)>/,         // Angle brackets
+      /^([A-Za-z0-9_]+)\[\[([^:]+):\s*([^\]]+)\]\]/,  // Double square brackets
     ];
 
     for (const pattern of patterns) {
@@ -374,23 +377,24 @@ export class MermaidParser {
    * Parse geometry from line (based on bracket type)
    */
   private parseGeometry(line: string): GeometryType {
-    // IMPORTANT: Check double brackets BEFORE single brackets!
-    
-    // [[Store: name]] -> CUBE (must check BEFORE single brackets)
-    if (line.includes('[[') && line.includes(']]')) {
-      return GeometryType.CUBE;
-    }
-    // ((Service: name)) -> TETRAHEDRON (must check BEFORE single parens)
-    else if (line.includes('((') && line.includes('))')) {
-      return GeometryType.TETRAHEDRON;
-    }
-    // [Function: name] or [Hook: name] -> CUBE
-    else if (line.includes('[') && line.includes(']')) {
+    // NOTE: Order matches npm 3d-ast-generator@1.0.18 (commit 5c0d60f) for
+    // behavioural compatibility with hoverchart's downstream pipeline. See PR #64 follow-up.
+
+    // [Function: name] -> CUBE
+    if (line.includes('[') && line.includes(']')) {
       return GeometryType.CUBE;
     }
     // {Component: name} -> DODECAHEDRON
     else if (line.includes('{') && line.includes('}')) {
       return GeometryType.DODECAHEDRON;
+    }
+    // [[Store: name]] -> CUBE
+    else if (line.includes('[[') && line.includes(']]')) {
+      return GeometryType.CUBE;
+    }
+    // ((Service: name)) -> TETRAHEDRON
+    else if (line.includes('((') && line.includes('))')) {
+      return GeometryType.TETRAHEDRON;
     }
     // <Library: name> -> CUBE
     else if (line.includes('<') && line.includes('>')) {
