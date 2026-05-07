@@ -5,9 +5,33 @@
 import { parse } from '@babel/parser';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+import { scanPythonWithTreeSitter, scanWithTreeSitter } from './treeSitterScanner';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
+
+/**
+ * Map a file path to the language key the tree-sitter scanner registers, or
+ * `null` if the language is handled elsewhere (Babel JS/TS, Vue SFC, shaders)
+ * or simply not supported.
+ */
+const TREE_SITTER_EXTENSIONS = [
+  { test: /\.go$/i,                key: 'go' },
+  { test: /\.rs$/i,                key: 'rust' },
+  { test: /\.java$/i,              key: 'java' },
+  { test: /\.cs$/i,                key: 'csharp' },
+  { test: /\.rb$/i,                key: 'ruby' },
+  { test: /\.php$/i,               key: 'php' },
+  { test: /\.(cpp|cc|cxx|hpp|hh|hxx)$/i, key: 'cpp' },
+  { test: /\.(c|h)$/i,             key: 'c' },
+];
+
+const getTreeSitterLanguage = (filePath) => {
+  for (const { test, key } of TREE_SITTER_EXTENSIONS) {
+    if (test.test(filePath)) return key;
+  }
+  return null;
+};
 
 /**
  * Exchange GitHub OAuth code for an access token
@@ -148,6 +172,8 @@ const getFileTypeFromPath = (filePath) => {
   if (/\.py$/.test(name)) return 'python';
   if (/\.vue$/.test(name)) return 'vue';
   if (/\.(glsl|wgsl|hlsl|vert|frag|comp)$/.test(name)) return 'shader';
+  const tsLang = getTreeSitterLanguage(name);
+  if (tsLang) return tsLang;
   return null;
 };
 
@@ -225,6 +251,19 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
             name: item.name,
             type: 'shader',
           });
+        }
+        // Include other tree-sitter-supported languages (Go, Rust, Java,
+        // C/C++, C#, Ruby, PHP). The `type` is the language key the scanner
+        // worker uses, so the analysis loop can route on `file.type` directly.
+        else {
+          const tsLang = getTreeSitterLanguage(item.name);
+          if (tsLang) {
+            structure.push({
+              path: item.path,
+              name: item.name,
+              type: tsLang,
+            });
+          }
         }
       }
     }
@@ -1425,13 +1464,43 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       constants: new Set(),
     };
 
-    // Track component-function relationships for "contains" connections
+    // Track component-function relationships for "contains" connections.
+    // Stores the unique ID assigned to each function inside a component.
     const componentFunctions = new Map();
-    // Maps prefixed node ID -> original function name for display (avoids showing the component prefix)
+    // Maps unique ID -> original function name for display (no parent prefix).
     const componentFuncDisplayNames = new Map();
+    // Counter map for assigning unique IDs when the same function name is
+    // declared inside multiple components (`handleClick`, `handleClick_2`, ...).
+    const funcIdCounters = new Map();
+
+    /**
+     * Assigns and returns a unique node ID for a function name. The display
+     * label remains the raw `funcName`. First occurrence is `funcName`,
+     * subsequent collisions become `funcName_2`, `funcName_3`, etc.
+     */
+    const allocateFuncId = (funcName) => {
+      const count = (funcIdCounters.get(funcName) ?? 0) + 1;
+      funcIdCounters.set(funcName, count);
+      const id = count === 1 ? funcName : `${funcName}_${count}`;
+      componentFuncDisplayNames.set(id, funcName);
+      return id;
+    };
 
     // Track component-to-component relationships (which components use which other components)
     const componentRelationships = new Map();
+
+    // Track which file each component is declared in (basename, no extension).
+    // Used during post-processing to resolve cross-file component imports
+    // back to actual component names — this is what stitches components in
+    // non-canonical folders (e.g. /landing/, /pages/) into the JSX hierarchy
+    // even when JSX usage detection misses the relationship (most commonly
+    // `const X = lazy(() => import('./Y.jsx'))` where the local alias `X`
+    // doesn't match any real component).
+    const componentToFile = new Map();
+    // componentName -> Set<importedFileBase> (basename of imported component
+    // files, populated from this component's containing file's imports plus
+    // any `lazy(() => import('./X'))` calls).
+    const componentImportSources = new Map();
 
     // Track component-to-hook/service/store relationships
     const componentDependencies = new Map();
@@ -1602,24 +1671,66 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             return; // Skip AST parsing for shader files
           }
 
-          // Handle Python files — use regex-based analysis instead of Babel
+          // Handle Python files — tree-sitter (WASM) in a worker, with
+          // automatic fallback to the regex scanner if WASM load or parse fails.
           if (file.type === 'python') {
             try {
-              traversePythonSource(
-                fileContent,
-                fileName,
-                file.path,
-                fileContext,
-                elements,
-                foundItems,
-                fileFunctions,
-                moduleImportRelationships,
-                functionCallRelationships
-              );
+              try {
+                await scanPythonWithTreeSitter(
+                  fileContent,
+                  fileName,
+                  file.path,
+                  fileContext,
+                  elements,
+                  foundItems,
+                  fileFunctions,
+                  moduleImportRelationships,
+                  functionCallRelationships
+                );
+              } catch (tsError) {
+                console.warn(`⚠️  tree-sitter Python scan failed for ${file.path}; falling back to regex:`, tsError?.message || tsError);
+                traversePythonSource(
+                  fileContent,
+                  fileName,
+                  file.path,
+                  fileContext,
+                  elements,
+                  foundItems,
+                  fileFunctions,
+                  moduleImportRelationships,
+                  functionCallRelationships
+                );
+              }
             } catch (pyError) {
               console.warn(`⚠️  Failed to parse Python file ${file.path}:`, pyError?.message || pyError);
             }
             return; // Skip Babel AST parsing for Python files
+          }
+
+          // Handle other tree-sitter-supported languages (Go, Rust, Java,
+          // C/C++, C#, Ruby, PHP). No legacy fallback exists for these, so
+          // any failure is logged and the file is skipped.
+          {
+            const tsLang = getTreeSitterLanguage(file.path);
+            if (tsLang) {
+              try {
+                await scanWithTreeSitter(
+                  tsLang,
+                  fileContent,
+                  fileName,
+                  file.path,
+                  fileContext,
+                  elements,
+                  foundItems,
+                  fileFunctions,
+                  moduleImportRelationships,
+                  functionCallRelationships
+                );
+              } catch (tsError) {
+                console.warn(`⚠️  tree-sitter ${tsLang} scan failed for ${file.path}:`, tsError?.message || tsError);
+              }
+              return;
+            }
           }
 
           // Handle Vue repos — .vue SFCs and plain JS/TS companion files
@@ -1698,7 +1809,27 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             }
             // ── React / framework path ────────────────────────────────────────
 
+            // ── Entry-point files (main.jsx / index.jsx / index.tsx) ─────────
+            // These files typically have NO named component function — they just
+            // call ReactDOM.createRoot().render(<SomeRootComponent />) at the
+            // top level.  Because there is no function declaration, `currentComponent`
+            // stays null and any JSX found (e.g. <AppShell />) is silently dropped
+            // from componentRelationships.
+            // Fix: if the file's base name is a known entry-point name and it is
+            // classified as a component file, pre-seed `currentComponent` with
+            // the file name so top-level JSX gets tracked as its children.
+            const ENTRY_POINT_NAMES = ['main', 'index'];
+            const isEntryPointFile =
+              ENTRY_POINT_NAMES.includes(fileName) && fileContext.isComponent;
+
             let currentComponent = null;
+            if (isEntryPointFile) {
+              // Seed as a synthetic "entry" component so JSX tracking fires.
+              // We do NOT push fileName into elements.components here — that
+              // only happens if the file actually contains JSX (checked below
+              // after the traverse completes).
+              currentComponent = fileName;
+            }
             // Functions encountered in a component file before the first component declaration
             // are deferred here and retroactively assigned to componentFunctions once the
             // component is found, so they receive proper containment arrows.
@@ -1708,6 +1839,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
               services: [],
               hooks: [],
               utilities: [],
+              // Basenames (no extension) of imported component files — used to
+              // wire up parent→child component relationships when JSX-name
+              // detection misses them (e.g. lazy/aliased imports).
+              componentBases: [],
             };
 
             // Track all components found in this file for internal component detection
@@ -1749,6 +1884,18 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 }
                 // Track imports from stores, services, hooks, utilities, and components for later association
                 else if (node.specifiers) {
+                  // Extract basename of imported file (no extension) for
+                  // potential component-import resolution. We add this for
+                  // any relative import — the post-process step filters
+                  // against the actual componentsSet so non-component imports
+                  // are dropped.
+                  const importBase = source
+                    .split('/')
+                    .pop()
+                    .replace(/\.(jsx?|tsx?|mjs|cjs)$/i, '');
+                  if (importBase && !fileImports.componentBases.includes(importBase)) {
+                    fileImports.componentBases.push(importBase);
+                  }
                   node.specifiers.forEach((spec) => {
                     if (spec.imported || spec.local) {
                       const importedName = spec.imported?.name || spec.local?.name;
@@ -1786,6 +1933,37 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 }
               }
 
+              // Detect dynamic imports inside CallExpression bodies, in
+              // particular React.lazy patterns:
+              //   const X = lazy(() => import('./Y.jsx'))
+              // The local binding `X` may not match any real component name,
+              // but the imported file `Y` is what we want to wire up. We
+              // record `Y` as a component-base import on the file so the
+              // post-process resolution step can hook the importing
+              // component → resolved component edge.
+              if (
+                node.type === 'CallExpression' &&
+                node.callee?.type === 'Import'
+              ) {
+                const arg = node.arguments?.[0];
+                const sourceVal =
+                  arg?.type === 'StringLiteral' || arg?.type === 'Literal'
+                    ? arg.value
+                    : null;
+                if (
+                  typeof sourceVal === 'string' &&
+                  (sourceVal.startsWith('./') || sourceVal.startsWith('../'))
+                ) {
+                  const importBase = sourceVal
+                    .split('/')
+                    .pop()
+                    .replace(/\.(jsx?|tsx?|mjs|cjs)$/i, '');
+                  if (importBase && !fileImports.componentBases.includes(importBase)) {
+                    fileImports.componentBases.push(importBase);
+                  }
+                }
+              }
+
               // Check for function declarations
               if (node.type === 'FunctionDeclaration' && node.id) {
                 const funcName = node.id.name;
@@ -1814,12 +1992,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     }
                     componentFunctions.set(funcName, new Set());
                     // Retroactively assign any module-level helpers encountered before
-                    // this component declaration so they get containment arrows
+                    // this component declaration so they get containment arrows.
+                    // Use raw function names with collision-suffix IDs (no parent prefix).
                     if (prePendingFunctions.length > 0) {
                       prePendingFunctions.forEach((fn) => {
-                        const prefixed = funcName.toLowerCase() + fn.charAt(0).toUpperCase() + fn.slice(1);
-                        componentFunctions.get(funcName).add(prefixed);
-                        componentFuncDisplayNames.set(prefixed, fn);
+                        const id = allocateFuncId(fn);
+                        componentFunctions.get(funcName).add(id);
                       });
                       prePendingFunctions.length = 0;
                     }
@@ -1840,6 +2018,20 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     fileImports.utilities.forEach((utility) =>
                       componentDependencies.get(funcName).add({ name: utility, type: 'utility' })
                     );
+
+                    // Record this component's containing file & imported
+                    // component-file basenames for cross-file resolution
+                    // during post-processing (stitches non-canonical-folder
+                    // components into the JSX hierarchy).
+                    componentToFile.set(funcName, fileName);
+                    if (!componentImportSources.has(funcName)) {
+                      componentImportSources.set(funcName, new Set());
+                    }
+                    fileImports.componentBases.forEach((b) => {
+                      if (b !== funcName) {
+                        componentImportSources.get(funcName).add(b);
+                      }
+                    });
                   }
                   // Traverse function body with component context
                   if (node.body) {
@@ -1933,18 +2125,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     const isTrivial = funcName.length <= 2;
 
                     if (!isTrivial) {
-                      // Prefix the function name with the component name
-                      const prefixedFuncName =
-                        currentComponent.toLowerCase() +
-                        funcName.charAt(0).toUpperCase() +
-                        funcName.slice(1);
-
-                      // Check if this PREFIXED function already exists
-                      if (!foundItems.functions.has(prefixedFuncName)) {
-                        foundItems.functions.add(prefixedFuncName);
-                        componentFunctions.get(currentComponent).add(prefixedFuncName);
-                        componentFuncDisplayNames.set(prefixedFuncName, funcName);
-                      }
+                      // Allocate a unique node ID for this helper. The display
+                      // label stays as the raw function name; collisions are
+                      // disambiguated by `_2`, `_3`, etc. suffixes on the ID.
+                      const id = allocateFuncId(funcName);
+                      foundItems.functions.add(id);
+                      componentFunctions.get(currentComponent).add(id);
                     }
                   } else if (fileContext.isUtil) {
                     // Functions in utility files should be utilities, not general functions
@@ -2138,12 +2324,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
 
                           componentFunctions.set(varName, new Set());
                           // Retroactively assign any module-level helpers encountered before
-                          // this component declaration so they get containment arrows
+                          // this component declaration so they get containment arrows.
+                          // Use raw function names with collision-suffix IDs (no parent prefix).
                           if (prePendingFunctions.length > 0) {
                             prePendingFunctions.forEach((fn) => {
-                              const prefixed = varName.toLowerCase() + fn.charAt(0).toUpperCase() + fn.slice(1);
-                              componentFunctions.get(varName).add(prefixed);
-                              componentFuncDisplayNames.set(prefixed, fn);
+                              const id = allocateFuncId(fn);
+                              componentFunctions.get(varName).add(id);
                             });
                             prePendingFunctions.length = 0;
                           }
@@ -2168,6 +2354,18 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                               .get(varName)
                               .add({ name: utility, type: 'utility' })
                           );
+
+                          // Record cross-file component import sources for
+                          // post-processing hierarchy resolution.
+                          componentToFile.set(varName, fileName);
+                          if (!componentImportSources.has(varName)) {
+                            componentImportSources.set(varName, new Set());
+                          }
+                          fileImports.componentBases.forEach((b) => {
+                            if (b !== varName) {
+                              componentImportSources.get(varName).add(b);
+                            }
+                          });
                         }
                         // Traverse function body with component context
                         if (decl.init.body) {
@@ -2261,18 +2459,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                           const isTrivial = varName.length <= 2;
 
                           if (!isTrivial && isFunction) {
-                            // Prefix the function name with the component name
-                            const prefixedVarName =
-                              currentComponent.toLowerCase() +
-                              varName.charAt(0).toUpperCase() +
-                              varName.slice(1);
-
-                            // Check if this PREFIXED function already exists
-                            if (!foundItems.functions.has(prefixedVarName)) {
-                              foundItems.functions.add(prefixedVarName);
-                              componentFunctions.get(currentComponent).add(prefixedVarName);
-                              componentFuncDisplayNames.set(prefixedVarName, varName);
-                            }
+                            // Allocate a unique node ID for this helper. The
+                            // display label stays as the raw variable name;
+                            // collisions are disambiguated by `_2`, `_3`, etc.
+                            const id = allocateFuncId(varName);
+                            foundItems.functions.add(id);
+                            componentFunctions.get(currentComponent).add(id);
                           }
                         } else if (fileContext.isUtil && isFunction) {
                           // Functions in utility files should be utilities, not general functions
@@ -2427,6 +2619,18 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   fileImports.utilities.forEach((utility) =>
                     componentDependencies.get(className).add({ name: utility, type: 'utility' })
                   );
+
+                  // Record cross-file component import sources for
+                  // post-processing hierarchy resolution.
+                  componentToFile.set(className, fileName);
+                  if (!componentImportSources.has(className)) {
+                    componentImportSources.set(className, new Set());
+                  }
+                  fileImports.componentBases.forEach((b) => {
+                    if (b !== className) {
+                      componentImportSources.get(className).add(b);
+                    }
+                  });
                 } else if (!foundItems.classes.has(className)) {
                   // Non-React classes: emit as [[Class:]] type
                   foundItems.classes.add(className);
@@ -2806,15 +3010,17 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
               // NEW: Detect shared TypeScript interfaces and type aliases
               if (node.type === 'TSInterfaceDeclaration' && node.id) {
                 const ifaceName = node.id.name;
-                sharedInterfaces.set(sanitizeNodeId(ifaceName), fileName);
+                const safeIfaceName = sanitizeNodeId(ifaceName);
+                sharedInterfaces.set(safeIfaceName, fileName);
                 if (currentComponent) {
                   if (!interfaceUsages.has(currentComponent)) interfaceUsages.set(currentComponent, new Set());
-                  interfaceUsages.get(currentComponent).add(sanitizeNodeId(ifaceName));
+                  interfaceUsages.get(currentComponent).add(safeIfaceName);
                 }
               }
               if (node.type === 'TSTypeAliasDeclaration' && node.id) {
                 const typeName = node.id.name;
-                sharedInterfaces.set(sanitizeNodeId(typeName), fileName);
+                const safeTypeName = sanitizeNodeId(typeName);
+                sharedInterfaces.set(safeTypeName, fileName);
               }
               // Import type { Name } - detect usage (type-only imports are most reliable,
               // but also check value imports for cases where types are re-exported without `type` keyword)
@@ -2842,6 +3048,28 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             };
 
             traverse(ast, false);
+
+            // ── Entry-point post-processing ───────────────────────────────────
+            // If this was an entry-point file (main.jsx / index.jsx) and the
+            // traverse captured child components via componentRelationships,
+            // register the file name as a real component so downstream steps
+            // include it in the hierarchy tree.  This makes `main` a proper
+            // root node that parents `AppShell` (or whatever the entry renders).
+            if (isEntryPointFile && componentRelationships.has(fileName)) {
+              const children = componentRelationships.get(fileName);
+              if (children && children.size > 0 && !foundItems.components.has(fileName)) {
+                foundItems.components.add(fileName);
+                elements.components.push(fileName);
+                fileComponents.push(fileName);
+                if (!componentFunctions.has(fileName)) {
+                  componentFunctions.set(fileName, new Set());
+                }
+                if (!componentDependencies.has(fileName)) {
+                  componentDependencies.set(fileName, new Set());
+                }
+                componentToFile.set(fileName, fileName);
+              }
+            }
 
             // After traversing the file, determine internal components based on exports
             if (fileContext.isComponent && fileComponents.length > 1) {
@@ -2922,6 +3150,36 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       console.log(`  Next.js route files (${nextjsRouteMap.size}):`);
       nextjsRouteMap.forEach((info, name) => {
         console.log(`    ${name}: route=${info.routePath || '/'}, layout=${info.isLayout}, page=${info.isPage}, api=${info.isApi}`);
+      });
+    }
+
+    // Resolve cross-file component imports → real component names and fold
+    // them into componentRelationships BEFORE handing the data off to the
+    // markdown generator. This catches:
+    //   - Default imports of components from non-canonical folders
+    //     (e.g. AppShell → LandingApp via `import LandingApp from './landing/LandingApp'`)
+    //   - lazy(() => import('./X.jsx')) where the local alias doesn't match
+    //     a real component name (e.g. AppShell → App via `lazy(() => import('./App.jsx'))`)
+    // The downstream filter inside generateMerfolkMarkdown drops any names
+    // that aren't real components.
+    {
+      const componentsSetForResolve = new Set(elements.components);
+      const fileToComponent = new Map();
+      componentToFile.forEach((file, comp) => {
+        if (componentsSetForResolve.has(comp) && !fileToComponent.has(file)) {
+          fileToComponent.set(file, comp);
+        }
+      });
+      componentImportSources.forEach((bases, comp) => {
+        if (!componentsSetForResolve.has(comp)) return;
+        bases.forEach((base) => {
+          const resolved = fileToComponent.get(base);
+          if (!resolved || resolved === comp) return;
+          if (!componentRelationships.has(comp)) {
+            componentRelationships.set(comp, new Set());
+          }
+          componentRelationships.get(comp).add(resolved);
+        });
       });
     }
 
@@ -3075,16 +3333,16 @@ const generateMerfolkMarkdown = (
   );
   elements.services = elements.services.filter((item) => !classesSet.has(item));
 
-  // Remove component-internal functions from the general functions list
-  // These will be handled via componentFunctions relationships
+  // Remove component-internal functions from the general functions list.
+  // These will be handled via componentFunctions relationships.
+  // NOTE: We must only filter by the *unique IDs* held in componentFunctions,
+  // not by their display names — otherwise any standalone function that shares
+  // a name with a component-internal helper (e.g. `handleClick`, `render`,
+  // `update`, `getX`, `setY`) would be incorrectly stripped from the diagram.
   const componentInternalFunctions = new Set();
   componentFunctions.forEach((functions) => {
     functions.forEach((func) => {
       componentInternalFunctions.add(func);
-      // Also add the original name so pre-pending functions (stored in elements.functions
-      // by their raw name before being retroactively prefixed) are also filtered out
-      const displayName = componentFuncDisplayNames.get(func);
-      if (displayName) componentInternalFunctions.add(displayName);
     });
   });
   elements.functions = elements.functions.filter((func) => !componentInternalFunctions.has(func));
@@ -3450,12 +3708,16 @@ const generateMerfolkMarkdown = (
   if (elements.imports.libraries.length > 0) {
     markdown += `\n%% External Libraries\n`;
     elements.imports.libraries.forEach((lib) => {
-      if (nodeIds.has(lib)) {
+      // The vendored Merfolk parser allows `/`, `.`, `-` in node IDs but forbids
+      // `@` (which is the face-separator in connection syntax). npm-scoped names
+      // like `@react-three/fiber` therefore need their leading `@` replaced.
+      const libId = lib.replace(/@/g, '_');
+      if (nodeIds.has(libId)) {
         // Already declared as a different node type — skip to avoid duplicate
         return;
       }
-      nodeIds.add(lib);
-      markdown += `${lib}<Library: ${lib}>\n`;
+      nodeIds.add(libId);
+      markdown += `${libId}<Library: ${lib}>\n`;
     });
   }
 
@@ -3937,6 +4199,16 @@ const generateMerfolkMarkdown = (
       }
     });
 
+    markdown += '\n%% API Containment\n';
+    apiEndpoints.forEach((ep, epKey) => {
+      if (!nodeIds.has(epKey)) return;
+      // Attach endpoint to its backend file container when one exists
+      const fileInfo = ep.sourceFile ? fileFunctions.get(ep.sourceFile) : null;
+      if (fileInfo?.nodeId && nodeIds.has(fileInfo.nodeId)) {
+        markdown += `${fileInfo.nodeId} -.-> ${epKey} : "contains"\n`;
+      }
+    });
+
     markdown += '\n%% API Handler Chains\n';
     apiEndpoints.forEach((ep, epKey) => {
       ep.handlers.forEach((handler) => {
@@ -4060,6 +4332,36 @@ const generateMerfolkMarkdown = (
 
   // ── Shared Interfaces ─────────────────────────────────────────────────────
   if (sharedInterfaces.size > 0) {
+    // First pass: build a map from sourceFile -> containerNodeId.
+    // • If the source file already has a fileFunctions container (it also
+    //   has functions or classes), reuse that container.
+    // • If the source file is a component file (same name as a component
+    //   symbol), skip — don't create a spurious utility container for it.
+    // • Otherwise create a minimal utility container so the interface gets
+    //   a parent cube rather than appearing as a floating orphan.
+    const ifaceOnlyContainers = new Map(); // sourceFile -> containerNodeId
+    sharedInterfaces.forEach((sourceFile, _ifaceName) => {
+      if (ifaceOnlyContainers.has(sourceFile)) return; // already handled
+      const fileInfo = fileFunctions.get(sourceFile);
+      if (fileInfo?.nodeId) {
+        // Existing file container from fileFunctions
+        ifaceOnlyContainers.set(sourceFile, fileInfo.nodeId);
+      } else if (allSymbolNames.has(sourceFile)) {
+        // sourceFile has the same name as a component/hook/store/service —
+        // it is a component file; skip creating a utility container.
+        // The interface will only have "uses type" connections.
+      } else {
+        // Interface-only file: create a minimal utility container
+        const containerId = nodeIds.has(sourceFile) ? `${sourceFile}_file` : sourceFile;
+        if (!nodeIds.has(containerId)) {
+          nodeIds.add(containerId);
+          markdown += `\n%% Interface-only file container\n`;
+          markdown += `${containerId}[Function: ${sourceFile}]\n`;
+        }
+        ifaceOnlyContainers.set(sourceFile, containerId);
+      }
+    });
+
     markdown += '\n%% Shared Interfaces\n';
     sharedInterfaces.forEach((sourceFile, ifaceName) => {
       if (!nodeIds.has(ifaceName)) {
@@ -4067,6 +4369,20 @@ const generateMerfolkMarkdown = (
         markdown += `${ifaceName}[[Interface: ${ifaceName}]]\n`;
       }
     });
+
+    // Second pass: emit "contains" connections from each file container to
+    // its interfaces so the hierarchy builder nests them properly.
+    const ifaceContainmentLines = [];
+    sharedInterfaces.forEach((sourceFile, ifaceName) => {
+      const containerId = ifaceOnlyContainers.get(sourceFile);
+      if (containerId && nodeIds.has(containerId) && nodeIds.has(ifaceName)) {
+        ifaceContainmentLines.push(`${containerId} -.-> ${ifaceName} : "contains"\n`);
+      }
+    });
+    if (ifaceContainmentLines.length > 0) {
+      markdown += '\n%% Interface-File Containment\n';
+      ifaceContainmentLines.forEach(line => { markdown += line; });
+    }
 
     if (interfaceUsages.size > 0) {
       markdown += '\n%% Interface Dependencies\n';

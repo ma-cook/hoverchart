@@ -571,6 +571,13 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
       return;
     } // Add an initial fetch phase to ensure we get all existing objects
     const performInitialObjectFetch = async () => {
+      // Short-circuit: bulk-delete in progress. The user just asked to wipe
+      // the space; pulling all still-existing Firestore objects back into the
+      // store would re-render every doomed object and tank the frame loop
+      // until the cloud function finishes deleting them one by one.
+      if (window._bulkDeleteInProgress) {
+        return;
+      }
       try {
         const ownerUserId = currentSpaceOwner || user?.uid;
 
@@ -585,6 +592,11 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
           effectiveSpaceId,
           cellCoords
         ); // Add all initial objects to the store
+        // Re-check the bulk-delete flag after the await — the user may have
+        // started a wipe while the fetch was in flight.
+        if (window._bulkDeleteInProgress) {
+          return;
+        }
         if (initialObjects.length > 0) {
           currentSetObjects((prev) => {
             const existingIds = new Set(prev.map((obj) => obj.id));
@@ -1683,21 +1695,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
           <div className="initial-loading-spinner" />
         </div>
       )}{' '}
-      {/* Corner spinner: Canvas is up but objects are still streaming in (initial load or camera movement) */}
-      {shouldRenderCanvas && (isInitialLoading || isCellsLoading) && (
-        <div className="objects-loading-corner">
-          <div className="objects-loading-spinner" />
-          <span className="objects-loading-label">
-            {isInitialLoading
-              ? objects.length > 0
-                ? `Loading ${objects.length} object${
-                    objects.length !== 1 ? 's' : ''
-                  }…`
-                : 'Loading…'
-              : 'Loading objects…'}
-          </span>
-        </div>
-      )}{' '}
+      {/* Data-loading state is now shown in UIOverlay's unified progress-toast */}{' '}
       {shouldRenderCanvas && (
         <div style={{
           visibility: viewMode === '3d' ? 'visible' : 'hidden',

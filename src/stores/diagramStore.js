@@ -24,6 +24,10 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   // Currently selected node in the 2D view (maps to a 3D objectId via nodeToObjectIdMap)
   selectedNodeId: null,
 
+  // Progress of progressive 3D object mounting — null when idle
+  // { total: number, mounted: number }
+  renderProgress: null,
+
   setGraphs(graphs) {
     set({ graphs, is2DReady: !!graphs });
   },
@@ -48,6 +52,23 @@ const useDiagramStore = createWithEqualityFn((set) => ({
     set({ selectedNodeId });
   },
 
+  setRenderProgress(total, mounted) {
+    if (total === 0) {
+      set({ renderProgress: null });
+      return;
+    }
+    // Clear when fully mounted
+    if (mounted >= total) {
+      set({ renderProgress: null });
+      return;
+    }
+    set({ renderProgress: { total, mounted } });
+  },
+
+  clearRenderProgress() {
+    set({ renderProgress: null });
+  },
+
   clear() {
     set({
       graphs: null,
@@ -57,6 +78,7 @@ const useDiagramStore = createWithEqualityFn((set) => ({
       layout2D: null,
       is2DReady: false,
       selectedNodeId: null,
+      renderProgress: null,
     });
   },
 }));

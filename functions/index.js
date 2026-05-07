@@ -2,6 +2,7 @@ import { initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
@@ -412,8 +413,13 @@ function toMillis(value) {
 
 /**
  * Delete all objects and connections inside a single cell whose lastUpdated
+/**
+ * Delete every object/connection document beneath `cellRef` whose `lastUpdated`
  * timestamp is at or before `cutoff` (ms).  Returns { objectsDeleted,
- * connectionsDeleted }.
+ * connectionsDeleted, objectsRemaining, connectionsRemaining } — the
+ * "*Remaining" counts include any post-cutoff docs that were intentionally
+ * skipped, so callers can decide whether it is safe to delete the parent
+ * cell document itself.
  */
 async function deleteCellContents(cellRef, cutoff, BATCH_SIZE) {
   const [objsSnap, connsSnap] = await Promise.all([
@@ -450,7 +456,12 @@ async function deleteCellContents(cellRef, cutoff, BATCH_SIZE) {
     connectionsDeleted += chunk.length;
   }
 
-  return { objectsDeleted, connectionsDeleted };
+  return {
+    objectsDeleted,
+    connectionsDeleted,
+    objectsRemaining: objsSnap.size - objectsDeleted,
+    connectionsRemaining: connsSnap.size - connectionsDeleted,
+  };
 }
 
 function createBulkDeleteApp() {
@@ -486,75 +497,27 @@ function createBulkDeleteApp() {
     const jobStartTime = Date.now();
     const jobRef = db.doc(`users/${userId}/spaces/${spaceId}/_deleteJobs/${jobId}`);
 
-    await jobRef.set({
-      status: 'running',
-      jobStartTime,
-      objectsDeleted: 0,
-      connectionsDeleted: 0,
-      cellsDeleted: 0,
-      createdAt: jobStartTime,
-    });
-
-    // Return jobId immediately so the frontend can poll status.
-    res.json({ jobId, jobStartTime });
-
-    // ---- Background deletion (Cloud Function stays alive until this resolves) ----
+    // Enqueue the job. The `bulkDeleteWorker` Firestore trigger picks this up
+    // asynchronously and performs the actual deletion. The HTTP handler does
+    // no heavy work — it returns immediately so the frontend can poll status.
     try {
-      const BATCH_SIZE = 500;
-      const CELL_CONCURRENCY = 5; // process 5 cells in parallel
-      let cellsDeleted = 0;
-      let objectsDeleted = 0;
-      let connectionsDeleted = 0;
-
-      console.log(`🗑️  [${jobId}] Starting bulk delete for user ${userId}, space ${spaceId}`);
-
-      const cellsRef = db.collection(`users/${userId}/spaces/${spaceId}/cells`);
-      const cellsSnap = await cellsRef.get();
-      const cellDocs = cellsSnap.docs;
-
-      console.log(`   [${jobId}] Found ${cellDocs.length} cells to process`);
-
-      // Process cells in parallel batches of CELL_CONCURRENCY
-      for (let i = 0; i < cellDocs.length; i += CELL_CONCURRENCY) {
-        const chunk = cellDocs.slice(i, i + CELL_CONCURRENCY);
-        const results = await Promise.all(
-          chunk.map((cellDoc) => deleteCellContents(cellDoc.ref, jobStartTime, BATCH_SIZE))
-        );
-        for (const r of results) {
-          objectsDeleted += r.objectsDeleted;
-          connectionsDeleted += r.connectionsDeleted;
-        }
-      }
-
-      // Delete cell documents themselves
-      for (let i = 0; i < cellDocs.length; i += BATCH_SIZE) {
-        const chunk = cellDocs.slice(i, i + BATCH_SIZE);
-        const batch = db.batch();
-        for (const d of chunk) batch.delete(d.ref);
-        await batch.commit();
-        cellsDeleted += chunk.length;
-      }
-
-      const duration = Date.now() - jobStartTime;
-      console.log(`✅ [${jobId}] Bulk delete completed in ${duration}ms`);
-      console.log(`   Cells: ${cellsDeleted}, Objects: ${objectsDeleted}, Connections: ${connectionsDeleted}`);
-
-      await jobRef.update({
-        status: 'done',
-        cellsDeleted,
-        objectsDeleted,
-        connectionsDeleted,
-        finishedAt: Date.now(),
-        duration,
+      await jobRef.set({
+        status: 'pending',
+        userId,
+        spaceId,
+        jobStartTime,
+        objectsDeleted: 0,
+        connectionsDeleted: 0,
+        cellsDeleted: 0,
+        createdAt: jobStartTime,
       });
-    } catch (err) {
-      console.error(`❌ [${jobId}] Background delete error:`, err);
-      try {
-        await jobRef.update({ status: 'error', error: err.message });
-      } catch (updateErr) {
-        console.error(`❌ [${jobId}] Failed to update job status to error:`, updateErr);
-      }
+    } catch (enqueueErr) {
+      console.error(`❌ [${jobId}] Failed to enqueue delete job:`, enqueueErr);
+      return res.status(500).json({ error: 'Failed to enqueue delete job', details: enqueueErr.message });
     }
+
+    console.log(`📥 [${jobId}] Enqueued bulk delete for user ${userId}, space ${spaceId}`);
+    res.json({ jobId, jobStartTime });
   });
 
   // ---- GET /job/:jobId — poll delete job status ----
@@ -592,13 +555,143 @@ function createBulkDeleteApp() {
 
 export const bulkDelete = onRequest(
   {
-    memory: '512MiB',
+    memory: '256MiB',
     region: 'us-central1',
     cors: true,
-    timeoutSeconds: 540, // 9 minutes max for large spaces
-    maxInstances: 5,
+    timeoutSeconds: 60,
+    maxInstances: 10,
   },
   createBulkDeleteApp()
+);
+
+// ============= BULK DELETE WORKER (Firestore-triggered) =============
+
+/**
+ * Run the actual bulk delete work. Reads job parameters from the job doc and
+ * walks all cells under the space, deleting objects/connections whose
+ * lastUpdated <= jobStartTime, then the cell docs themselves (only when their
+ * subcollections are now fully empty, to avoid orphaning concurrent writes).
+ *
+ * Uses `listDocuments()` to enumerate cell refs so that previously-orphaned
+ * cells (parent doc deleted but subcollections still present) are still
+ * walked and cleaned up.
+ */
+async function runBulkDeleteJob(jobRef, jobData) {
+  const { userId, spaceId, jobStartTime } = jobData;
+  const jobId = jobRef.id;
+
+  const BATCH_SIZE = 500;
+  const CELL_CONCURRENCY = 5;
+  let cellsDeleted = 0;
+  let objectsDeleted = 0;
+  let connectionsDeleted = 0;
+
+  console.log(`🗑️  [${jobId}] Starting bulk delete for user ${userId}, space ${spaceId}`);
+
+  await jobRef.update({ status: 'running', startedAt: Date.now() });
+
+  const cellsRef = db.collection(`users/${userId}/spaces/${spaceId}/cells`);
+  // listDocuments() returns DocumentReferences for every cell, including
+  // "orphan" cells whose parent document was deleted but whose
+  // /objects and /connections subcollections still hold data.
+  const cellRefs = await cellsRef.listDocuments();
+
+  console.log(`   [${jobId}] Found ${cellRefs.length} cells to process`);
+
+  // Cells whose subcollections are still non-empty after the cutoff filter
+  // (someone wrote to them while the job was running, OR the parent doc was
+  // already an orphan with stale data we couldn't fully delete in this pass).
+  const cellsToKeep = new Set();
+
+  for (let i = 0; i < cellRefs.length; i += CELL_CONCURRENCY) {
+    const chunk = cellRefs.slice(i, i + CELL_CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map((cellRef) =>
+        deleteCellContents(cellRef, jobStartTime, BATCH_SIZE).then((r) => ({ cellRef, ...r }))
+      )
+    );
+    for (const r of results) {
+      objectsDeleted += r.objectsDeleted;
+      connectionsDeleted += r.connectionsDeleted;
+      if (r.objectsRemaining > 0 || r.connectionsRemaining > 0) {
+        cellsToKeep.add(r.cellRef.path);
+      }
+    }
+
+    // Periodic progress update so the frontend poll sees movement.
+    if ((i / CELL_CONCURRENCY) % 4 === 0) {
+      await jobRef.update({ objectsDeleted, connectionsDeleted });
+    }
+  }
+
+  // Only delete cell parent docs whose subcollections are now empty.
+  // Cells with surviving (post-cutoff) writes keep their parent doc so
+  // the spatial subscription system continues to find those documents.
+  const deletableCellRefs = cellRefs.filter((ref) => !cellsToKeep.has(ref.path));
+  for (let i = 0; i < deletableCellRefs.length; i += BATCH_SIZE) {
+    const chunk = deletableCellRefs.slice(i, i + BATCH_SIZE);
+    const batch = db.batch();
+    for (const d of chunk) batch.delete(d);
+    await batch.commit();
+    cellsDeleted += chunk.length;
+  }
+
+  if (cellsToKeep.size > 0) {
+    console.log(
+      `   [${jobId}] Preserved ${cellsToKeep.size} cells with post-cutoff writes (concurrent saves)`
+    );
+  }
+
+  const duration = Date.now() - jobStartTime;
+  console.log(`✅ [${jobId}] Bulk delete completed in ${duration}ms`);
+  console.log(`   Cells: ${cellsDeleted}, Objects: ${objectsDeleted}, Connections: ${connectionsDeleted}`);
+
+  await jobRef.update({
+    status: 'done',
+    cellsDeleted,
+    cellsPreserved: cellsToKeep.size,
+    objectsDeleted,
+    connectionsDeleted,
+    finishedAt: Date.now(),
+    duration,
+  });
+}
+
+export const bulkDeleteWorker = onDocumentCreated(
+  {
+    document: 'users/{userId}/spaces/{spaceId}/_deleteJobs/{jobId}',
+    region: 'us-central1',
+    memory: '512MiB',
+    timeoutSeconds: 540, // 9 minutes
+  },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const jobData = snap.data();
+    const jobRef = snap.ref;
+    const jobId = jobRef.id;
+
+    // Only act on freshly-enqueued jobs.
+    if (jobData.status !== 'pending') {
+      console.log(`[${jobId}] Skipping trigger — status is '${jobData.status}', not 'pending'.`);
+      return;
+    }
+
+    try {
+      await runBulkDeleteJob(jobRef, jobData);
+    } catch (err) {
+      console.error(`❌ [${jobId}] Background delete error:`, err);
+      try {
+        await jobRef.update({
+          status: 'error',
+          error: err.message ?? String(err),
+          finishedAt: Date.now(),
+        });
+      } catch (updateErr) {
+        console.error(`❌ [${jobId}] Failed to update job status to error:`, updateErr);
+      }
+    }
+  }
 );
 
 // ============= SCAN WEBSITE RUNTIME FUNCTION =============

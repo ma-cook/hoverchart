@@ -25,7 +25,7 @@
  */
 
 import { expose } from 'comlink';
-import { MarkdownProcessor } from '3d-ast-generator';
+import { MarkdownProcessor } from '../lib/3d-ast';
 
 import { hierarchyMethods } from '../services/markdownDiagram/hierarchyMethods.js';
 import { scaleMethods } from '../services/markdownDiagram/scaleMethods.js';

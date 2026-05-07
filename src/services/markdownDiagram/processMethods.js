@@ -1,4 +1,4 @@
-import { MarkdownProcessor } from '3d-ast-generator';
+import { MarkdownProcessor } from '../../lib/3d-ast';
 import * as THREE from 'three';
 import { DEFAULT_CAMERA_DISTANCE } from './constants.js';
 import { getMarkdownLayoutWorker } from '../../workers/markdownLayoutWorkerClient.js';

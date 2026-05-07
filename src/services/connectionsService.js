@@ -407,6 +407,15 @@ const subscribeToCellConnections = (
                   return;
 
                 if (change.type === 'added' || change.type === 'modified') {
+                  // Short-circuit: bulk-delete in progress. Skip re-adding
+                  // connections that are about to be deleted by the worker —
+                  // otherwise the user sees lines reappear and slowly fade as
+                  // the cloud function chews through them, and the frame loop
+                  // tanks while ghost lines are being rendered.
+                  if (window._bulkDeleteInProgress) {
+                    return;
+                  }
+
                   // Add cell coordinates to connection data
                   const enrichedConnectionData = {
                     ...connectionData,

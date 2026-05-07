@@ -158,6 +158,20 @@ export const hierarchyMethods = {
             parentId = sourceId;
             childId = targetId;
           } else if (
+            // Store and Library nodes can also act as file-level containers
+            // emitted by the repo scanner — e.g. `cubeStore[[Store: cubeStore]]`
+            // or a library cube — and the scanner emits dashed `-.->`
+            // "contains" arrows from those containers to their internal
+            // functions/classes (`cubeStore -.-> getCubeSelector`). Without
+            // this branch those children are treated as root nodes and
+            // appear as ungrouped orphans next to the store cube.
+            (sourceNode.type === NODE_TYPE_STORE ||
+              sourceNode.type === NODE_TYPE_LIBRARY) &&
+            isCubeChild(targetNode.type)
+          ) {
+            parentId = sourceId;
+            childId = targetId;
+          } else if (
             isCubeChild(sourceNode.type) &&
             isCubeChild(targetNode.type)
           ) {

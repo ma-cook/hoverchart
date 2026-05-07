@@ -13,6 +13,7 @@ import AtlasTextSprite from './AtlasTextSprite';
 import { useCubeStore } from '../stores';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
 import useUIOverlayStore from '../stores/uiOverlayStore';
+import useDiagramStore from '../stores/diagramStore';
 
 /**
  * PROGRESSIVE MOUNT BUDGET
@@ -81,6 +82,8 @@ const ObjectsRenderer = React.memo(({
   const [mountedIds, setMountedIds] = useState(() => new Set());
   const pendingRef = useRef([]);
   const rafIdRef = useRef(null);
+  // Throttle render-progress store writes — only update every ~500ms
+  const lastProgressReportRef = useRef(0);
   // BUGFIX: Keep a ref to the latest visibleObjectIds so the rAF callback
   // checks against the current set, not a stale closure capture.
   const visibleObjectIdsRef = useRef(visibleObjectIds);
@@ -166,6 +169,8 @@ const ObjectsRenderer = React.memo(({
       toAdd.forEach(id => currentMounted.add(id));
       if (removed || toAdd.length > 0) {
         setMountedIds(new Set(currentMounted));
+        // Clear any in-progress render progress (all mounted instantly)
+        useDiagramStore.getState().setRenderProgress(objectsRef.current.length, currentMounted.size);
       }
       return;
     }
@@ -181,6 +186,10 @@ const ObjectsRenderer = React.memo(({
       const firstBatch = pendingRef.current.splice(0, MOUNT_BUDGET);
       firstBatch.forEach(id => currentMounted.add(id));
       setMountedIds(new Set(currentMounted));
+      // Immediately report that progressive mounting has started
+      const total = objectsRef.current.length;
+      useDiagramStore.getState().setRenderProgress(total, currentMounted.size);
+      lastProgressReportRef.current = Date.now();
     } else if (removed) {
       // Just sync the removal
       setMountedIds(new Set(currentMounted));
@@ -252,6 +261,14 @@ const ObjectsRenderer = React.memo(({
 
         if (added > 0) {
           setMountedIds(new Set(mountedIdsRef.current));
+          // Report progress to the store (throttled)
+          const now = Date.now();
+          const total = objectsRef.current.length;
+          const mounted = mountedIdsRef.current.size;
+          if (now - lastProgressReportRef.current > 500 || mounted >= total) {
+            lastProgressReportRef.current = now;
+            useDiagramStore.getState().setRenderProgress(total, mounted);
+          }
         }
 
         if (pending.length > 0) {

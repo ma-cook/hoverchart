@@ -29,6 +29,9 @@ import {
 } from '../services/runtimeScanService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import SpaceChat from './SpaceChat';
+import RepoAnalysisOverlay from './RepoAnalysisOverlay';
+import './RepoAnalysisOverlay.css';
+import './TopBar.css';
 import useEarthSettingsStore from '../stores/earthSettingsStore';
 import usePipelineStore from '../stores/pipelineStore';
 import { getPipelineTasks, getStatusColor, getStatusLabel, TASK_STATUS } from '../services/pipelineTaskService';
@@ -392,6 +395,7 @@ const UIOverlay = ({
   }, [lastCommitSha, currentSpaceId]);
 
   const [chatOpen, setChatOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [runtimeScanUrl, setRuntimeScanUrl] = useState('');
   const [runtimeScanDuration, setRuntimeScanDuration] = useState(10);
   const [lastScannedUrl, setLastScannedUrl] = useState(null);
@@ -458,6 +462,10 @@ const UIOverlay = ({
   const viewMode = useUIOverlayStore((state) => state.viewMode);
   const setViewMode = useUIOverlayStore((state) => state.setViewMode);
   const is2DReady = useDiagramStore((state) => state.is2DReady);
+  const renderProgress = useDiagramStore((state) => state.renderProgress);
+  const isInitialLoading = useObjectsStore((state) => state.isInitialLoading);
+  const objectCount = useObjectsStore((state) => state.objects?.length ?? 0);
+  const isCellsLoading = useSpatialManagerStore((state) => state.loadingCells.size > 0);
 
   // Hydrate diagramStore from stored markdown URL when loading an existing space
   useEffect(() => {
@@ -894,10 +902,40 @@ const UIOverlay = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idToken, userId: user.uid, spaceId: currentSpaceId }),
       });
-      const startData = await startRes.json();
-      if (!startRes.ok) throw new Error(startData.error || 'Bulk delete failed to start');
+
+      // Parse response defensively — Cloud Run / proxy errors return HTML, not JSON.
+      const startBodyText = await startRes.text();
+      let startData;
+      try {
+        startData = JSON.parse(startBodyText);
+      } catch {
+        throw new Error(
+          `Bulk delete returned non-JSON response (HTTP ${startRes.status}): ${startBodyText.slice(0, 200)}`
+        );
+      }
+      if (!startRes.ok) throw new Error(startData.error || `Bulk delete failed to start (HTTP ${startRes.status})`);
 
       const { jobId } = startData;
+
+      // --- Backward-compat: old synchronous API returned the final result
+      // directly (no jobId). If we see that shape, treat the job as done. ---
+      if (!jobId && (startData.success === true || typeof startData.objectsDeleted === 'number')) {
+        setCurrentDiagramRepo(null);
+        window._bulkDeleteInProgress = false;
+        setIsDeleting(false);
+        setNotification({
+          show: true,
+          message: `✅ Deleted ${startData.cellsDeleted ?? 0} cells, ${startData.objectsDeleted ?? 0} objects, ${startData.connectionsDeleted ?? 0} connections.`,
+        });
+        setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+        return;
+      }
+
+      if (!jobId) {
+        throw new Error(
+          `Bulk delete response missing jobId. Server returned: ${JSON.stringify(startData).slice(0, 300)}`
+        );
+      }
 
       // --- Step 3: Return UI control to the user ---
       // isDeleting stays true until the background job finishes so the button
@@ -921,14 +959,62 @@ const UIOverlay = ({
           const statusRes = await fetch(
             `${BULK_DELETE_URL}/job/${jobId}?idToken=${encodeURIComponent(freshToken)}&userId=${encodeURIComponent(user.uid)}&spaceId=${encodeURIComponent(currentSpaceId)}`
           );
-          const statusData = await statusRes.json();
 
-          if (statusData.status === 'done') {
+          // Parse response defensively — non-JSON responses (HTML 404 from
+          // proxy, etc.) would otherwise throw forever in the retry loop.
+          const statusBodyText = await statusRes.text();
+          let statusData;
+          try {
+            statusData = JSON.parse(statusBodyText);
+          } catch {
+            // If the job document literally hasn't been created yet (race on
+            // first poll), retry a few times then give up.
+            if (statusRes.status === 404 || statusRes.status === 0) {
+              throw new Error(`Job status endpoint returned HTTP ${statusRes.status} (non-JSON)`);
+            }
+            throw new Error(
+              `Job status returned non-JSON (HTTP ${statusRes.status}): ${statusBodyText.slice(0, 200)}`
+            );
+          }
+
+          // Hard-stop: server confirmed the job doesn't exist. Don't keep retrying.
+          if (statusRes.status === 404) {
             window._bulkDeleteInProgress = false;
             setIsDeleting(false);
             setNotification({
               show: true,
-              message: `✅ Deleted ${statusData.cellsDeleted ?? 0} cells, ${statusData.objectsDeleted ?? 0} objects, ${statusData.connectionsDeleted ?? 0} connections.`,
+              message: `❌ Delete job not found on server (jobId=${jobId}). Local state was cleared; check space manually.`,
+            });
+            setTimeout(() => setNotification({ show: false, message: '' }), 6000);
+            return;
+          }
+
+          if (statusData.status === 'done') {
+            // Final cleanup — Firestore listeners may have streamed in
+            // stale snapshots while the worker was running. Wipe caches,
+            // tear down subscriptions, and reset stores so the next render
+            // pass starts from an empty world.
+            try {
+              clearAllObjectCaches();
+              resetObjects();
+              resetConnections();
+              const finalLoadedCellIds = Array.from(
+                useSpatialManagerStore.getState().loadedCells ?? []
+              );
+              cleanupSpatialObjectSubscriptions(finalLoadedCellIds);
+              useSpatialManagerStore.getState().resetSpatialManager();
+            } catch (cleanupErr) {
+              console.warn('[BulkDelete] Post-job cleanup error (non-fatal):', cleanupErr);
+            }
+
+            window._bulkDeleteInProgress = false;
+            setIsDeleting(false);
+            const preserved = statusData.cellsPreserved
+              ? ` (${statusData.cellsPreserved} cells preserved with concurrent writes)`
+              : '';
+            setNotification({
+              show: true,
+              message: `✅ Deleted ${statusData.cellsDeleted ?? 0} cells, ${statusData.objectsDeleted ?? 0} objects, ${statusData.connectionsDeleted ?? 0} connections.${preserved}`,
             });
             setTimeout(() => setNotification({ show: false, message: '' }), 5000);
           } else if (statusData.status === 'error') {
@@ -1415,15 +1501,137 @@ const UIOverlay = ({
         </div>
       )}
       {' '}
-      <div className="menu-button-container">
-        <button
-          className="menu-button"
-          onClick={handleMenuToggle}
-          aria-label="Toggle menu"
-        >
-          ☰
-        </button>
-      </div>{' '}
+      {/* Professional top bar — side menu, brand, action buttons, presence info */}
+      <div className="top-bar" onClick={(e) => e.stopPropagation()}>
+        <div className="top-bar-section">
+          <button
+            className="top-bar-menu-button"
+            onClick={handleMenuToggle}
+            aria-label="Toggle menu"
+            title="Menu"
+          >
+            ☰
+          </button>
+          <div className="top-bar-brand" aria-label="Volscape">
+            VOL<span className="brand-accent">SCAPE</span>
+          </div>
+        </div>
+
+        <div className="top-bar-divider" />
+
+        <div className="top-bar-section actions">
+          {(user || trialMode) && (
+            <>
+              <button
+                className={`top-bar-btn record ${isRecording ? 'recording' : ''}`}
+                onClick={handleRecordClick}
+                title={isRecording ? 'Stop Recording' : 'Start Recording'}
+                aria-label={isRecording ? 'Stop Recording' : 'Start Recording'}
+              >
+                {isRecording ? '■' : ''}
+              </button>
+
+              <div style={{ position: 'relative', display: 'inline-flex' }}>
+                {showConnectionsHint && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '110%',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      background: 'rgba(0,0,0,0.85)',
+                      color: '#fff',
+                      fontSize: '11px',
+                      whiteSpace: 'nowrap',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      pointerEvents: 'none',
+                      zIndex: 9999,
+                    }}
+                  >
+                    Show connections
+                  </div>
+                )}
+                <button
+                  className={`top-bar-btn ${isConnectMode ? 'active' : ''} ${connectionsVisible ? '' : 'accent-orange'}`}
+                  onClick={handleArrowClick}
+                  title="Toggle Connection Lines"
+                  aria-label="Toggle Connection Lines"
+                >
+                  ↗
+                </button>
+              </div>
+
+              <button
+                className={`top-bar-btn ${cellBoundariesVisible ? 'active' : 'accent-blue'}`}
+                onClick={handleCellBoundariesToggle}
+                title="Toggle Cell Boundaries"
+                aria-label="Toggle Cell Boundaries"
+              >
+                ⬜
+              </button>
+
+              {is2DReady && (
+                <button
+                  className={`top-bar-btn ${viewMode === '2d' ? 'active' : ''}`}
+                  onClick={() => setViewMode(viewMode === '3d' ? '2d' : '3d')}
+                  title={viewMode === '3d' ? 'Switch to 2D Diagram' : 'Switch to 3D View'}
+                  aria-label="Toggle view mode"
+                  style={{ fontSize: 12, fontWeight: 600 }}
+                >
+                  {viewMode === '3d' ? '2D' : '3D'}
+                </button>
+              )}
+
+              <button
+                className="top-bar-btn delete"
+                onClick={handleDeleteAllCells}
+                disabled={isDeleting}
+                title="Delete All Objects in Space"
+                aria-label="Delete all objects"
+              >
+                {isDeleting ? '…' : '🗑'}
+              </button>
+
+              <button
+                className="top-bar-btn rescan"
+                onClick={() => handleRescan(currentDiagramRepo)}
+                disabled={!currentDiagramRepo || scanProgress.isScanning}
+                title={currentDiagramRepo?.name ? `Rescan ${currentDiagramRepo.name}` : 'No repo scanned yet'}
+                aria-label="Rescan repository"
+              >
+                ⟳
+              </button>
+
+              {is2DReady && (
+                <button
+                  className="top-bar-btn info"
+                  onClick={() => setAnalysisOpen(true)}
+                  title="Show repository analysis"
+                  aria-label="Show repository analysis"
+                >
+                  i
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="top-bar-divider" />
+
+        <div className="top-bar-section">
+          <SpacePresenceAvatars
+            spaceId={currentSpaceId}
+            currentCell={currentCell}
+            inline
+          />
+        </div>
+      </div>
+      <RepoAnalysisOverlay
+        open={analysisOpen}
+        onClose={() => setAnalysisOpen(false)}
+        repoName={currentDiagramRepo?.full_name || currentDiagramRepo?.name || lastScannedUrl}
+      />
       <div className={`sidebar-menu ${menuOpen ? 'open' : ''}`}>
         <div className="menu-content">
           <div className="current-cell-info">
@@ -1973,133 +2181,49 @@ const UIOverlay = ({
 
       {/* Group chat window - pops out to the left of the right panel */}
       {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} />}
-      {/* Visual tools container positioned at bottom center */}
-      {(user || trialMode) && (
-        <div className="visual-tools-container" onClick={(e) => e.stopPropagation()}>
-          <button
-            className={`record-button ${isRecording ? 'recording' : ''}`}
-            onClick={handleRecordClick}
-            title={isRecording ? 'Stop Recording' : 'Start Recording'}
-          >
-            {isRecording ? '' : ''}
-          </button>
-          <div style={{ position: 'relative', display: 'inline-block' }}>
-            {showConnectionsHint && (
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: '110%',
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  background: 'rgba(0,0,0,0.75)',
-                  color: '#fff',
-                  fontSize: '11px',
-                  whiteSpace: 'nowrap',
-                  padding: '4px 8px',
-                  borderRadius: '4px',
-                  pointerEvents: 'none',
-                  zIndex: 9999,
-                }}
-              >
-                Show connections
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    borderWidth: '4px',
-                    borderStyle: 'solid',
-                    borderColor: 'rgba(0,0,0,0.75) transparent transparent transparent',
-                  }}
-                />
+
+      
+      {/* Unified progress toast — bottom-right, handles scan, render, and data loading */}
+      {(scanProgress.isScanning || renderProgress || isInitialLoading || isCellsLoading) && (
+        <div className="progress-toast">
+          {(isInitialLoading || isCellsLoading) && (
+            <div className="progress-toast-row">
+              <div className="progress-toast-label">
+                {isInitialLoading
+                  ? objectCount > 0
+                    ? `Loading ${objectCount.toLocaleString()} object${objectCount !== 1 ? 's' : ''}…`
+                    : 'Loading objects…'
+                  : 'Loading objects…'}
               </div>
-            )}
-            <button
-              className={`shape-button ${isConnectMode ? 'active' : ''}`}
-              onClick={handleArrowClick}
-              title="Toggle Connection Lines"
-              style={{
-                borderColor: connectionsVisible ? '' : 'orange',
-                borderWidth: connectionsVisible ? '' : '2px',
-              }}
-            >
-              ↗
-            </button>
-          </div>
-          <button
-            className={`shape-button ${cellBoundariesVisible ? 'active' : ''}`}
-            onClick={handleCellBoundariesToggle}
-            title="Toggle Cell Boundaries"
-            style={{
-              borderColor: cellBoundariesVisible ? '' : 'blue',
-              borderWidth: cellBoundariesVisible ? '' : '2px',
-            }}
-          >
-            ⬜
-          </button>
-          {is2DReady && (
-            <button
-              className={`shape-button ${viewMode === '2d' ? 'active' : ''}`}
-              onClick={() => setViewMode(viewMode === '3d' ? '2d' : '3d')}
-              title={viewMode === '3d' ? 'Switch to 2D Diagram' : 'Switch to 3D View'}
-              style={{
-                borderColor: viewMode === '2d' ? '#2196F3' : '',
-                borderWidth: viewMode === '2d' ? '2px' : '',
-                fontWeight: viewMode === '2d' ? 'bold' : 'normal',
-              }}
-            >
-              {viewMode === '3d' ? '2D' : '3D'}
-            </button>
-          )}
-          <button
-            className="shape-button delete-all-button"
-            onClick={handleDeleteAllCells}
-            disabled={isDeleting}
-            title="Delete All Objects in Space"
-            style={{
-              backgroundColor: isDeleting ? '#ccc' : '#ffebee',
-              borderColor: '#f44336',
-              color: '#f44336',
-            }}
-          >
-            {isDeleting ? '...' : '🗑️'}
-          </button>
-          <button
-            className="shape-button"
-            onClick={() => handleRescan(currentDiagramRepo)}
-            disabled={!currentDiagramRepo || scanProgress.isScanning}
-            title={currentDiagramRepo?.name ? `Rescan ${currentDiagramRepo.name}` : 'No repo scanned yet'}
-            style={{
-              backgroundColor: currentDiagramRepo && !scanProgress.isScanning ? '#e8f5e9' : '#ccc',
-              borderColor: currentDiagramRepo && !scanProgress.isScanning ? '#4caf50' : '#aaa',
-              color: currentDiagramRepo && !scanProgress.isScanning ? '#4caf50' : '#aaa',
-              opacity: currentDiagramRepo && !scanProgress.isScanning ? 1 : 0.5,
-            }}
-          >
-            🔄
-          </button>
-        </div>
-      )}
-
-
-      
-      {/* Loading bar for GitHub repo scanning */}
-      {scanProgress.isScanning && (
-        <div className="scan-progress-overlay">
-          <div className="scan-progress-container">
-            <div className="scan-progress-text">{scanProgress.stage}</div>
-            <div className="scan-progress-bar">
-              <div 
-                className="scan-progress-fill" 
-                style={{ width: `${scanProgress.progress}%` }}
-              />
+              <div className="progress-toast-track">
+                <div className="progress-toast-fill progress-toast-fill--data progress-toast-fill--indeterminate" />
+              </div>
             </div>
-            <div className="scan-progress-percentage">{Math.round(scanProgress.progress)}%</div>
-          </div>
+          )}
+          {scanProgress.isScanning && (
+            <div className={`progress-toast-row${isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
+              <div className="progress-toast-label">{scanProgress.stage || 'Scanning…'}</div>
+              <div className="progress-toast-track">
+                <div className="progress-toast-fill progress-toast-fill--scan" style={{ width: `${scanProgress.progress}%` }} />
+              </div>
+              <div className="progress-toast-pct">{Math.round(scanProgress.progress)}%</div>
+            </div>
+          )}
+          {renderProgress && (
+            <div className={`progress-toast-row${scanProgress.isScanning || isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
+              <div className="progress-toast-label">
+                Rendering {renderProgress.total.toLocaleString()} objects
+                <span className="progress-toast-count"> ({renderProgress.mounted.toLocaleString()} / {renderProgress.total.toLocaleString()})</span>
+              </div>
+              <div className="progress-toast-track">
+                <div className="progress-toast-fill progress-toast-fill--render" style={{ width: `${Math.round((renderProgress.mounted / renderProgress.total) * 100)}%` }} />
+              </div>
+              <div className="progress-toast-pct">{Math.round((renderProgress.mounted / renderProgress.total) * 100)}%</div>
+            </div>
+          )}
         </div>
       )}
-      
+
       {/* Notification popup */}
       {notification.show && (
         <div className="notification-overlay" onClick={handleScreenClick}>
@@ -2109,8 +2233,6 @@ const UIOverlay = ({
           </div>
         </div>
       )}
-      {/* Space presence avatars */}
-      <SpacePresenceAvatars spaceId={currentSpaceId} currentCell={currentCell} />
     </>
   );
 };
