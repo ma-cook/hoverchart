@@ -1634,14 +1634,14 @@ const UIOverlay = ({
       />
       <div className={`sidebar-menu ${menuOpen ? 'open' : ''}`}>
         <div className="menu-content">
-          <div className="current-cell-info">
+         
             {spaceType === 'github_control_panel' && user?.uid && (
               <div style={{ fontSize: '11px', color: '#888' }}>
                 <span>UUID: </span>
                 <span style={{ fontFamily: 'monospace', userSelect: 'all' }}>{user.uid}</span>
               </div>
             )}
-          </div>
+         
           {/* Template Section */}{' '}
           {spaceType !== 'earth' && spaceType !== 'github_control_panel' && (
           <>
@@ -1750,7 +1750,7 @@ const UIOverlay = ({
               disabled={isProcessingMarkdown}
               title="Upload Markdown with Merfolk diagrams"
             >
-              {isProcessingMarkdown ? 'Processing...' : '📄 Upload Markdown'}
+              {isProcessingMarkdown ? 'Processing...' : 'Upload Markdown'}
             </button>
             {/* Hidden file input for markdown upload */}
             <input
@@ -1766,12 +1766,12 @@ const UIOverlay = ({
               disabled={!lastGeneratedMarkdown && !latestMarkdownUrl}
               title={lastGeneratedMarkdown || latestMarkdownUrl ? 'Download the latest generated diagram markdown' : 'No diagram generated yet'}
               style={{
-                marginTop: '6px',
+            
                 opacity: lastGeneratedMarkdown || latestMarkdownUrl ? 1 : 0.45,
                 cursor: lastGeneratedMarkdown || latestMarkdownUrl ? 'pointer' : 'not-allowed',
               }}
             >
-              📥 Download Markdown
+              Download Markdown
             </button>
           </div>
           {/* CSV Upload Section */}
@@ -1782,7 +1782,7 @@ const UIOverlay = ({
               disabled={isProcessingCsv}
               title="Upload CSV to create a 3D data visualization"
             >
-              {isProcessingCsv ? 'Processing...' : '📊 Upload CSV'}
+              {isProcessingCsv ? 'Processing...' : 'Upload CSV'}
             </button>
             <input
               ref={csvFileInputRef}

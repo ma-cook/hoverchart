@@ -2170,13 +2170,13 @@ const TextObject = React.memo(
                   dangerouslySetInnerHTML={{
                     __html: (() => {
                       const headerFontSize = textStyle.fontSize ? `${textStyle.fontSize * 2}px` : '64px';
-                      const headerHtml = `<div style="font-size:${headerFontSize};font-weight:bold;margin-bottom:8px">${objectData?.headerText || `Task #${merfolkData.planTaskIndex}`}</div>`;
-                      // Pipeline task collapsed: show header only
-                      if (isPipelineTask && !isTaskExpanded) {
-                        return headerHtml;
-                      }
-                      // Pipeline task expanded: show header + content
-                      if (isPipelineTask && isTaskExpanded) {
+                      if (isPipelineTask) {
+                        const headerHtml = `<div style="font-size:${headerFontSize};font-weight:bold;margin-bottom:8px">${objectData?.headerText || `Task #${merfolkData?.planTaskIndex}`}</div>`;
+                        // Pipeline task collapsed: show header only
+                        if (!isTaskExpanded) {
+                          return headerHtml;
+                        }
+                        // Pipeline task expanded: show header + content
                         const body = textContentRef.current || localText || text || '';
                         return headerHtml + (body && body !== 'Click to edit text...' ? body : '');
                       }

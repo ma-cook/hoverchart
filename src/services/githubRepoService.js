@@ -3296,17 +3296,27 @@ const generateMerfolkMarkdown = (
   elements.constants = [...new Set(elements.constants)];
   elements.imports.libraries = [...new Set(elements.imports.libraries)];
 
+  // Synthetic entry-point "components" are derived from file names like
+  // `main.jsx` / `index.jsx` / `firebase.js` and therefore start with a
+  // lowercase letter. They are still valid roots of the component tree
+  // (e.g. `main` parents `AppShell`) and must survive the uppercase filter,
+  // otherwise everything they render is left orphaned outside the
+  // Component Hierarchy container.
+  const ENTRY_POINT_COMPONENT_NAMES = new Set(['main', 'index', 'firebase']);
+  const isValidComponentName = (comp) =>
+    /^[A-Z]/.test(comp) || ENTRY_POINT_COMPONENT_NAMES.has(comp);
+
   // Debug: Log all detected components with first character check
   elements.components.forEach((comp) => {
-    const startsWithUppercase = /^[A-Z]/.test(comp);
-    if (!startsWithUppercase) {
+    if (!isValidComponentName(comp)) {
       console.warn(`⚠️ INVALID COMPONENT (not uppercase): "${comp}" - first char: "${comp[0]}"`);
     }
   });
 
   // SAFETY FILTER: Remove any components that don't start with uppercase letter
-  const validComponents = elements.components.filter((comp) => /^[A-Z]/.test(comp));
-  const invalidComponents = elements.components.filter((comp) => !/^[A-Z]/.test(comp));
+  // (with the exception of known entry-point file names — see above).
+  const validComponents = elements.components.filter(isValidComponentName);
+  const invalidComponents = elements.components.filter((comp) => !isValidComponentName(comp));
 
   if (invalidComponents.length > 0) {
     console.warn(`🚫 FILTERED OUT ${invalidComponents.length} invalid components:`, invalidComponents);

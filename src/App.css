@@ -429,18 +429,19 @@ canvas {
 }
 
 .template-section {
-  margin-bottom: 20px;
+ 
 }
 
 .repos-toggle-button {
   width: 100%;
-  padding: 10px;
+  padding: 5px;
+  font-weight: bold;
   background-color: white;
   color: #333;
   border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   text-align: left;
   transition: background-color 0.2s;
 }
@@ -508,14 +509,15 @@ canvas {
 
 .template-toggle-button {
   width: 100%;
-  padding: 10px;
+  padding: 5px;
   background-color: white;
   color: #333;
   border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   text-align: left;
+  font-weight: bold;
   transition: background-color 0.2s;
 }
 
@@ -576,6 +578,7 @@ canvas {
   cursor: pointer;
   font-size: 14px;
   font-weight: bold;
+  
   transition: background-color 0.2s;
 }
 
@@ -585,20 +588,20 @@ canvas {
 
 /* Markdown upload section styles */
 .markdown-section {
-  margin-bottom: 20px;
+
 }
 
 .markdown-upload-button {
   width: 100%;
-  padding: 10px;
+  padding: 5px;
   background-color: white;
   color: #333;
   border: 2px solid #333;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: bold;
-  text-align: center;
+  text-align: left;
   transition: background-color 0.2s;
 }
 
