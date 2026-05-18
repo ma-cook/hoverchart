@@ -198,9 +198,8 @@ function DiagramContent({ isMobile }) {
             margin: '0 auto',
           }}
         >
-          Volscape uses <strong style={{ color: INK }}>Merfolk</strong> — a
-          simple Markdown extension - to describe nodes and relationships. Paste
-          your diagram and explore it as a navigable 3D graph.
+          Volscape uses <strong style={{ color: INK }}>Merfolk</strong> - a
+          simple Markdown extension - to describe nodes and relationships.
         </p>
       </div>
 
@@ -237,7 +236,7 @@ function DiagramContent({ isMobile }) {
               color: '#666',
             }}
           >
-            Merfolk Markdown — version-controlled text
+            Merfolk Markdown - version-controlled text
           </p>
         </div>
 
