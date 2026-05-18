@@ -227,7 +227,7 @@ export class MermaidParser {
     // emitter (githubRepoService) replaces leading `@` with `_` for npm scopes.
     // NOTE: Pattern order matches npm 3d-ast-generator@1.0.18 (commit 5c0d60f)
     // for behavioural compatibility with hoverchart's downstream pipeline. The
-    // `more correct` double-bracket-first order from main is reverted here
+    // "more correct" double-bracket-first order from main is reverted here
     // pending a downstream fix in src/services/markdownDiagram/.
     const patterns = [
       /^([A-Za-z0-9_/.\-]+)\[([^:]+):\s*([^\]]+)\]/,      // Square brackets
