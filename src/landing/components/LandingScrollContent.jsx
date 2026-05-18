@@ -1,9 +1,64 @@
 import React from 'react';
 
 const BRAND = '#cc8500';
+const BRAND_DARK = '#8a5a00';
+const INK = '#0d0d0f';
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
+}
+
+function SectionEyebrow({ children }) {
+  return (
+    <div
+      style={{
+        display: 'inline-block',
+        fontSize: '11px',
+        fontWeight: 700,
+        letterSpacing: '1.8px',
+        textTransform: 'uppercase',
+        color: BRAND_DARK,
+        marginBottom: '14px',
+        padding: '6px 12px',
+        borderRadius: '999px',
+        background: 'rgba(204,133,0,0.10)',
+        border: '1px solid rgba(204,133,0,0.22)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Bullet({ children, accent }) {
+  return (
+    <li
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '10px',
+        fontSize: '14px',
+        lineHeight: 1.55,
+        color: '#333',
+        margin: 0,
+        padding: '6px 0',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          flexShrink: 0,
+          marginTop: '6px',
+          width: '6px',
+          height: '6px',
+          borderRadius: '50%',
+          background: accent || BRAND,
+          boxShadow: `0 0 0 3px ${accent ? accent + '22' : 'rgba(204,133,0,0.18)'}`,
+        }}
+      />
+      <span>{children}</span>
+    </li>
+  );
 }
 
 function getSectionVisibility(progress, fadeIn, fadeOut) {
@@ -44,6 +99,45 @@ const AUDIENCE_CARDS = [
   },
 ];
 
+const FEATURE_GROUPS = [
+  {
+    title: 'Visualise',
+    bullets: [
+      'Interactive 3D architecture diagrams of any codebase',
+      'Auto-scan public or private GitHub repositories',
+      'Components, hooks, stores, services & shaders mapped automatically',
+      'Spatial navigation — fly through your system like a map',
+    ],
+  },
+  {
+    title: 'Author',
+    bullets: [
+      'Merfolk Markdown — diagrams as version-controlled text',
+      'Face-to-face connections between 3D objects',
+      'Flow paths to trace multi-hop data routes',
+      'Live 2D preview alongside the 3D scene',
+    ],
+  },
+  {
+    title: 'Collaborate',
+    bullets: [
+      'Real-time shared spaces across your team',
+      'Organisations with role-based access control',
+      'Persistent cloud storage, available everywhere',
+      'Invite by email — no install required',
+    ],
+  },
+  {
+    title: 'Scale',
+    bullets: [
+      'Renders thousands of nodes with spatial partitioning',
+      'GPU-accelerated rendering for huge graphs',
+      'Web Workers keep the UI responsive at all times',
+      'Free tier to start, generous paid tiers when you grow',
+    ],
+  },
+];
+
 function ContentPanel({ children, isMobile }) {
   return (
     <div
@@ -72,28 +166,28 @@ function DiagramContent({ isMobile }) {
   return (
     <>
       <div style={{ textAlign: 'center', marginBottom: isMobile ? '24px' : '36px' }}>
-        <div
-          style={{
-            fontSize: '11px',
-            fontWeight: '700',
-            letterSpacing: '1.6px',
-            textTransform: 'uppercase',
-            color: BRAND,
-            marginBottom: '12px',
-          }}
-        >
-          Diagram as Code
-        </div>
+        <SectionEyebrow>Diagram as Code</SectionEyebrow>
         <h2
           style={{
-            fontSize: isMobile ? '24px' : '34px',
-            fontWeight: '800',
-            color: '#111',
+            fontSize: isMobile ? '26px' : '38px',
+            fontWeight: 800,
+            color: INK,
             margin: '0 0 14px 0',
-            lineHeight: '1.25',
+            lineHeight: 1.18,
+            letterSpacing: '-0.02em',
           }}
         >
-          Write Markdown. Explore in 3D.
+          Write Markdown.{' '}
+          <span
+            style={{
+              background: `linear-gradient(90deg, ${BRAND} 0%, #ffae33 100%)`,
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+            }}
+          >
+            Explore in 3D.
+          </span>
         </h2>
         <p
           style={{
@@ -104,7 +198,7 @@ function DiagramContent({ isMobile }) {
             margin: '0 auto',
           }}
         >
-          Volscape uses <strong style={{ color: '#111' }}>Merfolk</strong> — a
+          Volscape uses <strong style={{ color: INK }}>Merfolk</strong> — a
           simple Markdown extension — to describe nodes and relationships. Paste
           your diagram and explore it as a navigable 3D graph.
         </p>
@@ -190,32 +284,114 @@ function DiagramContent({ isMobile }) {
   );
 }
 
+function FeaturesContent({ isMobile }) {
+  return (
+    <>
+      <div style={{ textAlign: 'center', marginBottom: isMobile ? '24px' : '36px' }}>
+        <SectionEyebrow>What you get</SectionEyebrow>
+        <h2
+          style={{
+            fontSize: isMobile ? '26px' : '38px',
+            fontWeight: 800,
+            color: INK,
+            margin: '0 0 14px 0',
+            lineHeight: 1.18,
+            letterSpacing: '-0.02em',
+          }}
+        >
+          A full toolkit for{' '}
+          <span
+            style={{
+              background: `linear-gradient(90deg, ${BRAND} 0%, #ffae33 100%)`,
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+            }}
+          >
+            spatial software design
+          </span>
+        </h2>
+        <p
+          style={{
+            fontSize: isMobile ? '14px' : '16px',
+            color: '#555',
+            lineHeight: 1.7,
+            maxWidth: '560px',
+            margin: '0 auto',
+          }}
+        >
+          Everything you need to visualise, author, share and scale 3D
+          architecture diagrams — built into a single browser-native workspace.
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+          gap: isMobile ? '18px' : '28px 36px',
+        }}
+      >
+        {FEATURE_GROUPS.map((group) => (
+          <div key={group.title}>
+            <h3
+              style={{
+                fontSize: '13px',
+                fontWeight: 800,
+                letterSpacing: '1.4px',
+                textTransform: 'uppercase',
+                color: INK,
+                margin: '0 0 12px 0',
+                paddingBottom: '8px',
+                borderBottom: '2px solid rgba(204,133,0,0.35)',
+              }}
+            >
+              {group.title}
+            </h3>
+            <ul
+              style={{
+                listStyle: 'none',
+                padding: 0,
+                margin: 0,
+              }}
+            >
+              {group.bullets.map((b) => (
+                <Bullet key={b}>{b}</Bullet>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function AudienceContent({ isMobile }) {
   return (
     <>
       <div style={{ textAlign: 'center', marginBottom: isMobile ? '24px' : '36px' }}>
-        <div
-          style={{
-            fontSize: '11px',
-            fontWeight: '700',
-            letterSpacing: '1.6px',
-            textTransform: 'uppercase',
-            color: BRAND,
-            marginBottom: '12px',
-          }}
-        >
-          Built for your team
-        </div>
+        <SectionEyebrow>Built for your team</SectionEyebrow>
         <h2
           style={{
-            fontSize: isMobile ? '24px' : '34px',
-            fontWeight: '800',
-            color: '#111',
+            fontSize: isMobile ? '26px' : '38px',
+            fontWeight: 800,
+            color: INK,
             margin: '0 0 14px 0',
-            lineHeight: '1.25',
+            lineHeight: 1.18,
+            letterSpacing: '-0.02em',
           }}
         >
-          Every role gets more from Volscape
+          Every role gets more from{' '}
+          <span
+            style={{
+              background: `linear-gradient(90deg, ${BRAND} 0%, #ffae33 100%)`,
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+            }}
+          >
+            Volscape
+          </span>
         </h2>
         <p
           style={{
@@ -245,22 +421,37 @@ function AudienceContent({ isMobile }) {
             style={{
               flex: '1 1 220px',
               maxWidth: '280px',
-              padding: '24px 20px',
-              borderRadius: '10px',
+              padding: '24px 22px',
+              borderRadius: '12px',
               border: '1px solid rgba(0,0,0,0.08)',
-              backgroundColor: 'rgba(255,255,255,0.6)',
+              background:
+                'linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,247,233,0.55) 100%)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.05)',
+              position: 'relative',
+              overflow: 'hidden',
             }}
           >
-            <div style={{ fontSize: '22px', color: BRAND, marginBottom: '10px' }}>
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: '3px',
+                background: `linear-gradient(90deg, ${BRAND}, #ffae33)`,
+              }}
+            />
+            <div style={{ fontSize: '26px', color: BRAND, marginBottom: '12px', lineHeight: 1 }}>
               {card.icon}
             </div>
             <div
               style={{
                 fontSize: '10px',
-                fontWeight: '700',
-                letterSpacing: '1.2px',
+                fontWeight: 700,
+                letterSpacing: '1.3px',
                 textTransform: 'uppercase',
-                color: BRAND,
+                color: BRAND_DARK,
                 marginBottom: '8px',
               }}
             >
@@ -268,16 +459,16 @@ function AudienceContent({ isMobile }) {
             </div>
             <h3
               style={{
-                fontSize: '15px',
-                fontWeight: '700',
-                color: '#111',
-                margin: '0 0 8px 0',
-                lineHeight: '1.35',
+                fontSize: '16px',
+                fontWeight: 800,
+                color: INK,
+                margin: '0 0 10px 0',
+                lineHeight: 1.3,
               }}
             >
               {card.headline}
             </h3>
-            <p style={{ fontSize: '13px', color: '#555', lineHeight: '1.65', margin: 0 }}>
+            <p style={{ fontSize: '13px', color: '#555', lineHeight: 1.6, margin: 0 }}>
               {card.body}
             </p>
           </div>
@@ -289,36 +480,62 @@ function AudienceContent({ isMobile }) {
 
 function CtaContent({ isMobile, onLogin, onTryWithoutAccount }) {
   return (
-    <div style={{ textAlign: 'center', maxWidth: '520px', margin: '0 auto' }}>
+    <div style={{ textAlign: 'center', maxWidth: '560px', margin: '0 auto' }}>
+      <SectionEyebrow>Get started in seconds</SectionEyebrow>
       <h2
         style={{
-          fontSize: isMobile ? '26px' : '38px',
-          fontWeight: '800',
-          color: '#111',
+          fontSize: isMobile ? '28px' : '42px',
+          fontWeight: 800,
+          color: INK,
           margin: '0 0 16px 0',
-          lineHeight: '1.2',
+          lineHeight: 1.15,
+          letterSpacing: '-0.02em',
         }}
       >
-        See your architecture in 3D
+        See your architecture in{' '}
+        <span
+          style={{
+            background: `linear-gradient(90deg, ${BRAND} 0%, #ffae33 100%)`,
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+          }}
+        >
+          3D
+        </span>
       </h2>
       <p
         style={{
           fontSize: isMobile ? '15px' : '17px',
           color: '#555',
           lineHeight: '1.7',
-          margin: '0 0 36px 0',
+          margin: '0 0 28px 0',
         }}
       >
         No installation. No configuration. Start building your first Volscape
         diagram in seconds.
       </p>
+      <ul
+        style={{
+          listStyle: 'none',
+          padding: 0,
+          margin: '0 auto 32px',
+          maxWidth: '420px',
+          textAlign: 'left',
+          display: 'inline-block',
+        }}
+      >
+        <Bullet>Free forever for personal use</Bullet>
+        <Bullet>Works directly in your browser</Bullet>
+        <Bullet>Scan your first GitHub repo in under a minute</Bullet>
+      </ul>
       <div
         style={{
           display: 'flex',
           flexDirection: isMobile ? 'column' : 'row',
           gap: '12px',
           justifyContent: 'center',
-          marginBottom: '32px',
+          marginBottom: '24px',
         }}
       >
         <button
@@ -326,16 +543,16 @@ function CtaContent({ isMobile, onLogin, onTryWithoutAccount }) {
           className="welcome-btn-primary"
           style={{
             padding: '16px 36px',
-            backgroundColor: BRAND,
+            background: `linear-gradient(180deg, ${BRAND} 0%, #b87600 100%)`,
             color: '#000',
             border: 'none',
             borderRadius: '8px',
             fontSize: '16px',
-            fontWeight: '700',
+            fontWeight: 700,
             cursor: 'pointer',
             transition: 'all 0.2s ease',
             fontFamily: 'inherit',
-            boxShadow: '0 2px 8px rgba(204,133,0,0.28)',
+            boxShadow: '0 6px 20px rgba(204,133,0,0.35)',
           }}
         >
           Try Without Account
@@ -346,11 +563,11 @@ function CtaContent({ isMobile, onLogin, onTryWithoutAccount }) {
           style={{
             padding: '16px 36px',
             backgroundColor: 'transparent',
-            color: '#111',
-            border: '2px solid #111',
+            color: INK,
+            border: `2px solid ${INK}`,
             borderRadius: '8px',
             fontSize: '15px',
-            fontWeight: '600',
+            fontWeight: 600,
             cursor: 'pointer',
             transition: 'all 0.2s ease',
             fontFamily: 'inherit',
@@ -370,23 +587,30 @@ export function LandingScrollContent({ scrollProgress, isMobile, onLogin, onTryW
   const sections = [
     {
       id: 'diagram',
-      fadeIn: [0.10, 0.22],
-      fadeOut: [0.52, 0.62],
+      fadeIn: [0.08, 0.18],
+      fadeOut: [0.30, 0.38],
       zIndex: 21,
       content: <DiagramContent isMobile={isMobile} />,
     },
     {
-      id: 'audience',
-      fadeIn: [0.65, 0.75],
-      fadeOut: [0.82, 0.90],
+      id: 'features',
+      fadeIn: [0.42, 0.50],
+      fadeOut: [0.60, 0.68],
       zIndex: 22,
+      content: <FeaturesContent isMobile={isMobile} />,
+    },
+    {
+      id: 'audience',
+      fadeIn: [0.70, 0.78],
+      fadeOut: [0.85, 0.92],
+      zIndex: 23,
       content: <AudienceContent isMobile={isMobile} />,
     },
     {
       id: 'cta',
-      fadeIn: [0.93, 0.99],
+      fadeIn: [0.94, 0.99],
       fadeOut: null,
-      zIndex: 23,
+      zIndex: 24,
       content: (
         <CtaContent
           isMobile={isMobile}
