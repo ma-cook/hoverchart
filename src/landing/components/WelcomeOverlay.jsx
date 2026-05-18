@@ -6,10 +6,10 @@ const INK = '#0d0d0f';
 
 const HERO_BULLETS = [
   'Auto-scan any GitHub repository into a 3D map',
-  'Write diagrams as Merfolk Markdown — versioned with your code',
+  'Write diagrams as Merfolk Markdown - versioned with your code',
   'Real-time collaborative spaces for your whole team',
   'Renders thousands of nodes, smoothly, in the browser',
-  'Free to try — no install, no setup',
+  'Free to try - no install, no setup',
 ];
 
 export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAccount }) => {
