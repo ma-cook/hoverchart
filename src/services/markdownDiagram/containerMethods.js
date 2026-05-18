@@ -32,6 +32,28 @@ export const containerMethods = {
       nodeScales,
     } = context;
 
+    // ── Compute which components are in the main hierarchy ──────────────
+    // Root component nodes that are NOT reachable from entry-point components
+    // (App, AppShell, main, index, etc.) are "orphaned" — they have 3D positions
+    // from positionNodeHierarchy (as rootNodes) but no enclosing container.
+    // We collect them into the "Unused Components" grey container below.
+    const hierarchyComponents = new Set();
+    const ROOT_ENTRY_NAMES = ['main', 'index', 'firebase', 'App'];
+    const actualRootNodes = Array.from(context.rootNodes || []).filter(
+      (nodeId) => ROOT_ENTRY_NAMES.includes(nodeId) || nodeId.endsWith('_root')
+    );
+    const markHierarchyReachable = (nodeId) => {
+      if (hierarchyComponents.has(nodeId)) return;
+      const n = graphNodes.get(nodeId);
+      if (!n) return;
+      if ((n.type || '').toLowerCase().trim() === NODE_TYPE_COMPONENT) {
+        hierarchyComponents.add(nodeId);
+      }
+      const children = context.parentChildMap?.get(nodeId) || new Set();
+      children.forEach((childId) => markHierarchyReachable(childId));
+    };
+    actualRootNodes.forEach((nodeId) => markHierarchyReachable(nodeId));
+
     // ── Dynamic group discovery ──────────────────────────────────────────
     const groupedByType = new Map(); // groupKey → [nodeId, …]
     const ungroupedComponents = [];
@@ -49,7 +71,12 @@ export const containerMethods = {
         ) {
           continue;
         }
-        if (!nodePositions.has(nodeId)) {
+        // Add to ungrouped if: (a) no position yet, OR (b) positioned but not
+        // reachable from a main-hierarchy entry point AND has no children of its
+        // own (components that parent other components are clearly in-hierarchy
+        // even if the scanner didn't emit an explicit entry-point connection).
+        const hasChildren = (context.parentChildMap?.get(nodeId)?.size ?? 0) > 0;
+        if (!nodePositions.has(nodeId) || (!hierarchyComponents.has(nodeId) && !hasChildren)) {
           ungroupedComponents.push(nodeId);
         }
         continue;
@@ -214,9 +241,9 @@ export const containerMethods = {
       createContainerForGroup(nodes, displayName, color);
     });
 
-    // Ungrouped components always get the grey container
-    if (!existingGroupTypes.has('Ungrouped Components')) {
-      createContainerForGroup(ungroupedComponents, 'Ungrouped Components', '#757575');
+    // Unused components always get the grey container
+    if (!existingGroupTypes.has('Unused Components')) {
+      createContainerForGroup(ungroupedComponents, 'Unused Components', '#757575');
     }
 
     if (containerCubes.length > 0) {

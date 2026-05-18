@@ -36,9 +36,11 @@
     "three": "^0.160.0",
     "three-mesh-bvh": "^0.8.0",
     "three-stdlib": "^2.30.5",
+    "tree-sitter-wasms": "^0.1.13",
     "uuid": "^13.0.0",
     "vite-plugin-glsl": "^1.5.4",
     "vite-plugin-wasm": "^3.5.0",
+    "web-tree-sitter": "^0.20.8",
     "zustand": "^4.5.2"
   },
   "devDependencies": {

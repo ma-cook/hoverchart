@@ -266,6 +266,8 @@ const Plane = ({
   const isBroadcastingRef = useRef(false);
   const isMountedRef = useRef(true);
   const userJustToggledWebcamRef = useRef(false); // Track user actions
+  // Store the pre-stream scale so it can be restored when the stream ends
+  const preStreamScaleRef = useRef(null);
   // Define closeAllUIs before it's used in useEffect
   const closeAllUIs = useCallback(() => {
     setPlaneShowTextStyleUI(id, false);
@@ -1051,6 +1053,48 @@ const Plane = ({
     setPlaneIsBroadcasting,
     setPlaneViewerCount,
   ]);
+  // Apply a widescreen scale (16:9) at 3× the current size, saving the original
+  // so it can be restored when the stream ends.
+  const applyStreamScale = useCallback(() => {
+    // Capture the current scale from objectData (the authoritative rendered source)
+    const currentScale = objectData?.scale || [1, 1, 1];
+    if (!preStreamScaleRef.current) {
+      preStreamScaleRef.current = [...currentScale];
+    }
+    // 16:9 widescreen at 3× — derive from the saved Y so repeated calls are idempotent
+    const baseY = preStreamScaleRef.current[1];
+    const baseZ = preStreamScaleRef.current[2];
+    const newScale = [
+      baseY * 3 * (16 / 9),
+      baseY * 3,
+      baseZ,
+    ];
+    // Update plane store (UI state)
+    updatePlane(id, { scale: newScale });
+    // Update objects store immediately so the rendered scale changes right away
+    const objStore = useObjectsStore.getState();
+    objStore.setObjects(objStore.objects.map((obj) =>
+      obj.id === id ? { ...obj, scale: newScale } : obj
+    ));
+    // Persist to Firebase
+    onUpdate?.(id, { type: 'plane', scale: newScale });
+  }, [id, objectData?.scale, updatePlane, onUpdate]);
+
+  const restoreStreamScale = useCallback(() => {
+    if (!preStreamScaleRef.current) return;
+    const restored = preStreamScaleRef.current;
+    preStreamScaleRef.current = null;
+    // Update plane store
+    updatePlane(id, { scale: restored });
+    // Update objects store immediately
+    const objStore = useObjectsStore.getState();
+    objStore.setObjects(objStore.objects.map((obj) =>
+      obj.id === id ? { ...obj, scale: restored } : obj
+    ));
+    // Persist to Firebase
+    onUpdate?.(id, { type: 'plane', scale: restored });
+  }, [id, updatePlane, onUpdate]);
+
   const handleWebcamToggle = useCallback(async () => {
     // Set flag to prevent immediate sync interference
     userJustToggledWebcamRef.current = true;
@@ -1060,6 +1104,7 @@ const Plane = ({
 
     if (newWebcamState) {
       setPlaneWebcamInitialized(id, true);
+      applyStreamScale();
       if (
         confirm(
           'Do you want to broadcast this webcam to other users in this space?'
@@ -1086,6 +1131,7 @@ const Plane = ({
         });
       }
     } else {
+      restoreStreamScale();
       if (plane?.isBroadcasting) {
         setPlaneViewerCount(id, 0);
         onUpdate?.(id, {
@@ -1114,6 +1160,8 @@ const Plane = ({
     setPlaneIsViewingBroadcast,
     setPlaneBroadcastInfo,
     setPlaneShowUI,
+    applyStreamScale,
+    restoreStreamScale,
   ]);
   const handleScreenShareToggle = useCallback(() => {
     // Set flag to prevent immediate sync interference
@@ -1123,6 +1171,7 @@ const Plane = ({
 
     if (newScreenShareState) {
       setPlaneScreenShareInitialized(id, true);
+      applyStreamScale();
       if (
         confirm(
           'Do you want to share your screen to other users in this space?'
@@ -1147,6 +1196,7 @@ const Plane = ({
         });
       }
     } else {
+      restoreStreamScale();
       if (plane?.isScreenSharing) {
         // Stop screen sharing
         onUpdate?.(id, {
@@ -1168,6 +1218,8 @@ const Plane = ({
     setPlaneScreenShareActive,
     setPlaneIsScreenSharing,
     setPlaneShowUI,
+    applyStreamScale,
+    restoreStreamScale,
   ]);
 
   // Pin webcam to UI overlay

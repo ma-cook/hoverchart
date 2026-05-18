@@ -119,9 +119,10 @@ const HandTrackingToggle = () => {
 
 /**
  * Displays small round avatars for all users currently present in the given space.
- * Rendered in the top-right corner of the screen.
+ * Rendered in the top-right corner of the screen, or inline inside a parent
+ * container when `inline` is true (no fixed positioning, no z-index).
  */
-const SpacePresenceAvatars = ({ spaceId, currentCell }) => {
+const SpacePresenceAvatars = ({ spaceId, currentCell, inline = false }) => {
   const [presentUsers, setPresentUsers] = useState([]);
 
   useEffect(() => {
@@ -141,16 +142,23 @@ const SpacePresenceAvatars = ({ spaceId, currentCell }) => {
     ? `${currentCell.x},${currentCell.y},${currentCell.z}`
     : '0,0,0';
 
-  const containerStyle = {
-    position: 'fixed',
-    top: 12,
-    right: 12,
-    display: 'flex',
-    flexDirection: 'row',
-    gap: 6,
-    zIndex: 9999,
-    alignItems: 'center',
-  };
+  const containerStyle = inline
+    ? {
+        display: 'flex',
+        flexDirection: 'row',
+        gap: 6,
+        alignItems: 'center',
+      }
+    : {
+        position: 'fixed',
+        top: 12,
+        right: 12,
+        display: 'flex',
+        flexDirection: 'row',
+        gap: 6,
+        zIndex: 9999,
+        alignItems: 'center',
+      };
 
   const pillStyle = {
     background: 'rgba(0,0,0,0.55)',

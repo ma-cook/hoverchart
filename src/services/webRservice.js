@@ -18,7 +18,8 @@ import {
   generateSubscriptionKey,
   SUBSCRIPTION_TYPES,
 } from './globalSubscriptionManager';
-import { findObjectInCells, getAllObjectsInSpace } from './spatialPartitioning';
+import { findObjectInCells, getAllObjectsInSpace, getCellId, CELL_SIZE } from './spatialPartitioning';
+import useObjectsStore from '../stores/objectsStore';
 
 const activeStreams = new Map();
 
@@ -325,7 +326,32 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream, broadc
     console.log('Using space owner path:', spaceOwner);
 
     // Find the plane object in the spatial partitioning system
-    const planeResult = await findObjectInCells(spaceOwner, spaceId, planeId);
+    let planeResult = await findObjectInCells(spaceOwner, spaceId, planeId);
+
+    // Fallback: the plane may not be in Firebase yet (new object still in local store).
+    // Build the objectRef from the plane's in-memory position so we can still write
+    // the broadcast metadata even if findObjectInCells comes back empty.
+    if (!planeResult) {
+      const localObj = useObjectsStore.getState().objects.find((o) => o.id === planeId);
+      if (localObj) {
+        const [px, py, pz] = localObj.position || [0, 0, 0];
+        const cellX = Math.floor(px / CELL_SIZE);
+        const cellY = Math.floor(py / CELL_SIZE);
+        const cellZ = Math.floor(pz / CELL_SIZE);
+        const cellId = getCellId(cellX, cellY, cellZ);
+        const objectRef = doc(
+          db,
+          'users', spaceOwner,
+          'spaces', spaceId,
+          'cells', cellId,
+          'objects', planeId
+        );
+        planeResult = { object: localObj, cellId, objectRef };
+        console.warn(
+          `Plane ${planeId} not found in Firebase cells — using local store position (cell ${cellId}) as fallback`
+        );
+      }
+    }
 
     if (!planeResult) {
       console.error(`Plane ${planeId} not found in any cell`);

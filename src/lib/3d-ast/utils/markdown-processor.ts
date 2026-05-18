@@ -21,6 +21,7 @@ export interface ProcessedDiagram {
   block: AST3DBlock;
   json: any;
   errors: string[];
+  warnings: string[];
 }
 
 /**
@@ -97,7 +98,7 @@ export class MarkdownProcessor {
         const validation = this.generator.validate(block.content);
 
         if (validation.valid) {
-          // Generate graph
+          // Generate graph (orphan-tolerant — ASTBuilder drops bad edges)
           const graph = this.generator.generate(block.content);
           const json = this.generator.generateJSON(block.content);
 
@@ -106,6 +107,7 @@ export class MarkdownProcessor {
             block,
             json,
             errors: [],
+            warnings: validation.warnings,
           });
         } else {
           results.push({
@@ -113,6 +115,7 @@ export class MarkdownProcessor {
             block,
             json: null,
             errors: validation.errors,
+            warnings: validation.warnings,
           });
         }
       } catch (error) {
@@ -121,6 +124,7 @@ export class MarkdownProcessor {
           block,
           json: null,
           errors: [error instanceof Error ? error.message : 'Unknown error'],
+          warnings: [],
         });
       }
     }
@@ -144,6 +148,7 @@ export class MarkdownProcessor {
           block,
           json,
           errors: [],
+          warnings: validation.warnings,
         };
       } else {
         return {
@@ -151,6 +156,7 @@ export class MarkdownProcessor {
           block,
           json: null,
           errors: validation.errors,
+          warnings: validation.warnings,
         };
       }
     } catch (error) {
@@ -159,6 +165,7 @@ export class MarkdownProcessor {
         block,
         json: null,
         errors: [error instanceof Error ? error.message : 'Unknown error'],
+        warnings: [],
       };
     }
   }

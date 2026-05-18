@@ -64,12 +64,13 @@ export class AST3DGenerator {
   /**
    * Validate input syntax
    */
-  validate(input: string): { valid: boolean; errors: string[] } {
+  validate(input: string): { valid: boolean; errors: string[]; warnings: string[] } {
     try {
       const parsed = this.parser.parse(input);
       const errors: string[] = [];
+      const warnings: string[] = [];
 
-      // Check for duplicate node IDs
+      // Check for duplicate node IDs (fatal — would corrupt the graph)
       const nodeIds = new Set<string>();
       for (const node of parsed.nodes) {
         if (nodeIds.has(node.id)) {
@@ -78,15 +79,16 @@ export class AST3DGenerator {
         nodeIds.add(node.id);
       }
 
-      // Check for invalid connections
+      // Check for orphan connection refs (non-fatal — ASTBuilder already drops
+      // invalid connections, so the graph is still usable; surface as warnings).
       for (const connection of parsed.connections) {
         if (!nodeIds.has(connection.source.nodeId)) {
-          errors.push(
+          warnings.push(
             `Connection references unknown source node: ${connection.source.nodeId}`
           );
         }
         if (!nodeIds.has(connection.target.nodeId)) {
-          errors.push(
+          warnings.push(
             `Connection references unknown target node: ${connection.target.nodeId}`
           );
         }
@@ -95,6 +97,7 @@ export class AST3DGenerator {
       return {
         valid: errors.length === 0,
         errors,
+        warnings,
       };
     } catch (error) {
       return {
@@ -102,6 +105,7 @@ export class AST3DGenerator {
         errors: [
           error instanceof Error ? error.message : 'Unknown parsing error',
         ],
+        warnings: [],
       };
     }
   }

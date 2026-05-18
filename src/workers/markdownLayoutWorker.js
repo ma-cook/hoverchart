@@ -15,7 +15,7 @@
  *   - hierarchyMethods.js  (only imports constants.js)
  *   - scaleMethods.js      (only imports constants.js)
  *   - positionMethods.js   (only imports constants.js)
- *   - MarkdownProcessor from '../lib/3d-ast'  (vendored pure JS parser)
+ *   - MarkdownProcessor from '3d-ast-generator'  (pure JS parser)
  *
  * NOT imported here (they touch Zustand / Firebase / DOM):
  *   - connectionMethods.js
@@ -30,52 +30,6 @@ import { MarkdownProcessor } from '../lib/3d-ast';
 import { hierarchyMethods } from '../services/markdownDiagram/hierarchyMethods.js';
 import { scaleMethods } from '../services/markdownDiagram/scaleMethods.js';
 import { positionMethods } from '../services/markdownDiagram/positionMethods.js';
-
-// ---------------------------------------------------------------------------
-// Parse histogram instrumentation
-// ---------------------------------------------------------------------------
-
-const DEBUG_PARSE_HISTOGRAM = true;
-
-function logParseHistogram(label, diagrams) {
-  if (!DEBUG_PARSE_HISTOGRAM) return;
-  if (!diagrams || diagrams.length === 0) {
-    console.log(`[parse-histogram:${label}] no diagrams parsed`);
-    return;
-  }
-  const nodeTypes = {};
-  const connectionTypes = {};
-  let totalNodes = 0;
-  let totalConnections = 0;
-  let totalErrors = 0;
-  for (const d of diagrams) {
-    if (d.errors && d.errors.length > 0) {
-      totalErrors += d.errors.length;
-      continue;
-    }
-    const g = d.graph;
-    if (!g) continue;
-    if (g.nodes) {
-      totalNodes += g.nodes.size;
-      for (const node of g.nodes.values()) {
-        const t = node.type || 'unknown';
-        nodeTypes[t] = (nodeTypes[t] || 0) + 1;
-      }
-    }
-    if (g.connections) {
-      totalConnections += g.connections.size;
-      for (const conn of g.connections.values()) {
-        const t = conn.type || 'unknown';
-        connectionTypes[t] = (connectionTypes[t] || 0) + 1;
-      }
-    }
-  }
-  console.log(
-    `[parse-histogram:${label}] diagrams=${diagrams.length} nodes=${totalNodes} connections=${totalConnections} errors=${totalErrors}`
-  );
-  console.log(`[parse-histogram:${label}] nodeTypes=`, nodeTypes);
-  console.log(`[parse-histogram:${label}] connectionTypes=`, connectionTypes);
-}
 
 // ---------------------------------------------------------------------------
 // LayoutEngine  – mixes in only the pure computation methods
@@ -213,7 +167,6 @@ const workerApi = {
 
     // --- Step 2: build AST ---
     const diagrams = engine.processor.processMarkdown(processedContent);
-    logParseHistogram('worker', diagrams);
 
     if (!diagrams || diagrams.length === 0) {
       return { diagramLayouts: [], connectionTags: [] };

@@ -186,7 +186,7 @@ export class MermaidParser {
     // C((Module: Database))
     // D<Datapath: eventStream>
     // E[[Class: UserModel]]
-    return /^[A-Za-z0-9_]+[\[\{\(<]/.test(line);
+    return /^[A-Za-z0-9_/.\-]+[\[\{\(<]/.test(line);
   }
 
   /**
@@ -214,16 +214,27 @@ export class MermaidParser {
     // D<Datapath: eventStream>
     // E[[Class: UserModel]]
 
-    // NOTE: Pattern order matches npm 3d-ast-generator@1.0.18 (commit 5c0d60f) for
-    // behavioural compatibility with hoverchart's downstream pipeline. The "more
-    // correct" double-bracket-first order from main is reverted here pending a
-    // downstream fix in src/services/markdownDiagram/. See PR #64 follow-up.
+    // NOTE: Double-bracket pattern must come before single-bracket so that
+    // [[Store: x]], [[Class: x]], [[Interface: x]] are parsed with their correct
+    // type strings rather than the single-bracket regex capturing "[Store" as
+    // the type and falling back to NodeType.COMPONENT.  The downstream hierarchy
+    // methods (hierarchyMethods.js) have the corresponding service→class,
+    // store→cubeChild etc. branches to handle these types correctly.
+    // Node ID character class allows /, ., - so package paths like
+    // `firebase-admin/app`, `eslint-plugin-react`, `firebase-functions/v2/https`
+    // survive as parser-readable node IDs. `@` is intentionally excluded so the
+    // optional `@face` separator in connection patterns stays unambiguous; the
+    // emitter (githubRepoService) replaces leading `@` with `_` for npm scopes.
+    // NOTE: Pattern order matches npm 3d-ast-generator@1.0.18 (commit 5c0d60f)
+    // for behavioural compatibility with hoverchart's downstream pipeline. The
+    // `more correct` double-bracket-first order from main is reverted here
+    // pending a downstream fix in src/services/markdownDiagram/.
     const patterns = [
-      /^([A-Za-z0-9_]+)\[([^:]+):\s*([^\]]+)\]/,      // Square brackets
-      /^([A-Za-z0-9_]+)\{([^:]+):\s*([^\}]+)\}/,      // Curly brackets
-      /^([A-Za-z0-9_]+)\(\(([^:]+):\s*([^\)]+)\)\)/,  // Double parentheses
-      /^([A-Za-z0-9_]+)<([^:]+):\s*([^>]+)>/,         // Angle brackets
-      /^([A-Za-z0-9_]+)\[\[([^:]+):\s*([^\]]+)\]\]/,  // Double square brackets
+      /^([A-Za-z0-9_/.\-]+)\[([^:]+):\s*([^\]]+)\]/,      // Square brackets
+      /^([A-Za-z0-9_/.\-]+)\{([^:]+):\s*([^\}]+)\}/,      // Curly brackets
+      /^([A-Za-z0-9_/.\-]+)\(\(([^:]+):\s*([^\)]+)\)\)/,  // Double parentheses
+      /^([A-Za-z0-9_/.\-]+)<([^:]+):\s*([^>]+)>/,         // Angle brackets
+      /^([A-Za-z0-9_/.\-]+)\[\[([^:]+):\s*([^\]]+)\]\]/,  // Double square brackets
     ];
 
     for (const pattern of patterns) {
@@ -288,9 +299,9 @@ export class MermaidParser {
 
     const patterns = [
       // Pattern for -->|"label"| syntax (Mermaid-style)
-      /^([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?\s*(\*-->|-->|---|-.->|==|\.\.>)\s*\|\s*['""]([^'"]+)['"]\s*\|\s*([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?/,
+      /^([A-Za-z0-9_/.\-]+)(?:@([A-Za-z0-9_]+))?\s*(\*-->|-->|---|-.->|==|\.\.>)\s*\|\s*['""]([^'"]+)['"]\s*\|\s*([A-Za-z0-9_/.\-]+)(?:@([A-Za-z0-9_]+))?/,
       // Pattern for : "label" syntax (original)
-      /^([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?\s*(\*-->|-->|---|-.->|==|\.\.>)\s*([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?\s*(?::\s*['""]([^'"]+)['""])?/,
+      /^([A-Za-z0-9_/.\-]+)(?:@([A-Za-z0-9_]+))?\s*(\*-->|-->|---|-.->|==|\.\.>)\s*([A-Za-z0-9_/.\-]+)(?:@([A-Za-z0-9_]+))?\s*(?::\s*['""]([^'"]+)['""])?/,
     ];
 
     for (const pattern of patterns) {
@@ -369,6 +380,19 @@ export class MermaidParser {
       case 'constant':
       case 'const':
         return NodeType.CONSTANT;
+      // Extended types emitted by the repo scanner for backend/infra nodes —
+      // map to the closest semantic equivalent so they get proper icons and
+      // are grouped rather than falling back to component (dodecahedron).
+      case 'endpoint':
+      case 'route':
+        return NodeType.FUNCTION;   // cube, grouped with functions
+      case 'guard':
+      case 'middleware':
+        return NodeType.FUNCTION;   // cube, grouped with functions
+      case 'boundary':
+        return NodeType.MODULE;     // cube, grouped with modules
+      case 'model':
+        return NodeType.STORE;      // cube, grouped with stores
       default:
         return NodeType.COMPONENT; // Default fallback
     }

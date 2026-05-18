@@ -5,48 +5,6 @@ import { getMarkdownLayoutWorker } from '../../workers/markdownLayoutWorkerClien
 import useDiagramStore from '../../stores/diagramStore.js';
 import useObjectsStore from '../../stores/objectsStore.js';
 
-const DEBUG_PARSE_HISTOGRAM = true;
-
-function logParseHistogram(label, diagrams) {
-  if (!DEBUG_PARSE_HISTOGRAM) return;
-  if (!diagrams || diagrams.length === 0) {
-    console.log(`[parse-histogram:${label}] no diagrams parsed`);
-    return;
-  }
-  const nodeTypes = {};
-  const connectionTypes = {};
-  let totalNodes = 0;
-  let totalConnections = 0;
-  let totalErrors = 0;
-  for (const d of diagrams) {
-    if (d.errors && d.errors.length > 0) {
-      totalErrors += d.errors.length;
-      continue;
-    }
-    const g = d.graph;
-    if (!g) continue;
-    if (g.nodes) {
-      totalNodes += g.nodes.size;
-      for (const node of g.nodes.values()) {
-        const t = node.type || 'unknown';
-        nodeTypes[t] = (nodeTypes[t] || 0) + 1;
-      }
-    }
-    if (g.connections) {
-      totalConnections += g.connections.size;
-      for (const conn of g.connections.values()) {
-        const t = conn.type || 'unknown';
-        connectionTypes[t] = (connectionTypes[t] || 0) + 1;
-      }
-    }
-  }
-  console.log(
-    `[parse-histogram:${label}] diagrams=${diagrams.length} nodes=${totalNodes} connections=${totalConnections} errors=${totalErrors}`
-  );
-  console.log(`[parse-histogram:${label}] nodeTypes=`, nodeTypes);
-  console.log(`[parse-histogram:${label}] connectionTypes=`, connectionTypes);
-}
-
 export const processMethods = {
   initializeProcessor() {
     this.processor = new MarkdownProcessor({
@@ -118,7 +76,6 @@ export const processMethods = {
     const connectionTags = this.parseFlowPaths(content);
     const processedContent = this.stripFlowPathSyntax(content);
     const diagrams = this.processor.processMarkdown(processedContent);
-    logParseHistogram('hydrate', diagrams);
 
     if (!diagrams || diagrams.length === 0) return;
 
@@ -233,7 +190,6 @@ export const processMethods = {
       connectionTags = this.parseFlowPaths(content);
       const processedContent = this.stripFlowPathSyntax(content);
       diagrams = this.processor.processMarkdown(processedContent);
-      logParseHistogram('processFile', diagrams);
     }
 
     if (!diagrams || diagrams.length === 0) {

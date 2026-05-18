@@ -5,9 +5,33 @@
 import { parse } from '@babel/parser';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+import { scanPythonWithTreeSitter, scanWithTreeSitter } from './treeSitterScanner';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
+
+/**
+ * Map a file path to the language key the tree-sitter scanner registers, or
+ * `null` if the language is handled elsewhere (Babel JS/TS, Vue SFC, shaders)
+ * or simply not supported.
+ */
+const TREE_SITTER_EXTENSIONS = [
+  { test: /\.go$/i,                key: 'go' },
+  { test: /\.rs$/i,                key: 'rust' },
+  { test: /\.java$/i,              key: 'java' },
+  { test: /\.cs$/i,                key: 'csharp' },
+  { test: /\.rb$/i,                key: 'ruby' },
+  { test: /\.php$/i,               key: 'php' },
+  { test: /\.(cpp|cc|cxx|hpp|hh|hxx)$/i, key: 'cpp' },
+  { test: /\.(c|h)$/i,             key: 'c' },
+];
+
+const getTreeSitterLanguage = (filePath) => {
+  for (const { test, key } of TREE_SITTER_EXTENSIONS) {
+    if (test.test(filePath)) return key;
+  }
+  return null;
+};
 
 /**
  * Exchange GitHub OAuth code for an access token
@@ -148,6 +172,8 @@ const getFileTypeFromPath = (filePath) => {
   if (/\.py$/.test(name)) return 'python';
   if (/\.vue$/.test(name)) return 'vue';
   if (/\.(glsl|wgsl|hlsl|vert|frag|comp)$/.test(name)) return 'shader';
+  const tsLang = getTreeSitterLanguage(name);
+  if (tsLang) return tsLang;
   return null;
 };
 
@@ -225,6 +251,19 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
             name: item.name,
             type: 'shader',
           });
+        }
+        // Include other tree-sitter-supported languages (Go, Rust, Java,
+        // C/C++, C#, Ruby, PHP). The `type` is the language key the scanner
+        // worker uses, so the analysis loop can route on `file.type` directly.
+        else {
+          const tsLang = getTreeSitterLanguage(item.name);
+          if (tsLang) {
+            structure.push({
+              path: item.path,
+              name: item.name,
+              type: tsLang,
+            });
+          }
         }
       }
     }
@@ -1602,24 +1641,66 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             return; // Skip AST parsing for shader files
           }
 
-          // Handle Python files — use regex-based analysis instead of Babel
+          // Handle Python files — tree-sitter (WASM) in a worker, with
+          // automatic fallback to the regex scanner if WASM load or parse fails.
           if (file.type === 'python') {
             try {
-              traversePythonSource(
-                fileContent,
-                fileName,
-                file.path,
-                fileContext,
-                elements,
-                foundItems,
-                fileFunctions,
-                moduleImportRelationships,
-                functionCallRelationships
-              );
+              try {
+                await scanPythonWithTreeSitter(
+                  fileContent,
+                  fileName,
+                  file.path,
+                  fileContext,
+                  elements,
+                  foundItems,
+                  fileFunctions,
+                  moduleImportRelationships,
+                  functionCallRelationships
+                );
+              } catch (tsError) {
+                console.warn(`⚠️  tree-sitter Python scan failed for ${file.path}; falling back to regex:`, tsError?.message || tsError);
+                traversePythonSource(
+                  fileContent,
+                  fileName,
+                  file.path,
+                  fileContext,
+                  elements,
+                  foundItems,
+                  fileFunctions,
+                  moduleImportRelationships,
+                  functionCallRelationships
+                );
+              }
             } catch (pyError) {
               console.warn(`⚠️  Failed to parse Python file ${file.path}:`, pyError?.message || pyError);
             }
             return; // Skip Babel AST parsing for Python files
+          }
+
+          // Handle other tree-sitter-supported languages (Go, Rust, Java,
+          // C/C++, C#, Ruby, PHP). No legacy fallback exists for these, so
+          // any failure is logged and the file is skipped.
+          {
+            const tsLang = getTreeSitterLanguage(file.path);
+            if (tsLang) {
+              try {
+                await scanWithTreeSitter(
+                  tsLang,
+                  fileContent,
+                  fileName,
+                  file.path,
+                  fileContext,
+                  elements,
+                  foundItems,
+                  fileFunctions,
+                  moduleImportRelationships,
+                  functionCallRelationships
+                );
+              } catch (tsError) {
+                console.warn(`⚠️  tree-sitter ${tsLang} scan failed for ${file.path}:`, tsError?.message || tsError);
+              }
+              return;
+            }
           }
 
           // Handle Vue repos — .vue SFCs and plain JS/TS companion files
@@ -3450,12 +3531,16 @@ const generateMerfolkMarkdown = (
   if (elements.imports.libraries.length > 0) {
     markdown += `\n%% External Libraries\n`;
     elements.imports.libraries.forEach((lib) => {
-      if (nodeIds.has(lib)) {
+      // The vendored Merfolk parser allows `/`, `.`, `-` in node IDs but forbids
+      // `@` (which is the face-separator in connection syntax). npm-scoped names
+      // like `@react-three/fiber` therefore need their leading `@` replaced.
+      const libId = lib.replace(/@/g, '_');
+      if (nodeIds.has(libId)) {
         // Already declared as a different node type — skip to avoid duplicate
         return;
       }
-      nodeIds.add(lib);
-      markdown += `${lib}<Library: ${lib}>\n`;
+      nodeIds.add(libId);
+      markdown += `${libId}<Library: ${lib}>\n`;
     });
   }
 

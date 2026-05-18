@@ -673,16 +673,55 @@ export const positionMethods = {
     }
 
     if (hierarchyNodes.length === 0) {
-      console.log('⚠️ No hierarchy nodes found for container bounds calculation');
-      const firstRootId = Array.from(rootNodes)[0];
-      const firstRootPos = nodePositions.get(firstRootId);
-      const fallbackY = firstRootPos ? firstRootPos[1] : context.basePosition[1];
+      console.log('⚠️ No named-entry-point hierarchy nodes found — scanning all positioned components for orbit center');
+      // Fallback: compute the actual bounding box of every positioned component
+      // so the orbit circle centres on the real component tree, regardless of
+      // what the root component files are called.
+      let fbMinX = Infinity, fbMaxX = -Infinity;
+      let fbMinY = Infinity, fbMaxY = -Infinity;
+      let fbMinZ = Infinity, fbMaxZ = -Infinity;
+
+      for (const [nodeId, position] of nodePositions.entries()) {
+        if (!position) continue;
+        if (nodesInChildContainers.has(nodeId)) continue;
+        const node = graphNodes.get(nodeId);
+        if (!node || (node.type || '').toLowerCase().trim() !== NODE_TYPE_COMPONENT) continue;
+        const scale = nodeScales.get(nodeId) || [1, 1, 1];
+        const nodeSize = Math.max(...scale) * 10;
+        fbMinX = Math.min(fbMinX, position[0] - nodeSize);
+        fbMaxX = Math.max(fbMaxX, position[0] + nodeSize);
+        fbMinY = Math.min(fbMinY, position[1] - nodeSize);
+        fbMaxY = Math.max(fbMaxY, position[1] + nodeSize);
+        fbMinZ = Math.min(fbMinZ, position[2] - nodeSize);
+        fbMaxZ = Math.max(fbMaxZ, position[2] + nodeSize);
+      }
+
+      if (Number.isFinite(fbMinX)) {
+        const p = 15;
+        fbMinX -= p; fbMaxX += p;
+        fbMinY -= p; fbMaxY += p;
+        fbMinZ -= p; fbMaxZ += p;
+        return {
+          centerX: (fbMinX + fbMaxX) / 2,
+          centerY: (fbMinY + fbMaxY) / 2,
+          centerZ: (fbMinZ + fbMaxZ) / 2,
+          width: fbMaxX - fbMinX,
+          height: fbMaxY - fbMinY,
+          depth: fbMaxZ - fbMinZ,
+          minX: fbMinX, maxX: fbMaxX,
+          minY: fbMinY, maxY: fbMaxY,
+          minZ: fbMinZ, maxZ: fbMaxZ,
+        };
+      }
+
+      // Absolute last resort — no components positioned at all; use basePosition
+      const bp = context.basePosition;
       return {
-        centerX: 0, centerY: fallbackY, centerZ: 0,
+        centerX: bp[0], centerY: bp[1], centerZ: bp[2],
         width: 100, height: 100, depth: 100,
-        minX: -50, maxX: 50,
-        minY: fallbackY - 50, maxY: fallbackY + 50,
-        minZ: -50, maxZ: 50
+        minX: bp[0] - 50, maxX: bp[0] + 50,
+        minY: bp[1] - 50, maxY: bp[1] + 50,
+        minZ: bp[2] - 50, maxZ: bp[2] + 50,
       };
     }
 
@@ -916,16 +955,24 @@ export const positionMethods = {
     if (groupEntries.length > 0) {
       const rootWidth = rootHierarchyBounds.maxX - rootHierarchyBounds.minX;
       const rootDepth = rootHierarchyBounds.maxZ - rootHierarchyBounds.minZ;
-      const rootRadius = Math.max(rootWidth, rootDepth) / 2;
+      // Use the circumscribed-circle radius (half the diagonal) rather than
+      // half the largest side, otherwise groups placed at diagonal angles
+      // overlap the corners of the rectangular root hierarchy container.
+      const rootRadius =
+        Math.sqrt(rootWidth * rootWidth + rootDepth * rootDepth) / 2;
       const rootCenterXOffset = rootHierarchyBounds.centerX - basePosition[0];
       const rootCenterZOffset = rootHierarchyBounds.centerZ - basePosition[2];
 
       const angleStep = (2 * Math.PI) / groupEntries.length;
 
-      // Pre-compute the bounding radius of each group
+      // Pre-compute the bounding radius of each group using the diagonal so
+      // a group's inward-facing corner is fully accounted for at any angle.
       const groupRadii = groupEntries.map(([, nodes]) => {
         const bounds = calculateGroupBounds(nodes);
-        return Math.max(bounds.width, bounds.depth) / 2;
+        return (
+          Math.sqrt(bounds.width * bounds.width + bounds.depth * bounds.depth) /
+          2
+        );
       });
 
       const maxGroupRadius = Math.max(...groupRadii, 0);

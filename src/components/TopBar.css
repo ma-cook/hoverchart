@@ -1,0 +1,195 @@
+/* Professional top bar — replaces the floating menu/visual-tools/info clusters */
+
+.top-bar {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  height: 48px;
+  background: linear-gradient(180deg, rgba(22, 22, 26, 0.92), rgba(14, 14, 18, 0.92));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 12px;
+  z-index: 2000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #e6e6e6;
+  pointer-events: auto;
+}
+
+/* Sections inside the top bar */
+.top-bar-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+
+.top-bar-section.actions {
+  flex: 1;
+  min-width: 0;
+}
+
+.top-bar-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+/* Smaller side-menu toggle, sits inside the bar */
+.top-bar-menu-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e6e6e6;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, border-color 120ms ease;
+  flex-shrink: 0;
+}
+.top-bar-menu-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* VOLSCAPE wordmark — echoes the landing brand */
+.top-bar-brand {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.32em;
+  color: #f3f3f3;
+  text-shadow: 0 0 10px rgba(204, 133, 0, 0.25);
+  user-select: none;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+.top-bar-brand .brand-accent {
+  color: #cc8500;
+}
+
+/* Generic top-bar button — reused for all action icons */
+.top-bar-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e6e6e6;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+.top-bar-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.top-bar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.top-bar-btn.active {
+  background: rgba(120, 160, 255, 0.18);
+  border-color: rgba(120, 160, 255, 0.5);
+  color: #cfe0ff;
+}
+
+/* Variant: subtle accent borders for state indicators */
+.top-bar-btn.accent-orange { border-color: #d27b1f; color: #f3a85c; }
+.top-bar-btn.accent-blue   { border-color: #2196F3; color: #6ab9f5; }
+
+.top-bar-btn.record {
+  background: linear-gradient(135deg, #ff4757, #ff3742);
+  border-color: rgba(255, 71, 87, 0.5);
+  color: #fff;
+  font-size: 0;
+}
+.top-bar-btn.record:hover {
+  background: linear-gradient(135deg, #ff3742, #ff2f3a);
+}
+.top-bar-btn.record.recording {
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.top-bar-btn.delete {
+  background: rgba(244, 67, 54, 0.12);
+  border-color: rgba(244, 67, 54, 0.5);
+  color: #f47864;
+}
+.top-bar-btn.delete:hover:not(:disabled) {
+  background: rgba(244, 67, 54, 0.22);
+}
+
+.top-bar-btn.rescan {
+  background: rgba(76, 175, 80, 0.12);
+  border-color: rgba(76, 175, 80, 0.5);
+  color: #7adc7e;
+}
+.top-bar-btn.rescan:hover:not(:disabled) {
+  background: rgba(76, 175, 80, 0.22);
+}
+
+.top-bar-btn.info {
+  font-family: Georgia, serif;
+  font-weight: 600;
+  font-style: italic;
+}
+
+/* Cell coordinate pill */
+.top-bar-cell-pill {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e6e6e6;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* Push the old sidebar menu below the top bar */
+.sidebar-menu {
+  top: 64px !important;
+  left: 8px !important;
+}
+
+/* Hide the old standalone floating clusters when the top bar is active */
+.top-bar ~ .menu-button-container,
+body .top-bar + .menu-button-container {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .top-bar {
+    height: 44px;
+    gap: 6px;
+    padding: 0 6px;
+  }
+  .top-bar-brand {
+    font-size: 13px;
+    letter-spacing: 0.24em;
+  }
+  .top-bar-btn,
+  .top-bar-menu-button {
+    width: 30px;
+    height: 30px;
+  }
+}
