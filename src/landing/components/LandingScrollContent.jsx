@@ -106,13 +106,13 @@ const FEATURE_GROUPS = [
       'Interactive 3D architecture diagrams of any codebase',
       'Auto-scan public or private GitHub repositories',
       'Components, hooks, stores, services & shaders mapped automatically',
-      'Spatial navigation — fly through your system like a map',
+      'Spatial navigation - fly through your system like a map',
     ],
   },
   {
     title: 'Author',
     bullets: [
-      'Merfolk Markdown — diagrams as version-controlled text',
+      'Merfolk Markdown - diagrams as version-controlled text',
       'Face-to-face connections between 3D objects',
       'Flow paths to trace multi-hop data routes',
       'Live 2D preview alongside the 3D scene',
@@ -124,7 +124,7 @@ const FEATURE_GROUPS = [
       'Real-time shared spaces across your team',
       'Organisations with role-based access control',
       'Persistent cloud storage, available everywhere',
-      'Invite by email — no install required',
+      'Invite by email - no install required',
     ],
   },
   {
@@ -199,7 +199,7 @@ function DiagramContent({ isMobile }) {
           }}
         >
           Volscape uses <strong style={{ color: INK }}>Merfolk</strong> — a
-          simple Markdown extension — to describe nodes and relationships. Paste
+          simple Markdown extension - to describe nodes and relationships. Paste
           your diagram and explore it as a navigable 3D graph.
         </p>
       </div>
@@ -276,7 +276,7 @@ function DiagramContent({ isMobile }) {
               color: '#666',
             }}
           >
-            Interactive 3D visualization — navigate and share
+            Interactive 3D visualization - navigate and share
           </p>
         </div>
       </div>
@@ -321,7 +321,7 @@ function FeaturesContent({ isMobile }) {
           }}
         >
           Everything you need to visualise, author, share and scale 3D
-          architecture diagrams — built into a single browser-native workspace.
+          architecture diagrams.
         </p>
       </div>
 
@@ -402,7 +402,7 @@ function AudienceContent({ isMobile }) {
             margin: '0 auto',
           }}
         >
-          A shared spatial understanding of your systems — for every person on
+          A shared spatial understanding of your systems - for every person on
           the team.
         </p>
       </div>
