@@ -1,5 +1,5 @@
 import {
-  signInWithPopup,
+  signInWithRedirect,
   signInWithCustomToken,
   getRedirectResult,
   onAuthStateChanged,
@@ -20,39 +20,63 @@ export const signInUser = async () => {
     const isViewingSharedSpace =
       window.publicAccessSpace && window.currentSpaceOwner;
 
-    // Explicitly save current URL and view state before login
+    // Persist public-space context across the redirect round-trip so we can
+    // restore it after Firebase navigates back to the app.
+    if (isViewingSharedSpace) {
+      sessionStorage.setItem(
+        'pendingSharedSpaceContext',
+        JSON.stringify({
+          spaceId: window.publicAccessSpace,
+          ownerId: window.currentSpaceOwner,
+        })
+      );
+    }
 
-    const publicSpaceId = window.publicAccessSpace;
-    const publicSpaceOwner = window.currentSpaceOwner;
+    // Redirect to Google. The browser will navigate away and return to the
+    // app; `completeRedirectSignIn()` picks up the result on next page load.
+    await signInWithRedirect(auth, provider);
 
-    // Sign in with Google
-    const result = await signInWithPopup(auth, provider);
+    // Unreachable in practice — page navigates away before this line runs.
+    return null;
+  } catch (error) {
+    console.error('Error signing in:', error);
+    throw error;
+  }
+};
+
+// Call this once on app startup to complete a sign-in that began with
+// `signInWithRedirect`. Returns the signed-in user (or null if there's no
+// pending redirect result).
+export const completeRedirectSignIn = async () => {
+  try {
+    const result = await getRedirectResult(auth);
+    if (!result?.user) return null;
+
     const user = result.user;
 
-    // Restore public space context after login
-    if (isViewingSharedSpace) {
-      window.publicAccessSpace = publicSpaceId;
-      window.currentSpaceOwner = publicSpaceOwner;
-
-      // Register this user as having access to the shared space
-      await registerSharedSpaceFromUrl(
-        user.uid,
-        window.publicAccessSpace,
-        window.currentSpaceOwner
-      );
-
-      // Update session storage for safety
-      sessionStorage.setItem(`isPublicSpace_${publicSpaceId}`, 'true');
-      sessionStorage.setItem(`isSharedSpace_${publicSpaceId}`, 'true');
-      sessionStorage.setItem(
-        `sharedSpaceOwner_${publicSpaceId}`,
-        publicSpaceOwner
-      );
+    // Restore any public/shared space context that was active before the
+    // redirect navigated the page away.
+    const pendingRaw = sessionStorage.getItem('pendingSharedSpaceContext');
+    if (pendingRaw) {
+      sessionStorage.removeItem('pendingSharedSpaceContext');
+      try {
+        const { spaceId, ownerId } = JSON.parse(pendingRaw);
+        if (spaceId && ownerId) {
+          window.publicAccessSpace = spaceId;
+          window.currentSpaceOwner = ownerId;
+          await registerSharedSpaceFromUrl(user.uid, spaceId, ownerId);
+          sessionStorage.setItem(`isPublicSpace_${spaceId}`, 'true');
+          sessionStorage.setItem(`isSharedSpace_${spaceId}`, 'true');
+          sessionStorage.setItem(`sharedSpaceOwner_${spaceId}`, ownerId);
+        }
+      } catch (parseErr) {
+        console.warn('Failed to restore shared space context:', parseErr);
+      }
     }
 
     return user;
   } catch (error) {
-    console.error('Error signing in:', error);
+    console.error('Error completing redirect sign-in:', error);
     throw error;
   }
 };

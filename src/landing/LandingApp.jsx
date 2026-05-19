@@ -6,7 +6,7 @@ import React, {
   useCallback,
   useMemo,
 } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
 import { auth, provider, db, isValidFirebaseConfig } from '../firebase';
 import {
   doc,
@@ -157,6 +157,31 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     }
   }, []);
 
+  // Complete a pending signInWithRedirect on mount. When the user returns
+  // from Google after a redirect sign-in, Firebase exposes the result via
+  // getRedirectResult — we capture it here so the rest of the app sees the
+  // signed-in user immediately.
+  useEffect(() => {
+    let cancelled = false;
+    getRedirectResult(auth)
+      .then((result) => {
+        if (cancelled || !result?.user) return;
+        setUser(result.user);
+        createUserDocument(result.user).catch(() => {});
+      })
+      .catch((error) => {
+        // auth/no-auth-event is benign — it just means no pending redirect.
+        if (error?.code && error.code !== 'auth/no-auth-event') {
+          console.error('Redirect sign-in error:', error);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // createUserDocument is stable (useCallback with []), safe to omit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load user spaces and orgs when user changes
   useEffect(() => {
     if (user) {
@@ -217,7 +242,8 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     }
   }, []);
 
-  // Login handler
+  // Login handler — uses redirect (not popup) for forward compatibility with
+  // browser storage partitioning, mobile browsers, and strict COOP/COEP.
   const handleLogin = useCallback(async () => {
     if (!isValidFirebaseConfig) {
       alert(
@@ -231,9 +257,9 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         prompt: 'select_account',
       });
 
-      const result = await signInWithPopup(auth, provider);
-      setUser(result.user);
-      await createUserDocument(result.user);
+      // Page will navigate to Google and return to /. The post-redirect
+      // useEffect above picks up the result via getRedirectResult.
+      await signInWithRedirect(auth, provider);
     } catch (error) {
       console.error('Login error:', error);
 
@@ -244,15 +270,9 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         return;
       }
 
-      if (error.code === 'auth/popup-blocked') {
-        alert('Please allow popups for this website to login');
-      } else if (error.code === 'auth/cancelled-popup-request') {
-        return;
-      } else {
-        alert('Login failed. Please try again.');
-      }
+      alert('Login failed. Please try again.');
     }
-  }, [createUserDocument]);
+  }, []);
 
   // Logout handler
   const handleLogout = useCallback(() => {
