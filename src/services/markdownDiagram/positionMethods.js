@@ -134,8 +134,8 @@ export const positionMethods = {
           const row = Math.floor(componentSiblingIndex / gridSize);
           const col = componentSiblingIndex % gridSize;
 
-          const offsetX = spacingBetweenComponents * (col + 1);
-          const offsetZ = (row * spacingBetweenComponents) - ((gridSize - 1) * spacingBetweenComponents / 2);
+          const offsetX = (col - (gridSize - 1) / 2) * spacingBetweenComponents;
+          const offsetZ = (row - (gridSize - 1) / 2) * spacingBetweenComponents;
 
           const position = [
             parentPosition[0] + offsetX,
@@ -884,7 +884,7 @@ export const positionMethods = {
         }
       });
       const nodeHalfSize = maxScale * 5;
-      const gap = 40;
+      const gap = 80;
       return Math.max(100, nodeHalfSize * 2 + gap);
     };
 

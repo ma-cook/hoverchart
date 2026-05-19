@@ -560,24 +560,25 @@ export const containerMethods = {
   ) {
     const containerDimensions = new Map();
 
+    // Only COMPONENT-type parents get a per-parent "child container".
+    // Services, hooks, stores, libraries, modules, etc. are visually grouped
+    // by their group-level container (created in createGroupContainers), so
+    // they do NOT need a second per-parent container around their children.
     const containerEligibleTypes = new Set([
       NODE_TYPE_COMPONENT,
-      NODE_TYPE_SERVICE,
-      NODE_TYPE_STORE,
-      NODE_TYPE_HOOK,
-      NODE_TYPE_MODULE,
-      NODE_TYPE_LIBRARY,
-      NODE_TYPE_CLASS,
-      NODE_TYPE_INTERFACE,
     ]);
 
     for (const [parentNodeId, children] of parentChildMap.entries()) {
       const parentNode = graphNodes.get(parentNodeId);
       if (!parentNode || !containerEligibleTypes.has(parentNode.type)) continue;
 
-      const containerChildren = this.filterContainerChildren(children, graphNodes);
+      // Size the container to enclose only COMPONENT children. Including
+      // non-component descendants (hooks, functions, libraries, modules) was
+      // causing component containers to balloon out and overlap unrelated
+      // group containers.
+      const componentChildren = this.filterComponentChildren(children, graphNodes);
 
-      const externalComponentChildren = containerChildren.filter(
+      const externalComponentChildren = componentChildren.filter(
         (childId) => !internalComponentChildren.has(childId)
       );
 
