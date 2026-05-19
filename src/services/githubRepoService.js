@@ -212,7 +212,7 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
         if (
           item.name.endsWith('.js') ||
           item.name.endsWith('.jsx') ||
-          item.name.endsWith('.ts') ||
+          (item.name.endsWith('.ts') && !item.name.endsWith('.d.ts')) ||
           item.name.endsWith('.tsx')
         ) {
           structure.push({
@@ -3256,6 +3256,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       nextjsRouteMap,
       apiEndpoints,
       dbModels,
+      dbModelUsers,
       authGuards,
       authFlows,
       eventEmitters,
@@ -3320,6 +3321,7 @@ const generateMerfolkMarkdown = (
   nextjsRouteMap = new Map(),
   apiEndpoints = new Map(),
   dbModels = new Map(),
+  dbModelUsers = new Map(),
   authGuards = new Set(),
   authFlows = [],
   eventEmitters = new Map(),
