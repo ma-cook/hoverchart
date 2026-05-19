@@ -417,10 +417,8 @@ export const positionMethods = {
         if (level > 20) break;
       }
 
-      if (level === 0) {
-        if (!containersByLevel.has(level)) containersByLevel.set(level, []);
-        containersByLevel.get(level).push(containerId);
-      }
+      if (!containersByLevel.has(level)) containersByLevel.set(level, []);
+      containersByLevel.get(level).push(containerId);
     }
 
     if (!containersByLevel.has(-1)) containersByLevel.set(-1, []);
