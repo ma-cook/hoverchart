@@ -1560,6 +1560,8 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // NEW: Track database model/collection definitions and relationships
     // Maps: collectionName -> Set<relatedCollectionName>
     const dbModels = new Map();
+    // Maps: collectionName -> Set<callerName> (component/service/hook that accesses the collection)
+    const dbModelUsers = new Map();
 
     // NEW: Track auth guards/middleware
     // Set of guard names found across all files
@@ -2081,6 +2083,24 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
+
+                      // Track hook-to-service/utility/store dependencies so services
+                      // imported by hooks become connected nodes in the diagram.
+                      if (!componentDependencies.has(funcName)) {
+                        componentDependencies.set(funcName, new Set());
+                      }
+                      fileImports.stores.forEach((store) =>
+                        componentDependencies.get(funcName).add({ name: store, type: 'store' })
+                      );
+                      fileImports.services.forEach((service) =>
+                        componentDependencies.get(funcName).add({ name: service, type: 'service' })
+                      );
+                      fileImports.hooks.forEach((hook) =>
+                        componentDependencies.get(funcName).add({ name: hook, type: 'hook' })
+                      );
+                      (fileImports.utilities || []).forEach((utility) =>
+                        componentDependencies.get(funcName).add({ name: utility, type: 'utility' })
+                      );
                     }
                     // Hooks in component files are standalone - don't create file containers for them
                   }
@@ -2660,19 +2680,14 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     }
                   });
                 } else if (!foundItems.classes.has(className)) {
-                  // Non-React classes: emit as [[Class:]] type
+                  // Non-React classes: skip emitting as standalone [[Class:]] nodes.
+                  // They are implementation details of their parent service/utility file.
+                  // Emitting them produces orphaned nodes with only a "contains" dashed
+                  // edge (which the layout system ignores for connectivity), making them
+                  // appear as unused even when their service instance is connected.
                   foundItems.classes.add(className);
-                  elements.classes.push(className);
-                  // Track file→function relationship
-                  const containerType = fileContext.isBackend ? 'backend'
-                    : fileContext.isService ? 'service'
-                    : fileContext.isWorker ? 'worker'
-                    : fileContext.isUtil ? 'utility'
-                    : 'utility';
-                  if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: containerType, functions: new Set() });
-                  }
-                  fileFunctions.get(fileName).functions.add(className);
+                  // Do NOT add to elements.classes or fileFunctions —
+                  // the class simply does not appear as a diagram node.
                 }
               }
 
@@ -2874,6 +2889,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   if (collArg?.type === 'StringLiteral') {
                     const collName = sanitizeNodeId(collArg.value);
                     if (!dbModels.has(collName)) dbModels.set(collName, new Set());
+                    // Track which component/service/hook accesses this collection
+                    const caller = currentComponent || fileName;
+                    if (!dbModelUsers.has(caller)) dbModelUsers.set(caller, new Set());
+                    dbModelUsers.get(caller).add(collName);
                   }
                 }
                 // Mongoose: mongoose.model('Name', schema)
@@ -4279,6 +4298,20 @@ const generateMerfolkMarkdown = (
           const tgtId = `${relName}_model`;
           if (nodeIds.has(srcId) && nodeIds.has(tgtId)) {
             markdown += `${srcId} --> ${tgtId} : "references"\n`;
+          }
+        });
+      });
+    }
+
+    // Emit connections from callers (components/services/hooks) to their Firestore models
+    if (dbModelUsers.size > 0) {
+      markdown += '\n%% Model Access\n';
+      dbModelUsers.forEach((collections, caller) => {
+        collections.forEach(collName => {
+          const tgtId = `${collName}_model`;
+          if (nodeIds.has(tgtId)) {
+            const routedConnections = generateRoutedConnection(caller, tgtId, 'reads');
+            routedConnections.forEach(conn => { markdown += `${conn}\n`; });
           }
         });
       });
