@@ -481,20 +481,35 @@ export const positionMethods = {
             maxZ = Math.max(maxZ, pos[2] + nodeSize);
           }
         } else {
+          // Use the full subtree extent (all descendants, not just direct children)
+          // so that large child grids are accounted for in the bounding box.
           const componentChildren = getComponentChildren(containerId);
           if (componentChildren.length < 2) continue;
 
-          for (const childId of componentChildren) {
-            const childPos = nodePositions.get(childId);
-            if (!childPos) continue;
+          const collectAllDescendants = (id, visited) => {
+            const kids = parentChildMap.get(id);
+            if (!kids) return;
+            for (const kid of kids) {
+              if (visited.has(kid)) continue;
+              visited.add(kid);
+              collectAllDescendants(kid, visited);
+            }
+          };
 
-            const childScale = context.nodeScales?.get(childId) || [1, 1, 1];
-            const childSize = BASE_DODECAHEDRON_RADIUS * Math.max(...childScale);
+          const allDescendants = new Set();
+          collectAllDescendants(containerId, allDescendants);
 
-            minX = Math.min(minX, childPos[0] - childSize);
-            maxX = Math.max(maxX, childPos[0] + childSize);
-            minZ = Math.min(minZ, childPos[2] - childSize);
-            maxZ = Math.max(maxZ, childPos[2] + childSize);
+          for (const descId of allDescendants) {
+            const descPos = nodePositions.get(descId);
+            if (!descPos) continue;
+
+            const descScale = context.nodeScales?.get(descId) || [1, 1, 1];
+            const descSize = BASE_DODECAHEDRON_RADIUS * Math.max(...descScale);
+
+            minX = Math.min(minX, descPos[0] - descSize);
+            maxX = Math.max(maxX, descPos[0] + descSize);
+            minZ = Math.min(minZ, descPos[2] - descSize);
+            maxZ = Math.max(maxZ, descPos[2] + descSize);
           }
         }
 

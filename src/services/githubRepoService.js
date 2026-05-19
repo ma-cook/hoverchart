@@ -1848,6 +1848,13 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             // Track all components found in this file for internal component detection
             const fileComponents = [];
 
+            // Bodies that have already been explicitly traversed with the component
+            // context flag set to true. Tracked so the generic tail-recursion at the
+            // bottom of `traverse` does not visit the same body a second time with
+            // parentIsComponent=false, which would allocate duplicate `_2`-suffixed
+            // function IDs and emit redundant nodes / connections.
+            const traversedBodies = new WeakSet();
+
             // Recursive function to traverse the AST
             const traverse = (node, parentIsComponent = false) => {
               if (!node || typeof node !== 'object') return;
@@ -2033,8 +2040,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       }
                     });
                   }
-                  // Traverse function body with component context
+                  // Traverse function body with component context.
+                  // Register the body in traversedBodies BEFORE traversing so
+                  // the generic tail-recursion below skips it (preventing
+                  // duplicate helper-function allocation).
                   if (node.body) {
+                    traversedBodies.add(node.body);
                     traverse(node.body, true);
                   }
                 } else if (funcName.startsWith('use') && !fileContext.isStore) {
@@ -2367,8 +2378,12 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                             }
                           });
                         }
-                        // Traverse function body with component context
+                        // Traverse function body with component context.
+                        // Register the body in traversedBodies BEFORE traversing so
+                        // the generic tail-recursion below skips it (preventing
+                        // duplicate helper-function allocation).
                         if (decl.init.body) {
+                          traversedBodies.add(decl.init.body);
                           traverse(decl.init.body, true);
                         }
                       } else if (varName.startsWith('use') && !fileContext.isStore) {
@@ -3036,13 +3051,17 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 });
               }
 
-              // Recursively traverse child nodes
+              // Recursively traverse child nodes.
+              // Skip any body node that was already explicitly traversed above
+              // with parentIsComponent=true to prevent double-processing.
               Object.keys(node).forEach((key) => {
                 const child = node[key];
                 if (Array.isArray(child)) {
-                  child.forEach((c) => traverse(c, parentIsComponent));
+                  child.forEach((c) => {
+                    if (!traversedBodies.has(c)) traverse(c, parentIsComponent);
+                  });
                 } else if (child && typeof child === 'object' && child.type) {
-                  traverse(child, parentIsComponent);
+                  if (!traversedBodies.has(child)) traverse(child, parentIsComponent);
                 }
               });
             };
