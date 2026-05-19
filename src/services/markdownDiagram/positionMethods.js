@@ -417,8 +417,17 @@ export const positionMethods = {
         if (level > 20) break;
       }
 
-      if (!containersByLevel.has(level)) containersByLevel.set(level, []);
-      containersByLevel.get(level).push(containerId);
+      // Resolve overlaps at the top two hierarchy levels only.
+      //   level 0: root containers (e.g. AppShell) vs other root containers / groups
+      //   level 1: siblings under a single root (e.g. App vs LandingApp), where
+      //            each sibling's full child-grid extent is captured by its
+      //            immediate-children bbox.
+      // Deeper levels are intentionally excluded to avoid cascading shifts
+      // (each level's bbox depends on the previous level's positions).
+      if (level <= 1) {
+        if (!containersByLevel.has(level)) containersByLevel.set(level, []);
+        containersByLevel.get(level).push(containerId);
+      }
     }
 
     if (!containersByLevel.has(-1)) containersByLevel.set(-1, []);

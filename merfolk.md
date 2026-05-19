@@ -53,6 +53,9 @@ ObjectsRenderer{Component: ObjectsRenderer}
 ObjectUI{Component: ObjectUI}
 Plane{Component: Plane}
 RealTimeConnectionUpdater{Component: RealTimeConnectionUpdater}
+TreeRow{Component: TreeRow}
+GroupedView{Component: GroupedView}
+RepoAnalysisOverlay{Component: RepoAnalysisOverlay}
 RepoGrid_file{Component: RepoGrid}
 RepoGridLines{Component: RepoGridLines}
 ScreenShareStream{Component: ScreenShareStream}
@@ -75,8 +78,11 @@ WebcamStream{Component: WebcamStream}
 CreateOrganizationPopup{Component: CreateOrganizationPopup}
 CreateSpacePopup{Component: CreateSpacePopup}
 DodecahedronWireframe2{Component: DodecahedronWireframe2}
+SectionEyebrow{Component: SectionEyebrow}
+Bullet{Component: Bullet}
 ContentPanel{Component: ContentPanel}
 DiagramContent{Component: DiagramContent}
+FeaturesContent{Component: FeaturesContent}
 AudienceContent{Component: AudienceContent}
 CtaContent{Component: CtaContent}
 LandingScrollContent_file{Component: LandingScrollContent}
@@ -99,7 +105,6 @@ UpdatesEditor{Component: UpdatesEditor}
 UpdatesViewer{Component: UpdatesViewer}
 UserForm{Component: UserForm}
 Model{Component: Model}
-WhitePlane{Component: WhitePlane}
 
 %% Internal Helper Components
 AtlasTextSprite -.-> StaticBillboardMesh : "internal"
@@ -109,13 +114,18 @@ ConnectionsRenderer -.-> Connection : "internal"
 EdgeMarkerDefs -.-> MerfolkEdge : "internal"
 ContainerNode -.-> MerfolkNode : "internal"
 InstancedAtlasText -.-> PageInstancedMesh : "internal"
+RepoAnalysisOverlay -.-> TreeRow : "internal"
+RepoAnalysisOverlay -.-> GroupedView : "internal"
 RepoGrid_file -.-> RepoGridLines : "internal"
 SpacePresenceAvatars -.-> Avatar : "internal"
 SpacePresenceAvatars -.-> HandTrackingToggle : "internal"
 TextStyleUI -.-> TextStyleUIContent : "internal"
 UIOverlay -.-> EarthSidebarSections : "internal"
+LandingScrollContent_file -.-> SectionEyebrow : "internal"
+LandingScrollContent_file -.-> Bullet : "internal"
 LandingScrollContent_file -.-> ContentPanel : "internal"
 LandingScrollContent_file -.-> DiagramContent : "internal"
+LandingScrollContent_file -.-> FeaturesContent : "internal"
 LandingScrollContent_file -.-> AudienceContent : "internal"
 LandingScrollContent_file -.-> CtaContent : "internal"
 
@@ -130,6 +140,8 @@ toMillis[Function: toMillis]
 deleteCellContents[Function: deleteCellContents]
 createBulkDeleteApp[Function: createBulkDeleteApp]
 bulkDelete[Function: bulkDelete]
+runBulkDeleteJob[Function: runBulkDeleteJob]
+bulkDeleteWorker[Function: bulkDeleteWorker]
 validateRuntimeScanUrl[Function: validateRuntimeScanUrl]
 sanitizeMerfolkId[Function: sanitizeMerfolkId]
 generateMerfolkFromRuntimeTrace[Function: generateMerfolkFromRuntimeTrace]
@@ -154,6 +166,12 @@ sampleElevation[Function: sampleElevation]
 generateHeightmap[Function: generateHeightmap]
 main[Function: main]
 worker[Function: worker]
+isCubeChild[Function: isCubeChild]
+isContainerType[Function: isContainerType]
+wouldCreateCycle[Function: wouldCreateCycle]
+dfs[Function: dfs]
+addRel[Function: addRel]
+positionNode[Function: positionNode]
 AppShell[Function: AppShell]
 handleOpenSpace[Function: handleOpenSpace]
 handleBackToLanding[Function: handleBackToLanding]
@@ -221,6 +239,15 @@ getKey[Function: getKey]
 addPage[Function: addPage]
 getTextAtlasWorker[Function: getTextAtlasWorker]
 terminateTextAtlasWorker[Function: terminateTextAtlasWorker]
+ensureInit[Function: ensureInit]
+getLanguage[Function: getLanguage]
+getQuery[Function: getQuery]
+getParser[Function: getParser]
+collectDottedSegments[Function: collectDottedSegments]
+summariseQueryMatches[Function: summariseQueryMatches]
+stripPathQuotes[Function: stripPathQuotes]
+getTreeSitterScannerWorker[Function: getTreeSitterScannerWorker]
+terminateTreeSitterScannerWorker[Function: terminateTreeSitterScannerWorker]
 
 %% Hooks
 useAuth[Function: useAuth]
@@ -269,6 +296,7 @@ useWindowSize_file -.-> useWindowSize : "internal hook"
 objectsByCellId[Function: objectsByCellId]
 connectionsByCellId[Function: connectionsByCellId]
 params[Function: params]
+cellsToKeep[Function: cellsToKeep]
 EXCLUDED_PROFILER_NAMES[Function: EXCLUDED_PROFILER_NAMES]
 BUNDLE_NOISE_NAMES[Function: BUNDLE_NOISE_NAMES]
 bundleComponents[Function: bundleComponents]
@@ -278,6 +306,7 @@ urlObj[Function: urlObj]
 seen[Function: seen]
 seenFns[Function: seenFns]
 signInUser[Function: signInUser]
+completeRedirectSignIn[Function: completeRedirectSignIn]
 handlePostLoginRedirect[Function: handlePostLoginRedirect]
 signOut[Function: signOut]
 handleRedirectResult[Function: handleRedirectResult]
@@ -360,6 +389,7 @@ handleGithubCallback[Function: handleGithubCallback]
 scanRepositoryAndGenerateDiagram[Function: scanRepositoryAndGenerateDiagram]
 mergeMerfolkMarkdown[Function: mergeMerfolkMarkdown]
 rescanRepositoryForChanges[Function: rescanRepositoryForChanges]
+getTreeSitterLanguage[Function: getTreeSitterLanguage]
 getFileTypeFromPath[Function: getFileTypeFromPath]
 analyzeFile[Function: analyzeFile]
 containsJSX[Function: containsJSX]
@@ -377,7 +407,11 @@ localNames[Function: localNames]
 traverseVueSource[Function: traverseVueSource]
 componentFunctions[Function: componentFunctions]
 componentFuncDisplayNames[Function: componentFuncDisplayNames]
+funcIdCounters[Function: funcIdCounters]
+allocateFuncId[Function: allocateFuncId]
 componentRelationships[Function: componentRelationships]
+componentToFile[Function: componentToFile]
+componentImportSources[Function: componentImportSources]
 componentDependencies[Function: componentDependencies]
 internalComponents[Function: internalComponents]
 exportedComponents[Function: exportedComponents]
@@ -402,7 +436,11 @@ interfaceUsages[Function: interfaceUsages]
 traverse[Function: traverse]
 isMiddlewareParams[Function: isMiddlewareParams]
 knownContainers[Function: knownContainers]
+componentsSetForResolve[Function: componentsSetForResolve]
+fileToComponent[Function: fileToComponent]
 generateMerfolkMarkdown[Function: generateMerfolkMarkdown]
+ENTRY_POINT_COMPONENT_NAMES[Function: ENTRY_POINT_COMPONENT_NAMES]
+isValidComponentName[Function: isValidComponentName]
 storesSet[Function: storesSet]
 servicesSet[Function: servicesSet]
 classesSet[Function: classesSet]
@@ -415,7 +453,6 @@ hooksSet[Function: hooksSet]
 servicesSetForFilter[Function: servicesSetForFilter]
 storesSetForFilter[Function: storesSetForFilter]
 utilitiesSetForFilter[Function: utilitiesSetForFilter]
-nodeIds[Function: nodeIds]
 childToParentMap[Function: childToParentMap]
 allSymbolNames[Function: allSymbolNames]
 generateRoutedConnection[Function: generateRoutedConnection]
@@ -425,6 +462,7 @@ resolveRouteNodeId[Function: resolveRouteNodeId]
 routeGroups[Function: routeGroups]
 routeRepresentative[Function: routeRepresentative]
 allEventNames[Function: allEventNames]
+ifaceOnlyContainers[Function: ifaceOnlyContainers]
 currentParams[Function: currentParams]
 restoredParams[Function: restoredParams]
 newUrl[Function: newUrl]
@@ -483,6 +521,8 @@ calculateDodecahedronFaceCenter[Function: calculateDodecahedronFaceCenter]
 connectionsByCell[Function: connectionsByCell]
 getGroupDisplayName[Function: getGroupDisplayName]
 getGroupColor[Function: getGroupColor]
+hierarchyComponents[Function: hierarchyComponents]
+markHierarchyReachable[Function: markHierarchyReachable]
 groupedByType[Function: groupedByType]
 createContainerForGroup[Function: createContainerForGroup]
 existingGroupTypes[Function: existingGroupTypes]
@@ -491,21 +531,19 @@ markReachable[Function: markReachable]
 componentsWithChildContainers[Function: componentsWithChildContainers]
 nodesInChildContainers[Function: nodesInChildContainers]
 markDescendantsInChildContainers[Function: markDescendantsInChildContainers]
+includableTypes[Function: includableTypes]
 nodesWithContainers[Function: nodesWithContainers]
-visited[Function: visited]
 adjustNodeAndDescendants[Function: adjustNodeAndDescendants]
 containerDimensions[Function: containerDimensions]
+containerEligibleTypes[Function: containerEligibleTypes]
 existingParentNodeIds[Function: existingParentNodeIds]
 parentChildMap[Function: parentChildMap]
 childParentMap[Function: childParentMap]
 rootNodes[Function: rootNodes]
 internalComponentChildren[Function: internalComponentChildren]
 componentConnectionTypes[Function: componentConnectionTypes]
-wouldCreateCycle[Function: wouldCreateCycle]
-dfs[Function: dfs]
 warnedCycles[Function: warnedCycles]
 addParentChildRelation[Function: addParentChildRelation]
-isCubeChild[Function: isCubeChild]
 processedNodes[Function: processedNodes]
 existingNodeIdMap[Function: existingNodeIdMap]
 calculateHeaderStyle[Function: calculateHeaderStyle]
@@ -701,6 +739,12 @@ getStreamlinedSpatialManager[Function: getStreamlinedSpatialManager]
 initializeStreamlinedSpatialPartitioning[Function: initializeStreamlinedSpatialPartitioning]
 benchmarkStreamlinedSystem[Function: benchmarkStreamlinedSystem]
 manager[Function: manager]
+resolveContainerType[Function: resolveContainerType]
+scanWithTreeSitter[Function: scanWithTreeSitter]
+scanPythonWithTreeSitter[Function: scanPythonWithTreeSitter]
+isPrivate[Function: isPrivate]
+isDunder[Function: isDunder]
+importedNames[Function: importedNames]
 unifiedCacheManager[Function: unifiedCacheManager]
 initWebRTC[Function: initWebRTC]
 startBroadcasting[Function: startBroadcasting]
@@ -857,6 +901,15 @@ addSharedSpaceReference[Function: addSharedSpaceReference]
 removeSharedSpaceReference[Function: removeSharedSpaceReference]
 getSharedSpacesForUser[Function: getSharedSpacesForUser]
 removeAllSharedReferences[Function: removeAllSharedReferences]
+nodeIds[Function: nodeIds]
+visited[Function: visited]
+recursionStack[Function: recursionStack]
+node[Function: node]
+connection[Function: connection]
+nodeMap[Function: nodeMap]
+nodesWithCustomPositions[Function: nodesWithCustomPositions]
+layers[Function: layers]
+componentGroups[Function: componentGroups]
 line_frag_glsl[Function: line_frag_glsl]
 line_vert_glsl[Function: line_vert_glsl]
 monitorConnection[Function: monitorConnection]
@@ -1115,6 +1168,12 @@ frustumCullConnections[Function: frustumCullConnections]
 
 %% Classes
 SpatialHash[[Class: SpatialHash]]
+AST3DGenerator[[Class: AST3DGenerator]]
+Graph[[Class: Graph]]
+Node[[Class: Node]]
+ASTBuilder[[Class: ASTBuilder]]
+MermaidParser[[Class: MermaidParser]]
+MarkdownProcessor[[Class: MarkdownProcessor]]
 CentralizedBroadcastManager[[Class: CentralizedBroadcastManager]]
 GlobalOptimizationCoordinator[[Class: GlobalOptimizationCoordinator]]
 MarkdownDiagramService[[Class: MarkdownDiagramService]]
@@ -1150,6 +1209,31 @@ TARGET_HEIGHT[Constant: TARGET_HEIGHT]
 CONCURRENT[Constant: CONCURRENT]
 BASE_URL[Constant: BASE_URL]
 DEG2RAD[Constant: DEG2RAD]
+types[Constant: types]
+graph[Constant: graph]
+NODE_TYPE_COMPONENT[Constant: NODE_TYPE_COMPONENT]
+NODE_TYPE_FUNCTION[Constant: NODE_TYPE_FUNCTION]
+NODE_TYPE_HOOK[Constant: NODE_TYPE_HOOK]
+NODE_TYPE_SERVICE[Constant: NODE_TYPE_SERVICE]
+NODE_TYPE_STORE[Constant: NODE_TYPE_STORE]
+NODE_TYPE_LIBRARY[Constant: NODE_TYPE_LIBRARY]
+NODE_TYPE_MODULE[Constant: NODE_TYPE_MODULE]
+NODE_TYPE_CLASS[Constant: NODE_TYPE_CLASS]
+NODE_TYPE_INTERFACE[Constant: NODE_TYPE_INTERFACE]
+NODE_TYPE_VARIABLE[Constant: NODE_TYPE_VARIABLE]
+NODE_TYPE_CONSTANT[Constant: NODE_TYPE_CONSTANT]
+NODE_TYPE_DATAPATH[Constant: NODE_TYPE_DATAPATH]
+ungroupedComponents[Constant: ungroupedComponents]
+unpositioned[Constant: unpositioned]
+unposByType[Constant: unposByType]
+shim[Constant: shim]
+inFile[Constant: inFile]
+outFile[Constant: outFile]
+FIXTURES[Constant: FIXTURES]
+expectAtLeast[Constant: expectAtLeast]
+tmp[Constant: tmp]
+fixture[Constant: fixture]
+result[Constant: result]
 THROTTLE_FACE_TEXT[Constant: THROTTLE_FACE_TEXT]
 THROTTLE_HEADER_TEXT[Constant: THROTTLE_HEADER_TEXT]
 THROTTLE_CONNECTION_TEXT[Constant: THROTTLE_CONNECTION_TEXT]
@@ -1260,6 +1344,12 @@ TRANSFORM_CONTROLS_CONFIG[Constant: TRANSFORM_CONTROLS_CONFIG]
 MOUNT_BUDGET[Constant: MOUNT_BUDGET]
 MOUNT_BUDGET_MOVING[Constant: MOUNT_BUDGET_MOVING]
 PROGRESSIVE_THRESHOLD[Constant: PROGRESSIVE_THRESHOLD]
+TYPE_LABELS[Constant: TYPE_LABELS]
+TYPE_ORDER[Constant: TYPE_ORDER]
+TYPE_ICON[Constant: TYPE_ICON]
+GROUP_DISPLAY_NAMES[Constant: GROUP_DISPLAY_NAMES]
+GROUP_ORDER[Constant: GROUP_ORDER]
+ROOT_ENTRY_NAMES[Constant: ROOT_ENTRY_NAMES]
 GRID_OPACITY[Constant: GRID_OPACITY]
 GRID_CELL_PADDING[Constant: GRID_CELL_PADDING]
 INITIAL_LOAD[Constant: INITIAL_LOAD]
@@ -1275,7 +1365,10 @@ isValidFirebaseConfig[Constant: isValidFirebaseConfig]
 CLEANUP_INTERVAL[Constant: CLEANUP_INTERVAL]
 DEFAULT_EXCLUDE_SELECTORS[Constant: DEFAULT_EXCLUDE_SELECTORS]
 BRAND[Constant: BRAND]
+BRAND_DARK[Constant: BRAND_DARK]
+INK[Constant: INK]
 AUDIENCE_CARDS[Constant: AUDIENCE_CARDS]
+FEATURE_GROUPS[Constant: FEATURE_GROUPS]
 FONT_FAMILY[Constant: FONT_FAMILY]
 PLAN_LABELS[Constant: PLAN_LABELS]
 btnBase[Constant: btnBase]
@@ -1294,6 +1387,7 @@ INVITE_BTN_ROW[Constant: INVITE_BTN_ROW]
 ACCEPT_BTN_STYLES[Constant: ACCEPT_BTN_STYLES]
 NO_SPACES_TEXT[Constant: NO_SPACES_TEXT]
 TIER_LIMITS[Constant: TIER_LIMITS]
+HERO_BULLETS[Constant: HERO_BULLETS]
 CELL[Constant: CELL]
 NX[Constant: NX]
 NY[Constant: NY]
@@ -1305,14 +1399,14 @@ FADE_LEFT[Constant: FADE_LEFT]
 FADE_RIGHT[Constant: FADE_RIGHT]
 FADE_BOTTOM[Constant: FADE_BOTTOM]
 FADE_FAR[Constant: FADE_FAR]
-vertexShader[Constant: vertexShader]
-fragmentShader[Constant: fragmentShader]
+DEFAULT_CONFIG[Constant: DEFAULT_CONFIG]
 MIN_SCALE[Constant: MIN_SCALE]
 MAX_SCALE[Constant: MAX_SCALE]
 CONTAINER_PADDING[Constant: CONTAINER_PADDING]
 MAX_COLUMNS[Constant: MAX_COLUMNS]
 GITHUB_API[Constant: GITHUB_API]
 GITHUB_API_BASE[Constant: GITHUB_API_BASE]
+TREE_SITTER_EXTENSIONS[Constant: TREE_SITTER_EXTENSIONS]
 MAX_SUBSCRIPTION_AGE[Constant: MAX_SUBSCRIPTION_AGE]
 SUBSCRIPTION_TYPES[Constant: SUBSCRIPTION_TYPES]
 subscriptionMetrics[Constant: subscriptionMetrics]
@@ -1345,23 +1439,11 @@ HAND_DETECTOR_DATA_URL[Constant: HAND_DETECTOR_DATA_URL]
 HAND_LANDMARK_URL[Constant: HAND_LANDMARK_URL]
 HAND_LANDMARK_DATA_URL[Constant: HAND_LANDMARK_DATA_URL]
 connectionMethods[Constant: connectionMethods]
-NODE_TYPE_COMPONENT[Constant: NODE_TYPE_COMPONENT]
-NODE_TYPE_FUNCTION[Constant: NODE_TYPE_FUNCTION]
-NODE_TYPE_STORE[Constant: NODE_TYPE_STORE]
-NODE_TYPE_SERVICE[Constant: NODE_TYPE_SERVICE]
-NODE_TYPE_LIBRARY[Constant: NODE_TYPE_LIBRARY]
 NODE_TYPE_UTILITY[Constant: NODE_TYPE_UTILITY]
-NODE_TYPE_DATAPATH[Constant: NODE_TYPE_DATAPATH]
 NODE_TYPE_HANDLER[Constant: NODE_TYPE_HANDLER]
 NODE_TYPE_CONTROL[Constant: NODE_TYPE_CONTROL]
 NODE_TYPE_STATE[Constant: NODE_TYPE_STATE]
 NODE_TYPE_DATA[Constant: NODE_TYPE_DATA]
-NODE_TYPE_HOOK[Constant: NODE_TYPE_HOOK]
-NODE_TYPE_MODULE[Constant: NODE_TYPE_MODULE]
-NODE_TYPE_CLASS[Constant: NODE_TYPE_CLASS]
-NODE_TYPE_INTERFACE[Constant: NODE_TYPE_INTERFACE]
-NODE_TYPE_VARIABLE[Constant: NODE_TYPE_VARIABLE]
-NODE_TYPE_CONSTANT[Constant: NODE_TYPE_CONSTANT]
 OBJECT_TYPE_CUBE[Constant: OBJECT_TYPE_CUBE]
 OBJECT_TYPE_DODECAHEDRON[Constant: OBJECT_TYPE_DODECAHEDRON]
 OBJECT_TYPE_TETRAHEDRON[Constant: OBJECT_TYPE_TETRAHEDRON]
@@ -1377,7 +1459,6 @@ DEFAULT_CONTAINER_SIZE[Constant: DEFAULT_CONTAINER_SIZE]
 MIN_SCALE_FACTOR[Constant: MIN_SCALE_FACTOR]
 DESIRED_GAP[Constant: DESIRED_GAP]
 GROUP_CONTAINER_COLORS[Constant: GROUP_CONTAINER_COLORS]
-GROUP_DISPLAY_NAMES[Constant: GROUP_DISPLAY_NAMES]
 containerMethods[Constant: containerMethods]
 hierarchyMethods[Constant: hierarchyMethods]
 objectMethods[Constant: objectMethods]
@@ -1408,6 +1489,7 @@ MAX_CACHE_SIZE[Constant: MAX_CACHE_SIZE]
 MOVE_TIMEOUT[Constant: MOVE_TIMEOUT]
 MAX_IMAGE_SIZE[Constant: MAX_IMAGE_SIZE]
 MAX_MODEL_SIZE[Constant: MAX_MODEL_SIZE]
+STDLIB_DENY[Constant: STDLIB_DENY]
 CACHE_CONFIG[Constant: CACHE_CONFIG]
 memoizationCache[Constant: memoizationCache]
 DEFAULT_STATE[Constant: DEFAULT_STATE]
@@ -1493,8 +1575,26 @@ LOD_PARENT_FULL_SQ[Constant: LOD_PARENT_FULL_SQ]
 LOD_PARENT_MEDIUM_SQ[Constant: LOD_PARENT_MEDIUM_SQ]
 PADDING[Constant: PADDING]
 pages[Constant: pages]
+PYTHON_QUERY[Constant: PYTHON_QUERY]
+JAVASCRIPT_QUERY[Constant: JAVASCRIPT_QUERY]
+TYPESCRIPT_QUERY[Constant: TYPESCRIPT_QUERY]
+GO_QUERY[Constant: GO_QUERY]
+RUST_QUERY[Constant: RUST_QUERY]
+JAVA_QUERY[Constant: JAVA_QUERY]
+C_QUERY[Constant: C_QUERY]
+CPP_QUERY[Constant: CPP_QUERY]
+CSHARP_QUERY[Constant: CSHARP_QUERY]
+RUBY_QUERY[Constant: RUBY_QUERY]
+PHP_QUERY[Constant: PHP_QUERY]
+LANGUAGES[Constant: LANGUAGES]
 
 %% Variables
+engine[Variable: engine]
+totalNodes[Variable: totalNodes]
+totalConn[Variable: totalConn]
+errors[Variable: errors]
+warnings[Variable: warnings]
+allOk[Variable: allOk]
 isNetworkEnabled[Variable: isNetworkEnabled]
 listenersArePaused[Variable: listenersArePaused]
 cachedAnchors[Variable: cachedAnchors]
@@ -1567,6 +1667,25 @@ maxGPUTextureSize[Variable: maxGPUTextureSize]
 instance[Variable: instance]
 
 %% Interfaces
+ConnectionPoint[[Interface: ConnectionPoint]]
+ParsedNode[[Interface: ParsedNode]]
+ParsedConnection[[Interface: ParsedConnection]]
+ParsedFlowPath[[Interface: ParsedFlowPath]]
+ParsedGraph[[Interface: ParsedGraph]]
+VisualProperties[[Interface: VisualProperties]]
+ASTNode[[Interface: ASTNode]]
+ASTConnection[[Interface: ASTConnection]]
+FlowPath[[Interface: FlowPath]]
+AST3DGraph[[Interface: AST3DGraph]]
+ASTConfig[[Interface: ASTConfig]]
+Config[[Interface: Config]]
+Position3D[[Interface: Position3D]]
+Rotation3D[[Interface: Rotation3D]]
+Scale3D[[Interface: Scale3D]]
+Transform3D[[Interface: Transform3D]]
+Face[[Interface: Face]]
+AST3DBlock[[Interface: AST3DBlock]]
+ProcessedDiagram[[Interface: ProcessedDiagram]]
 InitInput[[Interface: InitInput]]
 InitOutput[[Interface: InitOutput]]
 SyncInitInput[[Interface: SyncInitInput]]
@@ -1581,12 +1700,18 @@ firebase-admin/app<Library: firebase-admin/app>
 firebase-admin/auth<Library: firebase-admin/auth>
 firebase-admin/firestore<Library: firebase-admin/firestore>
 firebase-functions/v2/https<Library: firebase-functions/v2/https>
+firebase-functions/v2/firestore<Library: firebase-functions/v2/firestore>
 firebase-functions/params<Library: firebase-functions/params>
 puppeteer-core<Library: puppeteer-core>
 @sparticuz/chromium<Library: @sparticuz/chromium>
 express<Library: express>
 cors<Library: cors>
 dotenv<Library: dotenv>
+fs<Library: fs>
+esbuild<Library: esbuild>
+os<Library: os>
+path<Library: path>
+module<Library: module>
 react<Library: react>
 @react-three/fiber<Library: @react-three/fiber>
 @react-three/postprocessing<Library: @react-three/postprocessing>
@@ -1613,10 +1738,23 @@ draft-js/dist/Draft.css<Library: draft-js/dist/Draft.css>
 react-dom/client<Library: react-dom/client>
 @babel/parser<Library: @babel/parser>
 comlink<Library: comlink>
-3d-ast-generator<Library: 3d-ast-generator>
 fix-webm-duration<Library: fix-webm-duration>
 uuid<Library: uuid>
 zustand/traditional<Library: zustand/traditional>
+web-tree-sitter<Library: web-tree-sitter>
+web-tree-sitter/tree-sitter.wasm?url<Library: web-tree-sitter/tree-sitter.wasm?url>
+tree-sitter-wasms/out/tree-sitter-python.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-python.wasm?url>
+tree-sitter-wasms/out/tree-sitter-javascript.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-javascript.wasm?url>
+tree-sitter-wasms/out/tree-sitter-typescript.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-typescript.wasm?url>
+tree-sitter-wasms/out/tree-sitter-tsx.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-tsx.wasm?url>
+tree-sitter-wasms/out/tree-sitter-go.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-go.wasm?url>
+tree-sitter-wasms/out/tree-sitter-rust.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-rust.wasm?url>
+tree-sitter-wasms/out/tree-sitter-java.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-java.wasm?url>
+tree-sitter-wasms/out/tree-sitter-c.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-c.wasm?url>
+tree-sitter-wasms/out/tree-sitter-cpp.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-cpp.wasm?url>
+tree-sitter-wasms/out/tree-sitter-c_sharp.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-c_sharp.wasm?url>
+tree-sitter-wasms/out/tree-sitter-ruby.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-ruby.wasm?url>
+tree-sitter-wasms/out/tree-sitter-php.wasm?url<Library: tree-sitter-wasms/out/tree-sitter-php.wasm?url>
 vite<Library: vite>
 @vitejs/plugin-react<Library: @vitejs/plugin-react>
 vite-plugin-glsl<Library: vite-plugin-glsl>
@@ -1879,6 +2017,8 @@ planeHandleIndicatorClick[Function: planeHandleIndicatorClick]
 planeIsIndicatorConnected[Function: planeIsIndicatorConnected]
 planeShouldShowIndicator[Function: planeShouldShowIndicator]
 planeHandleBroadcastStopped[Function: planeHandleBroadcastStopped]
+planeApplyStreamScale[Function: planeApplyStreamScale]
+planeRestoreStreamScale[Function: planeRestoreStreamScale]
 planeHandleWebcamToggle[Function: planeHandleWebcamToggle]
 planeHandleScreenShareToggle[Function: planeHandleScreenShareToggle]
 planeHandlePinToggle[Function: planeHandlePinToggle]
@@ -1893,6 +2033,13 @@ planeBorderEdgePoints[Function: planeBorderEdgePoints]
 realtimeconnectionupdaterRunConnectionUpdate[Function: realtimeconnectionupdaterRunConnectionUpdate]
 realtimeconnectionupdaterRebuildConnectionMap[Function: realtimeconnectionupdaterRebuildConnectionMap]
 realtimeconnectionupdaterUpdateConnectionEndpoint[Function: realtimeconnectionupdaterUpdateConnectionEndpoint]
+groupedviewToggleGroup[Function: groupedviewToggleGroup]
+groupedviewMarkReachable[Function: groupedviewMarkReachable]
+repoanalysisoverlayToggle[Function: repoanalysisoverlayToggle]
+repoanalysisoverlayVisibleRoots[Function: repoanalysisoverlayVisibleRoots]
+repoanalysisoverlayExpandAll[Function: repoanalysisoverlayExpandAll]
+repoanalysisoverlayCollapseAll[Function: repoanalysisoverlayCollapseAll]
+repoanalysisoverlayAncestorOf[Function: repoanalysisoverlayAncestorOf]
 repogridContainers[Function: repogridContainers]
 repogridGridData[Function: repogridGridData]
 screensharestreamAttemptPlay[Function: screensharestreamAttemptPlay]
@@ -2078,7 +2225,6 @@ updateseditorToggleInlineStyle[Function: updateseditorToggleInlineStyle]
 updateseditorHandleSave[Function: updateseditorHandleSave]
 updatesviewerParsedContent[Function: updatesviewerParsedContent]
 updatesviewerFormattedTimestamp[Function: updatesviewerFormattedTimestamp]
-whiteplaneMaterial[Function: whiteplaneMaterial]
 
 %% Component-Function Relationships
 App -.-> appObjects : "internal function"
@@ -2336,6 +2482,8 @@ Plane -.-> planeHandleIndicatorClick : "event handler"
 Plane -.-> planeIsIndicatorConnected : "boolean check"
 Plane -.-> planeShouldShowIndicator : "boolean check"
 Plane -.-> planeHandleBroadcastStopped : "event handler"
+Plane -.-> planeApplyStreamScale : "internal function"
+Plane -.-> planeRestoreStreamScale : "internal function"
 Plane -.-> planeHandleWebcamToggle : "event handler"
 Plane -.-> planeHandleScreenShareToggle : "event handler"
 Plane -.-> planeHandlePinToggle : "event handler"
@@ -2350,6 +2498,13 @@ Plane -.-> planeBorderEdgePoints : "internal function"
 RealTimeConnectionUpdater -.-> realtimeconnectionupdaterRunConnectionUpdate : "update helper"
 RealTimeConnectionUpdater -.-> realtimeconnectionupdaterRebuildConnectionMap : "update helper"
 RealTimeConnectionUpdater -.-> realtimeconnectionupdaterUpdateConnectionEndpoint : "update helper"
+GroupedView -.-> groupedviewToggleGroup : "internal function"
+GroupedView -.-> groupedviewMarkReachable : "internal function"
+RepoAnalysisOverlay -.-> repoanalysisoverlayToggle : "boolean check"
+RepoAnalysisOverlay -.-> repoanalysisoverlayVisibleRoots : "boolean check"
+RepoAnalysisOverlay -.-> repoanalysisoverlayExpandAll : "boolean check"
+RepoAnalysisOverlay -.-> repoanalysisoverlayCollapseAll : "boolean check"
+RepoAnalysisOverlay -.-> repoanalysisoverlayAncestorOf : "boolean check"
 RepoGrid_file -.-> repogridContainers : "internal function"
 RepoGrid_file -.-> repogridGridData : "internal function"
 ScreenShareStream -.-> screensharestreamAttemptPlay : "internal function"
@@ -2535,11 +2690,11 @@ UpdatesEditor -.-> updateseditorToggleInlineStyle : "update helper"
 UpdatesEditor -.-> updateseditorHandleSave : "event handler"
 UpdatesViewer -.-> updatesviewerParsedContent : "update helper"
 UpdatesViewer -.-> updatesviewerFormattedTimestamp : "update helper"
-WhitePlane -.-> whiteplaneMaterial : "internal function"
 
 %% File Container Nodes
 backend_index((Service: index))
 generateHeightmap_file[Function: generateHeightmap]
+test_pipeline[Function: test_pipeline]
 AppShell_file[Function: AppShell]
 useAuth_file[Hook: useAuth]
 useAuthState_file[Hook: useAuthState]
@@ -2557,6 +2712,13 @@ useSpaceManager_file[Hook: useSpaceManager]
 useSpatialManager_file[Hook: useSpatialManager]
 useTextureUpdater_file[Hook: useTextureUpdater]
 useTimeoutManager_file[Hook: useTimeoutManager]
+_3d_generator[Function: _3d_generator]
+connection_file((Service: connection))
+graph_file((Service: graph))
+node_file((Service: node))
+ast_builder[Function: ast_builder]
+mermaid_parser[Function: mermaid_parser]
+markdown_processor[Function: markdown_processor]
 authService((Service: authService))
 centralizedBroadcastManager_file((Service: centralizedBroadcastManager))
 connectionPositionResolver((Service: connectionPositionResolver))
@@ -2587,6 +2749,7 @@ spatialObjectsService((Service: spatialObjectsService))
 spatialPartitioning((Service: spatialPartitioning))
 storageService((Service: storageService))
 streamlinedSpatialPartitioning((Service: streamlinedSpatialPartitioning))
+index((Service: index))
 unifiedCacheManager_file((Service: unifiedCacheManager))
 webRservice((Service: webRservice))
 shader_shaders[Function: shaders]
@@ -2634,6 +2797,8 @@ worker_spatialIndexWorker[Function: spatialIndexWorker]
 worker_spatialIndexWorkerClient[Function: spatialIndexWorkerClient]
 worker_textAtlasWorker[Function: textAtlasWorker]
 worker_textAtlasWorkerClient[Function: textAtlasWorkerClient]
+worker_treeSitterScannerWorker[Function: treeSitterScannerWorker]
+worker_treeSitterScannerWorkerClient[Function: treeSitterScannerWorkerClient]
 
 %% File-Function Relationships
 backend_index -.-> createVerifyAuthTokenApp : "contains"
@@ -2646,6 +2811,8 @@ backend_index -.-> toMillis : "contains"
 backend_index -.-> deleteCellContents : "contains"
 backend_index -.-> createBulkDeleteApp : "contains"
 backend_index -.-> bulkDelete : "contains"
+backend_index -.-> runBulkDeleteJob : "contains"
+backend_index -.-> bulkDeleteWorker : "contains"
 backend_index -.-> validateRuntimeScanUrl : "contains"
 backend_index -.-> sanitizeMerfolkId : "contains"
 backend_index -.-> generateMerfolkFromRuntimeTrace : "contains"
@@ -2661,6 +2828,7 @@ backend_index -.-> scanWebsiteRuntime : "contains"
 backend_index -.-> objectsByCellId : "contains"
 backend_index -.-> connectionsByCellId : "contains"
 backend_index -.-> params : "contains"
+backend_index -.-> cellsToKeep : "contains"
 backend_index -.-> EXCLUDED_PROFILER_NAMES : "contains"
 backend_index -.-> BUNDLE_NOISE_NAMES : "contains"
 backend_index -.-> REACT_DEVTOOLS_INJECTION : "contains"
@@ -2681,6 +2849,12 @@ generateHeightmap_file -.-> sampleElevation : "contains"
 generateHeightmap_file -.-> generateHeightmap : "contains"
 generateHeightmap_file -.-> main : "contains"
 generateHeightmap_file -.-> worker : "contains"
+test_pipeline -.-> isCubeChild : "contains"
+test_pipeline -.-> isContainerType : "contains"
+test_pipeline -.-> wouldCreateCycle : "contains"
+test_pipeline -.-> dfs : "contains"
+test_pipeline -.-> addRel : "contains"
+test_pipeline -.-> positionNode : "contains"
 AppShell_file -.-> AppShell : "contains"
 AppShell_file -.-> handleOpenSpace : "contains"
 AppShell_file -.-> handleBackToLanding : "contains"
@@ -2754,7 +2928,25 @@ useTimeoutManager_file -.-> clearNamedTimeout : "contains"
 useTimeoutManager_file -.-> clearAllTimeouts : "contains"
 useTimeoutManager_file -.-> hasActiveTimeout : "contains"
 useTimeoutManager_file -.-> getTimeoutId : "contains"
+_3d_generator -.-> AST3DGenerator : "contains"
+_3d_generator -.-> nodeIds : "contains"
+connection_file -.-> Connection : "contains"
+graph_file -.-> Graph : "contains"
+graph_file -.-> visited : "contains"
+graph_file -.-> recursionStack : "contains"
+graph_file -.-> graph : "contains"
+graph_file -.-> node : "contains"
+graph_file -.-> connection : "contains"
+node_file -.-> Node : "contains"
+ast_builder -.-> ASTBuilder : "contains"
+ast_builder -.-> nodeMap : "contains"
+ast_builder -.-> nodesWithCustomPositions : "contains"
+ast_builder -.-> layers : "contains"
+ast_builder -.-> componentGroups : "contains"
+mermaid_parser -.-> MermaidParser : "contains"
+markdown_processor -.-> MarkdownProcessor : "contains"
 authService -.-> signInUser : "contains"
+authService -.-> completeRedirectSignIn : "contains"
 authService -.-> handlePostLoginRedirect : "contains"
 authService -.-> signOut : "contains"
 authService -.-> handleRedirectResult : "contains"
@@ -2838,6 +3030,7 @@ githubRepoService -.-> handleGithubCallback : "contains"
 githubRepoService -.-> scanRepositoryAndGenerateDiagram : "contains"
 githubRepoService -.-> mergeMerfolkMarkdown : "contains"
 githubRepoService -.-> rescanRepositoryForChanges : "contains"
+githubRepoService -.-> getTreeSitterLanguage : "contains"
 githubRepoService -.-> getFileTypeFromPath : "contains"
 githubRepoService -.-> analyzeFile : "contains"
 githubRepoService -.-> containsJSX : "contains"
@@ -2855,7 +3048,11 @@ githubRepoService -.-> localNames : "contains"
 githubRepoService -.-> traverseVueSource : "contains"
 githubRepoService -.-> componentFunctions : "contains"
 githubRepoService -.-> componentFuncDisplayNames : "contains"
+githubRepoService -.-> funcIdCounters : "contains"
+githubRepoService -.-> allocateFuncId : "contains"
 githubRepoService -.-> componentRelationships : "contains"
+githubRepoService -.-> componentToFile : "contains"
+githubRepoService -.-> componentImportSources : "contains"
 githubRepoService -.-> componentDependencies : "contains"
 githubRepoService -.-> internalComponents : "contains"
 githubRepoService -.-> exportedComponents : "contains"
@@ -2880,7 +3077,11 @@ githubRepoService -.-> interfaceUsages : "contains"
 githubRepoService -.-> traverse : "contains"
 githubRepoService -.-> isMiddlewareParams : "contains"
 githubRepoService -.-> knownContainers : "contains"
+githubRepoService -.-> componentsSetForResolve : "contains"
+githubRepoService -.-> fileToComponent : "contains"
 githubRepoService -.-> generateMerfolkMarkdown : "contains"
+githubRepoService -.-> ENTRY_POINT_COMPONENT_NAMES : "contains"
+githubRepoService -.-> isValidComponentName : "contains"
 githubRepoService -.-> storesSet : "contains"
 githubRepoService -.-> servicesSet : "contains"
 githubRepoService -.-> classesSet : "contains"
@@ -2893,7 +3094,6 @@ githubRepoService -.-> hooksSet : "contains"
 githubRepoService -.-> servicesSetForFilter : "contains"
 githubRepoService -.-> storesSetForFilter : "contains"
 githubRepoService -.-> utilitiesSetForFilter : "contains"
-githubRepoService -.-> nodeIds : "contains"
 githubRepoService -.-> childToParentMap : "contains"
 githubRepoService -.-> allSymbolNames : "contains"
 githubRepoService -.-> generateRoutedConnection : "contains"
@@ -2903,6 +3103,7 @@ githubRepoService -.-> resolveRouteNodeId : "contains"
 githubRepoService -.-> routeGroups : "contains"
 githubRepoService -.-> routeRepresentative : "contains"
 githubRepoService -.-> allEventNames : "contains"
+githubRepoService -.-> ifaceOnlyContainers : "contains"
 githubRepoService -.-> currentParams : "contains"
 githubRepoService -.-> restoredParams : "contains"
 githubRepoService -.-> newUrl : "contains"
@@ -2963,6 +3164,8 @@ connectionMethods -.-> calculateDodecahedronFaceCenter : "contains"
 connectionMethods -.-> connectionsByCell : "contains"
 constants -.-> getGroupDisplayName : "contains"
 constants -.-> getGroupColor : "contains"
+containerMethods -.-> hierarchyComponents : "contains"
+containerMethods -.-> markHierarchyReachable : "contains"
 containerMethods -.-> groupedByType : "contains"
 containerMethods -.-> createContainerForGroup : "contains"
 containerMethods -.-> existingGroupTypes : "contains"
@@ -2971,21 +3174,19 @@ containerMethods -.-> markReachable : "contains"
 containerMethods -.-> componentsWithChildContainers : "contains"
 containerMethods -.-> nodesInChildContainers : "contains"
 containerMethods -.-> markDescendantsInChildContainers : "contains"
+containerMethods -.-> includableTypes : "contains"
 containerMethods -.-> nodesWithContainers : "contains"
-containerMethods -.-> visited : "contains"
 containerMethods -.-> adjustNodeAndDescendants : "contains"
 containerMethods -.-> containerDimensions : "contains"
+containerMethods -.-> containerEligibleTypes : "contains"
 containerMethods -.-> existingParentNodeIds : "contains"
 hierarchyMethods -.-> parentChildMap : "contains"
 hierarchyMethods -.-> childParentMap : "contains"
 hierarchyMethods -.-> rootNodes : "contains"
 hierarchyMethods -.-> internalComponentChildren : "contains"
 hierarchyMethods -.-> componentConnectionTypes : "contains"
-hierarchyMethods -.-> wouldCreateCycle : "contains"
-hierarchyMethods -.-> dfs : "contains"
 hierarchyMethods -.-> warnedCycles : "contains"
 hierarchyMethods -.-> addParentChildRelation : "contains"
-hierarchyMethods -.-> isCubeChild : "contains"
 objectMethods -.-> processedNodes : "contains"
 objectMethods -.-> existingNodeIdMap : "contains"
 objectMethods -.-> calculateHeaderStyle : "contains"
@@ -3189,6 +3390,12 @@ streamlinedSpatialPartitioning -.-> getStreamlinedSpatialManager : "contains"
 streamlinedSpatialPartitioning -.-> initializeStreamlinedSpatialPartitioning : "contains"
 streamlinedSpatialPartitioning -.-> benchmarkStreamlinedSystem : "contains"
 streamlinedSpatialPartitioning -.-> manager : "contains"
+index -.-> resolveContainerType : "contains"
+index -.-> scanWithTreeSitter : "contains"
+index -.-> scanPythonWithTreeSitter : "contains"
+index -.-> isPrivate : "contains"
+index -.-> isDunder : "contains"
+index -.-> importedNames : "contains"
 unifiedCacheManager_file -.-> UnifiedCacheManager : "contains"
 unifiedCacheManager_file -.-> unifiedCacheManager : "contains"
 webRservice -.-> initWebRTC : "contains"
@@ -3546,6 +3753,15 @@ worker_textAtlasWorker -.-> AtlasPage : "contains"
 worker_textAtlasWorker -.-> addPage : "contains"
 worker_textAtlasWorkerClient -.-> getTextAtlasWorker : "contains"
 worker_textAtlasWorkerClient -.-> terminateTextAtlasWorker : "contains"
+worker_treeSitterScannerWorker -.-> ensureInit : "contains"
+worker_treeSitterScannerWorker -.-> getLanguage : "contains"
+worker_treeSitterScannerWorker -.-> getQuery : "contains"
+worker_treeSitterScannerWorker -.-> getParser : "contains"
+worker_treeSitterScannerWorker -.-> collectDottedSegments : "contains"
+worker_treeSitterScannerWorker -.-> summariseQueryMatches : "contains"
+worker_treeSitterScannerWorker -.-> stripPathQuotes : "contains"
+worker_treeSitterScannerWorkerClient -.-> getTreeSitterScannerWorker : "contains"
+worker_treeSitterScannerWorkerClient -.-> terminateTreeSitterScannerWorker : "contains"
 
 %% Component Relationships
 App --> FrameTicker : "uses"
@@ -3639,6 +3855,12 @@ Plane --> TextStyleUI : "position, onStyleChange, onClose..."
 Plane --> FaceUI : "position, onColorChange, onTextClick..."
 Plane --> FaceTextInput : "position, onTextSubmit, inputId..."
 Plane --> HeaderInput : "position, onTextSubmit, inputId..."
+TreeRow --> TreeRow : "key, nodeId, nodes..."
+GroupedView --> TreeRow : "key, nodeId, nodes..."
+RepoAnalysisOverlay --> RepoAnalysisOverlay : "allNodes, hierarchy, filter..."
+RepoAnalysisOverlay --> GroupedView : "receives"
+RepoAnalysisOverlay --> RepoAnalysisOverlay : "key, nodeId, nodes..."
+RepoAnalysisOverlay --> TreeRow : "receives"
 RepoGrid_file --> RepoGrid_file : "key"
 RepoGrid_file --> RepoGridLines : "receives"
 SnapLineIndicator --> InstancedLine : "points, color, lineWidth"
@@ -3670,11 +3892,18 @@ TextStyleUI --> TextStyleUI : "onStyleChange, distance, onClose"
 TextStyleUI --> TextStyleUIContent : "receives"
 TextStyleUIContainer --> TextStyleUI : "onStyleChange"
 TextStyleUI --> TextStyleUIContent : "receives"
+UIOverlay --> SpacePresenceAvatars : "spaceId, currentCell, inline"
+UIOverlay --> RepoAnalysisOverlay : "open, onClose, repoName"
 UIOverlay --> UIOverlay : "uses"
 UIOverlay --> EarthSidebarSections : "receives"
 UIOverlay --> SpaceChat : "spaceId, user, isOpen..."
-UIOverlay --> SpacePresenceAvatars : "spaceId, currentCell"
 CreateSpacePopup --> OrgMemberDropdown : "members, selectedUserId, onSelect..."
+DiagramContent --> SectionEyebrow : "uses"
+FeaturesContent --> SectionEyebrow : "uses"
+FeaturesContent --> Bullet : "key"
+AudienceContent --> SectionEyebrow : "uses"
+CtaContent --> SectionEyebrow : "uses"
+CtaContent --> Bullet : "uses"
 LandingScrollContent_file --> LandingScrollContent_file : "isMobile"
 LandingScrollContent_file --> ContentPanel : "receives"
 LandingApp --> CreateSpacePopup : "uses"
@@ -4173,6 +4402,7 @@ ObjectsRenderer --> useUIOverlayStore : "uses store"
 ObjectsRenderer --> useCubeStore : "uses store"
 ObjectsRenderer --> useCubeStore : "uses store"
 ObjectsRenderer --> useUIOverlayStore : "uses store"
+ObjectsRenderer --> useDiagramStore : "uses store"
 ObjectsRenderer --> renderWorkScheduler : "uses utility"
 renderWorkScheduler --> acquireBudget : "receives"
 ObjectsRenderer --> renderWorkScheduler : "uses utility"
@@ -4213,6 +4443,19 @@ RealTimeConnectionUpdater --> useObjectsStore : "uses store"
 RealTimeConnectionUpdater --> useSpatialManagerStore : "uses store"
 RealTimeConnectionUpdater --> facePositionUtils : "uses utility"
 facePositionUtils --> calculateFacePosition : "receives"
+RepoAnalysisOverlay --> useDiagramStore : "uses store"
+RepoAnalysisOverlay --> useDiagramStore : "uses store"
+RepoAnalysisOverlay --> useObjectsStore : "uses store"
+RepoAnalysisOverlay --> useDiagramStore : "uses store"
+RepoAnalysisOverlay --> useObjectsStore : "uses store"
+TreeRow --> RepoAnalysisOverlay : "calls out"
+RepoAnalysisOverlay --> useDiagramStore : "uses store"
+TreeRow --> RepoAnalysisOverlay : "calls out"
+RepoAnalysisOverlay --> useObjectsStore : "uses store"
+GroupedView --> RepoAnalysisOverlay : "calls out"
+RepoAnalysisOverlay --> useDiagramStore : "uses store"
+GroupedView --> RepoAnalysisOverlay : "calls out"
+RepoAnalysisOverlay --> useObjectsStore : "uses store"
 RepoGrid_file --> useObjectsStore : "uses store"
 RepoGrid_file --> repoContainerService : "uses service"
 repoContainerService --> computeGridLayout : "receives"
@@ -4466,6 +4709,10 @@ UIOverlay --> useUIOverlayStore : "uses store"
 UIOverlay --> useUIOverlayStore : "uses store"
 UIOverlay --> useUIOverlayStore : "uses store"
 UIOverlay --> useDiagramStore : "uses store"
+UIOverlay --> useDiagramStore : "uses store"
+UIOverlay --> useObjectsStore : "uses store"
+UIOverlay --> useObjectsStore : "uses store"
+UIOverlay --> useSpatialManagerStore : "uses store"
 UIOverlay --> useObjectsStore : "uses store"
 UIOverlay --> useUIOverlayStore : "uses store"
 UIOverlay --> useUIOverlayStore : "uses store"
@@ -4594,7 +4841,7 @@ backend_index --> express : "calls express"
 createBulkDeleteApp --> backend_index : "calls out"
 backend_index --> cors : "calls cors"
 createBulkDeleteApp --> generateJobId : "calls generateJobId"
-createBulkDeleteApp --> deleteCellContents : "calls deleteCellContents"
+runBulkDeleteJob --> deleteCellContents : "calls deleteCellContents"
 scanJsBundles --> extractSourceMapUrl : "calls extractSourceMapUrl"
 scanJsBundles --> scanOriginalSource : "calls scanOriginalSource"
 scanJsBundles --> extractNamesFromSourceMap : "calls extractNamesFromSourceMap"
@@ -4919,6 +5166,10 @@ UIOverlay --> githubRepoService : "calls fetchRepositories"
 githubRepoService --> fetchRepositories : "receives"
 UIOverlay --> githubRepoService : "calls handleGithubCallback"
 githubRepoService --> handleGithubCallback : "receives"
+UIOverlay --> spatialObjectsService : "calls clearAllObjectCaches"
+spatialObjectsService --> clearAllObjectCaches : "receives"
+UIOverlay --> spatialObjectsService : "calls cleanupSpatialObjectSubscriptions"
+spatialObjectsService --> cleanupSpatialObjectSubscriptions : "receives"
 UIOverlay --> spatialObjectsService : "calls clearAllObjectCaches"
 spatialObjectsService --> clearAllObjectCaches : "receives"
 UIOverlay --> spatialObjectsService : "calls cleanupSpatialObjectSubscriptions"
@@ -5372,6 +5623,12 @@ connectionMethods --> addTag : "receives"
 parseFlowPaths --> worker_markdownLayoutWorker : "calls out"
 worker_markdownLayoutWorker --> connectionMethods : "calls addTag"
 connectionMethods --> addTag : "receives"
+getQuery --> getLanguage : "calls getLanguage"
+getParser --> ensureInit : "calls ensureInit"
+getParser --> getLanguage : "calls getLanguage"
+summariseQueryMatches --> collectDottedSegments : "calls collectDottedSegments"
+summariseQueryMatches --> collectDottedSegments : "calls collectDottedSegments"
+summariseQueryMatches --> stripPathQuotes : "calls stripPathQuotes"
 
 %% Store Usage Details
 App --> useObjectsStore : "objects, setObjects, isInitialLoading, setIsInitialLoading"
@@ -5422,6 +5679,8 @@ Plane --> useIndicatorsStore : "hoveredObjectId, setHoveredObjectId"
 Plane --> useUIOverlayStore : "pinnedWebcamPlaneId, setPinnedWebcamPlaneId, clearPinnedWebcam"
 RealTimeConnectionUpdater --> useConnectionStore : "updateConnections"
 RealTimeConnectionUpdater --> useSpatialManagerStore : "isInitialized"
+RepoAnalysisOverlay --> useDiagramStore : "graphs, hierarchy"
+RepoAnalysisOverlay --> useObjectsStore : "length"
 ScreenShareStream --> useScreenShareStore : "getScreenShare, setScreenShareLoading, setScreenShareError, retryScreenShare"
 HandTrackingToggle --> SpacePresenceAvatars : "calls out"
 SpacePresenceAvatars --> useHandTrackingStore : "enabled, fps, error"
@@ -5438,10 +5697,10 @@ TextStyleUI --> useColorPickerStore : "openColorPicker, closeColorPicker"
 EarthSidebarSections --> UIOverlay : "calls out"
 UIOverlay --> useEarthSettingsStore : "radius, setRadius, exaggeration, setExaggeration..."
 UIOverlay --> usePipelineStore : "isRunning, isPaused, autoApprove, connectedRepo..."
-UIOverlay --> useObjectsStore : "objects, resetObjects"
+UIOverlay --> useObjectsStore : "objects, isInitialLoading, resetObjects"
 UIOverlay --> useUIOverlayStore : "toggleMenu, toggleTemplate, updateTemplateConfig, isUploadingModel..."
 UIOverlay --> useConnectionStore : "connectionsVisible, toggleConnectionsVisible, resetConnections, length"
-UIOverlay --> useDiagramStore : "is2DReady"
+UIOverlay --> useDiagramStore : "is2DReady, renderProgress"
 WebcamStream --> useWebcamStreamStore : "getWebcamStream, setWebcamLoading, setWebcamError, retryWebcamStream"
 useAuth_file --> useAuth_file : "calls out"
 useAuth_file --> useAuthStore : "authState, initializeAuth, cleanup"
@@ -5489,11 +5748,11 @@ orgInvites_model[[Store: orgInvites]]
 sharedSpaces_model[[Store: sharedSpaces]]
 
 %% Auth Guards
-signInWithPopup[Guard: signInWithPopup]
+signInWithRedirect[Guard: signInWithRedirect]
 onAuthStateChanged[Guard: onAuthStateChanged]
 
 %% Auth Flows
-LandingApp --> signInWithPopup : "auth check"
+LandingApp --> signInWithRedirect : "auth check"
 LandingApp --> signOut : "auth check"
 
 %% Events
