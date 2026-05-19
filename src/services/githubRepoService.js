@@ -1426,9 +1426,15 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // keep these because components in examples can still be meaningful.
     const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook|migrations?|alembic|__pycache__)\//i;
     const nonSourceFilePattern = /(?:^|\/)(?:debug[\-_]|test[\-_])/i;
-    const filesToProcess = (repoType === 'vanilla' || repoType === 'python' || repoType === 'vue')
-      ? structure.filter(f => !nonSourceDirPattern.test(f.path) && !nonSourceFilePattern.test(f.name))
-      : structure;
+    // Vendored library subdirectories: any file nested two or more levels inside
+    // a /lib/ directory (e.g. src/lib/3d-ast/types/ast.ts) is third-party code and
+    // should not be scanned as application nodes.
+    const vendoredLibPattern = /(?:^|\/)lib\/[^/]+\//;
+    const filesToProcess = (
+      (repoType === 'vanilla' || repoType === 'python' || repoType === 'vue')
+        ? structure.filter(f => !nonSourceDirPattern.test(f.path) && !nonSourceFilePattern.test(f.name))
+        : structure
+    ).filter(f => !vendoredLibPattern.test(f.path));
     if (filesToProcess.length !== structure.length) {
       console.log(`   Filtered ${structure.length - filesToProcess.length} non-source files for ${repoType} repo (${filesToProcess.length} remaining)`);
     }
@@ -2557,6 +2563,13 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         foundItems.stores.add(varName);
                         elements.stores.push(varName);
                       }
+                      // Register the store name in the file container so
+                      // a "contains" connection (authStore -.-> useAuthStore) is emitted,
+                      // preventing the file container node from appearing orphaned.
+                      if (!fileFunctions.has(fileName)) {
+                        fileFunctions.set(fileName, { type: 'store', functions: new Set() });
+                      }
+                      fileFunctions.get(fileName).functions.add(varName);
                     }
                     // Check for singleton instance exports (e.g., export const instance = new ClassName())
                     // These are commonly used for services and utilities
