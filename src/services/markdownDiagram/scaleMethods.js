@@ -70,7 +70,7 @@ export const scaleMethods = {
         cubeChildren.length > 0 || internalComponentChildrenArray.length > 0;
       const hasInternalComponents = internalComponentChildrenArray.length > 0;
 
-      const actualChildSpacing = 50;
+      const actualChildSpacing = 70;
 
       let requiredSpace;
 
@@ -96,7 +96,7 @@ export const scaleMethods = {
       }
 
       const adaptivePadding = hasInternalContent
-        ? Math.max(30, requiredSpace * 0.3)
+        ? Math.max(30, requiredSpace * 0.4)
         : 10;
 
       const requiredSize = requiredSpace + adaptivePadding;
@@ -206,7 +206,7 @@ export const scaleMethods = {
 
     const node = graphNodes.get(nodeId);
     if (!node || node.type !== NODE_TYPE_COMPONENT) {
-      const result = { width: 20, height: 20 };
+      const result = { width: 40, height: 40 };
       this.boundingBoxCache.set(cacheKey, result);
       return result;
     }

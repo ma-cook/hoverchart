@@ -1049,7 +1049,7 @@ export const positionMethods = {
 
     if (ungroupedComponents.length > 0) {
       const gridSize = Math.ceil(Math.sqrt(ungroupedComponents.length));
-      const baseSpacing = 80;
+      const baseSpacing = 40;
 
       ungroupedComponents.forEach((nodeId, index) => {
         const row = Math.floor(index / gridSize);
