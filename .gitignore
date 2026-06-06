@@ -30,3 +30,7 @@ src/wasm/target/
 
 # MediaPipe model binaries — download via `npm run download:models`
 public/assets/mediapipe/*.task
+
+native/.zig-cache
+native/zig-out
+native

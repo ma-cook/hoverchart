@@ -410,7 +410,7 @@ const ObjectsRenderer = React.memo(({
     for (const cube of cubeObjects) {
       if (cube.merfolkData?.isContainer) continue;
       if (cube.merfolkData?.isRepoContainer) continue;
-      if (isCubeUnmodified(cube.id, cubesMap)) {
+      if (isCubeUnmodified(cube.id, cubesMap, cube.headerText)) {
         ids.add(cube.id);
       }
     }
