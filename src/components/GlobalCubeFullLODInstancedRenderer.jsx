@@ -43,11 +43,17 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  *   component so the AtlasTextSprite can mount.  Instanced rendering has no text layer.
  * @returns {boolean}
  */
-export function isCubeUnmodified(cubeId, cubesMap, objectHeaderText) {
+export function isCubeUnmodified(cubeId, cubesMap, objectHeaderText, objectData) {
   // Cubes with a name in the object data are never "unmodified" — they need
   // an individual <Cube> component so their header text (name label) renders
   // at FULL LOD.  The instanced renderer has no text layer.
   if (objectHeaderText) return false;
+
+  // Check the object's own stored data for face colors/texts before falling
+  // back to cubeStore.  On page load the cubeStore is empty for cubes that
+  // were never selected, so the objects-array data is the only source of truth.
+  if (objectData?.faceColors && Object.keys(objectData.faceColors).length > 0) return false;
+  if (objectData?.faceTexts && Object.keys(objectData.faceTexts).length > 0) return false;
 
   const state = cubesMap?.get(cubeId?.toString());
   if (!state) return true; // No store entry yet = freshly loaded = unmodified
@@ -107,7 +113,7 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
         }
 
         // Only unmodified cubes (cubes with names are excluded — they use individual <Cube> for text)
-        if (!isCubeUnmodified(cube.id, cubesMap, cube.headerText)) return false;
+        if (!isCubeUnmodified(cube.id, cubesMap, cube.headerText, cube)) return false;
 
         // Skip selected cubes — they need the full component
         const cubeState = cubesMap?.get(cube.id?.toString());

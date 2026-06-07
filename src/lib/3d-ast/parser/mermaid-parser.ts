@@ -214,27 +214,24 @@ export class MermaidParser {
     // D<Datapath: eventStream>
     // E[[Class: UserModel]]
 
-    // NOTE: Double-bracket pattern must come before single-bracket so that
+    // Double-bracket must come before single-bracket so that
     // [[Store: x]], [[Class: x]], [[Interface: x]] are parsed with their correct
     // type strings rather than the single-bracket regex capturing "[Store" as
     // the type and falling back to NodeType.COMPONENT.  The downstream hierarchy
-    // methods (hierarchyMethods.js) have the corresponding service→class,
-    // store→cubeChild etc. branches to handle these types correctly.
+    // methods (hierarchyMethods.js) have store→cubeChild branches to handle
+    // these types correctly, and positionMethods.js section 8 positions children
+    // of grouped store/service/hook containers.
     // Node ID character class allows /, ., - so package paths like
     // `firebase-admin/app`, `eslint-plugin-react`, `firebase-functions/v2/https`
     // survive as parser-readable node IDs. `@` is intentionally excluded so the
     // optional `@face` separator in connection patterns stays unambiguous; the
     // emitter (githubRepoService) replaces leading `@` with `_` for npm scopes.
-    // NOTE: Pattern order matches npm 3d-ast-generator@1.0.18 (commit 5c0d60f)
-    // for behavioural compatibility with hoverchart's downstream pipeline. The
-    // "more correct" double-bracket-first order from main is reverted here
-    // pending a downstream fix in src/services/markdownDiagram/.
     const patterns = [
+      /^([A-Za-z0-9_/.\-]+)\[\[([^:]+):\s*([^\]]+)\]\]/,  // Double square brackets (must be before single)
       /^([A-Za-z0-9_/.\-]+)\[([^:]+):\s*([^\]]+)\]/,      // Square brackets
       /^([A-Za-z0-9_/.\-]+)\{([^:]+):\s*([^\}]+)\}/,      // Curly brackets
       /^([A-Za-z0-9_/.\-]+)\(\(([^:]+):\s*([^\)]+)\)\)/,  // Double parentheses
       /^([A-Za-z0-9_/.\-]+)<([^:]+):\s*([^>]+)>/,         // Angle brackets
-      /^([A-Za-z0-9_/.\-]+)\[\[([^:]+):\s*([^\]]+)\]\]/,  // Double square brackets
     ];
 
     for (const pattern of patterns) {
@@ -401,20 +398,19 @@ export class MermaidParser {
    * Parse geometry from line (based on bracket type)
    */
   private parseGeometry(line: string): GeometryType {
-    // NOTE: Order matches npm 3d-ast-generator@1.0.18 (commit 5c0d60f) for
-    // behavioural compatibility with hoverchart's downstream pipeline. See PR #64 follow-up.
-
+    // Double-bracket must come before single-bracket — [[Store: x]] contains
+    // both '[' and ']' characters, so single-bracket would match first otherwise.
+    // [[Store: name]] -> CUBE
+    if (line.includes('[[') && line.includes(']]')) {
+      return GeometryType.CUBE;
+    }
     // [Function: name] -> CUBE
-    if (line.includes('[') && line.includes(']')) {
+    else if (line.includes('[') && line.includes(']')) {
       return GeometryType.CUBE;
     }
     // {Component: name} -> DODECAHEDRON
     else if (line.includes('{') && line.includes('}')) {
       return GeometryType.DODECAHEDRON;
-    }
-    // [[Store: name]] -> CUBE
-    else if (line.includes('[[') && line.includes(']]')) {
-      return GeometryType.CUBE;
     }
     // ((Service: name)) -> TETRAHEDRON
     else if (line.includes('((') && line.includes('))')) {

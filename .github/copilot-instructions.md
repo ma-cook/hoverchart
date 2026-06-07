@@ -44,7 +44,7 @@ The Merfolk parser lives in-tree at `src/lib/3d-ast/` — a minimal subset vendo
 
 **Of these, the app actively uses:** `function`, `component`, `store`, `service`, `library`, `hook`, `datapath`. The parser types `module`, `class`, `interface`, `variable`, `constant` are recognized by the vendored parser but fall to a default Cube in the app's `getObjectTypeForNode()`.
 
-**Behavioural compatibility note:** The pattern order in `parseNodeDefinition()` and `parseGeometry()` matches npm `3d-ast-generator@1.0.18` (commit `5c0d60f`), not `ma-cook/3DAST` `main`. The "more correct" double-bracket-first order on main caused a ~20% drop in scan output (~2000 → ~1600 objects) because hoverchart's downstream pipeline in `src/services/markdownDiagram/` implicitly relied on `[[Store:]]` / `((Service:))` lines being misclassified as `component`. Correcting the typing routed those nodes through a different (currently lossy) branch. The downstream pipeline needs to be fixed before the parser can be re-aligned with main.
+**Pattern order:** `parseNodeDefinition()` and `parseGeometry()` both check double-bracket (`[[...]]`) **before** single-bracket (`[...]`) so that `authStore[[Store: authStore]]` is correctly typed as `store` (cube) rather than having `[Store` captured as the type string and falling back to `component` (dodecahedron). The downstream pipeline in `src/services/markdownDiagram/` is fully compatible: `positionNodeHierarchy` skips top-level store/service/hook nodes, `positionGroupedNodes` positions them and their children (section 8), and `containerMethods` creates their group containers.
 
 ### Merfolk Syntax Quick Reference
 

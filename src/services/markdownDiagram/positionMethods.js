@@ -56,7 +56,7 @@ export const positionMethods = {
         const row = Math.floor(rootIndex / gridSize);
         const col = rootIndex % gridSize;
 
-        const spacing = 200;
+        const spacing = 250;
 
         return [
           basePosition[0] + (col - (gridSize - 1) / 2) * spacing,
@@ -89,8 +89,13 @@ export const positionMethods = {
         const componentSiblingIndex = externalComponentSiblings.indexOf(nodeId);
         const componentSiblingCount = externalComponentSiblings.length;
 
-        let maxSiblingSize = actualComponentSize;
-        externalComponentSiblings.forEach((sibId) => {
+        // Collect each sibling's actual dodecahedron radius so we can pack
+        // tightly when siblings are unequal in size. Cell spacing must be
+        // wide enough that the two LARGEST radii fit edge-to-edge with a
+        // gap — not 2*max which over-pads when sizes are unequal (e.g. App
+        // radius ≈ 378 vs LandingApp radius ≈ 50).
+        const siblingSizes = externalComponentSiblings.map((sibId) => {
+          if (sibId === nodeId) return actualComponentSize;
           const sibScale = this.calculateDodecahedronScale(
             sibId,
             parentChildMap,
@@ -98,23 +103,68 @@ export const positionMethods = {
             internalComponentChildren,
             level
           );
-          const sibSize = baseDodecahedronRadius * Math.max(...sibScale.nodeScale);
-          if (sibSize > maxSiblingSize) {
-            maxSiblingSize = sibSize;
-          }
+          return baseDodecahedronRadius * Math.max(...sibScale.nodeScale);
         });
+        const sortedSizesDesc = [...siblingSizes].sort((a, b) => b - a);
+        const largestSize = sortedSizesDesc[0] || actualComponentSize;
+        const secondLargestSize = sortedSizesDesc[1] !== undefined
+          ? sortedSizesDesc[1]
+          : largestSize;
+        const maxSiblingSize = largestSize;
 
-        const levelFactor = level <= 2 ? 1.0 : 0.3;
-        const baseMinGap = level <= 2 ? 80 : 20;
+        const levelFactor = level <= 2 ? 0.15 : 0.3;
+        const baseMinGap = level <= 2 ? 30 : 20;
         const proportionalGap = maxSiblingSize * 0.5 * levelFactor;
         const gapBetweenEdges = Math.max(baseMinGap, proportionalGap);
 
-        const diameterMultiplier = level <= 2 ? 2.0 : 1.5;
-        const spacingBetweenComponents = (maxSiblingSize * diameterMultiplier) + gapBetweenEdges;
+        // Spacing = sum of two largest radii + gap. This is the minimum
+        // center-to-center distance that prevents the two biggest siblings
+        // from overlapping, with no wasted padding when sizes are unequal.
+        let spacingBetweenComponents =
+          largestSize + secondLargestSize + gapBetweenEdges;
 
-        let depthOffset = 300;
+        // Subtree-aware widening (dampened): subtrees can be wide, but we
+        // don't need full horizontal clearance because subtrees sit at a
+        // LOWER y-level than their parent siblings. We allow horizontal
+        // overlap of subtree branches and rely on increased depthOffset
+        // (below) to separate them vertically instead.
+        //
+        // SUBTREE_DAMPING < 1 lets App and LandingApp sit much closer to
+        // AppShell while still preventing their dodecahedron hulls from
+        // overlapping (the largestSize+secondLargestSize floor above
+        // guarantees that). Tune this single number to trade horizontal
+        // spacing for visual subtree overlap.
+        const SUBTREE_DAMPING = 0.15;
+        if (componentSiblingCount > 1) {
+          const halfWidths = externalComponentSiblings.map((sibId, i) =>
+            this.estimateSubtreeHalfWidth(
+              sibId,
+              parentChildMap,
+              graphNodes,
+              internalComponentChildren,
+              level,
+              siblingSizes[i]
+            )
+          );
+          const sortedHalvesDesc = [...halfWidths].sort((a, b) => b - a);
+          const largestHalf = sortedHalvesDesc[0];
+          const secondLargestHalf = sortedHalvesDesc[1] !== undefined
+            ? sortedHalvesDesc[1]
+            : largestHalf;
+          const dampedRequired =
+            SUBTREE_DAMPING * (largestHalf + secondLargestHalf) +
+            gapBetweenEdges;
+          if (dampedRequired > spacingBetweenComponents) {
+            spacingBetweenComponents = dampedRequired;
+          }
+        }
+
+        // Push subtrees further DOWN vertically. This is "vertical is fine"
+        // — subtrees of adjacent siblings won't visually collide because
+        // they live at noticeably different y-levels.
+        let depthOffset = 500;
         if (containerSize && typeof containerSize === 'number') {
-          depthOffset = Math.max(300, containerSize * 2.5);
+          depthOffset = Math.max(500, containerSize * 3.5);
         }
 
         if (nodeId === 'TextStyleUI' || nodeId === 'ObjectUI' || nodeId === 'TetrahedronFace' || nodeId === 'TextSprite') {
@@ -169,6 +219,98 @@ export const positionMethods = {
         }
       }
     }
+  },
+
+  /**
+   * Estimate the rendered half-width of a component's subtree by recursively
+   * mirroring the per-level spacing formula used in calculateNodePosition.
+   *
+   * Uses the actual dodecahedron radius (not the inflated `containerSize`
+   * from calculateDodecahedronScale) so the estimate matches what's drawn.
+   * Cached per (nodeId, level).
+   */
+  estimateSubtreeHalfWidth(
+    nodeId,
+    parentChildMap,
+    graphNodes,
+    internalComponentChildren,
+    level,
+    ownRadiusOverride
+  ) {
+    if (!this._subtreeHalfWidthCache) {
+      this._subtreeHalfWidthCache = new Map();
+    }
+    const cacheKey = `${nodeId}-${level}`;
+    if (this._subtreeHalfWidthCache.has(cacheKey)) {
+      return this._subtreeHalfWidthCache.get(cacheKey);
+    }
+    if (level > 10) return 15;
+
+    // Own dodecahedron radius — use the actual scaled radius if provided
+    // (this is the rendered size of the dodecahedron itself).
+    let OWN_HALF;
+    if (typeof ownRadiusOverride === 'number') {
+      OWN_HALF = ownRadiusOverride;
+    } else {
+      const scale = this.calculateDodecahedronScale(
+        nodeId,
+        parentChildMap,
+        graphNodes,
+        internalComponentChildren,
+        level
+      );
+      OWN_HALF = 10 * Math.max(...scale.nodeScale);
+    }
+
+    const children = parentChildMap.get(nodeId) || new Set();
+    const externalChildren = Array.from(children).filter((cid) => {
+      const c = graphNodes.get(cid);
+      return (
+        c &&
+        c.type === 'component' &&
+        !(internalComponentChildren && internalComponentChildren.has(cid))
+      );
+    });
+
+    if (externalChildren.length === 0) {
+      this._subtreeHalfWidthCache.set(cacheKey, OWN_HALF);
+      return OWN_HALF;
+    }
+
+    const childLevel = level + 1;
+
+    // Recursive child subtree half-widths (mirrors the main-path formula).
+    const childHalfWidths = externalChildren.map((cid) =>
+      this.estimateSubtreeHalfWidth(
+        cid,
+        parentChildMap,
+        graphNodes,
+        internalComponentChildren,
+        childLevel
+      )
+    );
+    const sortedDesc = [...childHalfWidths].sort((a, b) => b - a);
+    const largestHalf = sortedDesc[0];
+    const secondLargestHalf = sortedDesc[1] !== undefined
+      ? sortedDesc[1]
+      : largestHalf;
+
+    // Same per-level gap formula used in calculateNodePosition.
+    const levelFactor = childLevel <= 2 ? 0.15 : 0.3;
+    const baseMinGap = childLevel <= 2 ? 30 : 20;
+    const proportionalGap = largestHalf * 0.5 * levelFactor;
+    const gapBetweenEdges = Math.max(baseMinGap, proportionalGap);
+
+    // Cell spacing: two largest subtree "radii" + gap (matches main path).
+    const cellSpacing = largestHalf + secondLargestHalf + gapBetweenEdges;
+
+    const gridSize = Math.ceil(Math.sqrt(externalChildren.length));
+    const halfWidth =
+      ((gridSize - 1) / 2) * cellSpacing + largestHalf;
+
+    const result = Math.max(OWN_HALF, halfWidth);
+    this._subtreeHalfWidthCache.set(cacheKey, result);
+    return result;
   },
 
   /**
@@ -966,7 +1108,7 @@ export const positionMethods = {
     );
 
     const groupContainerYOffset = rootHierarchyBounds.centerY - basePosition[1];
-    const ungroupedYOffset = groupContainerYOffset + 200;
+    const ungroupedYOffset = groupContainerYOffset + 300;
     const edgeSpacing = 100;
 
     // ── 5. Position discovered groups in a circle around root hierarchy ───
