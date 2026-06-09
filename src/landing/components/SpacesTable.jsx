@@ -3,10 +3,11 @@ import React, { useState, useCallback, useMemo } from 'react';
 // ---------- Static style constants (hoisted outside component) ----------
 const TABLE_STYLES = {
   width: '100%',
-  backgroundColor: 'transparent',
+  backgroundColor: 'rgba(255, 255, 255, 0.5)',
   borderCollapse: 'collapse',
   borderRadius: '4px',
   overflow: 'hidden',
+  border: '1px solid rgba(22, 22, 26, 0.92)',
   fontFamily:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
 };

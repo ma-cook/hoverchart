@@ -968,9 +968,9 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
             style={{
               position: 'fixed',
               top: '64px',
-              bottom: '12px',
+              bottom: windowSize.width <= 768 ? '12px' : '56px',
               left: windowSize.width <= 768 ? '8px' : '270px',
-              right: '8px',
+              right: windowSize.width <= 768 ? '8px' : '270px',
               background: 'linear-gradient(180deg, rgba(22, 22, 26, 0.92), rgba(14, 14, 18, 0.92))',
               backdropFilter: 'blur(8px)',
               WebkitBackdropFilter: 'blur(8px)',
