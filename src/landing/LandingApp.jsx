@@ -967,24 +967,19 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
           <div
             style={{
               position: 'fixed',
-              top: 'calc(50% + 24px)',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: (() => {
-                if (windowSize.width <= 480) return '95%';
-                if (windowSize.width <= 768) return '90%';
-                if (windowSize.width <= 1200) return '75%';
-                return '65%';
-              })(),
-              maxWidth: '80rem',
-              maxHeight: '80vh',
-              backgroundColor: 'rgba(255, 255, 255, 0.7)',
-              borderRadius: '8px',
-              border: '1px solid rgba(0, 0, 0, 0.2)',
+              top: '64px',
+              bottom: '12px',
+              left: windowSize.width <= 768 ? '8px' : '270px',
+              right: '8px',
+              background: 'linear-gradient(180deg, rgba(22, 22, 26, 0.92), rgba(14, 14, 18, 0.92))',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '10px',
+              boxShadow: '0 4px 18px rgba(0, 0, 0, 0.35)',
               zIndex: 10,
               display: 'flex',
-              padding: windowSize.width > 768 ? '1.5rem' : '0.75rem',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+              padding: windowSize.width <= 480 ? '0.5rem' : '1rem',
               overflow: 'auto',
             }}
           >

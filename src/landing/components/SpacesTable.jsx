@@ -3,15 +3,14 @@ import React, { useState, useCallback, useMemo } from 'react';
 // ---------- Static style constants (hoisted outside component) ----------
 const TABLE_STYLES = {
   width: '100%',
-  backgroundColor: 'white',
+  backgroundColor: 'transparent',
   borderCollapse: 'collapse',
   borderRadius: '4px',
   overflow: 'hidden',
-  boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
   fontFamily:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
 };
-const LINK_STYLES = { color: '#0066cc', textDecoration: 'none' };
+const LINK_STYLES = { color: '#6ab9f5', textDecoration: 'none' };
 const BTN_STYLES = {
   display: 'flex',
   justifyContent: 'center',
@@ -20,10 +19,10 @@ const BTN_STYLES = {
   width: '28px',
   height: '28px',
   borderRadius: '4px',
-  backgroundColor: '#f8f8f8',
-  border: '1px solid #ddd',
+  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  border: '1px solid rgba(255, 255, 255, 0.1)',
   fontSize: '16px',
-  color: '#333',
+  color: '#e6e6e6',
 };
 const SHARE_BTN_STYLES = { ...BTN_STYLES, marginLeft: '10px' };
 const TRASH_BTN_STYLES = { ...BTN_STYLES, marginLeft: '5px' };
@@ -36,15 +35,15 @@ const LEAVE_BTN_STYLES = {
   height: '26px',
   borderRadius: '4px',
   marginLeft: '5px',
-  backgroundColor: 'rgba(255,235,235,0.7)',
-  border: '1px solid rgba(220,53,69,0.3)',
-  color: '#dc3545',
+  backgroundColor: 'rgba(244, 67, 54, 0.12)',
+  border: '1px solid rgba(244, 67, 54, 0.4)',
+  color: '#f47864',
   transition: 'all 0.2s',
 };
 const INVITE_BANNER_BASE = {
   marginTop: '12px',
-  backgroundColor: '#f0f7ff',
-  border: '1px solid #c2dcf5',
+  backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  border: '1px solid rgba(255, 255, 255, 0.08)',
   borderRadius: '6px',
   display: 'flex',
   alignItems: 'center',
@@ -54,7 +53,7 @@ const INVITE_BANNER_BASE = {
   fontFamily:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
 };
-const INVITE_TEXT_STYLES = { fontSize: '14px', color: '#333', fontWeight: '400' };
+const INVITE_TEXT_STYLES = { fontSize: '14px', color: '#d0d0d0', fontWeight: '400' };
 const INVITE_BTN_ROW = { display: 'flex', gap: '8px' };
 const ACCEPT_BTN_STYLES = {
   padding: '6px 14px',
@@ -65,7 +64,7 @@ const ACCEPT_BTN_STYLES = {
   fontFamily: 'inherit',
   transition: 'background-color 0.2s',
 };
-const NO_SPACES_TEXT = { textAlign: 'center' };
+const NO_SPACES_TEXT = { textAlign: 'center', color: '#999' };
 // -----------------------------------------------------------------------
 
 export const SpacesTable = React.memo(
@@ -103,12 +102,12 @@ export const SpacesTable = React.memo(
     const isSmall = windowSize.width <= 480;
     const thStyles = useMemo(
       () => ({
-        backgroundColor: '#f8f8f8',
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
         padding: isSmall ? '8px' : '12px',
         textAlign: 'left',
         fontWeight: '500',
-        borderBottom: '1px solid #ddd',
-        color: '#333',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+        color: '#e6e6e6',
         fontSize: isSmall ? '12px' : '14px',
       }),
       [isSmall]
@@ -116,16 +115,16 @@ export const SpacesTable = React.memo(
     const tdStyles = useMemo(
       () => ({
         padding: isSmall ? '8px' : '12px',
-        borderBottom: '1px solid #eee',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
         fontSize: isSmall ? '12px' : '14px',
-        color: '#333',
+        color: '#d0d0d0',
         fontWeight: '400',
       }),
       [isSmall]
     );
     const categoryRowStyles = useMemo(
       () => ({
-        backgroundColor: '#f0f0f0',
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
         fontWeight: 'bold',
         fontSize: isSmall ? '13px' : '15px',
       }),
