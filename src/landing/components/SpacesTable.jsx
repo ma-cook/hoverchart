@@ -7,7 +7,6 @@ const TABLE_STYLES = {
   borderCollapse: 'collapse',
   borderRadius: '4px',
   overflow: 'hidden',
-  border: '1px solid rgba(22, 22, 26, 0.92)',
   fontFamily:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
 };
