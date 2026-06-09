@@ -70,6 +70,31 @@
 
 /* ── Landing TopBar ─────────────────────────────────────────── */
 
+/* Sidebar menu (copied from App.css, needed because landing doesn't import App.css) */
+.sidebar-menu {
+  position: fixed;
+  top: 64px !important;
+  left: 8px !important;
+  height: auto;
+  max-height: calc(100vh - 90px);
+  width: 250px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 8px;
+  z-index: 1900;
+  transform: translateX(calc(-100% - 10px));
+  transition: transform 0.3s ease-in-out;
+  overflow-y: auto;
+}
+
+.sidebar-menu.open {
+  transform: translateX(0);
+}
+
+.menu-content {
+  padding: 20px;
+  color: white;
+}
+
 /* Avatar dropdown menu */
 .avatar-dropdown {
   position: absolute;

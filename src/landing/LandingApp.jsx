@@ -950,14 +950,9 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         dpr={[1, 2]}
       >
         <ambientLight intensity={2} />
-        <OrderHeader windowSize={windowSize} />
+        {!user && <OrderHeader windowSize={windowSize} />}
         <CustomCamera scrollProgressRef={!user ? scrollProgressRef : null} />
         <PerspectiveGrid />
-        {!user && (
-          <>
-           
-          </>
-        )}
       </Canvas>
 
       {/* Logged-in UI */}
