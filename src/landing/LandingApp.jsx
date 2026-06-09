@@ -904,6 +904,19 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
 
   const isMobile = windowSize.width <= 768;
 
+  const footerBtnStyle = {
+    background: 'rgba(255, 255, 255, 0.06)',
+    color: '#e6e6e6',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '6px',
+    padding: '4px 12px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+    transition: 'background 120ms ease, border-color 120ms ease',
+  };
+
   return (
     <div
       className="landing-view"
@@ -972,6 +985,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
               left: windowSize.width <= 768 ? '8px' : '270px',
               right: windowSize.width <= 768 ? '8px' : '270px',
               backgroundColor: 'rgba(255, 255, 255, 0.8)',
+              opacity: 0.95,
               backdropFilter: 'blur(8px)',
               WebkitBackdropFilter: 'blur(8px)',
               border: '1px solid rgba(22, 22, 26, 0.92)',
@@ -984,6 +998,47 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
             }}
           >
             <SpacesTable {...spaceTableProps} />
+          </div>
+
+          {/* Footer */}
+          <div
+            style={{
+              position: 'fixed',
+              bottom: '8px',
+              height: '40px',
+              left: windowSize.width <= 768 ? '8px' : '270px',
+              right: windowSize.width <= 768 ? '8px' : '270px',
+              background: 'linear-gradient(180deg, rgba(22, 22, 26, 0.92), rgba(14, 14, 18, 0.92))',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '10px',
+              boxShadow: '0 4px 18px rgba(0, 0, 0, 0.35)',
+              zIndex: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: windowSize.width <= 480 ? '8px' : '24px',
+              padding: '0 16px',
+              fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            }}
+          >
+            <button
+              style={footerBtnStyle}
+              onClick={() => window.open('https://github.com/anomalyco/opencode/issues', '_blank')}
+              title="Report a bug or suggest a feature"
+            >
+              Feedback
+            </button>
+            <button style={footerBtnStyle} title="View documentation (coming soon)">
+              Docs
+            </button>
+            <button style={footerBtnStyle} title="Keyboard shortcuts (coming soon)">
+              Shortcuts
+            </button>
+            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, userSelect: 'none' }}>
+              v1.0.0
+            </span>
           </div>
         </>
       )}

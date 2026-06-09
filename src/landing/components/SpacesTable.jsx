@@ -102,11 +102,11 @@ export const SpacesTable = React.memo(
     const isSmall = windowSize.width <= 480;
     const thStyles = useMemo(
       () => ({
-        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+        background: 'linear-gradient(180deg, rgba(22, 22, 26, 0.92), rgba(14, 14, 18, 0.92))',
         padding: isSmall ? '8px' : '12px',
         textAlign: 'left',
         fontWeight: '500',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
         color: '#e6e6e6',
         fontSize: isSmall ? '12px' : '14px',
       }),
@@ -124,9 +124,11 @@ export const SpacesTable = React.memo(
     );
     const categoryRowStyles = useMemo(
       () => ({
-        backgroundColor: 'rgba(255, 255, 255, 0.04)',
+        background: 'linear-gradient(180deg, rgba(22, 22, 26, 0.92), rgba(14, 14, 18, 0.92))',
         fontWeight: 'bold',
         fontSize: isSmall ? '13px' : '15px',
+        color: '#e6e6e6',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
       }),
       [isSmall]
     );
