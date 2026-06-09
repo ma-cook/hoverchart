@@ -31,7 +31,7 @@ import DodecahedronWireframe2 from './components/DodecahedronWireframe2';
 import { CreateSpacePopup } from './components/CreateSpacePopup';
 import { ShareSpacePopup } from './components/ShareSpacePopup';
 import { SpacesTable } from './components/SpacesTable';
-import { UserLoginSection } from './components/UserLoginSection';
+import LandingTopBar from './components/LandingTopBar';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { OrganizationManager } from './components/OrganizationManager';
 import { UpgradePrompt, TIER_LIMITS } from './components/UpgradePrompt';
@@ -45,6 +45,7 @@ import {
 import { useWindowSize } from './hooks/useWindowSize';
 import { LandingScrollContent } from './components/LandingScrollContent';
 import './LandingApp.css';
+import '../components/TopBar.css';
 
 function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   // Core state
@@ -962,10 +963,16 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       {/* Logged-in UI */}
       {user && (
         <>
+          <LandingTopBar
+            user={user}
+            onLogout={handleLogout}
+            onOpenOrgManager={() => setShowOrgManager(true)}
+            pendingInviteCount={pendingInvites.length}
+          />
           <div
             style={{
               position: 'fixed',
-              top: '50%',
+              top: 'calc(50% + 24px)',
               left: '50%',
               transform: 'translate(-50%, -50%)',
               width: (() => {
@@ -988,14 +995,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
           >
             <SpacesTable {...spaceTableProps} />
           </div>
-          <UserLoginSection
-            user={user}
-            windowSize={windowSize}
-            onLogin={handleLogin}
-            onLogout={handleLogout}
-            onOpenOrgManager={() => setShowOrgManager(true)}
-            pendingInviteCount={pendingInvites.length}
-          />
         </>
       )}
 
