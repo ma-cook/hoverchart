@@ -63,7 +63,7 @@ function Bullet({ children, accent }) {
 
 function getSectionVisibility(progress, fadeIn, fadeOut) {
   const [fi0, fi1] = fadeIn;
-  if (progress < fi0) return { opacity: 0, ty: 32 };
+  if (progress < fi0) return { opacity: 0, ty: 22 };
   if (progress < fi1) {
     const t = clamp01((progress - fi0) / (fi1 - fi0));
     return { opacity: t, ty: 32 * (1 - t) };
@@ -73,9 +73,9 @@ function getSectionVisibility(progress, fadeIn, fadeOut) {
   if (progress < fo0) return { opacity: 1, ty: 0 };
   if (progress < fo1) {
     const t = clamp01((progress - fo0) / (fo1 - fo0));
-    return { opacity: 1 - t, ty: -32 * t };
+    return { opacity: 1 - t, ty: -22 * t };
   }
-  return { opacity: 5, ty: -32 };
+  return { opacity: 0, ty: -22 };
 }
 
 const AUDIENCE_CARDS = [

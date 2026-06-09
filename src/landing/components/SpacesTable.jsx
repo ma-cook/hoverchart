@@ -150,6 +150,13 @@ export const SpacesTable = React.memo(
       >
         <table style={TABLE_STYLES}>
           <thead>
+            {hasOwnedSpaces && (
+              <tr>
+                <td colSpan="5" style={{ ...tdStyles, ...categoryRowStyles }}>
+                  Your Spaces
+                </td>
+              </tr>
+            )}
             <tr>
               <th style={thStyles}>Name</th>
               <th style={thStyles}>Owner</th>
@@ -168,17 +175,13 @@ export const SpacesTable = React.memo(
                   )}
                 </div>
               </th>
+              <th style={{ ...thStyles, width: '60px' }}></th>
             </tr>
           </thead>
           <tbody>
             {/* Owned Spaces */}
             {hasOwnedSpaces && (
               <>
-                <tr>
-                  <td colSpan="4" style={{ ...tdStyles, ...categoryRowStyles }}>
-                    Your Spaces
-                  </td>
-                </tr>
                 {userSpaces.owned.map((space) => (
                   <tr key={`owned-${space.id}`}>
                     <td style={tdStyles}>
@@ -222,8 +225,10 @@ export const SpacesTable = React.memo(
                       </div>
                     </td>
                     <td style={tdStyles}>
-                      <div style={{ display: 'flex', alignItems: 'center' }}>
-                        {new Date(space.createdAt).toLocaleDateString()}
+                      {new Date(space.createdAt).toLocaleDateString()}
+                    </td>
+                    <td style={tdStyles}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {space.isOwner && (
                           <button
                             style={TRASH_BTN_STYLES}
@@ -245,7 +250,7 @@ export const SpacesTable = React.memo(
             {hasSharedSpaces && (
               <>
                 <tr>
-                  <td colSpan="4" style={{ ...tdStyles, ...categoryRowStyles }}>
+                  <td colSpan="5" style={{ ...tdStyles, ...categoryRowStyles }}>
                     Shared With You
                   </td>
                 </tr>
@@ -276,8 +281,10 @@ export const SpacesTable = React.memo(
                     </td>
                     <td style={tdStyles}>Shared</td>
                     <td style={tdStyles}>
-                      <div style={{ display: 'flex', alignItems: 'center' }}>
-                        {new Date(space.createdAt).toLocaleDateString()}
+                      {new Date(space.createdAt).toLocaleDateString()}
+                    </td>
+                    <td style={tdStyles}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <button
                           className="leave-space-btn"
                           style={LEAVE_BTN_STYLES}
@@ -297,7 +304,7 @@ export const SpacesTable = React.memo(
             {/* No spaces message */}
             {!hasOwnedSpaces && !hasSharedSpaces && (
               <tr>
-                <td colSpan="4" style={{ ...tdStyles, ...NO_SPACES_TEXT }}>
+                <td colSpan="5" style={{ ...tdStyles, ...NO_SPACES_TEXT }}>
                   No spaces found. Create your first space!
                 </td>
               </tr>
