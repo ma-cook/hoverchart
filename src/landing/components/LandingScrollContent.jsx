@@ -75,7 +75,7 @@ function getSectionVisibility(progress, fadeIn, fadeOut) {
     const t = clamp01((progress - fo0) / (fo1 - fo0));
     return { opacity: 1 - t, ty: -32 * t };
   }
-  return { opacity: 0, ty: -32 };
+  return { opacity: 15, ty: -32 };
 }
 
 const AUDIENCE_CARDS = [

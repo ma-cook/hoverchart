@@ -766,6 +766,11 @@ export const positionMethods = {
       markReachable(rootModuleId);
     });
 
+    // Store the reachable set on context so positionGroupedNodes can identify
+    // orphan root components that were positioned at Y=0 but aren't in the
+    // reachable hierarchy — they belong in the Unused Components container.
+    if (context) context.hierarchyReachableNodes = reachableFromRootModules;
+
     const componentsWithChildContainers = new Set();
     for (const [parentNodeId, children] of context.parentChildMap.entries()) {
       const parentNode = graphNodes.get(parentNodeId);
@@ -1108,7 +1113,7 @@ export const positionMethods = {
     );
 
     const groupContainerYOffset = rootHierarchyBounds.centerY - basePosition[1];
-    const ungroupedYOffset = groupContainerYOffset + 300;
+    const ungroupedYOffset = (rootHierarchyBounds.maxY - basePosition[1]) + 100;
     const edgeSpacing = 100;
 
     // ── 5. Position discovered groups in a circle around root hierarchy ───
@@ -1176,6 +1181,28 @@ export const positionMethods = {
 
     // Store discovered groups on context so resolveCollisions can use them
     context.discoveredGroups = groupedByType;
+
+    // ── 5b. Pass 2: orphan root components ────────────────────────────────
+    // Root-level components that were positioned by positionNodeHierarchy at
+    // Y = basePosition[1] but are NOT reachable from entry points AND have no
+    // children of their own should be moved into the ungrouped set so they
+    // (and their descendants, if any) are repositioned at the ungrouped Y
+    // offset instead of sitting at the root hierarchy's Y level.
+    const hierarchyReachable = context.hierarchyReachableNodes || new Set();
+    for (const [nodeId, node] of graphNodes.entries()) {
+      if (childParentMap.has(nodeId)) continue;        // not root-level
+      if ((node.type || '').toLowerCase().trim() !== NODE_TYPE_COMPONENT) continue;
+      if (nodeId === 'MainEntry') continue;
+      if (internalComponentChildren?.has(nodeId)) continue;
+      if (!nodePositions.has(nodeId)) continue;         // already in pass 1
+      const hasChildren = (context.parentChildMap?.get(nodeId)?.size ?? 0) > 0;
+      if (hasChildren) continue;
+      if (!hierarchyReachable.has(nodeId)) {
+        if (!ungroupedComponents.includes(nodeId)) {
+          ungroupedComponents.push(nodeId);
+        }
+      }
+    }
 
     // ── 6. Ungrouped components ───────────────────────────────────────────
     ungroupedComponents.forEach((componentId) => {
@@ -1301,5 +1328,10 @@ export const positionMethods = {
         });
       });
     }
+
+    // Store the final ungrouped list so containerMethods.js can use the same
+    // set of nodes when creating the "Unused Components" container, instead
+    // of re-calculating with a different (broader) condition.
+    context.ungroupedComponents = ungroupedComponents;
   },
 };

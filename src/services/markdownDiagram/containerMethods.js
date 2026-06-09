@@ -58,29 +58,35 @@ export const containerMethods = {
     const groupedByType = new Map(); // groupKey → [nodeId, …]
     const ungroupedComponents = [];
 
-    for (const [nodeId, node] of graphNodes.entries()) {
-      if (childParentMap.has(nodeId)) continue;
+    // Use the pre-computed ungrouped list from positionMethods.js when available
+    // so that the same set of components drives both positioning AND container
+    // creation — preventing Y-position mismatches.
+    if (context.ungroupedComponents) {
+      ungroupedComponents.push(...context.ungroupedComponents);
+    } else {
+      for (const [nodeId, node] of graphNodes.entries()) {
+        if (childParentMap.has(nodeId)) continue;
 
-      const nodeType = (node.type || '').toLowerCase().trim();
+        const nodeType = (node.type || '').toLowerCase().trim();
 
-      // Components go into either the hierarchy or the "ungrouped" bucket
-      if (nodeType === NODE_TYPE_COMPONENT && nodeId !== 'MainEntry') {
-        if (
-          context.internalComponentChildren &&
-          context.internalComponentChildren.has(nodeId)
-        ) {
+        // Components go into either the hierarchy or the "ungrouped" bucket
+        if (nodeType === NODE_TYPE_COMPONENT && nodeId !== 'MainEntry') {
+          if (
+            context.internalComponentChildren &&
+            context.internalComponentChildren.has(nodeId)
+          ) {
+            continue;
+          }
+          // Add to ungrouped if: (a) no position yet, OR (b) positioned but not
+          // reachable from a main-hierarchy entry point AND has no children of its
+          // own (components that parent other components are clearly in-hierarchy
+          // even if the scanner didn't emit an explicit entry-point connection).
+          const hasChildren = (context.parentChildMap?.get(nodeId)?.size ?? 0) > 0;
+          if (!nodePositions.has(nodeId) || (!hierarchyComponents.has(nodeId) && !hasChildren)) {
+            ungroupedComponents.push(nodeId);
+          }
           continue;
         }
-        // Add to ungrouped if: (a) no position yet, OR (b) positioned but not
-        // reachable from a main-hierarchy entry point AND has no children of its
-        // own (components that parent other components are clearly in-hierarchy
-        // even if the scanner didn't emit an explicit entry-point connection).
-        const hasChildren = (context.parentChildMap?.get(nodeId)?.size ?? 0) > 0;
-        if (!nodePositions.has(nodeId) || (!hierarchyComponents.has(nodeId) && !hasChildren)) {
-          ungroupedComponents.push(nodeId);
-        }
-        continue;
-      }
 
       // Datapaths don't produce 3D objects
       if (nodeType === NODE_TYPE_DATAPATH) continue;
@@ -99,6 +105,7 @@ export const containerMethods = {
         groupedByType.set(groupKey, []);
       }
       groupedByType.get(groupKey).push(nodeId);
+    }
     }
 
     // ── Container creation helper (unchanged logic) ──────────────────────

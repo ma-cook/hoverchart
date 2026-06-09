@@ -64,6 +64,9 @@ export const objectMethods = {
         nodePositions,
         nodeScales,
         processedNodes: new Set(),
+        // Use the worker-computed ungrouped list so container creation
+        // uses the same set of nodes that was positioned as "ungrouped".
+        ungroupedComponents: precomputedLayout.ungroupedComponents || [],
       };
     } else {
       // ── Main-thread fallback (original code path) ────────────────────────

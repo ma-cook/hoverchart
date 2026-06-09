@@ -296,6 +296,7 @@ const workerApi = {
         childParentMap: Array.from(childParentMap.entries()),
         rootNodes: Array.from(rootNodes),
         internalComponentChildren: Array.from(internalComponentChildren),
+        ungroupedComponents: context.ungroupedComponents || [],
         // Minimal node metadata needed by container-sizing methods on main thread
         graphNodes: Array.from(graph.nodes.entries()).map(([k, v]) => [
           k,

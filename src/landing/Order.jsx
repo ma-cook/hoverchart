@@ -13,7 +13,7 @@ export function OrderHeader(props) {
       // Make positioning responsive to screen size
       const isMobile = viewport.width < 5; // Adjust threshold as needed
       const positionX = isMobile ? -viewport.width / 3 : -viewport.width / 12.8;
-      const positionY = viewport.height / 3.5;
+      const positionY = viewport.height / 2.5;
       const scale = Math.max(3, Math.min(1.0, viewport.width / 2000));
 
       groupRef.current.position.set(positionX, positionY, -0);

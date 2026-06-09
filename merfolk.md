@@ -166,6 +166,7 @@ sampleElevation[Function: sampleElevation]
 generateHeightmap[Function: generateHeightmap]
 main[Function: main]
 worker[Function: worker]
+containsJSX[Function: containsJSX]
 isCubeChild[Function: isCubeChild]
 isContainerType[Function: isContainerType]
 wouldCreateCycle[Function: wouldCreateCycle]
@@ -392,7 +393,6 @@ rescanRepositoryForChanges[Function: rescanRepositoryForChanges]
 getTreeSitterLanguage[Function: getTreeSitterLanguage]
 getFileTypeFromPath[Function: getFileTypeFromPath]
 analyzeFile[Function: analyzeFile]
-containsJSX[Function: containsJSX]
 detectRepoType[Function: detectRepoType]
 sanitizeNodeId[Function: sanitizeNodeId]
 traverseVanillaAST[Function: traverseVanillaAST]
@@ -426,6 +426,7 @@ moduleImportRelationships[Function: moduleImportRelationships]
 nextjsRouteMap[Function: nextjsRouteMap]
 apiEndpoints[Function: apiEndpoints]
 dbModels[Function: dbModels]
+dbModelUsers[Function: dbModelUsers]
 authGuards[Function: authGuards]
 eventEmitters[Function: eventEmitters]
 eventListeners[Function: eventListeners]
@@ -433,6 +434,7 @@ errorBoundaries[Function: errorBoundaries]
 suspenseBoundaries[Function: suspenseBoundaries]
 sharedInterfaces[Function: sharedInterfaces]
 interfaceUsages[Function: interfaceUsages]
+traversedBodies[Function: traversedBodies]
 traverse[Function: traverse]
 isMiddlewareParams[Function: isMiddlewareParams]
 knownContainers[Function: knownContainers]
@@ -551,6 +553,8 @@ moveComponentTree[Function: moveComponentTree]
 getComponentChildren[Function: getComponentChildren]
 checkOverlap[Function: checkOverlap]
 containersByLevel[Function: containersByLevel]
+collectAllDescendants[Function: collectAllDescendants]
+allDescendants[Function: allDescendants]
 resolveNodeMove[Function: resolveNodeMove]
 calculateNodeScaleFromChildren[Function: calculateNodeScaleFromChildren]
 calculateGroupSpacing[Function: calculateGroupSpacing]
@@ -791,6 +795,12 @@ useUIOverlayStore[[Store: useUIOverlayStore]]
 useWebcamStreamStore[[Store: useWebcamStreamStore]]
 
 %% Utilities
+gl_line_frag[Function: gl_line_frag]
+gl_line_vert[Function: gl_line_vert]
+gl_object_frag[Function: gl_object_frag]
+gl_object_vert[Function: gl_object_vert]
+line_wgsl[Function: line_wgsl]
+object_wgsl[Function: object_wgsl]
 getSharedMaterial[Function: getSharedMaterial]
 numericCacheKey[Function: numericCacheKey]
 pathToSegments[Function: pathToSegments]
@@ -1209,6 +1219,8 @@ TARGET_HEIGHT[Constant: TARGET_HEIGHT]
 CONCURRENT[Constant: CONCURRENT]
 BASE_URL[Constant: BASE_URL]
 DEG2RAD[Constant: DEG2RAD]
+landingDir[Constant: landingDir]
+fileContext[Constant: fileContext]
 types[Constant: types]
 graph[Constant: graph]
 NODE_TYPE_COMPONENT[Constant: NODE_TYPE_COMPONENT]
@@ -1708,9 +1720,10 @@ express<Library: express>
 cors<Library: cors>
 dotenv<Library: dotenv>
 fs<Library: fs>
+@babel/parser<Library: @babel/parser>
+path<Library: path>
 esbuild<Library: esbuild>
 os<Library: os>
-path<Library: path>
 module<Library: module>
 react<Library: react>
 @react-three/fiber<Library: @react-three/fiber>
@@ -1736,7 +1749,6 @@ prop-types<Library: prop-types>
 draft-js<Library: draft-js>
 draft-js/dist/Draft.css<Library: draft-js/dist/Draft.css>
 react-dom/client<Library: react-dom/client>
-@babel/parser<Library: @babel/parser>
 comlink<Library: comlink>
 fix-webm-duration<Library: fix-webm-duration>
 uuid<Library: uuid>
@@ -2693,7 +2705,9 @@ UpdatesViewer -.-> updatesviewerFormattedTimestamp : "update helper"
 
 %% File Container Nodes
 backend_index((Service: index))
+shader_shaders[Function: shaders]
 generateHeightmap_file[Function: generateHeightmap]
+test_landing_classification[Function: test_landing_classification]
 test_pipeline[Function: test_pipeline]
 AppShell_file[Function: AppShell]
 useAuth_file[Hook: useAuth]
@@ -2752,7 +2766,6 @@ streamlinedSpatialPartitioning((Service: streamlinedSpatialPartitioning))
 index((Service: index))
 unifiedCacheManager_file((Service: unifiedCacheManager))
 webRservice((Service: webRservice))
-shader_shaders[Function: shaders]
 authStore[[Store: authStore]]
 connectionStore[[Store: connectionStore]]
 cubeStore[[Store: cubeStore]]
@@ -2841,6 +2854,14 @@ backend_index -.-> urlObj : "contains"
 backend_index -.-> seen : "contains"
 backend_index -.-> seenFns : "contains"
 backend_index -.-> dedup : "contains"
+shader_shaders -.-> gl_line_frag : "contains"
+shader_shaders -.-> gl_line_vert : "contains"
+shader_shaders -.-> gl_object_frag : "contains"
+shader_shaders -.-> gl_object_vert : "contains"
+shader_shaders -.-> line_wgsl : "contains"
+shader_shaders -.-> object_wgsl : "contains"
+shader_shaders -.-> line_frag_glsl : "contains"
+shader_shaders -.-> line_vert_glsl : "contains"
 generateHeightmap_file -.-> fetchBuffer : "contains"
 generateHeightmap_file -.-> decodeTile : "contains"
 generateHeightmap_file -.-> downloadTiles : "contains"
@@ -2849,6 +2870,7 @@ generateHeightmap_file -.-> sampleElevation : "contains"
 generateHeightmap_file -.-> generateHeightmap : "contains"
 generateHeightmap_file -.-> main : "contains"
 generateHeightmap_file -.-> worker : "contains"
+test_landing_classification -.-> containsJSX : "contains"
 test_pipeline -.-> isCubeChild : "contains"
 test_pipeline -.-> isContainerType : "contains"
 test_pipeline -.-> wouldCreateCycle : "contains"
@@ -3033,7 +3055,6 @@ githubRepoService -.-> rescanRepositoryForChanges : "contains"
 githubRepoService -.-> getTreeSitterLanguage : "contains"
 githubRepoService -.-> getFileTypeFromPath : "contains"
 githubRepoService -.-> analyzeFile : "contains"
-githubRepoService -.-> containsJSX : "contains"
 githubRepoService -.-> detectRepoType : "contains"
 githubRepoService -.-> sanitizeNodeId : "contains"
 githubRepoService -.-> traverseVanillaAST : "contains"
@@ -3067,6 +3088,7 @@ githubRepoService -.-> moduleImportRelationships : "contains"
 githubRepoService -.-> nextjsRouteMap : "contains"
 githubRepoService -.-> apiEndpoints : "contains"
 githubRepoService -.-> dbModels : "contains"
+githubRepoService -.-> dbModelUsers : "contains"
 githubRepoService -.-> authGuards : "contains"
 githubRepoService -.-> eventEmitters : "contains"
 githubRepoService -.-> eventListeners : "contains"
@@ -3074,6 +3096,7 @@ githubRepoService -.-> errorBoundaries : "contains"
 githubRepoService -.-> suspenseBoundaries : "contains"
 githubRepoService -.-> sharedInterfaces : "contains"
 githubRepoService -.-> interfaceUsages : "contains"
+githubRepoService -.-> traversedBodies : "contains"
 githubRepoService -.-> traverse : "contains"
 githubRepoService -.-> isMiddlewareParams : "contains"
 githubRepoService -.-> knownContainers : "contains"
@@ -3194,6 +3217,8 @@ positionMethods -.-> moveComponentTree : "contains"
 positionMethods -.-> getComponentChildren : "contains"
 positionMethods -.-> checkOverlap : "contains"
 positionMethods -.-> containersByLevel : "contains"
+positionMethods -.-> collectAllDescendants : "contains"
+positionMethods -.-> allDescendants : "contains"
 positionMethods -.-> resolveNodeMove : "contains"
 positionMethods -.-> calculateNodeScaleFromChildren : "contains"
 positionMethods -.-> calculateGroupSpacing : "contains"
@@ -3413,8 +3438,6 @@ webRservice -.-> peerConnection : "contains"
 webRservice -.-> broadcastSession : "contains"
 webRservice -.-> activeUsers : "contains"
 webRservice -.-> fiveMinutesAgo : "contains"
-shader_shaders -.-> line_frag_glsl : "contains"
-shader_shaders -.-> line_vert_glsl : "contains"
 authStore -.-> monitorConnection : "contains"
 authStore -.-> connectionHandler : "contains"
 authStore -.-> handleUrlAuthLocal : "contains"
@@ -4873,6 +4896,16 @@ generateHeightmap --> latLonToMercatorPixel : "calls latLonToMercatorPixel"
 generateHeightmap --> sampleElevation : "calls sampleElevation"
 main --> downloadTiles : "calls downloadTiles"
 main --> generateHeightmap : "calls generateHeightmap"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
+containsJSX --> containsJSX : "calls containsJSX"
 App --> presenceService : "calls setGuestPresence"
 presenceService --> setGuestPresence : "receives"
 App --> animationUtils : "calls initAnimationSystem"
