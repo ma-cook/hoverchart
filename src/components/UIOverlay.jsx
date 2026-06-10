@@ -30,6 +30,7 @@ import {
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import SpaceChat from './SpaceChat';
 import RepoAnalysisOverlay from './RepoAnalysisOverlay';
+import RecordingFormatPrompt from './RecordingFormatPrompt';
 import './RepoAnalysisOverlay.css';
 import './TopBar.css';
 import useEarthSettingsStore from '../stores/earthSettingsStore';
@@ -396,6 +397,7 @@ const UIOverlay = ({
 
   const [chatOpen, setChatOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [recordingFormatOpen, setRecordingFormatOpen] = useState(false);
   const [runtimeScanUrl, setRuntimeScanUrl] = useState('');
   const [runtimeScanDuration, setRuntimeScanDuration] = useState(10);
   const [lastScannedUrl, setLastScannedUrl] = useState(null);
@@ -817,19 +819,21 @@ const UIOverlay = ({
         setIsRecording(false);
       }
     } else {
-      // Ask for confirmation before starting
-      const confirmed = window.confirm(
-        'Do you want to start recording your screen? You will be asked to select which screen or window to record.'
-      );
-
-      if (confirmed) {
-        const success = await screenRecorder.startRecording();
-        if (success) {
-          setIsRecording(true);
-        }
-      }
+      setRecordingFormatOpen(true);
     }
   }, [isRecording, setIsRecording]);
+
+  const handleFormatSelect = useCallback(async (format) => {
+    setRecordingFormatOpen(false);
+    const success = await screenRecorder.startRecording(format);
+    if (success) {
+      setIsRecording(true);
+    }
+  }, [setIsRecording]);
+
+  const handleCancelPrompt = useCallback(() => {
+    setRecordingFormatOpen(false);
+  }, []);
 
   // Sync React state when recording stops via browser's "Stop sharing" button
   useEffect(() => {
@@ -1627,6 +1631,11 @@ const UIOverlay = ({
           />
         </div>
       </div>
+      <RecordingFormatPrompt
+        open={recordingFormatOpen}
+        onSelect={handleFormatSelect}
+        onCancel={handleCancelPrompt}
+      />
       <RepoAnalysisOverlay
         open={analysisOpen}
         onClose={() => setAnalysisOpen(false)}

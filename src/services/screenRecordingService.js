@@ -7,9 +7,10 @@ export class ScreenRecordingService {
     this.chunks = [];
     this.isRecording = false;
     this.startTime = null;
+    this.recordingFormat = null;
   }
 
-  async startRecording() {
+  async startRecording(format = 'webm') {
     try {
       // Get display media (screen capture)
       this.stream = await navigator.mediaDevices.getDisplayMedia({
@@ -26,14 +27,27 @@ export class ScreenRecordingService {
         },
       });
 
-      // Pick the best supported mime type
-      const mimeType = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-      ].find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+      this.recordingFormat = format;
+
+      // Pick the best supported mime type for the chosen format
+      const mimeTypeCandidates =
+        format === 'mp4'
+          ? [
+              'video/mp4;codecs=mp4a.40.2',
+              'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+              'video/mp4',
+            ]
+          : [
+              'video/webm;codecs=vp9,opus',
+              'video/webm;codecs=vp8,opus',
+              'video/webm;codecs=vp9',
+              'video/webm;codecs=vp8',
+              'video/webm',
+            ];
+
+      const mimeType =
+        mimeTypeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) ||
+        mimeTypeCandidates[mimeTypeCandidates.length - 1];
 
       this.chunks = [];
 
@@ -100,9 +114,12 @@ export class ScreenRecordingService {
         const rawBlob = new Blob(this.chunks, { type: mimeType });
         console.log(`Recording complete: ${this.chunks.length} chunks, ${(rawBlob.size / 1024 / 1024).toFixed(1)} MB, ${(duration / 1000).toFixed(1)}s`);
 
-        // Fix WebM duration metadata so platforms like LinkedIn
-        // can detect the correct video length
-        const fixedBlob = await fixWebmDuration(rawBlob, duration, { logger: false });
+        // Fix duration metadata (WebM only — fix-webm-duration doesn't
+        // apply to MP4, and browsers usually handle MP4 duration correctly)
+        const fixedBlob =
+          this.recordingFormat === 'webm'
+            ? await fixWebmDuration(rawBlob, duration, { logger: false })
+            : rawBlob;
 
         // Stop all tracks
         if (this.stream) {
@@ -115,6 +132,7 @@ export class ScreenRecordingService {
         this.stream = null;
         this.chunks = [];
         this.startTime = null;
+        this.recordingFormat = null;
 
         resolve(fixedBlob);
       };
@@ -130,12 +148,15 @@ export class ScreenRecordingService {
     const a = document.createElement('a');
     a.style.display = 'none';
     a.href = url;
+
+    const timestamp = new Date()
+      .toISOString()
+      .slice(0, 19)
+      .replace(/:/g, '-');
+
     a.download =
       filename ||
-      `recording-${new Date()
-        .toISOString()
-        .slice(0, 19)
-        .replace(/:/g, '-')}.webm`;
+      `recording-${timestamp}.${this.recordingFormat === 'mp4' ? 'mp4' : 'webm'}`;
 
     document.body.appendChild(a);
     a.click();
