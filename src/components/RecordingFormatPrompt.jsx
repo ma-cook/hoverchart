@@ -7,15 +7,22 @@ const FORMATS = [
 ];
 
 const RecordingFormatPrompt = ({ open, onSelect, onCancel }) => {
+  const [detected, setDetected] = useState(false);
   const [supported, setSupported] = useState({});
 
   useEffect(() => {
     if (!open) return;
+    setDetected(false);
     const results = {};
     for (const { id, typeHint } of FORMATS) {
-      results[id] = MediaRecorder.isTypeSupported(typeHint);
+      try {
+        results[id] = MediaRecorder.isTypeSupported(typeHint);
+      } catch {
+        results[id] = false;
+      }
     }
     setSupported(results);
+    setDetected(true);
   }, [open]);
 
   if (!open) return null;
@@ -36,8 +43,8 @@ const RecordingFormatPrompt = ({ open, onSelect, onCancel }) => {
         </div>
 
         <div className="recording-format-options">
-          {FORMATS.map(({ id, label, desc, typeHint }) => {
-            const isSupported = supported[id] !== false;
+          {FORMATS.map(({ id, label, desc }) => {
+            const isSupported = detected ? supported[id] !== false : true;
             return (
               <button
                 key={id}
@@ -52,7 +59,7 @@ const RecordingFormatPrompt = ({ open, onSelect, onCancel }) => {
               >
                 <span className="recording-format-btn-label">{label}</span>
                 <span className="recording-format-btn-desc">{desc}</span>
-                {!isSupported && (
+                {detected && !isSupported && (
                   <span className="recording-format-btn-hint">Unavailable</span>
                 )}
               </button>
@@ -60,7 +67,7 @@ const RecordingFormatPrompt = ({ open, onSelect, onCancel }) => {
           })}
         </div>
 
-        {!anySupported && (
+        {detected && !anySupported && (
           <div
             style={{
               color: '#f88',

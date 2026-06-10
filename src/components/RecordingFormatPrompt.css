@@ -1,11 +1,15 @@
 .recording-format-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
+  z-index: 2200;
+  pointer-events: auto;
 }
 
 .recording-format-panel {
@@ -17,6 +21,7 @@
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
   padding: 20px 24px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  pointer-events: auto;
 }
 
 .recording-format-title {
@@ -52,6 +57,7 @@
   cursor: pointer;
   font-size: 13px;
   transition: background 120ms ease, border-color 120ms ease;
+  pointer-events: auto;
 }
 
 .recording-format-btn:hover:not(:disabled) {
@@ -94,6 +100,7 @@
   font-size: 12px;
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease;
+  pointer-events: auto;
 }
 
 .recording-format-cancel:hover {
