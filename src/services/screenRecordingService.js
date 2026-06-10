@@ -126,13 +126,13 @@ export class ScreenRecordingService {
           this.stream.getTracks().forEach((track) => track.stop());
         }
 
-        // Reset state
+        // Reset state (keep recordingFormat so downloadRecording can
+        // pick the right file extension)
         this.isRecording = false;
         this.recorder = null;
         this.stream = null;
         this.chunks = [];
         this.startTime = null;
-        this.recordingFormat = null;
 
         resolve(fixedBlob);
       };
