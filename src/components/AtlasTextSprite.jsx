@@ -686,6 +686,7 @@ export default React.memo(AtlasTextSprite, (prevProps, nextProps) => {
     prevProps.visible === nextProps.visible &&
     prevProps.renderOrder === nextProps.renderOrder &&
     prevProps.scale === nextProps.scale &&
+    prevProps.onClick === nextProps.onClick &&
     prevProps.lineStyle === nextProps.lineStyle &&
     prevProps.pathPoints?.length === nextProps.pathPoints?.length &&
     prevProps.followTarget === nextProps.followTarget &&

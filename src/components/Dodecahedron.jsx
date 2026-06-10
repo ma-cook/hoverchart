@@ -888,12 +888,12 @@ const Sphere = React.memo(
       onIndicatorSelected?.();
       onFaceIndicatorClick?.(indicator);
     };
-    const handleHeaderClick = (e) => {
+    const handleHeaderClick = useCallback((e) => {
       e.stopPropagation();
-      setDodecahedronShowStyleMenu(id, !dodecahedron?.showStyleMenu);
-      // Close ObjectUI when header text is clicked
+      const current = useDodecahedronStore.getState().getDodecahedron(id);
+      setDodecahedronShowStyleMenu(id, !current?.showStyleMenu);
       setDodecahedronShowObjectUI(id, false);
-    };
+    }, [id, setDodecahedronShowStyleMenu, setDodecahedronShowObjectUI]);
     const handleStyleChange = (newStyle) => {
       // Use dodecahedron store value if available, fallback to objectData
       const currentHeaderStyle = dodecahedron?.headerStyle || headerStyle || {};
