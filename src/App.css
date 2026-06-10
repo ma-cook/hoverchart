@@ -36,6 +36,7 @@ canvas {
   padding: 10px;
   border-radius: 8px;
   z-index: 1000;
+  pointer-events: auto;
 }
 
 .github-repos-list {
@@ -141,6 +142,7 @@ canvas {
   transform: translateX(calc(-100% - 10px));
   transition: transform 0.3s ease-in-out;
   overflow-y: auto;
+  pointer-events: auto;
 }
 
 .sidebar-menu.open {
