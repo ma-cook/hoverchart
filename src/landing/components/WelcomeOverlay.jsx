@@ -92,7 +92,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
         }}
       >
         Volscape turns any codebase or Markdown diagram into an interactive 3D
-        map — built for engineers, product, and design to explore together.
+        map.
       </p>
 
       {/* Standout bullets */}

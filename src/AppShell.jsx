@@ -73,7 +73,7 @@ const AppShell = () => {
         {activeView === 'landing' ? landingScene : diagramScene}
       </SharedCanvas>
 
-      <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
+      <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%', pointerEvents: 'none' }}>
         <div
           style={{
             opacity: activeView === 'landing' ? 1 : 0,
