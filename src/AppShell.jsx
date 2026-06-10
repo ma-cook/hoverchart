@@ -1,19 +1,22 @@
-import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import LandingApp from './landing/LandingApp';
-
-// Lazy load the heavy diagram app for code splitting
-const DiagramApp = lazy(() => import('./App.jsx'));
+import DiagramApp from './App.jsx';
+import SharedCanvas from './components/SharedCanvas';
+import useSceneStore from './stores/sceneStore';
 
 const AppShell = () => {
   const [activeView, setActiveView] = useState('landing'); // 'landing' | 'diagram'
   const [spaceContext, setSpaceContext] = useState(null);
   const [trialMode, setTrialMode] = useState(false);
 
+  const landingScene = useSceneStore((s) => s.landingScene);
+  const diagramScene = useSceneStore((s) => s.diagramScene);
+  const onDiagramPointerMissed = useSceneStore((s) => s.onDiagramPointerMissed);
+
   // Check URL on mount — if spaceId/space/code exists, go straight to diagram
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('spaceId') || params.get('space') || params.get('code')) {
-      // Restore spaceType from URL if available
       const urlSpaceType = params.get('type');
       const urlSpaceId = params.get('spaceId') || params.get('space');
       if (urlSpaceId && urlSpaceType) {
@@ -23,10 +26,8 @@ const AppShell = () => {
     }
   }, []);
 
-  // Called by LandingApp when user clicks a space
   const handleOpenSpace = useCallback((spaceId, ownerId, spaceType = 'diagram') => {
     setSpaceContext({ spaceId, ownerId, spaceType });
-    // Update URL without reload — include type if not default
     let newUrl = `${window.location.pathname}?spaceId=${encodeURIComponent(spaceId)}`;
     if (spaceType && spaceType !== 'diagram') {
       newUrl += `&type=${encodeURIComponent(spaceType)}`;
@@ -35,7 +36,6 @@ const AppShell = () => {
     setActiveView('diagram');
   }, []);
 
-  // Called when user wants to go back to the platform page
   const handleBackToLanding = useCallback(() => {
     window.history.pushState({}, '', window.location.pathname);
     window.isTrialMode = false;
@@ -44,7 +44,6 @@ const AppShell = () => {
     setActiveView('landing');
   }, []);
 
-  // Called when user clicks "Try Without Account"
   const handleTryWithoutAccount = useCallback(() => {
     window.isTrialMode = true;
     setTrialMode(true);
@@ -52,7 +51,6 @@ const AppShell = () => {
     setActiveView('diagram');
   }, []);
 
-  // Handle browser back/forward
   useEffect(() => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
@@ -68,43 +66,49 @@ const AppShell = () => {
   }, []);
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-      {/* Landing view */}
-      <div
-        style={{
-          opacity: activeView === 'landing' ? 1 : 0,
-          pointerEvents: activeView === 'landing' ? 'auto' : 'none',
-          transition: 'opacity 0.4s ease-in-out',
-          position: 'absolute',
-          inset: 0,
-          zIndex: activeView === 'landing' ? 1 : 0,
-        }}
+    <>
+      <SharedCanvas
+        onPointerMissed={activeView === 'diagram' ? onDiagramPointerMissed : undefined}
       >
-        {activeView === 'landing' && (
-          <LandingApp onOpenSpace={handleOpenSpace} onTryWithoutAccount={handleTryWithoutAccount} />
-        )}
-      </div>
+        {activeView === 'landing' ? landingScene : diagramScene}
+      </SharedCanvas>
 
-      {/* Diagram view */}
-      {activeView === 'diagram' && (
-        <Suspense fallback={<div className="loading">Loading diagram...</div>}>
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              zIndex: 2,
-            }}
-          >
+      <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
+        <div
+          style={{
+            opacity: activeView === 'landing' ? 1 : 0,
+            pointerEvents: activeView === 'landing' ? 'auto' : 'none',
+            transition: 'opacity 0.4s ease-in-out',
+            position: 'absolute',
+            inset: 0,
+          }}
+        >
+          {activeView === 'landing' && (
+            <LandingApp onOpenSpace={handleOpenSpace} onTryWithoutAccount={handleTryWithoutAccount} />
+          )}
+        </div>
+
+        <div
+          style={{
+            opacity: activeView === 'diagram' ? 1 : 0,
+            pointerEvents: activeView === 'diagram' ? 'auto' : 'none',
+            transition: 'opacity 0.4s ease-in-out',
+            position: 'absolute',
+            inset: 0,
+            zIndex: activeView === 'diagram' ? 1 : 0,
+          }}
+        >
+          {activeView === 'diagram' && (
             <DiagramApp
               initialSpaceContext={spaceContext}
               onBackToLanding={handleBackToLanding}
               trialMode={trialMode}
               spaceType={spaceContext?.spaceType || 'diagram'}
             />
-          </div>
-        </Suspense>
-      )}
-    </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 };
 

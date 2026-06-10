@@ -63,30 +63,34 @@ export const containerMethods = {
     // creation — preventing Y-position mismatches.
     if (context.ungroupedComponents) {
       ungroupedComponents.push(...context.ungroupedComponents);
-    } else {
-      for (const [nodeId, node] of graphNodes.entries()) {
-        if (childParentMap.has(nodeId)) continue;
+    }
 
-        const nodeType = (node.type || '').toLowerCase().trim();
+    // Always scan the graph to discover groups for folder-based containers
+    // (hooks, stores, services, workers, shaders, etc.).  Previously this was
+    // inside the else-branch of the ungrouped-components check — when the
+    // pre-computed list was present the group discovery was skipped entirely.
+    for (const [nodeId, node] of graphNodes.entries()) {
+      if (childParentMap.has(nodeId)) continue;
 
-        // Components go into either the hierarchy or the "ungrouped" bucket
-        if (nodeType === NODE_TYPE_COMPONENT && nodeId !== 'MainEntry') {
-          if (
-            context.internalComponentChildren &&
-            context.internalComponentChildren.has(nodeId)
-          ) {
-            continue;
-          }
-          // Add to ungrouped if: (a) no position yet, OR (b) positioned but not
-          // reachable from a main-hierarchy entry point AND has no children of its
-          // own (components that parent other components are clearly in-hierarchy
-          // even if the scanner didn't emit an explicit entry-point connection).
+      const nodeType = (node.type || '').toLowerCase().trim();
+
+      // Components go into either the hierarchy or the "ungrouped" bucket
+      if (nodeType === NODE_TYPE_COMPONENT && nodeId !== 'MainEntry') {
+        if (
+          context.internalComponentChildren &&
+          context.internalComponentChildren.has(nodeId)
+        ) {
+          continue;
+        }
+        // Only collect ungrouped components when not already pre-computed
+        if (!context.ungroupedComponents) {
           const hasChildren = (context.parentChildMap?.get(nodeId)?.size ?? 0) > 0;
           if (!nodePositions.has(nodeId) || (!hierarchyComponents.has(nodeId) && !hasChildren)) {
             ungroupedComponents.push(nodeId);
           }
-          continue;
         }
+        continue;
+      }
 
       // Datapaths don't produce 3D objects
       if (nodeType === NODE_TYPE_DATAPATH) continue;
@@ -105,7 +109,6 @@ export const containerMethods = {
         groupedByType.set(groupKey, []);
       }
       groupedByType.get(groupKey).push(nodeId);
-    }
     }
 
     // ── Container creation helper (unchanged logic) ──────────────────────

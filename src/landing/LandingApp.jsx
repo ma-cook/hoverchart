@@ -19,14 +19,8 @@ import {
   where,
   deleteDoc,
 } from 'firebase/firestore';
-import { OrderHeader } from './Order';
-import CustomCamera from './CustomCamera';
-import PerspectiveGrid from './PerspectiveGrid';
-import { Canvas } from '@react-three/fiber';
-
-import CubeOutline from './CubeOutline';
-import DodecahedronWireframe from './DodecahedronWireframe';
-import DodecahedronWireframe2 from './components/DodecahedronWireframe2';
+import LandingScene from './LandingScene';
+import useSceneStore from '../stores/sceneStore';
 
 import { CreateSpacePopup } from './components/CreateSpacePopup';
 import { ShareSpacePopup } from './components/ShareSpacePopup';
@@ -57,9 +51,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   // Window size custom hook
   const windowSize = useWindowSize();
 
-  // Canvas ref
-  const canvasRef = useRef(null);
-
   // Space management state
   const [showCreateSpacePopup, setShowCreateSpacePopup] = useState(false);
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
@@ -69,10 +60,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [isCreatingSpace, setIsCreatingSpace] = useState(false);
   const [userSpaces, setUserSpaces] = useState({ owned: [], shared: [] });
 
-  // Animation state
-  const [showDodecahedron, setShowDodecahedron] = useState(true);
-  const [showSecondCube, setShowSecondCube] = useState(true);
-
   // Scroll-driven camera and overlay progression
   const MAX_SCROLL = 3000;
   const rawScrollRef = useRef(0);
@@ -81,6 +68,19 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   // Ref so camera reads scroll every R3F frame without waiting for React re-renders
   const scrollProgressRef = useRef(0);
   const rafPendingRef = useRef(null);
+
+  // Feed 3D scene to the shared Canvas via store
+  const setLandingScene = useSceneStore((s) => s.setLandingScene);
+  useEffect(() => {
+    setLandingScene(
+      <LandingScene
+        user={user}
+        scrollProgressRef={scrollProgressRef}
+        windowSize={windowSize}
+      />
+    );
+    return () => setLandingScene(null);
+  }, [user, scrollProgressRef, windowSize, setLandingScene]);
 
   // Update ref immediately (for camera) and throttle state update to one rAF per frame
   // (for overlay panels) — prevents 10-20 re-renders per scroll gesture
@@ -757,15 +757,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     [fetchUserSpaces, user]
   );
 
-  // Animation completion handlers
-  const handleFirstCubeComplete = useCallback(() => {
-    setShowDodecahedron(true);
-  }, []);
-
-  const handleDodecahedronComplete = useCallback(() => {
-    setShowSecondCube(true);
-  }, []);
-
   const handleAcceptInvite = useCallback(
     async (orgId) => {
       if (!user) return;
@@ -943,30 +934,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         onClose={() => setShowOrgManager(false)}
       />
 
-      {/* Fixed 3D Canvas — always fills viewport behind all 2D content */}
-      <Canvas
-        ref={canvasRef}
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          width: '100vw',
-          height: '100vh',
-          zIndex: 0,
-          far: 10000,
-          pointerEvents: 'none',
-          background: 'white',
-        }}
-        resize={{ scroll: false }}
-        antialias="true"
-        pixelratio={window.devicePixelRatio}
-        dpr={[1, 2]}
-      >
-        <ambientLight intensity={2} />
-        {!user && <OrderHeader windowSize={windowSize} />}
-        <CustomCamera scrollProgressRef={!user ? scrollProgressRef : null} />
-        <PerspectiveGrid />
-      </Canvas>
+      {/* 3D scene rendered in shared Canvas via sceneStore */}
 
       {/* Logged-in UI */}
       {user && (

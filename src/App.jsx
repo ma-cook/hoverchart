@@ -1,7 +1,6 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { useRef, useState, useCallback, useEffect, useMemo, memo } from 'react';
 import { EffectComposer, SMAA } from '@react-three/postprocessing';
-import { Stats } from '@react-three/drei/core/Stats';
+import useSceneStore from './stores/sceneStore';
 
 import './App.css';
 
@@ -1556,9 +1555,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   // useLOD is now derived directly as state (see above) — no need for
   // `const useLOD = cameraDistance > 100;`
 
-  // Lazy load state for Canvas
-  const [shouldRenderCanvas, setShouldRenderCanvas] = useState(false);
-
   // Memoize device detection to avoid recalculating on every render
   const deviceInfo = useMemo(() => {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -1587,53 +1583,95 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   // Read view mode from store — '3d' or '2d'
   const viewMode = useUIOverlayStore((s) => s.viewMode);
 
-  // Memoize canvas settings to avoid recalculating on every render
-  const canvasSettings = useMemo(() => {
-    const { isMobile, isLowEnd } = deviceInfo;
-    const dpr = Math.min(window.devicePixelRatio, 2);
-    
-    if (canvasQuality === 'low' || isLowEnd || isMobile) {
-      return {
-        gl: {
-          antialias: false,
-          samples: 0,
-          alpha: true,
-          stencil: false,
-          depth: true,
-          logarithmicDepthBuffer: false,
-          powerPreference: 'high-performance',
-          precision: 'highp',
-        },
-        dpr,
-        camera: { fov: 50, near: 0.1, far: 10000, position: [0, 0, 50] },
-      };
-    }
-    
-    return {
-      gl: {
-        antialias: true,
-        samples: 4,
-        alpha: true,
-        stencil: false,
-        depth: true,
-        logarithmicDepthBuffer: false,
-        powerPreference: 'high-performance',
-        precision: 'highp',
-      },
-      dpr,
-      camera: { fov: 50, near: 0.1, far: 2000 },
-    };
-  }, [deviceInfo, canvasQuality]);
+  // Memoize scene content to keep the same JSX reference across re-renders
+  // when dependencies haven't changed.  Without this, every App render creates
+  // a new React element tree → setDiagramScene → AppShell re-render → scene
+  // remount → store updates → App re-render (infinite loop).
+  const diagramSceneContent = useMemo(() => (
+    <>
+      <FrameTicker />
+      <FrameloopController />
+      <LODManager enabled={useLOD} />
+      {viewMode === '3d' && <ConnectionAnimationManager />}
+      <CustomCamera ref={cameraRef} />
+      <group>
+        {viewMode === '3d' && <RealTimeConnectionUpdater />}
+        <ConnectionsRenderer
+          objects={objects}
+          allObjectsForPathfinding={objects}
+          visibleObjectIds={visibleObjectIds}
+          onLineStyleChange={handleLineStyleChange}
+          onLineColorChange={handleLineColorChange}
+          onConnectionClick={handleConnectionClick}
+          onLineTextClick={handleLineTextClick}
+          onLineTextSubmit={handleLineTextSubmit}
+          onLineTextStyleChange={handleLineTextStyleChange}
+        />
+        {spaceTypeProp === 'earth' && <EarthGlobe />}
+        <ObjectsRenderer
+          objects={objects}
+          visibleObjectIds={visibleObjectIds}
+          selectedId={selectedId}
+          handleObjectClick={handleObjectClick}
+          handleObjectMove={handleObjectMoveCallback}
+          handleObjectUpdate={handleObjectUpdateCallback}
+          disableOrbitControls={disableOrbitControls}
+          enableOrbitControls={enableOrbitControls}
+          handleFaceIndicatorClick={handleFaceIndicatorClickCallback}
+          handleFaceClick={handleFaceClick}
+          showAllCubesIndicators={showAllCubesIndicators}
+          activeIndicator={activeIndicator}
+          indicatorMode={indicatorMode}
+          selectedIndicators={selectedIndicators}
+          activeTextStyleUI={activeTextStyleUI}
+          setActiveTextStyleUI={setActiveTextStyleUI}
+          handleIndicatorDeselected={handleIndicatorDeselected}
+          registerTransformingObject={registerTransformingObject}
+          handleObjectMatrixChanged={handleObjectMatrixChanged}
+          handleIndicatorSelected={handleIndicatorSelected}
+          globalIndicatorSelected={globalIndicatorSelected}
+          handleObjectDelete={handleObjectDelete}
+          user={user}
+          currentSpaceId={effectiveSpaceId}
+          getTransformStartPosition={getTransformStartPosition}
+          checkPositionJitter={checkPositionJitterWithHistory}
+          useLOD={useLOD}
+        />
+        <RepoGrid />
+        <CellBoundaryRenderer visible={cellBoundariesVisible} />
+      </group>
+      <HandsRenderer />
+      {canvasQuality !== 'low' && (
+      <EffectComposer>
+        <SMAA />
+      </EffectComposer>
+      )}
+    </>
+  ), [
+    useLOD, viewMode, spaceTypeProp, canvasQuality,
+    objects, visibleObjectIds, selectedId,
+    handleObjectClick, handleObjectMoveCallback, handleObjectUpdateCallback,
+    disableOrbitControls, enableOrbitControls,
+    handleFaceIndicatorClickCallback, handleFaceClick,
+    showAllCubesIndicators, activeIndicator, indicatorMode,
+    selectedIndicators, activeTextStyleUI, setActiveTextStyleUI,
+    handleIndicatorDeselected, registerTransformingObject,
+    handleObjectMatrixChanged, handleIndicatorSelected,
+    globalIndicatorSelected, handleObjectDelete, user,
+    effectiveSpaceId, getTransformStartPosition,
+    checkPositionJitterWithHistory,
+    handleLineStyleChange, handleLineColorChange,
+    handleConnectionClick, handleLineTextClick,
+    handleLineTextSubmit, handleLineTextStyleChange,
+    cellBoundariesVisible,
+  ]);
 
-  // Initialize Canvas rendering after initial auth/space setup
+  // Store diagram scene content for SharedCanvas
+  const setDiagramScene = useSceneStore((s) => s.setDiagramScene);
   useEffect(() => {
-    if (canViewSpace && (isAuthReady || publicSpaceId || trialMode)) {
-      // Defer canvas rendering to next frame for better LCP
-      requestAnimationFrame(() => {
-        setShouldRenderCanvas(true);
-      });
-    }
-  }, [canViewSpace, isAuthReady, publicSpaceId, trialMode]);
+    setDiagramScene(diagramSceneContent, handleCanvasClick);
+    return () => setDiagramScene(null, null);
+  }, [diagramSceneContent, handleCanvasClick, setDiagramScene]);
 
   // Initialize WebRTC service with user ID when available
   useEffect(() => {
@@ -1671,129 +1709,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   clearRedirectTimeout();
   return (
     <>
-      {/* Full-screen loader: only while the Canvas hasn't mounted yet */}
-      {!shouldRenderCanvas && canViewSpace && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100vw',
-            height: '100vh',
-            background: backgroundColor,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '16px',
-            fontSize: '18px',
-            color: '#666',
-            zIndex: 9999,
-          }}
-        >
-          Initializing 3D space...
-          <div className="initial-loading-spinner" />
-        </div>
-      )}{' '}
-      {/* Data-loading state is now shown in UIOverlay's unified progress-toast */}{' '}
-      {shouldRenderCanvas && (
-        <div style={{
-          visibility: viewMode === '3d' ? 'visible' : 'hidden',
-          position: 'fixed',
-          inset: 0,
-        }}>
-        <Canvas
-          style={{
-            background: backgroundColor,
-            width: '100vw',
-            height: '100vh',
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            touchAction: 'none', // Enable touch gestures for mobile
-          }}
-          onPointerMissed={handleCanvasClick}
-          onCreated={() => {
-            console.log('🎨 Canvas created successfully');
-          }}
-          onError={(error) => {
-            console.error('🚨 Canvas error (WebGL issue):', error);
-            // Don't redirect on WebGL errors - show fallback UI instead
-          }}
-          {...canvasSettings}
-        >
-          {' '}
-          {/* Global frame counter - updates once per frame for all components */}
-          <FrameTicker />
-          <FrameloopController />
-          
-          {/* PERFORMANCE: LOD Manager for distance-based level of detail */}
-          <LODManager enabled={useLOD} />
-          {/* PERFORMANCE: skip heavy 3D-only work while 2D overlay is shown */}
-          {viewMode === '3d' && <ConnectionAnimationManager />}
-          <CustomCamera ref={cameraRef} />
-          <group>
-            {/* Real-time connection position updater - reactive to store changes */}
-            {viewMode === '3d' && <RealTimeConnectionUpdater />}{' '}
-            {/* Render connections with virtualization */}
-            <ConnectionsRenderer
-              objects={objects}
-              allObjectsForPathfinding={objects}
-              visibleObjectIds={visibleObjectIds}
-              onLineStyleChange={handleLineStyleChange}
-              onLineColorChange={handleLineColorChange}
-              onConnectionClick={handleConnectionClick}
-              onLineTextClick={handleLineTextClick}
-              onLineTextSubmit={handleLineTextSubmit}
-              onLineTextStyleChange={handleLineTextStyleChange}
-            />{' '}
-            {/* Render all objects with batched cube edges */}
-            {spaceTypeProp === 'earth' && <EarthGlobe />}
-            <ObjectsRenderer
-              objects={objects}
-              visibleObjectIds={visibleObjectIds}
-              selectedId={selectedId}
-              handleObjectClick={handleObjectClick}
-              handleObjectMove={handleObjectMoveCallback}
-              handleObjectUpdate={handleObjectUpdateCallback}
-              disableOrbitControls={disableOrbitControls}
-              enableOrbitControls={enableOrbitControls}
-              handleFaceIndicatorClick={handleFaceIndicatorClickCallback}
-              handleFaceClick={handleFaceClick}
-              showAllCubesIndicators={showAllCubesIndicators}
-              activeIndicator={activeIndicator}
-              indicatorMode={indicatorMode}
-              selectedIndicators={selectedIndicators}
-              activeTextStyleUI={activeTextStyleUI}
-              setActiveTextStyleUI={setActiveTextStyleUI}
-              handleIndicatorDeselected={handleIndicatorDeselected}
-              registerTransformingObject={registerTransformingObject}
-              handleObjectMatrixChanged={handleObjectMatrixChanged}
-              handleIndicatorSelected={handleIndicatorSelected}
-              globalIndicatorSelected={globalIndicatorSelected}
-              handleObjectDelete={handleObjectDelete}
-              user={user}
-              currentSpaceId={effectiveSpaceId}
-              getTransformStartPosition={getTransformStartPosition}
-              checkPositionJitter={checkPositionJitterWithHistory}
-              useLOD={useLOD}
-            />
-            <RepoGrid />
-            {/* Render cell boundaries */}
-            <CellBoundaryRenderer
-              visible={cellBoundariesVisible}
-            />
-          </group>
-          {/* Debug: render hand-tracking joints when hand tracking is enabled */}
-          <HandsRenderer />
-          {canvasQuality !== 'low' && (
-          <EffectComposer>
-            <SMAA />
-          </EffectComposer>
-          )}
-        </Canvas>
-        </div>
-      )}
       {viewMode === '2d' && <DiagramOverlay2D />}
       <UIOverlay
         onCreateObject={handleCreateObject}
@@ -1813,4 +1728,4 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   );
 };
 
-export default App;
+export default memo(App);
