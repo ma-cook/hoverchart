@@ -77,7 +77,7 @@ const AppShell = () => {
         <div
           style={{
             opacity: activeView === 'landing' ? 1 : 0,
-            pointerEvents: activeView === 'landing' ? 'auto' : 'none',
+            pointerEvents: 'none',
             transition: 'opacity 0.4s ease-in-out',
             position: 'absolute',
             inset: 0,
@@ -91,11 +91,10 @@ const AppShell = () => {
         <div
           style={{
             opacity: activeView === 'diagram' ? 1 : 0,
-            pointerEvents: activeView === 'diagram' ? 'auto' : 'none',
+            pointerEvents: 'none',
             transition: 'opacity 0.4s ease-in-out',
             position: 'absolute',
             inset: 0,
-            zIndex: activeView === 'diagram' ? 1 : 0,
           }}
         >
           {activeView === 'diagram' && (
