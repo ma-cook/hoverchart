@@ -1,14 +1,8 @@
 import {
   NODE_TYPE_COMPONENT,
   NODE_TYPE_FUNCTION,
-  NODE_TYPE_HOOK,
   NODE_TYPE_SERVICE,
-  NODE_TYPE_STORE,
   NODE_TYPE_DATAPATH,
-  NODE_TYPE_MODULE,
-  NODE_TYPE_LIBRARY,
-  NODE_TYPE_CLASS,
-  NODE_TYPE_INTERFACE,
   BASE_DODECAHEDRON_RADIUS,
   getGroupDisplayName,
   getGroupColor,
@@ -301,71 +295,16 @@ export const containerMethods = {
       markReachable(rootModuleId);
     });
 
-    const componentsWithChildContainers = new Set();
-    for (const [parentNodeId, children] of context.parentChildMap.entries()) {
-      const parentNode = graphNodes.get(parentNodeId);
-      if (!parentNode || parentNode.type !== NODE_TYPE_COMPONENT) {
-        continue;
-      }
-
-      const componentChildren = Array.from(children).filter((childId) => {
-        const childNode = graphNodes.get(childId);
-        return childNode && childNode.type === NODE_TYPE_COMPONENT;
-      });
-
-      if (componentChildren.length >= 2) {
-        componentsWithChildContainers.add(parentNodeId);
-      }
-    }
-
-    const nodesInChildContainers = new Set();
-    const markDescendantsInChildContainers = (nodeId) => {
-      if (nodesInChildContainers.has(nodeId)) return;
-      nodesInChildContainers.add(nodeId);
-
-      const children = context.parentChildMap.get(nodeId) || new Set();
-      children.forEach((childId) => {
-        markDescendantsInChildContainers(childId);
-      });
-    };
-
-    componentsWithChildContainers.forEach((componentId) => {
-      const children = context.parentChildMap.get(componentId) || new Set();
-      children.forEach((childId) => {
-        markDescendantsInChildContainers(childId);
-      });
-    });
-
-    const includableTypes = new Set([
-      NODE_TYPE_COMPONENT,
-      NODE_TYPE_FUNCTION,
-      NODE_TYPE_HOOK,
-      NODE_TYPE_CLASS,
-      NODE_TYPE_INTERFACE,
-      NODE_TYPE_STORE,
-      NODE_TYPE_SERVICE,
-      NODE_TYPE_MODULE,
-      NODE_TYPE_LIBRARY,
-    ]);
-
     for (const [nodeId, position] of nodePositions.entries()) {
       if (!position) continue;
-      if (nodesInChildContainers.has(nodeId)) continue;
 
       const node = graphNodes.get(nodeId);
       if (!node) continue;
 
       const nodeType = (node.type || '').toLowerCase().trim();
 
-      if (includableTypes.has(nodeType)) {
-        const parentId = childParentMap.get(nodeId);
-        if (nodeType === NODE_TYPE_COMPONENT) {
-          if (reachableFromRootModules.has(nodeId)) {
-            hierarchyNodes.push(nodeId);
-          }
-        } else if (parentId && reachableFromRootModules.has(parentId)) {
-          hierarchyNodes.push(nodeId);
-        }
+      if (nodeType === NODE_TYPE_COMPONENT && reachableFromRootModules.has(nodeId)) {
+        hierarchyNodes.push(nodeId);
       }
     }
 
