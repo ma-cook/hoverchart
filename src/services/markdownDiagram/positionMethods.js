@@ -1195,8 +1195,18 @@ export const positionMethods = {
       if (nodeId === 'MainEntry') continue;
       if (internalComponentChildren?.has(nodeId)) continue;
       if (!nodePositions.has(nodeId)) continue;         // already in pass 1
-      const hasChildren = (context.parentChildMap?.get(nodeId)?.size ?? 0) > 0;
-      if (hasChildren) continue;
+      const children = context.parentChildMap?.get(nodeId);
+      let hasComponentChildren = false;
+      if (children) {
+        for (const childId of children) {
+          const childNode = graphNodes.get(childId);
+          if (childNode && (childNode.type || '').toLowerCase().trim() === NODE_TYPE_COMPONENT) {
+            hasComponentChildren = true;
+            break;
+          }
+        }
+      }
+      if (hasComponentChildren) continue;
       if (!hierarchyReachable.has(nodeId)) {
         if (!ungroupedComponents.includes(nodeId)) {
           ungroupedComponents.push(nodeId);

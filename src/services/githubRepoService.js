@@ -462,11 +462,6 @@ const containsJSX = (node, fileContext = {}) => {
     if (node.property?.name === 'children') return true;
   }
 
-  // Null literal - components can return null
-  if (node.type === 'NullLiteral' && fileContext.isComponent) {
-    return true;
-  }
-
   return false;
 };
 
@@ -3147,6 +3142,60 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     helpers: new Set(helperComponents),
                   });
                 }
+              }
+            }
+
+            // ── Fallback: register exported names as synthetic components ──
+            // Some valid components may not be detected by the traversal
+            // (e.g. arrow functions returning JSXFragment without explicit
+            // return, or parser subtleties with parenthesized JSX bodies).
+            // If the file is a component file but no components were found,
+            // use the exported default name as a synthetic component.
+            if (fileContext.isComponent && fileComponents.length === 0) {
+              const exportedComp = exportedComponents.get(fileName);
+              if (exportedComp && /^[A-Z]/.test(exportedComp)) {
+                foundItems.components.add(exportedComp);
+                elements.components.push(exportedComp);
+                fileComponents.push(exportedComp);
+                currentComponent = exportedComp;
+                if (!componentFunctions.has(exportedComp)) {
+                  componentFunctions.set(exportedComp, new Set());
+                }
+                if (!componentDependencies.has(exportedComp)) {
+                  componentDependencies.set(exportedComp, new Set());
+                }
+                componentToFile.set(exportedComp, fileName);
+
+                // Assign any pre-pending functions
+                if (prePendingFunctions.length > 0) {
+                  prePendingFunctions.forEach((fn) => {
+                    const id = allocateFuncId(fn);
+                    componentFunctions.get(exportedComp).add(id);
+                  });
+                  prePendingFunctions.length = 0;
+                }
+
+                // Associate file imports
+                fileImports.stores.forEach((store) =>
+                  componentDependencies.get(exportedComp).add({ name: store, type: 'store' })
+                );
+                fileImports.services.forEach((service) =>
+                  componentDependencies.get(exportedComp).add({ name: service, type: 'service' })
+                );
+                fileImports.hooks.forEach((hook) =>
+                  componentDependencies.get(exportedComp).add({ name: hook, type: 'hook' })
+                );
+                fileImports.utilities.forEach((utility) =>
+                  componentDependencies.get(exportedComp).add({ name: utility, type: 'utility' })
+                );
+
+                // Record cross-file component import sources for hierarchy resolution
+                componentImportSources.set(exportedComp, new Set());
+                fileImports.componentBases.forEach((b) => {
+                  if (b !== exportedComp) {
+                    componentImportSources.get(exportedComp).add(b);
+                  }
+                });
               }
             }
           } catch (parseError) {
