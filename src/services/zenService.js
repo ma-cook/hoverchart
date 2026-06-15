@@ -2,136 +2,362 @@ const ZEN_PROXY_URL = 'https://us-central1-hoverchart.cloudfunctions.net/zenProx
 
 const MERFOLK_SYSTEM_PROMPT = `You are a Merfolk diagram expert. Merfolk is a custom markdown syntax for defining 3D system architecture diagrams.
 
-SYNTAX — Node types (bracket type determines 3D geometry):
-- {Component: Name} → Dodecahedron (UI components, pages)
-- [Function: Name] → Cube (functions, utilities)
-- [[Store: Name]] → Cube (state stores, data models)
-- ((Service: Name)) → Tetrahedron (backend services, APIs)
-- <Library: Name> → Cube (external libraries, dependencies)
-- [Hook: Name] → Cube (React hooks)
-- [Module: Name] → Cube (modules, namespaces)
+═══════════════════════════════════════════════════════════════
+MERFOLK SYNTAX REFERENCE
+═══════════════════════════════════════════════════════════════
 
-CONNECTIONS — Arrow type determines visual style:
-- A --> B : Data flow (solid arrow)
-- A -.-> B : Control flow (dashed arrow)
-- A --- B : Association (solid line)
-- A == B : Inheritance (double line)
-- A *--> B : Composition (filled arrow)
-- A ..> B : Dependency (dotted arrow)
+%% Comments (ignored by parser)
+%% This is a comment
+App{Component: Main Application}  %% inline comment
 
-Labels: A --> B : "description"
-Face targeting: A@front --> B@back
+NODE TYPES — Bracket style determines 3D geometry:
+  {Component: Name}  → Dodecahedron  (UI components, pages, containers)
+  [Function: Name]   → Cube          (functions, methods, utilities)
+  [[Store: Name]]    → Cube          (databases, state stores, data models)
+  ((Service: Name))  → Tetrahedron   (external services, APIs, microservices)
+  <Library: Name>    → Cube          (external libraries, dependencies)
+  [Hook: Name]       → Cube          (React hooks, custom hooks)
+  [Module: Name]     → Cube          (modules, namespaces)
+
+CONNECTION TYPES — Arrow style determines visual line:
+  A --> B    Data Flow    Solid arrow    (primary connection type, use this by default)
+  A -.-> B   Control Flow Dashed arrow   (events, control signals, conditional flow)
+  A --- B    Association  Solid line     (general relationships)
+  A == B     Inheritance  Thick line     (inheritance, strong dependencies)
+  A *--> B   Composition  Filled arrow   (ownership, contains)
+  A ..> B    Dependency   Dotted arrow   (imports, dependencies)
+
+LABELED CONNECTIONS — Add description after colon:
+  A --> B : "description"
+  A -.-> B : "event trigger"
+
+FACE CONNECTIONS — Target specific face of a 3D object:
+  A@front --> B@back
+  C@top --> D@bottom
+  Cubes: front, back, top, bottom, left, right
+  Dodecahedrons: face_0 through face_11
+
+NODE PROPERTIES — Inline customization:
+  App{Component: Main Application} {color: "blue", scale: "2,1,1"}
+  DataService[Function: Data Processing] {color: "#4CAF50"}
 
 FLOW PATHS — Named sequences through multiple nodes:
-- flowpath "name" : A --> B --> C --> D
-- Multiple flow paths can share connections
-
-COMMENTS:
-- %% comment
-- // comment
+  flowpath "name" : A --> B --> C --> D
+  flowpath "eventPipeline" (-.->): Input --> Transform --> Output
+  flowpath "requestLifecycle" : Client --> API --> DB --> Client : "full cycle"
+  Tag individual connections: A --> B #flowName
 
 GRAPH DECLARATION (optional):
-- graph3d "Title" or ast3d "Title"
+  graph3d "Title" or ast3d "Title"
 
-RULES:
-1. Output ONLY valid Merfolk inside \`\`\`merfolk code blocks
-2. Use descriptive camelCase node IDs (no spaces)
-3. Define all nodes before their connections
-4. Group related nodes with %% section comments
-5. Add flow paths for the main data flows
-6. Keep diagrams focused — 10 to 50 nodes is ideal`;
+═══════════════════════════════════════════════════════════════
+CRITICAL RULES — MUST FOLLOW
+═══════════════════════════════════════════════════════════════
+
+1. ROOT COMPONENT: Always include a root "App" or "MainApp" component.
+   Every other component must be reachable from this root through connections.
+
+2. NO ORPHANS: Every node MUST have at least one connection.
+   No node should appear disconnected. If a node exists, connect it.
+
+3. HIERARCHY: Connect components to the root with:
+   App --> ComponentA : "renders"
+   App --> ComponentB : "renders"
+   This establishes the component tree and prevents "Unused Components".
+
+4. NESTED GROUPING: Functions connected to components become visually
+   nested inside them. Connect functions to their parent component:
+   processOrder[Function: processOrder]
+   processOrder --> OrderService : "lives in"
+   Or use control flow for nesting:
+   processData -.-> DataService : "internal"
+
+5. CONNECTION DENSITY: Every service, store, hook, and function should
+   be connected to the component(s) that use it. Example:
+   APIGateway --> OrderService : "routes to"
+   OrderService --> OrderDB : "queries"
+   useAuth --> Dashboard : "provides auth"
+
+6. USE DATA FLOW (-->): Use --> as the default connection type.
+   Reserve -.-> for events/control flow, --- for loose associations.
+
+7. FLOW PATHS: Add flowpath directives for the main data flows.
+   This creates visual flow lines through the diagram.
+
+8. OUTPUT FORMAT: Output ONLY valid Merfolk inside \`\`\`merfolk code blocks.
+   Use descriptive camelCase node IDs (no spaces).
+   Define all nodes before their connections.
+   Group related nodes with %% section comments.
+   Keep diagrams focused — 15 to 40 nodes is ideal.`;
 
 const FEW_SHOT_EXAMPLES = [
   {
     role: 'user',
-    content: 'Create a simple auth system with login, JWT tokens, and a protected dashboard'
+    content: 'Create a microservices e-commerce architecture'
   },
   {
     role: 'assistant',
     content: `\`\`\`merfolk
-graph3d "Auth System"
+graph3d "E-Commerce Architecture"
 
-%% Frontend
-LoginPage{Component: LoginPage}
-Dashboard{Component: Dashboard}
-AuthContext{Component: AuthContext}
+%% ── Root ──────────────────────────────────────────
+App{Component: E-Commerce App}
 
-%% Functions
-loginUser[Function: loginUser]
-validateToken[Function: validateToken]
-logoutUser[Function: logoutUser]
+%% ── Frontend Components ───────────────────────────
+HomePage{Component: HomePage}
+ProductCatalog{Component: ProductCatalog}
+ShoppingCart{Component: ShoppingCart}
+CheckoutPage{Component: CheckoutPage}
+AdminDashboard{Component: AdminDashboard}
+UserAccount{Component: UserAccount}
 
-%% Hooks
+%% ── Backend Services ──────────────────────────────
+APIGateway((Service: API Gateway))
+ProductService((Service: Product Service))
+OrderService((Service: Order Service))
+PaymentService((Service: Payment Service))
+InventoryService((Service: Inventory Service))
+NotificationService((Service: Notification Service))
+AuthService((Service: Auth Service))
+
+%% ── Data Stores ───────────────────────────────────
+ProductDB[[Store: Product Database]]
+OrderDB[[Store: Order Database]]
+UserDB[[Store: User Database]]
+SessionStore[[Store: Session Store]]
+
+%% ── Functions ─────────────────────────────────────
+searchProducts[Function: searchProducts]
+addToCart[Function: addToCart]
+processCheckout[Function: processCheckout]
+validatePayment[Function: validatePayment]
+updateInventory[Function: updateInventory]
+sendEmail[Function: sendEmail]
+
+%% ── Hooks ─────────────────────────────────────────
+useCart[Hook: useCart]
 useAuth[Hook: useAuth]
+useProducts[Hook: useProducts]
 
-%% Services
-AuthService((Service: AuthService))
-TokenService[Module: TokenService]
+%% ── App renders all top-level pages ───────────────
+App --> HomePage : "renders"
+App --> ProductCatalog : "renders"
+App --> ShoppingCart : "renders"
+App --> CheckoutPage : "renders"
+App --> AdminDashboard : "renders"
+App --> UserAccount : "renders"
 
-%% Connections
-LoginPage --> loginUser : "submit credentials"
-loginUser --> AuthService : "POST /auth/login"
-AuthService --> TokenService : "issue JWT"
-TokenService --> loginUser : "return token"
-loginUser --> AuthContext : "store token"
-AuthContext --> useAuth : "expose state"
-useAuth --> Dashboard : "guard route"
-Dashboard --> validateToken : "on mount"
-validateToken --> AuthService : "verify JWT"
-Dashboard --> logoutUser : "click logout"
-logoutUser --> AuthContext : "clear token"
+%% ── Page components use services via API Gateway ──
+HomePage --> APIGateway : "fetches data"
+ProductCatalog --> APIGateway : "searches products"
+ShoppingCart --> APIGateway : "manages cart"
+CheckoutPage --> APIGateway : "places order"
+AdminDashboard --> APIGateway : "admin operations"
+UserAccount --> AuthService : "manages profile"
 
-%% Flow Paths
-flowpath "Login Flow" : LoginPage --> loginUser --> AuthService --> TokenService --> AuthContext --> Dashboard
-flowpath "Logout Flow" : Dashboard --> logoutUser --> AuthContext
+%% ── API Gateway routes to services ────────────────
+APIGateway --> ProductService : "product queries"
+APIGateway --> OrderService : "order operations"
+APIGateway --> PaymentService : "payment processing"
+APIGateway --> InventoryService : "stock checks"
+APIGateway --> NotificationService : "user alerts"
+
+%% ── Services connect to data stores ───────────────
+ProductService --> ProductDB : "reads/writes"
+OrderService --> OrderDB : "creates orders"
+PaymentService --> OrderDB : "updates payment status"
+InventoryService --> ProductDB : "updates stock"
+AuthService --> UserDB : "authenticates"
+AuthService --> SessionStore : "manages sessions"
+
+%% ── Functions connect to their parent services ────
+searchProducts --> ProductService : "searches"
+addToCart --> ShoppingCart : "adds item"
+processCheckout --> OrderService : "creates order"
+validatePayment --> PaymentService : "validates"
+updateInventory --> InventoryService : "decrements stock"
+sendEmail --> NotificationService : "sends"
+
+%% ── Hooks provide data to components ──────────────
+useCart --> ShoppingCart : "cart state"
+useAuth --> UserAccount : "auth state"
+useProducts --> ProductCatalog : "product data"
+
+%% ── Control flow for async events ─────────────────
+OrderService -.-> NotificationService : "order confirmed"
+PaymentService -.-> NotificationService : "payment received"
+InventoryService -.-> NotificationService : "low stock"
+
+%% ── Flow Paths ────────────────────────────────────
+flowpath "Purchase Flow" : HomePage --> ProductCatalog --> ShoppingCart --> CheckoutPage --> APIGateway --> OrderService --> PaymentService --> OrderService --> NotificationService
+flowpath "Admin Flow" : AdminDashboard --> APIGateway --> ProductService --> ProductDB
+flowpath "Auth Flow" : UserAccount --> AuthService --> UserDB --> SessionStore
 \`\`\``
   },
   {
     role: 'user',
-    content: 'Design a microservices order processing system'
+    content: 'Design a real-time chat application'
   },
   {
     role: 'assistant',
     content: `\`\`\`merfolk
-graph3d "Order Processing"
+graph3d "Real-Time Chat App"
 
-%% Frontend
-OrderUI{Component: OrderUI}
-OrderForm{Component: OrderForm}
+%% ── Root ──────────────────────────────────────────
+App{Component: Chat Application}
 
-%% Services
-APIGateway((Service: APIGateway))
-OrderService((Service: OrderService))
-PaymentService((Service: PaymentService))
-InventoryService((Service: InventoryService))
-NotificationService((Service: NotificationService))
+%% ── Frontend Components ───────────────────────────
+LoginScreen{Component: Login Screen}
+ChatRoom{Component: Chat Room}
+UserList{Component: User List}
+MessagePanel{Component: Message Panel}
+SettingsPage{Component: Settings Page}
 
-%% Data
-OrderDB[[Store: OrderDB]]
-PaymentDB[[Store: PaymentDB]]
+%% ── Backend Services ──────────────────────────────
+AuthService((Service: Auth Service))
+ChatService((Service: Chat Service))
+PresenceService((Service: Presence Service))
+FileService((Service: File Service))
 
-%% Functions
-processOrder[Function: processOrder]
-validateStock[Function: validateStock]
-chargePayment[Function: chargePayment]
-sendConfirmation[Function: sendConfirmation]
+%% ── Data Stores ───────────────────────────────────
+MessageDB[[Store: Message Database]]
+UserDB[[Store: User Database]]
+ChannelStore[[Store: Channel Store]]
 
-%% Connections
-OrderUI --> OrderForm
-OrderForm --> APIGateway : "submit order"
-APIGateway --> OrderService : "route"
-OrderService --> validateStock : "check inventory"
-validateStock --> InventoryService : "reserve items"
-InventoryService --> OrderDB : "update stock"
-OrderService --> chargePayment : "process payment"
-chargePayment --> PaymentService : "charge"
-PaymentService --> PaymentDB : "record"
-PaymentService --> OrderService : "confirm"
-OrderService --> sendConfirmation : "on success"
-sendConfirmation --> NotificationService : "email user"
+%% ── Functions ─────────────────────────────────────
+sendMessage[Function: sendMessage]
+fetchMessages[Function: fetchMessages]
+createChannel[Function: createChannel]
+uploadFile[Function: uploadFile]
 
-%% Flow Paths
-flowpath "Order Flow" : OrderForm --> APIGateway --> OrderService --> validateStock --> InventoryService --> chargePayment --> PaymentService --> OrderService --> sendConfirmation --> NotificationService
+%% ── Hooks ─────────────────────────────────────────
+useMessages[Hook: useMessages]
+useOnlineUsers[Hook: useOnlineUsers]
+
+%% ── App renders all screens ───────────────────────
+App --> LoginScreen : "renders"
+App --> ChatRoom : "renders"
+App --> SettingsPage : "renders"
+
+%% ── Chat Room contains sub-components ─────────────
+ChatRoom --> UserList : "shows"
+ChatRoom --> MessagePanel : "shows"
+
+%% ── Components connect to services ────────────────
+LoginScreen --> AuthService : "authenticates"
+ChatRoom --> ChatService : "sends/receives"
+UserList --> PresenceService : "tracks online"
+MessagePanel --> ChatService : "loads history"
+SettingsPage --> AuthService : "updates profile"
+
+%% ── Services connect to stores ────────────────────
+ChatService --> MessageDB : "stores messages"
+ChatService --> ChannelStore : "manages channels"
+AuthService --> UserDB : "user accounts"
+PresenceService --> UserDB : "reads profiles"
+FileService --> MessageDB : "attaches files"
+
+%% ── Functions connect to their context ────────────
+sendMessage --> MessagePanel : "triggers"
+fetchMessages --> MessagePanel : "loads"
+createChannel --> ChatService : "creates"
+uploadFile --> FileService : "uploads"
+
+%% ── Hooks provide data to components ──────────────
+useMessages --> MessagePanel : "message state"
+useOnlineUsers --> UserList : "presence state"
+
+%% ── Control flow for real-time events ─────────────
+ChatService -.-> MessagePanel : "new message"
+PresenceService -.-> UserList : "user joined/left"
+
+%% ── Flow Paths ────────────────────────────────────
+flowpath "Message Flow" : MessagePanel --> sendMessage --> ChatService --> MessageDB --> MessagePanel
+flowpath "Login Flow" : LoginScreen --> AuthService --> UserDB --> ChatRoom
+flowpath "File Upload" : MessagePanel --> uploadFile --> FileService --> MessageDB
+\`\`\``
+  },
+  {
+    role: 'user',
+    content: 'Create a React component library with hooks and state management'
+  },
+  {
+    role: 'assistant',
+    content: `\`\`\`merfolk
+graph3d "React Component Library"
+
+%% ── Root ──────────────────────────────────────────
+App{Component: Component Library}
+
+%% ── Core Components ───────────────────────────────
+Button{Component: Button}
+Modal{Component: Modal}
+DataTable{Component: DataTable}
+Form{Component: Form}
+Toast{Component: Toast}
+Dropdown{Component: Dropdown}
+
+%% ── Hooks ─────────────────────────────────────────
+useTheme[Hook: useTheme]
+useForm[Hook: useForm]
+useModal[Hook: useModal]
+useTableData[Hook: useTableData]
+
+%% ── State Stores ──────────────────────────────────
+ThemeStore[[Store: Theme Store]]
+FormStore[[Store: Form Store]]
+
+%% ── Utility Functions ─────────────────────────────
+formatDate[Function: formatDate]
+validateInput[Function: validateInput]
+debounce[Function: debounce]
+
+%% ── External Libraries ────────────────────────────
+ReactLib<Library: React>
+styledComponents<Library: styled-components>
+
+%% ── App exports all components ────────────────────
+App --> Button : "exports"
+App --> Modal : "exports"
+App --> DataTable : "exports"
+App --> Form : "exports"
+App --> Toast : "exports"
+App --> Dropdown : "exports"
+
+%% ── Components use hooks ──────────────────────────
+Button -.-> useTheme : "reads theme"
+Modal -.-> useModal : "manages state"
+DataTable -.-> useTableData : "fetches data"
+Form -.-> useForm : "manages form"
+Toast -.-> useTheme : "reads theme"
+
+%% ── Hooks connect to stores ───────────────────────
+useTheme --> ThemeStore : "reads/writes"
+useForm --> FormStore : "reads/writes"
+useTableData --> ThemeStore : "reads theme"
+
+%% ── Functions used by components ──────────────────
+Form --> validateInput : "validates"
+DataTable --> formatDate : "formats cells"
+DataTable --> debounce : "search debounce"
+
+%% ── Component composition ─────────────────────────
+Modal *--> Button : "contains cancel"
+Modal *--> Button : "contains confirm"
+Form *--> Button : "contains submit"
+Dropdown *--> Button : "triggers"
+
+%% ── Library dependencies ──────────────────────────
+Button --> ReactLib : "uses"
+Modal --> ReactLib : "uses"
+DataTable --> ReactLib : "uses"
+Form --> ReactLib : "uses"
+Button --> styledComponents : "styles"
+Modal --> styledComponents : "styles"
+
+%% ── Flow Paths ────────────────────────────────────
+flowpath "Theme Flow" : App --> useTheme --> ThemeStore --> Button --> styledComponents
+flowpath "Form Submit" : Form --> useForm --> FormStore --> validateInput --> Button
 \`\`\``
   }
 ];
