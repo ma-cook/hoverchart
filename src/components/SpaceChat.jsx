@@ -111,6 +111,15 @@ async function renderMerfolkToScene(merfolkBlocks) {
     );
   }
 
+  if (allConnectionsToSave.length > 0) {
+    await markdownDiagramService.saveConnections(
+      allConnectionsToSave,
+      null,
+      null,
+      allObjectsToSave
+    );
+  }
+
   return allConnectionsToSave.length > 0 || allObjectsToSave.length > 0;
 }
 
