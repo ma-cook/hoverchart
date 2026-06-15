@@ -473,6 +473,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
             {llmError && (
               <div className="space-chat-error">{llmError}</div>
             )}
+            {llmStreaming && llmMessages.length === 0 && (
+              <div className="space-chat-loading">
+                <span className="space-chat-spinner" />
+                <span>Thinking…</span>
+              </div>
+            )}
             {llmMessages.map((msg) => {
               const isUser = msg.role === 'user';
               return (

@@ -1175,6 +1175,29 @@ body {
   text-align: center;
 }
 
+.space-chat-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  color: #888;
+  font-size: 13px;
+}
+
+.space-chat-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(74, 144, 217, 0.2);
+  border-top-color: #4a90d9;
+  border-radius: 50%;
+  animation: space-chat-spin 0.7s linear infinite;
+}
+
+@keyframes space-chat-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Responsive design for visual tools container */
 @media (max-width: 768px) {
   .visual-tools-container {
