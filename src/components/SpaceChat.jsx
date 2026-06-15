@@ -42,7 +42,7 @@ const mergeMessages = (existing, incoming) => {
   return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 };
 
-async function renderMerfolkToScene(merfolkBlocks) {
+async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
   if (!merfolkBlocks || merfolkBlocks.length === 0) return false;
 
   const markdown = merfolkBlocks
@@ -84,8 +84,7 @@ async function renderMerfolkToScene(merfolkBlocks) {
   const nodeToObjectIdMap = new Map();
   const allConnectionsToSave = [];
   const allObjectsToSave = [];
-  const user = null;
-  const currentSpaceId = null;
+  const currentSpaceId = spaceId;
 
   window._faceDistributionCounters = window._faceDistributionCounters || new Map();
 
@@ -114,8 +113,8 @@ async function renderMerfolkToScene(merfolkBlocks) {
   if (allConnectionsToSave.length > 0) {
     await markdownDiagramService.saveConnections(
       allConnectionsToSave,
-      null,
-      null,
+      currentSpaceId,
+      user,
       allObjectsToSave
     );
   }
@@ -339,7 +338,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       });
 
       if (blocks.length > 0) {
-        const rendered = await renderMerfolkToScene(blocks);
+        const rendered = await renderMerfolkToScene(blocks, spaceId, user);
         if (rendered) {
           setLlmMessages((prev) =>
             prev.map(m =>
