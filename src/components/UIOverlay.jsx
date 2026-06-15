@@ -895,7 +895,7 @@ const UIOverlay = ({
       cleanupSpatialObjectSubscriptions(loadedCellIds);
       useSpatialManagerStore.getState().resetSpatialManager();
 
-      setNotification({ show: true, message: '🗑️ Deleting space objects…' });
+      setNotification({ show: true, message: '🧹 Clearing space…' });
 
       // --- Step 2: Fire the cloud function — it returns jobId immediately ---
       const idToken = await auth.currentUser?.getIdToken();
@@ -941,10 +941,11 @@ const UIOverlay = ({
         );
       }
 
-      // --- Step 3: Return UI control to the user ---
-      // isDeleting stays true until the background job finishes so the button
-      // remains disabled and prevents accidental concurrent operations.
+      // --- Step 3: Immediately return UI control to the user ---
+      setIsDeleting(false);
       setCurrentDiagramRepo(null);
+      setNotification({ show: true, message: '✅ Delete started — running in the background' });
+      setTimeout(() => setNotification({ show: false, message: '' }), 3000);
 
       // --- Step 4: Poll job status in the background ---
       const pollDeadline = Date.now() + POLL_TIMEOUT_MS;
@@ -1590,7 +1591,7 @@ const UIOverlay = ({
               <button
                 className="top-bar-btn delete"
                 onClick={handleDeleteAllCells}
-                disabled={isDeleting}
+                disabled={isDeleting || window._bulkDeleteInProgress}
                 title="Delete All Objects in Space"
                 aria-label="Delete all objects"
               >
