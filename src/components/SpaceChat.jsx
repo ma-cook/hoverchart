@@ -141,9 +141,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const [llmMessages, setLlmMessages] = useState([]);
   const [llmStreaming, setLlmStreaming] = useState(false);
   const [llmError, setLlmError] = useState(null);
+  const [model, setModel] = useState('big-pickle');
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const dropdownRef = useRef(null);
   const streamingRef = useRef('');
   const streamingMsgKeyRef = useRef(0);
   const abortControllerRef = useRef(null);
+
+  const AVAILABLE_MODELS = [
+    { id: 'big-pickle', name: 'Big Pickle' },
+    { id: 'mimo', name: 'Mimo' },
+  ];
 
   // ── Firebase real-time subscription (group mode) ──────────────────────
   useEffect(() => {
@@ -306,6 +314,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       await sendToZen({
         messages: zenMessages,
         signal: abortController.signal,
+        model,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           setLlmMessages((prev) => {
@@ -377,6 +386,20 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const handleModeSwitch = useCallback((mode) => {
     setChatMode(mode);
     setLlmError(null);
+  }, []);
+
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowModelDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   if (!isOpen) return null;
@@ -473,7 +496,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
             {llmError && (
               <div className="space-chat-error">{llmError}</div>
             )}
-            {llmStreaming && llmMessages.length === 0 && (
+            {llmStreaming && !llmMessages.some(m => m.streaming) && (
               <div className="space-chat-loading">
                 <span className="space-chat-spinner" />
                 <span>Thinking…</span>
@@ -505,6 +528,33 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         <div ref={bottomRef} />
       </div>
 
+      {chatMode === 'llm' && (
+        <div className="space-chat-model-bar" ref={dropdownRef}>
+          <button
+            className="space-chat-model-btn"
+            onClick={() => setShowModelDropdown(v => !v)}
+            disabled={llmStreaming}
+          >
+            {AVAILABLE_MODELS.find(m => m.id === model)?.name || model}
+            <span className="space-chat-model-arrow">{showModelDropdown ? '▲' : '▼'}</span>
+          </button>
+          {showModelDropdown && (
+            <div className="space-chat-model-dropdown">
+              {AVAILABLE_MODELS.map(m => (
+                <button
+                  key={m.id}
+                  className={`space-chat-model-option ${m.id === model ? 'selected' : ''}`}
+                  onClick={() => { setModel(m.id); setShowModelDropdown(false); }}
+                >
+                  {m.name}
+                  {m.id === model && <span className="space-chat-model-check">✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="space-chat-input-row">
         <input
           className="space-chat-input"
@@ -518,9 +568,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         />
         <button
           className="space-chat-send"
-          onClick={chatMode === 'group' ? handleSend : handleLlmSend}
-          disabled={!input.trim() || (chatMode === 'group' ? sending : llmStreaming)}
-          title={chatMode === 'group' ? 'Send' : 'Generate diagram'}
+          onClick={chatMode === 'llm' && llmStreaming ? handleStop : (chatMode === 'group' ? handleSend : handleLlmSend)}
+          disabled={chatMode === 'llm' && llmStreaming ? false : (!input.trim() || (chatMode === 'group' ? sending : llmStreaming))}
+          title={chatMode === 'llm' && llmStreaming ? 'Stop' : (chatMode === 'group' ? 'Send' : 'Generate diagram')}
         >
           {chatMode === 'llm' && llmStreaming ? '◼' : '➤'}
         </button>
