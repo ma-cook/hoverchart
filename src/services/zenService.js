@@ -1,4 +1,4 @@
-const ZEN_API_URL = 'https://opencode.ai/zen/v1/chat/completions';
+const ZEN_PROXY_URL = 'https://us-central1-hoverchart.cloudfunctions.net/zenProxy';
 
 const MERFOLK_SYSTEM_PROMPT = `You are a Merfolk diagram expert. Merfolk is a custom markdown syntax for defining 3D system architecture diagrams.
 
@@ -153,29 +153,22 @@ function buildSceneContext(objects) {
   return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections.`;
 }
 
-export async function sendToZen({ messages, onChunk, signal }) {
-  const apiKey = import.meta.env.VITE_ZEN_API_KEY;
-  if (!apiKey) {
-    throw new Error('VITE_ZEN_API_KEY is not set in .env');
-  }
-
-  const response = await fetch(ZEN_API_URL, {
+export async function sendToZen({ messages, onChunk, signal, model = 'big-pickle' }) {
+  const response = await fetch(ZEN_PROXY_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'big-pickle',
       messages,
-      stream: true,
+      model,
     }),
     signal,
   });
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
-    throw new Error(`Zen API error ${response.status}: ${errorText || response.statusText}`);
+    throw new Error(`Zen proxy error ${response.status}: ${errorText || response.statusText}`);
   }
 
   const reader = response.body.getReader();

@@ -1661,3 +1661,83 @@ export const scanWebsiteRuntime = onRequest(
   },
   createScanWebsiteRuntimeApp()
 );
+
+// ============= ZEN PROXY FUNCTION =============
+const zenApiKey = defineSecret('ZEN_API_KEY');
+
+function createZenProxyApp() {
+  const app = express();
+
+  app.use(cors({ origin: true }));
+  app.use(express.json({ limit: '1mb' }));
+
+  app.post('/', async (req, res) => {
+    const apiKey = zenApiKey.value();
+    if (!apiKey) {
+      console.error('[zenProxy] ZEN_API_KEY not configured');
+      return res.status(500).json({ error: 'ZEN_API_KEY not configured' });
+    }
+
+    const { messages, model = 'big-pickle' } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'messages array is required' });
+    }
+
+    try {
+      const response = await fetch('https://opencode.ai/zen/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model, messages, stream: true }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error(`[zenProxy] Zen API error ${response.status}:`, errorText);
+        return res.status(response.status).json({
+          error: `Zen API error ${response.status}`,
+          details: errorText || response.statusText,
+        });
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const reader = response.body.getReader();
+
+      try {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(value);
+        }
+      } catch (streamError) {
+        console.error('[zenProxy] Stream error:', streamError.message);
+      } finally {
+        res.end();
+      }
+    } catch (error) {
+      console.error('[zenProxy] Error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Proxy request failed', details: error.message });
+      }
+    }
+  });
+
+  return app;
+}
+
+export const zenProxy = onRequest(
+  {
+    memory: '256MiB',
+    region: 'us-central1',
+    maxInstances: 10,
+    secrets: [zenApiKey],
+  },
+  createZenProxyApp()
+);
