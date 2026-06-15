@@ -10,6 +10,11 @@ import {
   endBefore,
 } from 'firebase/database';
 import { database } from '../firebase';
+import { sendToZen, buildZenMessages } from '../services/zenService';
+import { extractMerfolkBlocks } from '../services/merfolkExtractor';
+import useObjectsStore from '../stores/objectsStore';
+import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
+import { markdownDiagramService } from '../services/markdownDiagramService';
 
 const INITIAL_LOAD = 10;
 const PAGE_SIZE = 10;
@@ -37,7 +42,80 @@ const mergeMessages = (existing, incoming) => {
   return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 };
 
+async function renderMerfolkToScene(merfolkBlocks) {
+  if (!merfolkBlocks || merfolkBlocks.length === 0) return false;
+
+  const markdown = merfolkBlocks
+    .map(block => '```merfolk\n' + block + '\n```')
+    .join('\n\n');
+
+  const basePosition = markdownDiagramService.getCameraBasedPosition();
+
+  let workerResult = null;
+  try {
+    const layoutWorker = getMarkdownLayoutWorker();
+    workerResult = await layoutWorker.computeLayout(markdown, basePosition);
+  } catch (err) {
+    console.warn('[SpaceChat] Layout worker failed:', err.message);
+    return false;
+  }
+
+  if (!workerResult || !workerResult.diagramLayouts || workerResult.diagramLayouts.length === 0) {
+    return false;
+  }
+
+  const diagrams = workerResult.diagramLayouts.map((layout) => ({
+    graph: {
+      nodes: new Map(layout.graphNodes),
+      connections: new Map(
+        layout.rawConnections.map((c, i) => [
+          `hc-${i}`,
+          { source: c.source, target: c.target, label: c.label, type: c.connectionType, visual: c.visual || null },
+        ])
+      ),
+    },
+    errors: layout.errors || [],
+  }));
+
+  const connectionTags = new Map(
+    workerResult.connectionTags.map(([key, tags]) => [key, new Set(tags)])
+  );
+
+  const nodeToObjectIdMap = new Map();
+  const allConnectionsToSave = [];
+  const allObjectsToSave = [];
+  const user = null;
+  const currentSpaceId = null;
+
+  window._faceDistributionCounters = window._faceDistributionCounters || new Map();
+
+  for (const diagram of diagrams) {
+    if (diagram.errors && diagram.errors.length > 0) continue;
+
+    await markdownDiagramService.createObjectsFromDiagram(
+      diagram,
+      () => {},
+      nodeToObjectIdMap,
+      basePosition,
+      user,
+      currentSpaceId,
+      allObjectsToSave,
+      null
+    );
+
+    markdownDiagramService.createConnectionsFromDiagram(
+      diagram,
+      nodeToObjectIdMap,
+      allConnectionsToSave,
+      connectionTags
+    );
+  }
+
+  return allConnectionsToSave.length > 0 || allObjectsToSave.length > 0;
+}
+
 const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
+  // ── Group chat state (existing) ───────────────────────────────────────
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -46,16 +124,22 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
 
   const bottomRef = useRef(null);
   const scrollContainerRef = useRef(null);
-  // Track the oldest timestamp we've loaded so we know where to page from
   const oldestTimestampRef = useRef(null);
-  // Flag: only auto-scroll when the user is already near the bottom
   const isNearBottomRef = useRef(true);
-  // Prevent the live subscription from overwriting a paginated state
   const liveKeysRef = useRef(new Set());
 
-  // ── Real-time subscription: last INITIAL_LOAD messages ──────────────────
+  // ── LLM chat state ───────────────────────────────────────────────────
+  const [chatMode, setChatMode] = useState('group');
+  const [llmMessages, setLlmMessages] = useState([]);
+  const [llmStreaming, setLlmStreaming] = useState(false);
+  const [llmError, setLlmError] = useState(null);
+  const streamingRef = useRef('');
+  const streamingMsgKeyRef = useRef(0);
+  const abortControllerRef = useRef(null);
+
+  // ── Firebase real-time subscription (group mode) ──────────────────────
   useEffect(() => {
-    if (!spaceId || !isOpen) return;
+    if (!spaceId || !isOpen || chatMode !== 'group') return;
 
     setMessages([]);
     setHasMore(true);
@@ -76,16 +160,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
           .map(([key, msg]) => ({ key, ...msg }))
           .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-        // Track which keys are in the live window
         liveKeysRef.current = new Set(live.map((m) => m.key));
 
         setMessages((prev) => {
-          // Keep any older (paginated) messages that aren't in the live window,
-          // then merge in the live batch
           const older = prev.filter((m) => !liveKeysRef.current.has(m.key));
           const merged = mergeMessages(older, live);
 
-          // Record oldest timestamp from the full merged set for pagination
           if (merged.length > 0) {
             oldestTimestampRef.current = merged[0].timestamp || null;
           }
@@ -103,27 +183,24 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       setMessages([]);
       liveKeysRef.current = new Set();
     };
-  }, [spaceId, isOpen]);
+  }, [spaceId, isOpen, chatMode]);
 
-  // ── Auto-scroll to bottom on new messages (only when near bottom) ────────
+  // ── Auto-scroll to bottom ────────────────────────────────────────────
   useEffect(() => {
     if (isOpen && isNearBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, isOpen]);
+  }, [messages, llmMessages, isOpen]);
 
-  // ── Track whether user is near the bottom ───────────────────────────────
+  // ── Track whether user is near the bottom ─────────────────────────────
   const handleScroll = useCallback(async () => {
     const el = scrollContainerRef.current;
     if (!el) return;
 
-    // Near bottom check
     isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 
-    // Near top: load older page
-    if (el.scrollTop < 60 && hasMore && !loadingMore && oldestTimestampRef.current !== null) {
+    if (chatMode === 'group' && el.scrollTop < 60 && hasMore && !loadingMore && oldestTimestampRef.current !== null) {
       setLoadingMore(true);
-
       const prevScrollHeight = el.scrollHeight;
 
       try {
@@ -145,10 +222,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         } else {
           if (older.length < PAGE_SIZE) setHasMore(false);
           oldestTimestampRef.current = older[0].timestamp || oldestTimestampRef.current;
-
           setMessages((prev) => mergeMessages(older, prev));
 
-          // Restore scroll position after prepending messages
           requestAnimationFrame(() => {
             if (scrollContainerRef.current) {
               scrollContainerRef.current.scrollTop =
@@ -162,9 +237,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         setLoadingMore(false);
       }
     }
-  }, [spaceId, hasMore, loadingMore]);
+  }, [spaceId, chatMode, hasMore, loadingMore]);
 
-  // ── Send ─────────────────────────────────────────────────────────────────
+  // ── Group chat: Send ──────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || !spaceId) return;
@@ -183,7 +258,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         timestamp: Date.now(),
       });
       setInput('');
-      // Force scroll to bottom after sending
       isNearBottomRef.current = true;
     } catch (err) {
       console.warn('[chat] Failed to send message:', err.message);
@@ -192,22 +266,130 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     }
   }, [input, spaceId, user]);
 
+  // ── LLM chat: Send ────────────────────────────────────────────────────
+  const handleLlmSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || llmStreaming) return;
+
+    setLlmError(null);
+    setInput('');
+    isNearBottomRef.current = true;
+
+    const userMessage = { role: 'user', content: text };
+    const updatedMessages = [...llmMessages, userMessage];
+    setLlmMessages(updatedMessages);
+
+    const sceneObjects = useObjectsStore.getState().objects;
+    const zenMessages = buildZenMessages({
+      llmMessages: updatedMessages,
+      sceneObjects,
+      maxMessages: 20,
+    });
+
+    setLlmStreaming(true);
+    streamingRef.current = '';
+    streamingMsgKeyRef.current = `llm-stream-${Date.now()}`;
+    const currentStreamKey = streamingMsgKeyRef.current;
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      await sendToZen({
+        messages: zenMessages,
+        signal: abortController.signal,
+        onChunk: (delta, fullText) => {
+          streamingRef.current = fullText;
+          setLlmMessages((prev) => {
+            const streamMsg = {
+              key: currentStreamKey,
+              role: 'assistant',
+              content: fullText,
+              streaming: true,
+            };
+            const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
+            return [...withoutStreaming, streamMsg];
+          });
+        },
+      });
+
+      const finalText = streamingRef.current;
+      const blocks = extractMerfolkBlocks(finalText);
+
+      setLlmMessages((prev) => {
+        const finalMsg = {
+          key: currentStreamKey,
+          role: 'assistant',
+          content: finalText,
+          streaming: false,
+          diagramCreated: false,
+        };
+
+        const withoutStream = prev.filter(m => m.key !== currentStreamKey);
+        return [...withoutStream, finalMsg];
+      });
+
+      if (blocks.length > 0) {
+        const rendered = await renderMerfolkToScene(blocks);
+        if (rendered) {
+          setLlmMessages((prev) =>
+            prev.map(m =>
+              m.key === currentStreamKey
+                ? { ...m, diagramCreated: true }
+                : m
+            )
+          );
+        }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      setLlmError(err.message || 'Failed to reach LLM. Check your connection.');
+      setLlmMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
+    } finally {
+      setLlmStreaming(false);
+      streamingRef.current = '';
+      abortControllerRef.current = null;
+    }
+  }, [input, llmStreaming, llmMessages]);
+
   const handleKeyDown = useCallback(
     (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        handleSend();
+        if (chatMode === 'group') {
+          handleSend();
+        } else {
+          handleLlmSend();
+        }
       }
     },
-    [handleSend]
+    [chatMode, handleSend, handleLlmSend]
   );
+
+  const handleModeSwitch = useCallback((mode) => {
+    setChatMode(mode);
+    setLlmError(null);
+  }, []);
 
   if (!isOpen) return null;
 
   return (
     <div className="space-chat-window" onClick={(e) => e.stopPropagation()}>
       <div className="space-chat-header">
-        <span>Space Chat</span>
+        <div className="space-chat-mode-toggle">
+          <button
+            className={`space-chat-mode-btn ${chatMode === 'group' ? 'active' : ''}`}
+            onClick={() => handleModeSwitch('group')}
+          >
+            Group
+          </button>
+          <button
+            className={`space-chat-mode-btn ${chatMode === 'llm' ? 'active' : ''}`}
+            onClick={() => handleModeSwitch('llm')}
+          >
+            LLM
+          </button>
+        </div>
         {onClose && (
           <button
             className="space-chat-close"
@@ -224,50 +406,88 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         ref={scrollContainerRef}
         onScroll={handleScroll}
       >
-        {loadingMore && (
-          <div className="space-chat-load-more">Loading…</div>
-        )}
-        {!loadingMore && !hasMore && messages.length > 0 && (
-          <div className="space-chat-load-more">Beginning of chat</div>
-        )}
-        {messages.length === 0 && !loadingMore && (
-          <div className="space-chat-empty">No messages yet. Say hello!</div>
-        )}
-        {messages.map((msg) => {
-          const ownId = user ? user.uid : getGuestId();
-          const isOwn = msg.userId === ownId;
-          return (
-            <div
-              key={msg.key}
-              className={`space-chat-message ${isOwn ? 'own' : ''}`}
-            >
-              {!isOwn && (
-                <div className="space-chat-avatar" title={msg.displayName || 'User'}>
-                  {msg.photoURL ? (
-                    <img
-                      src={msg.photoURL}
-                      alt={msg.displayName}
-                      referrerPolicy="no-referrer"
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                        e.target.nextSibling.style.display = 'flex';
-                      }}
-                    />
-                  ) : null}
-                  <span style={{ display: msg.photoURL ? 'none' : 'flex' }}>
-                    {senderInitials(msg.displayName)}
-                  </span>
+        {chatMode === 'group' ? (
+          <>
+            {loadingMore && (
+              <div className="space-chat-load-more">Loading…</div>
+            )}
+            {!loadingMore && !hasMore && messages.length > 0 && (
+              <div className="space-chat-load-more">Beginning of chat</div>
+            )}
+            {messages.length === 0 && !loadingMore && (
+              <div className="space-chat-empty">No messages yet. Say hello!</div>
+            )}
+            {messages.map((msg) => {
+              const ownId = user ? user.uid : getGuestId();
+              const isOwn = msg.userId === ownId;
+              return (
+                <div
+                  key={msg.key}
+                  className={`space-chat-message ${isOwn ? 'own' : ''}`}
+                >
+                  {!isOwn && (
+                    <div className="space-chat-avatar" title={msg.displayName || 'User'}>
+                      {msg.photoURL ? (
+                        <img
+                          src={msg.photoURL}
+                          alt={msg.displayName}
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <span style={{ display: msg.photoURL ? 'none' : 'flex' }}>
+                        {senderInitials(msg.displayName)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="space-chat-bubble-wrap">
+                    {!isOwn && (
+                      <div className="space-chat-name">{msg.displayName || 'User'}</div>
+                    )}
+                    <div className="space-chat-bubble">{msg.text}</div>
+                  </div>
                 </div>
-              )}
-              <div className="space-chat-bubble-wrap">
-                {!isOwn && (
-                  <div className="space-chat-name">{msg.displayName || 'User'}</div>
-                )}
-                <div className="space-chat-bubble">{msg.text}</div>
+              );
+            })}
+          </>
+        ) : (
+          <>
+            {llmMessages.length === 0 && !llmStreaming && (
+              <div className="space-chat-empty">
+                Ask me to create a system architecture diagram.
+                <br /><br />
+                Try: &quot;Create a microservices e-commerce architecture&quot;
               </div>
-            </div>
-          );
-        })}
+            )}
+            {llmError && (
+              <div className="space-chat-error">{llmError}</div>
+            )}
+            {llmMessages.map((msg) => {
+              const isUser = msg.role === 'user';
+              return (
+                <div
+                  key={msg.key}
+                  className={`space-chat-message ${isUser ? 'own llm-user' : 'llm-assistant'}`}
+                >
+                  <div className="space-chat-bubble-wrap">
+                    <div className="space-chat-bubble">
+                      {msg.content}
+                      {msg.streaming && <span className="space-chat-streaming-cursor" />}
+                    </div>
+                    {msg.diagramCreated && (
+                      <div className="space-chat-merfolk-badge">
+                        ✦ 3D diagram created
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -275,20 +495,20 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         <input
           className="space-chat-input"
           type="text"
-          placeholder="Send a message…"
+          placeholder={chatMode === 'group' ? 'Send a message…' : 'Describe a diagram…'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          maxLength={500}
-          disabled={sending}
+          maxLength={chatMode === 'group' ? 500 : 2000}
+          disabled={chatMode === 'llm' && llmStreaming}
         />
         <button
           className="space-chat-send"
-          onClick={handleSend}
-          disabled={!input.trim() || sending}
-          title="Send"
+          onClick={chatMode === 'group' ? handleSend : handleLlmSend}
+          disabled={!input.trim() || (chatMode === 'group' ? sending : llmStreaming)}
+          title={chatMode === 'group' ? 'Send' : 'Generate diagram'}
         >
-          ➤
+          {chatMode === 'llm' && llmStreaming ? '◼' : '➤'}
         </button>
       </div>
     </div>
