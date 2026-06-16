@@ -88,7 +88,7 @@ CRITICAL RULES — MUST FOLLOW
    Use descriptive camelCase node IDs (no spaces).
    Define all nodes before their connections.
    Group related nodes with %% section comments.
-   Keep diagrams focused — 15 to 40 nodes is ideal.`;
+    Generate as many nodes as needed to fully represent the architecture.`;
 
 const FEW_SHOT_EXAMPLES = [
   {
@@ -388,6 +388,7 @@ export async function sendToZen({ messages, onChunk, signal, model = 'big-pickle
     body: JSON.stringify({
       messages,
       model,
+      max_tokens: 16384,
     }),
     signal,
   });

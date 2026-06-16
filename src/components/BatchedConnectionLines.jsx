@@ -243,6 +243,8 @@ const BatchedConnectionLines = memo(({
   useEffect(() => {
     if (!materialRef.current) {
       materialRef.current = LineShaderMaterial.clone();
+      materialRef.current.uniforms.glowWidth.value = 1.0;
+      materialRef.current.uniforms.glowIntensity.value = 0.0;
     }
     materialRef.current.uniforms.linewidth.value = lineWidth;
   }, [lineWidth]);

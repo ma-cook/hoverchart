@@ -133,6 +133,8 @@ const CellBoundaryRenderer = ({ visible = true }) => {
   // Lazy-init material
   if (!materialRef.current) {
     materialRef.current = LineShaderMaterial.clone();
+    materialRef.current.uniforms.glowWidth.value = 1.0;
+    materialRef.current.uniforms.glowIntensity.value = 0.0;
     materialRef.current.uniforms.linewidth.value = 1;
     materialRef.current.uniforms.resolution.value.x = window.innerWidth;
     materialRef.current.uniforms.resolution.value.y = window.innerHeight;

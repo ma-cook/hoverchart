@@ -734,6 +734,7 @@ const Connection = React.memo(
                   (connection.color || 'black')
                 }
                 lineWidth={getLineWidth()}
+                glowWidth={1}
                 onClick={(e) => handleConnectionClick(e, connection.id)}
                 onPointerOver={handlePointerOver}
                 onPointerOut={handlePointerOut}

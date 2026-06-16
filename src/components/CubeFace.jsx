@@ -25,8 +25,8 @@ const materialCache = {
     side: THREE.DoubleSide,
   }),
   selected: new THREE.MeshBasicMaterial({
-    color: new THREE.Color('#99ccff'),
-    opacity: SELECTED_OPACITY,
+    color: new THREE.Color('#4a9eff'),
+    opacity: 0.2,
     transparent: true,
     side: THREE.DoubleSide,
     depthWrite: false,

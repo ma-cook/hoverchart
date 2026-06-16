@@ -9,8 +9,8 @@ const LineShaderMaterial = new ShaderMaterial({
     linewidth: { value: 1 },
     resolution: { value: { x: window.innerWidth, y: window.innerHeight } },
     opacity: { value: 1.0 },
-    glowWidth: { value: 3.0 },      // Quad expansion factor (1 = no glow, 3 = nice soft glow)
-    glowIntensity: { value: 0.45 }, // Peak glow alpha at the core edge
+    glowWidth: { value: 4.0 },      // Quad expansion factor (1 = no glow, 4 = nice soft glow)
+    glowIntensity: { value: 0.6 }, // Peak glow alpha at the core edge
   },
   transparent: true,
   depthTest: true,

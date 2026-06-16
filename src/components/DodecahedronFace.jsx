@@ -29,8 +29,8 @@ const dodecahedronFaceMaterialCache = {
   }),
   // Selected + highlighted - selection overlay
   selectedHighlighted: new THREE.MeshBasicMaterial({
-    color: new THREE.Color('#0066ff'),
-    opacity: 0.3,
+    color: new THREE.Color('#4a9eff'),
+    opacity: 0.25,
     transparent: true,
     side: THREE.DoubleSide,
     depthWrite: false,

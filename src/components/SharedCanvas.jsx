@@ -1,5 +1,7 @@
 import { Canvas } from '@react-three/fiber';
 
+import * as THREE from 'three';
+
 const GL_SETTINGS = {
   antialias: true,
   samples: 4,
@@ -8,6 +10,8 @@ const GL_SETTINGS = {
   depth: true,
   logarithmicDepthBuffer: false,
   powerPreference: 'high-performance',
+  toneMapping: THREE.ACESFilmicToneMapping,
+  toneMappingExposure: 1.0,
 };
 
 const SharedCanvas = ({ children, style, onPointerMissed }) => (
@@ -18,7 +22,7 @@ const SharedCanvas = ({ children, style, onPointerMissed }) => (
       left: 0,
       width: '100vw',
       height: '100vh',
-      background: 'white',
+      background: '#f0f2f5',
       ...style,
     }}
     gl={GL_SETTINGS}

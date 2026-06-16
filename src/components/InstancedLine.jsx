@@ -32,6 +32,8 @@ const InstancedLine = forwardRef(
       points = [],
       color = 'black',
       lineWidth = 1,
+      glowWidth,
+      glowIntensity,
       depthWrite: depthWriteProp,
       materialOpacity: materialOpacityProp,
       onClick,
@@ -262,6 +264,13 @@ const InstancedLine = forwardRef(
       if (depthWriteProp != null) material.depthWrite = depthWriteProp;
       if (materialOpacityProp != null) material.uniforms.opacity.value = materialOpacityProp;
     }, [material, depthWriteProp, materialOpacityProp]);
+
+    // Apply optional glow overrides — used to disable glow on connection lines
+    useEffect(() => {
+      if (!material) return;
+      if (glowWidth != null) material.uniforms.glowWidth.value = glowWidth;
+      if (glowIntensity != null) material.uniforms.glowIntensity.value = glowIntensity;
+    }, [material, glowWidth, glowIntensity]);
 
     // PERFORMANCE: Initialize instance matrices ONCE instead of every frame
     useEffect(() => {

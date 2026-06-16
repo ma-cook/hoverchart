@@ -17,9 +17,9 @@ const SHARED_BOX_GEOMETRY = new THREE.BoxGeometry(
 // Transparent material — visible as a very faint wireframe-fill so users
 // know the faces are clickable, but the cube still looks like a wireframe.
 const TRANSPARENT_MATERIAL = new THREE.MeshBasicMaterial({
-  color: 0x000000,
+  color: 0xffffff,
   transparent: true,
-  opacity: 0.04,
+  opacity: 0.06,
   side: THREE.DoubleSide,
   depthWrite: false,
 });

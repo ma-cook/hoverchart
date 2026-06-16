@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect, useMemo, memo } from 'react';
-import { EffectComposer, SMAA } from '@react-three/postprocessing';
+import { EffectComposer, SMAA, Bloom, Vignette } from '@react-three/postprocessing';
 import useSceneStore from './stores/sceneStore';
 
 import './App.css';
@@ -1644,6 +1644,8 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
       {canvasQuality !== 'low' && (
       <EffectComposer>
         <SMAA />
+        <Bloom luminanceThreshold={0.7} luminanceSmoothing={0.08} intensity={0.25} mipmapBlur />
+        <Vignette eskil={false} offset={0.3} darkness={0.4} />
       </EffectComposer>
       )}
     </>

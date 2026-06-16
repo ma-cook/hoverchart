@@ -1678,7 +1678,7 @@ function createZenProxyApp() {
       return res.status(500).json({ error: 'ZEN_API_KEY not configured' });
     }
 
-    const { messages, model = 'big-pickle' } = req.body;
+    const { messages, model = 'big-pickle', max_tokens } = req.body;
 
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'messages array is required' });
@@ -1691,7 +1691,7 @@ function createZenProxyApp() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, stream: true }),
+        body: JSON.stringify({ model, messages, stream: true, max_tokens }),
       });
 
       if (!response.ok) {
