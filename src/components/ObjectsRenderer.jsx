@@ -358,8 +358,20 @@ const ObjectsRenderer = React.memo(({
   // skips draw calls for out-of-view meshes at zero React overhead.
   // Filtering by visibleObjectIds here would unmount components on every camera
   // move, causing the visible "everything reloads" flicker the user reported.
+  //
+  // PERF: ref-diff maintains reference equality when only object properties
+  // change (position, color, etc.) without altering the mounted set. This
+  // prevents unnecessary remapping of renderedObjects and cascading
+  // recomputation in derived type arrays.
+  const progressiveVisibleObjectsRef = useRef([]);
   const progressiveVisibleObjects = useMemo(() => {
-    return objects.filter((obj) => mountedIds.has(obj.id));
+    const result = objects.filter((obj) => mountedIds.has(obj.id));
+    const prev = progressiveVisibleObjectsRef.current;
+    if (prev.length === result.length && result.every((obj, i) => obj === prev[i])) {
+      return prev;
+    }
+    progressiveVisibleObjectsRef.current = result;
+    return result;
   }, [objects, mountedIds]);
 
   // Extract cube objects for batched edge rendering (includes containers)
@@ -368,8 +380,18 @@ const ObjectsRenderer = React.memo(({
   // limit — distant objects get dropped on camera move, causing their edges to
   // vanish while the mesh/text stays mounted.  Edge renderers do their own
   // frustum culling in useFrame, so passing the full mounted set is safe.
+  //
+  // PERF: ref-diff prevents cross-type cascade — changes to dodecahedrons or
+  // tetrahedrons no longer cause cube renderers to re-render.
+  const cubeObjectsRef = useRef([]);
   const cubeObjects = useMemo(() => {
-    return progressiveVisibleObjects.filter((obj) => obj.type === 'cube');
+    const result = progressiveVisibleObjects.filter((obj) => obj.type === 'cube');
+    const prev = cubeObjectsRef.current;
+    if (prev.length === result.length && result.every((obj, i) => obj === prev[i])) {
+      return prev;
+    }
+    cubeObjectsRef.current = result;
+    return result;
   }, [progressiveVisibleObjects]);
 
   // Extract container cubes that need floating header labels
@@ -392,15 +414,29 @@ const ObjectsRenderer = React.memo(({
       });
   }, [cubeObjects]);
 
+  const dodecahedronObjectsRef = useRef([]);
   const dodecahedronObjects = useMemo(() => {
-    return progressiveVisibleObjects.filter(
+    const result = progressiveVisibleObjects.filter(
       (obj) => obj.type === 'sphere' || obj.type === 'dodecahedron'
     );
+    const prev = dodecahedronObjectsRef.current;
+    if (prev.length === result.length && result.every((obj, i) => obj === prev[i])) {
+      return prev;
+    }
+    dodecahedronObjectsRef.current = result;
+    return result;
   }, [progressiveVisibleObjects]);
 
   // Extract tetrahedron objects for batched edge rendering
+  const tetrahedronObjectsRef = useRef([]);
   const tetrahedronObjects = useMemo(() => {
-    return progressiveVisibleObjects.filter((obj) => obj.type === 'tetrahedron');
+    const result = progressiveVisibleObjects.filter((obj) => obj.type === 'tetrahedron');
+    const prev = tetrahedronObjectsRef.current;
+    if (prev.length === result.length && result.every((obj, i) => obj === prev[i])) {
+      return prev;
+    }
+    tetrahedronObjectsRef.current = result;
+    return result;
   }, [progressiveVisibleObjects]);
 
   // Compute set of unmodified cube IDs for instanced full-LOD rendering.
