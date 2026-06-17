@@ -28,6 +28,7 @@ const TextObjectUI = forwardRef(
   ) => {
     const groupRef = useRef();
     const lastPosition = useRef(null);
+    const distanceRef = useRef(null);
     const [distance, setDistance] = useState(50); // Add distance state for scaling
 
     // Use color picker store
@@ -89,11 +90,19 @@ const TextObjectUI = forwardRef(
         }
         groupRef.current.quaternion.copy(camera.quaternion);
 
-        // Calculate distance for UI scaling
+        // Throttle: only update distance state when it changes significantly
+        // (>10%) to avoid triggering a React re-render on every frame.
         const newDistance = camera.position.distanceTo(
           groupRef.current.position
         );
-        setDistance(newDistance);
+        const lastDistance = distanceRef.current;
+        if (
+          lastDistance === null ||
+          Math.abs(newDistance - lastDistance) / lastDistance > 0.1
+        ) {
+          distanceRef.current = newDistance;
+          setDistance(newDistance);
+        }
       }
     });
 
