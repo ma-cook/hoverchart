@@ -18,6 +18,7 @@ import isEqual from 'lodash/isEqual';
 import {
   useTextObjectStore,
   useObjectsStore,
+  getObjectById,
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
@@ -53,9 +54,9 @@ const TextObject = React.memo(
     // Access Three.js scene and camera for orbit controls and distance calculation
     const { scene, camera } = useThree();
 
-    // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
+    // PERFORMANCE: O(1) lookup via objectsById cache instead of O(N) .find().
     const objectData = useObjectsStore(
-      useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+      useCallback((state) => getObjectById(state, id), [id])
     );
 
     // PERFORMANCE: O(1) index lookup instead of O(C) filter.

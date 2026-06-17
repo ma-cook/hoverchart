@@ -38,6 +38,7 @@ import isEqual from 'lodash/isEqual';
 import {
   useTetrahedronStore,
   useObjectsStore,
+  getObjectById,
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
@@ -220,9 +221,9 @@ const Tetrahedron = ({
   // FLYWEIGHT: Use module-level shared geometries instead of creating per instance
   const tetrahedronTriangleFaces = SHARED_TETRAHEDRON_FACES;
 
-  // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
+  // PERFORMANCE: O(1) lookup via objectsById cache instead of O(N) .find().
   const objectData = useObjectsStore(
-    useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+    useCallback((state) => getObjectById(state, id), [id])
   );
 
   // Extract properties with defaults

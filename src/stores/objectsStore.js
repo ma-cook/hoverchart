@@ -12,6 +12,24 @@ import { deleteConnection } from '../services/connectionsService';
 // Module-level timer for deferred setObjects calls (avoids storing in Zustand state)
 let _pendingSetObjectsTimer = null;
 
+// ─── O(1) object lookup by ID ────────────────────────────────────────
+// Module-level cache: instead of each per-object component doing O(N) .find()
+// on every store notification (N=9000, components=9000 → 81M iterations),
+// we build the Map once per objects-array reference change.
+let _lastObjectsByIdRef = null;
+let _objectsByIdCache = new Map();
+
+export function getObjectById(state, id) {
+  if (state.objects !== _lastObjectsByIdRef) {
+    _lastObjectsByIdRef = state.objects;
+    _objectsByIdCache = new Map();
+    for (const obj of state.objects) {
+      _objectsByIdCache.set(obj.id, obj);
+    }
+  }
+  return _objectsByIdCache.get(id);
+}
+
 const useObjectsStore = createWithEqualityFn(
   (set, get) => ({
     // State

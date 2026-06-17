@@ -20,6 +20,7 @@ import { uploadImageToStorage } from '../services/storageService';
 import {
   usePlaneStore,
   useObjectsStore,
+  getObjectById,
   useConnectionStore,
   useIndicatorsStore,
   useUIOverlayStore,
@@ -59,9 +60,9 @@ const Plane = ({
   user,
   currentSpaceId,
 }) => {
-  // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
+  // PERFORMANCE: O(1) lookup via objectsById cache instead of O(N) .find().
   const objectData = useObjectsStore(
-    useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+    useCallback((state) => getObjectById(state, id), [id])
   );
 
   // PERFORMANCE: O(1) index lookup instead of O(C) filter.

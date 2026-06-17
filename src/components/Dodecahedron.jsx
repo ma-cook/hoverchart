@@ -8,6 +8,7 @@ import HeaderInput from './HeaderInput';
 import {
   useDodecahedronStore,
   useObjectsStore,
+  getObjectById,
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
@@ -195,10 +196,9 @@ const Sphere = React.memo(
         navigator.userAgent
       );
 
-    // PERFORMANCE: Use targeted selector — only re-renders when THIS object's data changes.
-    // Previously subscribed to the entire objects array, causing O(N) re-renders on every move.
+    // PERFORMANCE: O(1) lookup via objectsById cache instead of O(N) .find().
     const objectData = useObjectsStore(
-      useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+      useCallback((state) => getObjectById(state, id), [id])
     );
     const setObjects = useObjectsStore((state) => state.setObjects);
 

@@ -16,6 +16,7 @@ import { faces, getFaceIndicatorProps } from './cubeHelpers';
 import {
   useCubeStore,
   useObjectsStore,
+  getObjectById,
   useConnectionStore,
   useIndicatorsStore,
 } from '../stores';
@@ -193,9 +194,9 @@ const Cube = ({
     useCallback((state) => state.faceTextVisible.get(id) !== false, [id])
   );
   
-  // Get object data from objects store - use selector to avoid subscribing to all objects
+  // Get object data from objects store - O(1) lookup via objectsById cache
   const objectData = useObjectsStore(
-    useCallback((state) => state.objects.find((obj) => obj.id === id), [id])
+    useCallback((state) => getObjectById(state, id), [id])
   );
   const setIndicatorActive = useFaceIndicatorStore(
     (state) => state.setIndicatorActive
