@@ -31,7 +31,11 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [] }) 
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map());
 
-  const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } = useLODStore();
+  const lodLevels = useLODStore((s) => s.lodLevels);
+  const childParentMap = useLODStore((s) => s.childParentMap);
+  const parentIds = useLODStore((s) => s.parentIds);
+  const lodEnabled = useLODStore((s) => s.lodEnabled);
+  const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to only MEDIUM LOD dodecahedrons (excludes grouping containers)
   const mediumDodecahedrons = useMemo(() => {

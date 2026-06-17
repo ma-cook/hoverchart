@@ -88,8 +88,11 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     // Map from instance index → cube ID (rebuilt each time filtered set changes)
     const indexToCubeIdRef = useRef([]);
 
-    const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } =
-      useLODStore();
+    const lodLevels = useLODStore((s) => s.lodLevels);
+    const childParentMap = useLODStore((s) => s.childParentMap);
+    const parentIds = useLODStore((s) => s.parentIds);
+    const lodEnabled = useLODStore((s) => s.lodEnabled);
+    const _lodVersion = useLODStore((s) => s._lodVersion);
 
     // Subscribe to unmodified version counter instead of full cubes Map.
     // _unmodifiedVersion only bumps on structural changes (add/delete) or

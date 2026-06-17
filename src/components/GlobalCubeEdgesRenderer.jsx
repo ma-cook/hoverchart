@@ -128,7 +128,11 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   
   // Get LOD data from store
   // _lodVersion is a counter incremented when lodLevels Map is mutated in-place (avoids O(N) Map copy)
-  const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } = useLODStore();
+  const lodLevels = useLODStore((s) => s.lodLevels);
+  const childParentMap = useLODStore((s) => s.childParentMap);
+  const parentIds = useLODStore((s) => s.parentIds);
+  const lodEnabled = useLODStore((s) => s.lodEnabled);
+  const _lodVersion = useLODStore((s) => s._lodVersion);
   
   // Filter cubes based on LOD level - only render edges for FULL LOD cubes
   // Grouping containers are excluded from LOD and always render

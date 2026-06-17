@@ -64,7 +64,11 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
   const lastCapacityRef = useRef(0);
   const needsFullUpdateRef = useRef(true);
 
-  const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } = useLODStore();
+  const lodLevels = useLODStore((s) => s.lodLevels);
+  const childParentMap = useLODStore((s) => s.childParentMap);
+  const parentIds = useLODStore((s) => s.parentIds);
+  const lodEnabled = useLODStore((s) => s.lodEnabled);
+  const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to full-LOD cubes (same logic as GlobalCubeEdgesRenderer)
   const filteredCubes = useMemo(() => {

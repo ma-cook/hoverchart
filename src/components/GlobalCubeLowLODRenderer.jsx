@@ -26,7 +26,11 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
   const lastDataRef = useRef(new Map());
   const indexToCubeIdRef = useRef([]);
 
-  const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } = useLODStore();
+  const lodLevels = useLODStore((s) => s.lodLevels);
+  const childParentMap = useLODStore((s) => s.childParentMap);
+  const parentIds = useLODStore((s) => s.parentIds);
+  const lodEnabled = useLODStore((s) => s.lodEnabled);
+  const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to LOW-LOD cubes (excludes grouping containers)
   const lowCubes = useMemo(() => {
