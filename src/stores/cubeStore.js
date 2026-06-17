@@ -58,6 +58,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
   cubes: new Map(), // Map of cubeId -> cube state
   selectedCubes: new Set(), // Set of selected cube IDs
   transformingCubes: new Set(), // Set of cubes currently being transformed
+  _unmodifiedVersion: 0, // Version counter bumped only when unmodified-relevant data changes
 
   // Actions
   createCube: (cubeId, initialState = {}) => {
@@ -96,7 +97,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
         isScaleModified: false, // Add scale modification tracking
         ...initialState,
       });
-      return { cubes: newCubes };
+      return { cubes: newCubes, _unmodifiedVersion: state._unmodifiedVersion + 1 };
     });
   },
 
@@ -107,7 +108,14 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
       if (existing) {
         newCubes.set(cubeId, { ...existing, ...updates });
       }
-      return { cubes: newCubes };
+      const relevantKeys = ['faceColors', 'faceTexts', 'headerText'];
+      const hasRelevantChange = existing && relevantKeys.some(k => k in updates);
+      return {
+        cubes: newCubes,
+        _unmodifiedVersion: hasRelevantChange
+          ? state._unmodifiedVersion + 1
+          : state._unmodifiedVersion,
+      };
     });
   },
 
@@ -119,7 +127,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
         const newFaceColors = { ...existing.faceColors, [face]: color };
         newCubes.set(cubeId, { ...existing, faceColors: newFaceColors });
       }
-      return { cubes: newCubes };
+      return { cubes: newCubes, _unmodifiedVersion: state._unmodifiedVersion + 1 };
     });
   },
 
@@ -131,7 +139,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
         const newFaceTexts = { ...existing.faceTexts, [face]: text };
         newCubes.set(cubeId, { ...existing, faceTexts: newFaceTexts });
       }
-      return { cubes: newCubes };
+      return { cubes: newCubes, _unmodifiedVersion: state._unmodifiedVersion + 1 };
     });
   },
 
@@ -149,7 +157,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
           faceTextStyles: newFaceTextStyles,
         });
       }
-      return { cubes: newCubes };
+      return { cubes: newCubes, _unmodifiedVersion: state._unmodifiedVersion + 1 };
     });
   },
 
@@ -168,6 +176,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
         cubes: newCubes,
         selectedCubes: newSelected,
         transformingCubes: newTransforming,
+        _unmodifiedVersion: state._unmodifiedVersion + 1,
       };
     });
   },

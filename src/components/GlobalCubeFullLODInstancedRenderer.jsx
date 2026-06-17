@@ -91,13 +91,14 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } =
       useLODStore();
 
-    // We read cubeStore state in useFrame (non-reactive) for per-frame
-    // unmodified checks, but also subscribe to the cubes Map reference
-    // so the filtered list recomputes when cubes are modified.
-    const cubesMap = useCubeStore((s) => s.cubes);
+    // Subscribe to unmodified version counter instead of full cubes Map.
+    // _unmodifiedVersion only bumps on structural changes (add/delete) or
+    // when unmodified-relevant properties change (faceColors, faceTexts, headerText).
+    const unmodifiedVersion = useCubeStore((s) => s._unmodifiedVersion);
 
     // Filter to FULL-LOD, non-container, unmodified, non-selected cubes
     const instancedCubes = useMemo(() => {
+      const cubesMap = useCubeStore.getState().cubes;
       return cubes.filter((cube) => {
         // Containers are handled separately
         if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return false;
@@ -123,7 +124,7 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
       });
     }, [
       cubes,
-      cubesMap,
+      unmodifiedVersion,
       lodLevels,
       _lodVersion,
       childParentMap,

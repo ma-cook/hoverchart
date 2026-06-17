@@ -62,6 +62,7 @@ const tempColor = new THREE.Color();
 const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
   const meshRef = useRef();
   const lastCapacityRef = useRef(0);
+  const needsFullUpdateRef = useRef(true);
 
   const { lodLevels, childParentMap, parentIds, lodEnabled, _lodVersion } = useLODStore();
 
@@ -78,6 +79,14 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
     });
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
+  // Track cube IDs to detect structural changes
+  const filteredCubeIds = useMemo(() => filteredCubes.map(c => c.id).join(','), [filteredCubes]);
+
+  // Mark for full update when the set of cubes changes
+  useEffect(() => {
+    needsFullUpdateRef.current = true;
+  }, [filteredCubeIds]);
+
   // Power-of-2 grow-only capacity (6 faces per cube max)
   const maxPossible = filteredCubes.length * 6;
   if (maxPossible > lastCapacityRef.current) {
@@ -88,6 +97,10 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
   useFrame(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
+
+    const hasActiveTransforms = cubeTransformMap.size > 0;
+    const needsInitialSetup = needsFullUpdateRef.current;
+    if (!hasActiveTransforms && !needsInitialSetup) return;
 
     const cubeStoreState = useCubeStore.getState();
     let idx = 0;
@@ -142,6 +155,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
+    needsFullUpdateRef.current = false;
   });
 
   if (capacity === 0) return null;

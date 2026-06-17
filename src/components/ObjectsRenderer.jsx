@@ -9,6 +9,9 @@ import GlobalDodecahedronMediumLODRenderer from './GlobalDodecahedronMediumLODRe
 import GlobalTetrahedronMediumLODRenderer from './GlobalTetrahedronMediumLODRenderer';
 import GlobalCubeFaceRenderer from './GlobalCubeFaceRenderer';
 import GlobalCubeFullLODInstancedRenderer, { isCubeUnmodified } from './GlobalCubeFullLODInstancedRenderer';
+import GlobalCubeLowLODRenderer from './GlobalCubeLowLODRenderer';
+import GlobalDodecahedronLowLODRenderer from './GlobalDodecahedronLowLODRenderer';
+import GlobalTetrahedronLowLODRenderer from './GlobalTetrahedronLowLODRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { useCubeStore } from '../stores';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
@@ -404,8 +407,10 @@ const ObjectsRenderer = React.memo(({
   // These cubes skip mounting individual <Cube> components — their wireframe
   // edges come from GlobalCubeEdgesRenderer and their transparent clickable
   // faces from GlobalCubeFullLODInstancedRenderer.
-  const cubesMap = useCubeStore((s) => s.cubes);
+  const unmodifiedCubeIdsRef = useRef(null);
+  const unmodifiedVersion = useCubeStore((s) => s._unmodifiedVersion);
   const unmodifiedCubeIds = useMemo(() => {
+    const cubesMap = useCubeStore.getState().cubes;
     const ids = new Set();
     for (const cube of cubeObjects) {
       if (cube.merfolkData?.isContainer) continue;
@@ -414,8 +419,20 @@ const ObjectsRenderer = React.memo(({
         ids.add(cube.id);
       }
     }
+
+    // Diff against previous set to maintain reference equality when contents unchanged
+    const prev = unmodifiedCubeIdsRef.current;
+    if (prev !== null && prev.size === ids.size) {
+      let same = true;
+      for (const id of ids) {
+        if (!prev.has(id)) { same = false; break; }
+      }
+      if (same) return prev;
+    }
+
+    unmodifiedCubeIdsRef.current = ids;
     return ids;
-  }, [cubeObjects, cubesMap]);
+  }, [cubeObjects, unmodifiedVersion]);
 
   // Click handler for the instanced full-LOD renderer — selects the cube,
   // which promotes it to a full <Cube> component on next render.
@@ -512,6 +529,11 @@ const ObjectsRenderer = React.memo(({
       
       {/* PERFORMANCE: Render all medium-LOD tetrahedrons as simple boxes in 1 draw call */}
       <GlobalTetrahedronMediumLODRenderer tetrahedrons={tetrahedronObjects} />
+      
+      {/* PERFORMANCE: Render all LOW-LOD objects as instanced 2D shapes (1 draw call each) */}
+      <GlobalCubeLowLODRenderer cubes={cubeObjects} onInstanceClick={handleInstancedCubeClick} />
+      <GlobalDodecahedronLowLODRenderer dodecahedrons={dodecahedronObjects} onInstanceClick={handleInstancedCubeClick} />
+      <GlobalTetrahedronLowLODRenderer tetrahedrons={tetrahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* Render floating header labels above group containers */}
       {containerHeaders.map((header) => (
