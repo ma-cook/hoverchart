@@ -642,14 +642,16 @@ const UIOverlay = ({
         }
       }
 
-      // Process the new merfolk section to create additional 3D objects
+      // Process the merged markdown (existing + new content) to recompute the full diagram layout
+      // with all nodes and connections, ensuring new objects integrate into the correct positions
+      // rather than being placed in cloned containers to the side.
       diagramIsBeingGenerated.current = true;
-      setScanProgress({ isScanning: true, progress: 65, stage: 'Creating new objects from changes...' });
-      const newBlob = new Blob([rescanResult.newMerfolk], { type: 'text/markdown' });
-      const newFile = new File([newBlob], `${repo.name}-changes.md`, { type: 'text/markdown' });
+      setScanProgress({ isScanning: true, progress: 65, stage: 'Recomputing diagram layout...' });
+      const mergedBlob = new Blob([rescanResult.mergedMarkdown], { type: 'text/markdown' });
+      const mergedFile = new File([mergedBlob], `${repo.name}-merged.md`, { type: 'text/markdown' });
 
       const result = await markdownDiagramService.processMarkdownFile(
-        newFile,
+        mergedFile,
         onCreateObject,
         currentSpaceId,
         user,

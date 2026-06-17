@@ -55,7 +55,7 @@ import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle 
 import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkScheduler';
 
 import { signInUser } from './services/authService';
-import { toggleTaskExpansion } from './services/repoContainerService';
+import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
 import { subscribeToSpatialObjects } from './services/spatialObjectsService';
 import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning'; // Import CELL_SIZE constant
 import { setGuestPresence } from './services/presenceService';
@@ -655,6 +655,18 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
       spaceToLoad,
       loadedCells,
       (change) => {
+        // Collect repoSlugs BEFORE the store update so we know which
+        // containers may need expansion (initial loading excluded).
+        const newRepoSlugs = (() => {
+          if (change.type !== 'batch-added') return null;
+          const slugs = new Set();
+          for (const item of change.changes) {
+            const slug = item.object?.merfolkData?.repoSlug;
+            if (slug) slugs.add(slug);
+          }
+          return slugs.size > 0 ? slugs : null;
+        })();
+
         currentSetObjects((prev) => {
           switch (change.type) {
             // PERF: Batched add — all objects from a single Firebase snapshot
@@ -1039,6 +1051,19 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
               return prev;
           }
         });
+
+        // After store update, trigger container expansion for new repo
+        // objects (skip during initial loading — only react to live adds).
+        if (newRepoSlugs) {
+          const { isInitialLoading } = useObjectsStore.getState();
+          if (!isInitialLoading) {
+            setTimeout(() => {
+              for (const slug of newRepoSlugs) {
+                repositionAllTasks(slug);
+              }
+            }, 0);
+          }
+        }
       }
     );
 

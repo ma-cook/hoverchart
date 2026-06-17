@@ -162,15 +162,18 @@ function createBulkImportApp() {
           const BATCH_SIZE = 500;
 
           for (let i = 0; i < cellObjects.length; i += BATCH_SIZE) {
-            const batch = db.batch();
             const chunk = cellObjects.slice(i, i + BATCH_SIZE);
 
+            // Build refs and check which objects already exist to avoid
+            // overwriting client-side changes (e.g. dragged positions).
+            const objectRefs = [];
+            const objectDataList = [];
             for (const obj of chunk) {
-              const objectRef = db.doc(
+              const ref = db.doc(
                 `users/${userId}/spaces/${spaceId}/cells/${cellId}/objects/${obj.id}`
               );
-
-              const objectData = {
+              objectRefs.push(ref);
+              objectDataList.push({
                 id: obj.id,
                 position: obj.position,
                 scale: obj.size || obj.scale || [1, 1, 1],
@@ -192,13 +195,25 @@ function createBulkImportApp() {
                   faceTextStyles: obj.faceTextStyles,
                 }),
                 ...(obj.merfolkData && { merfolkData: obj.merfolkData }),
-              };
-
-              batch.set(objectRef, objectData);
+              });
             }
 
-            await batch.commit();
-            objectsWritten += chunk.length;
+            // Fetch existing docs in bulk. Only insert new objects;
+            // never overwrite docs already modified client-side.
+            const snapshots = await db.getAll(...objectRefs);
+            const batch = db.batch();
+            let writtenInChunk = 0;
+            for (let j = 0; j < chunk.length; j++) {
+              if (!snapshots[j].exists) {
+                batch.set(objectRefs[j], objectDataList[j]);
+                writtenInChunk++;
+              }
+            }
+
+            if (writtenInChunk > 0) {
+              await batch.commit();
+            }
+            objectsWritten += writtenInChunk;
 
             const progress = Math.min(i + chunk.length, cellObjects.length);
             console.log(
@@ -392,6 +407,31 @@ export const fetchGithubToken = onCall(
 );
 
 // ============= BULK DELETE FUNCTION =============
+
+/**
+ * Spatial cell size constant — must match src/services/spatialPartitioning.js
+ */
+const CELL_SIZE = 6667;
+
+/**
+ * Compute cell coordinates from a world position.
+ * @param {number[]} position - [x, y, z]
+ * @returns {{ x: number, y: number, z: number }}
+ */
+function getCellCoordinates(position) {
+  if (!Array.isArray(position) || position.length < 3) {
+    return { x: 0, y: 0, z: 0 };
+  }
+  const [x, y, z] = position;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return { x: 0, y: 0, z: 0 };
+  }
+  return {
+    x: Math.floor(x / CELL_SIZE),
+    y: Math.floor(y / CELL_SIZE),
+    z: Math.floor(z / CELL_SIZE),
+  };
+}
 
 /** Generate a short random job ID. */
 function generateJobId() {
@@ -1740,4 +1780,90 @@ export const zenProxy = onRequest(
     secrets: [zenApiKey],
   },
   createZenProxyApp()
+);
+
+// ============= UPSERT OBJECT POSITION FUNCTION =============
+/**
+ * Upsert a single object's data into Firestore. Called by the client after
+ * drag-end to guarantee the position is persisted server-side, bypassing
+ * any client-side throttling or batch-flush races. Uses the Admin SDK so
+ * writes always succeed regardless of client security rules.
+ *
+ * Accepts a full object document; fields not provided are left untouched
+ * ({ merge: true }) on the existing document.
+ */
+export const upsertObjectPosition = onCall(
+  {
+    memory: '256MiB',
+    region: 'us-central1',
+    maxInstances: 50,
+  },
+  async (request) => {
+    const { userId, spaceId, object } = request.data;
+
+    if (!userId || !spaceId || !object || !object.id) {
+      throw new HttpsError(
+        'invalid-argument',
+        'Missing required fields: userId, spaceId, object (with id)'
+      );
+    }
+
+    // Verify the caller is authenticated and matches the target userId
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+
+    const callerUid = request.auth.uid;
+    const canWrite =
+      callerUid === userId ||
+      (await (async () => {
+        // Check if the space is shared with this user
+        const spaceDoc = await db
+          .doc(`users/${userId}/spaces/${spaceId}`)
+          .get();
+        if (!spaceDoc.exists) return false;
+        const sharedWith = spaceDoc.data().sharedWith;
+        if (!Array.isArray(sharedWith)) return false;
+        return sharedWith.some(
+          (entry) => entry.userId === callerUid
+        );
+      })());
+
+    if (!canWrite) {
+      throw new HttpsError(
+        'permission-denied',
+        'User does not have write access to this space'
+      );
+    }
+
+    try {
+      const cellCoords = getCellCoordinates(object.position);
+      const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+
+      const objectRef = db.doc(
+        `users/${userId}/spaces/${spaceId}/cells/${cellId}/objects/${object.id}`
+      );
+
+      const dataToSave = {
+        ...object,
+        cellId,
+        lastUpdated: new Date(),
+        updatedAt: new Date(),
+      };
+
+      // Remove internal-only fields before persisting
+      delete dataToSave._fingerprint;
+      delete dataToSave._isDragging;
+      delete dataToSave._moveTimestamp;
+      delete dataToSave._transformActive;
+      delete dataToSave._repoLocalUpdate;
+
+      await objectRef.set(dataToSave, { merge: true });
+
+      return { success: true, cellId };
+    } catch (error) {
+      console.error('[upsertObjectPosition] Error:', error);
+      throw new HttpsError('internal', error.message);
+    }
+  }
 );

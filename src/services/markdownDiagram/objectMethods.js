@@ -156,6 +156,9 @@ export const objectMethods = {
       }
     }
 
+    // Collect position updates for existing objects during rescan (reprocessed merged markdown)
+    const positionUpdates = new Map();
+
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
       const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1; // eslint-disable-line no-unused-vars
@@ -220,6 +223,8 @@ export const objectMethods = {
 
           if (existingNodeIdMap.has(data.nodeId)) {
             nodeToObjectIdMap.set(data.nodeId, existingNodeIdMap.get(data.nodeId));
+            // Record new position for existing object so the full-graph layout is applied consistently
+            positionUpdates.set(existingNodeIdMap.get(data.nodeId), data.position);
             continue;
           }
 
@@ -342,12 +347,21 @@ export const objectMethods = {
       }
     }
 
-    // Add all objects to store in one batch for this diagram
-    if (allObjectsForDiagram.length > 0) {
+    // Add all objects to store in one batch for this diagram and apply position updates
+    if (allObjectsForDiagram.length > 0 || positionUpdates.size > 0) {
       const currentObjects = useObjectsStore.getState().objects;
-      useObjectsStore
-        .getState()
-        .setObjects([...currentObjects, ...allObjectsForDiagram]);
+      let updatedObjects = currentObjects;
+      if (positionUpdates.size > 0) {
+        updatedObjects = currentObjects.map((obj) =>
+          positionUpdates.has(obj.id)
+            ? { ...obj, position: positionUpdates.get(obj.id) }
+            : obj
+        );
+      }
+      if (allObjectsForDiagram.length > 0) {
+        updatedObjects = [...updatedObjects, ...allObjectsForDiagram];
+      }
+      useObjectsStore.getState().setObjects(updatedObjects);
     }
 
     // Calculate container dimensions for component child groupings

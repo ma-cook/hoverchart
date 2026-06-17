@@ -4,6 +4,8 @@ import {
 } from '../services/spatialObjectsService';
 import useObjectsStore from '../stores/objectsStore';
 import { useConnectionStore, usePublicSpaceStore } from '../stores';
+import { functions } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
 
 /**
  * Handle object movement with position updates
@@ -182,6 +184,11 @@ export const handleObjectMove = ({
 
           await saveObjectToCell(spaceOwnerId, currentSpaceId, updatedObject);
 
+          // Fire-and-forget call to the upsert cloud function for extra
+          // persistence assurance (bypasses client throttling / batch-flush
+          // races).  Silently ignored when the client or function is offline.
+          callUpsertObjectPosition(spaceOwnerId, currentSpaceId, updatedObject);
+
           // Clear transitioning flag if object was being transitioned between cells
           if (window.transitioningObjectsRef?.current?.has(id.toString())) {
             window.transitioningObjectsRef.current.delete(id.toString());
@@ -342,5 +349,23 @@ export const handleObjectUpdate = ({
         );
       }
     );
+  }
+};
+
+/**
+ * Fire-and-forget call to the upsertObjectPosition cloud function.
+ * Guarantees the position is persisted server-side with the Admin SDK,
+ * even when client-side throttling or batch-flush races would drop it.
+ * Silently no-ops on network error or missing function deployment.
+ */
+const callUpsertObjectPosition = (userId, spaceId, object) => {
+  try {
+    const upsertCallable = httpsCallable(functions, 'upsertObjectPosition');
+    upsertCallable({ userId, spaceId, object }).catch(() => {
+      // Silently ignore — the client-side saveObjectToCell is the
+      // primary persistence path; this is just a belt-and-suspenders.
+    });
+  } catch {
+    // Silently ignore
   }
 };
