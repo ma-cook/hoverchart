@@ -235,12 +235,12 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
     }
   }, [material, size.width, size.height]);
 
-  // Mark for full update when filtered dodecahedrons array changes
+  // Mark for full update when filtered dodecahedrons array changes (ID set or prop reference)
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
     visibilityRef.current.clear();
-  }, [dodecahedronIds]);
+  }, [dodecahedronIds, filteredDodecahedrons]);
 
   // Function to check if a dodecahedron is visible in the camera frustum
   const isDodecahedronVisible = useCallback((position, scale) => {

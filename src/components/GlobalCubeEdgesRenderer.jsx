@@ -232,12 +232,12 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     }
   }, [material, size.width, size.height]);
 
-  // Mark for full update when cubes array changes
+  // Mark for full update when cubes array changes (ID set or prop reference)
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
     visibilityRef.current.clear();
-  }, [cubeIds]);
+  }, [cubeIds, filteredCubes]);
 
   // Function to check if a cube is visible in the camera frustum
   const isCubeVisible = useCallback((position, scale) => {

@@ -217,12 +217,12 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
     }
   }, [material, size.width, size.height]);
 
-  // Mark for full update when tetrahedrons array changes
+  // Mark for full update when tetrahedrons array changes (ID set or prop reference)
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
     visibilityRef.current.clear();
-  }, [tetrahedronIds]);
+  }, [tetrahedronIds, filteredTetrahedrons]);
 
   // Function to check if a tetrahedron is visible in the camera frustum
   const isTetrahedronVisible = useCallback((position, scale) => {
