@@ -37,7 +37,7 @@
     "three-mesh-bvh": "^0.8.0",
     "three-stdlib": "^2.30.5",
     "tree-sitter-wasms": "^0.1.13",
-    "uuid": "^13.0.0",
+    "uuid": "^14.0.0",
     "vite-plugin-glsl": "^1.5.4",
     "vite-plugin-wasm": "^3.5.0",
     "web-tree-sitter": "^0.20.8",
@@ -55,7 +55,11 @@
     "eslint-plugin-react-refresh": "^0.4.16",
     "globals": "^15.14.0",
     "sharp": "^0.34.5",
-    "vite": "^6.0.5",
+    "vite": "^6.4.2",
     "vite-plugin-top-level-await": "^1.6.0"
+  },
+  "overrides": {
+    "immutable": "^3.8.3",
+    "uuid": "^14.0.0"
   }
 }
