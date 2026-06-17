@@ -6,6 +6,7 @@ import Plane from './Plane';
 import TextObject from './TextObject';
 import ModelObject from './ModelObject';
 import { isCubeUnmodified } from './GlobalCubeFullLODInstancedRenderer';
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 // Module-level constant to avoid creating new object on every render
 const TRANSFORM_CONTROLS_CONFIG = {
@@ -37,10 +38,13 @@ const ObjectRenderer = React.memo(
     handleIndicatorSelected,
     globalIndicatorSelected,
     handleObjectDelete,
-    user, // Add this prop
-    currentSpaceId, // Add this prop
+    user,
+    currentSpaceId,
+    useLOD,
     unmodifiedCubeIds, // Set of cube IDs rendered by instanced renderer
   }) => {
+    const lodLevel = useLODStore((s) => s.lodLevels?.get(obj.id));
+
     // Stable callback references — prevents new closures per render from
     // breaking React.memo on child 3D components (Cube, Tetrahedron, etc.).
     const objId = obj.id;
@@ -62,6 +66,14 @@ const ObjectRenderer = React.memo(
     // Skip mounting the heavy <Cube> component unless selected or modified
     if (obj.type === 'cube' && unmodifiedCubeIds?.has(obj.id) && selectedId !== obj.id) {
       return null;
+    }
+
+    // At MEDIUM or LOW LOD, skip per-object component for non-selected objects
+    // The global medium/low LOD renderers handle both visuals and clicks
+    if (useLOD && lodLevel >= LOD_LEVELS.MEDIUM && selectedId !== obj.id) {
+      if (obj.type === 'cube' || obj.type === 'tetrahedron' || obj.type === 'sphere' || obj.type === 'dodecahedron') {
+        return null;
+      }
     }
 
     if (obj.type === 'cube') {
@@ -253,7 +265,8 @@ const ObjectRenderer = React.memo(
       prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
       (prevProps.selectedIndicators?.length || 0) ===
         (nextProps.selectedIndicators?.length || 0) &&
-      prevProps.unmodifiedCubeIds === nextProps.unmodifiedCubeIds
+      prevProps.unmodifiedCubeIds === nextProps.unmodifiedCubeIds &&
+      prevProps.useLOD === nextProps.useLOD
     );
   }
 );

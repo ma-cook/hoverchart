@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
@@ -26,10 +26,11 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  *
  * @param {Array} dodecahedrons - Array of ALL dodecahedron objects (filtering done internally)
  */
-const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [] }) => {
+const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [], onInstanceClick }) => {
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map());
+  const indexToDodecaIdRef = useRef([]);
 
   const lodLevels = useLODStore((s) => s.lodLevels);
   const childParentMap = useLODStore((s) => s.childParentMap);
@@ -84,10 +85,12 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [] }) 
     if (!hasActiveTransforms && !needsInitialSetup) return;
 
     let needsUpdate = needsInitialSetup;
+    const idMap = [];
 
     for (let i = 0; i < mediumDodecahedrons.length; i++) {
       const dodeca = mediumDodecahedrons[i];
       const dodecaId = dodeca.id?.toString();
+      idMap[i] = dodecaId;
 
       const realtimeTransform = dodecahedronTransformMap.get(dodecaId);
       const position = realtimeTransform?.position || dodeca.position || [0, 0, 0];
@@ -124,6 +127,8 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [] }) 
       }
     }
 
+    indexToDodecaIdRef.current = idMap;
+
     if (needsInitialSetup) {
       for (let i = count; i < capacity; i++) {
         mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
@@ -139,6 +144,19 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [] }) 
     }
   });
 
+  const handleClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      const instanceId = e.instanceId;
+      if (instanceId == null) return;
+      const dodecaId = indexToDodecaIdRef.current[instanceId];
+      if (dodecaId && onInstanceClick) {
+        onInstanceClick(dodecaId);
+      }
+    },
+    [onInstanceClick]
+  );
+
   if (capacity === 0) return null;
 
   return (
@@ -147,6 +165,7 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [] }) 
       ref={meshRef}
       args={[SHARED_SPHERE_GEOMETRY, SHARED_MATERIAL, capacity]}
       frustumCulled={false}
+      onClick={handleClick}
     />
   );
 });

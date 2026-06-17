@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
@@ -34,10 +34,11 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  *
  * @param {Array} cubes - Array of ALL cube objects (filtering done internally)
  */
-const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [] }) => {
+const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick }) => {
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map()); // Track last known data to detect changes
+  const indexToCubeIdRef = useRef([]);
 
   // Get LOD data from store
   const lodLevels = useLODStore((s) => s.lodLevels);
@@ -100,10 +101,12 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [] }) => {
     if (!hasActiveTransforms && !needsInitialSetup) return;
 
     let needsUpdate = needsInitialSetup;
+    const idMap = [];
 
     for (let i = 0; i < mediumCubes.length; i++) {
       const cube = mediumCubes[i];
       const cubeId = cube.id?.toString();
+      idMap[i] = cubeId;
 
       // Use real-time transform if being dragged, else use store position
       const realtimeTransform = cubeTransformMap.get(cubeId);
@@ -146,6 +149,8 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [] }) => {
       }
     }
 
+    indexToCubeIdRef.current = idMap;
+
     // Zero-out unused instances beyond count (if capacity > count)
     if (needsInitialSetup) {
       for (let i = count; i < capacity; i++) {
@@ -162,6 +167,19 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [] }) => {
     }
   });
 
+  const handleClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      const instanceId = e.instanceId;
+      if (instanceId == null) return;
+      const cubeId = indexToCubeIdRef.current[instanceId];
+      if (cubeId && onInstanceClick) {
+        onInstanceClick(cubeId);
+      }
+    },
+    [onInstanceClick]
+  );
+
   if (capacity === 0) return null;
 
   return (
@@ -170,6 +188,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [] }) => {
       ref={meshRef}
       args={[SHARED_BOX_GEOMETRY, SHARED_MATERIAL, capacity]}
       frustumCulled={false}
+      onClick={handleClick}
     />
   );
 });

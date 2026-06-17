@@ -549,7 +549,7 @@ const ObjectsRenderer = React.memo(({
       <GlobalCubeFaceRenderer cubes={cubeObjects} />
       
       {/* PERFORMANCE: Render all medium-LOD cubes as simple boxes in 1 draw call */}
-      <GlobalCubeMediumLODRenderer cubes={cubeObjects} />
+      <GlobalCubeMediumLODRenderer cubes={cubeObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* PERFORMANCE: Instanced transparent faces for unmodified full-LOD cubes (1 draw call) */}
       <GlobalCubeFullLODInstancedRenderer cubes={cubeObjects} onInstanceClick={handleInstancedCubeClick} />
@@ -558,13 +558,13 @@ const ObjectsRenderer = React.memo(({
       <GlobalDodecahedronEdgesRenderer dodecahedrons={dodecahedronObjects} defaultLineWidth={1} />
       
       {/* PERFORMANCE: Render all medium-LOD dodecahedrons as simple spheres in 1 draw call */}
-      <GlobalDodecahedronMediumLODRenderer dodecahedrons={dodecahedronObjects} />
+      <GlobalDodecahedronMediumLODRenderer dodecahedrons={dodecahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* PERFORMANCE: Render all tetrahedron edges in a single draw call */}
       <GlobalTetrahedronEdgesRenderer tetrahedrons={tetrahedronObjects} defaultLineWidth={1} />
       
       {/* PERFORMANCE: Render all medium-LOD tetrahedrons as simple boxes in 1 draw call */}
-      <GlobalTetrahedronMediumLODRenderer tetrahedrons={tetrahedronObjects} />
+      <GlobalTetrahedronMediumLODRenderer tetrahedrons={tetrahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* PERFORMANCE: Render all LOW-LOD objects as instanced 2D shapes (1 draw call each) */}
       <GlobalCubeLowLODRenderer cubes={cubeObjects} onInstanceClick={handleInstancedCubeClick} />

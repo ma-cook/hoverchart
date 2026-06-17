@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
@@ -52,10 +52,11 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  *
  * @param {Array} tetrahedrons - Array of ALL tetrahedron objects (filtering done internally)
  */
-const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [] }) => {
+const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onInstanceClick }) => {
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map());
+  const indexToTetraIdRef = useRef([]);
 
   const lodLevels = useLODStore((s) => s.lodLevels);
   const childParentMap = useLODStore((s) => s.childParentMap);
@@ -110,10 +111,12 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [] }) =>
     if (!hasActiveTransforms && !needsInitialSetup) return;
 
     let needsUpdate = needsInitialSetup;
+    const idMap = [];
 
     for (let i = 0; i < mediumTetrahedrons.length; i++) {
       const tetra = mediumTetrahedrons[i];
       const tetraId = tetra.id?.toString();
+      idMap[i] = tetraId;
 
       const realtimeTransform = tetrahedronTransformMap.get(tetraId);
       const position = realtimeTransform?.position || tetra.position || [0, 0, 0];
@@ -150,6 +153,8 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [] }) =>
       }
     }
 
+    indexToTetraIdRef.current = idMap;
+
     if (needsInitialSetup) {
       for (let i = count; i < capacity; i++) {
         mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
@@ -165,6 +170,19 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [] }) =>
     }
   });
 
+  const handleClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      const instanceId = e.instanceId;
+      if (instanceId == null) return;
+      const tetraId = indexToTetraIdRef.current[instanceId];
+      if (tetraId && onInstanceClick) {
+        onInstanceClick(tetraId);
+      }
+    },
+    [onInstanceClick]
+  );
+
   if (capacity === 0) return null;
 
   return (
@@ -173,6 +191,7 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [] }) =>
       ref={meshRef}
       args={[SHARED_TETRAHEDRON_GEOMETRY, SHARED_MATERIAL, capacity]}
       frustumCulled={false}
+      onClick={handleClick}
     />
   );
 });
