@@ -166,7 +166,7 @@ let _lastMoveTs = 0;
  * `isCameraMoving()` returns true. This acts as a "settle" window:
  * once the user stops panning/orbiting, mounting resumes after this gap.
  */
-const MOVE_SETTLE_MS = 150;
+const MOVE_SETTLE_MS = 50;
 
 /**
  * Call this whenever the camera is known to be moving

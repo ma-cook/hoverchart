@@ -5,7 +5,7 @@ import useObjectsStore from '../stores/objectsStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
-import { isCameraMoving, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
+import { getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 
 // Reusable vectors to avoid GC pressure
 const _cameraPos = new THREE.Vector3();
@@ -404,12 +404,8 @@ const LODManager = ({ enabled = true }) => {
     const queue = upgradeQueueRef.current;
     if (queue.size === 0) return;
 
-    // Defer ALL upgrades while the camera is actively moving.
-    // Mounting full-detail components (faces, edges, text sprites) is
-    // expensive and competes with OrbitControls for the main thread.
-    // Downgrades still apply immediately (they reduce rendering cost)
-    // so the scene gets simpler during panning, not more complex.
-    if (isCameraMoving()) return;
+    // Allow upgrades during camera movement so objects don't stay
+    // invisible during panning. The per-frame budget keeps GPU impact minimal.
 
     // Build sortable array with distance to current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);

@@ -25,7 +25,7 @@ const MOUNT_BUDGET = 8;
 
 /** Reduced budget used during camera movement — still makes progress but doesn't
  *  compete with GPU rendering of the current frame. */
-const MOUNT_BUDGET_MOVING = 2;
+const MOUNT_BUDGET_MOVING = 8;
 
 /** Below this object count, skip progressive mounting entirely (instant mount). */
 const PROGRESSIVE_THRESHOLD = 40;
