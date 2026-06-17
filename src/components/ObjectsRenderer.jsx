@@ -82,7 +82,7 @@ const ObjectsRenderer = React.memo(({
   // Edge renderers still get the FULL visible set because instanced
   // buffer updates are cheap.
   const mountedIdsRef = useRef(new Set());
-  const [mountedIds, setMountedIds] = useState(() => new Set());
+  const [mountedVersion, setMountedVersion] = useState(0);
   const pendingRef = useRef([]);
   const rafIdRef = useRef(null);
   // Throttle render-progress store writes — only update every ~500ms
@@ -171,7 +171,7 @@ const ObjectsRenderer = React.memo(({
     if (toAdd.length <= MOUNT_BUDGET || objectsRef.current.length <= PROGRESSIVE_THRESHOLD) {
       toAdd.forEach(id => currentMounted.add(id));
       if (removed || toAdd.length > 0) {
-        setMountedIds(new Set(currentMounted));
+        setMountedVersion(v => v + 1);
         // Clear any in-progress render progress (all mounted instantly)
         useDiagramStore.getState().setRenderProgress(objectsRef.current.length, currentMounted.size);
       }
@@ -188,14 +188,14 @@ const ObjectsRenderer = React.memo(({
       // Mount first batch immediately
       const firstBatch = pendingRef.current.splice(0, MOUNT_BUDGET);
       firstBatch.forEach(id => currentMounted.add(id));
-      setMountedIds(new Set(currentMounted));
+      setMountedVersion(v => v + 1);
       // Immediately report that progressive mounting has started
       const total = objectsRef.current.length;
       useDiagramStore.getState().setRenderProgress(total, currentMounted.size);
       lastProgressReportRef.current = Date.now();
     } else if (removed) {
       // Just sync the removal
-      setMountedIds(new Set(currentMounted));
+      setMountedVersion(v => v + 1);
     }
 
     if (!isAlreadyMounting && pendingRef.current.length > 0) {
@@ -263,7 +263,7 @@ const ObjectsRenderer = React.memo(({
         }
 
         if (added > 0) {
-          setMountedIds(new Set(mountedIdsRef.current));
+          setMountedVersion(v => v + 1);
           // Report progress to the store (throttled)
           const now = Date.now();
           const total = objectsRef.current.length;
@@ -329,7 +329,7 @@ const ObjectsRenderer = React.memo(({
           const id = pending.shift();
           if (allObjectIds.has(id)) { mountedIdsRef.current.add(id); added++; }
         }
-        if (added > 0) setMountedIds(new Set(mountedIdsRef.current));
+        if (added > 0) setMountedVersion(v => v + 1);
         if (pending.length > 0) {
           rafIdRef.current = requestAnimationFrame(mountResume);
         } else {
@@ -365,14 +365,15 @@ const ObjectsRenderer = React.memo(({
   // recomputation in derived type arrays.
   const progressiveVisibleObjectsRef = useRef([]);
   const progressiveVisibleObjects = useMemo(() => {
-    const result = objects.filter((obj) => mountedIds.has(obj.id));
+    const currentIds = mountedIdsRef.current;
+    const result = objects.filter((obj) => currentIds.has(obj.id));
     const prev = progressiveVisibleObjectsRef.current;
     if (prev.length === result.length && result.every((obj, i) => obj === prev[i])) {
       return prev;
     }
     progressiveVisibleObjectsRef.current = result;
     return result;
-  }, [objects, mountedIds]);
+  }, [objects, mountedVersion]);
 
   // Extract cube objects for batched edge rendering (includes containers)
   // BUGFIX: Use progressiveVisibleObjects (same as mesh components) instead of

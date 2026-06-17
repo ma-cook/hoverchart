@@ -225,6 +225,10 @@ const HandsRenderer = memo(function HandsRenderer() {
 
   // ---- Per-frame: align group to camera, lerp displayed landmarks ----
   useFrame((_, delta) => {
+    // Early-exit when hand tracking is disabled — saves smoothing,
+    // matrix writes, setBones state updates, and bbox computation.
+    if (!useHandTrackingStore.getState().enabled) return;
+
     // alpha varies with delta so perceived smoothing rate is
     // frame-rate-independent.
     const alpha = 1 - Math.exp(-SMOOTHING_RATE * delta);
