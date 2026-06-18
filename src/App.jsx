@@ -56,7 +56,7 @@ import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkSched
 
 import { signInUser } from './services/authService';
 import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
-import { subscribeToSpatialObjects } from './services/spatialObjectsService';
+import { subscribeToSpatialObjects, clearAllObjectCaches } from './services/spatialObjectsService';
 import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning'; // Import CELL_SIZE constant
 import { setGuestPresence } from './services/presenceService';
 import { getPublicSpaceMetadata } from './services/spacesService';
@@ -87,7 +87,8 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   } = useTimeoutManager();
 
   const cameraRef = useRef();
-  const intentionalSpaceChangeRef = useRef(false); // Get objects from store with safety check
+  const intentionalSpaceChangeRef = useRef(false);
+  const previousSpaceIdRef = useRef(null); // Track space changes to clear stale state
   const objectsFromStore = useObjectsStore((state) => state.objects);
   const objects = useMemo(() => {
     return Array.isArray(objectsFromStore) ? objectsFromStore : [];
@@ -547,6 +548,17 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   }, [loadedCells]);
 
   // Note: Connections are now fully handled by useConnections hook
+
+  // Reset all stores when switching spaces to prevent stale objects bleeding through
+  useEffect(() => {
+    if (previousSpaceIdRef.current && previousSpaceIdRef.current !== effectiveSpaceId) {
+      clearAllObjectCaches();
+      useObjectsStore.getState().resetObjects();
+      useConnectionStore.getState().resetConnections();
+      useSpatialManagerStore.getState().resetSpatialManager();
+    }
+    previousSpaceIdRef.current = effectiveSpaceId;
+  }, [effectiveSpaceId]);
   
   // Subscribe to spatial objects changes - supports anonymous access to public spaces
   useEffect(() => {
@@ -597,13 +609,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
           return;
         }
         if (initialObjects.length > 0) {
-          currentSetObjects((prev) => {
-            const existingIds = new Set(prev.map((obj) => obj.id));
-            const newObjects = initialObjects.filter(
-              (obj) => !existingIds.has(obj.id)
-            );
-            return [...prev, ...newObjects];
-          });
+          currentSetObjects(initialObjects);
         }
       } catch (error) {
         console.error('Failed to fetch initial objects:', error);
