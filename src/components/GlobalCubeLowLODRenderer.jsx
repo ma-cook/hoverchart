@@ -125,6 +125,10 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
       if (mesh.instanceColor) {
         mesh.instanceColor.needsUpdate = true;
       }
+      // Invalidate cached bounding sphere so Three.js recomputes it from
+      // current instance data on the next raycast. Without this, a stale
+      // sphere can cause all raycasts to miss.
+      mesh.boundingSphere = null;
       needsFullUpdateRef.current = false;
     }
   });
