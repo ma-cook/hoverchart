@@ -67,7 +67,7 @@ let _smoothFrameTime = 16;
  *  exhausted. 40ms ≈ 25fps — a safer threshold that avoids the starvation
  *  spiral on mid-range GPUs where the old 28ms value permanently disabled
  *  LOD and culling. */
-const FRAME_TIME_BUDGET_MS = 40;
+const FRAME_TIME_BUDGET_MS = 50;
 
 /** Number of consecutive frames where _smoothFrameTime > FRAME_TIME_BUDGET_MS.
  *  `isFrameBudgetExhausted()` only returns true after this many consecutive
@@ -75,7 +75,7 @@ const FRAME_TIME_BUDGET_MS = 40;
 let _consecutiveBadFrames = 0;
 
 /** How many consecutive bad frames before we start shedding work. */
-const BAD_FRAME_THRESHOLD = 5;
+const BAD_FRAME_THRESHOLD = 8;
 
 /** Number of camera move events in the last 500ms — detects "rapid" panning. */
 let _moveCount = 0;

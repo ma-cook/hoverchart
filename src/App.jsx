@@ -12,6 +12,7 @@ import ObjectsRenderer from './components/ObjectsRenderer';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 import LODManager from './components/LODManager';
+import HeaderBillboardManager from './components/HeaderBillboardManager';
 import EarthGlobe from './components/EarthGlobe';
 import DiagramOverlay2D from './components/DiagramOverlay2D';
 import RepoGrid from './components/RepoGrid';
@@ -1623,6 +1624,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
       <FrameTicker />
       <FrameloopController />
       <LODManager enabled={useLOD} />
+      <HeaderBillboardManager />
       {viewMode === '3d' && <ConnectionAnimationManager />}
       <CustomCamera ref={cameraRef} />
       <group>

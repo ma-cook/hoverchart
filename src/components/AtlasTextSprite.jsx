@@ -4,6 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 import useTextAtlasStore from '../stores/textAtlasStore';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
+import { registerHeaderBillboardMesh } from './HeaderBillboardManager';
 
 // =============================================================================
 // PERFORMANCE OPTIMIZATION: Reusable THREE objects to avoid GC pressure
@@ -47,7 +48,7 @@ function getSharedMaterial(texture, side, depthWrite, depthTest, opacity) {
 
 // Throttle intervals by text type (ms) - less critical text updates less often
 const THROTTLE_FACE_TEXT = 66;      // 15fps - face visibility doesn't need high refresh
-const THROTTLE_HEADER_TEXT = 50;    // 20fps - headers follow objects
+const THROTTLE_HEADER_TEXT = 16;    // ~60fps - headers follow objects
 const THROTTLE_CONNECTION_TEXT = 33; // 30fps - connection text needs smooth movement
 const THROTTLE_STANDARD = 50;       // 20fps - standard billboard text
 
@@ -458,11 +459,94 @@ const DynamicBillboardMesh = React.memo(({
   pathPoints,
   lastUpdateTimeRef,
 }) => {
+  // Register/unregister this mesh with the batched HeaderBillboardManager
+  // so header texts and container headers share a single useFrame instead of
+  // each owning one.
+  useEffect(() => {
+    const isHeader = (followTarget?.current && style.isHeaderText) || style.isContainerHeader;
+    if (!isHeader) return;
+    return registerHeaderBillboardMesh(meshRef);
+  }, [followTarget, style.isHeaderText, style.isContainerHeader]);
+
   // Billboard and positioning effect using useFrame
   // PERFORMANCE OPTIMIZED: Uses reusable THREE objects and smart throttling
   useFrame(({ camera }) => {
     if (!meshRef.current) return;
-    // FREEZE FIX: Skip billboard updates when main thread is lagging
+
+    // === HEADER / CONTAINER TEXT — batched via HeaderBillboardManager ===
+    // Store the update function on userData so the manager can apply it in
+    // its single useFrame. This collapses N useFrame callbacks into 1.
+    if ((followTarget?.current && style.isHeaderText) || style.isContainerHeader) {
+      meshRef.current.visible = visible;
+      meshRef.current.userData._headerBillboard = (cam, mesh) => {
+        // Container headers — static position, just face the camera
+        if (style.isContainerHeader) {
+          mesh.quaternion.copy(cam.quaternion);
+          return;
+        }
+
+        const targetPos = followTarget.current.position;
+        const targetScale = followTarget.current.scale;
+
+        if (style.isDodecahedronHeader) {
+          const posX = Array.isArray(position) ? position[0] : (position?.x || 0);
+          const posY = Array.isArray(position) ? position[1] : (position?.y || 0);
+          const posZ = Array.isArray(position) ? position[2] : (position?.z || 0);
+
+          tempVec3A.set(posX, posY, posZ);
+          const distanceToCamera = cam.position.distanceTo(tempVec3A);
+          const baseScale = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 1.5);
+
+          mesh.position.set(posX, posY, posZ);
+          mesh.scale.setScalar(baseScale * scale);
+
+          if (distanceToCamera < 10000) {
+            mesh.quaternion.copy(cam.quaternion);
+          }
+        } else if (style.isHeaderText && style.isPlaneHeader) {
+          if (!style.fixedPosition) {
+            const [x, y, z] = position;
+            mesh.position.set(
+              targetPos.x + x,
+              targetPos.y + y,
+              targetPos.z + z
+            );
+          }
+
+          mesh.getWorldPosition(tempVec3A);
+          const distanceToCamera = cam.position.distanceTo(tempVec3A);
+
+          if (distanceToCamera < 10000) {
+            mesh.quaternion.copy(cam.quaternion);
+          }
+
+          const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
+          mesh.scale.setScalar(scaleValue * scale);
+        } else if (style.isHeaderText) {
+          const [x, y, z] = position;
+          const avgScale = (targetScale.x + targetScale.y + targetScale.z) / 3;
+
+          mesh.position.set(
+            targetPos.x + x * avgScale,
+            targetPos.y + y * avgScale,
+            targetPos.z + z * avgScale
+          );
+
+          mesh.getWorldPosition(tempVec3A);
+          const distanceToCamera = cam.position.distanceTo(tempVec3A);
+
+          if (distanceToCamera < 10000) {
+            mesh.quaternion.copy(cam.quaternion);
+          }
+
+          const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
+          mesh.scale.setScalar(scaleValue * scale * avgScale);
+        }
+      };
+      return; // Skip — handled by batched manager
+    }
+
+    // FREEZE FIX: Skip non-header billboard updates when main thread is lagging
     if (isFrameBudgetExhausted()) return;
 
     // Determine throttle interval based on text type
@@ -471,7 +555,7 @@ const DynamicBillboardMesh = React.memo(({
     
     if (style.isFaceText) {
       throttleInterval = THROTTLE_FACE_TEXT;
-    } else if (style.isHeaderText || followTarget?.current) {
+    } else if (followTarget?.current) {
       throttleInterval = THROTTLE_HEADER_TEXT;
     } else if (lineStyle && pathPoints) {
       throttleInterval = THROTTLE_CONNECTION_TEXT;
@@ -497,14 +581,13 @@ const DynamicBillboardMesh = React.memo(({
 
       // Set visibility based on viewing angle
       if (dotProduct < 0) {
-        // We're looking at the face from the front
         meshRef.current.visible = true;
 
         // Build rotation matrix for text orientation using reusable matrix
         tempMatrix.lookAt(
-          tempVec3C.set(0, 0, 0), // origin
-          tempVec3A,              // look at normal direction
-          tempVec3B.set(0, 1, 0)  // up vector
+          tempVec3C.set(0, 0, 0),
+          tempVec3A,
+          tempVec3B.set(0, 1, 0)
         );
 
         // Flip text 180° to face viewer using pre-computed flip matrix
@@ -512,7 +595,6 @@ const DynamicBillboardMesh = React.memo(({
 
         meshRef.current.setRotationFromMatrix(tempMatrix);
       } else {
-        // We're looking at the face from behind
         meshRef.current.visible = false;
       }
       return; // Face text handling complete
@@ -520,76 +602,6 @@ const DynamicBillboardMesh = React.memo(({
 
     // Non-face text is always visible
     meshRef.current.visible = visible;
-
-    // === HEADER TEXT HANDLING ===
-    // Header text follows a target object and scales with distance
-    if (followTarget?.current) {
-      const targetPos = followTarget.current.position;
-      const targetScale = followTarget.current.scale;
-
-      if (style.isDodecahedronHeader) {
-        // Dodecahedron headers use calculated position with distance-based scaling
-        const posX = Array.isArray(position) ? position[0] : (position?.x || 0);
-        const posY = Array.isArray(position) ? position[1] : (position?.y || 0);
-        const posZ = Array.isArray(position) ? position[2] : (position?.z || 0);
-        
-        // Reuse tempVec3A for distance calculation
-        tempVec3A.set(posX, posY, posZ);
-        const distanceToCamera = camera.position.distanceTo(tempVec3A);
-        const baseScale = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 1.5);
-
-        meshRef.current.position.set(posX, posY, posZ);
-        meshRef.current.scale.setScalar(baseScale * scale);
-
-        // Billboard orientation
-        if (distanceToCamera < 1000) {
-          meshRef.current.quaternion.copy(camera.quaternion);
-        }
-      } else if (style.isHeaderText && style.isPlaneHeader) {
-        // Plane headers follow target with position offset
-        if (!style.fixedPosition) {
-          const [x, y, z] = position;
-          meshRef.current.position.set(
-            targetPos.x + x,
-            targetPos.y + y,
-            targetPos.z + z
-          );
-        }
-
-        // Reuse tempVec3A for world position
-        meshRef.current.getWorldPosition(tempVec3A);
-        const distanceToCamera = camera.position.distanceTo(tempVec3A);
-
-        if (distanceToCamera < 1000) {
-          meshRef.current.quaternion.copy(camera.quaternion);
-        }
-
-        const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
-        meshRef.current.scale.setScalar(scaleValue * scale);
-      } else if (style.isHeaderText) {
-        // General header text (cubes, tetrahedrons)
-        const [x, y, z] = position;
-        const avgScale = (targetScale.x + targetScale.y + targetScale.z) / 3;
-
-        meshRef.current.position.set(
-          targetPos.x + x * avgScale,
-          targetPos.y + y * avgScale,
-          targetPos.z + z * avgScale
-        );
-
-        // Reuse tempVec3A for world position
-        meshRef.current.getWorldPosition(tempVec3A);
-        const distanceToCamera = camera.position.distanceTo(tempVec3A);
-
-        if (distanceToCamera < 1000) {
-          meshRef.current.quaternion.copy(camera.quaternion);
-        }
-
-        const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
-        meshRef.current.scale.setScalar(scaleValue * scale * avgScale);
-      }
-      return; // Header text handling complete
-    }
 
     // === CONNECTION TEXT HANDLING ===
     // Update position with smoothing for connection lines
@@ -632,7 +644,7 @@ const DynamicBillboardMesh = React.memo(({
       meshRef.current.getWorldPosition(tempVec3A);
       const distance = camera.position.distanceTo(tempVec3A);
 
-      if (distance < 1000) {
+      if (distance < 10000) {
         meshRef.current.quaternion.copy(camera.quaternion);
       }
     }
@@ -681,6 +693,7 @@ export default React.memo(AtlasTextSprite, (prevProps, nextProps) => {
     prevProps.style?.isDodecahedronHeader ===
       nextProps.style?.isDodecahedronHeader &&
     prevProps.style?.isPlaneHeader === nextProps.style?.isPlaneHeader &&
+    prevProps.style?.isContainerHeader === nextProps.style?.isContainerHeader &&
     prevProps.style?.fixedPosition === nextProps.style?.fixedPosition &&
     prevProps.billboard === nextProps.billboard &&
     prevProps.visible === nextProps.visible &&

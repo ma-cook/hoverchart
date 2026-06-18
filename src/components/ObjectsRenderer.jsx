@@ -584,12 +584,12 @@ const ObjectsRenderer = React.memo(({
             bold: true,
             depthTest: false,
             depthWrite: false,
+            isContainerHeader: true,
           }}
           billboard={true}
           visible={true}
           renderOrder={25}
           scale={1}
-          skipBillboardUpdates={true}
         />
       ))}
       
