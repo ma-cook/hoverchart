@@ -20,8 +20,8 @@ import { create } from 'zustand';
 
 // LOD distance thresholds for CHILD objects (inside containers)
 export const LOD_THRESHOLDS = {
-  FULL_DETAIL: 3000,   // Below this: full detail (LOD 0)
-  MEDIUM_DETAIL: 25000, // Below this: medium detail (LOD 1), above: low detail (LOD 2)
+  FULL_DETAIL: 2000,   // Below this: full detail (LOD 0)
+  MEDIUM_DETAIL: 20000, // Below this: medium detail (LOD 1), above: low detail (LOD 2)
 };
 
 // Pre-squared thresholds for distanceToSquared() comparison (avoids sqrt)
@@ -33,8 +33,8 @@ export const LOD_THRESHOLDS_SQ = {
 // LOD distance thresholds for PARENT objects
 // Note: Grouping containers (isContainer) are excluded from LOD system entirely
 export const LOD_THRESHOLDS_PARENT = {
-  FULL_DETAIL: 5000,  // Full detail below this distance
-  MEDIUM_DETAIL: 25000, // Basic mesh renders from FULL_DETAIL to this distance, then LOW (hidden)
+  FULL_DETAIL: 10000,  // Full detail below this distance
+  MEDIUM_DETAIL: 20000, // Basic mesh renders from FULL_DETAIL to this distance, then LOW (hidden)
 };
 
 // Pre-squared parent thresholds
