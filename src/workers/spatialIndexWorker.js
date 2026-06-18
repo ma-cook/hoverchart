@@ -114,8 +114,8 @@ function _rebuildFlatBuffers(objects) {
 // ---------------------------------------------------------------------------
 const LOD_CHILD_FULL_SQ = 2000 * 2000;
 const LOD_CHILD_MEDIUM_SQ = 20000 * 20000;
-const LOD_PARENT_FULL_SQ = 10000 * 10000;
-const LOD_PARENT_MEDIUM_SQ = 20000 * 20000;
+const LOD_PARENT_FULL_SQ = 20000 * 20000;
+const LOD_PARENT_MEDIUM_SQ = 40000 * 30000;
 
 function childLOD(distanceSq) {
   if (distanceSq < LOD_CHILD_FULL_SQ) return 0;

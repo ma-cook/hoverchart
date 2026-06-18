@@ -33,8 +33,8 @@ export const LOD_THRESHOLDS_SQ = {
 // LOD distance thresholds for PARENT objects
 // Note: Grouping containers (isContainer) are excluded from LOD system entirely
 export const LOD_THRESHOLDS_PARENT = {
-  FULL_DETAIL: 10000,  // Full detail below this distance
-  MEDIUM_DETAIL: 20000, // Basic mesh renders from FULL_DETAIL to this distance, then LOW (hidden)
+  FULL_DETAIL: 20000,  // Full detail below this distance
+  MEDIUM_DETAIL: 30000, // Basic mesh renders from FULL_DETAIL to this distance, then LOW (hidden)
 };
 
 // Pre-squared parent thresholds
