@@ -108,6 +108,12 @@ const useObjectsStore = createWithEqualityFn(
           return !window._unloadedObjects?.has(objId);
         });
 
+        // Function updaters always produce intentional changes — skip full diff
+        if (typeof objects === 'function') {
+          set({ objects: filteredObjects, _isUpdating: false });
+          return;
+        }
+
         // PERFORMANCE FIX: Only update if the objects actually changed
         // Compare both IDs and a hash of critical properties (position, scale)
         if (filteredObjects.length !== currentObjects.length) {

@@ -351,9 +351,7 @@ const subscribeToCellConnections = (
 
   let isSubscribed = true;
   const unsubscribeFunctions = new Map();
-
-  // Track which cells we're actively subscribed to
-  const activeSubscriptionCells = new Set();
+  const subscribedCellKeys = new Set();
 
   const startCellSubscriptions = async () => {
     try {
@@ -364,96 +362,18 @@ const subscribeToCellConnections = (
       // "Missing or insufficient permissions" error for anonymous viewers.
       let ownerUserId = userId;
       if (auth.currentUser) {
-        const sharedStatus = await isSharedSpace(userId, spaceId);
-        if (!isSubscribed) return;
-        ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-      }
-
-      // For each cell, set up a subscription if we don't already have one
-      for (const cellId of effectiveCells) {
-        if (!activeSubscriptionCells.has(cellId)) {
-          const [x, y, z] = cellId.split(',').map(Number);
-
-          // Subscribe to the connections subcollection instead of the cell document
-          // Using static imports from top of file to avoid 5-minute dynamic import delay
-          const connectionsRef = collection(
-            db,
-            'users',
-            ownerUserId,
-            'spaces',
-            spaceId,
-            'cells',
-            cellId,
-            'connections'
-          );
-
-          const unsubscribe = onSnapshot(connectionsRef, (snapshot) => {
-            // Skip processing if listeners are paused (during bulk saves)
-            if (listenersArePaused) {
-              console.log(
-                '⏭️ [ConnectionService] Skipping snapshot processing - listeners paused'
-              );
-              return;
-            }
-
-            snapshot.docChanges().forEach((change) => {
-              const connectionId = change.doc.id;
-              const connectionData = change.doc.data();
-
-              try {
-                // Skip if connection is in deletion blacklist
-                const connectionStore = useConnectionStore.getState();
-                if (connectionStore.deletingConnections.has(connectionId))
-                  return;
-
-                if (change.type === 'added' || change.type === 'modified') {
-                  // Short-circuit: bulk-delete in progress. Skip re-adding
-                  // connections that are about to be deleted by the worker —
-                  // otherwise the user sees lines reappear and slowly fade as
-                  // the cloud function chews through them, and the frame loop
-                  // tanks while ghost lines are being rendered.
-                  if (window._bulkDeleteInProgress) {
-                    return;
-                  }
-
-                  // Add cell coordinates to connection data
-                  const enrichedConnectionData = {
-                    ...connectionData,
-                    cellId,
-                  };
-
-                  callback({
-                    type: change.type === 'added' ? 'added' : 'modified',
-                    id: connectionId,
-                    connection: enrichedConnectionData,
-                    cellCoords: { x, y, z: z || 0 },
-                  });
-                } else if (change.type === 'removed') {
-                  callback({
-                    type: 'removed',
-                    id: connectionId,
-                    cellCoords: { x, y, z: z || 0 },
-                  });
-                }
-              } catch (error) {
-                console.error('Error processing connection:', error);
-              }
-            });
-          });
-
-          unsubscribeFunctions.set(cellId, unsubscribe);
-          activeSubscriptionCells.add(cellId);
-
-          // Store in global registry so we can unsubscribe during bulk saves
-          globalActiveListeners.set(cellId, unsubscribe);
+        if (window.currentSpaceOwner) {
+          ownerUserId = window.currentSpaceOwner;
+        } else {
+          const sharedStatus = await isSharedSpace(userId, spaceId);
+          if (!isSubscribed) return;
+          ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
         }
       }
 
       // If no cells are loaded, wait for spatial partitioning to determine which cells to load
-      // This ensures connections are only loaded through the spatial partitioning system
       if (effectiveCells.length === 0) {
-        // No cells loaded yet - waiting for spatial partitioning system to provide cells
-        return; // Don't load any connections until spatial manager provides cells
+        return;
       }
 
       // Subscribe to each loaded cell
@@ -492,17 +412,16 @@ const subscribeToCellConnections = (
               connectionsRef,
               { includeMetadataChanges: false },
               (snapshot) => {
+                if (listenersArePaused) return;
+
                 snapshot.docChanges().forEach((change) => {
                   const connectionId = change.doc.id;
                   const connectionData = change.doc.data();
 
-                  // CRITICAL FIX: Check deletion blacklist before processing any connection
-                  // This prevents stale Firebase data from re-adding deleted connections
                   if (window._deletingConnections?.has(connectionId)) {
                     return;
                   }
 
-                  // Also check connection store deletion blacklist
                   try {
                     const { useConnectionStore } = window;
                     if (useConnectionStore) {
@@ -520,6 +439,7 @@ const subscribeToCellConnections = (
                   const cacheKey = `${spaceId}_${connectionId}`;
 
                   if (change.type === 'added' || change.type === 'modified') {
+                    if (window._bulkDeleteInProgress) return;
                     // Check if connection data has changed using fast comparison
                     const cachedData = connectionCache.get(cacheKey);
                     const hasChanged = connectionDataChanged(cachedData, connectionData);
@@ -559,7 +479,8 @@ const subscribeToCellConnections = (
           }
         );
 
-        // Store the cleanup function
+        subscribedCellKeys.add(cellKey);
+        globalActiveListeners.set(cellKey, globalUnsubscribe);
         unsubscribeFunctions.set(cellKey, globalUnsubscribe);
       }
     } catch {
@@ -574,6 +495,9 @@ const subscribeToCellConnections = (
     isSubscribed = false;
     unsubscribeFunctions.forEach((cleanup) => cleanup());
     unsubscribeFunctions.clear();
+    for (const key of subscribedCellKeys) {
+      globalActiveListeners.delete(key);
+    }
   };
 };
 

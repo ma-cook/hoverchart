@@ -357,19 +357,13 @@ const useSpatialManagerStore = create((set, get) => ({
         }
         if (allCellCoordsToLoad.length > 0) {
           await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
-
-          // Wait a bit more for all cell subscriptions to be established
-          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
         if (existingCells.length > 0 || initialCells.length > 0) {
-          // Set state first
           set({
             loadedCells: cellsToLoad,
             currentCellCoords: { x: 0, y: 0, z: 0 },
             isInitialized: true,
-          }); // Add a small delay to ensure all cell subscriptions are fully established
-          // before other systems start using the spatial manager
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          });
         }
       } catch (error) {
         console.error('❌ Error during spatial initialization:', error);

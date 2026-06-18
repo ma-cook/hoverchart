@@ -873,61 +873,59 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
   }
 
   try {
-    const allObjects = [];
+    const results = await Promise.all(
+      cellCoords.map(async (coords) => {
+        const cellId = getCellId(coords.x, coords.y, coords.z);
 
-    for (const coords of cellCoords) {
-      const cellId = getCellId(coords.x, coords.y, coords.z);
+        const objectsCollectionRef = collection(
+          db,
+          'users',
+          userId,
+          'spaces',
+          spaceId,
+          'cells',
+          cellId,
+          'objects'
+        );
 
-      // NEW: Read from subcollection instead of map field
-      // This matches the cloud function's save path
-      const objectsCollectionRef = collection(
-        db,
-        'users',
-        userId,
-        'spaces',
-        spaceId,
-        'cells',
-        cellId,
-        'objects'
-      );
+        const querySnapshot = await getDocs(objectsCollectionRef);
+        const objects = [];
 
-      const querySnapshot = await getDocs(objectsCollectionRef);
+        querySnapshot.forEach((doc) => {
+          const objectData = doc.data();
 
-      querySnapshot.forEach((doc) => {
-        const objectData = doc.data();
+          if (
+            objectData.textStyle?.fontSize &&
+            typeof objectData.textStyle.fontSize === 'string'
+          ) {
+            const parsed = parseFloat(objectData.textStyle.fontSize);
+            objectData.textStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
+          }
+          if (
+            objectData.headerStyle?.fontSize &&
+            typeof objectData.headerStyle.fontSize === 'string'
+          ) {
+            const parsed = parseFloat(objectData.headerStyle.fontSize);
+            objectData.headerStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
+          }
+          if (objectData.faceTextStyles) {
+            Object.keys(objectData.faceTextStyles).forEach((face) => {
+              const style = objectData.faceTextStyles[face];
+              if (style?.fontSize && typeof style.fontSize === 'string') {
+                const parsed = parseFloat(style.fontSize);
+                style.fontSize = isNaN(parsed) ? 0.5 : parsed;
+              }
+            });
+          }
 
-        // DATA MIGRATION: Sanitize fontSize values from old data
-        // Old data might have string values like 'medium' instead of numbers
-        if (
-          objectData.textStyle?.fontSize &&
-          typeof objectData.textStyle.fontSize === 'string'
-        ) {
-          const parsed = parseFloat(objectData.textStyle.fontSize);
-          objectData.textStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
-        }
-        if (
-          objectData.headerStyle?.fontSize &&
-          typeof objectData.headerStyle.fontSize === 'string'
-        ) {
-          const parsed = parseFloat(objectData.headerStyle.fontSize);
-          objectData.headerStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
-        }
-        // Face text styles
-        if (objectData.faceTextStyles) {
-          Object.keys(objectData.faceTextStyles).forEach((face) => {
-            const style = objectData.faceTextStyles[face];
-            if (style?.fontSize && typeof style.fontSize === 'string') {
-              const parsed = parseFloat(style.fontSize);
-              style.fontSize = isNaN(parsed) ? 0.5 : parsed;
-            }
-          });
-        }
+          objects.push(objectData);
+        });
 
-        allObjects.push(objectData);
-      });
-    }
+        return objects;
+      })
+    );
 
-    return allObjects;
+    return results.flat();
   } catch (error) {
     console.error('Error loading objects from cells:', error);
     return [];

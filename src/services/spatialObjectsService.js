@@ -677,16 +677,20 @@ export const subscribeToSpatialObjects = (
 
       let ownerUserId = effectiveOwnerId;
       if (!isAnonymous) {
-        try {
-          const sharedStatus = await isSharedSpace(userId, spaceId);
-          if (!isSubscribed) return;
-          ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-        } catch (error) {
-          console.error('Error checking shared status:', error);
-          ownerUserId = window.currentSpaceOwner || userId;
+        if (window.currentSpaceOwner) {
+          ownerUserId = window.currentSpaceOwner;
+        } else {
+          try {
+            const sharedStatus = await isSharedSpace(userId, spaceId);
+            if (!isSubscribed) return;
+            ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+          } catch (error) {
+            console.error('Error checking shared status:', error);
+            ownerUserId = window.currentSpaceOwner || userId;
+          }
         }
       }
-      window.currentSpaceOwner = ownerUserId; // Guard against empty cells
+      window.currentSpaceOwner = ownerUserId;
       if (safeCells.length === 0) {
         return;
       }

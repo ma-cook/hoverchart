@@ -320,21 +320,8 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       return;
     }
 
-    // Initial load: record loaded cells and set up initial subscription
+    // Initial load: first effect already handles initial subscription
     if (!previousCells || previousCells.length === 0) {
-      // Create initial subscription
-      const initialCleanup = subscribeToConnections(
-        effectiveUserId,
-        currentSpaceId,
-        enhancedConnectionCallback,
-        currentCells
-      );
-
-      if (subscriptionCleanupRef.current) {
-        subscriptionCleanupRef.current();
-      }
-      subscriptionCleanupRef.current = initialCleanup;
-
       previousLoadedCellsRef.current = currentCells;
       return;
     }
