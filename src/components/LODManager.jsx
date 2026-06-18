@@ -20,7 +20,7 @@ const CAMERA_MOVE_THRESHOLD_SQ = CAMERA_MOVE_THRESHOLD * CAMERA_MOVE_THRESHOLD;
 // to prevent frame-rate spikes when many objects cross thresholds simultaneously.
 // Downgrades (FULL→MEDIUM, MEDIUM→LOW) are always applied immediately since
 // they reduce rendering cost.
-const LOD_UPGRADE_BUDGET_PER_FRAME = 3;
+const LOD_UPGRADE_BUDGET_PER_FRAME = 1000;
 
 // Frame-time threshold (ms) above which upgrade budget is halved.
 // Prevents piling on detail when frames are already slow.
