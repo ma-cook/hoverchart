@@ -137,6 +137,7 @@ export const connectionMethods = {
 
         const CUBE_FACES = ['front', 'back', 'left', 'right', 'top', 'bottom'];
         const TETRAHEDRON_FACES = ['front', 'left', 'right', 'bottom'];
+        const OCTAHEDRON_FACES = ['f0', 'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7'];
 
         const getFaceForObject = (objectId, objectType, isSource) => {
           const key = `${objectId}_${isSource ? 'source' : 'target'}`;
@@ -152,6 +153,8 @@ export const connectionMethods = {
             return currentCount % 12;
           } else if (objectType === 'tetrahedron') {
             return TETRAHEDRON_FACES[currentCount % TETRAHEDRON_FACES.length];
+          } else if (objectType === 'octahedron') {
+            return OCTAHEDRON_FACES[currentCount % OCTAHEDRON_FACES.length];
           } else {
             return CUBE_FACES[currentCount % CUBE_FACES.length];
           }
@@ -178,6 +181,29 @@ export const connectionMethods = {
               case 'right':  fc = [(v[0][0]+v[3][0]+v[2][0])/3, (v[0][1]+v[3][1]+v[2][1])/3, (v[0][2]+v[3][2]+v[2][2])/3]; break;
               default:       fc = [0, 0, 0];
             }
+            return [pos[0] + fc[0] * s[0], pos[1] + fc[1] * s[1], pos[2] + fc[2] * s[2]];
+          } else if (objectType === 'octahedron') {
+            const OCTA_SIZE = 5;
+            const ov = [
+              [0, OCTA_SIZE, 0],
+              [OCTA_SIZE, 0, 0],
+              [0, 0, OCTA_SIZE],
+              [-OCTA_SIZE, 0, 0],
+              [0, 0, -OCTA_SIZE],
+              [0, -OCTA_SIZE, 0],
+            ];
+            const octaFaceVertices = {
+              f0: [ov[0], ov[1], ov[2]],
+              f1: [ov[0], ov[2], ov[3]],
+              f2: [ov[0], ov[3], ov[4]],
+              f3: [ov[0], ov[4], ov[1]],
+              f4: [ov[5], ov[2], ov[1]],
+              f5: [ov[5], ov[3], ov[2]],
+              f6: [ov[5], ov[4], ov[3]],
+              f7: [ov[5], ov[1], ov[4]],
+            };
+            const fv = octaFaceVertices[faceName] || [ov[0], ov[1], ov[2]];
+            const fc = [(fv[0][0]+fv[1][0]+fv[2][0])/3, (fv[0][1]+fv[1][1]+fv[2][1])/3, (fv[0][2]+fv[1][2]+fv[2][2])/3];
             return [pos[0] + fc[0] * s[0], pos[1] + fc[1] * s[1], pos[2] + fc[2] * s[2]];
           }
 

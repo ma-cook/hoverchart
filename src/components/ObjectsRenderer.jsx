@@ -4,14 +4,17 @@ import ObjectRenderer from './ObjectRenderer';
 import GlobalCubeEdgesRenderer from './GlobalCubeEdgesRenderer';
 import GlobalDodecahedronEdgesRenderer from './GlobalDodecahedronEdgesRenderer';
 import GlobalTetrahedronEdgesRenderer from './GlobalTetrahedronEdgesRenderer';
+import GlobalOctahedronEdgesRenderer from './GlobalOctahedronEdgesRenderer';
 import GlobalCubeMediumLODRenderer from './GlobalCubeMediumLODRenderer';
 import GlobalDodecahedronMediumLODRenderer from './GlobalDodecahedronMediumLODRenderer';
 import GlobalTetrahedronMediumLODRenderer from './GlobalTetrahedronMediumLODRenderer';
+import GlobalOctahedronMediumLODRenderer from './GlobalOctahedronMediumLODRenderer';
 import GlobalCubeFaceRenderer from './GlobalCubeFaceRenderer';
 import GlobalCubeFullLODInstancedRenderer, { isCubeUnmodified } from './GlobalCubeFullLODInstancedRenderer';
 import GlobalCubeLowLODRenderer from './GlobalCubeLowLODRenderer';
 import GlobalDodecahedronLowLODRenderer from './GlobalDodecahedronLowLODRenderer';
 import GlobalTetrahedronLowLODRenderer from './GlobalTetrahedronLowLODRenderer';
+import GlobalOctahedronLowLODRenderer from './GlobalOctahedronLowLODRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { useCubeStore } from '../stores';
 import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
@@ -440,6 +443,18 @@ const ObjectsRenderer = React.memo(({
     return result;
   }, [progressiveVisibleObjects]);
 
+  // Extract octahedron objects for batched edge rendering
+  const octahedronObjectsRef = useRef([]);
+  const octahedronObjects = useMemo(() => {
+    const result = progressiveVisibleObjects.filter((obj) => obj.type === 'octahedron');
+    const prev = octahedronObjectsRef.current;
+    if (prev.length === result.length && result.every((obj, i) => obj === prev[i])) {
+      return prev;
+    }
+    octahedronObjectsRef.current = result;
+    return result;
+  }, [progressiveVisibleObjects]);
+
   // Compute set of unmodified cube IDs for instanced full-LOD rendering.
   // These cubes skip mounting individual <Cube> components — their wireframe
   // edges come from GlobalCubeEdgesRenderer and their transparent clickable
@@ -564,13 +579,20 @@ const ObjectsRenderer = React.memo(({
       {/* PERFORMANCE: Render all tetrahedron edges in a single draw call */}
       <GlobalTetrahedronEdgesRenderer tetrahedrons={tetrahedronObjects} defaultLineWidth={1} />
       
+      {/* PERFORMANCE: Render all octahedron edges in a single draw call */}
+      <GlobalOctahedronEdgesRenderer octahedrons={octahedronObjects} defaultLineWidth={1} />
+      
       {/* PERFORMANCE: Render all medium-LOD tetrahedrons as simple boxes in 1 draw call */}
       <GlobalTetrahedronMediumLODRenderer tetrahedrons={tetrahedronObjects} onInstanceClick={handleInstancedCubeClick} />
+      
+      {/* PERFORMANCE: Render all medium-LOD octahedrons as simple octahedrons in 1 draw call */}
+      <GlobalOctahedronMediumLODRenderer octahedrons={octahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* PERFORMANCE: Render all LOW-LOD objects as instanced 2D shapes (1 draw call each) */}
       <GlobalCubeLowLODRenderer cubes={cubeObjects} onInstanceClick={handleInstancedCubeClick} />
       <GlobalDodecahedronLowLODRenderer dodecahedrons={dodecahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       <GlobalTetrahedronLowLODRenderer tetrahedrons={tetrahedronObjects} onInstanceClick={handleInstancedCubeClick} />
+      <GlobalOctahedronLowLODRenderer octahedrons={octahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* Render floating header labels above group containers */}
       {containerHeaders.map((header) => (

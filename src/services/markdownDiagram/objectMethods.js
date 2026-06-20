@@ -172,7 +172,8 @@ export const objectMethods = {
         .map(([nodeId, position]) => {
           const node = graph.nodes.get(nodeId);
           const scale = nodeScales.get(nodeId);
-          const objectType = this.getObjectTypeForNode(node);
+          const isInternalComponent = node.type === 'component' && internalComponentChildren.has(nodeId);
+          const objectType = this.getObjectTypeForNode(node, isInternalComponent);
 
           if (!objectType || !node) return null;
 
@@ -267,6 +268,15 @@ export const objectMethods = {
                     fontSize: 1.5, color: 'black', underline: false,
                   },
                 }
+              : data.type === 'octahedron'
+              ? {
+                  headerText: data.extraData.headerText || '',
+                  faceColors: {},
+                  faceTexts: { f0: '', f1: '', f2: '', f3: '', f4: '', f5: '', f6: '', f7: '' },
+                  textStyle: data.extraData.headerStyle || {
+                    fontSize: 1.5, color: 'black', underline: false,
+                  },
+                }
               : data.type === 'tetrahedron'
               ? {
                   headerText: data.extraData.headerText || '',
@@ -322,6 +332,11 @@ export const objectMethods = {
               headerText: data.extraData.headerText || '',
               faceColors: {},
               faceTexts: { front: '', back: '', top: '', bottom: '', right: '', left: '' },
+            }),
+            ...(data.type === 'octahedron' && {
+              headerText: data.extraData.headerText || '',
+              faceColors: {},
+              faceTexts: { f0: '', f1: '', f2: '', f3: '', f4: '', f5: '', f6: '', f7: '' },
             }),
             ...(data.type === 'tetrahedron' && {
               headerText: data.extraData.headerText || '',

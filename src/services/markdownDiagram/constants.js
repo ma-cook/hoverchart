@@ -27,6 +27,7 @@ export const NODE_TYPE_CONSTANT = 'constant';
 export const OBJECT_TYPE_CUBE = 'cube';
 export const OBJECT_TYPE_DODECAHEDRON = 'dodecahedron';
 export const OBJECT_TYPE_TETRAHEDRON = 'tetrahedron';
+export const OBJECT_TYPE_OCTAHEDRON = 'octahedron';
 
 // UI component identifiers
 export const UI_COMPONENTS = [

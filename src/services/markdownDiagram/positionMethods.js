@@ -12,6 +12,7 @@ import {
   NODE_TYPE_LIBRARY,
   NODE_TYPE_MODULE,
   OBJECT_TYPE_DODECAHEDRON,
+  OBJECT_TYPE_OCTAHEDRON,
   DEFAULT_CONTAINER_SIZE,
   BASE_DODECAHEDRON_RADIUS,
 } from './constants.js';
@@ -66,7 +67,32 @@ export const positionMethods = {
       const isInternalComponent =
         nodeType === 'component' && internalComponentChildren.has(nodeId);
 
-      if (nodeType === 'component' && !isInternalComponent) {
+      const objectType = this.getObjectTypeForNode(node, isInternalComponent);
+    const isOctahedron = objectType === OBJECT_TYPE_OCTAHEDRON;
+
+    if (isOctahedron) {
+      const parentRadius = containerSize / 2;
+      const octahedronRadius = 10;
+      const gap = 30;
+
+      const internalSiblings = siblingIds.filter((sibId) => {
+        const sibNode = graphNodes.get(sibId);
+        return sibNode && sibNode.type === 'component' && internalComponentChildren.has(sibId);
+      });
+
+      const octaSiblingIndex = internalSiblings.indexOf(nodeId);
+      const side = octaSiblingIndex % 2 === 0 ? -1 : 1;
+      const offsetX = side * (parentRadius + octahedronRadius + gap);
+      const extraOffset = Math.floor(octaSiblingIndex / 2) * (octahedronRadius * 2 + gap) * side;
+
+      return [
+        parentPosition[0] + offsetX + extraOffset,
+        parentPosition[1],
+        parentPosition[2],
+      ];
+    }
+
+    if (nodeType === 'component' && !isInternalComponent) {
         const baseDodecahedronRadius = 10;
 
         const componentScale = this.calculateDodecahedronScale(

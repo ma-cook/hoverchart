@@ -47,15 +47,8 @@ export const scaleMethods = {
     }
 
     const cubeChildren = this.filterCubeChildren(children, graphNodes);
-    const componentChildren = this.filterComponentChildren(children, graphNodes);
 
-    const internalComponentChildrenArray = componentChildren.filter(
-      (childId) =>
-        internalComponentChildren && internalComponentChildren.has(childId)
-    );
-
-    const totalNestedChildren =
-      cubeChildren.length + internalComponentChildrenArray.length;
+    const totalNestedChildren = cubeChildren.length;
 
     if (totalNestedChildren > 0) {
       let maxChildSize = this.calculateMaxChildSize(
@@ -66,38 +59,18 @@ export const scaleMethods = {
         level
       );
 
-      const hasInternalContent =
-        cubeChildren.length > 0 || internalComponentChildrenArray.length > 0;
-      const hasInternalComponents = internalComponentChildrenArray.length > 0;
-
       const actualChildSpacing = 70;
 
       let requiredSpace;
 
-      if (hasInternalComponents && cubeChildren.length === 0) {
+      if (cubeChildren.length === 1) {
         requiredSpace = maxChildSize * 2;
-      } else if (hasInternalComponents && cubeChildren.length > 0) {
-        const totalInternalChildren = cubeChildren.length + internalComponentChildrenArray.length;
-        if (totalInternalChildren <= 2) {
-          requiredSpace = maxChildSize * 2.5;
-        } else {
-          const gridSize3D = Math.ceil(Math.pow(totalInternalChildren, 1 / 3));
-          requiredSpace = (gridSize3D - 1) * actualChildSpacing + maxChildSize * 2;
-        }
-      } else if (cubeChildren.length > 0) {
-        if (cubeChildren.length === 1) {
-          requiredSpace = maxChildSize * 2;
-        } else {
-          const gridSize3D = Math.ceil(Math.pow(cubeChildren.length, 1 / 3));
-          requiredSpace = (gridSize3D - 1) * actualChildSpacing + maxChildSize * 2;
-        }
       } else {
-        requiredSpace = maxChildSize * 1.2;
+        const gridSize3D = Math.ceil(Math.pow(cubeChildren.length, 1 / 3));
+        requiredSpace = (gridSize3D - 1) * actualChildSpacing + maxChildSize * 2;
       }
 
-      const adaptivePadding = hasInternalContent
-        ? Math.max(30, requiredSpace * 0.4)
-        : 10;
+      const adaptivePadding = Math.max(30, requiredSpace * 0.4);
 
       const requiredSize = requiredSpace + adaptivePadding;
 

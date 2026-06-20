@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
 import Cube from './Cube';
 import Tetrahedron from './Tetrahedron';
+import Octahedron from './Octahedron';
 import Sphere from './Dodecahedron';
 import Plane from './Plane';
 import TextObject from './TextObject';
@@ -71,7 +72,7 @@ const ObjectRenderer = React.memo(
     // At MEDIUM or LOW LOD, skip per-object component for non-selected objects
     // The global medium/low LOD renderers handle both visuals and clicks
     if (useLOD && lodLevel >= LOD_LEVELS.MEDIUM && selectedId !== obj.id) {
-      if (obj.type === 'cube' || obj.type === 'tetrahedron' || obj.type === 'sphere' || obj.type === 'dodecahedron') {
+      if (obj.type === 'cube' || obj.type === 'tetrahedron' || obj.type === 'octahedron' || obj.type === 'sphere' || obj.type === 'dodecahedron') {
         return null;
       }
     }
@@ -138,6 +139,39 @@ const ObjectRenderer = React.memo(
           onMove={onMoveStable}
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
           renderEdges={false} // Edges rendered by GlobalTetrahedronEdgesRenderer for better performance
+        />
+      );
+    }
+    if (obj.type === 'octahedron') {
+      return (
+        <Octahedron
+          key={obj.id}
+          id={obj.id}
+          selected={selectedId === obj.id}
+          onClick={onClickStable}
+          onUpdate={handleObjectUpdate}
+          disableOrbitControls={disableOrbitControls}
+          enableOrbitControls={enableOrbitControls}
+          onFaceIndicatorClick={handleFaceIndicatorClick}
+          onFaceClick={handleFaceClick}
+          showAllCubesIndicators={showAllCubesIndicators}
+          globalIndicatorSelected={globalIndicatorSelected}
+          activeIndicator={activeIndicator}
+          indicatorMode={indicatorMode}
+          selectedIndicators={selectedIndicators}
+          activeTextStyleUI={activeTextStyleUI}
+          setActiveTextStyleUI={setActiveTextStyleUI}
+          handleIndicatorDeselected={handleIndicatorDeselected}
+          registerTransformingObject={registerTransformingObject}
+          onTransformStart={onTransformStartStable}
+          onTransformEnd={onTransformEndStable}
+          onMatrixChanged={onMatrixChangedStable}
+          transformControls={TRANSFORM_CONTROLS_CONFIG}
+          onDelete={onDeleteStable}
+          handleObjectMove={handleObjectMove}
+          onMove={onMoveStable}
+          lineWidth={obj.lineWidth}
+          renderEdges={false}
         />
       );
     }

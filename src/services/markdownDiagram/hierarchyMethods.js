@@ -17,6 +17,7 @@ import {
   OBJECT_TYPE_CUBE,
   OBJECT_TYPE_DODECAHEDRON,
   OBJECT_TYPE_TETRAHEDRON,
+  OBJECT_TYPE_OCTAHEDRON,
 } from './constants.js';
 
 export const hierarchyMethods = {
@@ -271,13 +272,17 @@ export const hierarchyMethods = {
   /**
    * Determine the 3D object type based on node type
    * @param {Object} node - The node from the graph
+   * @param {boolean} [isInternalComponent=false] - Whether this node is an internal (nested) component child
    * @returns {string} - The 3D object type
    */
-  getObjectTypeForNode(node) {
+  getObjectTypeForNode(node, isInternalComponent = false) {
     const nodeType = (node.type || '').toLowerCase().trim();
 
     switch (nodeType) {
       case NODE_TYPE_COMPONENT:
+        if (isInternalComponent) {
+          return OBJECT_TYPE_OCTAHEDRON;
+        }
         return OBJECT_TYPE_DODECAHEDRON;
       case NODE_TYPE_SERVICE:
       case NODE_TYPE_MODULE:

@@ -2,6 +2,7 @@
 export { default as useFaceIndicatorStore } from './faceIndicatorStore.js';
 export { default as useCubeStore } from './cubeStore.js';
 export { default as useTetrahedronStore } from './tetrahedronStore.js';
+export { default as useOctahedronStore } from './octahedronStore.js';
 export { default as useDodecahedronStore } from './dodecahedronStore.js';
 export { default as usePlaneStore } from './planeStore.js';
 export { default as useFaceStore } from './faceStore.js';
