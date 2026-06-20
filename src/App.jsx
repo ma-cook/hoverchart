@@ -709,8 +709,17 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
                   transitioningObjectsRef.current.delete(item.id.toString());
                 }
 
-                // Skip unloaded
-                if (window._unloadedObjects?.has(item.id.toString())) continue;
+                // Skip unloaded — defense: clean up if found so
+                // objects aren't permanently lost if primary cleanup misses them.
+                if (window._unloadedObjects?.has(item.id.toString())) {
+                  window._unloadedObjects.delete(item.id.toString());
+                  if (window._unloadedObjectsByCell) {
+                    for (const [, objSet] of window._unloadedObjectsByCell) {
+                      objSet.delete(item.id.toString());
+                    }
+                  }
+                  continue;
+                }
 
                 // Validate position
                 const pos = item.object?.position;
@@ -831,11 +840,15 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
                 transitioningObjectsRef.current.delete(change.id.toString());
               }
               // Check if object is in an unloaded cell
+              // Defense-in-depth: clean up if found so objects aren't
+              // permanently lost if primary cleanup misses them.
               if (window._unloadedObjects?.has(change.id.toString())) {
-                console.log(
-                  `🚫 Blocked re-adding unloaded object: ${change.id}`
-                );
-                return prev;
+                window._unloadedObjects.delete(change.id.toString());
+                if (window._unloadedObjectsByCell) {
+                  for (const [, objSet] of window._unloadedObjectsByCell) {
+                    objSet.delete(change.id.toString());
+                  }
+                }
               }
 
               if (!prev.find((obj) => obj.id === change.id)) {

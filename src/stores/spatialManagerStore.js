@@ -214,12 +214,25 @@ const useSpatialManagerStore = create((set, get) => ({
           window._unloadedCells.delete(cellId);
         }
 
-        // Remove all objects in this cell from unloaded tracking
-        const cellObjects = state.objectsByCell.get(cellId);
-        if (cellObjects && window._unloadedObjects) {
-          cellObjects.forEach((objId) => {
+        // Remove all objects in this cell from unloaded tracking.
+        // Use _unloadedObjectsByCell (populated at unload time) as the
+        // authoritative source — it is always in sync with _unloadedObjects.
+        // Fall back to objectsByCell for cells tracked before this fix.
+        let cellObjectIds = window._unloadedObjectsByCell?.get(cellId);
+        if (!cellObjectIds || cellObjectIds.size === 0) {
+          // Fallback: use objectsByCell for pre-existing data
+          const fallback = state.objectsByCell.get(cellId);
+          if (fallback && fallback.size > 0) {
+            cellObjectIds = fallback;
+          }
+        }
+
+        if (cellObjectIds && window._unloadedObjects) {
+          cellObjectIds.forEach((objId) => {
             window._unloadedObjects.delete(objId);
           });
+          // Clean up the per-cell tracking entry
+          window._unloadedObjectsByCell?.delete(cellId);
         }
       });
     }
@@ -415,19 +428,25 @@ const useSpatialManagerStore = create((set, get) => ({
       // Notify about objects that should be removed and track them
       if (onObjectsChange && state.objectsByCell.size > 0) {
         const objectsToRemove = [];
-        // Create or update the global tracking set for unloaded objects
+        // Create or update the global tracking sets for unloaded objects
         if (!window._unloadedObjects) {
           window._unloadedObjects = new Set();
+        }
+        if (!window._unloadedObjectsByCell) {
+          window._unloadedObjectsByCell = new Map();
         }
 
         cellsToUnloadNow.forEach((cellId) => {
           const cellObjects = state.objectsByCell.get(cellId);
 
           if (cellObjects) {
-            // Add objects to tracking set
+            const objSet = new Set();
             cellObjects.forEach((objId) => {
-              window._unloadedObjects.add(objId.toString());
+              const idStr = objId.toString();
+              window._unloadedObjects.add(idStr);
+              objSet.add(idStr);
             });
+            window._unloadedObjectsByCell.set(cellId, objSet);
 
             objectsToRemove.push(...Array.from(cellObjects));
           }

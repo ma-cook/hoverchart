@@ -144,6 +144,9 @@ export const clearAllObjectCaches = () => {
   if (window._unloadedCells) {
     window._unloadedCells.clear();
   }
+  if (window._unloadedObjectsByCell) {
+    window._unloadedObjectsByCell.clear();
+  }
   console.log('🧹 Cleared all object caches');
 };
 
@@ -788,9 +791,18 @@ export const subscribeToSpatialObjects = (
                     });
                   }
 
-                  // Skip if object is marked as unloaded
+                  // Skip if object is marked as unloaded.
+                  // Defense-in-depth: clean up if found — ensures objects
+                  // aren't permanently lost if the primary cleanup in
+                  // loadCellsBatch ever misses them.
                   if (window._unloadedObjects?.has(objectId.toString())) {
-                    return;
+                    window._unloadedObjects.delete(objectId.toString());
+                    // Also clean up per-cell tracking if available
+                    if (window._unloadedObjectsByCell) {
+                      for (const [, objSet] of window._unloadedObjectsByCell) {
+                        objSet.delete(objectId.toString());
+                      }
+                    }
                   }
 
                   const cacheKey = `${spaceId}_${objectId}`;
