@@ -430,10 +430,6 @@ const useSpatialManagerStore = create((set, get) => ({
             });
 
             objectsToRemove.push(...Array.from(cellObjects));
-            // Remove from objectsByCell map
-            const newMap = new Map(state.objectsByCell);
-            newMap.delete(cellId);
-            set({ objectsByCell: newMap });
           }
         });
 
