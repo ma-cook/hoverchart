@@ -485,6 +485,7 @@ const DynamicBillboardMesh = React.memo(({
           return;
         }
 
+        if (!followTarget.current) return;
         const targetPos = followTarget.current.position;
         const targetScale = followTarget.current.scale;
 
