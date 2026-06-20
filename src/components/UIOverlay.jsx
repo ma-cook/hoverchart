@@ -28,6 +28,7 @@ import {
   validateScanUrl,
 } from '../services/runtimeScanService';
 import SpacePresenceAvatars from './SpacePresenceAvatars';
+import ObjectSearch from './ObjectSearch';
 import SpaceChat from './SpaceChat';
 import RepoAnalysisOverlay from './RepoAnalysisOverlay';
 import RecordingFormatPrompt from './RecordingFormatPrompt';
@@ -1623,6 +1624,8 @@ const UIOverlay = ({
             </>
           )}
         </div>
+
+        <ObjectSearch />
 
         <div className="top-bar-divider" />
 
