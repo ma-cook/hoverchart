@@ -19,7 +19,7 @@ import {
   SUBSCRIPTION_TYPES,
 } from './globalSubscriptionManager';
 import { findObjectInCells, getAllObjectsInSpace, getCellId, CELL_SIZE } from './spatialPartitioning';
-import useObjectsStore from '../stores/objectsStore';
+
 
 const activeStreams = new Map();
 
@@ -332,6 +332,7 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream, broadc
     // Build the objectRef from the plane's in-memory position so we can still write
     // the broadcast metadata even if findObjectInCells comes back empty.
     if (!planeResult) {
+      const { default: useObjectsStore } = await import('../stores/objectsStore');
       const localObj = useObjectsStore.getState().objects.find((o) => o.id === planeId);
       if (localObj) {
         const [px, py, pz] = localObj.position || [0, 0, 0];

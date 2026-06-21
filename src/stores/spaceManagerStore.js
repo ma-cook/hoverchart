@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { doc, getDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
 import { findSpaceOwner } from '../services/sharedSpacesService';
-import { registerUserPresence } from '../services/webRservice';
+
 import { setUserPresence } from '../services/presenceService';
 
 const useSpaceManagerStore = create((set, get) => ({
@@ -38,6 +38,7 @@ const useSpaceManagerStore = create((set, get) => ({
   fetchCurrentSpace: async (user) => {
     if (!user) return;
 
+    const { registerUserPresence } = await import('../services/webRservice');
     const state = get();
     if (state.isLoadingSpace) return; // Prevent multiple concurrent fetches
 
