@@ -1,6 +1,6 @@
 import { initializeApp, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, recursiveDelete } from 'firebase-admin/firestore';
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
@@ -439,69 +439,11 @@ function generateJobId() {
 }
 
 /**
- * Return the millisecond timestamp from a Firestore Timestamp object
- * (`toMillis()`), a plain JS `Date`, a raw epoch number, or null when the
- * value is missing / unrecognisable.
+ * Recursively delete a cell document and all of its subcollections
+ * (objects, connections, etc.) in a single server-side operation.
  */
-function toMillis(value) {
-  if (!value) return null;
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === 'number') return value;
-  return null;
-}
-
-/**
- * Delete all objects and connections inside a single cell whose lastUpdated
-/**
- * Delete every object/connection document beneath `cellRef` whose `lastUpdated`
- * timestamp is at or before `cutoff` (ms).  Returns { objectsDeleted,
- * connectionsDeleted, objectsRemaining, connectionsRemaining } — the
- * "*Remaining" counts include any post-cutoff docs that were intentionally
- * skipped, so callers can decide whether it is safe to delete the parent
- * cell document itself.
- */
-async function deleteCellContents(cellRef, cutoff, BATCH_SIZE) {
-  const [objsSnap, connsSnap] = await Promise.all([
-    cellRef.collection('objects').get(),
-    cellRef.collection('connections').get(),
-  ]);
-
-  const objsToDelete = objsSnap.docs.filter((d) => {
-    const ms = toMillis(d.data().lastUpdated);
-    return ms === null || ms <= cutoff;
-  });
-
-  const connsToDelete = connsSnap.docs.filter((d) => {
-    const ms = toMillis(d.data().lastUpdated);
-    return ms === null || ms <= cutoff;
-  });
-
-  let objectsDeleted = 0;
-  let connectionsDeleted = 0;
-
-  for (let i = 0; i < objsToDelete.length; i += BATCH_SIZE) {
-    const chunk = objsToDelete.slice(i, i + BATCH_SIZE);
-    const batch = db.batch();
-    for (const d of chunk) batch.delete(d.ref);
-    await batch.commit();
-    objectsDeleted += chunk.length;
-  }
-
-  for (let i = 0; i < connsToDelete.length; i += BATCH_SIZE) {
-    const chunk = connsToDelete.slice(i, i + BATCH_SIZE);
-    const batch = db.batch();
-    for (const d of chunk) batch.delete(d.ref);
-    await batch.commit();
-    connectionsDeleted += chunk.length;
-  }
-
-  return {
-    objectsDeleted,
-    connectionsDeleted,
-    objectsRemaining: objsSnap.size - objectsDeleted,
-    connectionsRemaining: connsSnap.size - connectionsDeleted,
-  };
+async function deleteCellContents(cellRef) {
+  await recursiveDelete(cellRef);
 }
 
 function createBulkDeleteApp() {
@@ -607,10 +549,9 @@ export const bulkDelete = onRequest(
 // ============= BULK DELETE WORKER (Firestore-triggered) =============
 
 /**
- * Run the actual bulk delete work. Reads job parameters from the job doc and
- * walks all cells under the space, deleting objects/connections whose
- * lastUpdated <= jobStartTime, then the cell docs themselves (only when their
- * subcollections are now fully empty, to avoid orphaning concurrent writes).
+ * Run the actual bulk delete work.  Recursively deletes every cell document
+ * found under the space (including all subcollections) so that no read pass
+ * or per-item delete is needed.
  *
  * Uses `listDocuments()` to enumerate cell refs so that previously-orphaned
  * cells (parent doc deleted but subcollections still present) are still
@@ -620,78 +561,35 @@ async function runBulkDeleteJob(jobRef, jobData) {
   const { userId, spaceId, jobStartTime } = jobData;
   const jobId = jobRef.id;
 
-  const BATCH_SIZE = 500;
-  const CELL_CONCURRENCY = 5;
+  const CELL_CONCURRENCY = 10;
   let cellsDeleted = 0;
-  let objectsDeleted = 0;
-  let connectionsDeleted = 0;
 
   console.log(`🗑️  [${jobId}] Starting bulk delete for user ${userId}, space ${spaceId}`);
 
   await jobRef.update({ status: 'running', startedAt: Date.now() });
 
   const cellsRef = db.collection(`users/${userId}/spaces/${spaceId}/cells`);
-  // listDocuments() returns DocumentReferences for every cell, including
-  // "orphan" cells whose parent document was deleted but whose
-  // /objects and /connections subcollections still hold data.
   const cellRefs = await cellsRef.listDocuments();
 
   console.log(`   [${jobId}] Found ${cellRefs.length} cells to process`);
 
-  // Cells whose subcollections are still non-empty after the cutoff filter
-  // (someone wrote to them while the job was running, OR the parent doc was
-  // already an orphan with stale data we couldn't fully delete in this pass).
-  const cellsToKeep = new Set();
-
   for (let i = 0; i < cellRefs.length; i += CELL_CONCURRENCY) {
     const chunk = cellRefs.slice(i, i + CELL_CONCURRENCY);
-    const results = await Promise.all(
-      chunk.map((cellRef) =>
-        deleteCellContents(cellRef, jobStartTime, BATCH_SIZE).then((r) => ({ cellRef, ...r }))
-      )
-    );
-    for (const r of results) {
-      objectsDeleted += r.objectsDeleted;
-      connectionsDeleted += r.connectionsDeleted;
-      if (r.objectsRemaining > 0 || r.connectionsRemaining > 0) {
-        cellsToKeep.add(r.cellRef.path);
-      }
-    }
-
-    // Periodic progress update so the frontend poll sees movement.
-    if ((i / CELL_CONCURRENCY) % 4 === 0) {
-      await jobRef.update({ objectsDeleted, connectionsDeleted });
-    }
-  }
-
-  // Only delete cell parent docs whose subcollections are now empty.
-  // Cells with surviving (post-cutoff) writes keep their parent doc so
-  // the spatial subscription system continues to find those documents.
-  const deletableCellRefs = cellRefs.filter((ref) => !cellsToKeep.has(ref.path));
-  for (let i = 0; i < deletableCellRefs.length; i += BATCH_SIZE) {
-    const chunk = deletableCellRefs.slice(i, i + BATCH_SIZE);
-    const batch = db.batch();
-    for (const d of chunk) batch.delete(d);
-    await batch.commit();
+    await Promise.all(chunk.map((cellRef) => deleteCellContents(cellRef)));
     cellsDeleted += chunk.length;
-  }
 
-  if (cellsToKeep.size > 0) {
-    console.log(
-      `   [${jobId}] Preserved ${cellsToKeep.size} cells with post-cutoff writes (concurrent saves)`
-    );
+    if ((i / CELL_CONCURRENCY) % 5 === 0) {
+      await jobRef.update({ cellsDeleted });
+    }
   }
 
   const duration = Date.now() - jobStartTime;
   console.log(`✅ [${jobId}] Bulk delete completed in ${duration}ms`);
-  console.log(`   Cells: ${cellsDeleted}, Objects: ${objectsDeleted}, Connections: ${connectionsDeleted}`);
+  console.log(`   Cells: ${cellsDeleted}`);
 
   await jobRef.update({
     status: 'done',
     cellsDeleted,
-    cellsPreserved: cellsToKeep.size,
-    objectsDeleted,
-    connectionsDeleted,
     finishedAt: Date.now(),
     duration,
   });
