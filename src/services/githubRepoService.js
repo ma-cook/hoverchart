@@ -26,6 +26,35 @@ const TREE_SITTER_EXTENSIONS = [
   { test: /\.(c|h)$/i,             key: 'c' },
 ];
 
+// ── Retry / rate-limit helpers ────────────────────────────────────────────
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const GITHUB_API_HEADERS = { Accept: 'application/vnd.github.v3+json' };
+
+/**
+ * Wrapper around fetch that retries on 429 (rate-limit) and 403 (abuse)
+ * with exponential backoff + jitter.  All other errors propagate immediately.
+ */
+async function fetchWithRetry(url, options = {}, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const response = await fetch(url, options);
+    if (response.ok) return response;
+    if ((response.status === 429 || response.status === 403) && attempt < retries) {
+      const retryAfter = response.headers.get('Retry-After');
+      const baseDelay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000 * Math.pow(2, attempt);
+      const jitter = Math.random() * 1000;
+      const delay = Math.min(baseDelay + jitter, 30_000);
+      console.warn(`⏳ GitHub API rate-limited (${response.status}), retrying in ${Math.round(delay)}ms…`);
+      await sleep(delay);
+      continue;
+    }
+    // Non-retryable or final attempt
+    if (response.status === 404) return response; // let caller handle
+    throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+  }
+}
+
 const getTreeSitterLanguage = (filePath) => {
   for (const { test, key } of TREE_SITTER_EXTENSIONS) {
     if (test.test(filePath)) return key;
@@ -60,16 +89,27 @@ export const fetchRepositories = async (token) => {
     throw new Error('GitHub token not found');
   }
 
-  try {
-    const response = await fetch(`${GITHUB_API_BASE}/user/repos`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+  const perPage = 100;
+  let page = 1;
+  let allRepos = [];
 
-    if (!response.ok) {
-      throw new Error('Failed to fetch repositories');
+  try {
+    while (true) {
+      const url = `${GITHUB_API_BASE}/user/repos?per_page=${perPage}&page=${page}`;
+      const response = await fetchWithRetry(url, {
+        headers: { Authorization: `Bearer ${token}`, ...GITHUB_API_HEADERS },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch repositories: ${response.status}`);
+      }
+      const repos = await response.json();
+      if (repos.length === 0) break;
+      allRepos = allRepos.concat(repos);
+      if (repos.length < perPage) break;
+      page++;
     }
 
-    return await response.json();
+    return allRepos;
   } catch (error) {
     console.error('Error fetching repositories:', error);
     throw error;
@@ -87,7 +127,7 @@ export const fetchRepositories = async (token) => {
 export const fetchFileContent = async (owner, repoName, filePath, token) => {
   try {
     const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/contents/${filePath}`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: {
         Authorization: `token ${token}`,
         Accept: 'application/vnd.github.v3.raw', // Get raw content directly
@@ -95,6 +135,7 @@ export const fetchFileContent = async (owner, repoName, filePath, token) => {
     });
 
     if (!response.ok) {
+      if (response.status === 404) return null; // file not found
       console.warn(`⚠️  GitHub API error for ${filePath}: ${response.status}`);
       return null;
     }
@@ -116,10 +157,10 @@ export const fetchFileContent = async (owner, repoName, filePath, token) => {
  */
 export const fetchLatestCommitSha = async (owner, repoName, token) => {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/commits?per_page=1`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: {
       Authorization: `token ${token}`,
-      Accept: 'application/vnd.github.v3+json',
+      ...GITHUB_API_HEADERS,
     },
   });
   if (!response.ok) {
@@ -143,10 +184,10 @@ export const fetchLatestCommitSha = async (owner, repoName, token) => {
  */
 export const fetchChangedFiles = async (owner, repoName, baseSha, headSha, token) => {
   const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/compare/${baseSha}...${headSha}`;
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: {
       Authorization: `token ${token}`,
-      Accept: 'application/vnd.github.v3+json',
+      ...GITHUB_API_HEADERS,
     },
   });
   if (!response.ok) {
@@ -168,6 +209,7 @@ export const fetchChangedFiles = async (owner, repoName, baseSha, headSha, token
  */
 const getFileTypeFromPath = (filePath) => {
   const name = filePath.split('/').pop();
+  if (name.endsWith('.d.ts')) return null;
   if (/\.(jsx?|tsx?)$/.test(name)) return 'file';
   if (/\.py$/.test(name)) return 'python';
   if (/\.vue$/.test(name)) return 'vue';
@@ -178,91 +220,82 @@ const getFileTypeFromPath = (filePath) => {
 };
 
 /**
- * Recursively fetch repository structure (JS/TS files only)
+ * Fetch repository structure using the Git Trees API.
+ * A single recursive call replaces sequential Contents API directory walking.
  * @param {string} owner - Repository owner
  * @param {string} repoName - Repository name
  * @param {string} token - GitHub access token
- * @param {string} path - Current path in repository
  * @returns {Promise<Array>} - Array of file objects with path, name, type
  */
-export const fetchRepositoryStructure = async (owner, repoName, token, path = '') => {
+export const fetchRepositoryStructure = async (owner, repoName, token) => {
   try {
-    const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/contents/${path}`;
-    const response = await fetch(url, {
+    const commitSha = await fetchLatestCommitSha(owner, repoName, token);
+
+    const commitUrl = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/commits/${commitSha}`;
+    const commitResponse = await fetchWithRetry(commitUrl, {
       headers: {
         Authorization: `token ${token}`,
-        Accept: 'application/vnd.github.v3+json',
+        ...GITHUB_API_HEADERS,
       },
     });
-
-    if (!response.ok) {
-      throw new Error(`GitHub API error: ${response.status}`);
+    if (!commitResponse.ok) {
+      throw new Error(`GitHub API error fetching commit: ${commitResponse.status}`);
     }
+    const commitData = await commitResponse.json();
+    const treeSha = commitData.tree.sha;
 
-    const items = await response.json();
+    const treeUrl = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/trees/${treeSha}?recursive=1`;
+    const treeResponse = await fetchWithRetry(treeUrl, {
+      headers: {
+        Authorization: `token ${token}`,
+        ...GITHUB_API_HEADERS,
+      },
+    });
+    if (!treeResponse.ok) {
+      throw new Error(`GitHub API error fetching tree: ${treeResponse.status}`);
+    }
+    const treeData = await treeResponse.json();
+
     const structure = [];
+    const items = treeData.tree || [];
 
     for (const item of items) {
-      if (item.type === 'dir') {
-        // Recursively fetch subdirectories
-        const subItems = await fetchRepositoryStructure(owner, repoName, token, item.path);
-        structure.push(...subItems);
-      } else if (item.type === 'file') {
-        // Include JavaScript/TypeScript files
-        if (
-          item.name.endsWith('.js') ||
-          item.name.endsWith('.jsx') ||
-          (item.name.endsWith('.ts') && !item.name.endsWith('.d.ts')) ||
-          item.name.endsWith('.tsx')
-        ) {
+      if (item.type === 'blob') {
+        const fileType = getFileTypeFromPath(item.path);
+        if (fileType) {
           structure.push({
             path: item.path,
-            name: item.name,
-            type: 'file',
+            name: item.path.split('/').pop(),
+            type: fileType,
           });
         }
-        // Include Python files
-        else if (item.name.endsWith('.py')) {
-          structure.push({
-            path: item.path,
-            name: item.name,
-            type: 'python',
-          });
-        }
-        // Include Vue single-file components
-        else if (item.name.endsWith('.vue')) {
-          structure.push({
-            path: item.path,
-            name: item.name,
-            type: 'vue',
-          });
-        }
-        // Include shader files (GLSL, WGSL, HLSL, etc.)
-        else if (
-          item.name.endsWith('.glsl') ||
-          item.name.endsWith('.wgsl') ||
-          item.name.endsWith('.hlsl') ||
-          item.name.endsWith('.vert') ||
-          item.name.endsWith('.frag') ||
-          item.name.endsWith('.comp')
-        ) {
-          structure.push({
-            path: item.path,
-            name: item.name,
-            type: 'shader',
-          });
-        }
-        // Include other tree-sitter-supported languages (Go, Rust, Java,
-        // C/C++, C#, Ruby, PHP). The `type` is the language key the scanner
-        // worker uses, so the analysis loop can route on `file.type` directly.
-        else {
-          const tsLang = getTreeSitterLanguage(item.name);
-          if (tsLang) {
-            structure.push({
-              path: item.path,
-              name: item.name,
-              type: tsLang,
-            });
+      }
+    }
+
+    if (treeData.truncated) {
+      console.warn('Repository tree was truncated (>100k items), fetching sub-trees...');
+      const dirs = items.filter(i => i.type === 'tree');
+      for (const dir of dirs) {
+        const subUrl = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/trees/${dir.sha}?recursive=1`;
+        const subResponse = await fetchWithRetry(subUrl, {
+          headers: {
+            Authorization: `token ${token}`,
+            ...GITHUB_API_HEADERS,
+          },
+        });
+        if (subResponse.ok) {
+          const subData = await subResponse.json();
+          for (const subItem of (subData.tree || [])) {
+            if (subItem.type === 'blob') {
+              const fileType = getFileTypeFromPath(subItem.path);
+              if (fileType) {
+                structure.push({
+                  path: subItem.path,
+                  name: subItem.path.split('/').pop(),
+                  type: fileType,
+                });
+              }
+            }
           }
         }
       }
@@ -270,7 +303,7 @@ export const fetchRepositoryStructure = async (owner, repoName, token, path = ''
 
     return structure;
   } catch (error) {
-    console.error(`Error fetching repository structure for ${path}:`, error);
+    console.error('Error fetching repository structure:', error);
     return [];
   }
 };
@@ -1584,23 +1617,45 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // Maps: consumer (component/file) -> Set<interfaceName>
     const interfaceUsages = new Map();
 
-    // Process files in parallel batches for better performance
-    const BATCH_SIZE = 10; // Process 10 files at a time
-    const batches = [];
-    for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
-      batches.push(filesToProcess.slice(i, i + BATCH_SIZE));
-    }
+    const ctx = {
+      owner, repoName, token,
+      elements, foundItems,
+      componentFunctions, componentFuncDisplayNames, funcIdCounters,
+      componentRelationships, componentDependencies,
+      internalComponents, exportedComponents,
+      componentToFile, componentImportSources,
+      fileFunctions, internalHooks, filesNeedingSuffix,
+      functionCallRelationships, componentPropsRelationships,
+      storeUsageRelationships, hookReturnValueRelationships,
+      moduleImportRelationships, nextjsRouteMap,
+      apiEndpoints, dbModels, dbModelUsers,
+      authGuards, authFlows,
+      eventEmitters, eventListeners,
+      errorBoundaries, suspenseBoundaries, errorContainment,
+      sharedInterfaces, interfaceUsages,
+      repoType, parse,
+    };
 
-    for (const batch of batches) {
-      // Process all files in this batch in parallel
-      await Promise.all(
-        batch.map(async (file) => {
-          const fileContent = await fetchFileContent(owner, repoName, file.path, token);
-          if (!fileContent) {
-            return;
-          }
+    const processSingleFile = async (file, fileContent, ctx) => {
+      const {
+        elements, foundItems,
+        componentFunctions,
+        componentRelationships, componentDependencies,
+        internalComponents, exportedComponents,
+        componentToFile, componentImportSources,
+        fileFunctions, internalHooks, filesNeedingSuffix,
+        functionCallRelationships, componentPropsRelationships,
+        storeUsageRelationships, hookReturnValueRelationships,
+        moduleImportRelationships, nextjsRouteMap,
+        apiEndpoints, dbModels, dbModelUsers,
+        authGuards, authFlows,
+        eventEmitters, eventListeners,
+        errorBoundaries, suspenseBoundaries, errorContainment,
+        sharedInterfaces, interfaceUsages,
+        repoType, parse,
+      } = ctx;
 
-          const fileContext = analyzeFile(file.path, repoType);
+      const fileContext = analyzeFile(file.path, repoType);
 
           // Extract file name without extension for file-level tracking
           // Sanitize to remove hyphens/dots that break Merfolk node-ID syntax
@@ -3201,10 +3256,34 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
           } catch (parseError) {
             // Log which files can't be parsed (helps debug missing nodes)
             console.warn(`⚠️  Failed to parse ${file.path}:`, parseError?.message || parseError);
-            return;
           }
-        })
-      );
+    };
+
+    // Process files with dynamic concurrency pool for maximum throughput.
+    // File *fetching* (HTTP) runs with MAX_CONCURRENCY parallel requests;
+    // file *processing* (AST parsing, symbol extraction) runs sequentially
+    // in original order so all shared state mutations are safe.
+    const MAX_CONCURRENCY = 25;
+    const fetched = new Array(filesToProcess.length).fill(undefined);
+    let fetchIdx = 0;
+
+    const fetchWorker = async () => {
+      while (fetchIdx < filesToProcess.length) {
+        const i = fetchIdx++;
+        const file = filesToProcess[i];
+        const fileContent = await fetchFileContent(ctx.owner, ctx.repoName, file.path, ctx.token);
+        if (fileContent) fetched[i] = { file, fileContent };
+      }
+    };
+
+    const poolSize = Math.min(MAX_CONCURRENCY, filesToProcess.length);
+    await Promise.all(Array.from({ length: poolSize }, () => fetchWorker()));
+
+    for (let idx = 0; idx < fetched.length; idx++) {
+      const entry = fetched[idx];
+      if (!entry) continue;
+      const { file, fileContent } = entry;
+      await processSingleFile(file, fileContent, ctx);
     }
 
     // ── Vanilla / Python / Vue post-processing: convert inter-module imports to connections ──
@@ -3284,10 +3363,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     }
 
     // Generate Merfolk markdown
-    const merfolkResult = generateMerfolkMarkdown(
+    const merfolkResult = generateMerfolkMarkdown({
       repoName,
       elements,
-      foundItems,
       componentFunctions,
       componentFuncDisplayNames,
       componentRelationships,
@@ -3314,8 +3392,8 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       suspenseBoundaries,
       errorContainment,
       sharedInterfaces,
-      interfaceUsages
-    );
+      interfaceUsages,
+    });
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
     console.log(`📝 Generated Merfolk markdown (${merfolkResult.length} chars):\n${merfolkResult.substring(0, 3000)}`);
@@ -3332,7 +3410,6 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
  * Generate Merfolk markdown from parsed elements
  * @param {string} repoName - Repository name
  * @param {Object} elements - Parsed elements
- * @param {Object} foundItems - Sets of found items
  * @param {Map} componentFunctions - Component to function relationships
  * @param {Map} componentRelationships - Component to component relationships
  * @param {Map} componentDependencies - Component dependencies
@@ -3349,10 +3426,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
  * @param {Map} nextjsRouteMap - filePath -> { segment, parentPath, isLayout, isPage, isApi }
  * @returns {string} - Merfolk markdown content
  */
-const generateMerfolkMarkdown = (
+const generateMerfolkMarkdown = ({
   repoName,
   elements,
-  foundItems,
   componentFunctions,
   componentFuncDisplayNames,
   componentRelationships,
@@ -3380,7 +3456,7 @@ const generateMerfolkMarkdown = (
   errorContainment = [],
   sharedInterfaces = new Map(),
   interfaceUsages = new Map()
-) => {
+}) => {
   const isVanilla = repoType === 'vanilla' || repoType === 'python' || repoType === 'vue';
   const isNextjs = repoType === 'nextjs';
   let markdown = `%% ${repoName} Repository Analysis\n\n`;

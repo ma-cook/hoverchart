@@ -524,14 +524,16 @@ export const connectionMethods = {
    * @private
    */
   async _backgroundSaveConnections(allConnectionsToSave, currentSpaceId, user) {
-    const BATCH_SIZE = 20;
+    const BATCH_SIZE = 50;
     const startTime = performance.now();
 
     try {
       await pauseConnectionListeners();
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Reduced wait — Firestore resume racing is no longer an issue with
+      // the batch size / parallelism improvements.
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const MAX_CONCURRENT_BATCHES = 1;
+      const MAX_CONCURRENT_BATCHES = 3;
       const totalBatches = Math.ceil(allConnectionsToSave.length / BATCH_SIZE);
       let savedCount = 0;
 
@@ -543,7 +545,7 @@ export const connectionMethods = {
         const groupPromises = [];
 
         if (batchGroup > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await new Promise((resolve) => setTimeout(resolve, 50));
         }
 
         for (

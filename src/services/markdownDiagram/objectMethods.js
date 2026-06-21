@@ -142,7 +142,7 @@ export const objectMethods = {
       console.log('[object-histogram] UNPOSITIONED by type =', unpositionedTypes);
     }
 
-    const OBJECT_BATCH_SIZE = 50;
+    const OBJECT_BATCH_SIZE = 200;
 
     // Collect all objects for this diagram before adding to store
     const allObjectsForDiagram = [];
@@ -163,10 +163,6 @@ export const objectMethods = {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
       const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1; // eslint-disable-line no-unused-vars
       const totalBatches = Math.ceil(nodeEntries.length / OBJECT_BATCH_SIZE); // eslint-disable-line no-unused-vars
-
-      if (i > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
 
       const batchData = batch
         .map(([nodeId, position]) => {

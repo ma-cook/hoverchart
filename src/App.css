@@ -921,6 +921,12 @@ body {
   flex: 0 0 25%;
   min-height: 60px;
   max-height: 200px;
+  align-items: flex-start;
+}
+
+.space-chat-window.expanded .space-chat-input {
+  height: 100%;
+  max-height: none;
 }
 
 .space-chat-resize-handle {
@@ -1127,6 +1133,11 @@ body {
   font-size: 13px;
   outline: none;
   min-width: 0;
+  resize: none;
+  overflow-y: auto;
+  font-family: inherit;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .space-chat-input::placeholder {

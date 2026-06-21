@@ -170,6 +170,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     setResizing({ edge, startX: e.clientX, startY: e.clientY, startWidth: chatSize.width, startHeight: chatSize.height });
   };
 
+  // ── Auto-grow textarea ────────────────────────────────────────────────
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || isExpanded) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, [input, isExpanded]);
+
   // ── Group chat state (existing) ───────────────────────────────────────
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -177,6 +185,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  const textareaRef = useRef(null);
   const bottomRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const oldestTimestampRef = useRef(null);
@@ -625,9 +634,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       )}
 
       <div className="space-chat-input-row">
-        <input
+        <textarea
+          ref={textareaRef}
           className="space-chat-input"
-          type="text"
+          rows={1}
           placeholder={chatMode === 'group' ? 'Send a message…' : 'Describe a diagram…'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
