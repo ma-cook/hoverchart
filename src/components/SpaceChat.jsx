@@ -122,7 +122,54 @@ async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
   return allConnectionsToSave.length > 0 || allObjectsToSave.length > 0;
 }
 
+const SPACE_CHAT_MIN_WIDTH = 240;
+const SPACE_CHAT_MIN_HEIGHT = 200;
+const SPACE_CHAT_DEFAULT_WIDTH = 300;
+const SPACE_CHAT_DEFAULT_HEIGHT = 360;
+
 const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
+  // ── Expand / Resize state ─────────────────────────────────────────────
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [chatSize, setChatSize] = useState({ width: SPACE_CHAT_DEFAULT_WIDTH, height: SPACE_CHAT_DEFAULT_HEIGHT });
+  const [userResized, setUserResized] = useState(false);
+  const [resizing, setResizing] = useState(null);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const handleMove = (e) => {
+      const dx = e.clientX - resizing.startX;
+      const dy = e.clientY - resizing.startY;
+      setChatSize((prev) => {
+        const next = { ...prev };
+        if (resizing.edge === 'right' || resizing.edge === 'corner') {
+          const newWidth = Math.max(SPACE_CHAT_MIN_WIDTH, resizing.startWidth + dx);
+          next.width = newWidth;
+          next.userRight = 76 - dx;
+        }
+        if (resizing.edge === 'bottom' || resizing.edge === 'corner') {
+          next.height = Math.max(SPACE_CHAT_MIN_HEIGHT, resizing.startHeight + dy);
+        }
+        return next;
+      });
+    };
+    const handleUp = () => {
+      setResizing(null);
+      setUserResized(true);
+    };
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+    };
+  }, [resizing]);
+
+  const handleResizeStart = (edge, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setResizing({ edge, startX: e.clientX, startY: e.clientY, startWidth: chatSize.width, startHeight: chatSize.height });
+  };
+
   // ── Group chat state (existing) ───────────────────────────────────────
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -405,7 +452,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="space-chat-window" onClick={(e) => e.stopPropagation()}>
+    <div
+      className={`space-chat-window${isExpanded ? ' expanded' : ''}`}
+      onClick={(e) => e.stopPropagation()}
+      style={isExpanded ? undefined : { width: chatSize.width, height: chatSize.height, ...(userResized && chatSize.userRight ? { right: chatSize.userRight } : {}) }}
+    >
       <div className="space-chat-header">
         <div className="space-chat-mode-toggle">
           <button
@@ -421,16 +472,34 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
             LLM
           </button>
         </div>
-        {onClose && (
+        <div className="space-chat-header-actions">
           <button
-            className="space-chat-close"
-            onClick={onClose}
-            title="Close chat"
+            className="space-chat-expand"
+            onClick={() => setIsExpanded(v => !v)}
+            title={isExpanded ? 'Collapse' : 'Expand'}
           >
-            ✕
+            {isExpanded ? '⤡' : '⤢'}
           </button>
-        )}
+          {onClose && (
+            <button
+              className="space-chat-close"
+              onClick={onClose}
+              title="Close chat"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Resize handles (only when not expanded) */}
+      {!isExpanded && (
+        <>
+          <div className="space-chat-resize-handle space-chat-resize-right" onMouseDown={(e) => handleResizeStart('right', e)} />
+          <div className="space-chat-resize-handle space-chat-resize-bottom" onMouseDown={(e) => handleResizeStart('bottom', e)} />
+          <div className="space-chat-resize-handle space-chat-resize-corner" onMouseDown={(e) => handleResizeStart('corner', e)} />
+        </>
+      )}
 
       <div
         className="space-chat-messages"

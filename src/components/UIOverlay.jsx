@@ -1621,11 +1621,10 @@ const UIOverlay = ({
                   i
                 </button>
               )}
+              <ObjectSearch />
             </>
           )}
         </div>
-
-        <ObjectSearch />
 
         <div className="top-bar-divider" />
 
