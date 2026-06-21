@@ -51,9 +51,6 @@ const GlobalDodecahedronLowLODRenderer = React.memo(({ dodecahedrons = [], onIns
     if (!lodEnabled) return [];
     return dodecahedrons.filter(dodeca => {
       if (dodeca.merfolkData?.isContainer === true) return false;
-      const isParent = parentIds.has(dodeca.id);
-      const isChild = childParentMap.has(dodeca.id);
-      if (!isParent && !isChild) return false;
       const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.LOW;
     });

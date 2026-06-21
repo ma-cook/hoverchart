@@ -56,12 +56,6 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
       if (isGroupingContainer) return false;
 
-      const isParent = parentIds.has(cube.id);
-      const isChild = childParentMap.has(cube.id);
-
-      // If neither parent nor child, LOD doesn't apply
-      if (!isParent && !isChild) return false;
-
       const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.MEDIUM;
     });

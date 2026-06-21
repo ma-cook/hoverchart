@@ -72,11 +72,6 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
       const isGroupingContainer = tetra.merfolkData?.isContainer === true;
       if (isGroupingContainer) return false;
 
-      const isParent = parentIds.has(tetra.id);
-      const isChild = childParentMap.has(tetra.id);
-
-      if (!isParent && !isChild) return false;
-
       const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.MEDIUM;
     });

@@ -709,8 +709,8 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
                   transitioningObjectsRef.current.delete(item.id.toString());
                 }
 
-                // Skip unloaded — defense: clean up if found so
-                // objects aren't permanently lost if primary cleanup misses them.
+                // Defense-in-depth: clean up if found in unloaded tracking,
+                // then let the object through so it's not permanently lost.
                 if (window._unloadedObjects?.has(item.id.toString())) {
                   window._unloadedObjects.delete(item.id.toString());
                   if (window._unloadedObjectsByCell) {
@@ -718,7 +718,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
                       objSet.delete(item.id.toString());
                     }
                   }
-                  continue;
                 }
 
                 // Validate position

@@ -37,9 +37,6 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
     if (!lodEnabled) return [];
     return cubes.filter(cube => {
       if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return false;
-      const isParent = parentIds.has(cube.id);
-      const isChild = childParentMap.has(cube.id);
-      if (!isParent && !isChild) return false;
       const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.LOW;
     });

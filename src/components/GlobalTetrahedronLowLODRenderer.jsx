@@ -52,9 +52,6 @@ const GlobalTetrahedronLowLODRenderer = React.memo(({ tetrahedrons = [], onInsta
     if (!lodEnabled) return [];
     return tetrahedrons.filter(tetra => {
       if (tetra.merfolkData?.isContainer === true) return false;
-      const isParent = parentIds.has(tetra.id);
-      const isChild = childParentMap.has(tetra.id);
-      if (!isParent && !isChild) return false;
       const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.LOW;
     });

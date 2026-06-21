@@ -46,11 +46,6 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [], on
       const isGroupingContainer = dodeca.merfolkData?.isContainer === true;
       if (isGroupingContainer) return false;
 
-      const isParent = parentIds.has(dodeca.id);
-      const isChild = childParentMap.has(dodeca.id);
-
-      if (!isParent && !isChild) return false;
-
       const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.MEDIUM;
     });

@@ -26,6 +26,7 @@ import { forceCleanupSubscription, generateSubscriptionKey } from '../services/g
 // Lazy-accessed at runtime (inside actions) to break circular init dependency
 import useObjectsStore from './objectsStore';
 import useConnectionStore from './connectionStore';
+import useLODStore from './lodStore';
 
 // Version marker
 
@@ -53,17 +54,11 @@ const useSpatialManagerStore = create((set, get) => ({
   UNLOAD_BATCH_SIZE: 6, // Conservative unload batch size
   LOAD_BATCH_SIZE: 6, // Conservative load batch size for optimal performance
 
-  // Handler for when cells are reloaded
-  handleCellsReloaded: (loadedCells) => {
-    if (!loadedCells?.length) return;
-
-    try {
-      const currentObjects = useObjectsStore.getState().objects;
-      useObjectsStore.getState().setObjects([...currentObjects]);
-    } catch (error) {
-      console.error('Error updating objects after cell reload:', error);
-    }
-  },
+  // Handler for when cells are reloaded.
+  // No-op: cleanup of _unloadedObjects happens in loadCellsBatch before the
+  // DB fetch, and the Firestore subscription callback in App.jsx handles
+  // populating the objects store with the reloaded data.
+  handleCellsReloaded: () => {},
 
   // Actions
   setLoadedCells: (cells) => {
@@ -436,6 +431,9 @@ const useSpatialManagerStore = create((set, get) => ({
           window._unloadedObjectsByCell = new Map();
         }
 
+        const lodLevels = useLODStore.getState().lodLevels;
+        const faceTextVisible = useLODStore.getState().faceTextVisible;
+
         cellsToUnloadNow.forEach((cellId) => {
           const cellObjects = state.objectsByCell.get(cellId);
 
@@ -445,12 +443,23 @@ const useSpatialManagerStore = create((set, get) => ({
               const idStr = objId.toString();
               window._unloadedObjects.add(idStr);
               objSet.add(idStr);
+              // Clean up LOD store entries for this object
+              if (lodLevels) lodLevels.delete(idStr);
+              if (faceTextVisible) faceTextVisible.delete(idStr);
             });
             window._unloadedObjectsByCell.set(cellId, objSet);
 
             objectsToRemove.push(...Array.from(cellObjects));
           }
+
+          // Clear objectsByCell entry for this unloaded cell to prevent stale data
+          const newMap = new Map(state.objectsByCell);
+          newMap.delete(cellId);
+          set({ objectsByCell: newMap });
         });
+
+        // Bump LOD version so renderers pick up the cleaned entries
+        useLODStore.setState({ _lodVersion: useLODStore.getState()._lodVersion + 1 });
 
         if (objectsToRemove.length > 0) {
           objectsToRemove.forEach((objectId) => {

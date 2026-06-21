@@ -60,11 +60,6 @@ const GlobalOctahedronMediumLODRenderer = React.memo(({ octahedrons = [], onInst
       const isGroupingContainer = octa.merfolkData?.isContainer === true;
       if (isGroupingContainer) return false;
 
-      const isParent = parentIds.has(octa.id);
-      const isChild = childParentMap.has(octa.id);
-
-      if (!isParent && !isChild) return false;
-
       const lodLevel = lodLevels.get(octa.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.MEDIUM;
     });
