@@ -170,14 +170,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     setResizing({ edge, startX: e.clientX, startY: e.clientY, startWidth: chatSize.width, startHeight: chatSize.height });
   };
 
-  // ── Auto-grow textarea ────────────────────────────────────────────────
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el || isExpanded) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  }, [input, isExpanded]);
-
   // ── Group chat state (existing) ───────────────────────────────────────
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -191,6 +183,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const oldestTimestampRef = useRef(null);
   const isNearBottomRef = useRef(true);
   const liveKeysRef = useRef(new Set());
+
+  // ── Auto-grow textarea ────────────────────────────────────────────────
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || isExpanded) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, [input, isExpanded]);
 
   // ── LLM chat state ───────────────────────────────────────────────────
   const [chatMode, setChatMode] = useState('group');
