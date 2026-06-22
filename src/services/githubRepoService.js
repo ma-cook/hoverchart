@@ -1431,6 +1431,7 @@ const traverseVueSource = (
  * @returns {Promise<string>} - Merfolk markdown content
  */
 export const generateMerfolkFromRepository = async (owner, repoName, options = {}) => {
+  const { onProgress } = options;
   try {
     const token = localStorage.getItem('github_token');
     if (!token) {
@@ -3284,12 +3285,19 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     const fetched = new Array(filesToProcess.length).fill(undefined);
     let fetchIdx = 0;
 
+    let fetchedCount = 0;
+
     const fetchWorker = async () => {
       while (fetchIdx < filesToProcess.length) {
         const i = fetchIdx++;
         const file = filesToProcess[i];
         const fileContent = await fetchFileContent(ctx.owner, ctx.repoName, file.path, ctx.token);
         if (fileContent) fetched[i] = { file, fileContent };
+        fetchedCount++;
+        if (onProgress) {
+          const pct = 10 + Math.round((fetchedCount / filesToProcess.length) * 25);
+          onProgress(pct, `Fetching files (${fetchedCount}/${filesToProcess.length})...`);
+        }
       }
     };
 
@@ -3301,6 +3309,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       if (!entry) continue;
       const { file, fileContent } = entry;
       await processSingleFile(file, fileContent, ctx);
+      if (onProgress) {
+        const pct = 35 + Math.round(((idx + 1) / fetched.length) * 5);
+        onProgress(pct, `Processing files (${idx + 1}/${fetched.length})...`);
+      }
     }
 
     // ── Vanilla / Python / Vue post-processing: convert inter-module imports to connections ──
@@ -3595,6 +3607,23 @@ const generateMerfolkMarkdown = ({
   const nodeIds = new Set();
   const duplicates = [];
 
+  // When a node ID would collide, it gets renamed with a _2, _3, … suffix.
+  // This map tracks old → new so connection generators can update references.
+  const renamedIds = new Map();
+
+  function uniqueNodeId(baseId) {
+    if (!nodeIds.has(baseId)) {
+      nodeIds.add(baseId);
+      return baseId;
+    }
+    let c = 2;
+    let alias;
+    do { alias = `${baseId}_${c++}`; } while (nodeIds.has(alias));
+    nodeIds.add(alias);
+    renamedIds.set(baseId, alias);
+    return alias;
+  }
+
   // Build a reverse lookup: function/utility/hook name -> parent container node ID
   // This is used to route connections through parent containers
   const childToParentMap = new Map();
@@ -3668,6 +3697,7 @@ const generateMerfolkMarkdown = ({
     // variants) must have been emitted as Merfolk node definitions.
     const resolveId = (name) => {
       if (filesNeedingSuffix.has(name)) return `${name}_file`;
+      if (renamedIds.has(name)) return renamedIds.get(name);
       return name;
     };
     const srcId = resolveId(sourceNode);
@@ -3685,17 +3715,11 @@ const generateMerfolkMarkdown = ({
     const sourceParent = childToParentMap.get(sourceNode);
     const targetParent = childToParentMap.get(targetNode);
     
-    // Determine source node ID (might need _file suffix)
-    let sourceNodeId = sourceNode;
-    if (filesNeedingSuffix.has(sourceNode)) {
-      sourceNodeId = `${sourceNode}_file`;
-    }
+    // Determine source node ID (might need _file suffix or rename)
+    let sourceNodeId = resolveId(sourceNode);
     
-    // Determine target node ID (might need _file suffix)  
-    let targetNodeId = targetNode;
-    if (filesNeedingSuffix.has(targetNode)) {
-      targetNodeId = `${targetNode}_file`;
-    }
+    // Determine target node ID (might need _file suffix or rename)  
+    let targetNodeId = resolveId(targetNode);
     
     if (sourceParent && targetParent) {
       // Both have parents - route through both parent containers
@@ -3732,14 +3756,11 @@ const generateMerfolkMarkdown = ({
       // Check if this component needs _file suffix due to internal hook with same name
       const needsSuffix = filesNeedingSuffix.has(comp);
       const nodeId = needsSuffix ? `${comp}_file` : comp;
-      
-      if (nodeIds.has(nodeId)) {
-        duplicates.push({ id: nodeId, type: 'Component', section: 'Components' });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${nodeId} (Component)`);
-        return;
+      const finalId = uniqueNodeId(nodeId);
+      if (finalId !== nodeId) {
+        console.warn(`ℹ️ Renamed duplicate "${nodeId}" → "${finalId}" (Component)`);
       }
-      nodeIds.add(nodeId);
-      markdown += `${nodeId}{Component: ${comp}}\n`;
+      markdown += `${finalId}{Component: ${comp}}\n`;
     });
   }
 
@@ -3770,13 +3791,11 @@ const generateMerfolkMarkdown = ({
   if (elements.functions.length > 0) {
     markdown += `\n%% Functions\n`;
     elements.functions.forEach((func) => {
-      if (nodeIds.has(func)) {
-        duplicates.push({ id: func, type: 'Function', section: 'Functions' });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${func} (Function)`);
-        return;
+      const finalId = uniqueNodeId(func);
+      if (finalId !== func) {
+        console.warn(`ℹ️ Renamed duplicate "${func}" → "${finalId}" (Function)`);
       }
-      nodeIds.add(func);
-      markdown += `${func}[Function: ${func}]\n`;
+      markdown += `${finalId}[Function: ${func}]\n`;
     });
   }
 
@@ -3784,15 +3803,11 @@ const generateMerfolkMarkdown = ({
   if (elements.hooks.length > 0) {
     markdown += `\n%% Hooks\n`;
     elements.hooks.forEach((hook) => {
-      if (nodeIds.has(hook)) {
-        duplicates.push({ id: hook, type: 'Hook', section: 'Hooks' });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${hook} (Hook)`);
-        return;
+      const finalId = uniqueNodeId(hook);
+      if (finalId !== hook) {
+        console.warn(`ℹ️ Renamed duplicate "${hook}" → "${finalId}" (Hook)`);
       }
-      nodeIds.add(hook);
-      // Hook functions are cubes with [Function: name]
-      // Only hook FILE CONTAINERS (created later) use [Hook: fileName]
-      markdown += `${hook}[Function: ${hook}]\n`;
+      markdown += `${finalId}[Function: ${hook}]\n`;
     });
   }
 
@@ -3811,14 +3826,8 @@ const generateMerfolkMarkdown = ({
   if (elements.services.length > 0) {
     markdown += `\n%% Services\n`;
     elements.services.forEach((service) => {
-      if (nodeIds.has(service)) {
-        // Skip duplicate - node already defined, this is just a reference
-        return;
-      }
-      nodeIds.add(service);
-      // Service functions are cubes, not tetrahedrons
-      // Only service FILE CONTAINERS (created later) are tetrahedrons
-      markdown += `${service}[Function: ${service}]\n`;
+      const finalId = uniqueNodeId(service);
+      markdown += `${finalId}[Function: ${service}]\n`;
     });
   }
 
@@ -3826,13 +3835,11 @@ const generateMerfolkMarkdown = ({
   if (elements.stores.length > 0) {
     markdown += `\n%% Stores\n`;
     elements.stores.forEach((store) => {
-      if (nodeIds.has(store)) {
-        duplicates.push({ id: store, type: 'Store', section: 'Stores' });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${store} (Store)`);
-        return;
+      const finalId = uniqueNodeId(store);
+      if (finalId !== store) {
+        console.warn(`ℹ️ Renamed duplicate "${store}" → "${finalId}" (Store)`);
       }
-      nodeIds.add(store);
-      markdown += `${store}[[Store: ${store}]]\n`;
+      markdown += `${finalId}[[Store: ${store}]]\n`;
     });
   }
 
@@ -3843,18 +3850,13 @@ const generateMerfolkMarkdown = ({
   if (elements.utilities.length > 0) {
     markdown += `\n%% Utilities\n`;
     elements.utilities.forEach((util) => {
-      if (nodeIds.has(util)) {
-        // Skip duplicate - node already defined, this is just a reference
-        // This is expected when multiple files contain functions with the same name
-        return;
-      }
       // If this utility is a child of a file container, defer its declaration to
       // the File-Function Relationships section so it appears nested in its parent.
       if (childToParentMap.has(util)) {
         return;
       }
-      nodeIds.add(util);
-      markdown += `${util}[Function: ${util}]\n`;
+      const finalId = uniqueNodeId(util);
+      markdown += `${finalId}[Function: ${util}]\n`;
     });
   }
 
@@ -3862,11 +3864,8 @@ const generateMerfolkMarkdown = ({
   if (elements.classes.length > 0) {
     markdown += `\n%% Classes\n`;
     elements.classes.forEach((cls) => {
-      if (nodeIds.has(cls)) {
-        return;
-      }
-      nodeIds.add(cls);
-      markdown += `${cls}[[Class: ${cls}]]\n`;
+      const finalId = uniqueNodeId(cls);
+      markdown += `${finalId}[[Class: ${cls}]]\n`;
     });
   }
 
@@ -3874,11 +3873,8 @@ const generateMerfolkMarkdown = ({
   if (elements.constants.length > 0) {
     markdown += `\n%% Constants\n`;
     elements.constants.forEach((cnst) => {
-      if (nodeIds.has(cnst)) {
-        return;
-      }
-      nodeIds.add(cnst);
-      markdown += `${cnst}[Constant: ${cnst}]\n`;
+      const finalId = uniqueNodeId(cnst);
+      markdown += `${finalId}[Constant: ${cnst}]\n`;
     });
   }
 
@@ -3886,11 +3882,8 @@ const generateMerfolkMarkdown = ({
   if (elements.variables.length > 0) {
     markdown += `\n%% Variables\n`;
     elements.variables.forEach((v) => {
-      if (nodeIds.has(v)) {
-        return;
-      }
-      nodeIds.add(v);
-      markdown += `${v}[Variable: ${v}]\n`;
+      const finalId = uniqueNodeId(v);
+      markdown += `${finalId}[Variable: ${v}]\n`;
     });
   }
 
@@ -3900,11 +3893,8 @@ const generateMerfolkMarkdown = ({
   if (elements.interfaces.length > 0) {
     markdown += `\n%% Interfaces\n`;
     elements.interfaces.forEach((iface) => {
-      if (nodeIds.has(iface)) {
-        return;
-      }
-      nodeIds.add(iface);
-      markdown += `${iface}[[Interface: ${iface}]]\n`;
+      const finalId = uniqueNodeId(iface);
+      markdown += `${finalId}[[Interface: ${iface}]]\n`;
     });
   }
 
@@ -3917,12 +3907,8 @@ const generateMerfolkMarkdown = ({
       // `@` (which is the face-separator in connection syntax). npm-scoped names
       // like `@react-three/fiber` therefore need their leading `@` replaced.
       const libId = lib.replace(/@/g, '_');
-      if (nodeIds.has(libId)) {
-        // Already declared as a different node type — skip to avoid duplicate
-        return;
-      }
-      nodeIds.add(libId);
-      markdown += `${libId}<Library: ${lib}>\n`;
+      const finalId = uniqueNodeId(libId);
+      markdown += `${finalId}<Library: ${lib}>\n`;
     });
   }
 
@@ -3935,14 +3921,12 @@ const generateMerfolkMarkdown = ({
       functions.forEach((func) => allComponentFunctions.add(func));
     });
     allComponentFunctions.forEach((func) => {
-      if (nodeIds.has(func)) {
-        duplicates.push({ id: func, type: 'Function', section: 'Component Internal Functions' });
-        console.warn(`⚠️ DUPLICATE NODE ID: ${func} (Component Internal Function)`);
-        return;
+      const finalId = uniqueNodeId(func);
+      if (finalId !== func) {
+        console.warn(`ℹ️ Renamed duplicate "${func}" → "${finalId}" (Component Internal Function)`);
       }
-      nodeIds.add(func);
       const displayName = componentFuncDisplayNames.get(func) || func;
-      markdown += `${func}[Function: ${displayName}]\n`;
+      markdown += `${finalId}[Function: ${displayName}]\n`;
     });
 
     // Then add arrow relationships with descriptive labels
@@ -3977,7 +3961,8 @@ const generateMerfolkMarkdown = ({
           label = 'debounced helper';
         }
 
-        markdown += `${componentNodeId} -.-> ${func} : "${label}"\n`;
+        const resolvedFunc = renamedIds.get(func) || func;
+        markdown += `${componentNodeId} -.-> ${resolvedFunc} : "${label}"\n`;
       });
     });
   }
@@ -3992,9 +3977,13 @@ const generateMerfolkMarkdown = ({
   let vanillaRootId = null;
   if (isVanilla && fileFunctions.size > 0) {
     vanillaRootId = `${sanitizeNodeId(repoName)}_root`;
+    const finalRootId = uniqueNodeId(vanillaRootId);
+    if (finalRootId !== vanillaRootId) {
+      console.warn(`ℹ️ Renamed duplicate "${vanillaRootId}" → "${finalRootId}" (Vanilla root)`);
+      vanillaRootId = finalRootId;
+    }
     markdown += `\n%% Entry-point root\n`;
     markdown += `${vanillaRootId}{Component: ${repoName}}\n`;
-    nodeIds.add(vanillaRootId);
   }
 
   if (fileFunctions.size > 0) {
@@ -4014,102 +4003,74 @@ const generateMerfolkMarkdown = ({
       // so `positionNodeHierarchy` includes them in the hierarchy tree.
       // React repos keep the original type-specific shapes.
       if (isVanilla) {
-        if (nodeIds.has(fileNodeId)) {
-          duplicates.push({ id: fileNodeId, type: 'Vanilla File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Vanilla File)`);
-          fileInfo.nodeId = fileNodeId;
-        } else {
-          nodeIds.add(fileNodeId);
-          markdown += `${fileNodeId}{Component: ${fileName}}\n`;
-          fileInfo.nodeId = fileNodeId;
+        const finalId = uniqueNodeId(fileNodeId);
+        if (finalId !== fileNodeId) {
+          console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Vanilla File)`);
         }
+        markdown += `${finalId}{Component: ${fileName}}\n`;
+        fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'backend') {
-        // ── React paths (unchanged) ──
         const backendNodeId = `backend_${fileName}`;
-        if (nodeIds.has(backendNodeId)) {
-          duplicates.push({ id: backendNodeId, type: 'Backend File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${backendNodeId} (Backend File)`);
-          fileInfo.nodeId = backendNodeId;
-        } else {
-          nodeIds.add(backendNodeId);
-          markdown += `${backendNodeId}((Service: ${fileName}))\n`;
-          fileInfo.nodeId = backendNodeId;
+        const finalId = uniqueNodeId(backendNodeId);
+        if (finalId !== backendNodeId) {
+          console.warn(`ℹ️ Renamed duplicate "${backendNodeId}" → "${finalId}" (Backend File)`);
         }
+        markdown += `${finalId}((Service: ${fileName}))\n`;
+        fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'service') {
-        if (nodeIds.has(fileNodeId)) {
-          duplicates.push({ id: fileNodeId, type: 'Service File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Service File)`);
-          fileInfo.nodeId = fileNodeId;
-        } else {
-          nodeIds.add(fileNodeId);
-          markdown += `${fileNodeId}((Service: ${fileName}))\n`;
-          fileInfo.nodeId = fileNodeId;
+        const finalId = uniqueNodeId(fileNodeId);
+        if (finalId !== fileNodeId) {
+          console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Service File)`);
         }
+        markdown += `${finalId}((Service: ${fileName}))\n`;
+        fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'hook') {
-        if (nodeIds.has(fileNodeId)) {
-          duplicates.push({ id: fileNodeId, type: 'Hook File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Hook File)`);
-          fileInfo.nodeId = fileNodeId;
-        } else {
-          nodeIds.add(fileNodeId);
-          markdown += `${fileNodeId}[Hook: ${fileName}]\n`;
-          fileInfo.nodeId = fileNodeId;
+        const finalId = uniqueNodeId(fileNodeId);
+        if (finalId !== fileNodeId) {
+          console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Hook File)`);
         }
+        markdown += `${finalId}[Hook: ${fileName}]\n`;
+        fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'store') {
-        if (nodeIds.has(fileNodeId)) {
-          duplicates.push({ id: fileNodeId, type: 'Store File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${fileNodeId} (Store File)`);
-          fileInfo.nodeId = fileNodeId;
-        } else {
-          nodeIds.add(fileNodeId);
-          markdown += `${fileNodeId}[[Store: ${fileName}]]\n`;
-          fileInfo.nodeId = fileNodeId;
+        const finalId = uniqueNodeId(fileNodeId);
+        if (finalId !== fileNodeId) {
+          console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Store File)`);
         }
+        markdown += `${finalId}[[Store: ${fileName}]]\n`;
+        fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'worker') {
-        // Worker files get a worker_ prefix so they are grouped separately
         const workerNodeId = `worker_${fileName}`;
-        if (nodeIds.has(workerNodeId)) {
-          duplicates.push({ id: workerNodeId, type: 'Worker File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${workerNodeId} (Worker File)`);
-          fileInfo.nodeId = workerNodeId;
-        } else {
-          nodeIds.add(workerNodeId);
-          markdown += `${workerNodeId}[Function: ${fileName}]\n`;
-          fileInfo.nodeId = workerNodeId;
+        const finalId = uniqueNodeId(workerNodeId);
+        if (finalId !== workerNodeId) {
+          console.warn(`ℹ️ Renamed duplicate "${workerNodeId}" → "${finalId}" (Worker File)`);
         }
+        markdown += `${finalId}[Function: ${fileName}]\n`;
+        fileInfo.nodeId = finalId;
       } else {
         // utility (and shaders container)
-        // Shader containers get a shader_ prefix for separate grouping
         const utilNodeId = (fileName === 'shaders') ? `shader_${fileName}` : fileNodeId;
-        if (nodeIds.has(utilNodeId)) {
-          duplicates.push({ id: utilNodeId, type: 'Utility File', section: 'File Container Nodes' });
-          console.warn(`⚠️ DUPLICATE NODE ID: ${utilNodeId} (Utility File)`);
-          fileInfo.nodeId = utilNodeId;
-        } else {
-          nodeIds.add(utilNodeId);
-          markdown += `${utilNodeId}[Function: ${fileName}]\n`;
-          fileInfo.nodeId = utilNodeId;
+        const finalId = uniqueNodeId(utilNodeId);
+        if (finalId !== utilNodeId) {
+          console.warn(`ℹ️ Renamed duplicate "${utilNodeId}" → "${finalId}" (Utility File)`);
         }
+        markdown += `${finalId}[Function: ${fileName}]\n`;
+        fileInfo.nodeId = finalId;
       }
     });
 
     // Add file→function connections with dashed arrows (containment)
     markdown += '\n%% File-Function Relationships\n';
     fileFunctions.forEach((fileInfo, fileName) => {
-      // Use the stored file node ID (which may have __file suffix)
       const fileNodeId = fileInfo.nodeId;
 
       fileInfo.functions.forEach((funcName) => {
-        // Create connection from file container to each function it contains
         if (fileNodeId) {
-          // If the function was never declared as a node (e.g. Firebase onCall wrappers
-          // whose CallExpression init is not recognised as a function), declare it now
-          // so the connection target is always valid.
           if (!nodeIds.has(funcName)) {
-            nodeIds.add(funcName);
-            markdown += `${funcName}[Function: ${funcName}]\n`;
+            const finalFuncId = uniqueNodeId(funcName);
+            markdown += `${finalFuncId}[Function: ${funcName}]\n`;
           }
-          markdown += `${fileNodeId} -.-> ${funcName} : "contains"\n`;
+          const resolvedFunc = renamedIds.get(funcName) || funcName;
+          markdown += `${fileNodeId} -.-> ${resolvedFunc} : "contains"\n`;
         }
       });
     });
@@ -4142,10 +4103,11 @@ const generateMerfolkMarkdown = ({
     markdown += `\n%% Next.js Route Hierarchy\n`;
 
     // Emit root entry-point node
-    if (!nodeIds.has(nextRootId)) {
-      markdown += `${nextRootId}{Component: ${repoName}}\n`;
-      nodeIds.add(nextRootId);
+    const nextRootFinalId = uniqueNodeId(nextRootId);
+    if (nextRootFinalId !== nextRootId) {
+      console.warn(`ℹ️ Renamed duplicate "${nextRootId}" → "${nextRootFinalId}" (Next.js root)`);
     }
+    markdown += `${nextRootFinalId}{Component: ${repoName}}\n`;
 
     // Helper: resolve a route fileName to its actual Merfolk node ID.
     // Route files processed via the React AST path are emitted earlier as
@@ -4156,9 +4118,13 @@ const generateMerfolkMarkdown = ({
       if (info && info.isApi) {
         const apiId = `backend_${fileName}`;
         if (nodeIds.has(apiId)) return apiId;
+        const renamed = renamedIds.get(apiId);
+        if (renamed && nodeIds.has(renamed)) return renamed;
       }
       const suffixed = `${fileName}_file`;
       if (nodeIds.has(suffixed)) return suffixed;
+      const renamed = renamedIds.get(fileName);
+      if (renamed && nodeIds.has(renamed)) return renamed;
       if (nodeIds.has(fileName)) return fileName;
       return null;
     };
@@ -4203,13 +4169,17 @@ const generateMerfolkMarkdown = ({
 
       if (info.isApi) {
         const apiId = `backend_${fileName}`;
-        if (!nodeIds.has(apiId)) {
-          markdown += `${apiId}((Service: ${label}))\n`;
-          nodeIds.add(apiId);
+        const finalId = uniqueNodeId(apiId);
+        if (finalId !== apiId) {
+          console.warn(`ℹ️ Renamed duplicate "${apiId}" → "${finalId}" (Next.js API route)`);
         }
+        markdown += `${finalId}((Service: ${label}))\n`;
       } else {
-        markdown += `${fileName}{Component: ${label}}\n`;
-        nodeIds.add(fileName);
+        const finalId = uniqueNodeId(fileName);
+        if (finalId !== fileName) {
+          console.warn(`ℹ️ Renamed duplicate "${fileName}" → "${finalId}" (Next.js route)`);
+        }
+        markdown += `${finalId}{Component: ${label}}\n`;
       }
     });
 
@@ -4571,22 +4541,23 @@ const generateMerfolkMarkdown = ({
         // The interface will only have "uses type" connections.
       } else {
         // Interface-only file: create a minimal utility container
-        const containerId = nodeIds.has(sourceFile) ? `${sourceFile}_file` : sourceFile;
-        if (!nodeIds.has(containerId)) {
-          nodeIds.add(containerId);
-          markdown += `\n%% Interface-only file container\n`;
-          markdown += `${containerId}[Function: ${sourceFile}]\n`;
+        const containerId = uniqueNodeId(sourceFile);
+        if (containerId !== sourceFile) {
+          console.warn(`ℹ️ Renamed duplicate "${sourceFile}" → "${containerId}" (Interface Container)`);
         }
+        markdown += `\n%% Interface-only file container\n`;
+        markdown += `${containerId}[Function: ${sourceFile}]\n`;
         ifaceOnlyContainers.set(sourceFile, containerId);
       }
     });
 
     markdown += '\n%% Shared Interfaces\n';
     sharedInterfaces.forEach((sourceFile, ifaceName) => {
-      if (!nodeIds.has(ifaceName)) {
-        nodeIds.add(ifaceName);
-        markdown += `${ifaceName}[[Interface: ${ifaceName}]]\n`;
+      const finalId = uniqueNodeId(ifaceName);
+      if (finalId !== ifaceName) {
+        console.warn(`ℹ️ Renamed duplicate "${ifaceName}" → "${finalId}" (Interface)`);
       }
+      markdown += `${finalId}[[Interface: ${ifaceName}]]\n`;
     });
 
     // Second pass: emit "contains" connections from each file container to
@@ -4594,8 +4565,9 @@ const generateMerfolkMarkdown = ({
     const ifaceContainmentLines = [];
     sharedInterfaces.forEach((sourceFile, ifaceName) => {
       const containerId = ifaceOnlyContainers.get(sourceFile);
-      if (containerId && nodeIds.has(containerId) && nodeIds.has(ifaceName)) {
-        ifaceContainmentLines.push(`${containerId} -.-> ${ifaceName} : "contains"\n`);
+      const resolvedIface = renamedIds.get(ifaceName) || ifaceName;
+      if (containerId && nodeIds.has(containerId) && nodeIds.has(resolvedIface)) {
+        ifaceContainmentLines.push(`${containerId} -.-> ${resolvedIface} : "contains"\n`);
       }
     });
     if (ifaceContainmentLines.length > 0) {
@@ -4609,8 +4581,9 @@ const generateMerfolkMarkdown = ({
         const srcId = sanitizeNodeId(consumer);
         if (!nodeIds.has(srcId) && !childToParentMap.has(consumer)) return;
         ifaces.forEach(ifaceName => {
-          if (nodeIds.has(ifaceName)) {
-            markdown += `${srcId} --> ${ifaceName} : "uses type"\n`;
+          const resolvedIface = renamedIds.get(ifaceName) || ifaceName;
+          if (nodeIds.has(resolvedIface)) {
+            markdown += `${srcId} --> ${resolvedIface} : "uses type"\n`;
           }
         });
       });
@@ -4769,7 +4742,7 @@ export const scanRepositoryAndGenerateDiagram = async (
     if (onProgress) onProgress(10, 'Fetching repository structure...');
     
     // Generate Merfolk markdown from entire repository
-    const merfolkMarkdown = await generateMerfolkFromRepository(repo.owner.login, repo.name);
+    const merfolkMarkdown = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
     
     if (onProgress) onProgress(40, 'Analyzing code and generating diagram...');
 
@@ -4969,6 +4942,7 @@ export const rescanRepositoryForChanges = async (
   const newMerfolk = await generateMerfolkFromRepository(owner, repoName, {
     preFilteredFiles: sourceFiles,
     repoType: detectedRepoType,
+    onProgress,
   });
 
   // 6. Merge into existing markdown (or use the new markdown as-is)
