@@ -27,7 +27,6 @@
     "draft-js": "^0.11.7",
     "firebase": "^11.0.1",
     "fix-webm-duration": "^1.0.6",
-    "jszip": "^3.10.1",
     "lodash": "^4.17.21",
     "onnxruntime-web": "^1.24.3",
     "react": "^18.3.1",
