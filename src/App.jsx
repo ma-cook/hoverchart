@@ -58,7 +58,8 @@ import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkSched
 import { signInUser } from './services/authService';
 import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
 import { subscribeToSpatialObjects, clearAllObjectCaches } from './services/spatialObjectsService';
-import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning'; // Import CELL_SIZE constant
+import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning';
+import { hasAnyPendingObjects, getAllCellObjectsForCells } from './services/cellObjectCache';
 import { setGuestPresence } from './services/presenceService';
 import { getPublicSpaceMetadata } from './services/spacesService';
 import { setIsInitialLoading as setGlobalInitialLoading } from './utils/loadingState';
@@ -603,7 +604,24 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
           ownerUserId,
           effectiveSpaceId,
           cellCoords
-        ); // Add all initial objects to the store
+        );
+        // Bridge: during diagram creation, objects for cells near the camera
+        // are already in the store (from createObjectsFromDiagram), but objects
+        // for cells loaded during camera movement may not be in Firebase yet
+        // (Cloud Function still pending). Merge in any cached objects.
+        if (hasAnyPendingObjects() && loadedCells.length > 0) {
+          const cachedObjects = getAllCellObjectsForCells(loadedCells);
+          if (cachedObjects.length > 0) {
+            // Deduplicate by a Set of known IDs
+            const knownIds = new Set(initialObjects.map(o => o.id?.toString()));
+            for (const obj of cachedObjects) {
+              if (!knownIds.has(obj.id?.toString())) {
+                initialObjects.push(obj);
+                knownIds.add(obj.id?.toString());
+              }
+            }
+          }
+        }
         // Re-check the bulk-delete flag after the await — the user may have
         // started a wipe while the fetch was in flight.
         if (window._bulkDeleteInProgress) {

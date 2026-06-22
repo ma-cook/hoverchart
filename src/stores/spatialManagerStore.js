@@ -27,6 +27,7 @@ import { forceCleanupSubscription, generateSubscriptionKey } from '../services/g
 import useObjectsStore from './objectsStore';
 import useConnectionStore from './connectionStore';
 import useLODStore from './lodStore';
+import { getAllCellObjectsForCells } from '../services/cellObjectCache';
 
 // Version marker
 
@@ -282,6 +283,21 @@ const useSpatialManagerStore = create((set, get) => ({
           ...newCellIds,
         ]);
         set({ loadedCells: newLoadedCells });
+
+        // Check if any objects were cached for these newly loaded cells
+        // (e.g. during diagram creation before the Cloud Function completes).
+        const cachedObjects = getAllCellObjectsForCells(newCellIds);
+        if (cachedObjects.length > 0) {
+          useObjectsStore.getState().setObjects(
+            (prev) => [...prev, ...cachedObjects]
+          );
+          // Track in objectsByCell so unload can remove them
+          for (const obj of cachedObjects) {
+            if (obj.cellId && newCellIds.includes(obj.cellId)) {
+              get().trackObjectInCell(obj.id, obj.cellId);
+            }
+          }
+        }
       }
 
       return results;

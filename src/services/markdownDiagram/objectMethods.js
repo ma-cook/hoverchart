@@ -1,6 +1,7 @@
-import { useObjectsStore } from '../../stores';
+import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import useDiagramStore from '../../stores/diagramStore.js';
-import { getCellCoordinates, getCellId } from '../spatialPartitioning';
+import { getCellCoordinates, getCellId, getNeighborCells, CELL_NEIGHBOR_RADIUS } from '../spatialPartitioning';
+import { addPendingCellObjects, clearAllCellCaches } from '../cellObjectCache';
 
 export const objectMethods = {
   /**
@@ -136,6 +137,22 @@ export const objectMethods = {
       console.log('[object-histogram] graph nodes total =', graph.nodes.size);
       console.log('[object-histogram] positioned by type =', positionedTypes);
       console.log('[object-histogram] UNPOSITIONED by type =', unpositionedTypes);
+    }
+
+    // ── Determine which cells are "active" (near the camera) ─────────────
+    // Only objects in active cells are pushed to the Zustand store immediately.
+    // Objects outside these cells are deferred to the cell-object cache and
+    // will be added to the store when the camera moves and their cell is loaded.
+    clearAllCellCaches();
+    const cameraPos = basePosition || [0, 0, 0];
+    const cameraCell = getCellCoordinates(cameraPos);
+    const neighborCoords = getNeighborCells(cameraCell.x, cameraCell.y, cameraCell.z, CELL_NEIGHBOR_RADIUS);
+    const activeCells = new Set(neighborCoords.map(c => getCellId(c.x, c.y, c.z)));
+    const spatialState = useSpatialManagerStore.getState();
+    if (spatialState.loadedCells) {
+      for (const cellId of spatialState.loadedCells) {
+        activeCells.add(cellId);
+      }
     }
 
     const OBJECT_BATCH_SIZE = 200;
@@ -295,7 +312,17 @@ export const objectMethods = {
             },
           };
 
-          storeBatch.push(objectData);
+          // Only add to the Zustand store for cells near the camera.
+          // Objects in distant cells are cached and added when their cell
+          // is loaded during camera movement.
+          if (activeCells.has(cellId)) {
+            storeBatch.push(objectData);
+          } else {
+            addPendingCellObjects(cellId, [objectData]);
+          }
+
+          // Track all objects per cell so spatial manager can unload them
+          spatialState.trackObjectInCell(objectId, cellId);
 
           const objectForSave = {
             id: objectId,
