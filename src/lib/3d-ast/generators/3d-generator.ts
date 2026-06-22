@@ -70,24 +70,30 @@ export class AST3DGenerator {
       const errors: string[] = [];
       const warnings: string[] = [];
 
-      // Check for duplicate node IDs (fatal — would corrupt the graph)
-      const nodeIds = new Set<string>();
+      // Check for duplicate node IDs — warn and skip, the builder handles
+      // duplicates gracefully (Map.set overwrites with last definition) so
+      // there is no reason to reject the entire diagram.
+      const seenIds = new Set<string>();
+      const dedupedNodes: typeof parsed.nodes = [];
       for (const node of parsed.nodes) {
-        if (nodeIds.has(node.id)) {
-          errors.push(`Duplicate node ID: ${node.id}`);
+        if (seenIds.has(node.id)) {
+          warnings.push(`Duplicate node ID: ${node.id} — skipping duplicate`);
+        } else {
+          seenIds.add(node.id);
+          dedupedNodes.push(node);
         }
-        nodeIds.add(node.id);
       }
+      parsed.nodes = dedupedNodes;
 
       // Check for orphan connection refs (non-fatal — ASTBuilder already drops
       // invalid connections, so the graph is still usable; surface as warnings).
       for (const connection of parsed.connections) {
-        if (!nodeIds.has(connection.source.nodeId)) {
+        if (!seenIds.has(connection.source.nodeId)) {
           warnings.push(
             `Connection references unknown source node: ${connection.source.nodeId}`
           );
         }
-        if (!nodeIds.has(connection.target.nodeId)) {
+        if (!seenIds.has(connection.target.nodeId)) {
           warnings.push(
             `Connection references unknown target node: ${connection.target.nodeId}`
           );

@@ -4837,11 +4837,41 @@ const filterNewMerfolkNodes = (newContent, existingIds) => {
   const lines = newContent.split('\n');
   const kept = [];
   const nodePattern = /^(\w+)(?:\{|\[\[|\[|\(\(|<)/;
+  // Track IDs seen within the new content itself — in case
+  // generateMerfolkMarkdown produced multiple nodes with the same
+  // sanitized ID across the changed files.
+  const localIds = new Set();
   for (const line of lines) {
     const m = line.match(nodePattern);
-    if (m && existingIds.has(m[1])) {
-      // Skip duplicate node declaration
-      continue;
+    if (m) {
+      const id = m[1];
+      if (existingIds.has(id) || localIds.has(id)) {
+        continue;
+      }
+      localIds.add(id);
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
+};
+
+/**
+ * Strip duplicate node declarations from raw merfolk content (no fences).
+ * Keeps the first occurrence of each node ID; later declarations are dropped.
+ * Connection lines, comments, and blank lines pass through unchanged.
+ */
+const deduplicateMerfolkNodes = (content) => {
+  const lines = content.split('\n');
+  const kept = [];
+  const seenIds = new Set();
+  const nodePattern = /^(\w+)(?:\{|\[\[|\[|\(\(|<)/;
+  for (const line of lines) {
+    const m = line.match(nodePattern);
+    if (m) {
+      if (seenIds.has(m[1])) {
+        continue;
+      }
+      seenIds.add(m[1]);
     }
     kept.push(line);
   }
@@ -4862,16 +4892,20 @@ export const mergeMerfolkMarkdown = (existingMarkdown, newMarkdown) => {
   const existingContent = extractContent(existingMarkdown);
   const newRawContent = extractContent(newMarkdown);
 
+  // Deduplicate existing content first (may have accumulated duplicates
+  // from previous rescans before the merge fix).
+  const cleanExisting = deduplicateMerfolkNodes(existingContent);
+
   const existingIds = extractMerfolkNodeIds(existingMarkdown);
   const filteredNew = filterNewMerfolkNodes(newRawContent, existingIds);
 
   // Only append if there is actual new content after filtering
   const trimmed = filteredNew.replace(/^[\s%]*$/gm, '').trim();
   if (!trimmed) {
-    return existingMarkdown; // nothing new to add
+    return `\`\`\`merfolk\n${cleanExisting}\n\`\`\`\n`;
   }
 
-  return `\`\`\`merfolk\n${existingContent}\n\n%% === Rescan Additions ===\n${filteredNew}\n\`\`\`\n`;
+  return `\`\`\`merfolk\n${cleanExisting}\n\n%% === Rescan Additions ===\n${filteredNew}\n\`\`\`\n`;
 };
 
 /**

@@ -67,6 +67,7 @@ export class MermaidParser {
   private nodeIdCounter = 0;
   private connectionIdCounter = 0;
   private flowPathIdCounter = 0;
+  private seenNodeIds: Set<string> = new Set();
 
   /**
    * Parse Merfolk syntax into graph structure
@@ -124,11 +125,16 @@ export class MermaidParser {
         continue;
       }
 
-      // Parse node definition
+      // Parse node definition (skip duplicates)
       if (this.isNodeDefinition(line)) {
         const node = this.parseNodeDefinition(line);
         if (node) {
-          this.nodes.push(node);
+          if (this.seenNodeIds.has(node.id)) {
+            console.warn(`[MermaidParser] Skipping duplicate node: ${node.id}`);
+          } else {
+            this.seenNodeIds.add(node.id);
+            this.nodes.push(node);
+          }
         }
         continue;
       }
@@ -175,6 +181,7 @@ export class MermaidParser {
     this.nodeIdCounter = 0;
     this.connectionIdCounter = 0;
     this.flowPathIdCounter = 0;
+    this.seenNodeIds = new Set();
   }
   /**
    * Check if line is a node definition
