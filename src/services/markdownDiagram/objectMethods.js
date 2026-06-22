@@ -121,12 +121,8 @@ export const objectMethods = {
       internalComponentChildren,
     });
 
-    // Create 3D objects with batch processing for better performance
-    let objectsCreated = 0;
-    const nodeEntries = Array.from(nodePositions);
-
-    const DEBUG_OBJECT_HISTOGRAM = true; // toggle off after verification
-    if (DEBUG_OBJECT_HISTOGRAM) {
+    // ── Sampled histogram (only on small or first-batch for performance) ──
+    if (graph.nodes.size < 5000) {
       const positionedTypes = {};
       const unpositionedTypes = {};
       for (const [nodeId, node] of graph.nodes.entries()) {
@@ -143,9 +139,11 @@ export const objectMethods = {
     }
 
     const OBJECT_BATCH_SIZE = 200;
-
-    // Collect all objects for this diagram before adding to store
-    const allObjectsForDiagram = [];
+    // Yield to the main thread every N batches to keep the UI responsive.
+    // Flush accumulated objects to the Zustand store every STORE_FLUSH_SIZE items
+    // so React can start progressive mounting while more objects are being built.
+    const YIELD_EVERY_N_BATCHES = 1;      // yield after every batch
+    const STORE_FLUSH_SIZE = 500;
 
     // Build a lookup map of existing objects by merfolkData.nodeId to avoid re-creating
     const existingObjects = useObjectsStore.getState().objects;
@@ -159,10 +157,12 @@ export const objectMethods = {
     // Collect position updates for existing objects during rescan (reprocessed merged markdown)
     const positionUpdates = new Map();
 
+    const nodeEntries = Array.from(nodePositions);
+    let objectsCreated = 0;
+    let storeBatch = [];
+
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
-      const batchNumber = Math.floor(i / OBJECT_BATCH_SIZE) + 1; // eslint-disable-line no-unused-vars
-      const totalBatches = Math.ceil(nodeEntries.length / OBJECT_BATCH_SIZE); // eslint-disable-line no-unused-vars
 
       const batchData = batch
         .map(([nodeId, position]) => {
@@ -220,7 +220,6 @@ export const objectMethods = {
 
           if (existingNodeIdMap.has(data.nodeId)) {
             nodeToObjectIdMap.set(data.nodeId, existingNodeIdMap.get(data.nodeId));
-            // Record new position for existing object so the full-graph layout is applied consistently
             positionUpdates.set(existingNodeIdMap.get(data.nodeId), data.position);
             continue;
           }
@@ -296,7 +295,7 @@ export const objectMethods = {
             },
           };
 
-          allObjectsForDiagram.push(objectData);
+          storeBatch.push(objectData);
 
           const objectForSave = {
             id: objectId,
@@ -356,24 +355,41 @@ export const objectMethods = {
           );
         }
       }
+
+      // ── Yield to the browser so the tab stays responsive ─────────────
+      if (i + OBJECT_BATCH_SIZE < nodeEntries.length) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      // ── Flush accumulated objects to the store incrementally ────────
+      //     This lets React / ObjectsRenderer start progressive mounting
+      //     while more objects are still being built.
+      if (storeBatch.length >= STORE_FLUSH_SIZE ||
+          i + OBJECT_BATCH_SIZE >= nodeEntries.length) {
+        if (storeBatch.length > 0) {
+          const currentObjects = useObjectsStore.getState().objects;
+          useObjectsStore.getState().setObjects([...currentObjects, ...storeBatch]);
+          storeBatch = [];
+        }
+      }
     }
 
-    // Add all objects to store in one batch for this diagram and apply position updates
-    if (allObjectsForDiagram.length > 0 || positionUpdates.size > 0) {
+    // ── Apply position updates in a single pass ──────────────────────
+    if (positionUpdates.size > 0) {
       const currentObjects = useObjectsStore.getState().objects;
-      let updatedObjects = currentObjects;
-      if (positionUpdates.size > 0) {
-        updatedObjects = currentObjects.map((obj) =>
-          positionUpdates.has(obj.id)
-            ? { ...obj, position: positionUpdates.get(obj.id) }
-            : obj
-        );
-      }
-      if (allObjectsForDiagram.length > 0) {
-        updatedObjects = [...updatedObjects, ...allObjectsForDiagram];
-      }
-      useObjectsStore.getState().setObjects(updatedObjects);
+      const updated = currentObjects.map((obj) =>
+        positionUpdates.has(obj.id)
+          ? { ...obj, position: positionUpdates.get(obj.id) }
+          : obj
+      );
+      useObjectsStore.getState().setObjects(updated);
+      await new Promise(r => setTimeout(r, 0));
     }
+
+    // ── Defer container creation to let React start mounting core objects ─
+    //     Progressive mounting in ObjectsRenderer will already be rendering
+    //     the first STORE_FLUSH_SIZE objects while containers are built here.
+    await new Promise(r => setTimeout(r, 0));
 
     // Calculate container dimensions for component child groupings
     const containerDimensions = this.calculateContainerDimensions(
@@ -385,6 +401,8 @@ export const objectMethods = {
       internalComponentChildren
     );
 
+    // These are already async and call setObjects() internally, so they
+    // naturally yield to the event loop between each step.
     await this.createContainerCubesAtPositions(
       containerDimensions,
       graph.nodes,

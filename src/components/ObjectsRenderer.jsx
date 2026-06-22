@@ -17,21 +17,26 @@ import GlobalTetrahedronLowLODRenderer from './GlobalTetrahedronLowLODRenderer';
 import GlobalOctahedronLowLODRenderer from './GlobalOctahedronLowLODRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { useCubeStore } from '../stores';
-import { acquireBudget, isCameraMoving } from '../utils/renderWorkScheduler';
+import { acquireBudget, isCameraMoving, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
 
 /**
- * PROGRESSIVE MOUNT BUDGET
- * Max new objects to REQUEST from the global render work scheduler per frame.
- * The scheduler may grant fewer if connections or other systems have already
- * consumed part of this frame's budget.
+ * PROGRESSIVE MOUNT BUDGET (Adaptive)
+ * Dynamically scales based on the smoothed frame time so that fast hardware
+ * mounts objects faster (up to 24/frame) while struggling hardware or heavy
+ * scenes throttle back (as low as 4/frame).
+ *
+ * The scheduler may grant fewer than requested if connections, text atlas,
+ * or other systems have already consumed part of this frame's budget.
  */
-const MOUNT_BUDGET = 8;
-
-/** Reduced budget used during camera movement — still makes progress but doesn't
- *  compete with GPU rendering of the current frame. */
-const MOUNT_BUDGET_MOVING = 8;
+function getProgressiveBudget() {
+  const ft = getSmoothedFrameTime();
+  if (ft < 20) return 24;  // Very smooth: mount aggressively
+  if (ft < 30) return 16;  // Smooth: mount faster
+  if (ft < 50) return 8;   // Normal: standard pace
+  return 4;                 // Struggling: throttle back
+}
 
 /** Below this object count, skip progressive mounting entirely (instant mount). */
 const PROGRESSIVE_THRESHOLD = 40;
@@ -171,7 +176,7 @@ const ObjectsRenderer = React.memo(({
     }
 
     // 4. If few enough, mount all at once (no need for batching)
-    if (toAdd.length <= MOUNT_BUDGET || objectsRef.current.length <= PROGRESSIVE_THRESHOLD) {
+    if (toAdd.length <= getProgressiveBudget() || objectsRef.current.length <= PROGRESSIVE_THRESHOLD) {
       toAdd.forEach(id => currentMounted.add(id));
       if (removed || toAdd.length > 0) {
         setMountedVersion(v => v + 1);
@@ -189,7 +194,7 @@ const ObjectsRenderer = React.memo(({
 
     if (!isAlreadyMounting) {
       // Mount first batch immediately
-      const firstBatch = pendingRef.current.splice(0, MOUNT_BUDGET);
+      const firstBatch = pendingRef.current.splice(0, getProgressiveBudget());
       firstBatch.forEach(id => currentMounted.add(id));
       setMountedVersion(v => v + 1);
       // Immediately report that progressive mounting has started
@@ -234,12 +239,10 @@ const ObjectsRenderer = React.memo(({
         }
 
         // Only mount objects still in the loaded set (camera may have moved)
-        // Use the shared render budget so objects + connections don't overwhelm one frame
-        // PERF: Use a reduced budget during camera movement instead of blocking
-        // completely — the old full-block caused cubes to never mount in large
-        // diagrams when orbit damping kept isCameraMoving() true for seconds.
-        const isMoving = isCameraMoving();
-        const budget = acquireBudget(isMoving ? MOUNT_BUDGET_MOVING : MOUNT_BUDGET);
+        // Use the shared render budget so objects + connections don't overwhelm one frame.
+        // getProgressiveBudget() returns a lower value when frame times are high,
+        // naturally throttling mounting during busy frames or camera movement.
+        const budget = acquireBudget(getProgressiveBudget());
         if (budget === 0) {
           // Entire frame budget consumed by other systems — try next frame
           rafIdRef.current = requestAnimationFrame(mountNextBatch);
@@ -324,7 +327,7 @@ const ObjectsRenderer = React.memo(({
         }
         const pending = pendingRef.current;
         if (pending.length === 0) { rafIdRef.current = null; return; }
-        const budget = acquireBudget(MOUNT_BUDGET);
+        const budget = acquireBudget(getProgressiveBudget());
         if (budget === 0) { rafIdRef.current = requestAnimationFrame(mountResume); return; }
         const allObjectIds = new Set(objectsRef.current.map(o => o.id));
         let added = 0;
