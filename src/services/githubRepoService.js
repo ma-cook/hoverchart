@@ -71,10 +71,13 @@ let zipCache = null; // Map<string, string> | null
  * fetching entirely.  The cache is held in module memory for the page session.
  */
 async function downloadAndCacheRepoZip(owner, repoName, ref) {
-  const url = `https://github.com/${owner}/${repoName}/archive/${ref}.zip`;
-  console.log(`📦 Downloading repo ZIP from ${url}...`);
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/zipball/${ref}`;
+  console.log(`📦 Downloading repo ZIP from API: ${url}...`);
   try {
-    const response = await fetch(url);
+    const token = getGithubToken();
+    const response = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     if (!response.ok) {
       console.warn(`⚠️  ZIP download failed (${response.status}), falling back to API`);
       zipCache = null;
