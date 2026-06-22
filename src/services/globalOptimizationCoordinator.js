@@ -798,7 +798,22 @@ class GlobalOptimizationCoordinator {
                 0,
                 excess
               );
-              toDelete.forEach((id) => window._unloadedObjects.delete(id));
+              toDelete.forEach((id) => {
+                window._unloadedObjects.delete(id);
+                if (window._unloadedObjectsByCell) {
+                  for (const [, objSet] of window._unloadedObjectsByCell) {
+                    objSet.delete(id);
+                  }
+                }
+              });
+              // Clean up empty cell entries
+              if (window._unloadedObjectsByCell) {
+                for (const [cellId, objSet] of window._unloadedObjectsByCell) {
+                  if (objSet.size === 0) {
+                    window._unloadedObjectsByCell.delete(cellId);
+                  }
+                }
+              }
               cleaned += excess;
             }
 

@@ -6,6 +6,7 @@ import { parse } from '@babel/parser';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { scanPythonWithTreeSitter, scanWithTreeSitter } from './treeSitterScanner';
+import JSZip from 'jszip';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -52,6 +53,59 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
     // Non-retryable or final attempt
     if (response.status === 404) return response; // let caller handle
     throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+  }
+}
+
+// ── ZIP archive cache ──────────────────────────────────────────────────────
+// Download the entire repo as a ZIP once and serve file reads from memory,
+// avoiding N individual `/contents/{path}` API calls.
+
+let zipCache = null; // Map<string, string> | null
+
+/**
+ * Download a repository as a ZIP archive and extract all file contents into
+ * the in-memory `zipCache`.  Uses the raw GitHub archive URL (not the API) so
+ * it does NOT count against the API rate limit for public repos.
+ *
+ * Call this once before any `fetchFileContent` calls to bypass per-file API
+ * fetching entirely.  The cache is held in module memory for the page session.
+ */
+async function downloadAndCacheRepoZip(owner, repoName, ref) {
+  const url = `https://github.com/${owner}/${repoName}/archive/${ref}.zip`;
+  console.log(`📦 Downloading repo ZIP from ${url}...`);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn(`⚠️  ZIP download failed (${response.status}), falling back to API`);
+      zipCache = null;
+      return;
+    }
+    const buffer = await response.arrayBuffer();
+    const zip = await JSZip.loadAsync(buffer);
+
+    // The ZIP has a root directory named `{repoName}-{ref}/` — strip it.
+    const rootDirs = Object.keys(zip.files).filter(k => k.endsWith('/'));
+    const rootDir = rootDirs[0] || '';
+
+    zipCache = new Map();
+    const promises = [];
+    zip.forEach((relativePath, zipEntry) => {
+      if (!zipEntry.dir) {
+        const path = relativePath.startsWith(rootDir)
+          ? relativePath.slice(rootDir.length)
+          : relativePath;
+        if (path) {
+          promises.push(
+            zipEntry.async('text').then(content => zipCache.set(path, content))
+          );
+        }
+      }
+    });
+    await Promise.all(promises);
+    console.log(`📦 Extracted ${zipCache.size} files from repo ZIP`);
+  } catch (err) {
+    console.warn('⚠️  ZIP download/extraction failed, falling back to API:', err.message);
+    zipCache = null;
   }
 }
 
@@ -125,6 +179,11 @@ export const fetchRepositories = async (token) => {
  * @returns {Promise<string|null>} - File content or null if failed
  */
 export const fetchFileContent = async (owner, repoName, filePath, token) => {
+  // Serve from ZIP cache when available (avoids API rate limits)
+  if (zipCache?.has(filePath)) {
+    return zipCache.get(filePath);
+  }
+
   try {
     const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/contents/${filePath}`;
     const response = await fetchWithRetry(url, {
@@ -4743,6 +4802,10 @@ export const scanRepositoryAndGenerateDiagram = async (
     // Capture the commit SHA before scanning so rescans can compare later
     if (onProgress) onProgress(5, 'Recording commit...');
     const commitSha = await fetchLatestCommitSha(repo.owner.login, repo.name, token);
+
+    // Download entire repo as a ZIP to avoid per-file API rate limits
+    if (onProgress) onProgress(7, 'Downloading repository archive...');
+    await downloadAndCacheRepoZip(repo.owner.login, repo.name, commitSha);
 
     // Report progress: Fetching repository structure
     if (onProgress) onProgress(10, 'Fetching repository structure...');
