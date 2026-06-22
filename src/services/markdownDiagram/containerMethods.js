@@ -548,6 +548,7 @@ export const containerMethods = {
       let minX = Infinity, minY = Infinity, minZ = Infinity;
       let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
 
+      let validChildFound = false;
       hierarchicalChildren.forEach((childId) => {
         const childPos = nodePositions.get(childId);
         const childScale = nodeScales.get(childId);
@@ -563,7 +564,12 @@ export const containerMethods = {
         maxY = Math.max(maxY, childPos[1] + childSize);
         minZ = Math.min(minZ, childPos[2] - childSize);
         maxZ = Math.max(maxZ, childPos[2] + childSize);
+        validChildFound = true;
       });
+
+      // If none of the children had a valid position the bounds are still at
+      // Infinity/ -Infinity, which would produce NaN positions — skip.
+      if (!validChildFound) continue;
 
       const padding = 20;
       minX -= padding; maxX += padding;
