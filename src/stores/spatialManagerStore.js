@@ -190,6 +190,7 @@ const useSpatialManagerStore = create((set, get) => ({
     const availableSlots = state.MAX_CONCURRENT_LOADS - state.loadingCells.size;
     const effectiveBatchSize = Math.min(availableSlots, state.LOAD_BATCH_SIZE);
     const cellsToLoadNow = cellsToLoad.slice(0, effectiveBatchSize);
+    const remainingCells = cellsToLoad.slice(effectiveBatchSize);
 
     // Get cell IDs for cleanup operations
     const loadingCellIds = cellsToLoadNow.map((coords) =>
@@ -233,9 +234,11 @@ const useSpatialManagerStore = create((set, get) => ({
       });
     }
 
+    let results;
+    let hasError = false;
     try {
       // Use optimized batch creation for better performance
-      const results = await createCellsBatch(
+      results = await createCellsBatch(
         ownerUserId,
         currentSpaceId,
         cellsToLoadNow
@@ -299,11 +302,10 @@ const useSpatialManagerStore = create((set, get) => ({
           }
         }
       }
-
-      return results;
     } catch (error) {
       console.error('❌ Error in batch cell loading:', error);
-      return [];
+      results = [];
+      hasError = true;
     } finally {
       // Remove cells from loading tracker
       cellsToLoadNow.forEach((coords) => {
@@ -311,6 +313,24 @@ const useSpatialManagerStore = create((set, get) => ({
         get().removeLoadingCell(cellId);
       });
     }
+
+    // Process remaining cells AFTER current batch is fully cleaned up
+    // (loadingCells is now clear, so the recursive call can proceed)
+    if (!hasError && remainingCells.length > 0) {
+      const remainingCoords = remainingCells.map((c) => ({
+        x: c.x,
+        y: c.y,
+        z: c.z,
+      }));
+      const remainingResults = await get().loadCellsBatch(
+        remainingCoords,
+        user,
+        currentSpaceId
+      );
+      return [...results, ...remainingResults];
+    }
+
+    return results;
   },
   // Initialize the spatial system by discovering existing cells and loading the origin cell
   initializeSpatialSystem: async (user, currentSpaceId, cameraRef) => {
