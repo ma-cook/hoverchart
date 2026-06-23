@@ -963,6 +963,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
               display: 'flex',
               padding: windowSize.width <= 480 ? '0.5rem' : '1rem',
               overflow: 'auto',
+              pointerEvents: 'auto',
             }}
           >
             <SpacesTable {...spaceTableProps} />
@@ -989,6 +990,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
               gap: windowSize.width <= 480 ? '8px' : '24px',
               padding: '0 16px',
               fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+              pointerEvents: 'auto',
             }}
           >
             <button
