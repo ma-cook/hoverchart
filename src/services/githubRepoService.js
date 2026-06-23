@@ -4434,6 +4434,8 @@ const generateMerfolkMarkdown = ({
     }
   }
 
+  const resolveNodeId = (name) => renamedIds.get(name) || sanitizeNodeId(name);
+
   // ── Auth Guards ───────────────────────────────────────────────────────────
   if (authGuards.size > 0) {
     markdown += '\n%% Auth Guards\n';
@@ -4442,8 +4444,6 @@ const generateMerfolkMarkdown = ({
       const finalId = uniqueNodeId(nodeId);
       markdown += `${finalId}[Guard: ${guardName}]\n`;
     });
-
-    const resolveNodeId = (name) => renamedIds.get(name) || sanitizeNodeId(name);
 
     if (authFlows.length > 0) {
       markdown += '\n%% Auth Flows\n';
