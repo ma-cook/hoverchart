@@ -37,6 +37,7 @@ const useSpatialManagerStore = create((set, get) => ({
   currentCellCoords: { x: 0, y: 0, z: 0 },
   cameraCellCoords: { x: 0, y: 0, z: 0 },
   isInitialized: false,
+  initializationGen: 0,
 
   // Internal tracking state
   lastCameraPosition: [0, 0, 0],
@@ -331,6 +332,8 @@ const useSpatialManagerStore = create((set, get) => ({
           return;
         }
 
+        const startGen = get().initializationGen;
+
         // Discover existing cells that contain objects
         const existingCells = await getOccupiedCells(
           ownerUserId,
@@ -383,6 +386,10 @@ const useSpatialManagerStore = create((set, get) => ({
           await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
         }
         if (existingCells.length > 0 || initialCells.length > 0) {
+          // Guard against stale initialization — if resetSpatialManager was
+          // called while this async init was in-flight, the generation counter
+          // will have incremented, and we must not overwrite state with stale data.
+          if (get().initializationGen !== startGen) return;
           set({
             loadedCells: cellsToLoad,
             currentCellCoords: { x: 0, y: 0, z: 0 },
@@ -768,6 +775,7 @@ const useSpatialManagerStore = create((set, get) => ({
       currentCellCoords: { x: 0, y: 0, z: 0 },
       cameraCellCoords: { x: 0, y: 0, z: 0 },
       isInitialized: false,
+      initializationGen: get().initializationGen + 1,
       lastCameraPosition: [0, 0, 0],
       cameraVelocity: [0, 0, 0],
       cellSubscriptions: new Map(),
