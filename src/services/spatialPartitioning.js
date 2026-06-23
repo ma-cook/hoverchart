@@ -1398,10 +1398,108 @@ export const bulkSaveConnectionsToCell = async (
 };
 
 /**
+ * Save connections using Firestore writeBatch for maximum throughput.
+ * Groups connections by cell and writes in batches of up to 500 ops,
+ * eliminating the 200ms-per-write delay from bulkSaveConnectionsToCell.
+ *
+ * @param {string} userId
+ * @param {string} spaceId
+ * @param {Map<string, object[]>} connectionsByCell  - cellId → connectionData[]
+ * @returns {{ saved: number, failed: number }}
+ */
+export const bulkSaveConnectionsBatch = async (
+  userId,
+  spaceId,
+  connectionsByCell
+) => {
+  if (!userId || !spaceId || !connectionsByCell || connectionsByCell.size === 0) {
+    return { saved: 0, failed: 0 };
+  }
+
+  let totalSaved = 0;
+  let totalFailed = 0;
+
+  for (const [cellId, connections] of connectionsByCell) {
+    if (!connections || connections.length === 0) continue;
+
+    // Ensure cell exists
+    const cellRef = doc(db, 'users', userId, 'spaces', spaceId, 'cells', cellId);
+    const cellDoc = await getDoc(cellRef);
+    if (!cellDoc.exists()) {
+      const [x, y, z] = cellId.split(',').map(Number);
+      await createCell(userId, spaceId, x, y, z);
+    }
+
+    // Write connections in batches of up to 500 (Firestore batch limit)
+    for (let i = 0; i < connections.length; i += 500) {
+      const batch = writeBatch(db);
+      const chunk = connections.slice(i, i + 500);
+
+      for (const connectionData of chunk) {
+        const connectionRef = doc(
+          db,
+          'users',
+          userId,
+          'spaces',
+          spaceId,
+          'cells',
+          cellId,
+          'connections',
+          connectionData.id
+        );
+
+        const data = {
+          id: connectionData.id,
+          start: {
+            objectId: connectionData.start?.objectId,
+            type: connectionData.start?.type,
+            face: connectionData.start?.face,
+            position: connectionData.start?.position,
+          },
+          end: {
+            objectId: connectionData.end?.objectId,
+            type: connectionData.end?.type,
+            face: connectionData.end?.face,
+            position: connectionData.end?.position,
+          },
+          cellId,
+        };
+
+        if (connectionData.text !== undefined) data.text = connectionData.text;
+        if (connectionData.color !== undefined) data.color = connectionData.color;
+        if (connectionData.thickness !== undefined) data.thickness = connectionData.thickness;
+        if (connectionData.lineStyle !== undefined) data.lineStyle = connectionData.lineStyle;
+        if (connectionData.styleType !== undefined) data.styleType = connectionData.styleType;
+        if (connectionData.textStyle !== undefined) data.textStyle = connectionData.textStyle;
+        if (connectionData.merfolkData !== undefined) data.merfolkData = connectionData.merfolkData;
+        if (connectionData.dashDirection !== undefined) data.dashDirection = connectionData.dashDirection;
+        if (connectionData.dashOffset !== undefined) data.dashOffset = connectionData.dashOffset;
+
+        batch.set(connectionRef, data);
+      }
+
+      try {
+        await batch.commit();
+        totalSaved += chunk.length;
+      } catch (error) {
+        console.error(`❌ Batch commit failed for cell ${cellId} (offset ${i}):`, error);
+        totalFailed += chunk.length;
+      }
+    }
+
+    // Update hasConnections flag once per cell (not per write)
+    try {
+      await setDoc(cellRef, { hasConnections: true }, { merge: true });
+    } catch (error) {
+      console.warn(`⚠️ Failed to update hasConnections for cell ${cellId}:`, error);
+    }
+  }
+
+  return { saved: totalSaved, failed: totalFailed };
+};
+
+/**
  * Add connection to a specific cell
- * @param {string} userId - User ID (or space owner ID)
- * @param {string} spaceId - Space ID
- * @param {string} cellId - Cell ID
  * @param {Object} connectionData - Complete connection data
  * @returns {Promise<boolean>} - Success status
  */

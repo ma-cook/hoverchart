@@ -5,7 +5,7 @@ import {
   resumeConnectionListeners,
 } from '../connectionsService';
 import {
-  bulkSaveConnectionsToCell,
+  bulkSaveConnectionsBatch,
   getCellCoordinates,
   getCellId,
 } from '../spatialPartitioning';
@@ -468,15 +468,14 @@ export const connectionMethods = {
         userId: user.uid,
         spaceId: currentSpaceId,
         objects,
-        connections,
+        connections: [],
       };
 
-      const payloadSize = JSON.stringify(payload).length;
+      const MAX_PAYLOAD_SIZE = 9 * 1024 * 1024;
+      const basePayloadSize = JSON.stringify(payload).length;
 
-      if (payloadSize > 9 * 1024 * 1024) {
-        console.warn(
-          '⚠️ [CloudFunction] Payload too large, falling back to client-side save'
-        );
+      if (basePayloadSize > MAX_PAYLOAD_SIZE) {
+        console.error('Base payload exceeds limit even without connections');
         return this._backgroundSaveConnections(
           allConnectionsToSave,
           currentSpaceId,
@@ -484,34 +483,103 @@ export const connectionMethods = {
         );
       }
 
-      const response = await fetch(functionUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      // Dynamic chunk sizing based on average connection size
+      const remainingSpace = MAX_PAYLOAD_SIZE - basePayloadSize - 500;
+      const sampleSize = Math.min(5, connections.length);
+      const avgConnSize =
+        sampleSize > 0
+          ? connections
+              .slice(0, sampleSize)
+              .reduce((s, c) => s + JSON.stringify(c).length, 0) / sampleSize
+          : 0;
+      const chunkSize =
+        avgConnSize > 0
+          ? Math.max(1, Math.floor(remainingSpace / avgConnSize))
+          : connections.length;
 
-      if (!response.ok) {
-        let errorMessage = response.statusText;
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorData.message || JSON.stringify(errorData);
-          console.error('❌ [CloudFunction] Error response:', errorData);
-        } catch {
+      // Single chunk — send as-is (original behavior)
+      if (chunkSize >= connections.length) {
+        const fullPayload = { ...payload, connections };
+
+        const response = await fetch(functionUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fullPayload),
+        });
+
+        if (!response.ok) {
+          let errorMessage = response.statusText;
           try {
-            const errorText = await response.text();
-            console.error('❌ [CloudFunction] Error text:', errorText);
-            errorMessage = errorText || errorMessage;
+            const errorData = await response.json();
+            errorMessage =
+              errorData.error || errorData.message || JSON.stringify(errorData);
+            console.error('❌ [CloudFunction] Error response:', errorData);
           } catch {
-            console.error('❌ [CloudFunction] Could not read error response');
+            try {
+              const errorText = await response.text();
+              console.error('❌ [CloudFunction] Error text:', errorText);
+              errorMessage = errorText || errorMessage;
+            } catch {
+              console.error('❌ [CloudFunction] Could not read error response');
+            }
           }
+          throw new Error(`Cloud Function error: ${errorMessage}`);
         }
-        throw new Error(`Cloud Function error: ${errorMessage}`);
+
+        const result = await response.json();
+        return result;
       }
 
-      const result = await response.json();
-      const duration = ((performance.now() - startTime) / 1000).toFixed(2); // eslint-disable-line no-unused-vars
+      // Multiple chunks — send sequentially
+      let allResults = [];
+      for (let i = 0; i < connections.length; i += chunkSize) {
+        const chunk = connections.slice(i, i + chunkSize);
+        const chunkPayload = { ...payload, connections: chunk };
+        const chunkIndex = Math.floor(i / chunkSize) + 1;
+        const totalChunks = Math.ceil(connections.length / chunkSize);
 
-      return result;
+        console.log(
+          `📡 [CloudFunction] Sending chunk ${chunkIndex}/${totalChunks} (${chunk.length} connections)`
+        );
+
+        try {
+          const response = await fetch(functionUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(chunkPayload),
+          });
+
+          if (!response.ok) {
+            console.warn(
+              `⚠️ [CloudFunction] Chunk ${chunkIndex}/${totalChunks} failed, falling back to client for remaining connections`
+            );
+            const remainingConnections = allConnectionsToSave.slice(i);
+            return this._backgroundSaveConnections(
+              remainingConnections,
+              currentSpaceId,
+              user
+            );
+          }
+
+          const result = await response.json();
+          allResults.push(result);
+        } catch (error) {
+          console.warn(
+            `⚠️ [CloudFunction] Chunk ${chunkIndex}/${totalChunks} error, falling back to client for remaining connections:`,
+            error
+          );
+          const remainingConnections = allConnectionsToSave.slice(i);
+          return this._backgroundSaveConnections(
+            remainingConnections,
+            currentSpaceId,
+            user
+          );
+        }
+      }
+
+      const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+
+      return { success: true, chunks: allResults };
     } catch (error) {
       console.error('❌ [CloudFunction] Bulk import failed:', error);
 
@@ -528,115 +596,42 @@ export const connectionMethods = {
    * @private
    */
   async _backgroundSaveConnections(allConnectionsToSave, currentSpaceId, user) {
-    const BATCH_SIZE = 50;
-    const startTime = performance.now();
-
     try {
       await pauseConnectionListeners();
-      // Reduced wait — Firestore resume racing is no longer an issue with
-      // the batch size / parallelism improvements.
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const MAX_CONCURRENT_BATCHES = 3;
-      const totalBatches = Math.ceil(allConnectionsToSave.length / BATCH_SIZE);
-      let savedCount = 0;
+      const connectionsByCell = new Map();
 
-      for (
-        let batchGroup = 0;
-        batchGroup < totalBatches;
-        batchGroup += MAX_CONCURRENT_BATCHES
-      ) {
-        const groupPromises = [];
+      for (const connectionData of allConnectionsToSave) {
+        const startPosition = connectionData.start?.position;
+        const endPosition = connectionData.end?.position;
 
-        if (batchGroup > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
+        if (!startPosition || !endPosition) {
+          continue;
         }
 
-        for (
-          let batchOffset = 0;
-          batchOffset < MAX_CONCURRENT_BATCHES;
-          batchOffset++
-        ) {
-          const batchIndex = batchGroup + batchOffset;
-          if (batchIndex >= totalBatches) break;
+        const startCellCoords = getCellCoordinates(startPosition);
+        const startCellId = getCellId(
+          startCellCoords.x,
+          startCellCoords.y,
+          startCellCoords.z
+        );
 
-          const i = batchIndex * BATCH_SIZE;
-          const batch = allConnectionsToSave.slice(
-            i,
-            Math.min(i + BATCH_SIZE, allConnectionsToSave.length)
-          );
-          const currentBatchNumber = batchIndex + 1;
-
-          const batchPromise = (async () => {
-            const batchStart = performance.now();
-
-            try {
-              const connectionsByCell = new Map();
-
-              for (const connectionData of batch) {
-                const startPosition = connectionData.start?.position;
-                const endPosition = connectionData.end?.position;
-
-                if (!startPosition || !endPosition) {
-                  continue;
-                }
-
-                const startCellCoords = getCellCoordinates(startPosition);
-                const startCellId = getCellId(
-                  startCellCoords.x,
-                  startCellCoords.y,
-                  startCellCoords.z
-                );
-
-                if (!connectionsByCell.has(startCellId)) {
-                  connectionsByCell.set(startCellId, []);
-                }
-                connectionsByCell.get(startCellId).push(connectionData);
-              }
-
-              let batchSavedCount = 0;
-              const cellEntries = Array.from(connectionsByCell.entries());
-
-              for (let cellIdx = 0; cellIdx < cellEntries.length; cellIdx++) {
-                const [cellId, connections] = cellEntries[cellIdx];
-                try {
-                  const success = await bulkSaveConnectionsToCell(
-                    user.uid,
-                    currentSpaceId,
-                    cellId,
-                    connections,
-                    false
-                  );
-                  if (success) {
-                    batchSavedCount += connections.length;
-                  }
-                } catch (error) {
-                  console.error(
-                    `✗ Cell ${cellId} in batch ${currentBatchNumber} failed:`,
-                    error
-                  );
-                }
-              }
-
-              const batchDuration = // eslint-disable-line no-unused-vars
-                ((performance.now() - batchStart) / 1000).toFixed(2);
-
-              return batchSavedCount;
-            } catch (error) {
-              console.error(`❌ Batch ${currentBatchNumber} failed:`, error);
-              return 0;
-            }
-          })();
-
-          groupPromises.push(batchPromise);
+        if (!connectionsByCell.has(startCellId)) {
+          connectionsByCell.set(startCellId, []);
         }
-
-        const groupResults = await Promise.all(groupPromises);
-        const groupSaved = groupResults.reduce((sum, count) => sum + count, 0);
-        savedCount += groupSaved; // eslint-disable-line no-unused-vars
+        connectionsByCell.get(startCellId).push(connectionData);
       }
 
-      const duration = ((performance.now() - startTime) / 1000).toFixed(2); // eslint-disable-line no-unused-vars
+      const { saved, failed } = await bulkSaveConnectionsBatch(
+        user.uid,
+        currentSpaceId,
+        connectionsByCell
+      );
+
+      console.log(
+        `✅ Background save complete: ${saved} saved, ${failed} failed`
+      );
 
       await resumeConnectionListeners();
     } catch (error) {
