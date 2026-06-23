@@ -226,6 +226,7 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
         alignItems: 'center',
         zIndex: 1000,
         fontFamily: FONT_FAMILY,
+        pointerEvents: 'auto',
       }}
     >
       <div

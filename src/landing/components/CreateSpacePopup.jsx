@@ -87,6 +87,7 @@ export const CreateSpacePopup = React.memo(
           justifyContent: 'center',
           alignItems: 'center',
           zIndex: 1000,
+          pointerEvents: 'auto',
         }}
       >
         <div

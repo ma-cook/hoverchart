@@ -23,6 +23,7 @@ const UpgradePrompt = React.memo(({ show, onClose, currentTier = 'free' }) => {
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 1000,
+        pointerEvents: 'auto',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
