@@ -230,7 +230,7 @@ const useConnectionStore = create((set, get) => ({
         try {
           // Use simple cell calculation inline to avoid import issues
           const getCellCoords = (position) => {
-            const CELL_SIZE = 10000;
+            const CELL_SIZE = 15000;
             return {
               x: Math.floor(position[0] / CELL_SIZE),
               y: Math.floor(position[1] / CELL_SIZE),
