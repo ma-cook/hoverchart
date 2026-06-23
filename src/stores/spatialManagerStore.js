@@ -7,7 +7,6 @@ import {
   createCellsBatch,
   addObjectToCell,
   moveObjectBetweenCells,
-  getOccupiedCells,
   getCellsToUnload,
   CELL_NEIGHBOR_RADIUS,
   CELL_UNLOAD_DISTANCE,
@@ -334,12 +333,6 @@ const useSpatialManagerStore = create((set, get) => ({
 
         const startGen = get().initializationGen;
 
-        // Discover existing cells that contain objects
-        const existingCells = await getOccupiedCells(
-          ownerUserId,
-          currentSpaceId
-        );
-
         // Get initial camera position and load neighbor cells
         // Use actual camera position if available, otherwise use default
         const actualCameraPosition = cameraRef?.current?.camera?.position;
@@ -356,36 +349,24 @@ const useSpatialManagerStore = create((set, get) => ({
           CELL_NEIGHBOR_RADIUS
         ); // Combine existing occupied cells and initial camera radius cells
         const cellsToLoad = new Set();
-        existingCells.forEach((cellId) => cellsToLoad.add(cellId));
 
-        // Add initial camera radius cells
+        // Only load camera-neighbor cells initially. Distant cells are
+        // loaded on demand when the camera moves via updateCameraPosition.
         for (const cellCoords of initialCells) {
           const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
           cellsToLoad.add(cellId);
         }
 
-        // Convert all cells to load into coordinate format for batch loading
+        // Convert cells to load into coordinate format for batch loading
         const allCellCoordsToLoad = [];
 
-        // Add existing cells coordinates
-        for (const cellId of existingCells) {
-          const coords = cellId.split(',').map((num) => parseInt(num));
-          if (coords.length >= 2) {
-            allCellCoordsToLoad.push({
-              x: coords[0],
-              y: coords[1],
-              z: coords[2] || 0,
-            });
-          }
-        }
-        // Add initial camera cells coordinates
         for (const cellCoords of initialCells) {
           allCellCoordsToLoad.push(cellCoords);
         }
         if (allCellCoordsToLoad.length > 0) {
           await get().loadCellsBatch(allCellCoordsToLoad, user, currentSpaceId);
         }
-        if (existingCells.length > 0 || initialCells.length > 0) {
+        if (initialCells.length > 0) {
           // Guard against stale initialization — if resetSpatialManager was
           // called while this async init was in-flight, the generation counter
           // will have incremented, and we must not overwrite state with stale data.
