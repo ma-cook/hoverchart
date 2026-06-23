@@ -212,6 +212,7 @@ export const processMethods = {
 
     let totalObjectsCreated = 0;
     const nodeToObjectIdMap = new Map();
+    const nodeDataMap = new Map();
     const allConnectionsToSave = [];
     const allObjectsToSave = [];
 
@@ -237,7 +238,8 @@ export const processMethods = {
         user,
         currentSpaceId,
         allObjectsToSave,
-        precomputedLayout
+        precomputedLayout,
+        nodeDataMap
       );
 
       totalObjectsCreated += objectsCreated;
@@ -246,7 +248,8 @@ export const processMethods = {
         diagram,
         nodeToObjectIdMap,
         allConnectionsToSave,
-        connectionTags
+        connectionTags,
+        nodeDataMap
       );
     }
 

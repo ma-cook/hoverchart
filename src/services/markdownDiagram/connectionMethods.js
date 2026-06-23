@@ -77,7 +77,8 @@ export const connectionMethods = {
     diagram,
     nodeToObjectIdMap,
     allConnectionsToSave,
-    connectionTags = new Map()
+    connectionTags = new Map(),
+    nodeDataMap = null
   ) {
     const graph = diagram.graph;
     if (!graph || !graph.connections) {
@@ -120,18 +121,21 @@ export const connectionMethods = {
           .toString(36)
           .substr(2, 9)}`;
 
-        const objectsStore = useObjectsStore.getState();
-        const sourceObject = objectsStore.objects.find(
-          (obj) => obj.id === sourceObjectId
-        );
-        const targetObject = objectsStore.objects.find(
-          (obj) => obj.id === targetObjectId
-        );
+        let sourceObject, targetObject;
+        if (nodeDataMap && nodeDataMap.has(sourceNodeId) && nodeDataMap.has(targetNodeId)) {
+          sourceObject = nodeDataMap.get(sourceNodeId);
+          targetObject = nodeDataMap.get(targetNodeId);
+        } else {
+          const objectsStore = useObjectsStore.getState();
+          sourceObject = objectsStore.objects.find(
+            (obj) => obj.id === sourceObjectId
+          );
+          targetObject = objectsStore.objects.find(
+            (obj) => obj.id === targetObjectId
+          );
+        }
 
         if (!sourceObject || !targetObject) {
-          console.warn(
-            `Cannot create connection: missing object data for ${sourceObjectId} or ${targetObjectId}`
-          );
           return;
         }
 

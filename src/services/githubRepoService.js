@@ -4368,26 +4368,25 @@ const generateMerfolkMarkdown = ({
   if (apiEndpoints.size > 0) {
     markdown += '\n%% API Endpoints\n';
     apiEndpoints.forEach((ep, epKey) => {
-      if (!nodeIds.has(epKey)) {
-        nodeIds.add(epKey);
-        markdown += `${epKey}[Endpoint: ${ep.method} ${ep.path}]\n`;
-      }
+      const finalId = uniqueNodeId(epKey);
+      markdown += `${finalId}[Endpoint: ${ep.method} ${ep.path}]\n`;
     });
 
     markdown += '\n%% API Containment\n';
     apiEndpoints.forEach((ep, epKey) => {
-      if (!nodeIds.has(epKey)) return;
-      // Attach endpoint to its backend file container when one exists
+      const resolvedKey = renamedIds.get(epKey) || epKey;
+      if (!nodeIds.has(resolvedKey)) return;
       const fileInfo = ep.sourceFile ? fileFunctions.get(ep.sourceFile) : null;
       if (fileInfo?.nodeId && nodeIds.has(fileInfo.nodeId)) {
-        markdown += `${fileInfo.nodeId} -.-> ${epKey} : "contains"\n`;
+        markdown += `${fileInfo.nodeId} -.-> ${resolvedKey} : "contains"\n`;
       }
     });
 
     markdown += '\n%% API Handler Chains\n';
     apiEndpoints.forEach((ep, epKey) => {
+      const resolvedKey = renamedIds.get(epKey) || epKey;
       ep.handlers.forEach((handler) => {
-        markdown += `${epKey} --> ${handler} : "handler"\n`;
+        markdown += `${resolvedKey} --> ${handler} : "handler"\n`;
       });
     });
   }
@@ -4397,19 +4396,22 @@ const generateMerfolkMarkdown = ({
     markdown += '\n%% Database Models\n';
     dbModels.forEach((_rels, modelName) => {
       const nodeId = `${modelName}_model`;
-      if (!nodeIds.has(nodeId)) {
-        nodeIds.add(nodeId);
-        markdown += `${nodeId}[[Store: ${modelName}]]\n`;
-      }
+      const finalId = uniqueNodeId(nodeId);
+      markdown += `${finalId}[[Store: ${modelName}]]\n`;
     });
+
+    const modelResolve = (name) => {
+      const base = `${name}_model`;
+      return renamedIds.get(base) || base;
+    };
 
     const hasRelationships = [...dbModels.values()].some(s => s.size > 0);
     if (hasRelationships) {
       markdown += '\n%% Model Relationships\n';
       dbModels.forEach((related, modelName) => {
-        const srcId = `${modelName}_model`;
+        const srcId = modelResolve(modelName);
         related.forEach(relName => {
-          const tgtId = `${relName}_model`;
+          const tgtId = modelResolve(relName);
           if (nodeIds.has(srcId) && nodeIds.has(tgtId)) {
             markdown += `${srcId} --> ${tgtId} : "references"\n`;
           }
@@ -4422,7 +4424,7 @@ const generateMerfolkMarkdown = ({
       markdown += '\n%% Model Access\n';
       dbModelUsers.forEach((collections, caller) => {
         collections.forEach(collName => {
-          const tgtId = `${collName}_model`;
+          const tgtId = modelResolve(collName);
           if (nodeIds.has(tgtId)) {
             const routedConnections = generateRoutedConnection(caller, tgtId, 'reads');
             routedConnections.forEach(conn => { markdown += `${conn}\n`; });
@@ -4437,17 +4439,17 @@ const generateMerfolkMarkdown = ({
     markdown += '\n%% Auth Guards\n';
     authGuards.forEach(guardName => {
       const nodeId = sanitizeNodeId(guardName);
-      if (!nodeIds.has(nodeId)) {
-        nodeIds.add(nodeId);
-        markdown += `${nodeId}[Guard: ${guardName}]\n`;
-      }
+      const finalId = uniqueNodeId(nodeId);
+      markdown += `${finalId}[Guard: ${guardName}]\n`;
     });
+
+    const resolveNodeId = (name) => renamedIds.get(name) || sanitizeNodeId(name);
 
     if (authFlows.length > 0) {
       markdown += '\n%% Auth Flows\n';
       authFlows.forEach(({ source, target, label }) => {
-        const srcId = sanitizeNodeId(source);
-        const tgtId = sanitizeNodeId(target);
+        const srcId = resolveNodeId(source);
+        const tgtId = resolveNodeId(target);
         if (nodeIds.has(srcId) || childToParentMap.has(source)) {
           markdown += `${srcId} --> ${tgtId} : "${label}"\n`;
         }
@@ -4461,28 +4463,31 @@ const generateMerfolkMarkdown = ({
     markdown += '\n%% Events\n';
     allEventNames.forEach(evtName => {
       const nodeId = `${evtName}_event`;
-      if (!nodeIds.has(nodeId)) {
-        nodeIds.add(nodeId);
-        markdown += `${nodeId}((Service: ${evtName}))\n`;
-      }
+      const finalId = uniqueNodeId(nodeId);
+      markdown += `${finalId}((Service: ${evtName}))\n`;
     });
+
+    const eventResolve = (evtName) => {
+      const base = `${evtName}_event`;
+      return renamedIds.get(base) || base;
+    };
 
     markdown += '\n%% Event Flows\n';
     eventEmitters.forEach((sources, evtName) => {
-      const tgtId = `${evtName}_event`;
+      const tgtId = eventResolve(evtName);
       if (!nodeIds.has(tgtId)) return;
       sources.forEach(src => {
-        const srcId = sanitizeNodeId(src);
+        const srcId = resolveNodeId(src);
         if (nodeIds.has(srcId) || childToParentMap.has(src)) {
           markdown += `${srcId} --> ${tgtId} : "emits"\n`;
         }
       });
     });
     eventListeners.forEach((sources, evtName) => {
-      const evtNodeId = `${evtName}_event`;
+      const evtNodeId = eventResolve(evtName);
       if (!nodeIds.has(evtNodeId)) return;
       sources.forEach(listener => {
-        const listId = sanitizeNodeId(listener);
+        const listId = resolveNodeId(listener);
         if (nodeIds.has(listId) || childToParentMap.has(listener)) {
           markdown += `${evtNodeId} --> ${listId} : "listened by"\n`;
         }
@@ -4494,23 +4499,19 @@ const generateMerfolkMarkdown = ({
   if (errorBoundaries.size > 0 || suspenseBoundaries.size > 0) {
     markdown += '\n%% Error Boundaries\n';
     errorBoundaries.forEach(boundaryName => {
-      if (!nodeIds.has(boundaryName)) {
-        nodeIds.add(boundaryName);
-        markdown += `${boundaryName}[Boundary: ${boundaryName}]\n`;
-      }
+      const finalId = uniqueNodeId(boundaryName);
+      markdown += `${finalId}[Boundary: ${boundaryName}]\n`;
     });
     suspenseBoundaries.forEach(boundaryId => {
-      if (!nodeIds.has(boundaryId)) {
-        nodeIds.add(boundaryId);
-        markdown += `${boundaryId}[Boundary: Suspense]\n`;
-      }
+      const finalId = uniqueNodeId(boundaryId);
+      markdown += `${finalId}[Boundary: Suspense]\n`;
     });
 
     if (errorContainment.length > 0) {
       markdown += '\n%% Error Containment\n';
       errorContainment.forEach(({ boundary, wraps, label }) => {
-        const srcId = sanitizeNodeId(boundary);
-        const tgtId = sanitizeNodeId(wraps);
+        const srcId = renamedIds.get(boundary) || sanitizeNodeId(boundary);
+        const tgtId = renamedIds.get(wraps) || sanitizeNodeId(wraps);
         if ((nodeIds.has(srcId) || childToParentMap.has(boundary)) &&
             (nodeIds.has(tgtId) || childToParentMap.has(wraps))) {
           markdown += `${srcId} -.-> ${tgtId} : "${label}"\n`;

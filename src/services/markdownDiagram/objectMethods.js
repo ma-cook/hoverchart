@@ -1,7 +1,7 @@
 import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import useDiagramStore from '../../stores/diagramStore.js';
 import { getCellCoordinates, getCellId, getNeighborCells, CELL_NEIGHBOR_RADIUS } from '../spatialPartitioning';
-import { addPendingCellObjects, clearAllCellCaches } from '../cellObjectCache';
+import { addPendingCellObjects, clearAllCellCaches, consumePendingCellObjectsForCells } from '../cellObjectCache';
 
 export const objectMethods = {
   /**
@@ -27,11 +27,15 @@ export const objectMethods = {
     user,
     currentSpaceId,
     allObjectsToSave,
-    precomputedLayout = null
+    precomputedLayout = null,
+    nodeDataMap = null
   ) {
     const graph = diagram.graph;
     if (!graph || !graph.nodes) {
       return 0;
+    }
+    if (nodeDataMap) {
+      nodeDataMap.clear();
     }
 
     let parentChildMap, childParentMap, rootNodes, internalComponentChildren;
@@ -374,6 +378,13 @@ export const objectMethods = {
           allObjectsToSave.push(objectForSave);
 
           nodeToObjectIdMap.set(data.nodeId, objectId);
+          if (nodeDataMap) {
+            nodeDataMap.set(data.nodeId, {
+              position: data.position,
+              scale: data.extraData.scale || [1, 1, 1],
+              type: data.type,
+            });
+          }
           objectsCreated++;
         } catch (err) {
           console.error(
@@ -396,6 +407,24 @@ export const objectMethods = {
         if (storeBatch.length > 0) {
           const currentObjects = useObjectsStore.getState().objects;
           useObjectsStore.getState().setObjects([...currentObjects, ...storeBatch]);
+          storeBatch = [];
+        }
+      }
+    }
+
+    // ── Safety net: if no objects made it to the store (camera outside
+    //     diagram bounds), force-add at least the nearest batch so the
+    //     diagram isn't completely invisible.
+    if (objectsCreated > 0) {
+      const currentCount = useObjectsStore.getState().objects.length;
+      if (currentCount === 0) {
+        const allCached = consumePendingCellObjectsForCells(
+          Array.from(activeCells)
+        );
+        if (allCached.length > 0) {
+          useObjectsStore.getState().setObjects(allCached);
+        } else if (storeBatch.length > 0) {
+          useObjectsStore.getState().setObjects(storeBatch);
           storeBatch = [];
         }
       }
