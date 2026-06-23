@@ -1,7 +1,7 @@
 import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import useDiagramStore from '../../stores/diagramStore.js';
 import { getCellCoordinates, getCellId, getNeighborCells, CELL_NEIGHBOR_RADIUS } from '../spatialPartitioning';
-import { addPendingCellObjects, clearAllCellCaches, consumePendingCellObjectsForCells } from '../cellObjectCache';
+import { addPendingCellObjects, addToAllCellObjects, clearAllCellCaches, consumePendingCellObjectsForCells } from '../cellObjectCache';
 
 export const objectMethods = {
   /**
@@ -407,6 +407,20 @@ export const objectMethods = {
         if (storeBatch.length > 0) {
           const currentObjects = useObjectsStore.getState().objects;
           useObjectsStore.getState().setObjects([...currentObjects, ...storeBatch]);
+
+          // Cache in allCellObjects so objects survive unload/reload
+          const byCell = new Map();
+          for (const obj of storeBatch) {
+            if (obj.cellId) {
+              let cellObjs = byCell.get(obj.cellId);
+              if (!cellObjs) { cellObjs = []; byCell.set(obj.cellId, cellObjs); }
+              cellObjs.push(obj);
+            }
+          }
+          for (const [cellId, objects] of byCell) {
+            addToAllCellObjects(cellId, objects);
+          }
+
           storeBatch = [];
         }
       }

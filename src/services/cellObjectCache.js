@@ -50,6 +50,16 @@ export function consumePendingCellObjectsForCells(cellIds) {
   return result;
 }
 
+export function addToAllCellObjects(cellId, objects) {
+  if (!objects || objects.length === 0) return;
+  let all = allCellObjects.get(cellId);
+  if (!all) {
+    all = [];
+    allCellObjects.set(cellId, all);
+  }
+  all.push(...objects);
+}
+
 export function getAllCellObjectsForCells(cellIds) {
   const result = [];
   for (const cellId of cellIds) {

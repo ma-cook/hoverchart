@@ -28,7 +28,7 @@ import { getIsInitialLoading } from '../utils/loadingState';
 // Cell size constants
 export const CELL_SIZE = 6667; // Reduced by 1/3rd (was 10000)
 export const CELL_NEIGHBOR_RADIUS = 1; // Load 3x3 horizontal grid around camera (9 cells)
-export const CELL_UNLOAD_DISTANCE = 3;
+export const CELL_UNLOAD_DISTANCE = 5;
 export const CELL_BOUNDARY_HYSTERESIS = 667; // Proportionally reduced with cell size (was 1000)
 
 // Cache for cell existence checks to reduce redundant fetch calls
