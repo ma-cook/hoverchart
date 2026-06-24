@@ -995,7 +995,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
           >
             <button
               style={footerBtnStyle}
-              onClick={() => window.open('https://github.com/anomalyco/opencode/issues', '_blank')}
+              onClick={() => window.open('https://volscape.com', '_blank')}
               title="Report a bug or suggest a feature"
             >
               Feedback
