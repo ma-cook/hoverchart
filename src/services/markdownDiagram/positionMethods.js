@@ -188,7 +188,7 @@ export const positionMethods = {
         // they live at noticeably different y-levels.
         let depthOffset = 500;
         if (containerSize && typeof containerSize === 'number') {
-          depthOffset = Math.max(500, containerSize * 3.5);
+          depthOffset = Math.max(500, 500 * Math.log2(containerSize / 25 + 1));
         }
 
         if (nodeId === 'TextStyleUI' || nodeId === 'ObjectUI' || nodeId === 'TetrahedronFace' || nodeId === 'TextSprite') {
@@ -332,7 +332,7 @@ export const positionMethods = {
     const halfWidth =
       ((gridSize - 1) / 2) * cellSpacing + largestHalf;
 
-    const result = Math.max(OWN_HALF, halfWidth);
+    const result = Math.min(Math.max(OWN_HALF, halfWidth), 5000);
     this._subtreeHalfWidthCache.set(cacheKey, result);
     return result;
   },
@@ -734,7 +734,7 @@ export const positionMethods = {
             const moveDistance = requiredDistance - Math.abs(center2X - center1X);
 
             if (moveDistance > 0) {
-              const offsetX = direction * moveDistance;
+              const offsetX = direction * Math.min(moveDistance, 2000);
               resolveNodeMove(bbox2, offsetX, 0);
               bbox2.minX += offsetX;
               bbox2.maxX += offsetX;
@@ -745,7 +745,7 @@ export const positionMethods = {
             const moveDistance = requiredDistance - Math.abs(center2Z - center1Z);
 
             if (moveDistance > 0) {
-              const offsetZ = direction * moveDistance;
+              const offsetZ = direction * Math.min(moveDistance, 2000);
               resolveNodeMove(bbox2, 0, offsetZ);
               bbox2.minZ += offsetZ;
               bbox2.maxZ += offsetZ;
@@ -973,7 +973,7 @@ export const positionMethods = {
         const baseCubeSize = 20;
         const generousPadding = Math.max(30, childCount * 8);
         const totalRequiredSize = requiredSpace + generousPadding * 2;
-        const minScaleFactor = Math.max(1.5, 1 + childCount * 0.3);
+        const minScaleFactor = Math.max(1.5, 1 + Math.sqrt(childCount) * 0.5);
         const calculatedScaleFactor = totalRequiredSize / baseCubeSize;
         const scaleFactor = Math.max(minScaleFactor, calculatedScaleFactor);
         nodeScales.set(nodeId, [scaleFactor, scaleFactor, scaleFactor]);

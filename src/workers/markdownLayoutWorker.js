@@ -248,6 +248,21 @@ const workerApi = {
       engine.positionGroupedNodes(context);
       engine.resolveCollisions(context);
 
+      // --- Post-layout: compress extreme positions logarithmically ---
+      // Keeps all objects within a renderable volume while preserving
+      // relative ordering — big distances still map to larger positions,
+      // but no node ends up hundreds of thousands of units away.
+      const CLAMP_BOUNDARY = 50000;
+      for (const [, pos] of nodePositions) {
+        for (const axis of [0, 1, 2]) {
+          if (Math.abs(pos[axis]) > CLAMP_BOUNDARY) {
+            const sign = Math.sign(pos[axis]);
+            const excess = Math.abs(pos[axis]) - CLAMP_BOUNDARY;
+            pos[axis] = sign * (CLAMP_BOUNDARY + Math.log10(excess + 1) * 8000);
+          }
+        }
+      }
+
       // --- Serialise node layout ---
       const nodes = [];
       for (const [nodeId, position] of nodePositions) {

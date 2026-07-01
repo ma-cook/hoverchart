@@ -70,7 +70,7 @@ export const scaleMethods = {
         requiredSpace = (gridSize3D - 1) * actualChildSpacing + maxChildSize * 2;
       }
 
-      const adaptivePadding = Math.max(30, requiredSpace * 0.4);
+      const adaptivePadding = Math.max(20, requiredSpace * 0.15);
 
       const requiredSize = requiredSpace + adaptivePadding;
 
