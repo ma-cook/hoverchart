@@ -6,6 +6,7 @@ on:
     paths:
       - 'backend/**'
       - 'migrations/**'
+  workflow_dispatch:
 
 jobs:
   deploy:
