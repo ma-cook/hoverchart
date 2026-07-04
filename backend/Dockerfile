@@ -6,10 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci --only=production
 
-COPY . .
+COPY backend/ .
+COPY migrations ./migrations
 
 EXPOSE 8080
 

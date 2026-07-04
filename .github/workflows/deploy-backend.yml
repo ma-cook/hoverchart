@@ -25,7 +25,7 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - run: gcloud builds submit backend --config backend/cloudbuild.yaml
+      - run: gcloud builds submit . --config backend/cloudbuild.yaml
         env:
           CLOUDSQL_INSTANCE: ${{ secrets.CLOUDSQL_INSTANCE }}
           REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
