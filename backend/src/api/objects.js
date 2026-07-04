@@ -11,6 +11,15 @@ function normalize(obj) {
       obj[snake] = obj[camel];
     }
   }
+  // Derive cell_x/y/z from cell_id if not provided
+  if (obj.cell_id && (obj.cell_x === undefined || obj.cell_y === undefined || obj.cell_z === undefined)) {
+    const parts = obj.cell_id.split(',').map(Number);
+    if (parts.length >= 3 && parts.every(n => !isNaN(n))) {
+      if (obj.cell_x === undefined) obj.cell_x = parts[0];
+      if (obj.cell_y === undefined) obj.cell_y = parts[1];
+      if (obj.cell_z === undefined) obj.cell_z = parts[2];
+    }
+  }
   return obj;
 }
 
