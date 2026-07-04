@@ -378,25 +378,25 @@ export const connectionMethods = {
     );
   },
 
-  function deriveCellCoords(obj) {
-    if (obj.cell_x !== undefined && obj.cell_y !== undefined && obj.cell_z !== undefined) return obj;
-    if (obj.cellId) {
-      const parts = obj.cellId.split(',').map(Number);
-      if (parts.length >= 3 && parts.every(n => !isNaN(n))) {
-        obj.cell_x = parts[0];
-        obj.cell_y = parts[1];
-        obj.cell_z = parts[2];
-      }
-    }
-    return obj;
-  }
-
   async _cloudFunctionBulkImport(
     allConnectionsToSave,
     currentSpaceId,
     user,
     allObjectsToSave = []
   ) {
+    const deriveCellCoords = (obj) => {
+      if (obj.cell_x !== undefined && obj.cell_y !== undefined && obj.cell_z !== undefined) return obj;
+      if (obj.cell_id) {
+        const parts = obj.cell_id.split(',').map(Number);
+        if (parts.length >= 3 && parts.every(n => !isNaN(n))) {
+          obj.cell_x = parts[0];
+          obj.cell_y = parts[1];
+          obj.cell_z = parts[2];
+        }
+      }
+      return obj;
+    };
+
     const startTime = performance.now();
 
     try {
