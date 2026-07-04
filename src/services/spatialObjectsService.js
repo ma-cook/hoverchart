@@ -67,26 +67,17 @@ async function flushSaveBatch() {
     }
   }
 
-  // ── Same-cell writes: individual API calls ──
+  // ── Same-cell writes: POST upserts (ON CONFLICT DO UPDATE handles both create+update) ──
   if (sameCellSaves.length > 0) {
-    try {
-      await Promise.all(
-        sameCellSaves.map(info =>
-          api.patch(`/api/spaces/${info.spaceId}/objects/${info.objectId}`, info.objectToSave)
-        )
-      );
-    } catch (error) {
-      console.error('[SaveBatch] API patch failed, falling back to individual saves:', error);
-      for (const info of sameCellSaves) {
-        const cacheKey = `${info.spaceId}_${info.objectId}`;
-        try {
-          await addObjectToCell(info.ownerUserId, info.spaceId, info.objectToSave);
-        } catch (innerErr) {
-          console.error(`[SaveBatch] Fallback save failed for ${info.objectId}:`, innerErr);
-          objectsCache.delete(cacheKey);
-        }
-      }
-    }
+    await Promise.all(
+      sameCellSaves.map(info =>
+        addObjectToCell(info.ownerUserId, info.spaceId, info.objectToSave)
+          .catch(innerErr => {
+            console.error(`[SaveBatch] Upsert failed for ${info.objectId}:`, innerErr);
+            objectsCache.delete(`${info.spaceId}_${info.objectId}`);
+          })
+      )
+    );
   }
 
   // ── Cross-cell moves remain individual (delete + add atomicity) ──
