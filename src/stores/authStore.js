@@ -21,7 +21,7 @@ function initGIS() {
   });
 }
 
-function getGISIdToken() {
+function getGISAccessToken() {
   return new Promise((resolve, reject) => {
     initGIS();
     if (!tokenClient) {
@@ -32,7 +32,7 @@ function getGISIdToken() {
       if (response.error) {
         reject(new Error(response.error));
       } else {
-        resolve(response.id_token);
+        resolve(response.access_token);
       }
     };
     tokenClient.requestAccessToken({ prompt: 'select_account' });
@@ -73,8 +73,8 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
   signInWithGoogle: async () => {
     try {
       set((s) => ({ authState: { ...s.authState, isLoading: true } }));
-      const idToken = await getGISIdToken();
-      const data = await api.post('/api/auth/google', { idToken });
+      const accessToken = await getGISAccessToken();
+      const data = await api.post('/api/auth/google', { accessToken });
       setTokens(data.accessToken, data.refreshToken);
       set({
         authState: {

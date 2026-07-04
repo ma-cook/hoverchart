@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
-import { OAuth2Client } from 'google-auth-library';
 import { v4 as uuid } from 'uuid';
 import pool from '../db.js';
 
@@ -9,15 +8,16 @@ export const router = Router();
 // POST /api/auth/google
 router.post('/google', async (req, res) => {
   try {
-    const { idToken } = req.body;
-    if (!idToken) return res.status(400).json({ error: 'idToken required' });
+    const { accessToken } = req.body;
+    if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
 
-    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-    const ticket = await client.verifyIdToken({
-      idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+    const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
-    const { sub, email, name, picture } = ticket.getPayload();
+    if (!response.ok) {
+      return res.status(401).json({ error: 'Invalid access token' });
+    }
+    const { sub, email, name, picture } = await response.json();
 
     const result = await pool.query(
       `INSERT INTO users (id, email, display_name, photo_url)
