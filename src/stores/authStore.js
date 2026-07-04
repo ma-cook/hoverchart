@@ -60,7 +60,7 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
           authState: {
             isAuthenticated: true,
             isLoading: false,
-            user: { sub: payload.sub, name: payload.name, email: payload.email, picture: payload.picture },
+            user: { sub: payload.sub, uid: payload.sub, name: payload.name, email: payload.email, picture: payload.picture },
             isAuthReady: true,
           },
         });
@@ -80,7 +80,7 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
         authState: {
           isAuthenticated: true,
           isLoading: false,
-          user: data.user,
+          user: { ...data.user, sub: data.user.id, uid: data.user.id },
           isAuthReady: true,
         },
       });
@@ -100,7 +100,7 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
         authState: {
           isAuthenticated: true,
           isLoading: false,
-          user: { sub: data.user.sub, name: data.user.name, isGuest: true },
+          user: { sub: data.userId, uid: data.userId, name: 'Guest', isGuest: true },
           isAuthReady: true,
         },
       });
