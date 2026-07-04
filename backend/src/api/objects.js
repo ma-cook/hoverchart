@@ -3,14 +3,26 @@ import pool from '../db.js';
 
 export const router = Router({ mergeParams: true });
 
+function normalize(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const map = { cellId: 'cell_id', cellX: 'cell_x', cellY: 'cell_y', cellZ: 'cell_z', spaceId: 'space_id', ownerId: 'owner_id', displayName: 'display_name', photoUrl: 'photo_url', lastUpdated: 'last_updated', updatedAt: 'updated_at', headerText: 'header_text', isPublic: 'is_public', sharedWith: 'shared_with' };
+  for (const [camel, snake] of Object.entries(map)) {
+    if (obj[camel] !== undefined && obj[snake] === undefined) {
+      obj[snake] = obj[camel];
+    }
+  }
+  return obj;
+}
+
 router.get('/', async (req, res) => {
   const { spaceId } = req.params;
-  const { cell, cell_id, x, y, z } = req.query;
+  const { cell, cell_id, cellId, x, y, z } = req.query;
+  const effectiveCellId = cell_id || cellId;
   try {
     let query, params;
-    if (cell_id) {
+    if (effectiveCellId) {
       query = `SELECT * FROM objects WHERE space_id = $1 AND cell_id = $2 ORDER BY updated_at DESC`;
-      params = [spaceId, cell_id];
+      params = [spaceId, effectiveCellId];
     } else if (x !== undefined && y !== undefined && z !== undefined) {
       query = `SELECT * FROM objects WHERE space_id = $1 AND cell_x = $2 AND cell_y = $3 AND cell_z = $4 ORDER BY updated_at DESC`;
       params = [spaceId, +x, +y, +z];
@@ -32,7 +44,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   const { spaceId } = req.params;
-  const obj = req.body;
+  const obj = normalize(req.body);
   if (!obj.id || !obj.cell_id || !obj.type) return res.status(400).json({ error: 'id, cell_id, and type are required' });
   try {
     const result = await pool.query(
@@ -63,7 +75,7 @@ router.post('/', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   const { spaceId, id } = req.params;
-  const updates = req.body;
+  const updates = normalize(req.body);
   const fields = [];
   const values = [];
   let idx = 1;
@@ -91,12 +103,12 @@ router.patch('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   const { spaceId, id } = req.params;
-  const { cell_id } = req.query;
-  if (!cell_id) return res.status(400).json({ error: 'cell_id query param required' });
+  const { cell_id, cellId } = req.query;
+  if (!cell_id && !cellId) return res.status(400).json({ error: 'cell_id query param required' });
   try {
     await pool.query(
       `DELETE FROM objects WHERE space_id = $1 AND cell_id = $2 AND id = $3`,
-      [spaceId, cell_id, id]
+      [spaceId, cell_id || cellId, id]
     );
     res.json({ deleted: true });
   } catch (err) {

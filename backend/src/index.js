@@ -36,7 +36,9 @@ import { router as organizationsRouter } from './api/organizations.js';
 import { router as storageRouter } from './api/storage.js';
 import { router as bulkRouter } from './api/bulk.js';
 import { router as updatesRouter } from './api/updates.js';
+import { router as usersRouter } from './api/users.js';
 
+app.use('/api/users', authenticate, usersRouter);
 app.use('/api/spaces', authenticate, spacesRouter);
 app.use('/api/spaces/:spaceId/objects', authenticate, objectsRouter);
 app.use('/api/spaces/:spaceId/connections', authenticate, connectionsRouter);
