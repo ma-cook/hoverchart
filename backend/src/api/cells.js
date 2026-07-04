@@ -17,6 +17,25 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.delete('/:id', async (req, res) => {
+  const { spaceId, id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM connections WHERE space_id = $1 AND cell_id = $2`, [spaceId, id]);
+    await client.query(`DELETE FROM objects WHERE space_id = $1 AND cell_id = $2`, [spaceId, id]);
+    await client.query(`DELETE FROM spatial_cells WHERE space_id = $1 AND id = $2`, [spaceId, id]);
+    await client.query('COMMIT');
+    res.json({ deleted: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Delete cell error:', err);
+    res.status(500).json({ error: 'Failed to delete cell' });
+  } finally {
+    client.release();
+  }
+});
+
 router.post('/', async (req, res) => {
   const { spaceId } = req.params;
   const { id, x, y, z, bounds } = req.body;
