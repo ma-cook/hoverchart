@@ -19,7 +19,18 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   const { spaceId } = req.params;
-  const conn = req.body;
+  let conn = req.body;
+
+  // Normalize frontend format (start/end objects) → backend format (start_obj/end_obj + start_data/end_data)
+  if (conn.start && typeof conn.start === 'object' && !conn.start_obj) {
+    conn.start_obj = conn.start.objectId || conn.start.id;
+    conn.start_data = conn.start;
+    conn.end_obj = conn.end.objectId || conn.end.id;
+    conn.end_data = conn.end;
+  }
+  if (conn.lineStyle && !conn.line_style) conn.line_style = conn.lineStyle;
+  if (conn.cellId && !conn.cell_id) conn.cell_id = conn.cellId;
+
   if (!conn.id || !conn.cell_id || !conn.start_obj || !conn.end_obj) {
     return res.status(400).json({ error: 'id, cell_id, start_obj, and end_obj are required' });
   }
@@ -52,7 +63,8 @@ router.post('/', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   const { spaceId, id } = req.params;
-  const updates = req.body;
+  let updates = req.body;
+  if (updates.lineStyle && !updates.line_style) updates.line_style = updates.lineStyle;
   const fields = [];
   const values = [];
   let idx = 1;

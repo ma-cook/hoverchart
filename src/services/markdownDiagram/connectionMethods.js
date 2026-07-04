@@ -1,3 +1,4 @@
+import { api } from '../../api-client';
 import useConnectionStore from '../../stores/connectionStore';
 import { useObjectsStore } from '../../stores';
 import {
@@ -377,6 +378,19 @@ export const connectionMethods = {
     );
   },
 
+  function deriveCellCoords(obj) {
+    if (obj.cell_x !== undefined && obj.cell_y !== undefined && obj.cell_z !== undefined) return obj;
+    if (obj.cellId) {
+      const parts = obj.cellId.split(',').map(Number);
+      if (parts.length >= 3 && parts.every(n => !isNaN(n))) {
+        obj.cell_x = parts[0];
+        obj.cell_y = parts[1];
+        obj.cell_z = parts[2];
+      }
+    }
+    return obj;
+  }
+
   async _cloudFunctionBulkImport(
     allConnectionsToSave,
     currentSpaceId,
@@ -386,66 +400,66 @@ export const connectionMethods = {
     const startTime = performance.now();
 
     try {
-      const idToken = localStorage.getItem('idToken');
+      const objects = allObjectsToSave.map((obj) =>
+        deriveCellCoords({
+          id: obj.id,
+          cell_id: obj.cellId,
+          position: obj.position,
+          type: obj.type,
+          color: obj.color,
+          content: obj.content || '',
+          scale: obj.scale || [1, 1, 1],
+          rotation: obj.rotation || [0, 0, 0],
+          header_text: obj.headerText,
+          metadata: {
+            ...(obj.size && { size: obj.size }),
+            ...(obj.textStyle && { textStyle: obj.textStyle }),
+            ...(obj.headerStyle && { headerStyle: obj.headerStyle }),
+            ...(obj.faceColors && { faceColors: obj.faceColors }),
+            ...(obj.faceTexts && { faceTexts: obj.faceTexts }),
+            ...(obj.faceTextStyles && { faceTextStyles: obj.faceTextStyles }),
+            ...(obj.lineColor && { lineColor: obj.lineColor }),
+            ...(obj.borderStyle && { borderStyle: obj.borderStyle }),
+            ...(obj.borderColor && { borderColor: obj.borderColor }),
+            ...(obj.lineThickness && { lineThickness: obj.lineThickness }),
+            ...(obj.merfolkData && { merfolkData: obj.merfolkData }),
+          },
+        })
+      );
 
-      const connections = allConnectionsToSave.map((conn) => ({
-        id: conn.id,
-        start: conn.start || {
+      const connections = allConnectionsToSave.map((conn) => {
+        const start = conn.start || {
           objectId: conn.from?.objectId || conn.from?.id,
           type: conn.from?.type,
           face: conn.from?.face,
           position: conn.from?.position,
-        },
-        end: conn.end || {
+        };
+        const end = conn.end || {
           objectId: conn.to?.objectId || conn.to?.id,
           type: conn.to?.type,
           face: conn.to?.face,
           position: conn.to?.position,
-        },
-        type: conn.type || 'line',
-        color: conn.color || '#000000',
-        createdAt: conn.createdAt || Date.now(),
-        cellId: conn.cellId,
-        ...(conn.text && { text: conn.text }),
-        ...(conn.thickness && { thickness: conn.thickness }),
-        ...(conn.textStyle && { textStyle: conn.textStyle }),
-        ...(conn.curvedPath && {
-          curvedPath: conn.curvedPath.map((p) =>
-            Array.isArray(p) ? [...p] : p
-          ),
-        }),
-        ...(conn.merfolkData && { merfolkData: conn.merfolkData }),
-      }));
-
-      const objects = allObjectsToSave.map((obj) => ({
-        id: obj.id,
-        position: obj.position,
-        type: obj.type,
-        color: obj.color,
-        content: obj.content || '',
-        createdAt: obj.createdAt || Date.now(),
-        cellId: obj.cellId,
-        ...(obj.size && { size: obj.size }),
-        ...(obj.scale && { scale: obj.scale }),
-        ...(obj.rotation && { rotation: obj.rotation }),
-        ...(obj.textStyle && { textStyle: obj.textStyle }),
-        ...(obj.headerText !== undefined && { headerText: obj.headerText }),
-        ...(obj.headerStyle && { headerStyle: obj.headerStyle }),
-        ...(obj.faceColors && { faceColors: obj.faceColors }),
-        ...(obj.faceTexts && { faceTexts: obj.faceTexts }),
-        ...(obj.faceTextStyles && { faceTextStyles: obj.faceTextStyles }),
-        ...(obj.lineColor && { lineColor: obj.lineColor }),
-        ...(obj.borderStyle && { borderStyle: obj.borderStyle }),
-        ...(obj.borderColor && { borderColor: obj.borderColor }),
-        ...(obj.lineThickness && { lineThickness: obj.lineThickness }),
-        ...(obj.merfolkData && { merfolkData: obj.merfolkData }),
-      }));
-
-      const functionUrl = 'https://bulkimport-qtk2xsi74a-uc.a.run.app';
+        };
+        return deriveCellCoords({
+          id: conn.id,
+          cell_id: conn.cellId,
+          start_obj: start.objectId,
+          end_obj: end.objectId,
+          start_data: start,
+          end_data: end,
+          line_style: conn.type || 'straight',
+          color: conn.color || '#000000',
+          text: conn.text,
+          metadata: {
+            ...(conn.thickness && { thickness: conn.thickness }),
+            ...(conn.textStyle && { textStyle: conn.textStyle }),
+            ...(conn.curvedPath && { curvedPath: conn.curvedPath.map(p => Array.isArray(p) ? [...p] : p) }),
+            ...(conn.merfolkData && { merfolkData: conn.merfolkData }),
+          },
+        });
+      });
 
       const payload = {
-        idToken,
-        userId: user.uid,
         spaceId: currentSpaceId,
         objects,
         connections: [],
@@ -476,73 +490,31 @@ export const connectionMethods = {
           ? Math.max(1, Math.floor(remainingSpace / avgConnSize))
           : connections.length;
 
-      if (chunkSize >= connections.length) {
-        const fullPayload = { ...payload, connections };
-
-        const response = await fetch(functionUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(fullPayload),
-        });
-
-        if (!response.ok) {
-          let errorMessage = response.statusText;
-          try {
-            const errorData = await response.json();
-            errorMessage =
-              errorData.error || errorData.message || JSON.stringify(errorData);
-            console.error('❌ [CloudFunction] Error response:', errorData);
-          } catch {
-            try {
-              const errorText = await response.text();
-              console.error('❌ [CloudFunction] Error text:', errorText);
-              errorMessage = errorText || errorMessage;
-            } catch {
-              console.error('❌ [CloudFunction] Could not read error response');
-            }
-          }
-          throw new Error(`Cloud Function error: ${errorMessage}`);
+      async function sendChunk(chunk, index, total) {
+        const chunkPayload = { ...payload, connections: chunk };
+        if (total > 1) {
+          console.log(
+            `📡 [BulkImport] Sending chunk ${index}/${total} (${chunk.length} connections)`
+          );
         }
+        return api.post('/api/bulk/import', chunkPayload);
+      }
 
-        const result = await response.json();
-        return result;
+      if (chunkSize >= connections.length) {
+        return sendChunk(connections, 1, 1);
       }
 
       let allResults = [];
       for (let i = 0; i < connections.length; i += chunkSize) {
         const chunk = connections.slice(i, i + chunkSize);
-        const chunkPayload = { ...payload, connections: chunk };
         const chunkIndex = Math.floor(i / chunkSize) + 1;
         const totalChunks = Math.ceil(connections.length / chunkSize);
-
-        console.log(
-          `📡 [CloudFunction] Sending chunk ${chunkIndex}/${totalChunks} (${chunk.length} connections)`
-        );
-
         try {
-          const response = await fetch(functionUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(chunkPayload),
-          });
-
-          if (!response.ok) {
-            console.warn(
-              `⚠️ [CloudFunction] Chunk ${chunkIndex}/${totalChunks} failed, falling back to client for remaining connections`
-            );
-            const remainingConnections = allConnectionsToSave.slice(i);
-            return this._backgroundSaveConnections(
-              remainingConnections,
-              currentSpaceId,
-              user
-            );
-          }
-
-          const result = await response.json();
+          const result = await sendChunk(chunk, chunkIndex, totalChunks);
           allResults.push(result);
         } catch (error) {
           console.warn(
-            `⚠️ [CloudFunction] Chunk ${chunkIndex}/${totalChunks} error, falling back to client for remaining connections:`,
+            `⚠️ [BulkImport] Chunk ${chunkIndex}/${totalChunks} failed, falling back to client for remaining connections:`,
             error
           );
           const remainingConnections = allConnectionsToSave.slice(i);
@@ -558,7 +530,7 @@ export const connectionMethods = {
 
       return { success: true, chunks: allResults };
     } catch (error) {
-      console.error('❌ [CloudFunction] Bulk import failed:', error);
+      console.error('❌ [BulkImport] Bulk import failed:', error);
 
       return this._backgroundSaveConnections(
         allConnectionsToSave,

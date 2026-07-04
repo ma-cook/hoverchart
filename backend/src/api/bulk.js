@@ -12,6 +12,16 @@ router.post('/import', async (req, res) => {
     let objCount = 0, connCount = 0;
     if (objects && objects.length > 0) {
       for (const obj of objects) {
+        // Normalize frontend format
+        if (obj.cellId && !obj.cell_id) obj.cell_id = obj.cellId;
+        if (obj.cell_id && (obj.cell_x === undefined || obj.cell_y === undefined || obj.cell_z === undefined)) {
+          const parts = obj.cell_id.split(',').map(Number);
+          if (parts.length >= 3 && parts.every(n => !isNaN(n))) {
+            if (obj.cell_x === undefined) obj.cell_x = parts[0];
+            if (obj.cell_y === undefined) obj.cell_y = parts[1];
+            if (obj.cell_z === undefined) obj.cell_z = parts[2];
+          }
+        }
         await client.query(
           `INSERT INTO objects (id, space_id, cell_id, cell_x, cell_y, cell_z, position, scale, rotation, type, color, content, header_text, metadata)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -27,6 +37,15 @@ router.post('/import', async (req, res) => {
     }
     if (connections && connections.length > 0) {
       for (const conn of connections) {
+        // Normalize frontend format
+        if (conn.start && typeof conn.start === 'object' && !conn.start_obj) {
+          conn.start_obj = conn.start.objectId || conn.start.id;
+          conn.start_data = conn.start;
+          conn.end_obj = conn.end.objectId || conn.end.id;
+          conn.end_data = conn.end;
+        }
+        if (conn.lineStyle && !conn.line_style) conn.line_style = conn.lineStyle;
+        if (conn.cellId && !conn.cell_id) conn.cell_id = conn.cellId;
         await client.query(
           `INSERT INTO connections (id, space_id, cell_id, start_obj, end_obj, start_data, end_data, line_style, color, text, metadata)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
