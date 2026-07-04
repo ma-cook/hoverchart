@@ -10,7 +10,7 @@ import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
-import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions } from '../services/spatialObjectsService';
+import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions, deleteAllCellsInSpace } from '../services/spatialObjectsService';
 import { api } from '../api-client';
 import useAuthStore from '../stores/authStore';
 import * as THREE from 'three';
@@ -870,168 +870,39 @@ const UIOverlay = ({
     // docs with lastUpdated > jobStartTime) ensures they are not deleted.
     window._bulkDeleteInProgress = true;
 
-    const BULK_DELETE_URL = 'https://bulkdelete-qtk2xsi74a-uc.a.run.app';
-    const POLL_INTERVAL_MS = 3000;
-    const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+    // ── Clear local state immediately so UI is responsive ──
+    clearAllObjectCaches();
+    resetObjects();
+    resetConnections();
 
-    const { loadTokens } = await import('../api-client');
+    const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
+    cleanupSpatialObjectSubscriptions(loadedCellIds);
+    useSpatialManagerStore.getState().resetSpatialManager();
 
+    setNotification({ show: true, message: '🧹 Clearing space…' });
+
+    // ── Delete all cells via backend API ──
     try {
-      // --- Step 1: Clear local state immediately so UI is responsive ---
+      await deleteAllCellsInSpace(user.uid, currentSpaceId);
+
+      // Final cleanup — re-clear caches in case any stale data leaked in
       clearAllObjectCaches();
       resetObjects();
       resetConnections();
-
-      const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
-      cleanupSpatialObjectSubscriptions(loadedCellIds);
+      const finalLoadedCellIds = Array.from(
+        useSpatialManagerStore.getState().loadedCells ?? []
+      );
+      cleanupSpatialObjectSubscriptions(finalLoadedCellIds);
       useSpatialManagerStore.getState().resetSpatialManager();
 
-      setNotification({ show: true, message: '🧹 Clearing space…' });
-
-      // --- Step 2: Fire the cloud function — it returns jobId immediately ---
-      const tokens = loadTokens();
-      const jwtToken = tokens?.accessToken;
-      if (!jwtToken) throw new Error('Unable to get authentication token');
-
-      const startRes = await fetch(BULK_DELETE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken: jwtToken, userId: user.sub || user.uid, spaceId: currentSpaceId }),
-      });
-
-      // Parse response defensively — Cloud Run / proxy errors return HTML, not JSON.
-      const startBodyText = await startRes.text();
-      let startData;
-      try {
-        startData = JSON.parse(startBodyText);
-      } catch {
-        throw new Error(
-          `Bulk delete returned non-JSON response (HTTP ${startRes.status}): ${startBodyText.slice(0, 200)}`
-        );
-      }
-      if (!startRes.ok) throw new Error(startData.error || `Bulk delete failed to start (HTTP ${startRes.status})`);
-
-      const { jobId } = startData;
-
-      // --- Backward-compat: old synchronous API returned the final result
-      // directly (no jobId). If we see that shape, treat the job as done. ---
-      if (!jobId && (startData.success === true || typeof startData.objectsDeleted === 'number')) {
-        setCurrentDiagramRepo(null);
-        window._bulkDeleteInProgress = false;
-        setIsDeleting(false);
-        setNotification({
-          show: true,
-          message: `✅ Deleted ${startData.cellsDeleted ?? 0} cells, ${startData.objectsDeleted ?? 0} objects, ${startData.connectionsDeleted ?? 0} connections.`,
-        });
-        setTimeout(() => setNotification({ show: false, message: '' }), 5000);
-        return;
-      }
-
-      if (!jobId) {
-        throw new Error(
-          `Bulk delete response missing jobId. Server returned: ${JSON.stringify(startData).slice(0, 300)}`
-        );
-      }
-
-      // --- Step 3: Immediately return UI control to the user ---
+      window._bulkDeleteInProgress = false;
       setIsDeleting(false);
       setCurrentDiagramRepo(null);
-      setNotification({ show: true, message: '✅ Delete started — running in the background' });
-      setTimeout(() => setNotification({ show: false, message: '' }), 3000);
-
-      // --- Step 4: Poll job status in the background ---
-      const pollDeadline = Date.now() + POLL_TIMEOUT_MS;
-
-      const pollStatus = async () => {
-        if (Date.now() > pollDeadline) {
-          setNotification({ show: true, message: '⚠️ Delete job timed out — check space manually.' });
-          setTimeout(() => setNotification({ show: false, message: '' }), 5000);
-          window._bulkDeleteInProgress = false;
-          setIsDeleting(false);
-          return;
-        }
-
-        try {
-          const tokens = loadTokens();
-          const freshToken = tokens?.accessToken;
-          const statusRes = await fetch(
-            `${BULK_DELETE_URL}/job/${jobId}?idToken=${encodeURIComponent(freshToken || '')}&userId=${encodeURIComponent(user.sub || user.uid)}&spaceId=${encodeURIComponent(currentSpaceId)}`
-          );
-
-          // Parse response defensively — non-JSON responses (HTML 404 from
-          // proxy, etc.) would otherwise throw forever in the retry loop.
-          const statusBodyText = await statusRes.text();
-          let statusData;
-          try {
-            statusData = JSON.parse(statusBodyText);
-          } catch {
-            // If the job document literally hasn't been created yet (race on
-            // first poll), retry a few times then give up.
-            if (statusRes.status === 404 || statusRes.status === 0) {
-              throw new Error(`Job status endpoint returned HTTP ${statusRes.status} (non-JSON)`);
-            }
-            throw new Error(
-              `Job status returned non-JSON (HTTP ${statusRes.status}): ${statusBodyText.slice(0, 200)}`
-            );
-          }
-
-          // Hard-stop: server confirmed the job doesn't exist. Don't keep retrying.
-          if (statusRes.status === 404) {
-            window._bulkDeleteInProgress = false;
-            setIsDeleting(false);
-            setNotification({
-              show: true,
-              message: `❌ Delete job not found on server (jobId=${jobId}). Local state was cleared; check space manually.`,
-            });
-            setTimeout(() => setNotification({ show: false, message: '' }), 6000);
-            return;
-          }
-
-          if (statusData.status === 'done') {
-            // Final cleanup — Firestore listeners may have streamed in
-            // stale snapshots while the worker was running. Wipe caches,
-            // tear down subscriptions, and reset stores so the next render
-            // pass starts from an empty world.
-            try {
-              clearAllObjectCaches();
-              resetObjects();
-              resetConnections();
-              const finalLoadedCellIds = Array.from(
-                useSpatialManagerStore.getState().loadedCells ?? []
-              );
-              cleanupSpatialObjectSubscriptions(finalLoadedCellIds);
-              useSpatialManagerStore.getState().resetSpatialManager();
-            } catch (cleanupErr) {
-              console.warn('[BulkDelete] Post-job cleanup error (non-fatal):', cleanupErr);
-            }
-
-            window._bulkDeleteInProgress = false;
-            setIsDeleting(false);
-            const preserved = statusData.cellsPreserved
-              ? ` (${statusData.cellsPreserved} cells preserved with concurrent writes)`
-              : '';
-            setNotification({
-              show: true,
-              message: `✅ Deleted ${statusData.cellsDeleted ?? 0} cells, ${statusData.objectsDeleted ?? 0} objects, ${statusData.connectionsDeleted ?? 0} connections.${preserved}`,
-            });
-            setTimeout(() => setNotification({ show: false, message: '' }), 5000);
-          } else if (statusData.status === 'error') {
-            window._bulkDeleteInProgress = false;
-            setIsDeleting(false);
-            setNotification({ show: true, message: `❌ Delete job failed: ${statusData.error ?? 'unknown error'}` });
-            setTimeout(() => setNotification({ show: false, message: '' }), 6000);
-          } else {
-            // Still running — poll again
-            setTimeout(pollStatus, POLL_INTERVAL_MS);
-          }
-        } catch (pollErr) {
-          console.warn('[BulkDelete] Poll error (retrying):', pollErr);
-          setTimeout(pollStatus, POLL_INTERVAL_MS);
-        }
-      };
-
-      // Start polling immediately for fast completions, then every POLL_INTERVAL_MS
-      pollStatus();
+      setNotification({
+        show: true,
+        message: '✅ All objects deleted.',
+      });
+      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
     } catch (error) {
       console.error('Bulk delete error:', error);
       window._bulkDeleteInProgress = false;
