@@ -6,28 +6,16 @@ import { useAuthStore } from '../stores';
 const selectAuthState = (state) => ({
   user: state.authState.user,
   isAuthReady: state.authState.isAuthReady,
-  isCheckingUrlAuth: state.authState.isCheckingUrlAuth,
   initializeAuth: state.initializeAuth,
-  checkUrlAuth: state.checkUrlAuth,
-  cleanup: state.cleanup,
 });
 
 export function useAuthState() {
-  const { user, isAuthReady, isCheckingUrlAuth, initializeAuth, checkUrlAuth, cleanup } =
+  const { user, isAuthReady, initializeAuth } =
     useAuthStore(selectAuthState, shallow);
 
   useEffect(() => {
-    // Initialize auth when hook is mounted
     initializeAuth();
+  }, [initializeAuth]);
 
-    // Return cleanup function
-    return cleanup;
-  }, [initializeAuth, cleanup]);
-
-  useEffect(() => {
-    // Check URL auth on mount
-    checkUrlAuth();
-  }, [checkUrlAuth]);
-
-  return { user, isAuthReady, isCheckingUrlAuth };
+  return { user, isAuthReady, isCheckingUrlAuth: false };
 }
