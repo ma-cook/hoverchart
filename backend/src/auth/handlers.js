@@ -8,11 +8,11 @@ export const router = Router();
 // POST /api/auth/google
 router.post('/google', async (req, res) => {
   try {
-    const { accessToken } = req.body;
-    if (!accessToken) return res.status(400).json({ error: 'accessToken required' });
+    const { accessToken: googleAccessToken } = req.body;
+    if (!googleAccessToken) return res.status(400).json({ error: 'accessToken required' });
 
     const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: { Authorization: `Bearer ${googleAccessToken}` },
     });
     if (!response.ok) {
       return res.status(401).json({ error: 'Invalid access token' });
