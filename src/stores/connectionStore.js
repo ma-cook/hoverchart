@@ -1,6 +1,5 @@
 import { create } from 'zustand';
-import { db, auth } from '../firebase';
-import { collection, getDocs, doc, updateDoc, deleteField } from 'firebase/firestore';
+import { api } from '../api-client';
 import useSpaceManagerStore from './spaceManagerStore';
 
 // Stable empty array for components with no connections — prevents re-renders from shallow equality
@@ -837,12 +836,11 @@ const useConnectionStore = create((set, get) => ({
         }, 60000); // 1 minute timeout - simplified
       });
 
-      // SIMPLIFIED: Directly delete from database without complex fallbacks
+      // Delete from database via API
       if (connectionIdsToDelete.length > 0) {
-        // Use a simple direct deletion approach
         setTimeout(async () => {
           try {
-            const user = auth.currentUser || window.currentUser;
+            const user = window.currentUser;
 
             // Use provided spaceId first, then fall back to global context
             let finalSpaceId =
@@ -868,42 +866,12 @@ const useConnectionStore = create((set, get) => ({
               return;
             }
 
-            // Get all cells and remove the connections directly
-            const cellsRef = collection(
-              db,
-              'users',
-              user.uid,
-              'spaces',
-              finalSpaceId,
-              'cells'
-            );
-            const cellsSnapshot = await getDocs(cellsRef);
-
-            for (const cellDoc of cellsSnapshot.docs) {
-              const cellData = cellDoc.data();
-              if (cellData.connections) {
-                let hasChanges = false;
-                const updates = {};
-
-                connectionIdsToDelete.forEach((connId) => {
-                  if (cellData.connections[connId]) {
-                    updates[`connections.${connId}`] = deleteField();
-                    hasChanges = true;
-                  }
-                });
-
-                if (hasChanges) {
-                  const cellRef = doc(
-                    db,
-                    'users',
-                    user.uid,
-                    'spaces',
-                    finalSpaceId,
-                    'cells',
-                    cellDoc.id
-                  );
-                  await updateDoc(cellRef, updates);
-                }
+            // Delete each connection via API
+            for (const connId of connectionIdsToDelete) {
+              try {
+                await api.delete(`/api/spaces/${finalSpaceId}/connections/${connId}`);
+              } catch {
+                // Individual deletion error
               }
             }
           } catch {
@@ -996,8 +964,6 @@ const useConnectionStore = create((set, get) => ({
     // Check if this connection is being deleted - if so, don't add it back
     const state = get();
     if (state.deletingConnections.has(connection.id)) {
-      // Additional check: verify if this connection should actually still be blocked
-      // Sometimes Firebase sends stale data, so we should verify the timestamp
       return;
     }
 

@@ -1,95 +1,51 @@
-// Shared Spaces Service - Better architecture for shared spaces
-import {
-  collection,
-  doc,
-  getDoc,
-  setDoc,
-  deleteDoc,
-  getDocs,
-  query,
-  where,
-} from 'firebase/firestore';
+import { api } from '../api-client';
 
-/**
- * Add a shared space reference for a user
- */
-export async function addSharedSpaceReference(
-  db,
-  userId,
-  spaceId,
-  ownerId,
-  permissions = ['view']
-) {
-  const sharedSpaceRef = doc(db, 'users', userId, 'sharedSpaces', spaceId);
-  await setDoc(sharedSpaceRef, {
-    spaceId,
-    ownerId,
-    permissions,
-    sharedAt: new Date().toISOString(),
-  });
+export async function addSharedSpaceReference(db, userId, spaceId, ownerId) {
+  try {
+    await api.patch(`/api/spaces/${spaceId}`, {
+      shared_with: [userId],
+    });
+  } catch (err) {
+    console.error('Failed to add shared space reference:', err);
+  }
 }
 
-/**
- * Remove a shared space reference for a user
- */
 export async function removeSharedSpaceReference(db, userId, spaceId) {
-  const sharedSpaceRef = doc(db, 'users', userId, 'sharedSpaces', spaceId);
-  await deleteDoc(sharedSpaceRef);
+  try {
+    const space = await api.get(`/api/spaces/${spaceId}`, { retries: 0 }).catch(() => null);
+    if (space) {
+      const sharedWith = (space.shared_with || []).filter((id) => id !== userId);
+      await api.patch(`/api/spaces/${spaceId}`, { shared_with: sharedWith });
+    }
+  } catch (err) {
+    console.error('Failed to remove shared space reference:', err);
+  }
 }
 
-/**
- * Get all shared spaces for a user - MUCH more efficient!
- */
-export async function getSharedSpacesForUser(db, userId) {
-  const sharedSpacesRef = collection(db, 'users', userId, 'sharedSpaces');
-  const sharedSpacesSnapshot = await getDocs(sharedSpacesRef);
-
-  const sharedSpaces = [];
-
-  // Get the actual space data for each shared space reference
-  for (const sharedSpaceDoc of sharedSpacesSnapshot.docs) {
-    const sharedData = sharedSpaceDoc.data();
-    const { spaceId, ownerId } = sharedData;
-
-    try {
-      // Get the actual space data from the owner's collection
-      const spaceRef = doc(db, 'users', ownerId, 'spaces', spaceId);
-      const spaceDoc = await getDoc(spaceRef);
-
-      if (spaceDoc.exists()) {
-        sharedSpaces.push({
-          id: spaceId,
-          ownerId,
-          ...spaceDoc.data(),
-          ...sharedData, // Include permissions, sharedAt, etc.
-          isOwner: false,
-          isShared: true,
-        });
-      }
-    } catch (error) {
-      console.warn(
-        `Could not fetch shared space ${spaceId} from owner ${ownerId}:`,
-        error
-      );
-    }
-  }
-
-  return sharedSpaces;
+export async function getSharedSpaces(db, userId) {
+  try {
+    const spaces = await api.get('/api/spaces');
+    return spaces.filter((s) => s.owner_id !== userId);
+  } catch { return []; }
 }
 
-/**
- * Remove all shared references when a space is deleted
- */
-export async function removeAllSharedReferences(db, spaceId, sharedWithArray) {
-  const promises = [];
-
-  if (Array.isArray(sharedWithArray)) {
-    for (const share of sharedWithArray) {
-      if (share.userId) {
-        promises.push(removeSharedSpaceReference(db, share.userId, spaceId));
-      }
+export async function registerSharedSpaceFromUrl(db, userId, spaceId, ownerId) {
+  try {
+    const space = await api.get(`/api/spaces/${spaceId}`, { retries: 0 }).catch(() => null);
+    if (space) {
+      await api.patch(`/api/spaces/${spaceId}`, {
+        shared_with: [...new Set([...(space.shared_with || []), userId])],
+      });
     }
+  } catch (err) {
+    console.error('Failed to register shared space:', err);
   }
+}
 
-  await Promise.all(promises);
+export async function checkSharedSpaceAccess(db, userId, spaceId) {
+  try {
+    const space = await api.get(`/api/spaces/${spaceId}`, { retries: 0 }).catch(() => null);
+    if (!space) return false;
+    return space.owner_id === userId || (space.shared_with || []).includes(userId) || space.is_public;
+  } catch { return false; }
 }

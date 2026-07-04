@@ -3,8 +3,7 @@
  * Handles GitHub OAuth, repository fetching, file analysis, and Merfolk markdown generation
  */
 import { parse } from '@babel/parser';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../firebase';
+import { api } from '../api-client';
 import { scanPythonWithTreeSitter, scanWithTreeSitter } from './treeSitterScanner';
 
 // GitHub API base URL
@@ -75,8 +74,7 @@ const getTreeSitterLanguage = (filePath) => {
 export const exchangeGithubCode = async (code) => {
   try {
     const redirectUri = window.location.origin + window.location.pathname;
-    const fetchGithubToken = httpsCallable(functions, 'fetchGithubToken');
-    const result = await fetchGithubToken({ code, redirect_uri: redirectUri });
+    const result = await api.post('/api/auth/github/token', { code, redirect_uri: redirectUri });
     return result.data.access_token;
   } catch (error) {
     console.error('Error exchanging GitHub code:', error);

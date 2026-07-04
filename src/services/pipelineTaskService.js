@@ -1,5 +1,4 @@
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { api } from '../api-client';
 import useObjectsStore from '../stores/objectsStore';
 
 export const TASK_STATUS = {
@@ -49,24 +48,16 @@ export function getNextQueuedTask(tasks) {
   return tasks.find(
     (task) => {
       const status = task.merfolkData?.status;
-      // Treat tasks with no status as queued (legacy tasks positioned before status was added)
       return !status || status === TASK_STATUS.QUEUED;
     }
   ) || null;
 }
 
-/**
- * Returns the next task that still needs pipeline work. This includes not only
- * freshly QUEUED tasks but also IN_PROGRESS / PR_OPEN tasks that were left
- * in-flight on a prior run (e.g. the app was refreshed while GitHub auto-merged
- * the PR). The pipeline must pick these up again so the merge can be detected
- * and the next queued task can advance.
- */
 export function getNextActionableTask(tasks) {
   return tasks.find(
     (task) => {
       const status = task.merfolkData?.status;
-      if (!status) return true; // legacy tasks with no status
+      if (!status) return true;
       return (
         status === TASK_STATUS.QUEUED ||
         status === TASK_STATUS.IN_PROGRESS ||
@@ -101,39 +92,30 @@ export async function updateTaskStatus(
   newStatus,
   extraFields = {}
 ) {
-  const docRef = doc(
-    db,
-    'users',
-    spaceOwnerId,
-    'spaces',
-    spaceId,
-    'cells',
-    cellId,
-    'objects',
-    objectId
-  );
+  const path = `/api/users/${spaceOwnerId}/spaces/${spaceId}/cells/${cellId}/objects/${objectId}`;
 
-  const snapshot = await getDoc(docRef);
-  if (!snapshot.exists()) {
+  let data;
+  try {
+    const response = await api.get(path);
+    data = response.data || response;
+  } catch {
     console.warn(`[pipelineTaskService] Object ${objectId} not found`);
     return false;
   }
 
-  const data = snapshot.data();
+  if (!data) {
+    console.warn(`[pipelineTaskService] Object ${objectId} not found`);
+    return false;
+  }
+
   const updatedMerfolkData = {
     ...(data.merfolkData || {}),
     status: newStatus,
     ...extraFields,
   };
 
-  await updateDoc(docRef, { merfolkData: updatedMerfolkData });
+  await api.patch(path, { merfolkData: updatedMerfolkData });
 
-  // Synchronously mirror the new status into the local objects store. Without
-  // this, callers that immediately invoke repositionAllTasks() after a status
-  // change would re-sort using stale local data (the Firestore snapshot
-  // listener hasn't fired yet, and the _repoLocalUpdate shield in App.jsx
-  // would even ignore the snapshot once it does arrive). That caused merged
-  // tasks to land in active grid slots and active tasks to bump backwards.
   const objectsState = useObjectsStore.getState();
   const currentObjects = objectsState.objects || [];
   let didUpdate = false;

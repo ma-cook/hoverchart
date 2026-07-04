@@ -1,0 +1,30 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/hoverchart-api', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/hoverchart-api']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'hoverchart-api'
+      - '--image=gcr.io/$PROJECT_ID/hoverchart-api'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--min-instances=0'
+      - '--max-instances=10'
+      - '--concurrency=40'
+      - '--cpu=1'
+      - '--memory=512Mi'
+      - '--service-account=hoverchart-api-sa@$PROJECT_ID.iam.gserviceaccount.com'
+      - '--add-cloudsql-instances=$PROJECT_ID:us-central1:volscape'
+      - '--set-secrets=DATABASE_URL=DATABASE_URL:latest'
+      - '--set-secrets=JWT_SECRET=JWT_SECRET:latest'
+      - '--set-secrets=JWT_REFRESH_SECRET=JWT_REFRESH_SECRET:latest'
+      - '--set-secrets=JWT_GUEST_SECRET=JWT_GUEST_SECRET:latest'
+      - '--set-secrets=GOOGLE_CLIENT_ID=GIS_CLIENT_ID:latest'
+      - '--set-secrets=GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest'
+      - '--set-secrets=GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest'
+      - '--set-secrets=GCS_BUCKET=GCS_BUCKET:latest'

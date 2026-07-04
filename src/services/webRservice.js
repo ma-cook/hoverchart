@@ -1,42 +1,31 @@
-import { db } from '../firebase';
-import {
-  collection,
-  doc,
-  getDoc,
-  updateDoc,
-  serverTimestamp,
-  query,
-  where,
-  arrayUnion,
-  onSnapshot,
-  setDoc,
-} from 'firebase/firestore';
+import { api, emitSocket, onSocket, connectSocket, getSocket } from '../api-client';
+import { getSpaceDataChannel } from './spaceDataChannel';
 
-// Import global subscription manager
-import {
-  getOrCreateSubscription,
-  generateSubscriptionKey,
-  SUBSCRIPTION_TYPES,
-} from './globalSubscriptionManager';
-import { findObjectInCells, getAllObjectsInSpace, getCellId, CELL_SIZE } from './spatialPartitioning';
+let _rtcInitialized = false;
 
+export const initWebRTC = (userId) => {
+  if (_rtcInitialized || !userId) return;
+  _rtcInitialized = true;
+  connectSocket();
+  const socket = getSocket();
+  if (!socket) return;
+  socket.on('connect', () => {
+    getSpaceDataChannel();
+  });
+};
 
-const activeStreams = new Map();
+const TURN_URL = import.meta.env.VITE_TURN_URL || 'turn:relay.metered.ca:443';
+const TURN_USERNAME = import.meta.env.VITE_TURN_USERNAME || 'e8dd65f183e28d282e8b83b0';
+const TURN_CREDENTIAL = import.meta.env.VITE_TURN_CREDENTIAL || 'uWdWNmkhvyqTEswO';
 
-const getRTCConfiguration = () => ({
+const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    {
-      urls: 'turn:relay.metered.ca:443',
-      username: 'e8dd65f183e28d282e8b83b0',
-      credential: 'uWdWNmkhvyqTEswO',
-    },
+    { urls: TURN_URL, username: TURN_USERNAME, credential: TURN_CREDENTIAL },
   ],
-});
-
-export const initWebRTC = () => {
-  // WebRTC service initialized
 };
+
+const activeStreams = new Map();
 
 class BroadcastSession {
   constructor(broadcastId, stream, userId, spaceId) {
@@ -45,926 +34,145 @@ class BroadcastSession {
     this.userId = userId;
     this.spaceId = spaceId;
     this.peerConnections = new Map();
-    this.signalingListeners = new Map();
   }
 
   async createOfferForViewer(viewerId) {
-    if (this.peerConnections.has(viewerId)) {
-      console.log(
-        `Connection already exists or pending for viewer ${viewerId}`
-      );
-      return;
-    }
-
+    if (this.peerConnections.has(viewerId)) return;
     try {
-      console.log(
-        `Received 'joining' signal from viewer ${viewerId}, creating offer...`
-      );
-      const peerConnection = new RTCPeerConnection(getRTCConfiguration());
+      const pc = new RTCPeerConnection(RTC_CONFIG);
+      this.stream.getTracks().forEach((track) => pc.addTrack(track, this.stream));
+      this.peerConnections.set(viewerId, pc);
 
-      this.stream
-        .getTracks()
-        .forEach((track) => peerConnection.addTrack(track, this.stream));
+      const offer = await pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false });
+      await pc.setLocalDescription(offer);
+      emitSocket('signaling:offer', { to: viewerId, offer: { type: offer.type, sdp: offer.sdp } });
 
-      this.peerConnections.set(viewerId, peerConnection);
-
-      const offer = await peerConnection.createOffer({
-        offerToReceiveVideo: false,
-        offerToReceiveAudio: false,
-      });
-
-      await peerConnection.setLocalDescription(offer);
-
-      const signalingId = `${this.broadcastId}_${viewerId}`;
-      const signalingRef = doc(
-        db,
-        'users',
-        window.currentSpaceOwner,
-        'spaces',
-        this.spaceId,
-        'signaling',
-        signalingId
-      );
-
-      await updateDoc(signalingRef, {
-        broadcasterId: this.userId,
-        offer: {
-          type: offer.type,
-          sdp: offer.sdp,
-        },
-        broadcasterCandidates: [],
-        status: 'offering',
-        lastUpdated: serverTimestamp(),
-      });
-      console.log(
-        `Offer sent to signaling document ${signalingId} for viewer ${viewerId}`
-      );
-
-      const unsubscribeListener = onSnapshot(signalingRef, async (snapshot) => {
-        const data = snapshot.data();
-        // --- Only clean up if the connection is truly closed or failed ---
-        if (!data) {
-          // Do not clean up just because the doc is missing; wait for ICE state or explicit status
-          console.log(
-            `Signaling doc ${signalingId} missing but connection not closed. Not cleaning up yet.`
-          );
-          return;
-        }
-
-        console.log(
-          `Broadcaster received signaling update for ${viewerId}: Status - ${data.status}`
-        );
-
-        if (data.answer && !peerConnection.currentRemoteDescription) {
-          console.log(`Received answer from ${viewerId}`);
-          try {
-            // Only set remote description if the connection is not closed
-            if (peerConnection.signalingState !== 'closed') {
-              await peerConnection.setRemoteDescription(
-                new RTCSessionDescription(data.answer)
-              );
-              console.log(
-                `Successfully set remote description (answer) for ${viewerId}`
-              );
-              await updateDoc(signalingRef, {
-                status: 'connected',
-                lastUpdated: serverTimestamp(),
-              });
-              console.log(
-                `Signaling status updated to 'connected' for ${viewerId}`
-              );
-            } else {
-              console.warn(
-                `PeerConnection for ${viewerId} is already closed, skipping setRemoteDescription.`
-              );
-            }
-          } catch (err) {
-            console.error(
-              `Error setting remote description for ${viewerId}:`,
-              err
-            );
-            await updateDoc(signalingRef, {
-              status: 'failed',
-              error: `Broadcaster error setting answer: ${err.message}`,
-              lastUpdated: serverTimestamp(),
-            }).catch((updateErr) =>
-              console.error("Failed to update status to 'failed':", updateErr)
-            );
-            this.removeViewer(viewerId);
-          }
-        }
-
-        if (data.viewerCandidates?.length > 0) {
-          const candidatesToAdd = data.viewerCandidates;
-
-          for (const candidate of candidatesToAdd) {
-            if (!candidate) continue;
-            try {
-              if (
-                peerConnection.signalingState !== 'closed' &&
-                peerConnection.remoteDescription
-              ) {
-                await peerConnection.addIceCandidate(
-                  new RTCIceCandidate(candidate)
-                );
-                console.log(
-                  `Added viewer ICE candidate for ${viewerId}:`,
-                  candidate.sdpMid || candidate.candidate.substring(0, 20)
-                );
-              } else {
-                console.warn(
-                  `Cannot add ICE candidate for ${viewerId}. State: ${
-                    peerConnection.signalingState
-                  }, RemoteDesc: ${!!peerConnection.remoteDescription}`
-                );
-              }
-            } catch (err) {
-              if (!err.message.includes('remote description is not set')) {
-                console.warn(
-                  `Error adding viewer ICE candidate for ${viewerId}:`,
-                  err
-                );
-              }
-            }
-          }
-        }
-
-        // --- Only clean up if status is 'closed' or 'failed' ---
-        if (['closed', 'failed'].includes(data.status)) {
-          console.log(
-            `Signaling status for ${viewerId} is '${data.status}'. Cleaning up viewer.`
-          );
-          this.removeViewer(viewerId);
+      const unsubscribeOffer = onSocket('signaling:answer', ({ from, answer }) => {
+        if (from === viewerId && !pc.currentRemoteDescription) {
+          pc.setRemoteDescription(new RTCSessionDescription(answer)).catch(console.error);
         }
       });
 
-      this.signalingListeners.set(viewerId, unsubscribeListener);
-
-      peerConnection.onicecandidate = async (event) => {
-        if (event.candidate) {
-          try {
-            await updateDoc(signalingRef, {
-              broadcasterCandidates: arrayUnion(event.candidate.toJSON()),
-              lastUpdated: serverTimestamp(),
-            });
-            console.log(`Added broadcaster ICE candidate for ${viewerId}`);
-          } catch (err) {
-            // Doc may not exist if viewer disconnected before ICE gathering complete — ignore
-            if (!err.message?.includes('No document to update')) {
-              console.error(
-                `Error adding broadcaster ICE candidate for ${viewerId}:`,
-                err
-              );
-            }
-          }
-        }
+      pc.onicecandidate = (e) => {
+        if (e.candidate) emitSocket('signaling:ice', { to: viewerId, candidate: e.candidate.toJSON() });
       };
 
-      peerConnection.oniceconnectionstatechange = () => {
-        console.log(
-          `ICE Connection State Change for ${viewerId}: ${peerConnection.iceConnectionState}`
-        );
-        if (
-          ['disconnected', 'failed', 'closed'].includes(
-            peerConnection.iceConnectionState
-          )
-        ) {
-          console.log(
-            `Connection with viewer ${viewerId} lost or failed. Cleaning up.`
-          );
+      pc.oniceconnectionstatechange = () => {
+        if (['disconnected', 'failed', 'closed'].includes(pc.iceConnectionState)) {
           this.removeViewer(viewerId);
         }
       };
 
-      return peerConnection;
-    } catch (error) {
-      console.error(`Failed to create offer for viewer ${viewerId}:`, error);
+      this.peerConnections.set(viewerId, pc);
+    } catch (err) {
+      console.error('Offer creation error:', err);
       this.removeViewer(viewerId);
     }
   }
 
   removeViewer(viewerId) {
-    const connection = this.peerConnections.get(viewerId);
-    if (connection) {
-      connection.close();
-      this.peerConnections.delete(viewerId);
-      console.log(`Closed peer connection for viewer ${viewerId}`);
-    }
-
-    const unsubscribe = this.signalingListeners.get(viewerId);
-    if (unsubscribe) {
-      unsubscribe();
-      this.signalingListeners.delete(viewerId);
-      console.log(`Removed signaling listener for viewer ${viewerId}`);
-    }
-
-    const signalingId = `${this.broadcastId}_${viewerId}`;
-    const signalingRef = doc(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      this.spaceId,
-      'signaling',
-      signalingId
-    );
-    getDoc(signalingRef)
-      .then((docSnap) => {
-        if (
-          docSnap.exists() &&
-          !['failed', 'closed', 'expired'].includes(docSnap.data()?.status)
-        ) {
-          updateDoc(signalingRef, {
-            status: 'closed',
-            lastUpdated: serverTimestamp(),
-          })
-            .then(() =>
-              console.log(`Signaling doc ${signalingId} marked as closed.`)
-            )
-            .catch((err) =>
-              console.warn(
-                `Failed to mark signaling doc ${signalingId} as closed:`,
-                err
-              )
-            );
-        }
-      })
-      .catch((err) =>
-        console.warn(
-          `Error checking signaling doc ${signalingId} before cleanup:`,
-          err
-        )
-      );
+    const pc = this.peerConnections.get(viewerId);
+    if (pc) { pc.close(); this.peerConnections.delete(viewerId); }
   }
 
   cleanup() {
-    this.signalingListeners.forEach((unsubscribe) => unsubscribe());
-    this.signalingListeners.clear();
-
-    this.peerConnections.forEach((conn, viewerId) => {
-      conn.close();
-      console.log(
-        `Closed peer connection for viewer ${viewerId} during cleanup.`
-      );
-    });
+    this.peerConnections.forEach((pc) => pc.close());
     this.peerConnections.clear();
-
     if (this.stream) {
-      this.stream.getTracks().forEach((track) => track.stop());
-      console.log('Stopped local stream tracks during cleanup.');
+      this.stream.getTracks().forEach((t) => t.stop());
     }
   }
 }
 
-export const startBroadcasting = async (userId, spaceId, planeId, stream, broadcastType = 'webcam') => {
+export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
+  const broadcastId = `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  connectSocket();
+
+  const broadcastSession = new BroadcastSession(broadcastId, stream, userId, spaceId);
+  activeStreams.set(`${spaceId}-${planeId}`, { broadcastId, stream, broadcastSession });
+
+  const unsubOffer = onSocket('signaling:offer', async ({ from, offer }) => {
+    if (from === userId) return;
+    broadcastSession.createOfferForViewer(from);
+  });
+
   try {
-    const broadcastId = `broadcast_${Date.now()}_${Math.random()
-      .toString(36)
-      .substr(2, 6)}`;
-
-    const spaceOwner = window.currentSpaceOwner || userId;
-    console.log('Using space owner path:', spaceOwner);
-
-    // Find the plane object in the spatial partitioning system
-    let planeResult = await findObjectInCells(spaceOwner, spaceId, planeId);
-
-    // Fallback: the plane may not be in Firebase yet (new object still in local store).
-    // Build the objectRef from the plane's in-memory position so we can still write
-    // the broadcast metadata even if findObjectInCells comes back empty.
-    if (!planeResult) {
-      const { default: useObjectsStore } = await import('../stores/objectsStore');
-      const localObj = useObjectsStore.getState().objects.find((o) => o.id === planeId);
-      if (localObj) {
-        const [px, py, pz] = localObj.position || [0, 0, 0];
-        const cellX = Math.floor(px / CELL_SIZE);
-        const cellY = Math.floor(py / CELL_SIZE);
-        const cellZ = Math.floor(pz / CELL_SIZE);
-        const cellId = getCellId(cellX, cellY, cellZ);
-        const objectRef = doc(
-          db,
-          'users', spaceOwner,
-          'spaces', spaceId,
-          'cells', cellId,
-          'objects', planeId
-        );
-        planeResult = { object: localObj, cellId, objectRef };
-        console.warn(
-          `Plane ${planeId} not found in Firebase cells — using local store position (cell ${cellId}) as fallback`
-        );
-      }
-    }
-
-    if (!planeResult) {
-      console.error(`Plane ${planeId} not found in any cell`);
-      throw new Error(`Plane ${planeId} not found`);
-    }
-
-    // Update the plane object in its cell using the objects subcollection
-    const updatedPlane = {
-      ...planeResult.object,
-      broadcastId,
-      broadcasting: true,
-      broadcasterId: userId,
-      broadcastType,
-      lastUpdated: new Date(),
-    };
-
-    // Update the object in the subcollection
-    const objectRef = planeResult.objectRef;
-    await setDoc(objectRef, updatedPlane, { merge: true });
-
-    console.log(
-      `Plane ${planeId} updated with broadcastId ${broadcastId} in cell ${planeResult.cellId}`
-    );
-
-    const broadcastSession = new BroadcastSession(
-      broadcastId,
-      stream,
-      userId,
-      spaceId
-    );
-
-    activeStreams.set(`${spaceId}-${planeId}`, {
-      broadcastId,
-      stream,
-      broadcastSession,
+    const user = await api.get('/api/auth/verify', { retries: 0 }).catch(() => null);
+    await api.patch(`/api/spaces/${spaceId}/objects/${planeId}`, {
+      metadata: { broadcastId, broadcasting: true, broadcasterId: userId, broadcastType: 'webcam' },
     });
+  } catch { /* object update best-effort */ }
 
-    const signalingRef = collection(
-      db,
-      'users',
-      spaceOwner,
-      'spaces',
-      spaceId,
-      'signaling'
-    );
-    // Use single-field query (no composite index needed) and filter status in callback.
-    // This avoids the Firestore composite index requirement that can silently fail.
-    const q = query(
-      signalingRef,
-      where('broadcastId', '==', broadcastId)
-    );
-
-    const unsubscribeSignaling = onSnapshot(q, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added' || change.type === 'modified') {
-          const data = change.doc.data();
-          const viewerId = data?.viewerId;
-          if (viewerId && data.status === 'joining') {
-            console.log(
-              `Detected viewer ${viewerId} attempting to join broadcast ${broadcastId}`
-            );
-            broadcastSession.createOfferForViewer(viewerId);
-          }
-        }
-      });
-    }, (error) => {
-      console.error(`Error in signaling query listener for broadcast ${broadcastId}:`, error);
-    });
-
-    return {
-      broadcastId,
-      stop: async () => {
-        console.log(`Stopping broadcast ${broadcastId} for plane ${planeId}`);
-        unsubscribeSignaling();
-        broadcastSession.cleanup();
-        activeStreams.delete(`${spaceId}-${planeId}`);
-        try {
-          // Find the plane object in the spatial partitioning system to stop broadcasting
-          const planeResult = await findObjectInCells(
-            spaceOwner,
-            spaceId,
-            planeId
-          );
-
-          if (planeResult) {
-            // Update the plane object in the objects subcollection
-            const updatedPlane = {
-              ...planeResult.object,
-              broadcastId: null,
-              broadcasting: false,
-              broadcasterId: null,
-              lastUpdated: new Date(),
-            };
-
-            // Update the object in the subcollection
-            await setDoc(planeResult.objectRef, updatedPlane, { merge: true });
-
-            console.log(
-              `Plane ${planeId} updated to stop broadcasting in cell ${planeResult.cellId}.`
-            );
-          } else {
-            console.warn(`Plane ${planeId} not found when stopping broadcast`);
-          }
-        } catch (stopError) {
-          console.error(
-            `Error updating plane ${planeId} on broadcast stop:`,
-            stopError
-          );
-        }
-      },
-      getViewerCount: () => broadcastSession.peerConnections.size,
-    };
-  } catch (error) {
-    console.error('Error starting broadcast:', error);
-    const streamData = activeStreams.get(`${spaceId}-${planeId}`);
-    streamData?.broadcastSession?.cleanup();
-    activeStreams.delete(`${spaceId}-${planeId}`);
-    throw error;
-  }
+  return {
+    broadcastId,
+    stop: async () => {
+      unsubOffer();
+      broadcastSession.cleanup();
+      activeStreams.delete(`${spaceId}-${planeId}`);
+      try {
+        await api.patch(`/api/spaces/${spaceId}/objects/${planeId}`, {
+          metadata: { broadcastId: null, broadcasting: false, broadcasterId: null },
+        });
+      } catch { /* best-effort */ }
+    },
+    getViewerCount: () => broadcastSession.peerConnections.size,
+  };
 };
 
 export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
-  try {
-    console.log(
-      `Viewer ${viewerId} attempting to join broadcast: ${broadcastId} in space: ${spaceId}`
-    );
+  connectSocket();
+  const pc = new RTCPeerConnection(RTC_CONFIG);
 
-    // NOTE: The viewer already has broadcastId, broadcasterId, and planeId from their
-    // broadcastInfo store (set by the detection effect reading Firestore via objectData).
-    // We do NOT need to re-query getAllObjectsInSpace here — that scan can fail silently
-    // (wrong window.currentSpaceOwner, Firestore propagation delay, permission issues)
-    // and was the root cause of viewers never being able to join broadcasts.
-    // The signaling path only requires broadcastId + viewerId to set up the WebRTC handshake.
-    console.log(`Viewer ${viewerId} joining broadcast ${broadcastId} directly via signaling`);
+  pc.onicecandidate = (e) => {
+    if (e.candidate) emitSocket('signaling:ice', { to: broadcastId, candidate: e.candidate.toJSON() });
+  };
 
-    const peerConnection = new RTCPeerConnection(getRTCConfiguration());
-    const signalingId = `${broadcastId}_${viewerId}`;
-    const signalingRef = doc(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      spaceId,
-      'signaling',
-      signalingId
-    );
+  const unsubAnswer = onSocket('signaling:offer', async ({ from, offer }) => {
+    if (from === viewerId) return;
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    emitSocket('signaling:answer', { to: from, answer });
+  });
 
-    // Queue for candidates arriving before the offer is set
-    let queuedBroadcasterCandidates = [];
-    let remoteDescriptionSet = false; // Flag to track if remote description is set
-
-    console.log(
-      `Viewer ${viewerId} setting signaling status to 'joining' for ${broadcastId}`
-    );
-    await setDoc(
-      signalingRef,
-      {
-        created: serverTimestamp(),
-        viewerId,
-        broadcastId,
-        status: 'joining',
-        viewerCandidates: [],
-        broadcasterCandidates: [],
-      },
-      { merge: true }
-    );
-
-    console.log(
-      `PeerConnection created for ${broadcastId}. Caller must add ontrack handler.`
-    );
-
-    peerConnection.onicecandidate = async (event) => {
-      if (event.candidate) {
-        try {
-          await updateDoc(signalingRef, {
-            viewerCandidates: arrayUnion(event.candidate.toJSON()),
-            lastUpdated: serverTimestamp(),
-          });
-          console.log(
-            `Viewer ${viewerId} added ICE candidate for ${broadcastId}`
-          );
-        } catch (err) {
-          // Doc may not exist if broadcaster stopped before ICE gathering complete — ignore
-          if (!err.message?.includes('No document to update')) {
-            console.error(`Viewer ${viewerId} error adding ICE candidate:`, err);
-          }
-        }
-      }
-    };
-
-    peerConnection.oniceconnectionstatechange = () => {
-      console.log(
-        `Viewer ICE Connection State Change for ${broadcastId}: ${peerConnection.iceConnectionState}`
-      );
-      if (
-        ['disconnected', 'failed', 'closed'].includes(
-          peerConnection.iceConnectionState
-        )
-      ) {
-        console.log(
-          `Viewer connection to ${broadcastId} lost or failed. Cleaning up listener.`
-        );
-      }
-    };
-
-    const unsubscribe = onSnapshot(signalingRef, async (snapshot) => {
-      const data = snapshot.data();
-      if (!data || peerConnection.connectionState === 'closed') {
-        console.log(
-          `Signaling doc ${signalingId} removed or connection closed. Cleaning up listener.`
-        );
-        unsubscribe();
-        peerConnection.close();
-        return;
-      }
-
-      console.log(
-        `Viewer ${viewerId} received signaling update for ${broadcastId}: Status - ${data.status}`
-      );
-
-      // --- Handle Offer ---
-      if (
-        data.offer &&
-        data.status === 'offering' &&
-        !peerConnection.currentRemoteDescription && // Ensure offer isn't processed twice
-        !remoteDescriptionSet // Use our flag
-      ) {
-        console.log(
-          `Viewer ${viewerId} received offer for ${broadcastId}, creating answer...`
-        );
-        try {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(data.offer)
-          );
-          remoteDescriptionSet = true; // Set the flag
-          console.log(
-            `Viewer ${viewerId} set remote description (offer) successfully.`
-          );
-
-          // Process any queued candidates now that remote description is set
-          console.log(
-            `Processing ${queuedBroadcasterCandidates.length} queued broadcaster candidates...`
-          );
-          while (queuedBroadcasterCandidates.length > 0) {
-            const candidate = queuedBroadcasterCandidates.shift();
-            try {
-              await peerConnection.addIceCandidate(
-                new RTCIceCandidate(candidate)
-              );
-              console.log(
-                `Viewer ${viewerId} added queued broadcaster ICE candidate for ${broadcastId}:`,
-                candidate.sdpMid || candidate.candidate.substring(0, 20)
-              );
-            } catch (addCandidateError) {
-              if (
-                !addCandidateError.message.includes(
-                  'remote description is not set'
-                )
-              ) {
-                // Avoid redundant logs
-                console.warn(
-                  `Viewer ${viewerId} error adding QUEUED broadcaster ICE candidate:`,
-                  addCandidateError
-                );
-              }
-            }
-          }
-
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          console.log(
-            `Viewer ${viewerId} set local description (answer) successfully.`
-          );
-
-          if (data.status !== 'connected' && data.status !== 'answering') {
-            await updateDoc(signalingRef, {
-              answer: { type: answer.type, sdp: answer.sdp },
-              status: 'answering',
-              lastUpdated: serverTimestamp(),
-            });
-            console.log(`Viewer ${viewerId} sent answer for ${broadcastId}.`);
-          } else {
-            await updateDoc(signalingRef, {
-              answer: { type: answer.type, sdp: answer.sdp },
-              lastUpdated: serverTimestamp(),
-            });
-            console.log(
-              `Viewer ${viewerId} updated answer for ${broadcastId} (status ${data.status}).`
-            );
-          }
-        } catch (err) {
-          console.error(
-            `Viewer ${viewerId} error handling offer or creating/sending answer:`,
-            err
-          );
-          remoteDescriptionSet = false; // Reset flag on error
-          await updateDoc(signalingRef, {
-            status: 'failed',
-            error: `Viewer error handling offer: ${err.message}`,
-            lastUpdated: serverTimestamp(),
-          }).catch((updateErr) =>
-            console.error("Failed to update status to 'failed':", updateErr)
-          );
-          peerConnection.close();
-        }
-      }
-
-      // --- Handle Broadcaster Candidates ---
-      if (data.broadcasterCandidates?.length > 0) {
-        const candidatesToAdd = data.broadcasterCandidates;
-
-        for (const candidate of candidatesToAdd) {
-          if (!candidate) continue;
-          try {
-            if (remoteDescriptionSet && peerConnection.remoteDescription) {
-              if (
-                !queuedBroadcasterCandidates.some(
-                  (qc) => qc.candidate === candidate.candidate
-                )
-              ) {
-                await peerConnection.addIceCandidate(
-                  new RTCIceCandidate(candidate)
-                );
-                console.log(
-                  `Viewer ${viewerId} added broadcaster ICE candidate for ${broadcastId}:`,
-                  candidate.sdpMid || candidate.candidate.substring(0, 20)
-                );
-              } else {
-                console.log(
-                  `Skipping already processed candidate: ${candidate.candidate.substring(
-                    0,
-                    20
-                  )}`
-                );
-              }
-            } else {
-              if (
-                !queuedBroadcasterCandidates.some(
-                  (qc) => qc.candidate === candidate.candidate
-                )
-              ) {
-                console.log(
-                  `Queuing broadcaster ICE candidate because remote description not set yet.`
-                );
-                queuedBroadcasterCandidates.push(candidate);
-              }
-            }
-          } catch (err) {
-            if (!err.message.includes('remote description is not set')) {
-              console.warn(
-                `Viewer ${viewerId} error adding broadcaster ICE candidate:`,
-                err
-              );
-            }
-          }
-        }
-      }
-
-      if (data.status === 'connected') {
-        console.log(
-          `Viewer ${viewerId} confirmed connection established for ${broadcastId} via signaling status.`
-        );
-      }
-    });
-
-    return {
-      peerConnection,
-      disconnect: () => {
-        console.log(
-          `Disconnecting viewer ${viewerId} from broadcast ${broadcastId}`
-        );
-        unsubscribe();
-        peerConnection.close();
-
-        updateDoc(signalingRef, {
-          status: 'closed',
-          lastUpdated: serverTimestamp(),
-        }).catch((err) =>
-          console.warn(
-            `Failed to mark signaling doc ${signalingId} as closed on disconnect:`,
-            err
-          )
-        );
-      },
-    };
-  } catch (error) {
-    console.error(
-      `Viewer ${viewerId} error joining broadcast ${broadcastId}:`,
-      error
-    );
-    const signalingId = `${broadcastId}_${viewerId}`;
-    const signalingRef = doc(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      spaceId,
-      'signaling',
-      signalingId
-    );
-    try {
-      await updateDoc(signalingRef, {
-        status: 'failed',
-        error: `Join error: ${error.message}`,
-        lastUpdated: serverTimestamp(),
-      });
-    } catch (cleanupError) {
-      console.warn(
-        'Failed to update signaling status on join error:',
-        cleanupError
-      );
-    }
-    throw error;
-  }
+  return {
+    peerConnection: pc,
+    disconnect: () => { unsubAnswer(); pc.close(); },
+  };
 };
 
 export const isPlaneBeingBroadcast = async (spaceId, planeId) => {
   try {
-    // Use spatial partitioning to find the plane object
-    const spaceOwner = window.currentSpaceOwner;
-
-    // Get all objects in the space across all cells
-    const allObjects = await getAllObjectsInSpace(spaceOwner, spaceId);
-
-    // Check if the specific plane exists and is broadcasting
-    const planeData = allObjects[planeId];
-    return planeData && !!planeData.broadcasting;
-  } catch {
-    return false;
-  }
+    const res = await api.get(`/api/spaces/${spaceId}/objects?limit=500`).catch(() => []);
+    const obj = res.find((o) => o.id === planeId);
+    return obj?.metadata?.broadcasting || false;
+  } catch { return false; }
 };
 
 export const findAvailableBroadcasts = async (spaceId) => {
   try {
-    // Import spatial partitioning helper
-    const spaceOwner = window.currentSpaceOwner;
-
-    // Get all objects in the space across all cells
-    const allObjects = await getAllObjectsInSpace(spaceOwner, spaceId);
-
-    // Filter for broadcasting objects
-    const broadcasts = [];
-    Object.entries(allObjects).forEach(([objectId, objectData]) => {
-      if (objectData.broadcasting && objectData.broadcastId) {
-        broadcasts.push({
-          id: objectData.broadcastId,
-          planeId: objectId,
-          broadcasterId: objectData.broadcasterId,
-          active: true,
-          startTime: objectData.broadcastStartTime || Date.now(),
-        });
-      }
-    });
-
-    return broadcasts.filter((b) => b.id && b.id !== 'pending');
-  } catch {
-    return [];
-  }
+    const res = await api.get(`/api/spaces/${spaceId}/objects?limit=500`).catch(() => []);
+    return res
+      .filter((o) => o.metadata?.broadcasting && o.metadata?.broadcastId)
+      .map((o) => ({ id: o.metadata.broadcastId, planeId: o.id, broadcasterId: o.metadata.broadcasterId, active: true }));
+  } catch { return []; }
 };
 
 export const cleanupWebRTC = () => {
-  console.log('Cleaning up WebRTC resources...');
-  activeStreams.forEach(({ broadcastSession }, key) => {
-    console.log(`Cleaning up broadcast session for key: ${key}`);
-    broadcastSession?.cleanup();
-  });
+  activeStreams.forEach(({ broadcastSession }) => broadcastSession?.cleanup());
   activeStreams.clear();
 };
 
 export const registerUserPresence = async (userId, spaceId) => {
   if (!userId || !spaceId) return;
-
-  window.currentUser = { uid: userId };
-
-  if (!window.currentSpaceOwner) {
-    window.currentSpaceOwner = userId;
-  }
-
-  // IMPORTANT: Do not create user documents - only update existing ones
-  // User creation should be handled by the landing page application
-  try {
-    // First check if the space owner document exists
-    const ownerDocRef = doc(db, 'users', window.currentSpaceOwner);
-    const ownerDoc = await getDoc(ownerDocRef);
-
-    if (!ownerDoc.exists()) {
-      console.warn(
-        `User document for ${window.currentSpaceOwner} does not exist. Skipping presence registration to avoid creating empty user documents.`
-      );
-      return;
-    }
-
-    const presenceRef = doc(
-      db,
-      'users',
-      window.currentSpaceOwner,
-      'spaces',
-      spaceId,
-      'presence',
-      userId
-    );
-
-    await setDoc(
-      presenceRef,
-      {
-        online: true,
-        userId,
-        lastSeen: serverTimestamp(),
-      },
-      { merge: true }
-    );
-  } catch (error) {
-    console.error('Error registering user presence:', error);
-  }
+  window.currentUser = { sub: userId };
+  connectSocket();
+  emitSocket('signaling:join', { spaceId });
 };
 
 export const subscribeToUsersInSpace = (spaceId, callback) => {
-  if (!spaceId || !window.currentSpaceOwner) {
-    console.warn(
-      'Cannot subscribe to users: spaceId or currentSpaceOwner missing.'
-    );
-    return () => {};
-  }
-
-  const subscriptionKey = generateSubscriptionKey.webrtcSignaling(
-    spaceId,
-    window.currentSpaceOwner
-  );
-
-  // Use global subscription manager for WebRTC signaling
-  const { unsubscribe } = getOrCreateSubscription(
-    subscriptionKey,
-    SUBSCRIPTION_TYPES.WEBRTC_SIGNALING,
-    () => {
-      console.log(
-        `🔥 Creating NEW WebRTC signaling subscription for space: ${spaceId}`
-      );
-
-      const presenceRef = collection(
-        db,
-        'users',
-        window.currentSpaceOwner,
-        'spaces',
-        spaceId,
-        'presence'
-      );
-
-      const currentUserId = window.currentUser?.uid;
-
-      const unsubscribePresence = onSnapshot(
-        presenceRef,
-        (snapshot) => {
-          const activeUsers = new Set();
-          snapshot.forEach((doc) => {
-            const userData = doc.data();
-            if (userData.online && doc.id !== currentUserId) {
-              activeUsers.add(doc.id);
-            }
-          });
-          callback(Array.from(activeUsers));
-        },
-        (error) => {
-          console.error('Error listening to presence collection:', error);
-        }
-      );
-
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-      const signalingRef = collection(
-        db,
-        'users',
-        window.currentSpaceOwner,
-        'spaces',
-        spaceId,
-        'signaling'
-      );
-      const q = query(signalingRef, where('viewerId', '==', currentUserId));
-
-      const unsubscribeSignaling = onSnapshot(
-        q,
-        (snapshot) => {
-          snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added' || change.type === 'modified') {
-              const data = change.doc.data();
-              if (data?.viewerId === currentUserId) {
-                let creationTime = data.created?.toDate
-                  ? data.created.toDate()
-                  : new Date(0);
-                if (creationTime >= fiveMinutesAgo) {
-                  console.log(
-                    `ℹ️ Signaling document change detected: ${change.doc.id}`,
-                    data?.status
-                  );
-                }
-              }
-            }
-          });
-        },
-        (error) => {
-          console.error('Error listening to signaling collection:', error);
-        }
-      );
-
-      // Combined unsubscribe function
-      return () => {
-        console.log(
-          `Unsubscribing from presence and signaling for space ${spaceId}`
-        );
-        unsubscribeSignaling();
-        unsubscribePresence();
-      };
-    }
-  );
-
-  return unsubscribe;
+  if (!spaceId) return () => {};
+  return onSocket('signaling:members', (members) => {
+    callback(members);
+  });
 };

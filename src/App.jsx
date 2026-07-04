@@ -63,7 +63,6 @@ import { hasAnyPendingObjects, getAllCellObjectsForCells } from './services/cell
 import { setGuestPresence } from './services/presenceService';
 import { getPublicSpaceMetadata } from './services/spacesService';
 import { setIsInitialLoading as setGlobalInitialLoading } from './utils/loadingState';
-import { db } from './firebase';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
 import { initAnimationSystem } from './utils/animationUtils';
@@ -482,7 +481,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
     // Setup debug context for spatial partitioning
     window._currentSpaceId = currentSpaceId;
     window._currentUserId = user?.uid;
-    window._firebaseDb = db;
 
     // Setup global context for stores that need it
     // Use effectiveSpaceId so public-space and direct-space both work

@@ -1,36 +1,20 @@
-import { db } from '../firebase';
-import {
-  doc,
-  getDoc,
-  collection,
-  query,
-  getDocs,
-  orderBy,
-} from 'firebase/firestore';
-import { isSharedSpace } from './sharedSpacesService';
+import { api } from '../api-client';
 
 // Get a space by ID - now handles shared spaces
 export const getSpaceById = async (userId, spaceId) => {
   if (!userId || !spaceId) return null;
 
   try {
-    // First, check if this is a shared space
-    const sharedStatus = await isSharedSpace(userId, spaceId);
+    const data = await api.get(`/api/spaces/${spaceId}`);
 
-    // If it's shared, use the owner's ID to access the space
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-
-    const spaceRef = doc(db, 'users', ownerUserId, 'spaces', spaceId);
-    const spaceDoc = await getDoc(spaceRef);
-
-    if (spaceDoc.exists()) {
+    if (data) {
+      const isShared = data.owner_id !== userId;
       return {
-        id: spaceDoc.id,
-        ...spaceDoc.data(),
-        isShared: sharedStatus.isShared,
-        ownerId: ownerUserId,
-        // Include permission information if it's a shared space
-        permissions: sharedStatus.isShared ? sharedStatus.permissions : 'owner',
+        id: data.id || spaceId,
+        ...data,
+        isShared,
+        ownerId: data.owner_id,
+        permissions: isShared ? 'read' : 'owner',
       };
     }
 
@@ -54,26 +38,12 @@ export const getOrCreateDefaultSpace = async (userId) => {
   if (!userId) return null;
 
   try {
-    // Check if any spaces exist
-    const spacesRef = collection(db, 'users', userId, 'spaces');
-    const q = query(spacesRef, orderBy('createdAt'));
+    const spaces = await api.get('/api/spaces');
 
-    try {
-      const snapshot = await getDocs(q);
-
-      // If spaces exist, return the first one
-      if (!snapshot.empty) {
-        const firstSpace = snapshot.docs[0];
-        return {
-          id: firstSpace.id,
-          ...firstSpace.data(),
-        };
-      }
-    } catch (permissionError) {
-      console.error('Permission error accessing spaces:', permissionError);
+    if (spaces && spaces.length > 0) {
+      return spaces[0];
     }
 
-    // No spaces exist and we're not creating a default one anymore
     return null;
   } catch (error) {
     console.error('Error getting spaces:', error);
@@ -94,14 +64,8 @@ export const getUserSpaces = async (userId) => {
   if (!userId) return [];
 
   try {
-    const spacesRef = collection(db, 'users', userId, 'spaces');
-    const q = query(spacesRef, orderBy('createdAt', 'desc'));
-    const snapshot = await getDocs(q);
-
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const spaces = await api.get('/api/spaces');
+    return spaces || [];
   } catch (error) {
     console.error('Error getting user spaces:', error);
     return [];
@@ -143,57 +107,45 @@ export const getPublicSpaceMetadata = async (spaceId) => {
     console.log('📋 Step 1: Checking sessionStorage cache...');
     const cachedOwner = sessionStorage.getItem(`sharedSpaceOwner_${spaceId}`);
     if (cachedOwner) {
-      console.log('� Found cached owner:', cachedOwner);
+      console.log(' Found cached owner:', cachedOwner);
       try {
-        const spaceRef = doc(db, 'users', cachedOwner, 'spaces', spaceId);
-        const spaceDoc = await getDoc(spaceRef);
+        const data = await api.get(`/api/spaces/${spaceId}`, { retries: 0 });
 
-        if (spaceDoc.exists()) {
-          const data = spaceDoc.data();
-          if (data.isPublic && data.sharedWith?.includes('everyone')) {
-            console.log('✅ Found public space using cached owner!');
-            return {
-              id: spaceDoc.id,
-              ...data,
-              ownerId: cachedOwner,
-            };
-          }
+        if (data && data.isPublic && data.sharedWith?.includes('everyone')) {
+          console.log('✅ Found public space using cached owner!');
+          return {
+            id: data.id || spaceId,
+            ...data,
+            ownerId: cachedOwner,
+          };
         }
       } catch (error) {
         console.error('❌ Error using cached owner:', error);
       }
     }
 
-    // Step 2: Try publicSpaces collection (main method)
-    console.log('📋 Step 2: Trying publicSpaces collection...');
+    // Step 2: Try API directly
+    console.log('📋 Step 2: Trying API...');
     try {
-      const publicSpaceRef = doc(db, 'publicSpaces', spaceId);
-      const publicSpaceDoc = await getDoc(publicSpaceRef);
-      console.log(
-        '📋 publicSpaces check complete. Document exists?',
-        publicSpaceDoc.exists()
-      );
+      const data = await api.get(`/api/spaces/${spaceId}`, { retries: 0 });
 
-      if (publicSpaceDoc.exists()) {
-        const data = publicSpaceDoc.data();
-        console.log('📋 publicSpaces data:', data);
-
-        // publicSpaces collection contains public spaces by definition
-        console.log('✅ Found public space in publicSpaces collection!');
+      if (data) {
+        console.log('✅ Found public space via API!');
 
         // Cache this for future use
-        sessionStorage.setItem(`sharedSpaceOwner_${spaceId}`, data.ownerId);
+        sessionStorage.setItem(`sharedSpaceOwner_${spaceId}`, data.owner_id);
         sessionStorage.setItem(`isPublicSpace_${spaceId}`, 'true');
 
         return {
-          id: publicSpaceDoc.id,
+          id: data.id || spaceId,
           ...data,
           isPublic: true,
           sharedWith: ['everyone'],
+          ownerId: data.owner_id,
         };
       }
     } catch (error) {
-      console.error('❌ Error checking publicSpaces collection:', error);
+      console.error('❌ Error checking via API:', error);
     }
 
     // Step 3: Try sessionStorage cache
@@ -202,19 +154,15 @@ export const getPublicSpaceMetadata = async (spaceId) => {
     if (sessionOwner) {
       console.log('📋 Found cached owner:', sessionOwner);
       try {
-        const spaceRef = doc(db, 'users', sessionOwner, 'spaces', spaceId);
-        const spaceDoc = await getDoc(spaceRef);
+        const data = await api.get(`/api/spaces/${spaceId}`, { retries: 0 });
 
-        if (spaceDoc.exists()) {
-          const data = spaceDoc.data();
-          if (data.isPublic && data.sharedWith?.includes('everyone')) {
-            console.log('✅ Found public space using cached owner!');
-            return {
-              id: spaceDoc.id,
-              ...data,
-              ownerId: sessionOwner,
-            };
-          }
+        if (data && data.isPublic && data.sharedWith?.includes('everyone')) {
+          console.log('✅ Found public space using cached owner!');
+          return {
+            id: data.id || spaceId,
+            ...data,
+            ownerId: sessionOwner,
+          };
         }
       } catch (error) {
         console.error('❌ Error using cached owner:', error);

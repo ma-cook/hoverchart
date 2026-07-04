@@ -1,27 +1,7 @@
-import { db } from '../firebase';
-import {
-  doc,
-  setDoc,
-  updateDoc,
-  getDoc,
-  getDocs,
-  deleteDoc,
-  collection,
-  onSnapshot,
-  deleteField,
-  writeBatch,
-  Timestamp,
-} from 'firebase/firestore';
+import { api } from '../api-client';
 
 // Import stores at top to avoid 5-minute dynamic import delays
 import useConnectionStore from '../stores/connectionStore';
-
-// Import global subscription manager
-import {
-  getOrCreateSubscription,
-  generateSubscriptionKey,
-  SUBSCRIPTION_TYPES,
-} from './globalSubscriptionManager';
 
 import { getIsInitialLoading } from '../utils/loadingState';
 
@@ -214,20 +194,11 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
       // If cache says it doesn't exist, we'll create it below
     }
 
-    const cellRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId
-    );
-
     // Check if cell already exists (only if not in cache or cache expired)
     if (!cached || Date.now() - cached.timestamp >= CACHE_DURATION) {
-      const cellDoc = await getDoc(cellRef);
-      if (cellDoc.exists()) {
+      const cells = await api.get(`/api/spaces/${spaceId}/cells`);
+      const existingCell = cells.find(c => c.id === cellId);
+      if (existingCell) {
         // Update cache
         cellExistenceCache.set(cacheKey, {
           exists: true,
@@ -249,7 +220,7 @@ export const createCell = async (userId, spaceId, cellX, cellY, cellZ) => {
       connections: {}, // Will store connection data with connectionId as key
     };
 
-    await setDoc(cellRef, cellData);
+    await api.post(`/api/spaces/${spaceId}/cells`, cellData);
 
     // Update cache to reflect the newly created cell
     cellExistenceCache.set(cacheKey, {
@@ -282,7 +253,7 @@ export const createCellsBatch = async (userId, spaceId, cellCoordsList) => {
   const BATCH_SIZE = 6;
   const results = [];
 
-  // Process in small batches to avoid overwhelming Firestore
+  // Process in small batches to avoid overwhelming API
   for (let i = 0; i < cellCoordsList.length; i += BATCH_SIZE) {
     const batch = cellCoordsList.slice(i, i + BATCH_SIZE);
     const batchResults = await createCellsBatchOptimized(
@@ -339,17 +310,8 @@ const createCellsBatchOptimized = async (userId, spaceId, cellCoordsList) => {
     const existencePromises = uncachedCells.map(
       async ({ coords, cellId, cacheKey }) => {
         try {
-          const cellRef = doc(
-            db,
-            'users',
-            userId,
-            'spaces',
-            spaceId,
-            'cells',
-            cellId
-          );
-          const cellDoc = await getDoc(cellRef);
-          const exists = cellDoc.exists();
+          const cell = await getCell(userId, spaceId, coords.x, coords.y, coords.z);
+          const exists = cell !== null;
 
           // Cache the result
           cellExistenceCache.set(cacheKey, {
@@ -357,10 +319,10 @@ const createCellsBatchOptimized = async (userId, spaceId, cellCoordsList) => {
             timestamp: Date.now(),
           });
 
-          return { coords, cellId, exists, cellDoc: exists ? cellDoc : null };
+          return { coords, cellId, exists };
         } catch (error) {
           console.warn(`Failed to check cell existence for ${cellId}:`, error);
-          return { coords, cellId, exists: false, cellDoc: null };
+          return { coords, cellId, exists: false };
         }
       }
     );
@@ -375,7 +337,7 @@ const createCellsBatchOptimized = async (userId, spaceId, cellCoordsList) => {
     ...existenceResults,
   ];
 
-  // Step 5: Filter cells that need creation and use batch write
+  // Step 5: Filter cells that need creation and create them
   const cellsToCreate = allResults.filter((item) => !item.exists);
 
   if (cellsToCreate.length === 0) {
@@ -383,38 +345,18 @@ const createCellsBatchOptimized = async (userId, spaceId, cellCoordsList) => {
     return cellCoordsList.map(() => true);
   }
 
-  // Step 6: Use Firestore batch write for creating multiple cells
+  // Step 6: Create cells via API
   try {
-    const batch = writeBatch(db);
-
-    cellsToCreate.forEach(({ coords, cellId }) => {
-      const { x, y, z } = coords;
-      const cellRef = doc(
-        db,
-        'users',
-        userId,
-        'spaces',
-        spaceId,
-        'cells',
-        cellId
-      );
-
-      const cellData = {
-        id: cellId,
-        x: x,
-        y: y,
-        z: z,
-        bounds: getCellBounds(x, y, z),
-        createdAt: new Date(),
-        objects: {},
-        connections: {},
-      };
-
-      batch.set(cellRef, cellData);
-    });
-
-    // Commit the batch
-    await batch.commit();
+    await Promise.all(
+      cellsToCreate.map(({ coords }) =>
+        api.post(`/api/spaces/${spaceId}/cells`, {
+          id: getCellId(coords.x, coords.y, coords.z),
+          x: coords.x,
+          y: coords.y,
+          z: coords.z,
+        })
+      )
+    );
 
     // Update cache for newly created cells
     cellsToCreate.forEach(({ cacheKey }) => {
@@ -476,17 +418,8 @@ export const cellExists = async (userId, spaceId, cellX, cellY, cellZ) => {
   }
 
   try {
-    const cellRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId
-    );
-    const cellDoc = await getDoc(cellRef);
-    const exists = cellDoc.exists();
+    const cell = await getCell(userId, spaceId, cellX, cellY, cellZ);
+    const exists = cell !== null;
 
     // Cache the result
     cellExistenceCache.set(cacheKey, {
@@ -534,17 +467,8 @@ export const cellExistsBulk = async (userId, spaceId, cellCoordsList) => {
   if (uncachedCells.length > 0) {
     const promises = uncachedCells.map(async ({ coords, cellId, cacheKey }) => {
       try {
-        const cellRef = doc(
-          db,
-          'users',
-          userId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellId
-        );
-        const cellDoc = await getDoc(cellRef);
-        const exists = cellDoc.exists();
+        const cell = await getCell(userId, spaceId, coords.x, coords.y, coords.z);
+        const exists = cell !== null;
 
         // Cache the result
         cellExistenceCache.set(cacheKey, {
@@ -591,18 +515,10 @@ export const getCell = async (userId, spaceId, cellX, cellY, cellZ) => {
 
   try {
     const cellId = getCellId(cellX, cellY, cellZ);
-    const cellRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId
-    );
-    const cellDoc = await getDoc(cellRef);
-    if (cellDoc.exists()) {
-      return { id: cellId, ...cellDoc.data() };
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
+    const cell = cells.find(c => c.id === cellId);
+    if (cell) {
+      return { id: cellId, ...cell };
     }
     return null;
   } catch {
@@ -629,25 +545,9 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
   }
 
   try {
-
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
-    // NEW: Save to subcollection path instead of map field
-    // This matches the cloud function's save path
-    const objectRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId,
-      'objects',
-      objectData.id
-    );
-
-    // Prepare object data
     const objectToAdd = {
       ...objectData,
       lastUpdated: new Date(),
@@ -655,8 +555,7 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
       updatedAt: new Date(),
     };
 
-    // Save to subcollection - this will create or update the document
-    await setDoc(objectRef, objectToAdd, { merge: true });
+    await api.post(`/api/spaces/${spaceId}/objects`, objectToAdd);
 
     return true;
   } catch (error) {
@@ -687,21 +586,7 @@ export const removeObjectFromCell = async (
     const cellCoords = getCellCoordinates(position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
-    // NEW: Delete from subcollection instead of map field
-    const objectRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId,
-      'objects',
-      objectId
-    );
-
-    // Delete the document
-    await deleteDoc(objectRef);
+    await api.delete(`/api/spaces/${spaceId}/objects/${objectId}?cell_id=${cellId}`);
 
     return true;
   } catch (error) {
@@ -841,19 +726,11 @@ export const getLoadedCells = async (userId, spaceId) => {
   if (!userId || !spaceId) return [];
 
   try {
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
-    const cellsSnapshot = await getDocs(cellsRef);
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
-    return cellsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
+    return cells.map((cell) => ({
+      id: cell.id,
+      ...cell,
     }));
   } catch {
     return [];
@@ -877,23 +754,10 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
       cellCoords.map(async (coords) => {
         const cellId = getCellId(coords.x, coords.y, coords.z);
 
-        const objectsCollectionRef = collection(
-          db,
-          'users',
-          userId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellId,
-          'objects'
-        );
+        const objects = await api.get(`/api/spaces/${spaceId}/objects?cell_id=${cellId}`);
 
-        const querySnapshot = await getDocs(objectsCollectionRef);
-        const objects = [];
-
-        querySnapshot.forEach((doc) => {
-          const objectData = doc.data();
-
+        // Sanitize fontSize values from old data
+        objects.forEach((objectData) => {
           if (
             objectData.textStyle?.fontSize &&
             typeof objectData.textStyle.fontSize === 'string'
@@ -917,8 +781,6 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
               }
             });
           }
-
-          objects.push(objectData);
         });
 
         return objects;
@@ -958,19 +820,6 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
-    // NEW: Update in subcollection instead of map field
-    const objectRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId,
-      'objects',
-      objectData.id
-    );
-
     const objectToUpdate = {
       ...objectData,
       lastUpdated: new Date(),
@@ -978,8 +827,7 @@ export const updateObjectInCell = async (userId, spaceId, objectData) => {
       cellId: cellId,
     };
 
-    // Use setDoc with merge to update or create
-    await setDoc(objectRef, objectToUpdate, { merge: true });
+    await api.patch(`/api/spaces/${spaceId}/objects/${objectData.id}`, objectToUpdate);
 
     return true;
   } catch (error) {
@@ -1008,20 +856,7 @@ export const deleteObjectFromCell = async (
     const cellCoords = getCellCoordinates(position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
-    // NEW: Delete from subcollection
-    const objectRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId,
-      'objects',
-      objectId
-    );
-
-    await deleteDoc(objectRef);
+    await api.delete(`/api/spaces/${spaceId}/objects/${objectId}?cell_id=${cellId}`);
     return true;
   } catch (error) {
     console.error('Error deleting object from cell:', error);
@@ -1033,7 +868,7 @@ export const deleteObjectFromCell = async (
 const cellCallbacks = new Map(); // subscriptionKey -> Set(callbacks)
 
 /**
- * Subscribe to cell changes with global subscription deduplication
+ * Subscribe to cell changes using polling
  * @param {string} userId - User ID (or space owner ID)
  * @param {string} spaceId - Space ID
  * @param {Array} cellCoords - Array of {x, y} cell coordinates to watch
@@ -1045,72 +880,40 @@ export const subscribeToCells = (userId, spaceId, cellCoords, callback) => {
     return () => {};
   }
 
-  const unsubscribeFunctions = [];
+  const lastDataMap = new Map();
 
-  cellCoords.forEach((coords) => {
-    const cellId = getCellId(coords.x, coords.y, coords.z);
-    const subscriptionKey = generateSubscriptionKey.cells(spaceId, cellId);
+  const intervalId = setInterval(async () => {
+    try {
+      const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
-    // Add callback to tracking
-    if (!cellCallbacks.has(subscriptionKey)) {
-      cellCallbacks.set(subscriptionKey, new Set());
-    }
-    cellCallbacks.get(subscriptionKey).add(callback);
+      cellCoords.forEach((coords) => {
+        const cellId = getCellId(coords.x, coords.y, coords.z);
+        const cell = cells.find(c => c.id === cellId);
 
-    // Use global subscription manager
-    const { unsubscribe } = getOrCreateSubscription(
-      subscriptionKey,
-      SUBSCRIPTION_TYPES.CELLS,
-      () => {
-        const cellRef = doc(
-          db,
-          'users',
-          userId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellId
-        );
+        if (cell) {
+          const cellData = { id: cellId, ...cell };
+          const cellDataJson = JSON.stringify(cellData);
+          const lastDataJson = lastDataMap.get(cellId);
 
-        return onSnapshot(
-          cellRef,
-          (doc) => {
-            if (doc.exists()) {
-              const cellData = {
-                type: 'cell_updated',
-                cellId,
-                data: { id: cellId, ...doc.data() },
-              };
-
-              // Notify all registered callbacks for this cell
-              const callbacks = cellCallbacks.get(subscriptionKey);
-              if (callbacks) {
-                callbacks.forEach((cb) => cb(cellData));
-              }
-            }
-          },
-          () => {
-            // Error handler - no logging
+          if (cellDataJson !== lastDataJson) {
+            lastDataMap.set(cellId, cellDataJson);
+            callback({
+              type: 'cell_updated',
+              cellId,
+              data: cellData,
+            });
           }
-        );
-      }
-    );
-
-    unsubscribeFunctions.push(() => {
-      const callbacks = cellCallbacks.get(subscriptionKey);
-      if (callbacks) {
-        callbacks.delete(callback);
-        if (callbacks.size === 0) {
-          cellCallbacks.delete(subscriptionKey);
         }
-      }
-      unsubscribe();
-    });
-  });
+      });
+    } catch {
+      // Error handler - no logging
+    }
+  }, 2000);
 
   // Return cleanup function
   return () => {
-    unsubscribeFunctions.forEach((cleanup) => cleanup());
+    clearInterval(intervalId);
+    lastDataMap.clear();
   };
 };
 
@@ -1124,27 +927,9 @@ export const getOccupiedCells = async (userId, spaceId) => {
   if (!userId || !spaceId) return [];
 
   try {
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
-    const snapshot = await getDocs(cellsRef);
-    const occupiedCells = [];
-
-    snapshot.forEach((doc) => {
-      // Objects are stored in subcollections (cells/{cellId}/objects/),
-      // not in the cell document's objects map field.
-      // Return all existing cell IDs - the subscription will determine
-      // which cells actually have objects.
-      occupiedCells.push(doc.id);
-    });
-
-    return occupiedCells;
+    return cells.map(cell => cell.id);
   } catch {
     return [];
   }
@@ -1257,7 +1042,7 @@ export const bulkSaveConnectionsToCell = async (
   spaceId,
   cellId,
   connectionsArray,
-  skipCellCheck = false // New parameter to skip existence check when caller has already created cells
+  skipCellCheck = false
 ) => {
   if (
     !userId ||
@@ -1274,116 +1059,22 @@ export const bulkSaveConnectionsToCell = async (
   }
 
   try {
-    const cellRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId
-    );
-
-    // Only check/create cell if caller hasn't already done it
     if (!skipCellCheck) {
-      const cellDoc = await getDoc(cellRef);
+      const cells = await api.get(`/api/spaces/${spaceId}/cells`);
+      const cellExists = cells.some(c => c.id === cellId);
 
-      if (!cellDoc.exists()) {
+      if (!cellExists) {
         const [x, y, z] = cellId.split(',').map(Number);
         await createCell(userId, spaceId, x, y, z);
       }
     }
 
-    // Save connections to SUBCOLLECTION (like manual connections do)
-    // Listeners are already unsubscribed by caller, so no event avalanche
-    // Subcollection writes are more efficient with Firebase persistence than field updates
     console.log(
-      `💾 Saving ${connectionsArray.length} connections to subcollection with 50ms delays...`
+      `💾 Saving ${connectionsArray.length} connections to subcollection...`
     );
     const saveStart = performance.now();
 
-    for (let i = 0; i < connectionsArray.length; i++) {
-      const connectionData = connectionsArray[i];
-
-      // Log progress every 10 connections to see where it hangs
-      if (i % 10 === 0) {
-        console.log(
-          `  💾 Saving connection ${i + 1}/${connectionsArray.length}...`
-        );
-      }
-
-      const essentialData = {
-        id: connectionData.id,
-        start: {
-          objectId: connectionData.start?.objectId,
-          type: connectionData.start?.type,
-          face: connectionData.start?.face,
-          position: connectionData.start?.position,
-        },
-        end: {
-          objectId: connectionData.end?.objectId,
-          type: connectionData.end?.type,
-          face: connectionData.end?.face,
-          position: connectionData.end?.position,
-        },
-        cellId: cellId,
-      };
-
-      // Only include fields if they are NOT undefined
-      if (connectionData.text !== undefined)
-        essentialData.text = connectionData.text;
-      if (connectionData.color !== undefined)
-        essentialData.color = connectionData.color;
-      if (connectionData.thickness !== undefined)
-        essentialData.thickness = connectionData.thickness;
-      if (connectionData.lineStyle !== undefined)
-        essentialData.lineStyle = connectionData.lineStyle;
-      if (connectionData.styleType !== undefined)
-        essentialData.styleType = connectionData.styleType;
-      if (connectionData.textStyle !== undefined)
-        essentialData.textStyle = connectionData.textStyle;
-      if (connectionData.merfolkData !== undefined)
-        essentialData.merfolkData = connectionData.merfolkData;
-      if (connectionData.dashDirection !== undefined)
-        essentialData.dashDirection = connectionData.dashDirection;
-      if (connectionData.dashOffset !== undefined)
-        essentialData.dashOffset = connectionData.dashOffset;
-
-      // Save to subcollection instead of cell document field
-      // This matches how manual connections are saved and works better with Firebase persistence
-      const connectionRef = doc(
-        db,
-        'users',
-        userId,
-        'spaces',
-        spaceId,
-        'cells',
-        cellId,
-        'connections',
-        connectionData.id
-      );
-
-      try {
-        const writeStart = performance.now();
-        await setDoc(connectionRef, essentialData);
-        const writeDuration = (performance.now() - writeStart).toFixed(0);
-
-        if (writeDuration > 500) {
-          console.warn(
-            `  ⚠️ Slow write for connection ${i + 1}: ${writeDuration}ms`
-          );
-        }
-      } catch (writeError) {
-        console.error(`  ❌ Failed to save connection ${i + 1}:`, writeError);
-        throw writeError;
-      }
-
-      // 200ms delay between writes to prevent Firebase WebChannel overload
-      // 50ms was too fast and caused 400 Bad Request errors
-      if (i < connectionsArray.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
-    }
+    await api.post('/api/bulk/import', { spaceId, connections: connectionsArray });
 
     const saveDuration = ((performance.now() - saveStart) / 1000).toFixed(2);
     console.log(
@@ -1398,9 +1089,7 @@ export const bulkSaveConnectionsToCell = async (
 };
 
 /**
- * Save connections using Firestore writeBatch for maximum throughput.
- * Groups connections by cell and writes in batches of up to 500 ops,
- * eliminating the 200ms-per-write delay from bulkSaveConnectionsToCell.
+ * Save connections in bulk via API.
  *
  * @param {string} userId
  * @param {string} spaceId
@@ -1419,79 +1108,25 @@ export const bulkSaveConnectionsBatch = async (
   let totalSaved = 0;
   let totalFailed = 0;
 
-  for (const [cellId, connections] of connectionsByCell) {
-    if (!connections || connections.length === 0) continue;
-
-    // Ensure cell exists
-    const cellRef = doc(db, 'users', userId, 'spaces', spaceId, 'cells', cellId);
-    const cellDoc = await getDoc(cellRef);
-    if (!cellDoc.exists()) {
-      const [x, y, z] = cellId.split(',').map(Number);
-      await createCell(userId, spaceId, x, y, z);
-    }
-
-    // Write connections in batches of up to 500 (Firestore batch limit)
-    for (let i = 0; i < connections.length; i += 500) {
-      const batch = writeBatch(db);
-      const chunk = connections.slice(i, i + 500);
-
-      for (const connectionData of chunk) {
-        const connectionRef = doc(
-          db,
-          'users',
-          userId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellId,
-          'connections',
-          connectionData.id
-        );
-
-        const data = {
-          id: connectionData.id,
-          start: {
-            objectId: connectionData.start?.objectId,
-            type: connectionData.start?.type,
-            face: connectionData.start?.face,
-            position: connectionData.start?.position,
-          },
-          end: {
-            objectId: connectionData.end?.objectId,
-            type: connectionData.end?.type,
-            face: connectionData.end?.face,
-            position: connectionData.end?.position,
-          },
-          cellId,
-        };
-
-        if (connectionData.text !== undefined) data.text = connectionData.text;
-        if (connectionData.color !== undefined) data.color = connectionData.color;
-        if (connectionData.thickness !== undefined) data.thickness = connectionData.thickness;
-        if (connectionData.lineStyle !== undefined) data.lineStyle = connectionData.lineStyle;
-        if (connectionData.styleType !== undefined) data.styleType = connectionData.styleType;
-        if (connectionData.textStyle !== undefined) data.textStyle = connectionData.textStyle;
-        if (connectionData.merfolkData !== undefined) data.merfolkData = connectionData.merfolkData;
-        if (connectionData.dashDirection !== undefined) data.dashDirection = connectionData.dashDirection;
-        if (connectionData.dashOffset !== undefined) data.dashOffset = connectionData.dashOffset;
-
-        batch.set(connectionRef, data);
-      }
-
-      try {
-        await batch.commit();
-        totalSaved += chunk.length;
-      } catch (error) {
-        console.error(`❌ Batch commit failed for cell ${cellId} (offset ${i}):`, error);
-        totalFailed += chunk.length;
+  try {
+    const allConnections = [];
+    for (const [, connections] of connectionsByCell) {
+      if (connections && connections.length > 0) {
+        allConnections.push(...connections);
       }
     }
 
-    // Update hasConnections flag once per cell (not per write)
-    try {
-      await setDoc(cellRef, { hasConnections: true }, { merge: true });
-    } catch (error) {
-      console.warn(`⚠️ Failed to update hasConnections for cell ${cellId}:`, error);
+    if (allConnections.length === 0) {
+      return { saved: 0, failed: 0 };
+    }
+
+    await api.post('/api/bulk/import', { spaceId, connections: allConnections });
+    totalSaved = allConnections.length;
+  } catch (error) {
+    console.error(`❌ Bulk import failed:`, error);
+    totalFailed = 0;
+    for (const [, connections] of connectionsByCell) {
+      if (connections) totalFailed += connections.length;
     }
   }
 
@@ -1515,57 +1150,11 @@ export const addConnectionToCell = async (
 
   try {
     // Check if this connection is in the deletion blacklist
-    // Using static import from top of file to avoid 5-minute dynamic import delay
     const connectionStore = useConnectionStore.getState();
 
     if (connectionStore.deletingConnections.has(connectionData.id)) {
       return false;
     }
-
-    const cellRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId
-    );
-
-    // Get current cell data
-    const cellDoc = await getDoc(cellRef);
-    let cellData;
-
-    if (cellDoc.exists()) {
-      cellData = cellDoc.data();
-    } else {
-      // Cell doesn't exist, create it
-      const [x, y, z] = cellId.split(',').map(Number);
-      await createCell(userId, spaceId, x, y, z);
-      cellData = {
-        id: cellId,
-        x,
-        y,
-        z,
-        bounds: getCellBounds(x, y, z),
-        createdAt: new Date(),
-        objects: {},
-        connections: {},
-      };
-    }
-
-    // Write connection to subcollection instead of map field
-    const connectionRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId,
-      'connections',
-      connectionData.id
-    );
 
     const connectionToSave = {
       ...connectionData,
@@ -1573,10 +1162,7 @@ export const addConnectionToCell = async (
       cellId: cellId,
     };
 
-    await setDoc(connectionRef, connectionToSave);
-
-    // Update cell to mark it has connections (for spatial partitioning queries)
-    await setDoc(cellRef, { hasConnections: true }, { merge: true });
+    await api.post(`/api/spaces/${spaceId}/connections`, connectionToSave);
 
     return true;
   } catch {
@@ -1601,39 +1187,13 @@ export const removeConnectionFromAllCells = async (
   }
 
   try {
-    // Get all cells in the space
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
-    const snapshot = await getDocs(cellsRef);
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
     let errorCount = 0;
 
-    // Process each cell - delete from subcollection
-    for (const cellDoc of snapshot.docs) {
+    for (const cell of cells) {
       try {
-        const connectionRef = doc(
-          db,
-          'users',
-          userId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellDoc.id,
-          'connections',
-          connectionId
-        );
-
-        // Check if connection exists before deleting
-        const connectionDoc = await getDoc(connectionRef);
-        if (connectionDoc.exists()) {
-          await deleteDoc(connectionRef);
-        }
+        await api.delete(`/api/spaces/${spaceId}/connections/${connectionId}?cell_id=${cell.id}`);
       } catch {
         errorCount++;
       }
@@ -1801,23 +1361,7 @@ export const removeConnectionFromCell = async (
   }
 
   try {
-    const connectionRef = doc(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells',
-      cellId,
-      'connections',
-      connectionId
-    );
-
-    const connectionDoc = await getDoc(connectionRef);
-    if (connectionDoc.exists()) {
-      await deleteDoc(connectionRef);
-    }
-
+    await api.delete(`/api/spaces/${spaceId}/connections/${connectionId}?cell_id=${cellId}`);
     return true;
   } catch {
     return false;
@@ -1855,26 +1399,14 @@ export const getConnectionsFromCells = async (userId, spaceId, cellCoords) => {
     for (const coords of validCellCoords) {
       const cellId = getCellId(coords.x, coords.y, coords.z);
 
-      const connectionsRef = collection(
-        db,
-        'users',
-        userId,
-        'spaces',
-        spaceId,
-        'cells',
-        cellId,
-        'connections'
-      );
+      const connections = await api.get(`/api/spaces/${spaceId}/connections?cell_id=${cellId}`);
 
-      const connectionsSnapshot = await getDocs(connectionsRef);
-
-      connectionsSnapshot.forEach((connectionDoc) => {
-        const connection = connectionDoc.data();
+      for (const connection of connections) {
         if (!seenConnectionIds.has(connection.id)) {
           seenConnectionIds.add(connection.id);
           allConnections.push(connection);
         }
-      });
+      }
     }
 
     return allConnections;
@@ -2057,48 +1589,19 @@ export const findObjectInCells = async (userId, spaceId, objectId) => {
   if (!userId || !spaceId || !objectId) return null;
 
   try {
-    // Get all cells in the space
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
-    const snapshot = await getDocs(cellsRef);
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
-    // Search through all cells for the object in the objects subcollection
-    for (const cellDoc of snapshot.docs) {
-      const objectRef = doc(
-        db,
-        'users',
-        userId,
-        'spaces',
-        spaceId,
-        'cells',
-        cellDoc.id,
-        'objects',
-        objectId
-      );
-
-      const objectDoc = await getDoc(objectRef);
-
-      if (objectDoc.exists()) {
-        return {
-          object: objectDoc.data(),
-          cellId: cellDoc.id,
-          cellRef: doc(
-            db,
-            'users',
-            userId,
-            'spaces',
-            spaceId,
-            'cells',
-            cellDoc.id
-          ),
-          objectRef: objectRef, // Also return the object ref for direct updates
-        };
+    for (const cell of cells) {
+      try {
+        const object = await api.get(`/api/spaces/${spaceId}/objects/${objectId}?cell_id=${cell.id}`);
+        if (object) {
+          return {
+            object,
+            cellId: cell.id,
+          };
+        }
+      } catch {
+        continue;
       }
     }
 
@@ -2121,34 +1624,13 @@ export const getAllObjectsInSpace = async (userId, spaceId) => {
   try {
     const allObjects = {};
 
-    // Get all cells in the space
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
-    const cellsSnapshot = await getDocs(cellsRef);
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
-    // For each cell, get all objects from the objects subcollection
-    for (const cellDoc of cellsSnapshot.docs) {
-      const objectsRef = collection(
-        db,
-        'users',
-        userId,
-        'spaces',
-        spaceId,
-        'cells',
-        cellDoc.id,
-        'objects'
-      );
+    for (const cell of cells) {
+      const objects = await api.get(`/api/spaces/${spaceId}/objects?cell_id=${cell.id}`);
 
-      const objectsSnapshot = await getDocs(objectsRef);
-
-      objectsSnapshot.forEach((objectDoc) => {
-        allObjects[objectDoc.id] = objectDoc.data();
+      objects.forEach((object) => {
+        allObjects[object.id] = object;
       });
     }
 
@@ -2170,38 +1652,20 @@ export const findConnectionInCells = async (userId, spaceId, connectionId) => {
   if (!userId || !spaceId || !connectionId) return null;
 
   try {
-    // Get all cells in the space
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
-    const snapshot = await getDocs(cellsRef);
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
-    // Search through all cells for the connection in subcollection
-    for (const cellDoc of snapshot.docs) {
-      const connectionRef = doc(
-        db,
-        'users',
-        userId,
-        'spaces',
-        spaceId,
-        'cells',
-        cellDoc.id,
-        'connections',
-        connectionId
-      );
-
-      const connectionDoc = await getDoc(connectionRef);
-      if (connectionDoc.exists()) {
-        return {
-          connection: connectionDoc.data(),
-          cellId: cellDoc.id,
-          cellRef: connectionRef,
-        };
+    for (const cell of cells) {
+      try {
+        const connections = await api.get(`/api/spaces/${spaceId}/connections?cell_id=${cell.id}`);
+        const connection = connections.find(c => c.id === connectionId);
+        if (connection) {
+          return {
+            connection,
+            cellId: cell.id,
+          };
+        }
+      } catch {
+        continue;
       }
     }
 
@@ -2226,51 +1690,24 @@ export const purgeConnectionFromAllCells = async (
   if (!userId || !spaceId || !connectionId) return 0;
 
   try {
-    // Get all cells in the space
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
-    const snapshot = await getDocs(cellsRef);
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
     let purgedCount = 0;
     const purgePromises = [];
 
-    // Search through all cells for the connection and remove it
-    for (const cellDoc of snapshot.docs) {
-      const cellData = cellDoc.data();
-
-      if (cellData.connections && typeof cellData.connections === 'object') {
-        if (cellData.connections[connectionId]) {
-          // Remove the connection from this cell
-          const purgePromise = (async () => {
-            try {
-              delete cellData.connections[connectionId];
-
-              // If this was the last connection, clean up the cell's connection data
-              if (Object.keys(cellData.connections).length === 0) {
-                delete cellData.connections;
-                delete cellData.hasConnections;
-              }
-
-              await setDoc(cellDoc.ref, cellData, { merge: true });
-
-              return 1;
-            } catch {
-              return 0;
-            }
-          })();
-
-          purgePromises.push(purgePromise);
+    for (const cell of cells) {
+      const purgePromise = (async () => {
+        try {
+          await api.delete(`/api/spaces/${spaceId}/connections/${connectionId}?cell_id=${cell.id}`);
+          return 1;
+        } catch {
+          return 0;
         }
-      }
+      })();
+
+      purgePromises.push(purgePromise);
     }
 
-    // Wait for all purge operations to complete
     const results = await Promise.all(purgePromises);
     purgedCount = results.reduce((sum, result) => sum + result, 0);
 
@@ -2281,8 +1718,7 @@ export const purgeConnectionFromAllCells = async (
 };
 
 /**
- * Delete all cells in a space using batched writes to handle thousands of cells
- * Firestore has a limit of 500 operations per batch, so we batch accordingly
+ * Delete all cells in a space
  * @param {string} userId - User ID (or space owner ID)
  * @param {string} spaceId - Space ID
  * @param {Function} onProgress - Optional callback for progress updates (deletedCount, totalCount)
@@ -2294,40 +1730,23 @@ export const deleteAllCellsInSpace = async (userId, spaceId, onProgress) => {
   }
 
   try {
-    // Get all cells in the space
-    const cellsRef = collection(
-      db,
-      'users',
-      userId,
-      'spaces',
-      spaceId,
-      'cells'
-    );
-    const snapshot = await getDocs(cellsRef);
+    const cells = await api.get(`/api/spaces/${spaceId}/cells`);
 
-    if (snapshot.empty) {
+    if (!cells || cells.length === 0) {
       return { success: true, deletedCount: 0 };
     }
 
-    const totalCells = snapshot.docs.length;
+    const totalCells = cells.length;
     let deletedCount = 0;
-    const BATCH_SIZE = 500; // Firestore limit
 
-    // Process in batches
-    const cellDocs = snapshot.docs;
-    
-    for (let i = 0; i < cellDocs.length; i += BATCH_SIZE) {
-      const batch = writeBatch(db);
-      const batchDocs = cellDocs.slice(i, i + BATCH_SIZE);
-
-      for (const cellDoc of batchDocs) {
-        batch.delete(cellDoc.ref);
+    for (const cell of cells) {
+      try {
+        await api.delete(`/api/spaces/${spaceId}/cells/${cell.id}`);
+        deletedCount++;
+      } catch {
+        // continue with next cell
       }
 
-      await batch.commit();
-      deletedCount += batchDocs.length;
-
-      // Report progress
       if (onProgress) {
         onProgress(deletedCount, totalCells);
       }

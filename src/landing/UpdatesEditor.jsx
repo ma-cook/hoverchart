@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Editor, EditorState, RichUtils, convertToRaw } from 'draft-js';
 import 'draft-js/dist/Draft.css';
-import { collection, addDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { api } from '../api-client';
 
 const UpdatesEditor = ({ onClose, user }) => {
   const [editorState, setEditorState] = useState(EditorState.createEmpty());
@@ -24,10 +23,9 @@ const UpdatesEditor = ({ onClose, user }) => {
     const contentState = editorState.getCurrentContent();
     const rawContent = convertToRaw(contentState);
     try {
-      await addDoc(collection(db, 'devUpdates'), {
+      await api.post('/api/updates', {
         content: JSON.stringify(rawContent),
-        timestamp: new Date(),
-        userId: user.uid,
+        userId: user?.sub,
       });
       onClose();
     } catch (error) {
@@ -56,13 +54,9 @@ const UpdatesEditor = ({ onClose, user }) => {
     >
       <div style={{ marginBottom: '1rem' }}>
         <button onClick={() => toggleInlineStyle('BOLD')}>Bold</button>
-        <button onClick={() => toggleInlineStyle('UNDERLINE')}>
-          Underline
-        </button>
+        <button onClick={() => toggleInlineStyle('UNDERLINE')}>Underline</button>
         <button onClick={() => toggleInlineStyle('ITALIC')}>Italic</button>
-        <button onClick={() => toggleInlineStyle('STRIKETHROUGH')}>
-          Strikethrough
-        </button>
+        <button onClick={() => toggleInlineStyle('STRIKETHROUGH')}>Strikethrough</button>
       </div>
       <div style={{ flex: 1, border: '1px solid black', padding: '1rem' }}>
         <div style={{ color: 'black' }}>
@@ -73,13 +67,7 @@ const UpdatesEditor = ({ onClose, user }) => {
           />
         </div>
       </div>
-      <div
-        style={{
-          marginTop: '1rem',
-          display: 'flex',
-          justifyContent: 'space-between',
-        }}
-      >
+      <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between' }}>
         <button onClick={handleSave}>Save</button>
         <button onClick={onClose}>Cancel</button>
       </div>

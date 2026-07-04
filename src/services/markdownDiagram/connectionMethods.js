@@ -9,13 +9,8 @@ import {
   getCellCoordinates,
   getCellId,
 } from '../spatialPartitioning';
-import { auth } from '../../firebase';
 
 export const connectionMethods = {
-  /**
-   * Parse flowpath directives and #tag annotations from Merfolk code blocks.
-   * Returns a Map of "sourceNodeId|targetNodeId" -> Set<flowpathName>
-   */
   parseFlowPaths(content) {
     const connectionTags = new Map();
 
@@ -34,7 +29,6 @@ export const connectionMethods = {
       connectionTags.get(key).add(name);
     };
 
-    // 1. Parse flowpath directives
     const flowpathRegex =
       /^[ \t]*flowpath\s+"([^"]+)"\s*(?:\([^)]*\))?\s*:\s*(.+?)(?:\s*:\s*"[^"]*")?\s*$/gm;
     let match;
@@ -50,7 +44,6 @@ export const connectionMethods = {
       }
     }
 
-    // 2. Parse #tag annotations on individual connection lines
     const taggedConnRegex =
       /^[ \t]*(\w[\w-]*)[ \t]*(?:-->|-.->|-\.->|===+>|--[^>]*>)[ \t]*(\w[\w-]*)[ \t]*(?::\s*"[^"]*")?[ \t]*((?:#\w+[ \t]*)+)/gm;
     while ((match = taggedConnRegex.exec(merfolkContent)) !== null) {
@@ -63,16 +56,10 @@ export const connectionMethods = {
     return connectionTags;
   },
 
-  /**
-   * Remove flowpath directives from raw markdown content before passing to MarkdownProcessor
-   */
   stripFlowPathSyntax(content) {
     return content.replace(/^[ \t]*flowpath\b[^\n]*/gm, '');
   },
 
-  /**
-   * Create connections between objects
-   */
   createConnectionsFromDiagram(
     diagram,
     nodeToObjectIdMap,
@@ -361,9 +348,6 @@ export const connectionMethods = {
     });
   },
 
-  /**
-   * Save all connections using Cloud Function for bulk import
-   */
   async saveConnections(
     allConnectionsToSave,
     currentSpaceId,
@@ -393,10 +377,6 @@ export const connectionMethods = {
     );
   },
 
-  /**
-   * Call Cloud Function to perform bulk import server-side
-   * @private
-   */
   async _cloudFunctionBulkImport(
     allConnectionsToSave,
     currentSpaceId,
@@ -406,7 +386,7 @@ export const connectionMethods = {
     const startTime = performance.now();
 
     try {
-      const idToken = await auth.currentUser.getIdToken();
+      const idToken = localStorage.getItem('idToken');
 
       const connections = allConnectionsToSave.map((conn) => ({
         id: conn.id,
@@ -483,7 +463,6 @@ export const connectionMethods = {
         );
       }
 
-      // Dynamic chunk sizing based on average connection size
       const remainingSpace = MAX_PAYLOAD_SIZE - basePayloadSize - 500;
       const sampleSize = Math.min(5, connections.length);
       const avgConnSize =
@@ -497,7 +476,6 @@ export const connectionMethods = {
           ? Math.max(1, Math.floor(remainingSpace / avgConnSize))
           : connections.length;
 
-      // Single chunk — send as-is (original behavior)
       if (chunkSize >= connections.length) {
         const fullPayload = { ...payload, connections };
 
@@ -530,7 +508,6 @@ export const connectionMethods = {
         return result;
       }
 
-      // Multiple chunks — send sequentially
       let allResults = [];
       for (let i = 0; i < connections.length; i += chunkSize) {
         const chunk = connections.slice(i, i + chunkSize);
@@ -591,10 +568,6 @@ export const connectionMethods = {
     }
   },
 
-  /**
-   * Background process for saving connections to Firebase (FALLBACK ONLY)
-   * @private
-   */
   async _backgroundSaveConnections(allConnectionsToSave, currentSpaceId, user) {
     try {
       await pauseConnectionListeners();

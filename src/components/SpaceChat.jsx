@@ -1,23 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import {
-  ref,
-  push,
-  get,
-  onValue,
-  query,
-  orderByChild,
-  limitToLast,
-  endBefore,
-} from 'firebase/database';
-import { database } from '../firebase';
+import { onSocket, emitSocket } from '../api-client';
 import { sendToZen, buildZenMessages } from '../services/zenService';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import useObjectsStore from '../stores/objectsStore';
 import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
 import { markdownDiagramService } from '../services/markdownDiagramService';
-
-const INITIAL_LOAD = 10;
-const PAGE_SIZE = 10;
 
 const getGuestId = () => {
   let guestId = sessionStorage.getItem('guestPresenceId');
@@ -34,12 +21,6 @@ const senderInitials = (name) => {
   return parts.length === 1
     ? parts[0][0].toUpperCase()
     : (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
-
-const mergeMessages = (existing, incoming) => {
-  const map = new Map(existing.map((m) => [m.key, m]));
-  for (const m of incoming) map.set(m.key, m);
-  return Array.from(map.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 };
 
 async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
@@ -209,49 +190,43 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     { id: 'mimo', name: 'Mimo' },
   ];
 
-  // ── Firebase real-time subscription (group mode) ──────────────────────
+  // ── Socket.IO chat subscription (group mode) ────────────────────────
   useEffect(() => {
     if (!spaceId || !isOpen || chatMode !== 'group') return;
 
     setMessages([]);
-    setHasMore(true);
+    setHasMore(false);
     oldestTimestampRef.current = null;
     liveKeysRef.current = new Set();
 
-    const messagesRef = query(
-      ref(database, `/chat/${spaceId}/messages`),
-      orderByChild('timestamp'),
-      limitToLast(INITIAL_LOAD)
-    );
-
-    const unsubscribe = onValue(
-      messagesRef,
-      (snapshot) => {
-        const data = snapshot.val() || {};
-        const live = Object.entries(data)
-          .map(([key, msg]) => ({ key, ...msg }))
-          .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-        liveKeysRef.current = new Set(live.map((m) => m.key));
-
-        setMessages((prev) => {
-          const older = prev.filter((m) => !liveKeysRef.current.has(m.key));
-          const merged = mergeMessages(older, live);
-
-          if (merged.length > 0) {
-            oldestTimestampRef.current = merged[0].timestamp || null;
-          }
-
-          return merged;
-        });
-      },
-      (err) => {
-        console.warn('[chat] Failed to subscribe to messages:', err.message);
+    const unsubHistory = onSocket('chat:history', (msgs) => {
+      const mapped = (msgs || []).map((m) => ({ key: m.id, ...m }));
+      liveKeysRef.current = new Set(mapped.map((m) => m.key));
+      setMessages(mapped);
+      if (mapped.length > 0) {
+        oldestTimestampRef.current = mapped[0].timestamp || null;
       }
-    );
+    });
+
+    const unsubMessage = onSocket('chat:message', (msg) => {
+      const wrapped = { ...msg, key: msg.id };
+      setMessages((prev) => {
+        if (prev.some((m) => m.key === wrapped.key || m.key === msg._tempKey)) return prev;
+        const next = [...prev, wrapped];
+        if (next.length > 0) {
+          oldestTimestampRef.current = next[0].timestamp || null;
+        }
+        return next;
+      });
+      liveKeysRef.current.add(msg.id);
+    });
+
+      emitSocket('chat:join', { spaceId });
 
     return () => {
-      unsubscribe();
+      emitSocket('chat:leave', { spaceId });
+      unsubHistory();
+      unsubMessage();
       setMessages([]);
       liveKeysRef.current = new Set();
     };
@@ -271,43 +246,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
 
     isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 
-    if (chatMode === 'group' && el.scrollTop < 60 && hasMore && !loadingMore && oldestTimestampRef.current !== null) {
-      setLoadingMore(true);
-      const prevScrollHeight = el.scrollHeight;
-
-      try {
-        const olderQuery = query(
-          ref(database, `/chat/${spaceId}/messages`),
-          orderByChild('timestamp'),
-          endBefore(oldestTimestampRef.current),
-          limitToLast(PAGE_SIZE)
-        );
-
-        const snapshot = await get(olderQuery);
-        const data = snapshot.val() || {};
-        const older = Object.entries(data)
-          .map(([key, msg]) => ({ key, ...msg }))
-          .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-        if (older.length === 0) {
-          setHasMore(false);
-        } else {
-          if (older.length < PAGE_SIZE) setHasMore(false);
-          oldestTimestampRef.current = older[0].timestamp || oldestTimestampRef.current;
-          setMessages((prev) => mergeMessages(older, prev));
-
-          requestAnimationFrame(() => {
-            if (scrollContainerRef.current) {
-              scrollContainerRef.current.scrollTop =
-                scrollContainerRef.current.scrollHeight - prevScrollHeight;
-            }
-          });
-        }
-      } catch (err) {
-        console.warn('[chat] Failed to load older messages:', err.message);
-      } finally {
-        setLoadingMore(false);
-      }
+    if (chatMode === 'group' && el.scrollTop < 60 && hasMore && !loadingMore) {
+      // Pagination not supported via Socket.IO — all messages sent on join
+      setHasMore(false);
     }
   }, [spaceId, chatMode, hasMore, loadingMore]);
 
@@ -322,13 +263,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
 
     setSending(true);
     try {
-      await push(ref(database, `/chat/${spaceId}/messages`), {
-        userId,
-        displayName,
-        photoURL,
-        text,
-        timestamp: Date.now(),
-      });
+      emitSocket('chat:message', { spaceId, text });
       setInput('');
       isNearBottomRef.current = true;
     } catch (err) {

@@ -1,27 +1,10 @@
-import { db } from '../firebase';
-import {
-  doc,
-  getDoc,
-  collection,
-  query,
-  getDocs,
-  where,
-} from 'firebase/firestore';
+import { api } from '../api-client';
 
 // Generate a sharing URL for a space
 export const generateSharingUrl = async (userId, spaceId) => {
   if (!userId || !spaceId) return null;
 
   try {
-    // Verify the space exists
-    const spaceRef = doc(db, 'users', userId, 'spaces', spaceId);
-    const spaceDoc = await getDoc(spaceRef);
-
-    if (!spaceDoc.exists()) {
-      console.error('Space not found');
-      return null;
-    }
-
     // Base URL of the application
     const baseUrl = window.location.origin;
 
@@ -47,18 +30,13 @@ export const getSharedSpaceInfo = async (spaceId) => {
   if (!spaceId) return null;
 
   try {
-    const sharedSpacesRef = collection(db, 'sharedSpaces');
-    const q = query(sharedSpacesRef, where('spaceId', '==', spaceId));
-    const querySnapshot = await getDocs(q);
+    const data = await api.get(`/api/spaces/${spaceId}`, { retries: 0 });
 
-    if (querySnapshot.empty) {
-      return null;
-    }
+    if (!data) return null;
 
-    // Return the first matching sharing record
     return {
-      id: querySnapshot.docs[0].id,
-      ...querySnapshot.docs[0].data(),
+      id: data.id || spaceId,
+      ...data,
     };
   } catch (error) {
     console.error('Error getting shared space info:', error);

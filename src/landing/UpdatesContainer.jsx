@@ -1,20 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
+import { api } from '../api-client';
 import UpdatesViewer from './UpdatesViewer';
 
 const UpdatesContainer = () => {
   const [updates, setUpdates] = useState([]);
 
   useEffect(() => {
-    const q = query(collection(db, 'devUpdates'), orderBy('timestamp', 'desc'));
-    return onSnapshot(q, (querySnapshot) => {
-      const updatesList = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setUpdates(updatesList);
-    });
+    api.get('/api/updates').then(setUpdates).catch(() => setUpdates([]));
   }, []);
 
   return (

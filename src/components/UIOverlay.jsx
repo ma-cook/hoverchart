@@ -11,9 +11,8 @@ import { markdownDiagramService } from '../services/markdownDiagramService';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions } from '../services/spatialObjectsService';
-import { getAuth } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { api } from '../api-client';
+import useAuthStore from '../stores/authStore';
 import * as THREE from 'three';
 import {
   handleGithubCallback,
@@ -342,27 +341,23 @@ const UIOverlay = ({
     setLastGeneratedMarkdown(null);
 
     // Hydrate any missing pieces from Firestore (cross-device support)
-    const needsFirestoreFetch = !localUrl || !localSha || !stored;
-    if (needsFirestoreFetch) {
-      const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-      if (spaceOwnerId) {
-        getDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId))
-          .then((snap) => {
-            if (!snap.exists()) return;
-            const data = snap.data();
-            if (!localUrl && data.markdownStorageUrl) {
-              setLatestMarkdownUrl(data.markdownStorageUrl);
-              localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, data.markdownStorageUrl);
-            }
-            if (!localSha && data.diagramCommitSha) {
-              setLastCommitSha(data.diagramCommitSha);
-            }
-            if (!stored && data.diagramRepo) {
-              setCurrentDiagramRepo(data.diagramRepo);
-            }
-          })
-          .catch(() => { /* ignore – space doc may not exist */ });
-      }
+    const needsBackendFetch = !localUrl || !localSha || !stored;
+    if (needsBackendFetch) {
+      api.get(`/api/spaces/${currentSpaceId}`)
+        .then((space) => {
+          if (!space) return;
+          if (!localUrl && space.markdownStorageUrl) {
+            setLatestMarkdownUrl(space.markdownStorageUrl);
+            localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, space.markdownStorageUrl);
+          }
+          if (!localSha && space.diagramCommitSha) {
+            setLastCommitSha(space.diagramCommitSha);
+          }
+          if (!stored && space.diagramRepo) {
+            setCurrentDiagramRepo(space.diagramRepo);
+          }
+        })
+        .catch(() => {});
     }
   }, [currentSpaceId, user]);
 
@@ -542,13 +537,12 @@ const UIOverlay = ({
         }
         if (result.commitSha) setLastCommitSha(result.commitSha);
 
-        // Persist diagram metadata to Firestore so rescan works across devices / after localStorage clear
-        const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-        if (spaceOwnerId && currentSpaceId) {
+        // Persist diagram metadata via API
+        if (currentSpaceId) {
           const payload = { diagramRepo: repo };
           if (result.storageUrl) payload.markdownStorageUrl = result.storageUrl;
           if (result.commitSha) payload.diagramCommitSha = result.commitSha;
-          setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), payload, { merge: true }).catch(() => {});
+          api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
         }
 
         setNotification({
@@ -667,13 +661,12 @@ const UIOverlay = ({
         setLatestMarkdownUrl(storageUrl);
       }
 
-      // Persist updated diagram metadata to Firestore
-      const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-      if (spaceOwnerId && currentSpaceId) {
+      // Persist updated diagram metadata via API
+      if (currentSpaceId) {
         const payload = { diagramRepo: repo };
         if (storageUrl) payload.markdownStorageUrl = storageUrl;
         if (rescanResult.commitSha) payload.diagramCommitSha = rescanResult.commitSha;
-        setDoc(doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId), payload, { merge: true }).catch(() => {});
+        api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
       }
 
       const parts = [];
@@ -768,13 +761,8 @@ const UIOverlay = ({
         if (result.markdown) setLastGeneratedMarkdown(result.markdown);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
-          const spaceOwnerId = window.currentSpaceOwner || user?.uid;
-          if (spaceOwnerId && currentSpaceId) {
-            setDoc(
-              doc(db, 'users', spaceOwnerId, 'spaces', currentSpaceId),
-              { markdownStorageUrl: result.storageUrl },
-              { merge: true },
-            ).catch(() => {});
+          if (currentSpaceId) {
+            api.patch(`/api/spaces/${currentSpaceId}`, { markdownStorageUrl: result.storageUrl }).catch(() => {});
           }
         }
 
@@ -886,7 +874,7 @@ const UIOverlay = ({
     const POLL_INTERVAL_MS = 3000;
     const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-    const auth = getAuth();
+    const { loadTokens } = await import('../api-client');
 
     try {
       // --- Step 1: Clear local state immediately so UI is responsive ---
@@ -901,13 +889,14 @@ const UIOverlay = ({
       setNotification({ show: true, message: '🧹 Clearing space…' });
 
       // --- Step 2: Fire the cloud function — it returns jobId immediately ---
-      const idToken = await auth.currentUser?.getIdToken();
-      if (!idToken) throw new Error('Unable to get authentication token');
+      const tokens = loadTokens();
+      const jwtToken = tokens?.accessToken;
+      if (!jwtToken) throw new Error('Unable to get authentication token');
 
       const startRes = await fetch(BULK_DELETE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken, userId: user.uid, spaceId: currentSpaceId }),
+        body: JSON.stringify({ idToken: jwtToken, userId: user.sub || user.uid, spaceId: currentSpaceId }),
       });
 
       // Parse response defensively — Cloud Run / proxy errors return HTML, not JSON.
@@ -963,9 +952,10 @@ const UIOverlay = ({
         }
 
         try {
-          const freshToken = await auth.currentUser?.getIdToken();
+          const tokens = loadTokens();
+          const freshToken = tokens?.accessToken;
           const statusRes = await fetch(
-            `${BULK_DELETE_URL}/job/${jobId}?idToken=${encodeURIComponent(freshToken)}&userId=${encodeURIComponent(user.uid)}&spaceId=${encodeURIComponent(currentSpaceId)}`
+            `${BULK_DELETE_URL}/job/${jobId}?idToken=${encodeURIComponent(freshToken || '')}&userId=${encodeURIComponent(user.sub || user.uid)}&spaceId=${encodeURIComponent(currentSpaceId)}`
           );
 
           // Parse response defensively — non-JSON responses (HTML 404 from

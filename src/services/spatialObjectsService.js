@@ -1,6 +1,4 @@
-import { db } from '../firebase';
-import { collection, onSnapshot, Timestamp, doc, writeBatch } from 'firebase/firestore';
-import { isSharedSpace } from './sharedSpacesService';
+import { api } from '../api-client';
 import {
   addObjectToCell,
   updateObjectInCell as updateObjectInCellSpatial,
@@ -30,7 +28,7 @@ const deletingObjects = new Set(); // Set of objectId strings being deleted
 
 // ── Batched write queue ──────────────────────────────────────────────
 // Instead of N individual setTimeout→Firestore writes, pending saves
-// accumulate here and flush together in a single writeBatch.
+// accumulate here and flush together in a single batch.
 const pendingSaves = new Map(); // cacheKey → { ownerUserId, spaceId, objectId, objectToSave, oldCellId, newCellId, oldPosition }
 let batchFlushTimer = null;
 const BATCH_FLUSH_DELAY = 300; // ms — matches the old per-object setTimeout delay
@@ -69,38 +67,23 @@ async function flushSaveBatch() {
     }
   }
 
-  // ── Same-cell writes: single writeBatch (max 500 ops) ──
+  // ── Same-cell writes: individual API calls ──
   if (sameCellSaves.length > 0) {
-    for (let i = 0; i < sameCellSaves.length; i += 500) {
-      const chunk = sameCellSaves.slice(i, i + 500);
-      const batch = writeBatch(db);
-      for (const info of chunk) {
-        const cellCoords = getCellCoordinates(info.objectToSave.position);
-        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-        const objectRef = doc(
-          db, 'users', info.ownerUserId, 'spaces', info.spaceId,
-          'cells', cellId, 'objects', info.objectId,
-        );
-        batch.set(objectRef, {
-          ...info.objectToSave,
-          cellId,
-          lastUpdated: new Date(),
-          updatedAt: new Date(),
-        }, { merge: true });
-      }
-      try {
-        await batch.commit();
-      } catch (error) {
-        console.error('[SaveBatch] writeBatch commit failed, falling back to individual saves:', error);
-        // Fallback: re-enqueue failed saves for individual retry
-        for (const info of chunk) {
-          const cacheKey = `${info.spaceId}_${info.objectId}`;
-          try {
-            await addObjectToCell(info.ownerUserId, info.spaceId, info.objectToSave);
-          } catch (innerErr) {
-            console.error(`[SaveBatch] Fallback save failed for ${info.objectId}:`, innerErr);
-            objectsCache.delete(cacheKey);
-          }
+    try {
+      await Promise.all(
+        sameCellSaves.map(info =>
+          api.patch(`/api/spaces/${info.spaceId}/objects/${info.objectId}`, info.objectToSave)
+        )
+      );
+    } catch (error) {
+      console.error('[SaveBatch] API patch failed, falling back to individual saves:', error);
+      for (const info of sameCellSaves) {
+        const cacheKey = `${info.spaceId}_${info.objectId}`;
+        try {
+          await addObjectToCell(info.ownerUserId, info.spaceId, info.objectToSave);
+        } catch (innerErr) {
+          console.error(`[SaveBatch] Fallback save failed for ${info.objectId}:`, innerErr);
+          objectsCache.delete(cacheKey);
         }
       }
     }
@@ -251,15 +234,7 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
 
     updateThrottles.set(cacheKey, now);
 
-    // Check if this is a shared space
-    const sharedStatus = await isSharedSpace(userId, spaceId);
-
-    if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      // console.log(`[SaveDebug] User ${userId} has read-only permissions for shared space ${spaceId}. Skipping save for object ${objectId}.`);
-      return;
-    }
-
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+    const ownerUserId = userId;
 
     const cachedData = objectsCache.get(cacheKey);
 
@@ -309,10 +284,10 @@ export const saveObjectToCell = async (userId, spaceId, object) => {
 
     const objectToSave = {
       ...newData,
-      lastUpdated: Timestamp.fromDate(new Date()),
+      lastUpdated: new Date().toISOString(),
       creatorId: ownerUserId,
     };
-    // Remove internal fingerprint before sending to Firestore
+    // Remove internal fingerprint before sending to API
     delete objectToSave._fingerprint;
 
     lastReceivedObjects.set(`${spaceId}_${objectId}`, objectToSave);
@@ -377,16 +352,7 @@ export const deleteObjectFromSpatialCell = async (
 
     updateThrottles.delete(cacheKey);
 
-    // Check if this is a shared space
-    const sharedStatus = await isSharedSpace(userId, spaceId);
-
-    if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      throw new Error(
-        `User ${userId} does not have write permissions for shared space ${spaceId}`
-      );
-    }
-
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+    const ownerUserId = userId;
 
     // If no position provided, try to find the object in all cells
     if (!position) {
@@ -507,18 +473,11 @@ export const updateObjectInSpatialCell = async (
     }, 3000); // Clean up after 3 seconds
 
     try {
-      // Check if this is a shared space
-      const sharedStatus = await isSharedSpace(userId, spaceId);
-
-      if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-        return;
-      }
-
-      const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+      const ownerUserId = userId;
 
       const objectToUpdate = {
         ...objectData,
-        lastUpdated: Timestamp.fromDate(new Date()),
+        lastUpdated: new Date().toISOString(),
         updatedBy: userId,
       };
 
@@ -576,14 +535,6 @@ export const updateObjectInSpatialCell = async (
   }
 };
 
-// Import global subscription manager
-import {
-  getOrCreateSubscription,
-  generateSubscriptionKey,
-  SUBSCRIPTION_TYPES,
-  forceCleanupSubscription,
-} from './globalSubscriptionManager';
-
 /**
  * Clear cache entries for a cell
  */
@@ -609,7 +560,7 @@ const objectSubscriptionsByCell = new Map(); // cellId -> Set of object subscrip
 /**
  * Force-cleanup all active spatial-object subscriptions for the given cell IDs
  * (or all cells when no argument is provided). Used after a bulk-delete to
- * prevent Firebase listeners from re-emitting stale docs into the store.
+ * prevent listeners from re-emitting stale docs into the store.
  */
 export const cleanupSpatialObjectSubscriptions = (cellIds) => {
   const targets = cellIds
@@ -618,16 +569,13 @@ export const cleanupSpatialObjectSubscriptions = (cellIds) => {
 
   objectSubscriptionsByCell.forEach((subscriptions, cellId) => {
     if (!targets || targets.has(cellId)) {
-      subscriptions.forEach((subKey) => {
-        forceCleanupSubscription(subKey);
-      });
       objectSubscriptionsByCell.delete(cellId);
     }
   });
 };
 
 /**
- * Subscribe to objects in loaded cells with deduplication
+ * Subscribe to objects in loaded cells with polling
  */
 export const subscribeToSpatialObjects = (
   userId,
@@ -640,12 +588,9 @@ export const subscribeToSpatialObjects = (
   // Ensure loadedCells is always an array
   const safeCells = Array.isArray(loadedCells) ? loadedCells : [];
 
-  // Clean up subscriptions for cells that are no longer loaded
+  // Clean up tracking for cells that are no longer loaded
   objectSubscriptionsByCell.forEach((subscriptions, cellId) => {
     if (!safeCells.includes(cellId)) {
-      subscriptions.forEach((subKey) => {
-        forceCleanupSubscription(subKey);
-      });
       objectSubscriptionsByCell.delete(cellId);
     }
   });
@@ -664,285 +609,216 @@ export const subscribeToSpatialObjects = (
 
   const isAnonymous = !userId;
   let isSubscribed = true;
-  const unsubscribeFunctions = new Map();
-  const localSubscriptionKeys = new Set(); // Track which subscriptions this instance uses
 
-  const startCellSubscriptions = async () => {
+  // Track known object IDs per cell for removal detection
+  const previousCellObjectIds = new Map(); // cellKey -> Set<objectId>
+
+  const poll = async () => {
+    if (!isSubscribed) return;
     try {
       const ownerIdFromUrl = window.currentSpaceOwner;
 
       if (isAnonymous && !ownerIdFromUrl) {
-        console.error('Anonymous access requires owner ID in URL');
         return;
       }
 
       const effectiveOwnerId = isAnonymous ? ownerIdFromUrl : userId;
-
       let ownerUserId = effectiveOwnerId;
       if (!isAnonymous) {
         if (window.currentSpaceOwner) {
           ownerUserId = window.currentSpaceOwner;
         } else {
-          try {
-            const sharedStatus = await isSharedSpace(userId, spaceId);
-            if (!isSubscribed) return;
-            ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
-          } catch (error) {
-            console.error('Error checking shared status:', error);
-            ownerUserId = window.currentSpaceOwner || userId;
-          }
+          ownerUserId = window.currentSpaceOwner || userId;
         }
       }
       window.currentSpaceOwner = ownerUserId;
+
       if (safeCells.length === 0) {
         return;
       }
 
-      // Subscribe to each loaded cell with deduplication
       for (const cellKey of safeCells) {
         if (!cellKey || typeof cellKey !== 'string') {
-          console.warn('[SpatialObjects] Invalid cellKey:', cellKey);
           continue;
         }
 
         const [x, y, z] = cellKey.split(',').map(Number);
-        const subscriptionKey = generateSubscriptionKey.spatialObjects(
-          spaceId,
-          cellKey
-        );
+        const cellId = cellKey;
 
-        // NEW: Subscribe to objects subcollection instead of map field
-        const objectsCollectionRef = collection(
-          db,
-          'users',
-          ownerUserId,
-          'spaces',
-          spaceId,
-          'cells',
-          cellKey,
-          'objects'
-        );
+        if (!objectSubscriptionsByCell.has(cellKey)) {
+          objectSubscriptionsByCell.set(cellKey, new Set());
+        }
 
-        // Use global subscription manager and track by cell
-        const subscriptionResult = getOrCreateSubscription(
-          subscriptionKey,
-          SUBSCRIPTION_TYPES.SPATIAL_OBJECTS,
-          () => {
-            // Create the actual Firebase subscription
+        let objects;
+        try {
+          objects = await api.get(`/api/spaces/${spaceId}/objects?cell_id=${cellKey}`);
+        } catch {
+          continue;
+        }
 
-            // Track this subscription for the cell
-            if (!objectSubscriptionsByCell.has(cellKey)) {
-              objectSubscriptionsByCell.set(cellKey, new Set());
+        // Detect removed objects
+        const currentIds = new Set(objects.map(o => o.id));
+        const previousIds = previousCellObjectIds.get(cellKey) || new Set();
+
+        const batchedAdds = [];
+        const batchedRemoves = [];
+
+        // Process added objects
+        for (const objectData of objects) {
+          const objectId = objectData.id;
+
+          // DATA MIGRATION: Sanitize fontSize values from old data
+          if (
+            objectData.textStyle?.fontSize &&
+            typeof objectData.textStyle.fontSize === 'string'
+          ) {
+            const parsed = parseFloat(objectData.textStyle.fontSize);
+            objectData.textStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
+          }
+          if (
+            objectData.headerStyle?.fontSize &&
+            typeof objectData.headerStyle.fontSize === 'string'
+          ) {
+            const parsed = parseFloat(objectData.headerStyle.fontSize);
+            objectData.headerStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
+          }
+          if (objectData.faceTextStyles) {
+            Object.keys(objectData.faceTextStyles).forEach((face) => {
+              const style = objectData.faceTextStyles[face];
+              if (style?.fontSize && typeof style.fontSize === 'string') {
+                const parsed = parseFloat(style.fontSize);
+                style.fontSize = isNaN(parsed) ? 0.5 : parsed;
+              }
+            });
+          }
+
+          // Skip if object is marked as unloaded
+          if (window._unloadedObjects?.has(objectId.toString())) {
+            window._unloadedObjects.delete(objectId.toString());
+            if (window._unloadedObjectsByCell) {
+              for (const [, objSet] of window._unloadedObjectsByCell) {
+                objSet.delete(objectId.toString());
+              }
             }
-            objectSubscriptionsByCell.get(cellKey).add(subscriptionKey);
+          }
 
-            // Subscribe to the objects subcollection
-            return onSnapshot(
-              objectsCollectionRef,
-              { includeMetadataChanges: true },
-              (querySnapshot) => {
-                // Check if cell is unloaded
-                if (window._unloadedCells?.has(cellKey)) {
-                  return;
-                }
+          const cacheKey = `${spaceId}_${objectId}`;
 
-                // Process each object document in the subcollection
-                // PERF: Batch all changes from this snapshot into arrays,
-                // then fire a single callback per type. This avoids O(n²)
-                // array spreads in the consumer when a cell with 50+ objects loads.
-                const batchedAdds = [];
-                const batchedRemoves = [];
+          // Check if object data has changed
+          const cachedData = objectsCache.get(cacheKey);
+          let hasChanged = false;
+          if (cachedData) {
+            const positionChanged = !positionsEqual(
+              cachedData.position,
+              objectData.position
+            );
 
-                querySnapshot.forEach((doc) => {
-                  const objectData = doc.data();
-                  const objectId = doc.id;
+            let otherDataChanged = false;
+            if (!positionChanged) {
+              const incomingFp = computeNonPositionFingerprint(objectData);
+              otherDataChanged = incomingFp !== cachedData._fingerprint;
+            }
 
-                  // DATA MIGRATION: Sanitize fontSize values from old data
-                  // Old data might have string values like 'medium' instead of numbers
-                  if (
-                    objectData.textStyle?.fontSize &&
-                    typeof objectData.textStyle.fontSize === 'string'
-                  ) {
-                    const parsed = parseFloat(objectData.textStyle.fontSize);
-                    objectData.textStyle.fontSize = isNaN(parsed)
-                      ? 1.5
-                      : parsed;
-                  }
-                  if (
-                    objectData.headerStyle?.fontSize &&
-                    typeof objectData.headerStyle.fontSize === 'string'
-                  ) {
-                    const parsed = parseFloat(objectData.headerStyle.fontSize);
-                    objectData.headerStyle.fontSize = isNaN(parsed)
-                      ? 1.5
-                      : parsed;
-                  }
-                  // Face text styles
-                  if (objectData.faceTextStyles) {
-                    Object.keys(objectData.faceTextStyles).forEach((face) => {
-                      const style = objectData.faceTextStyles[face];
-                      if (
-                        style?.fontSize &&
-                        typeof style.fontSize === 'string'
-                      ) {
-                        const parsed = parseFloat(style.fontSize);
-                        style.fontSize = isNaN(parsed) ? 0.5 : parsed;
-                      }
-                    });
-                  }
+            hasChanged = positionChanged || otherDataChanged;
 
-                  // Skip if object is marked as unloaded.
-                  // Defense-in-depth: clean up if found — ensures objects
-                  // aren't permanently lost if the primary cleanup in
-                  // loadCellsBatch ever misses them.
-                  if (window._unloadedObjects?.has(objectId.toString())) {
-                    window._unloadedObjects.delete(objectId.toString());
-                    // Also clean up per-cell tracking if available
-                    if (window._unloadedObjectsByCell) {
-                      for (const [, objSet] of window._unloadedObjectsByCell) {
-                        objSet.delete(objectId.toString());
-                      }
-                    }
-                  }
+            if (hasChanged) {
+              if (cachedData.lastUpdated && objectData.lastUpdated) {
+                const cachedTime = cachedData.lastUpdated.toMillis
+                  ? cachedData.lastUpdated.toMillis()
+                  : new Date(cachedData.lastUpdated).getTime();
+                const newTime = objectData.lastUpdated.toMillis
+                  ? objectData.lastUpdated.toMillis()
+                  : new Date(objectData.lastUpdated).getTime();
 
-                  const cacheKey = `${spaceId}_${objectId}`;
-
-                  // Check if object data has changed
-                  const cachedData = objectsCache.get(cacheKey);
-                  let hasChanged = false;
-                  if (cachedData) {
-                    const positionChanged = !positionsEqual(
-                      cachedData.position,
-                      objectData.position
-                    );
-
-                    let otherDataChanged = false;
-                    if (!positionChanged) {
-                      // Only compute fingerprint when position is the same
-                      const incomingFp = computeNonPositionFingerprint(objectData);
-                      otherDataChanged = incomingFp !== cachedData._fingerprint;
-                    }
-
-                    hasChanged = positionChanged || otherDataChanged;
-
-                    if (hasChanged) {
-                      // DUPLICATE PROTECTION: Compare timestamps to ensure we only accept newer versions
-                      if (cachedData.lastUpdated && objectData.lastUpdated) {
-                        // Handle both Firestore Timestamps and regular Date objects
-                        const cachedTime = cachedData.lastUpdated.toMillis
-                          ? cachedData.lastUpdated.toMillis()
-                          : new Date(cachedData.lastUpdated).getTime();
-                        const newTime = objectData.lastUpdated.toMillis
-                          ? objectData.lastUpdated.toMillis()
-                          : new Date(objectData.lastUpdated).getTime();
-
-                        if (newTime <= cachedTime) {
-                          return; // Skip this older version
-                        }
-                      }
-                    }
-                  } else {
-                    hasChanged = true;
-                  }
-
-                  if (hasChanged) {
-                    // CRITICAL: Block adding objects during bulk delete
-                    if (window._bulkDeleteInProgress) {
-                      return;
-                    }
-
-                    // Skip Firebase updates for objects currently being transformed
-                    if (
-                      window._currentTransformingObjects &&
-                      window._currentTransformingObjects.has(objectId)
-                    ) {
-                      return;
-                    }
-
-                    try {
-                      const cached = { ...objectData };
-                      cached._fingerprint = computeNonPositionFingerprint(objectData);
-                      objectsCache.set(cacheKey, cached);
-                    } catch (error) {
-                      console.warn(
-                        '⚠️ Failed to cache object in spatialObjectsService:',
-                        error,
-                        'objectData:',
-                        objectData
-                      );
-                      objectsCache.set(cacheKey, { ...objectData }); // Fallback to shallow copy
-                    }
-                    lastReceivedObjects.set(cacheKey, objectData);
-                    batchedAdds.push({
-                      type: 'added',
-                      id: objectId,
-                      object: objectData,
-                      cellCoords: { x, y, z: z || 0 },
-                    });
-                  }
-                });
-
-                // Handle removed objects using docChanges
-                querySnapshot.docChanges().forEach((change) => {
-                  if (change.type === 'removed') {
-                    const objectId = change.doc.id;
-                    const cacheKey = `${spaceId}_${objectId}`;
-                    objectsCache.delete(cacheKey);
-                    lastReceivedObjects.delete(cacheKey);
-                    batchedRemoves.push({
-                      type: 'removed',
-                      id: objectId,
-                      cellCoords: { x, y, z: z || 0 },
-                    });
-                  }
-                });
-
-                // Fire batched callbacks — one call for all adds, one for all removes
-                if (batchedAdds.length > 0) {
-                  callback({
-                    type: 'batch-added',
-                    changes: batchedAdds,
-                  });
-                }
-                if (batchedRemoves.length > 0) {
-                  callback({
-                    type: 'batch-removed',
-                    changes: batchedRemoves,
-                  });
-                }
-              },
-              (error) => {
-                console.error(`Subscription error for cell ${cellKey}:`, error);
-
-                if (error.code === 'permission-denied' && isAnonymous) {
-                  console.error(
-                    'Anonymous access denied. This space may not be public.'
-                  );
-                  return;
+                if (newTime <= cachedTime) {
+                  continue;
                 }
               }
-            );
+            }
+          } else {
+            hasChanged = true;
           }
-        );
 
-        // Store the cleanup function
-        localSubscriptionKeys.add(subscriptionKey);
-        unsubscribeFunctions.set(cellKey, subscriptionResult.unsubscribe);
+          if (hasChanged) {
+            if (window._bulkDeleteInProgress) {
+              continue;
+            }
+
+            if (
+              window._currentTransformingObjects &&
+              window._currentTransformingObjects.has(objectId)
+            ) {
+              continue;
+            }
+
+            try {
+              const cached = { ...objectData };
+              cached._fingerprint = computeNonPositionFingerprint(objectData);
+              objectsCache.set(cacheKey, cached);
+            } catch (error) {
+              console.warn(
+                '⚠️ Failed to cache object in spatialObjectsService:',
+                error,
+                'objectData:',
+                objectData
+              );
+              objectsCache.set(cacheKey, { ...objectData });
+            }
+            lastReceivedObjects.set(cacheKey, objectData);
+            batchedAdds.push({
+              type: 'added',
+              id: objectId,
+              object: objectData,
+              cellCoords: { x, y, z: z || 0 },
+            });
+          }
+        }
+
+        // Detect removed objects via diff
+        for (const id of previousIds) {
+          if (!currentIds.has(id)) {
+            const cacheKey = `${spaceId}_${id}`;
+            objectsCache.delete(cacheKey);
+            lastReceivedObjects.delete(cacheKey);
+            batchedRemoves.push({
+              type: 'removed',
+              id,
+              cellCoords: { x, y, z: z || 0 },
+            });
+          }
+        }
+
+        previousCellObjectIds.set(cellKey, currentIds);
+
+        if (batchedAdds.length > 0) {
+          callback({
+            type: 'batch-added',
+            changes: batchedAdds,
+          });
+        }
+        if (batchedRemoves.length > 0) {
+          callback({
+            type: 'batch-removed',
+            changes: batchedRemoves,
+          });
+        }
       }
     } catch (error) {
-      console.error('Error starting spatial objects subscriptions:', error);
+      console.error('Error polling spatial objects:', error);
     }
   };
 
-  startCellSubscriptions();
+  // Initial fetch
+  poll();
+
+  // Poll every 2 seconds
+  const intervalId = setInterval(poll, 2000);
+
   // Return cleanup function
   return () => {
     isSubscribed = false;
-    // Clean up all subscriptions created by this instance
-    for (const unsubscribe of unsubscribeFunctions.values()) {
-      unsubscribe();
-    }
-    unsubscribeFunctions.clear();
+    clearInterval(intervalId);
+    previousCellObjectIds.clear();
   };
 };
 
@@ -988,12 +864,7 @@ export const moveObjectBetweenCells = async (
   }
 
   try {
-    const sharedStatus = await isSharedSpace(userId, spaceId);
-    if (sharedStatus.isShared && sharedStatus.permissions !== 'write') {
-      return false;
-    }
-
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+    const ownerUserId = userId;
 
     // Get old and new cell coordinates
     const oldCellCoords = getCellCoordinates(oldPosition);
@@ -1006,7 +877,7 @@ export const moveObjectBetweenCells = async (
       const updatedObject = {
         ...objectData,
         position: newPosition,
-        lastUpdated: Timestamp.fromDate(new Date()),
+        lastUpdated: new Date().toISOString(),
         updatedBy: userId,
       };
 
@@ -1039,8 +910,7 @@ export const loadObjectsFromCells = async (userId, spaceId, loadedCells) => {
   }
 
   try {
-    const sharedStatus = await isSharedSpace(userId, spaceId);
-    const ownerUserId = sharedStatus.isShared ? sharedStatus.ownerId : userId;
+    const ownerUserId = userId;
     const cellCoords = loadedCells.map((cellKey) => {
       const [x, y, z] = cellKey.split(',').map(Number);
       return { x, y, z: z || 0 }; // Default z to 0 for backward compatibility

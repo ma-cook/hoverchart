@@ -1,13 +1,5 @@
-import { auth } from '../firebase';
+import { api } from '../api-client';
 
-// ─── URL Validation ──────────────────────────────────────────────────────────
-
-/**
- * Validate a URL for runtime scanning.
- * Blocks private/internal IP ranges (SSRF prevention) and enforces https/http only.
- * @param {string} url - URL to validate
- * @returns {{ valid: boolean, error?: string }}
- */
 export const validateScanUrl = (url) => {
   if (!url || typeof url !== 'string') {
     return { valid: false, error: 'URL is required' };
@@ -26,7 +18,6 @@ export const validateScanUrl = (url) => {
 
   const hostname = parsed.hostname.toLowerCase();
 
-  // Block localhost and loopback
   if (
     hostname === 'localhost' ||
     hostname === '127.0.0.1' ||
@@ -36,14 +27,13 @@ export const validateScanUrl = (url) => {
     return { valid: false, error: 'Scanning localhost is not allowed' };
   }
 
-  // Block private IP ranges (SSRF prevention)
   const privateRanges = [
     /^10\.\d+\.\d+\.\d+$/,
     /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/,
     /^192\.168\.\d+\.\d+$/,
-    /^169\.254\.\d+\.\d+$/, // link-local
-    /^fc[0-9a-f]{2}:/i,      // IPv6 ULA
-    /^fe80:/i,                // IPv6 link-local
+    /^169\.254\.\d+\.\d+$/,
+    /^fc[0-9a-f]{2}:/i,
+    /^fe80:/i,
   ];
 
   for (const range of privateRanges) {
@@ -55,15 +45,6 @@ export const validateScanUrl = (url) => {
   return { valid: true };
 };
 
-// ─── Merfolk Generation from Runtime Trace ───────────────────────────────────
-
-/**
- * Convert a structured runtime trace into Merfolk markdown.
- *
- * @param {Object} traceData - Structured runtime trace from the Cloud Function
- * @param {string} url - The scanned URL (for the header comment)
- * @returns {string} - Merfolk markdown wrapped in fenced code block
- */
 export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
   const {
     components = [],
@@ -83,7 +64,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
   lines.push(`%% Framework: ${framework}`);
   lines.push('');
 
-  // ── Components ──────────────────────────────────────────────────────────────
   if (components.length > 0) {
     lines.push('%% Components');
     for (const comp of components) {
@@ -93,7 +73,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
     lines.push('');
   }
 
-  // ── Event Handlers ──────────────────────────────────────────────────────────
   if (eventHandlers.length > 0) {
     lines.push('%% Event Handlers');
     for (const handler of eventHandlers) {
@@ -103,7 +82,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
     lines.push('');
   }
 
-  // ── API Calls ────────────────────────────────────────────────────────────────
   if (apiCalls.length > 0) {
     lines.push('%% API Calls');
     for (const call of apiCalls) {
@@ -114,7 +92,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
     lines.push('');
   }
 
-  // ── State Stores ─────────────────────────────────────────────────────────────
   if (stateStores.length > 0) {
     lines.push('%% State Stores');
     for (const store of stateStores) {
@@ -124,7 +101,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
     lines.push('');
   }
 
-  // ── Hooks ────────────────────────────────────────────────────────────────────
   if (hooks.length > 0) {
     lines.push('%% Hooks');
     for (const hook of hooks) {
@@ -134,7 +110,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
     lines.push('');
   }
 
-  // ── Libraries ────────────────────────────────────────────────────────────────
   if (libraries.length > 0) {
     lines.push('%% Libraries');
     for (const lib of libraries) {
@@ -144,7 +119,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
     lines.push('');
   }
 
-  // ── Workers ──────────────────────────────────────────────────────────────────
   if (workers.length > 0) {
     lines.push('%% Workers');
     for (const worker of workers) {
@@ -154,7 +128,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
     lines.push('');
   }
 
-  // ── Connections ──────────────────────────────────────────────────────────────
   if (connections.length > 0) {
     lines.push('%% Connections');
     for (const conn of connections) {
@@ -171,11 +144,6 @@ export const generateMerfolkFromRuntimeTrace = (traceData, url) => {
   return lines.join('\n');
 };
 
-/**
- * Convert a string into a valid Merfolk node identifier (alphanumeric + underscores).
- * @param {string} name
- * @returns {string}
- */
 const sanitizeId = (name) => {
   return String(name)
     .replace(/[^a-zA-Z0-9_]/g, '_')
@@ -183,22 +151,6 @@ const sanitizeId = (name) => {
     .slice(0, 60);
 };
 
-// ─── Main Scan Function ───────────────────────────────────────────────────────
-
-/**
- * Scan a live website and generate a 3D Merfolk diagram.
- * Mirrors the signature of `scanRepositoryAndGenerateDiagram` from githubRepoService.js.
- *
- * @param {string} url - URL of the website to scan
- * @param {number} duration - Capture duration in seconds (5-30)
- * @param {Function} onCreateObject - Callback to create 3D objects
- * @param {Object} user - Firebase user object
- * @param {string} currentSpaceId - Current space ID
- * @param {Function} uploadMarkdownToStorage - Function to upload markdown to Storage
- * @param {Object} markdownDiagramService - Markdown diagram service instance
- * @param {Function} onProgress - Optional callback (progress: 0-100, stage: string)
- * @returns {Promise<{ success: boolean, markdown: string, storageUrl: string|null, objectsCreated: number, connectionsCreated: number }>}
- */
 export const scanWebsiteAndGenerateDiagram = async (
   url,
   duration = 10,
@@ -209,48 +161,31 @@ export const scanWebsiteAndGenerateDiagram = async (
   markdownDiagramService,
   onProgress = null,
 ) => {
-  // 1. Validate URL client-side first
   if (onProgress) onProgress(5, 'Validating URL...');
   const validation = validateScanUrl(url);
   if (!validation.valid) {
     throw new Error(validation.error);
   }
 
-  // 2. Call the Cloud Function
   if (onProgress) onProgress(15, 'Launching browser...');
 
-  const SCAN_URL = 'https://us-central1-hoverchart.cloudfunctions.net/scanWebsiteRuntime';
-
-  let cloudResult;
+  let result;
   try {
-    const idToken = await auth.currentUser?.getIdToken();
-    if (!idToken) throw new Error('Not authenticated');
-
     const progressInterval = simulateProgress(onProgress, 15, 75, duration * 1000 + 30000);
-    const response = await fetch(SCAN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idToken, url, duration }),
-    });
+    const response = await api.post('/api/zen/scan', { url, duration });
     clearInterval(progressInterval);
-
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => ({}));
-      throw new Error(errBody.error || `HTTP ${response.status}`);
-    }
-    cloudResult = { data: await response.json() };
+    result = response.data || response;
   } catch (error) {
     throw new Error(`Runtime scan failed: ${error.message}`);
   }
 
-  const { markdown, metadata } = cloudResult.data;
+  const { markdown, metadata } = result;
   if (!markdown) {
-    throw new Error('Cloud Function returned no Merfolk markdown');
+    throw new Error('Scan API returned no Merfolk markdown');
   }
 
   if (onProgress) onProgress(75, 'Analyzing traces...');
 
-  // 3. Upload markdown to Storage
   if (onProgress) onProgress(85, 'Generating diagram...');
   let storageUrl = null;
   if (user?.uid && currentSpaceId) {
@@ -267,7 +202,6 @@ export const scanWebsiteAndGenerateDiagram = async (
     }
   }
 
-  // 4. Process markdown into 3D objects via the existing pipeline
   if (onProgress) onProgress(90, 'Creating 3D objects...');
   const hostname = new URL(url).hostname.replace(/\./g, '-');
   const markdownBlob = new Blob([markdown], { type: 'text/markdown' });
@@ -275,14 +209,14 @@ export const scanWebsiteAndGenerateDiagram = async (
     type: 'text/markdown',
   });
 
-  const result = await markdownDiagramService.processMarkdownFile(
+  const response = await markdownDiagramService.processMarkdownFile(
     markdownFile,
     onCreateObject,
     currentSpaceId,
     user,
   );
 
-  if (!result.success) {
+  if (!response.success) {
     throw new Error('Diagram generated but no 3D objects were created. Check Merfolk syntax.');
   }
 
@@ -292,21 +226,12 @@ export const scanWebsiteAndGenerateDiagram = async (
     success: true,
     markdown,
     storageUrl,
-    objectsCreated: result.objectsCreated,
-    connectionsCreated: result.connectionsCreated,
+    objectsCreated: response.objectsCreated,
+    connectionsCreated: response.connectionsCreated,
     metadata,
   };
 };
 
-/**
- * Advance the progress bar smoothly while waiting for the Cloud Function.
- * Returns the interval ID so the caller can clear it when the call resolves.
- * @param {Function|null} onProgress
- * @param {number} startPct - Starting percentage
- * @param {number} endPct - Ending percentage (will not exceed this)
- * @param {number} durationMs - Expected total duration in ms
- * @returns {number} - setInterval ID
- */
 const simulateProgress = (onProgress, startPct, endPct, durationMs) => {
   if (!onProgress) return 0;
   const steps = 20;
