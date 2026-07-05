@@ -75,7 +75,7 @@ export const exchangeGithubCode = async (code) => {
   try {
     const redirectUri = window.location.origin + window.location.pathname;
     const result = await api.post('/api/auth/github/token', { code, redirect_uri: redirectUri });
-    return result.data.access_token;
+    return result.access_token;
   } catch (error) {
     console.error('Error exchanging GitHub code:', error);
     throw error;
