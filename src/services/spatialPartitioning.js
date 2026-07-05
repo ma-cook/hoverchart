@@ -756,8 +756,18 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
 
         const objects = await api.get(`/api/spaces/${spaceId}/objects?cell_id=${cellId}`);
 
-        // Sanitize fontSize values from old data
+        // Normalize: flatten metadata.* to top level for frontend compatibility
         objects.forEach((objectData) => {
+          if (objectData.metadata) {
+            const meta = typeof objectData.metadata === 'string' ? JSON.parse(objectData.metadata) : objectData.metadata;
+            for (const key of ['merfolkData', 'faceColors', 'faceTexts', 'faceTextStyles', 'textStyle', 'headerStyle', 'size', 'lineColor', 'lineThickness', 'borderColor', 'borderStyle']) {
+              if (meta[key] !== undefined && objectData[key] === undefined) {
+                objectData[key] = meta[key];
+              }
+            }
+          }
+
+          // Sanitize fontSize values from old data
           if (
             objectData.textStyle?.fontSize &&
             typeof objectData.textStyle.fontSize === 'string'

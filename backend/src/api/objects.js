@@ -3,6 +3,17 @@ import pool from '../db.js';
 
 export const router = Router({ mergeParams: true });
 
+function toCamel(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(toCamel);
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    result[camel] = value && typeof value === 'object' && !(value instanceof Date) ? toCamel(value) : value;
+  }
+  return result;
+}
+
 function normalize(obj) {
   if (!obj || typeof obj !== 'object') return obj;
   const map = { cellId: 'cell_id', cellX: 'cell_x', cellY: 'cell_y', cellZ: 'cell_z', spaceId: 'space_id', ownerId: 'owner_id', displayName: 'display_name', photoUrl: 'photo_url', lastUpdated: 'last_updated', updatedAt: 'updated_at', headerText: 'header_text', isPublic: 'is_public', sharedWith: 'shared_with' };
@@ -44,7 +55,7 @@ router.get('/', async (req, res) => {
       params = [spaceId];
     }
     const result = await pool.query(query, params);
-    res.json(result.rows);
+    res.json(toCamel(result.rows));
   } catch (err) {
     console.error('List objects error:', err);
     res.status(500).json({ error: 'Failed to list objects' });
@@ -75,7 +86,7 @@ router.post('/', async (req, res) => {
        obj.position || [0, 0, 0], obj.scale || [1, 1, 1], obj.rotation || [0, 0, 0],
        obj.type, obj.color, obj.content, obj.header_text, obj.metadata || {}]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(toCamel(result.rows[0]));
   } catch (err) {
     console.error('Upsert object error:', err);
     res.status(500).json({ error: 'Failed to upsert object' });
@@ -103,7 +114,7 @@ router.patch('/:id', async (req, res) => {
       values
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Object not found' });
-    res.json(result.rows[0]);
+    res.json(toCamel(result.rows[0]));
   } catch (err) {
     console.error('Update object error:', err);
     res.status(500).json({ error: 'Failed to update object' });

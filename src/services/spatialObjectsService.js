@@ -647,6 +647,20 @@ export const subscribeToSpatialObjects = (
           continue;
         }
 
+        // Normalize: flatten metadata.* to top level for frontend compatibility
+        if (objects) {
+          for (const obj of objects) {
+            if (obj.metadata) {
+              const meta = typeof obj.metadata === 'string' ? JSON.parse(obj.metadata) : obj.metadata;
+              for (const key of ['merfolkData', 'faceColors', 'faceTexts', 'faceTextStyles', 'textStyle', 'headerStyle', 'size', 'lineColor', 'lineThickness', 'borderColor', 'borderStyle']) {
+                if (meta[key] !== undefined && obj[key] === undefined) {
+                  obj[key] = meta[key];
+                }
+              }
+            }
+          }
+        }
+
         // Detect removed objects
         const currentIds = new Set(objects.map(o => o.id));
         const previousIds = previousCellObjectIds.get(cellKey) || new Set();
