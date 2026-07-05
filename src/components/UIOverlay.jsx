@@ -895,9 +895,20 @@ const UIOverlay = ({
       cleanupSpatialObjectSubscriptions(finalLoadedCellIds);
       useSpatialManagerStore.getState().resetSpatialManager();
 
+      // Re-initialize the spatial system to clean, initialized state.
+      // Without this, the system stays uninitialized (guarded by _bulkDeleteInProgress
+      // in initializeSpatialSystem), and new scans/object creation won't work properly.
+      useSpatialManagerStore.getState().setIsInitialized(true);
+
+      // Clear 2D diagram and analysis state
+      useDiagramStore.getState().clear();
       window._bulkDeleteInProgress = false;
       setIsDeleting(false);
       setCurrentDiagramRepo(null);
+      setLastGeneratedMarkdown(null);
+      setLatestMarkdownUrl(null);
+      setLastCommitSha(null);
+      setAnalysisOpen(false);
       setNotification({
         show: true,
         message: '✅ All objects deleted.',

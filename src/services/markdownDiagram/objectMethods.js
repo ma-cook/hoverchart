@@ -425,6 +425,20 @@ export const objectMethods = {
           : obj
       );
       useObjectsStore.getState().setObjects(updated);
+
+      // Persist position updates for existing objects that were repositioned
+      // by the layout computation. Use the store's current data (which preserves
+      // any manual edits) with only the position changed.
+      for (const [objId, newPos] of positionUpdates) {
+        const existing = currentObjects.find(o => o.id === objId);
+        if (existing) {
+          allObjectsToSave.push({
+            ...existing,
+            position: newPos,
+          });
+        }
+      }
+
       await new Promise(r => setTimeout(r, 0));
     }
 

@@ -376,7 +376,7 @@ function buildSceneContext(objects) {
 
   if (nodes.length === 0) return '';
 
-  return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections.`;
+  return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections. When adding new nodes, use descriptive camelCase IDs that don't clash with existing IDs. When updating an existing node, use its EXACT nodeId — any variation (different case, extra prefix, etc.) will create a duplicate instead of modifying it.`;
 }
 
 export async function sendToZen({ messages, onChunk, signal, model = 'big-pickle' }) {

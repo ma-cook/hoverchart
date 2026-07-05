@@ -4,6 +4,8 @@ import { DEFAULT_CAMERA_DISTANCE } from './constants.js';
 import { getMarkdownLayoutWorker } from '../../workers/markdownLayoutWorkerClient.js';
 import useDiagramStore from '../../stores/diagramStore.js';
 import useObjectsStore from '../../stores/objectsStore.js';
+import useConnectionStore from '../../stores/connectionStore.js';
+import { api } from '../../api-client';
 
 export const processMethods = {
   initializeProcessor() {
@@ -255,6 +257,45 @@ export const processMethods = {
 
     // Persist the node-to-object ID mapping so the 2D view can cross-reference
     useDiagramStore.getState().setNodeToObjectIdMap(new Map(nodeToObjectIdMap));
+
+    // ── Clean up orphaned objects ──────────────────────────────────
+    // Objects that have a merfolkData.nodeId that no longer exists in
+    // the current diagram are leftovers from previous scans.  Delete
+    // them from the store and backend so they don't accumulate.
+    const activeNodeIds = new Set(nodeToObjectIdMap.keys());
+    const allObjects = useObjectsStore.getState().objects;
+    const orphans = allObjects.filter(
+      (obj) => obj.merfolkData?.nodeId && !activeNodeIds.has(obj.merfolkData.nodeId)
+    );
+
+    if (orphans.length > 0) {
+      const orphanIds = new Set(orphans.map((o) => o.id));
+
+      // Remove orphans from the store
+      useObjectsStore.getState().setObjects(
+        allObjects.filter((o) => !orphanIds.has(o.id))
+      );
+
+      // Clean up any connections attached to orphaned objects
+      const connectionStore = useConnectionStore.getState();
+      const remainingConnections = connectionStore.connections.filter(
+        (conn) =>
+          !orphanIds.has(conn.start?.objectId) &&
+          !orphanIds.has(conn.end?.objectId)
+      );
+      useConnectionStore.getState().setConnections(remainingConnections);
+
+      // Fire-and-forget backend deletions for orphaned objects
+      if (user && currentSpaceId) {
+        for (const obj of orphans) {
+          const cellCoords = obj.position
+            ? ((arr) => ({ x: arr[0], y: arr[1], z: arr[2] || 0 }))(Array.isArray(obj.position) ? obj.position : [0, 0, 0])
+            : { x: 0, y: 0, z: 0 };
+          const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
+          api.delete(`/api/spaces/${currentSpaceId}/objects/${obj.id}?cell_id=${cellId}`).catch(() => {});
+        }
+      }
+    }
 
     const savePromise = this.saveConnections(
       allConnectionsToSave,

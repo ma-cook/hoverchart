@@ -1765,7 +1765,7 @@ export const deleteAllCellsInSpace = async (userId, spaceId, onProgress) => {
     // Clear the cell existence cache for this space
     const cacheKeysToDelete = [];
     for (const key of cellExistenceCache.keys()) {
-      if (key.startsWith(`${userId}_${spaceId}_`)) {
+      if (key.startsWith(`${userId}:${spaceId}:`)) {
         cacheKeysToDelete.push(key);
       }
     }
