@@ -62,9 +62,9 @@ export const getOrCreateSubscription = (
   // Create new subscription    // console.log(`🔥 Creating NEW ${type} subscription: ${subscriptionKey}`);
 
   try {
-    const firebaseUnsubscribe = createSubscriptionFn();
+    const unsubscribeFn = createSubscriptionFn();
 
-    if (typeof firebaseUnsubscribe !== 'function') {
+    if (typeof unsubscribeFn !== 'function') {
       throw new Error(
         'createSubscriptionFn must return an unsubscribe function'
       );
@@ -72,7 +72,7 @@ export const getOrCreateSubscription = (
 
     // Store in global registry
     globalSubscriptions.set(subscriptionKey, {
-      unsubscribe: firebaseUnsubscribe,
+      unsubscribe: unsubscribeFn,
       refCount: 1,
       timestamp: Date.now(),
       type: type,

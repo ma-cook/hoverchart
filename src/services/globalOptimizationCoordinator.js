@@ -987,7 +987,7 @@ class GlobalOptimizationCoordinator {
         {
           file: 'src/services/streamlinedSpatialPartitioning.js',
           status: 'primary',
-          integration: 'firebase',
+          integration: 'api',
         },
         {
           file: 'src/services/spatialPartitioning.js',
