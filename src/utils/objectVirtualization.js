@@ -115,16 +115,13 @@ export class ObjectVirtualizer {
 
     // If spatial partitioning is active (loadedCells provided), respect it
     if (loadedCells && loadedCells.size > 0) {
-      // In spatial mode: only filter by object count, not distance
-      // This ensures objects don't disappear due to distance culling when spatial system has them loaded
-      const maxObjects = isMobile
-        ? (canvasQuality === 'low' ? 200 : canvasQuality === 'medium' ? 400 : 600)
-        : (canvasQuality === 'low' ? 1600 : canvasQuality === 'medium' ? 3200 : 7200);
-
-      const count = this._fillDistanceBuffer(objects, cx, cy, cz, Infinity);
-      const visibleIds = this._sortAndExtract(count, maxObjects);
-      this.visibleObjects = new Set(visibleIds);
-      return visibleIds;
+      // Spatial mode: show ALL objects in loaded cells — the spatial system
+      // already limits the visible area to cells near the camera
+      // (CELL_NEIGHBOR_RADIUS=1 → 3×3 grid = 9 cells).  No additional
+      // distance or count cap needed.
+      const ids = objects.map(o => o.id);
+      this.visibleObjects = new Set(ids);
+      return ids;
     }
 
     // Fallback mode: traditional distance-based culling for when spatial system isn't active
