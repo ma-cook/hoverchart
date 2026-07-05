@@ -1,7 +1,7 @@
 import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import useDiagramStore from '../../stores/diagramStore.js';
-import { getCellCoordinates, getCellId, getNeighborCells, CELL_NEIGHBOR_RADIUS } from '../spatialPartitioning';
-import { addPendingCellObjects, addToAllCellObjects, clearAllCellCaches, consumePendingCellObjectsForCells } from '../cellObjectCache';
+import { getCellCoordinates, getCellId } from '../spatialPartitioning';
+import { addToAllCellObjects } from '../cellObjectCache';
 
 export const objectMethods = {
   /**
@@ -143,21 +143,9 @@ export const objectMethods = {
       console.log('[object-histogram] UNPOSITIONED by type =', unpositionedTypes);
     }
 
-    // ── Determine which cells are "active" (near the camera) ─────────────
-    // Only objects in active cells are pushed to the Zustand store immediately.
-    // Objects outside these cells are deferred to the cell-object cache and
-    // will be added to the store when the camera moves and their cell is loaded.
-    clearAllCellCaches();
-    const cameraPos = basePosition || [0, 0, 0];
-    const cameraCell = getCellCoordinates(cameraPos);
-    const neighborCoords = getNeighborCells(cameraCell.x, cameraCell.y, cameraCell.z, CELL_NEIGHBOR_RADIUS);
-    const activeCells = new Set(neighborCoords.map(c => getCellId(c.x, c.y, c.z)));
-    const spatialState = useSpatialManagerStore.getState();
-    if (spatialState.loadedCells) {
-      for (const cellId of spatialState.loadedCells) {
-        activeCells.add(cellId);
-      }
-    }
+    // Objects are persisted to the DB via bulk import and synced to
+    // the store incrementally as they're built.  The spatial system
+    // later manages which objects are mounted/unmounted.
 
     const OBJECT_BATCH_SIZE = 200;
     // Yield to the main thread every N batches to keep the UI responsive.
@@ -316,17 +304,12 @@ export const objectMethods = {
             },
           };
 
-          // Only add to the Zustand store for cells near the camera.
-          // Objects in distant cells are cached and added when their cell
-          // is loaded during camera movement.
-          if (activeCells.has(cellId)) {
-            storeBatch.push(objectData);
-          } else {
-            addPendingCellObjects(cellId, [objectData]);
-          }
+          // Add every object to the store immediately — progressive mounting
+          // in ObjectsRenderer handles per-frame rendering costs.
+          storeBatch.push(objectData);
 
           // Track all objects per cell so spatial manager can unload them
-          spatialState.trackObjectInCell(objectId, cellId);
+          useSpatialManagerStore.getState().trackObjectInCell(objectId, cellId);
 
           const objectForSave = {
             id: objectId,
@@ -426,22 +409,11 @@ export const objectMethods = {
       }
     }
 
-    // ── Safety net: if no objects made it to the store (camera outside
-    //     diagram bounds), force-add at least the nearest batch so the
-    //     diagram isn't completely invisible.
-    if (objectsCreated > 0) {
-      const currentCount = useObjectsStore.getState().objects.length;
-      if (currentCount === 0) {
-        const allCached = consumePendingCellObjectsForCells(
-          Array.from(activeCells)
-        );
-        if (allCached.length > 0) {
-          useObjectsStore.getState().setObjects(allCached);
-        } else if (storeBatch.length > 0) {
-          useObjectsStore.getState().setObjects(storeBatch);
-          storeBatch = [];
-        }
-      }
+    // Flush any remaining batch
+    if (storeBatch.length > 0) {
+      const currentObjects = useObjectsStore.getState().objects;
+      useObjectsStore.getState().setObjects([...currentObjects, ...storeBatch]);
+      storeBatch = [];
     }
 
     // ── Apply position updates in a single pass ──────────────────────
