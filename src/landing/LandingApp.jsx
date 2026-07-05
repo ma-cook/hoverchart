@@ -188,8 +188,8 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     if (!user) return;
     try {
       const spaces = await api.get('/api/spaces');
-      const owned = (spaces || []).filter((s) => s.owner_id === user.sub);
-      const shared = (spaces || []).filter((s) => s.owner_id !== user.sub);
+      const owned = (spaces || []).filter((s) => s.owner_id === user.sub).map(s => ({ ...s, isOwner: true }));
+      const shared = (spaces || []).filter((s) => s.owner_id !== user.sub).map(s => ({ ...s, isOwner: false }));
       setUserSpaces({ owned, shared });
     } catch (error) {
       console.error('Error fetching user spaces:', error);
