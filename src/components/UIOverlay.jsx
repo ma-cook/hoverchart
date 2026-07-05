@@ -29,6 +29,7 @@ import {
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import ObjectSearch from './ObjectSearch';
 import SpaceChat from './SpaceChat';
+import CodeWorkspace from './CodeWorkspace';
 import RepoAnalysisOverlay from './RepoAnalysisOverlay';
 import RecordingFormatPrompt from './RecordingFormatPrompt';
 import './RepoAnalysisOverlay.css';
@@ -1518,6 +1519,7 @@ const UIOverlay = ({
         onClose={() => setAnalysisOpen(false)}
         repoName={currentDiagramRepo?.full_name || currentDiagramRepo?.name || lastScannedUrl}
       />
+      <CodeWorkspace />
       <div className={`sidebar-menu ${menuOpen ? 'open' : ''}`}>
         <div className="menu-content">
          

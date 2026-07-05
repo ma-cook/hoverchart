@@ -165,6 +165,7 @@ const Octahedron = ({
   onMove,
   lineWidth,
   renderEdges = true,
+  onCodeToggle,
 }) => {
   const DEFAULT_COLOR = '#000000';
 
@@ -190,6 +191,8 @@ const Octahedron = ({
   const objectData = useObjectsStore(
     useCallback((state) => getObjectById(state, id), [id])
   );
+
+  const hasCode = objectData?.metadata?.code != null;
 
   const position = React.useMemo(
     () => objectData?.position || [0, 0, 0],
@@ -1093,6 +1096,8 @@ const Octahedron = ({
           showHeader={octahedronState.showHeader}
           followTarget={contentRef}
           objectId={id}
+          hasCode={hasCode}
+          onCodeToggle={onCodeToggle}
         />
       )}
 

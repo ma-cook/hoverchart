@@ -197,6 +197,7 @@ const Tetrahedron = ({
   onMove,
   lineWidth, // Add lineWidth prop
   renderEdges = true, // Add renderEdges prop - default true for backwards compatibility
+  onCodeToggle,
 }) => {
   // Create triangle geometries for each face (moved inside component to ensure proper disposal)
 
@@ -225,6 +226,8 @@ const Tetrahedron = ({
   const objectData = useObjectsStore(
     useCallback((state) => getObjectById(state, id), [id])
   );
+
+  const hasCode = objectData?.metadata?.code != null;
 
   // Extract properties with defaults
   const position = React.useMemo(
@@ -1328,6 +1331,8 @@ const Tetrahedron = ({
             showHeader={tetrahedronState.showHeader}
             followTarget={contentRef}
             objectId={id}
+            hasCode={hasCode}
+            onCodeToggle={onCodeToggle}
           />
         )}
       {/* Transform controls */}

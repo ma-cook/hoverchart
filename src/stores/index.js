@@ -25,6 +25,7 @@ export { default as useDiagramStore } from './diagramStore.js';
 export { default as useEarthSettingsStore } from './earthSettingsStore.js';
 export { default as useHandTrackingStore } from './handTrackingStore.js';
 export { default as usePipelineStore } from './pipelineStore.js';
+export { default as useCodeStore } from './codeStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';

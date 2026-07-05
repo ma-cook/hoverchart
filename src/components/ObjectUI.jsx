@@ -14,10 +14,12 @@ const ObjectUI = React.memo(
     onTransformToggle,
     onHeaderToggle,
     onResizeToggle,
-    onLineColorChange, // <-- New prop
-    onDelete, // Add new delete handler prop
+    onLineColorChange,
+    onDelete,
+    onCodeToggle,
     showTransform = false,
     showHeader = false,
+    hasCode = false,
     followTarget,
   }) => {
     const groupRef = useRef();
@@ -120,6 +122,12 @@ const ObjectUI = React.memo(
           onResizeToggle?.();
         },
       },
+      { name: 'code', icon: '</>', active: false, disabled: !hasCode,
+        onClick: () => {
+          console.log('Code button clicked');
+          onCodeToggle?.();
+        },
+      },
       { name: 'color', icon: '🎨' }, // <-- New color tool
       {
         name: 'eye',
@@ -147,13 +155,12 @@ const ObjectUI = React.memo(
         case 'resize':
           onResizeToggle();
           break;
+        case 'code':
+          onCodeToggle?.();
+          break;
         case 'color':
           console.log('Opening color picker with pickerId:', pickerId);
           openColorPicker(pickerId, 'object-ui');
-          console.log(
-            'Color picker opened, showColorPicker:',
-            isColorPickerOpen(pickerId)
-          );
           break;
       }
     };
@@ -188,9 +195,10 @@ const ObjectUI = React.memo(
                 key={tool.name}
                 className={`face-tool-button ${
                   tool.active ? 'active-tool' : ''
-                }`}
+                } ${tool.disabled ? 'tool-disabled' : ''}`}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (tool.disabled) return;
                   if (tool.onClick) {
                     tool.onClick();
                   } else {
@@ -204,8 +212,14 @@ const ObjectUI = React.memo(
                         backgroundColor: '#4CAF50',
                         color: 'white',
                       }
+                    : tool.disabled
+                    ? {
+                        opacity: 0.4,
+                        cursor: 'not-allowed',
+                      }
                     : {}
                 }
+                title={tool.disabled ? 'No code associated with this object' : tool.name}
               >
                 {tool.icon}
               </button>
@@ -237,7 +251,8 @@ const ObjectUI = React.memo(
     return (
       prevProps.showTransform === nextProps.showTransform &&
       prevProps.showHeader === nextProps.showHeader &&
-      prevProps.followTarget === nextProps.followTarget
+      prevProps.followTarget === nextProps.followTarget &&
+      prevProps.hasCode === nextProps.hasCode
     );
   }
 );

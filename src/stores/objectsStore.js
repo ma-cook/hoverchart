@@ -1005,6 +1005,35 @@ const useObjectsStore = createWithEqualityFn(
         window.currentlyDeletingObjects?.delete(objectIdStr);
       }
     },
+    associateCodeWithObject: (objectId, codeInfo) => {
+      const state = get();
+      const { code, language, filePath } = codeInfo;
+      const updatedObjects = state.objects.map(obj => {
+        if (obj.id?.toString() === objectId?.toString()) {
+          return {
+            ...obj,
+            metadata: {
+              ...(obj.metadata || {}),
+              code: code || obj.metadata?.code,
+              codeLanguage: language || obj.metadata?.codeLanguage,
+              codeFilePath: filePath || obj.metadata?.codeFilePath,
+            },
+          };
+        }
+        return obj;
+      });
+      set({ objects: updatedObjects });
+
+      if (!window.isTrialMode) {
+        const spaceOwnerId = window.currentSpaceOwner;
+        const spaceId = window.currentSpaceId;
+        if (spaceOwnerId && spaceId) {
+          const obj = updatedObjects.find(o => o.id?.toString() === objectId?.toString());
+          if (obj) saveObjectToCell(spaceOwnerId, spaceId, obj);
+        }
+      }
+    },
+
     // Reset all object state
     resetObjects: () => {
       set({

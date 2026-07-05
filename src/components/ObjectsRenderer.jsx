@@ -81,6 +81,7 @@ const ObjectsRenderer = React.memo(({
   getTransformStartPosition,
   checkPositionJitter,
   useLOD,
+  onCodeToggle,
 }) => {
   const { camera } = useThree();
 
@@ -527,6 +528,7 @@ const ObjectsRenderer = React.memo(({
         checkPositionJitter={checkPositionJitter}
         useLOD={useLOD}
         unmodifiedCubeIds={unmodifiedCubeIds}
+        onCodeToggle={onCodeToggle}
       />
     ));
   }, [
@@ -557,6 +559,7 @@ const ObjectsRenderer = React.memo(({
     checkPositionJitter,
     useLOD,
     unmodifiedCubeIds,
+    onCodeToggle,
   ]);
 
   return (

@@ -189,6 +189,7 @@ const Sphere = React.memo(
     registerTransformingObject, // Add this prop
     lineWidth, // Add lineWidth prop
     renderEdges = true, // When false, edges are rendered by GlobalDodecahedronEdgesRenderer
+    onCodeToggle,
   }) => {
     // Mobile detection for scaling
     const isMobile =
@@ -204,6 +205,8 @@ const Sphere = React.memo(
 
     // PERFORMANCE: O(1) index lookup instead of O(C) filter. Shallow equality prevents
     // re-renders when this dodecahedron's connections haven't changed.
+    const hasCode = objectData?.metadata?.code != null;
+
     const connections = useConnectionStore(
       useCallback(
         (state) => state.connectionsByObjectId.get(id?.toString()) || EMPTY_CONNECTIONS,
@@ -1287,9 +1290,12 @@ const Sphere = React.memo(
               onHeaderToggle={handleHeaderToggle}
               onResizeToggle={handleResizeToggle}
               onLineColorChange={handleLineColorChange}
-              onDelete={() => onDelete?.(id)} // Pass the delete handler with this object's ID          showTransform={dodecahedron?.showTransform}
+              onDelete={() => onDelete?.(id)}
+              showTransform={dodecahedron?.showTransform}
               showHeader={dodecahedron?.showHeader}
               followTarget={contentRef}
+              hasCode={hasCode}
+              onCodeToggle={onCodeToggle}
             />
           )}{' '}
         {shouldRenderFullDetail && selected &&

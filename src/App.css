@@ -1629,3 +1629,314 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── SpaceChat GitHub Panel ─────────────────────────────────────────── */
+.space-chat-github-btn {
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.space-chat-github-panel {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.space-chat-github-connected {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.space-chat-repo-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.space-chat-repo-name {
+  font-weight: 600;
+  color: #333;
+}
+
+.space-chat-branch-name {
+  color: #0366d6;
+  font-family: monospace;
+}
+
+.space-chat-small-btn {
+  padding: 2px 8px;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.space-chat-small-btn:hover {
+  background: #f0f0f0;
+  border-color: #999;
+}
+
+.space-chat-repo-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.space-chat-repo-list {
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+}
+
+.space-chat-repo-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.space-chat-repo-item:hover {
+  background: #e8f0fe;
+}
+
+.space-chat-repo-item:last-child {
+  border-bottom: none;
+}
+
+.space-chat-new-repo {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.space-chat-new-repo input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ── SpaceChat Modal ────────────────────────────────────────────────── */
+.space-chat-modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.space-chat-modal {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  width: 280px;
+  max-width: 90%;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
+
+.space-chat-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #333;
+}
+
+.space-chat-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.space-chat-modal-body p {
+  margin: 0;
+  font-size: 13px;
+  color: #555;
+}
+
+.space-chat-modal-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.space-chat-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.space-chat-modal-btn {
+  padding: 6px 14px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.space-chat-modal-btn:hover {
+  background: #f0f0f0;
+}
+
+.space-chat-modal-btn.primary {
+  background: #0366d6;
+  color: white;
+  border-color: #0366d6;
+}
+
+.space-chat-modal-btn.primary:hover {
+  background: #0256b9;
+}
+
+.space-chat-modal-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.space-chat-modal-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.space-chat-modal-option input[type="radio"] {
+  margin: 0;
+}
+
+/* ── SpaceChat Notifications ────────────────────────────────────────── */
+.space-chat-notification {
+  padding: 6px 10px;
+  margin: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.space-chat-notification.success {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.space-chat-notification.error {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+/* ── CodeWorkspace ──────────────────────────────────────────────────── */
+.code-workspace-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.code-workspace-panel {
+  background: #1e1e1e;
+  border-radius: 8px;
+  width: 80vw;
+  max-width: 900px;
+  height: 70vh;
+  max-height: 600px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.code-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.code-workspace-file-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.code-workspace-language-tag {
+  background: #3c3c3c;
+  color: #9cdcfe;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: Consolas, "Courier New", monospace;
+  text-transform: uppercase;
+}
+
+.code-workspace-file-path {
+  color: #999;
+  font-size: 13px;
+  font-family: Consolas, "Courier New", monospace;
+}
+
+.code-workspace-close {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.code-workspace-close:hover {
+  background: #3c3c3c;
+  color: #fff;
+}
+
+.code-workspace-body {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+}
+
+.code-workspace-pre {
+  margin: 0;
+  padding: 16px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.code-workspace-code {
+  font-family: inherit;
+}

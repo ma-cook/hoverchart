@@ -43,6 +43,7 @@ const ObjectRenderer = React.memo(
     currentSpaceId,
     useLOD,
     unmodifiedCubeIds, // Set of cube IDs rendered by instanced renderer
+    onCodeToggle,
   }) => {
     const lodLevel = useLODStore((s) => s.lodLevels?.get(obj.id));
 
@@ -106,6 +107,7 @@ const ObjectRenderer = React.memo(
           onMove={onMoveStable}
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
           renderEdges={false} // Edges rendered by GlobalCubeEdgesRenderer for better performance
+          onCodeToggle={onCodeToggle}
         />
       );
     }
@@ -139,6 +141,7 @@ const ObjectRenderer = React.memo(
           onMove={onMoveStable}
           lineWidth={obj.lineWidth} // Pass lineWidth from object data
           renderEdges={false} // Edges rendered by GlobalTetrahedronEdgesRenderer for better performance
+          onCodeToggle={onCodeToggle}
         />
       );
     }
@@ -172,6 +175,7 @@ const ObjectRenderer = React.memo(
           onMove={onMoveStable}
           lineWidth={obj.lineWidth}
           renderEdges={false}
+          onCodeToggle={onCodeToggle}
         />
       );
     }
@@ -194,6 +198,7 @@ const ObjectRenderer = React.memo(
           selectedIndicators={selectedIndicators} // Add this prop
           indicatorMode={indicatorMode}
           renderEdges={false} // Edges rendered by GlobalDodecahedronEdgesRenderer for better performance
+          onCodeToggle={onCodeToggle}
         />
       );
     }
@@ -254,6 +259,7 @@ const ObjectRenderer = React.memo(
           onResizeEnd={onTransformEndStable}
           onTransformStart={onTransformStartStable}
           onTransformEnd={onTransformEndStable}
+          readOnly={obj.metadata?.code != null}
         />
       );
     }

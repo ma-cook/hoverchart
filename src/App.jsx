@@ -40,6 +40,7 @@ import {
   useDodecahedronStore,
   useSpatialManagerStore,
   useDiagramStore,
+  useCodeStore,
 } from './stores';
 
 // PERFORMANCE: Global animation manager for connection lines
@@ -1643,6 +1644,13 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   // Read view mode from store — '3d' or '2d'
   const viewMode = useUIOverlayStore((s) => s.viewMode);
 
+  // Handle code toggle from ObjectUI — sets active code object and opens expanded view
+  const handleCodeToggle = useCallback((objectId) => {
+    const codeStore = useCodeStore.getState();
+    codeStore.setActiveCodeObjectId(objectId);
+    codeStore.setExpandedView(true);
+  }, []);
+
   // Memoize scene content to keep the same JSX reference across re-renders
   // when dependencies haven't changed.  Without this, every App render creates
   // a new React element tree → setDiagramScene → AppShell re-render → scene
@@ -1697,6 +1705,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
           getTransformStartPosition={getTransformStartPosition}
           checkPositionJitter={checkPositionJitterWithHistory}
           useLOD={useLOD}
+          onCodeToggle={handleCodeToggle}
         />
         <RepoGrid />
         <CellBoundaryRenderer visible={cellBoundariesVisible} />
@@ -1726,7 +1735,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
     handleLineStyleChange, handleLineColorChange,
     handleConnectionClick, handleLineTextClick,
     handleLineTextSubmit, handleLineTextStyleChange,
-    cellBoundariesVisible,
+    cellBoundariesVisible, handleCodeToggle,
   ]);
 
   // Store diagram scene content for SharedCanvas

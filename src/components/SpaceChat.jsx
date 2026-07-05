@@ -1,10 +1,24 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages } from '../services/zenService';
+import { sendToZen, buildZenMessages, buildCodeMessages } from '../services/zenService';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
+import { extractCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
+import useCodeStore from '../stores/codeStore';
 import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
 import { markdownDiagramService } from '../services/markdownDiagramService';
+import {
+  getGithubToken,
+  isGithubAuthenticated,
+  getGithubOAuthUrl,
+  fetchRepositories,
+} from '../services/githubRepoService';
+import {
+  getBranchRef,
+  createBranchRef,
+  createFileOnBranch,
+  getFileContents,
+} from '../services/githubIssuesService';
 
 const getGuestId = () => {
   let guestId = sessionStorage.getItem('guestPresenceId');
@@ -103,13 +117,86 @@ async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
   return allConnectionsToSave.length > 0 || allObjectsToSave.length > 0;
 }
 
+async function associateCodeWithScene(codeBlocks) {
+  if (!codeBlocks || codeBlocks.length === 0) return 0;
+
+  const objectsStore = useObjectsStore.getState();
+  const objects = objectsStore.objects;
+  let associatedCount = 0;
+
+  for (const block of codeBlocks) {
+    if (block.nodeId) {
+      const target = objects.find(o =>
+        o.merfolkData?.nodeId === block.nodeId
+      );
+      if (target) {
+        objectsStore.associateCodeWithObject(target.id, {
+          code: block.code,
+          language: block.language,
+          filePath: block.filePath,
+        });
+        associatedCount++;
+      }
+    } else if (block.filePath) {
+      const target = objects.find(o =>
+        o.metadata?.codeFilePath === block.filePath
+      );
+      if (target) {
+        objectsStore.associateCodeWithObject(target.id, {
+          code: block.code,
+          language: block.language,
+          filePath: block.filePath,
+        });
+        associatedCount++;
+      }
+    }
+  }
+
+  return associatedCount;
+}
+
+async function pushCodeToGitHub(codeBlocks, owner, repo, branch, token) {
+  if (!token || !owner || !repo || !branch) return { success: false, pushed: 0 };
+
+  let pushed = 0;
+  const errors = [];
+
+  for (const block of codeBlocks) {
+    if (!block.code || !block.filePath) continue;
+    try {
+      const path = block.filePath;
+      const message = `Code: ${block.nodeId ? `updated ${block.nodeId}` : `updated ${path}`}`;
+      let sha = null;
+      try {
+        const existing = await getFileContents(token, owner, repo, path, branch);
+        if (existing?.data) sha = existing.data.sha;
+      } catch {}
+      await createFileOnBranch(token, owner, repo, path, block.code, branch, message, sha);
+      pushed++;
+    } catch (err) {
+      errors.push({ file: block.filePath, error: err.message });
+    }
+  }
+
+  return { success: errors.length === 0, pushed, errors };
+}
+
+async function getGithubFileContents(token, owner, repo, path, branch) {
+  const baseUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  const url = branch ? `${baseUrl}?ref=${branch}` : baseUrl;
+  const res = await fetch(url, {
+    headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
+  });
+  if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+  return res.json();
+}
+
 const SPACE_CHAT_MIN_WIDTH = 240;
 const SPACE_CHAT_MIN_HEIGHT = 200;
 const SPACE_CHAT_DEFAULT_WIDTH = 300;
 const SPACE_CHAT_DEFAULT_HEIGHT = 360;
 
 const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
-  // ── Expand / Resize state ─────────────────────────────────────────────
   const [isExpanded, setIsExpanded] = useState(false);
   const [chatSize, setChatSize] = useState({ width: SPACE_CHAT_DEFAULT_WIDTH, height: SPACE_CHAT_DEFAULT_HEIGHT });
   const [userResized, setUserResized] = useState(false);
@@ -151,7 +238,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     setResizing({ edge, startX: e.clientX, startY: e.clientY, startWidth: chatSize.width, startHeight: chatSize.height });
   };
 
-  // ── Group chat state (existing) ───────────────────────────────────────
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -165,7 +251,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const isNearBottomRef = useRef(true);
   const liveKeysRef = useRef(new Set());
 
-  // ── Auto-grow textarea ────────────────────────────────────────────────
   useEffect(() => {
     const el = textareaRef.current;
     if (!el || isExpanded) return;
@@ -173,10 +258,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [input, isExpanded]);
 
-  // ── LLM chat state ───────────────────────────────────────────────────
   const [chatMode, setChatMode] = useState('group');
-  const [llmMessages, setLlmMessages] = useState([]);
-  const [llmStreaming, setLlmStreaming] = useState(false);
+  const [planMessages, setPlanMessages] = useState([]);
+  const [codeMessages, setCodeMessages] = useState([]);
+  const [streaming, setStreaming] = useState(false);
   const [llmError, setLlmError] = useState(null);
   const [model, setModel] = useState('big-pickle');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -185,12 +270,28 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const streamingMsgKeyRef = useRef(0);
   const abortControllerRef = useRef(null);
 
+  const codeStore = useCodeStore();
+
+  const [showGithubPanel, setShowGithubPanel] = useState(false);
+  const [repos, setRepos] = useState([]);
+  const [showRepos, setShowRepos] = useState(false);
+  const [showNewRepoInput, setShowNewRepoInput] = useState(false);
+  const [newRepoName, setNewRepoName] = useState('');
+  const [showBranchPrompt, setShowBranchPrompt] = useState(false);
+  const [branchNameInput, setBranchNameInput] = useState('');
+  const [showTechStackPrompt, setShowTechStackPrompt] = useState(false);
+  const [techStackInput, setTechStackInput] = useState('');
+  const [pushNotification, setPushNotification] = useState(null);
+  const [associatedCount, setAssociatedCount] = useState(0);
+
+  const llmMessages = chatMode === 'plan' ? planMessages : codeMessages;
+  const setLlmMessages = chatMode === 'plan' ? setPlanMessages : setCodeMessages;
+
   const AVAILABLE_MODELS = [
     { id: 'big-pickle', name: 'Big Pickle' },
     { id: 'mimo', name: 'Mimo' },
   ];
 
-  // ── Socket.IO chat subscription (group mode) ────────────────────────
   useEffect(() => {
     if (!spaceId || !isOpen || chatMode !== 'group') return;
 
@@ -232,35 +333,27 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     };
   }, [spaceId, isOpen, chatMode]);
 
-  // ── Auto-scroll to bottom ────────────────────────────────────────────
   useEffect(() => {
     if (isOpen && isNearBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, llmMessages, isOpen]);
+  }, [messages, planMessages, codeMessages, isOpen]);
 
-  // ── Track whether user is near the bottom ─────────────────────────────
   const handleScroll = useCallback(async () => {
     const el = scrollContainerRef.current;
     if (!el) return;
-
     isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-
     if (chatMode === 'group' && el.scrollTop < 60 && hasMore && !loadingMore) {
-      // Pagination not supported via Socket.IO — all messages sent on join
       setHasMore(false);
     }
   }, [spaceId, chatMode, hasMore, loadingMore]);
 
-  // ── Group chat: Send ──────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || !spaceId) return;
-
     const userId = user ? user.uid : getGuestId();
     const displayName = user ? (user.displayName || user.email || 'User') : 'Guest';
     const photoURL = user ? (user.photoURL || null) : null;
-
     setSending(true);
     try {
       emitSocket('chat:message', { spaceId, text });
@@ -273,18 +366,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     }
   }, [input, spaceId, user]);
 
-  // ── LLM chat: Send ────────────────────────────────────────────────────
-  const handleLlmSend = useCallback(async () => {
+  const handlePlanSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || llmStreaming) return;
+    if (!text || streaming) return;
 
     setLlmError(null);
     setInput('');
     isNearBottomRef.current = true;
 
     const userMessage = { role: 'user', content: text };
-    const updatedMessages = [...llmMessages, userMessage];
-    setLlmMessages(updatedMessages);
+    const updatedMessages = [...planMessages, userMessage];
+    setPlanMessages(updatedMessages);
 
     const sceneObjects = useObjectsStore.getState().objects;
     const zenMessages = buildZenMessages({
@@ -293,7 +385,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       maxMessages: 20,
     });
 
-    setLlmStreaming(true);
+    setStreaming(true);
     streamingRef.current = '';
     streamingMsgKeyRef.current = `llm-stream-${Date.now()}`;
     const currentStreamKey = streamingMsgKeyRef.current;
@@ -308,7 +400,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         model,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
-          setLlmMessages((prev) => {
+          setPlanMessages((prev) => {
             const streamMsg = {
               key: currentStreamKey,
               role: 'assistant',
@@ -324,7 +416,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       const finalText = streamingRef.current;
       const blocks = extractMerfolkBlocks(finalText);
 
-      setLlmMessages((prev) => {
+      setPlanMessages((prev) => {
         const finalMsg = {
           key: currentStreamKey,
           role: 'assistant',
@@ -332,7 +424,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
           streaming: false,
           diagramCreated: false,
         };
-
         const withoutStream = prev.filter(m => m.key !== currentStreamKey);
         return [...withoutStream, finalMsg];
       });
@@ -340,7 +431,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       if (blocks.length > 0) {
         const rendered = await renderMerfolkToScene(blocks, spaceId, user);
         if (rendered) {
-          setLlmMessages((prev) =>
+          setPlanMessages((prev) =>
             prev.map(m =>
               m.key === currentStreamKey
                 ? { ...m, diagramCreated: true }
@@ -352,32 +443,131 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     } catch (err) {
       if (err.name === 'AbortError') return;
       setLlmError(err.message || 'Failed to reach LLM. Check your connection.');
-      setLlmMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
+      setPlanMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
     } finally {
-      setLlmStreaming(false);
+      setStreaming(false);
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, llmStreaming, llmMessages]);
+  }, [input, streaming, planMessages, model, spaceId, user]);
+
+  const handleCodeSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || streaming) return;
+
+    setLlmError(null);
+    setInput('');
+    isNearBottomRef.current = true;
+
+    const userMessage = { role: 'user', content: text };
+    const updatedMessages = [...codeMessages, userMessage];
+    setCodeMessages(updatedMessages);
+
+    const sceneObjects = useObjectsStore.getState().objects;
+    const techStack = codeStore.techStack;
+    const zenMessages = buildCodeMessages({
+      llmMessages: updatedMessages,
+      sceneObjects,
+      techStack,
+      maxMessages: 20,
+    });
+
+    setStreaming(true);
+    streamingRef.current = '';
+    streamingMsgKeyRef.current = `code-stream-${Date.now()}`;
+    const currentStreamKey = streamingMsgKeyRef.current;
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      await sendToZen({
+        messages: zenMessages,
+        signal: abortController.signal,
+        model,
+        onChunk: (delta, fullText) => {
+          streamingRef.current = fullText;
+          setCodeMessages((prev) => {
+            const streamMsg = {
+              key: currentStreamKey,
+              role: 'assistant',
+              content: fullText,
+              streaming: true,
+            };
+            const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
+            return [...withoutStreaming, streamMsg];
+          });
+        },
+      });
+
+      const finalText = streamingRef.current;
+      const codeBlocks = extractCodeBlocks(finalText);
+
+      setCodeMessages((prev) => {
+        const finalMsg = {
+          key: currentStreamKey,
+          role: 'assistant',
+          content: finalText,
+          streaming: false,
+          codeCreated: codeBlocks.length > 0,
+        };
+        const withoutStream = prev.filter(m => m.key !== currentStreamKey);
+        return [...withoutStream, finalMsg];
+      });
+
+      if (codeBlocks.length > 0) {
+        const count = await associateCodeWithScene(codeBlocks);
+        setAssociatedCount(count);
+
+        if (codeStore.selectedRepo && codeStore.selectedBranch) {
+          const token = getGithubToken();
+          if (token) {
+            const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
+            const repoName = codeStore.selectedRepo.name;
+            const result = await pushCodeToGitHub(codeBlocks, owner, repoName, codeStore.selectedBranch, token);
+            setPushNotification({
+              type: result.success ? 'success' : 'error',
+              message: result.success
+                ? `Pushed ${result.pushed} file(s) to ${owner}/${repoName}:${codeStore.selectedBranch}`
+                : `Pushed ${result.pushed}/${codeBlocks.length} file(s) — ${result.errors?.length} error(s)`,
+            });
+            setTimeout(() => setPushNotification(null), 5000);
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      setLlmError(err.message || 'Failed to reach LLM. Check your connection.');
+      setCodeMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
+    } finally {
+      setStreaming(false);
+      streamingRef.current = '';
+      abortControllerRef.current = null;
+    }
+  }, [input, streaming, codeMessages, model, spaceId, user, codeStore.selectedRepo, codeStore.selectedBranch, codeStore.techStack]);
 
   const handleKeyDown = useCallback(
     (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (chatMode === 'group') {
-          handleSend();
-        } else {
-          handleLlmSend();
-        }
+        if (chatMode === 'group') handleSend();
+        else if (chatMode === 'plan') handlePlanSend();
+        else handleCodeSend();
       }
     },
-    [chatMode, handleSend, handleLlmSend]
+    [chatMode, handleSend, handlePlanSend, handleCodeSend]
   );
 
   const handleModeSwitch = useCallback((mode) => {
     setChatMode(mode);
     setLlmError(null);
-  }, []);
+    setAssociatedCount(0);
+    setPushNotification(null);
+
+    if (mode === 'code' && !codeStore.techStack) {
+      setShowTechStackPrompt(true);
+    }
+  }, [codeStore]);
 
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -392,6 +582,120 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    const githubConnected = isGithubAuthenticated();
+    if (githubConnected !== codeStore.githubConnected) {
+      codeStore.setGithubConnected(githubConnected);
+    }
+  }, [codeStore.githubConnected]);
+
+  const handleTechStackSubmit = () => {
+    const stack = techStackInput.trim();
+    if (stack) {
+      codeStore.setTechStack(stack, 'user');
+    } else {
+      codeStore.setTechStack('Let the LLM decide what tech stack is best for this architecture', 'llm');
+    }
+    setShowTechStackPrompt(false);
+    setTechStackInput('');
+  };
+
+  const handleGithubLogin = () => {
+    window.location.href = getGithubOAuthUrl();
+  };
+
+  const handleFetchRepos = async () => {
+    const token = getGithubToken();
+    if (!token) return;
+    try {
+      const reposData = await fetchRepositories(token);
+      setRepos(reposData);
+    } catch {}
+  };
+
+  const handleSelectRepo = (repo) => {
+    codeStore.setSelectedRepo(repo);
+    setShowRepos(false);
+    setShowBranchPrompt(true);
+  };
+
+  const handleCreateNewRepo = async () => {
+    const name = newRepoName.trim();
+    if (!name) return;
+    const token = getGithubToken();
+    if (!token) return;
+    try {
+      const res = await fetch('https://api.github.com/user/repos', {
+        method: 'POST',
+        headers: {
+          Authorization: `token ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, private: false, auto_init: true }),
+      });
+      if (!res.ok) throw new Error(`Failed to create repo: ${res.status}`);
+      const repo = await res.json();
+      codeStore.setSelectedRepo(repo);
+      setShowNewRepoInput(false);
+      setNewRepoName('');
+      setShowBranchPrompt(true);
+      setPushNotification({ type: 'success', message: `Created repo ${name}` });
+      setTimeout(() => setPushNotification(null), 3000);
+    } catch (err) {
+      setPushNotification({ type: 'error', message: err.message });
+      setTimeout(() => setPushNotification(null), 5000);
+    }
+  };
+
+  const handleBranchConfirm = async () => {
+    const repo = codeStore.selectedRepo;
+    if (!repo) return;
+    const owner = repo.owner?.login || repo.owner;
+    const repoName = repo.name;
+    const token = getGithubToken();
+    if (!token) return;
+
+    const strategy = codeStore.branchStrategy;
+    let branch = 'main';
+
+    if (strategy === 'new') {
+      const newBranch = branchNameInput.trim();
+      if (!newBranch) return;
+      try {
+        const mainRef = await getBranchRef(token, owner, repoName, repo.default_branch || 'main');
+        const sha = mainRef.data?.object?.sha;
+        if (sha) await createBranchRef(token, owner, repoName, newBranch, sha);
+        branch = newBranch;
+      } catch (err) {
+        setPushNotification({ type: 'error', message: `Failed to create branch: ${err.message}` });
+        setTimeout(() => setPushNotification(null), 5000);
+        return;
+      }
+    } else if (strategy === 'existing') {
+      branch = branchNameInput.trim() || repo.default_branch || 'main';
+    } else {
+      branch = repo.default_branch || 'main';
+    }
+
+    codeStore.setSelectedBranch(branch);
+    setShowBranchPrompt(false);
+    setBranchNameInput('');
+    setPushNotification({ type: 'success', message: `Working in ${owner}/${repoName}:${branch}` });
+    setTimeout(() => setPushNotification(null), 3000);
+  };
+
+  const getInputPlaceholder = () => {
+    if (chatMode === 'group') return 'Send a message…';
+    if (chatMode === 'plan') return 'Describe architecture or ask a question…';
+    return 'Describe what code to generate…';
+  };
+
+  const getSendButtonLabel = () => {
+    if (chatMode === 'group') return 'Send';
+    if (chatMode === 'plan') return 'Send';
+    return 'Generate code';
+  };
 
   if (!isOpen) return null;
 
@@ -410,13 +714,28 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
             Group
           </button>
           <button
-            className={`space-chat-mode-btn ${chatMode === 'llm' ? 'active' : ''}`}
-            onClick={() => handleModeSwitch('llm')}
+            className={`space-chat-mode-btn ${chatMode === 'plan' ? 'active' : ''}`}
+            onClick={() => handleModeSwitch('plan')}
           >
-            LLM
+            Plan
+          </button>
+          <button
+            className={`space-chat-mode-btn ${chatMode === 'code' ? 'active' : ''}`}
+            onClick={() => handleModeSwitch('code')}
+          >
+            Code
           </button>
         </div>
         <div className="space-chat-header-actions">
+          {chatMode === 'code' && (
+            <button
+              className="space-chat-github-btn"
+              onClick={() => setShowGithubPanel(v => !v)}
+              title="GitHub"
+            >
+              {codeStore.githubConnected ? '◉' : '○'}
+            </button>
+          )}
           <button
             className="space-chat-expand"
             onClick={() => setIsExpanded(v => !v)}
@@ -436,7 +755,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         </div>
       </div>
 
-      {/* Resize handles (only when not expanded) */}
       {!isExpanded && (
         <>
           <div className="space-chat-resize-handle space-chat-resize-right" onMouseDown={(e) => handleResizeStart('right', e)} />
@@ -445,16 +763,169 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         </>
       )}
 
+      {showTechStackPrompt && (
+        <div className="space-chat-modal-overlay" onClick={() => {}}>
+          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
+            <div className="space-chat-modal-title">Select Tech Stack</div>
+            <div className="space-chat-modal-body">
+              <p>What language/framework should the code use?</p>
+              <input
+                className="space-chat-modal-input"
+                type="text"
+                placeholder="e.g., React + TypeScript, Python + FastAPI, Go"
+                value={techStackInput}
+                onChange={e => setTechStackInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleTechStackSubmit(); }}
+                autoFocus
+              />
+              <div className="space-chat-modal-actions">
+                <button className="space-chat-modal-btn" onClick={() => { codeStore.setTechStack('', 'llm'); setShowTechStackPrompt(false); }}>
+                  Let LLM decide
+                </button>
+                <button className="space-chat-modal-btn primary" onClick={handleTechStackSubmit}>
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBranchPrompt && (
+        <div className="space-chat-modal-overlay" onClick={() => {}}>
+          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
+            <div className="space-chat-modal-title">Commit Strategy</div>
+            <div className="space-chat-modal-body">
+              <p>How should code be committed to {codeStore.selectedRepo?.name}?</p>
+              <div className="space-chat-modal-options">
+                <label className="space-chat-modal-option">
+                  <input
+                    type="radio"
+                    name="branchStrategy"
+                    checked={codeStore.branchStrategy === 'main'}
+                    onChange={() => codeStore.setBranchStrategy('main')}
+                  />
+                  <span>Commit to main/master</span>
+                </label>
+                <label className="space-chat-modal-option">
+                  <input
+                    type="radio"
+                    name="branchStrategy"
+                    checked={codeStore.branchStrategy === 'new'}
+                    onChange={() => codeStore.setBranchStrategy('new')}
+                  />
+                  <span>Create new branch</span>
+                </label>
+                <label className="space-chat-modal-option">
+                  <input
+                    type="radio"
+                    name="branchStrategy"
+                    checked={codeStore.branchStrategy === 'existing'}
+                    onChange={() => codeStore.setBranchStrategy('existing')}
+                  />
+                  <span>Select existing branch</span>
+                </label>
+              </div>
+              {(codeStore.branchStrategy === 'new' || codeStore.branchStrategy === 'existing') && (
+                <input
+                  className="space-chat-modal-input"
+                  type="text"
+                  placeholder={codeStore.branchStrategy === 'new' ? 'New branch name…' : 'Branch name…'}
+                  value={branchNameInput}
+                  onChange={e => setBranchNameInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleBranchConfirm(); }}
+                  autoFocus
+                />
+              )}
+              <div className="space-chat-modal-actions">
+                <button className="space-chat-modal-btn primary" onClick={handleBranchConfirm}>
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GitHub Panel */}
+      {showGithubPanel && chatMode === 'code' && (
+        <div className="space-chat-github-panel">
+          {!codeStore.githubConnected ? (
+            <button className="github-login-button" onClick={handleGithubLogin}>
+              Connect to GitHub
+            </button>
+          ) : (
+            <div className="space-chat-github-connected">
+              {codeStore.selectedRepo ? (
+                <div className="space-chat-repo-info">
+                  <span className="space-chat-repo-name">
+                    {codeStore.selectedRepo.full_name || codeStore.selectedRepo.name}
+                  </span>
+                  <span className="space-chat-branch-name">:{codeStore.selectedBranch}</span>
+                  <button
+                    className="space-chat-small-btn"
+                    onClick={() => setShowBranchPrompt(true)}
+                    title="Switch branch"
+                  >
+                    Switch
+                  </button>
+                </div>
+              ) : (
+                <div className="space-chat-repo-select">
+                  <button
+                    className="space-chat-small-btn"
+                    onClick={() => { handleFetchRepos(); setShowRepos(v => !v); }}
+                  >
+                    {showRepos ? 'Hide repos' : 'Select repo'}
+                  </button>
+                  <button
+                    className="space-chat-small-btn"
+                    onClick={() => setShowNewRepoInput(v => !v)}
+                  >
+                    New repo
+                  </button>
+                  {showRepos && (
+                    <div className="space-chat-repo-list">
+                      {repos.map(repo => (
+                        <button
+                          key={repo.id}
+                          className="space-chat-repo-item"
+                          onClick={() => handleSelectRepo(repo)}
+                        >
+                          {repo.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showNewRepoInput && (
+                    <div className="space-chat-new-repo">
+                      <input
+                        type="text"
+                        placeholder="Repository name"
+                        value={newRepoName}
+                        onChange={e => setNewRepoName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleCreateNewRepo(); }}
+                      />
+                      <button className="space-chat-small-btn" onClick={handleCreateNewRepo}>
+                        Create
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div
         className="space-chat-messages"
         ref={scrollContainerRef}
         onScroll={handleScroll}
       >
-        {chatMode === 'group' ? (
+        {chatMode === 'group' && (
           <>
-            {loadingMore && (
-              <div className="space-chat-load-more">Loading…</div>
-            )}
+            {loadingMore && <div className="space-chat-load-more">Loading…</div>}
             {!loadingMore && !hasMore && messages.length > 0 && (
               <div className="space-chat-load-more">Beginning of chat</div>
             )}
@@ -465,21 +936,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
               const ownId = user ? user.uid : getGuestId();
               const isOwn = msg.userId === ownId;
               return (
-                <div
-                  key={msg.key}
-                  className={`space-chat-message ${isOwn ? 'own' : ''}`}
-                >
+                <div key={msg.key} className={`space-chat-message ${isOwn ? 'own' : ''}`}>
                   {!isOwn && (
                     <div className="space-chat-avatar" title={msg.displayName || 'User'}>
                       {msg.photoURL ? (
-                        <img
-                          src={msg.photoURL}
-                          alt={msg.displayName}
-                          referrerPolicy="no-referrer"
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                            e.target.nextSibling.style.display = 'flex';
-                          }}
+                        <img src={msg.photoURL} alt={msg.displayName} referrerPolicy="no-referrer"
+                          onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
                         />
                       ) : null}
                       <span style={{ display: msg.photoURL ? 'none' : 'flex' }}>
@@ -488,49 +950,69 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
                     </div>
                   )}
                   <div className="space-chat-bubble-wrap">
-                    {!isOwn && (
-                      <div className="space-chat-name">{msg.displayName || 'User'}</div>
-                    )}
+                    {!isOwn && <div className="space-chat-name">{msg.displayName || 'User'}</div>}
                     <div className="space-chat-bubble">{msg.text}</div>
                   </div>
                 </div>
               );
             })}
           </>
-        ) : (
+        )}
+
+        {(chatMode === 'plan' || chatMode === 'code') && (
           <>
-            {llmMessages.length === 0 && !llmStreaming && (
+            {llmMessages.length === 0 && !streaming && (
               <div className="space-chat-empty">
-                Ask me to create a system architecture diagram.
-                <br /><br />
-                Try: &quot;Create a microservices e-commerce architecture&quot;
+                {chatMode === 'plan' ? (
+                  <>
+                    Ask me about software architecture or create a diagram.
+                    <br /><br />
+                    Try: &quot;Create a microservices e-commerce architecture&quot;
+                  </>
+                ) : (
+                  <>
+                    Generate code from your architecture diagram.
+                    <br /><br />
+                    {codeStore.techStack ? (
+                      <>Tech stack: {codeStore.techStack}</>
+                    ) : (
+                      <>I&apos;ll ask about your tech stack first.</>
+                    )}
+                  </>
+                )}
               </div>
             )}
-            {llmError && (
-              <div className="space-chat-error">{llmError}</div>
-            )}
-            {llmStreaming && !llmMessages.some(m => m.streaming) && (
+            {llmError && <div className="space-chat-error">{llmError}</div>}
+            {streaming && !llmMessages.some(m => m.streaming) && (
               <div className="space-chat-loading">
                 <span className="space-chat-spinner" />
                 <span>Thinking…</span>
               </div>
             )}
+            {pushNotification && (
+              <div className={`space-chat-notification ${pushNotification.type}`}>
+                {pushNotification.message}
+              </div>
+            )}
+            {associatedCount > 0 && chatMode === 'code' && (
+              <div className="space-chat-notification success">
+                Associated {associatedCount} file(s) with objects
+              </div>
+            )}
             {llmMessages.map((msg) => {
               const isUser = msg.role === 'user';
               return (
-                <div
-                  key={msg.key}
-                  className={`space-chat-message ${isUser ? 'own llm-user' : 'llm-assistant'}`}
-                >
+                <div key={msg.key} className={`space-chat-message ${isUser ? 'own llm-user' : 'llm-assistant'}`}>
                   <div className="space-chat-bubble-wrap">
                     <div className="space-chat-bubble">
                       {msg.content}
                       {msg.streaming && <span className="space-chat-streaming-cursor" />}
                     </div>
                     {msg.diagramCreated && (
-                      <div className="space-chat-merfolk-badge">
-                        ✦ 3D diagram created
-                      </div>
+                      <div className="space-chat-merfolk-badge">✦ 3D diagram created</div>
+                    )}
+                    {msg.codeCreated && (
+                      <div className="space-chat-merfolk-badge">✦ Code generated</div>
                     )}
                   </div>
                 </div>
@@ -541,12 +1023,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
         <div ref={bottomRef} />
       </div>
 
-      {chatMode === 'llm' && (
+      {(chatMode === 'plan' || chatMode === 'code') && (
         <div className="space-chat-model-bar" ref={dropdownRef}>
           <button
             className="space-chat-model-btn"
             onClick={() => setShowModelDropdown(v => !v)}
-            disabled={llmStreaming}
+            disabled={streaming}
           >
             {AVAILABLE_MODELS.find(m => m.id === model)?.name || model}
             <span className="space-chat-model-arrow">{showModelDropdown ? '▲' : '▼'}</span>
@@ -573,20 +1055,24 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
           ref={textareaRef}
           className="space-chat-input"
           rows={1}
-          placeholder={chatMode === 'group' ? 'Send a message…' : 'Describe a diagram…'}
+          placeholder={getInputPlaceholder()}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          maxLength={chatMode === 'group' ? 500 : 2000}
-          disabled={chatMode === 'llm' && llmStreaming}
+          maxLength={chatMode === 'group' ? 500 : 4000}
+          disabled={chatMode !== 'group' && streaming}
         />
         <button
           className="space-chat-send"
-          onClick={chatMode === 'llm' && llmStreaming ? handleStop : (chatMode === 'group' ? handleSend : handleLlmSend)}
-          disabled={chatMode === 'llm' && llmStreaming ? false : (!input.trim() || (chatMode === 'group' ? sending : llmStreaming))}
-          title={chatMode === 'llm' && llmStreaming ? 'Stop' : (chatMode === 'group' ? 'Send' : 'Generate diagram')}
+          onClick={
+            streaming
+              ? handleStop
+              : (chatMode === 'group' ? handleSend : chatMode === 'plan' ? handlePlanSend : handleCodeSend)
+          }
+          disabled={streaming ? false : (!input.trim() || (chatMode === 'group' ? sending : streaming))}
+          title={streaming ? 'Stop' : getSendButtonLabel()}
         >
-          {chatMode === 'llm' && llmStreaming ? '◼' : '➤'}
+          {streaming ? '◼' : '➤'}
         </button>
       </div>
     </div>

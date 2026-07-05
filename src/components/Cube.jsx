@@ -179,6 +179,7 @@ const Cube = ({
   onMove, // Add onMove prop like Sphere
   lineWidth, // Line width for cube edges
   renderEdges = false, // When false, edges are rendered by GlobalCubeEdgesRenderer for better performance
+  onCodeToggle,
 }) => {
   // Get LOD level for this cube from LOD store
   const lodLevel = useLODStore(
@@ -204,6 +205,7 @@ const Cube = ({
 
   // Repo container state — must be declared before handleSceneClick
   const isRepoContainer = objectData?.merfolkData?.isRepoContainer === true;
+  const hasCode = objectData?.metadata?.code != null;
   const pipelineIsRunning = usePipelineStore((state) => state.isRunning);
   const repoSlug = objectData?.merfolkData?.repoSlug;
 
@@ -1641,6 +1643,8 @@ const Cube = ({
           showHeader={cube?.showHeader}
           followTarget={contentRef}
           objectId={id}
+          hasCode={hasCode}
+          onCodeToggle={onCodeToggle}
         />
       )}{' '}
       {/* Transform controls - only at full LOD */}{' '}

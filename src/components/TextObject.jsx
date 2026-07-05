@@ -50,6 +50,7 @@ const TextObject = React.memo(
     indicatorMode,
     onUpdate,
     onDelete,
+    readOnly = false,
   }) => {
     // Access Three.js scene and camera for orbit controls and distance calculation
     const { scene, camera } = useThree();
@@ -1004,6 +1005,9 @@ const TextObject = React.memo(
       e.preventDefault();
 
       onClick();
+
+      // Read-only mode: don't enter edit mode
+      if (readOnly) return;
 
       // Pipeline task collapsed: toggle expansion instead of editing
       if (isPipelineTask && !isTaskExpanded) {
@@ -2152,11 +2156,13 @@ const TextObject = React.memo(
                   ref={displayRef}
                   onClick={handleTextClick}
                   onMouseDown={(e) => {
+                    if (readOnly) { e.stopPropagation(); return; }
                     e.stopPropagation();
                     // Briefly pause orbit controls when clicking to start editing
                     setOrbitControlsEnabled(false);
                   }}
                   onMouseUp={(e) => {
+                    if (readOnly) { e.stopPropagation(); return; }
                     e.stopPropagation();
                     // Re-enable orbit controls after click
                     setOrbitControlsEnabled(true);
@@ -2164,9 +2170,14 @@ const TextObject = React.memo(
                   style={{
                     ...getTextAreaStyle(),
                     userSelect: 'none',
-                    cursor: isPipelineTask ? 'pointer' : 'text',
+                    cursor: readOnly ? 'default' : (isPipelineTask ? 'pointer' : 'text'),
                     width: '100%',
-                    background: isPipelineTask && taskColor ? taskColor : 'white',
+                    background: readOnly ? '#1e1e1e' : (isPipelineTask && taskColor ? taskColor : 'white'),
+                    color: readOnly ? '#d4d4d4' : undefined,
+                    fontFamily: readOnly ? 'Consolas, "Courier New", monospace' : undefined,
+                    padding: readOnly ? '12px' : undefined,
+                    borderRadius: readOnly ? '4px' : undefined,
+                    border: readOnly ? '1px solid #333' : undefined,
                   }}
                   dangerouslySetInnerHTML={{
                     __html: (() => {

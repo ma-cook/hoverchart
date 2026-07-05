@@ -1,10 +1,12 @@
 const ZEN_PROXY_URL = 'https://us-central1-hoverchart.cloudfunctions.net/zenProxy';
 
-const MERFOLK_SYSTEM_PROMPT = `You are a Merfolk diagram expert. Merfolk is a custom markdown syntax for defining 3D system architecture diagrams.
+const PLAN_SYSTEM_PROMPT = `You are a software architecture expert and diagram assistant. You help users design, discuss, and refine system architectures.
 
 ═══════════════════════════════════════════════════════════════
-MERFOLK SYNTAX REFERENCE
+MERFOLK DIAGRAM SYNTAX REFERENCE
 ═══════════════════════════════════════════════════════════════
+
+When asked to CREATE or MODIFY a system architecture diagram, use Merfolk syntax inside \`\`\`merfolk code blocks:
 
 %% Comments (ignored by parser)
 %% This is a comment
@@ -45,50 +47,80 @@ FLOW PATHS — Named sequences through multiple nodes:
   flowpath "name" : A --> B --> C --> D
   flowpath "eventPipeline" (-.->): Input --> Transform --> Output
   flowpath "requestLifecycle" : Client --> API --> DB --> Client : "full cycle"
-  Tag individual connections: A --> B #flowName
 
 GRAPH DECLARATION (optional):
   graph3d "Title" or ast3d "Title"
 
+DIAGRAM RULES:
+1. Always include a root component. Every other component must be reachable.
+2. Every node should have at least one connection.
+3. Use --> as the default connection type.
+4. Generate as many nodes as needed to fully represent the architecture.
+
 ═══════════════════════════════════════════════════════════════
-CRITICAL RULES — MUST FOLLOW
+CAPABILITIES
 ═══════════════════════════════════════════════════════════════
 
-1. ROOT COMPONENT: Always include a root "App" or "MainApp" component.
-   Every other component must be reachable from this root through connections.
+You can:
+- Create and modify system architecture diagrams using Merfolk syntax
+- Answer questions about software architecture, design patterns, and tradeoffs
+- Discuss code structure, component relationships, and system design
+- Suggest improvements to existing architectures
+- Recommend technology stacks and frameworks
 
-2. NO ORPHANS: Every node MUST have at least one connection.
-   No node should appear disconnected. If a node exists, connect it.
+When asked a general question, answer conversationally and helpfully.
+When asked to create or modify a diagram, output Merfolk inside \`\`\`merfolk blocks.
+You may also suggest code structure, file organization, and implementation approaches.`;
 
-3. HIERARCHY: Connect components to the root with:
-   App --> ComponentA : "renders"
-   App --> ComponentB : "renders"
-   This establishes the component tree and prevents "Unused Components".
+const CODE_SYSTEM_PROMPT = `You are a code generation expert. Your task is to generate production-ready code based on the system architecture provided.
 
-4. NESTED GROUPING: Functions connected to components become visually
-   nested inside them. Connect functions to their parent component:
-   processOrder[Function: processOrder]
-   processOrder --> OrderService : "lives in"
-   Or use control flow for nesting:
-   processData -.-> DataService : "internal"
+═══════════════════════════════════════════════════════════════
+ARCHITECTURE CONTEXT
+═══════════════════════════════════════════════════════════════
 
-5. CONNECTION DENSITY: Every service, store, hook, and function should
-   be connected to the component(s) that use it. Example:
-   APIGateway --> OrderService : "routes to"
-   OrderService --> OrderDB : "queries"
-   useAuth --> Dashboard : "provides auth"
+The system architecture is represented as 3D objects in the scene. Each object corresponds to a component, function, service, store, hook, or library in the architecture. The connections between them represent relationships (data flow, control flow, dependencies, etc.).
 
-6. USE DATA FLOW (-->): Use --> as the default connection type.
-   Reserve -.-> for events/control flow, --- for loose associations.
+When generating code:
+- Read the architecture context below to understand the system structure
+- Generate complete, working code files for each component
+- Use the file path conventions appropriate for the project
+- Include proper imports, error handling, and edge cases
 
-7. FLOW PATHS: Add flowpath directives for the main data flows.
-   This creates visual flow lines through the diagram.
+═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════
 
-8. OUTPUT FORMAT: Output ONLY valid Merfolk inside \`\`\`merfolk code blocks.
-   Use descriptive camelCase node IDs (no spaces).
-   Define all nodes before their connections.
-   Group related nodes with %% section comments.
-    Generate as many nodes as needed to fully represent the architecture.`;
+Each file must be in a code block with the file path as the language identifier label:
+
+\`\`\`javascript:src/components/Button.jsx
+// NODE: Button
+import React from 'react';
+export function Button() { ... }
+\`\`\`
+
+The // NODE: directive MUST match a nodeId from the architecture context.
+This tells the system which architecture component this code belongs to.
+
+If the code has no specific node association, omit the NODE directive.
+
+═══════════════════════════════════════════════════════════════
+TECH STACK
+═══════════════════════════════════════════════════════════════
+
+{techStack}
+
+═══════════════════════════════════════════════════════════════
+RULES
+═══════════════════════════════════════════════════════════════
+
+1. Generate COMPLETE files - every import, export, type, and function needed
+2. Group related files by feature or module
+3. Follow idiomatic patterns for the target language/framework
+4. Include error handling, input validation, and edge cases
+5. Use modern syntax and best practices
+6. When updating existing code (shown in context), only output the changed file in full
+7. Files are read-only to users - you are the only one who writes code
+8. If you need additional context from the repository, explain what you need`;
 
 const FEW_SHOT_EXAMPLES = [
   {
@@ -371,12 +403,46 @@ function buildSceneContext(objects) {
       const nodeId = o.merfolkData.nodeId;
       const nodeType = o.merfolkData.nodeType || o.type || 'unknown';
       const name = o.headerText || nodeId;
-      return `- ${nodeId} (${nodeType}) — ${name}`;
+      const hasCode = o.metadata?.code ? ' [code attached]' : '';
+      return `- ${nodeId} (${nodeType}) — ${name}${hasCode}`;
     });
 
   if (nodes.length === 0) return '';
 
-  return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections. When adding new nodes, use descriptive camelCase IDs that don't clash with existing IDs. When updating an existing node, use its EXACT nodeId — any variation (different case, extra prefix, etc.) will create a duplicate instead of modifying it.`;
+  return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections.`;
+}
+
+function buildCodeSceneContext(objects) {
+  if (!objects || objects.length === 0) return 'No architecture objects found in the scene.\n';
+
+  const lines = [];
+  const merfolkObjects = objects.filter(o => o.merfolkData?.nodeId && !o.merfolkData?.isContainer);
+
+  lines.push('=== SYSTEM ARCHITECTURE ===\n');
+  for (const obj of merfolkObjects) {
+    const nodeId = obj.merfolkData.nodeId;
+    const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
+    const name = obj.headerText || nodeId;
+    lines.push(`[${nodeId}] ${nodeType} — "${name}"`);
+
+    if (obj.metadata?.code) {
+      const preview = obj.metadata.code.slice(0, 200).replace(/\n/g, '\\n');
+      lines.push(`  Existing code (${obj.metadata.codeLanguage || 'unknown'}, ${obj.metadata.codeFilePath || 'unknown path'}):`);
+      lines.push(`  \`${preview}...\``);
+    }
+  }
+
+  const connections = objects.reduce((acc, o) => {
+    if (o.merfolkData?.nodeId) acc.add(o.merfolkData.nodeId);
+    return acc;
+  }, new Set());
+
+  if (connections.size > 0) {
+    lines.push('\n=== NODES IN SCENE ===');
+    for (const id of connections) lines.push(`- ${id}`);
+  }
+
+  return lines.join('\n');
 }
 
 export async function sendToZen({ messages, onChunk, signal, model = 'big-pickle' }) {
@@ -438,7 +504,7 @@ export function buildZenMessages({ llmMessages, sceneObjects, maxMessages = 20 }
   const recentMessages = llmMessages.slice(-maxMessages);
 
   const sceneContext = buildSceneContext(sceneObjects);
-  const systemContent = MERFOLK_SYSTEM_PROMPT + sceneContext;
+  const systemContent = PLAN_SYSTEM_PROMPT + sceneContext;
 
   const systemMessage = { role: 'system', content: systemContent };
 
@@ -448,4 +514,16 @@ export function buildZenMessages({ llmMessages, sceneObjects, maxMessages = 20 }
   }));
 
   return [systemMessage, ...fewShotWithScene, ...recentMessages];
+}
+
+export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', maxMessages = 20 }) {
+  const recentMessages = llmMessages.slice(-maxMessages);
+
+  const sceneContext = buildCodeSceneContext(sceneObjects);
+  const techStackSection = techStack ? `The project uses: ${techStack}` : 'The tech stack has not been specified yet. Ask the user what language/framework they want to use, or suggest the best choice for this architecture.';
+  const systemContent = CODE_SYSTEM_PROMPT.replace('{techStack}', techStackSection) + '\n\n' + sceneContext;
+
+  const systemMessage = { role: 'system', content: systemContent };
+
+  return [systemMessage, ...recentMessages];
 }
