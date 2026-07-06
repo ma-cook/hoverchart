@@ -26,6 +26,7 @@ export { default as useEarthSettingsStore } from './earthSettingsStore.js';
 export { default as useHandTrackingStore } from './handTrackingStore.js';
 export { default as usePipelineStore } from './pipelineStore.js';
 export { default as useCodeStore } from './codeStore.js';
+export { default as useLlmStore } from './llmStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';

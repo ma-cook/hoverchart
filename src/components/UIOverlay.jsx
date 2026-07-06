@@ -2068,7 +2068,7 @@ const UIOverlay = ({
       </div>
 
       {/* Group chat window - pops out to the left of the right panel */}
-      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} />}
+      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} onCreateObject={onCreateObject} />}
 
       
       {/* Unified progress toast — bottom-right, handles scan, render, and data loading */}

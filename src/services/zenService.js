@@ -1,5 +1,3 @@
-const ZEN_PROXY_URL = 'https://us-central1-hoverchart.cloudfunctions.net/zenProxy';
-
 const PLAN_SYSTEM_PROMPT = `You are a software architecture expert and diagram assistant. You help users design, discuss, and refine system architectures.
 
 ═══════════════════════════════════════════════════════════════
@@ -445,59 +443,24 @@ function buildCodeSceneContext(objects) {
   return lines.join('\n');
 }
 
-export async function sendToZen({ messages, onChunk, signal, model = 'big-pickle' }) {
-  const response = await fetch(ZEN_PROXY_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messages,
-      model,
-      max_tokens: 16384,
-    }),
+import { sendToProvider } from './llmProviders';
+import useLlmStore from '../stores/llmStore';
+
+export async function sendToZen({ messages, onChunk, signal }) {
+  const { providerId, apiKey, selectedModel } = useLlmStore.getState();
+
+  if (!providerId || !apiKey || !selectedModel) {
+    throw new Error('LLM not configured. Click the model button to set up a provider.');
+  }
+
+  return sendToProvider({
+    providerId,
+    apiKey,
+    model: selectedModel,
+    messages,
+    onChunk,
     signal,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`Zen proxy error ${response.status}: ${errorText || response.statusText}`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let fullText = '';
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data: ')) continue;
-
-      const data = trimmed.slice(6);
-      if (data === '[DONE]') break;
-
-      try {
-        const parsed = JSON.parse(data);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta) {
-          fullText += delta;
-          onChunk?.(delta, fullText);
-        }
-      } catch {
-        // skip malformed JSON lines
-      }
-    }
-  }
-
-  return fullText;
 }
 
 export function buildZenMessages({ llmMessages, sceneObjects, maxMessages = 20 }) {

@@ -5,6 +5,8 @@ import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
+import useLlmStore from '../stores/llmStore';
+import { PROVIDERS, fetchModels } from '../services/llmProviders';
 import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import {
@@ -19,6 +21,9 @@ import {
   createFileOnBranch,
   getFileContents,
 } from '../services/githubIssuesService';
+import { listBranches } from '../services/githubPushService';
+import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
+import { uploadMarkdownToStorage } from '../services/storageService';
 
 const getGuestId = () => {
   let guestId = sessionStorage.getItem('guestPresenceId');
@@ -117,12 +122,18 @@ async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
   return allConnectionsToSave.length > 0 || allObjectsToSave.length > 0;
 }
 
-async function associateCodeWithScene(codeBlocks) {
+async function associateCodeWithScene(codeBlocks, spaceId, user) {
   if (!codeBlocks || codeBlocks.length === 0) return 0;
+
+  const { default: spatialPartitioning } = await import('../services/spatialPartitioning');
+  const getCellCoordinates = spatialPartitioning.getCellCoordinates;
+  const getCellId = spatialPartitioning.getCellId;
+  const { saveObjectToCell } = await import('../services/spatialObjectsService');
 
   const objectsStore = useObjectsStore.getState();
   const objects = objectsStore.objects;
   let associatedCount = 0;
+  const newTextObjects = [];
 
   for (const block of codeBlocks) {
     if (block.nodeId) {
@@ -136,23 +147,50 @@ async function associateCodeWithScene(codeBlocks) {
           filePath: block.filePath,
         });
         associatedCount++;
-      }
-    } else if (block.filePath) {
-      const target = objects.find(o =>
-        o.metadata?.codeFilePath === block.filePath
-      );
-      if (target) {
-        objectsStore.associateCodeWithObject(target.id, {
-          code: block.code,
-          language: block.language,
-          filePath: block.filePath,
-        });
-        associatedCount++;
+
+        const textId = `code-text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const belowPosition = [
+          (target.position?.[0] || 0),
+          (target.position?.[1] || 0) - 15,
+          (target.position?.[2] || 0),
+        ];
+        const cellCoords = getCellCoordinates(belowPosition);
+        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
+
+        const textObject = {
+          id: textId,
+          type: 'text',
+          position: belowPosition,
+          scale: [30, 20, 1],
+          cellId,
+          createdAt: Date.now(),
+          text: block.code,
+          textStyle: {
+            fontSize: 16,
+            color: '#d4d4d4',
+            fontWeight: 'normal',
+            fontFamily: 'Consolas, "Courier New", monospace',
+          },
+          metadata: {
+            code: block.code,
+            codeLanguage: block.language,
+            codeFilePath: block.filePath,
+          },
+          merfolkData: {
+            parentObjectId: target.id,
+          },
+        };
+
+        newTextObjects.push(textObject);
+        objectsStore.setObjects(current => [...current, textObject]);
+        try {
+          await saveObjectToCell(user?.uid || user, spaceId, textObject);
+        } catch {}
       }
     }
   }
 
-  return associatedCount;
+  return { count: associatedCount, newTextObjects };
 }
 
 async function pushCodeToGitHub(codeBlocks, owner, repo, branch, token) {
@@ -196,7 +234,7 @@ const SPACE_CHAT_MIN_HEIGHT = 200;
 const SPACE_CHAT_DEFAULT_WIDTH = 300;
 const SPACE_CHAT_DEFAULT_HEIGHT = 360;
 
-const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
+const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [chatSize, setChatSize] = useState({ width: SPACE_CHAT_DEFAULT_WIDTH, height: SPACE_CHAT_DEFAULT_HEIGHT });
   const [userResized, setUserResized] = useState(false);
@@ -263,14 +301,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const [codeMessages, setCodeMessages] = useState([]);
   const [streaming, setStreaming] = useState(false);
   const [llmError, setLlmError] = useState(null);
-  const [model, setModel] = useState('big-pickle');
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const dropdownRef = useRef(null);
   const streamingRef = useRef('');
   const streamingMsgKeyRef = useRef(0);
   const abortControllerRef = useRef(null);
 
   const codeStore = useCodeStore();
+  const llmStore = useLlmStore();
 
   const [showGithubPanel, setShowGithubPanel] = useState(false);
   const [repos, setRepos] = useState([]);
@@ -279,18 +315,22 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   const [newRepoName, setNewRepoName] = useState('');
   const [showBranchPrompt, setShowBranchPrompt] = useState(false);
   const [branchNameInput, setBranchNameInput] = useState('');
+  const [availableBranches, setAvailableBranches] = useState([]);
+  const [branchFetching, setBranchFetching] = useState(false);
+  const [showProviderModal, setShowProviderModal] = useState(false);
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [providerModels, setProviderModels] = useState([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelFetchError, setModelFetchError] = useState(null);
+  const [pendingProviderId, setPendingProviderId] = useState(null);
   const [showTechStackPrompt, setShowTechStackPrompt] = useState(false);
   const [techStackInput, setTechStackInput] = useState('');
   const [pushNotification, setPushNotification] = useState(null);
   const [associatedCount, setAssociatedCount] = useState(0);
+  const [scanProgress, setScanProgress] = useState(null);
 
   const llmMessages = chatMode === 'plan' ? planMessages : codeMessages;
-  const setLlmMessages = chatMode === 'plan' ? setPlanMessages : setCodeMessages;
-
-  const AVAILABLE_MODELS = [
-    { id: 'big-pickle', name: 'Big Pickle' },
-    { id: 'mimo', name: 'Mimo' },
-  ];
 
   useEffect(() => {
     if (!spaceId || !isOpen || chatMode !== 'group') return;
@@ -397,7 +437,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       await sendToZen({
         messages: zenMessages,
         signal: abortController.signal,
-        model,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           setPlanMessages((prev) => {
@@ -449,7 +488,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, planMessages, model, spaceId, user]);
+  }, [input, streaming, planMessages, spaceId, user]);
 
   const handleCodeSend = useCallback(async () => {
     const text = input.trim();
@@ -484,7 +523,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       await sendToZen({
         messages: zenMessages,
         signal: abortController.signal,
-        model,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           setCodeMessages((prev) => {
@@ -516,7 +554,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       });
 
       if (codeBlocks.length > 0) {
-        const count = await associateCodeWithScene(codeBlocks);
+        const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
         setAssociatedCount(count);
 
         if (codeStore.selectedRepo && codeStore.selectedBranch) {
@@ -544,7 +582,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, codeMessages, model, spaceId, user, codeStore.selectedRepo, codeStore.selectedBranch, codeStore.techStack]);
+  }, [input, streaming, codeMessages, spaceId, user, codeStore.selectedRepo, codeStore.selectedBranch, codeStore.techStack]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -574,21 +612,34 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
   }, []);
 
   useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setShowModelDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  useEffect(() => {
     const githubConnected = isGithubAuthenticated();
     if (githubConnected !== codeStore.githubConnected) {
       codeStore.setGithubConnected(githubConnected);
     }
   }, [codeStore.githubConnected]);
+
+  useEffect(() => {
+    if (!showBranchPrompt) return;
+    if (codeStore.branchStrategy !== 'existing') return;
+
+    const repo = codeStore.selectedRepo;
+    if (!repo) return;
+    const owner = repo.owner?.login || repo.owner;
+    const repoName = repo.name;
+    const token = getGithubToken();
+    if (!token) return;
+
+    setBranchFetching(true);
+    listBranches(token, owner, repoName)
+      .then(branches => {
+        setAvailableBranches(branches || []);
+        if (branches?.length > 0) {
+          setBranchNameInput(branches[0].name);
+        }
+      })
+      .catch(() => setAvailableBranches([]))
+      .finally(() => setBranchFetching(false));
+  }, [showBranchPrompt, codeStore.branchStrategy, codeStore.selectedRepo]);
 
   const handleTechStackSubmit = () => {
     const stack = techStackInput.trim();
@@ -599,6 +650,33 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     }
     setShowTechStackPrompt(false);
     setTechStackInput('');
+  };
+
+  const handleApiKeySubmit = useCallback(async () => {
+    const key = apiKeyInput.trim();
+    if (!key || !pendingProviderId) return;
+    setFetchingModels(true);
+    setModelFetchError(null);
+    try {
+      const models = await fetchModels(pendingProviderId, key);
+      llmStore.setProviderId(pendingProviderId);
+      llmStore.setApiKey(key);
+      setProviderModels(models);
+      setShowApiKeyInput(false);
+      if (models.length > 0) {
+        llmStore.setSelectedModel(models[0].id);
+      }
+    } catch (err) {
+      setModelFetchError(err.message);
+    } finally {
+      setFetchingModels(false);
+    }
+  }, [apiKeyInput, pendingProviderId]);
+
+  const handleModelSelect = (modelId) => {
+    llmStore.setSelectedModel(modelId);
+    setProviderModels([]);
+    setShowProviderModal(false);
   };
 
   const handleGithubLogin = () => {
@@ -614,10 +692,42 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
     } catch {}
   };
 
-  const handleSelectRepo = (repo) => {
+  const handleSelectRepo = async (repo) => {
     codeStore.setSelectedRepo(repo);
     setShowRepos(false);
     setShowBranchPrompt(true);
+    await scanRepoForDiagram(repo);
+  };
+
+  const scanRepoForDiagram = async (repo) => {
+    if (!repo || !user || !spaceId || !onCreateObject) return;
+    setScanProgress({ stage: 'Starting scan...', progress: 0 });
+    try {
+      const result = await scanRepositoryAndGenerateDiagram(
+        repo,
+        onCreateObject,
+        user,
+        spaceId,
+        uploadMarkdownToStorage,
+        markdownDiagramService,
+        (progress, stage) => {
+          setScanProgress({ stage, progress });
+        }
+      );
+      if (result.success) {
+        setPushNotification({
+          type: 'success',
+          message: `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,
+        });
+      } else {
+        setPushNotification({ type: 'error', message: 'Failed to create diagram from repo.' });
+      }
+    } catch (err) {
+      setPushNotification({ type: 'error', message: `Scan error: ${err.message}` });
+    } finally {
+      setScanProgress(null);
+      setTimeout(() => setPushNotification(null), 5000);
+    }
   };
 
   const handleCreateNewRepo = async () => {
@@ -826,16 +936,35 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
                   <span>Select existing branch</span>
                 </label>
               </div>
-              {(codeStore.branchStrategy === 'new' || codeStore.branchStrategy === 'existing') && (
+              {codeStore.branchStrategy === 'new' && (
                 <input
                   className="space-chat-modal-input"
                   type="text"
-                  placeholder={codeStore.branchStrategy === 'new' ? 'New branch name…' : 'Branch name…'}
+                  placeholder="New branch name…"
                   value={branchNameInput}
                   onChange={e => setBranchNameInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleBranchConfirm(); }}
                   autoFocus
                 />
+              )}
+              {codeStore.branchStrategy === 'existing' && (
+                <select
+                  className="space-chat-modal-input space-chat-modal-select"
+                  value={branchNameInput}
+                  onChange={e => setBranchNameInput(e.target.value)}
+                  disabled={branchFetching}
+                  autoFocus
+                >
+                  {branchFetching ? (
+                    <option value="">Loading branches…</option>
+                  ) : availableBranches.length === 0 ? (
+                    <option value="">No branches found</option>
+                  ) : (
+                    availableBranches.map(b => (
+                      <option key={b.name} value={b.name}>{b.name}</option>
+                    ))
+                  )}
+                </select>
               )}
               <div className="space-chat-modal-actions">
                 <button className="space-chat-modal-btn primary" onClick={handleBranchConfirm}>
@@ -994,6 +1123,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
                 {pushNotification.message}
               </div>
             )}
+            {scanProgress && (
+              <div className="space-chat-notification info">
+                <span className="space-chat-spinner" />
+                <span>{scanProgress.stage} ({scanProgress.progress}%)</span>
+              </div>
+            )}
             {associatedCount > 0 && chatMode === 'code' && (
               <div className="space-chat-notification success">
                 Associated {associatedCount} file(s) with objects
@@ -1024,29 +1159,109 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose }) => {
       </div>
 
       {(chatMode === 'plan' || chatMode === 'code') && (
-        <div className="space-chat-model-bar" ref={dropdownRef}>
+        <div className="space-chat-model-bar">
           <button
             className="space-chat-model-btn"
-            onClick={() => setShowModelDropdown(v => !v)}
+            onClick={() => setShowProviderModal(true)}
             disabled={streaming}
           >
-            {AVAILABLE_MODELS.find(m => m.id === model)?.name || model}
-            <span className="space-chat-model-arrow">{showModelDropdown ? '▲' : '▼'}</span>
+            {llmStore.providerId && llmStore.selectedModel
+              ? `${PROVIDERS.find(p => p.id === llmStore.providerId)?.name || llmStore.providerId} · ${llmStore.selectedModel}`
+              : 'Configure LLM'}
+            <span className="space-chat-model-arrow">▼</span>
           </button>
-          {showModelDropdown && (
-            <div className="space-chat-model-dropdown">
-              {AVAILABLE_MODELS.map(m => (
+        </div>
+      )}
+
+      {/* Provider Selection Modal */}
+      {showProviderModal && !showApiKeyInput && (
+        <div className="space-chat-modal-overlay" onClick={() => setShowProviderModal(false)}>
+          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
+            <div className="space-chat-modal-title">Select Provider</div>
+            <div className="space-chat-provider-list">
+              {PROVIDERS.map(p => (
                 <button
-                  key={m.id}
-                  className={`space-chat-model-option ${m.id === model ? 'selected' : ''}`}
-                  onClick={() => { setModel(m.id); setShowModelDropdown(false); }}
+                  key={p.id}
+                  className={`space-chat-provider-option ${llmStore.providerId === p.id ? 'selected' : ''}`}
+                  onClick={() => {
+                    setPendingProviderId(p.id);
+                    if (llmStore.apiKey && llmStore.providerId === p.id) {
+                      setShowProviderModal(false);
+                      return;
+                    }
+                    setApiKeyInput(llmStore.providerId === p.id && llmStore.apiKey ? llmStore.apiKey : '');
+                    setShowApiKeyInput(true);
+                  }}
                 >
-                  {m.name}
-                  {m.id === model && <span className="space-chat-model-check">✓</span>}
+                  {p.name}
+                  {llmStore.providerId === p.id && llmStore.apiKey && <span className="space-chat-model-check">✓</span>}
                 </button>
               ))}
             </div>
-          )}
+            <div className="space-chat-modal-actions">
+              <button className="space-chat-modal-btn" onClick={() => setShowProviderModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* API Key Input Modal */}
+      {showApiKeyInput && (
+        <div className="space-chat-modal-overlay" onClick={() => { setShowApiKeyInput(false); setShowProviderModal(false); }}>
+          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
+            <div className="space-chat-modal-title">
+              {PROVIDERS.find(p => p.id === pendingProviderId)?.name || 'Provider'} API Key
+            </div>
+            <div className="space-chat-modal-body">
+              <input
+                className="space-chat-modal-input"
+                type="password"
+                placeholder={`Enter your ${PROVIDERS.find(p => p.id === pendingProviderId)?.name || ''} API key…`}
+                value={apiKeyInput}
+                onChange={e => setApiKeyInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleApiKeySubmit(); }}
+                autoFocus
+              />
+              {modelFetchError && <div className="space-chat-provider-error">{modelFetchError}</div>}
+            </div>
+            <div className="space-chat-modal-actions">
+              <button className="space-chat-modal-btn" onClick={() => { setShowApiKeyInput(false); setShowProviderModal(false); setModelFetchError(null); }}>Back</button>
+              <button className="space-chat-modal-btn primary" onClick={handleApiKeySubmit} disabled={!apiKeyInput.trim() || fetchingModels}>
+                {fetchingModels ? 'Loading…' : 'Fetch Models'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Model Selection Modal */}
+      {fetchingModels && !modelFetchError && (
+        <div className="space-chat-modal-overlay">
+          <div className="space-chat-modal">
+            <div className="space-chat-modal-title">Loading models…</div>
+          </div>
+        </div>
+      )}
+      {!fetchingModels && providerModels.length > 0 && (
+        <div className="space-chat-modal-overlay" onClick={() => { setShowProviderModal(false); setProviderModels([]); }}>
+          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
+            <div className="space-chat-modal-title">Select Model</div>
+            <div className="space-chat-provider-list">
+              {providerModels.map(m => (
+                <button
+                  key={m.id}
+                  className={`space-chat-provider-option ${llmStore.selectedModel === m.id ? 'selected' : ''}`}
+                  onClick={() => handleModelSelect(m.id)}
+                >
+                  {m.name}
+                  {llmStore.selectedModel === m.id && <span className="space-chat-model-check">✓</span>}
+                </button>
+              ))}
+            </div>
+            <div className="space-chat-modal-actions">
+              <button className="space-chat-modal-btn" onClick={() => { setShowProviderModal(false); setProviderModels([]); }}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 
