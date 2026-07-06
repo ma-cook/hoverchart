@@ -1316,7 +1316,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                 <button
                   key={p.id}
                   className={`space-chat-provider-option ${llmStore.providerId === p.id ? 'selected' : ''}`}
-                  onClick={() => {
+                    onClick={() => {
                     setPendingProviderId(p.id);
                     if (llmStore.apiKey && llmStore.providerId === p.id) {
                       setShowProviderModal(false);
