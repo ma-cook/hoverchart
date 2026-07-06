@@ -24,6 +24,14 @@ import {
 import { listBranches } from '../services/githubPushService';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
+import {
+  findPlanContainer,
+  findPlanTextObjects,
+  createPlanContainer,
+  createPlanTextObject,
+  updatePlanText,
+  generatePlanTitle,
+} from '../services/planService';
 
 const getGuestId = () => {
   let guestId = sessionStorage.getItem('guestPresenceId');
@@ -329,6 +337,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const [pushNotification, setPushNotification] = useState(null);
   const [associatedCount, setAssociatedCount] = useState(0);
   const [scanProgress, setScanProgress] = useState(null);
+  const [planContainer, setPlanContainer] = useState(null);
+  const [activePlanTextId, setActivePlanTextId] = useState(null);
+  const [planTextObjects, setPlanTextObjects] = useState([]);
+  const [showNewPlanPrompt, setShowNewPlanPrompt] = useState(false);
+  const [planTitleInput, setPlanTitleInput] = useState('');
 
   const llmMessages = chatMode === 'plan' ? planMessages : codeMessages;
 
@@ -387,6 +400,26 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       setHasMore(false);
     }
   }, [spaceId, chatMode, hasMore, loadingMore]);
+
+  useEffect(() => {
+    if (chatMode !== 'plan') return;
+    const container = findPlanContainer();
+    setPlanContainer(container);
+    if (container) {
+      const plans = findPlanTextObjects(container.id);
+      setPlanTextObjects(plans);
+      setActivePlanTextId(current => {
+        if (current && plans.some(p => p.id === current)) return current;
+        if (plans.length > 0) return plans[plans.length - 1].id;
+        return null;
+      });
+      if (plans.length === 0) {
+        setShowNewPlanPrompt(true);
+      }
+    } else {
+      setShowNewPlanPrompt(true);
+    }
+  }, [chatMode]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -453,6 +486,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       });
 
       const finalText = streamingRef.current;
+
+      if (activePlanTextId) {
+        const textObj = useObjectsStore.getState().objects.find(o => o.id === activePlanTextId);
+        if (textObj) {
+          updatePlanText(textObj, finalText, user, spaceId);
+        }
+      }
+
       const blocks = extractMerfolkBlocks(finalText);
 
       setPlanMessages((prev) => {
@@ -488,7 +529,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, planMessages, spaceId, user]);
+  }, [input, streaming, planMessages, spaceId, user, activePlanTextId]);
 
   const handleCodeSend = useCallback(async () => {
     const text = input.trim();
@@ -606,6 +647,23 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       setShowTechStackPrompt(true);
     }
   }, [codeStore]);
+
+  const handleCreatePlan = useCallback(async () => {
+    let container = planContainer || await createPlanContainer(user, spaceId);
+    if (!container) return;
+    const existingPlans = findPlanTextObjects(container.id);
+    const title = planTitleInput.trim() || generatePlanTitle(existingPlans.length);
+    const result = await createPlanTextObject(container, title, user, spaceId);
+    setActivePlanTextId(result.textObj.id);
+    setPlanContainer(result.container);
+    setPlanTextObjects(prev => [...prev, result.textObj]);
+    setShowNewPlanPrompt(false);
+    setPlanTitleInput('');
+  }, [planContainer, user, spaceId, planTitleInput]);
+
+  const handlePlanSelect = useCallback((e) => {
+    setActivePlanTextId(e.target.value);
+  }, []);
 
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -901,6 +959,40 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         </div>
       )}
 
+      {showNewPlanPrompt && chatMode === 'plan' && (
+        <div className="space-chat-modal-overlay" onClick={() => {}}>
+          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
+            <div className="space-chat-modal-title">
+              {planContainer ? 'New Plan' : 'Start Planning'}
+            </div>
+            <div className="space-chat-modal-body">
+              <p>
+                {planContainer
+                  ? 'Enter a title for your new plan'
+                  : 'Create your first architecture plan?'}
+              </p>
+              <input
+                className="space-chat-modal-input"
+                type="text"
+                placeholder={generatePlanTitle(planTextObjects.length)}
+                value={planTitleInput}
+                onChange={e => setPlanTitleInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreatePlan(); }}
+                autoFocus
+              />
+              <div className="space-chat-modal-actions">
+                <button className="space-chat-modal-btn" onClick={() => setShowNewPlanPrompt(false)}>
+                  Cancel
+                </button>
+                <button className="space-chat-modal-btn primary" onClick={handleCreatePlan}>
+                  {planContainer ? 'Create' : 'Start Planning'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showBranchPrompt && (
         <div className="space-chat-modal-overlay" onClick={() => {}}>
           <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
@@ -1160,6 +1252,31 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
       {(chatMode === 'plan' || chatMode === 'code') && (
         <div className="space-chat-model-bar">
+          {chatMode === 'plan' && (
+            <>
+              <button
+                className="space-chat-plan-new-btn"
+                onClick={() => setShowNewPlanPrompt(true)}
+                disabled={streaming}
+                title="New Plan"
+              >
+                + Plan
+              </button>
+              {planTextObjects.length > 0 && (
+                <select
+                  className="space-chat-plan-select"
+                  value={activePlanTextId || ''}
+                  onChange={handlePlanSelect}
+                >
+                  {planTextObjects.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.merfolkData?.title || p.headerText || 'Plan'}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
+          )}
           <button
             className="space-chat-model-btn"
             onClick={() => setShowProviderModal(true)}

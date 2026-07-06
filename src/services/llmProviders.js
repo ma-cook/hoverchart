@@ -1,40 +1,5 @@
 export const PROVIDERS = [
   {
-    id: 'openai',
-    name: 'OpenAI',
-    chatEndpoint: 'https://api.openai.com/v1/chat/completions',
-    modelsEndpoint: 'https://api.openai.com/v1/models',
-    getHeaders: (apiKey) => ({
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    }),
-    formatBody: (messages, model) => ({
-      model,
-      messages,
-      stream: true,
-      max_tokens: 16384,
-    }),
-    parseModels: (data) =>
-      (data.data || [])
-        .filter((m) => m.id.startsWith('gpt-') || m.id.startsWith('o'))
-        .map((m) => ({ id: m.id, name: m.id }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    parseStreamLine: (line) => {
-      if (!line.startsWith('data: ')) return null;
-      const data = line.slice(6);
-      if (data === '[DONE]') return { done: true };
-      try {
-        const parsed = JSON.parse(data);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta != null) return delta;
-        if (parsed.choices?.[0]?.finish_reason) return { done: true };
-        return null;
-      } catch {
-        return null;
-      }
-    },
-  },
-  {
     id: 'anthropic',
     name: 'Anthropic',
     chatEndpoint: 'https://api.anthropic.com/v1/messages',
@@ -120,10 +85,10 @@ export const PROVIDERS = [
     },
   },
   {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    chatEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
-    modelsEndpoint: 'https://openrouter.ai/api/v1/models',
+    id: 'opencode-zen',
+    name: 'Opencode Zen',
+    chatEndpoint: 'https://api.opencode.ai/v1/chat/completions',
+    modelsEndpoint: 'https://api.opencode.ai/v1/models',
     getHeaders: (apiKey) => ({
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -136,7 +101,6 @@ export const PROVIDERS = [
     }),
     parseModels: (data) =>
       (data.data || [])
-        .filter((m) => !m.id.includes('vision') && !m.id.includes('image'))
         .map((m) => ({ id: m.id, name: m.id }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     parseStreamLine: (line) => {
@@ -155,10 +119,10 @@ export const PROVIDERS = [
     },
   },
   {
-    id: 'groq',
-    name: 'Groq',
-    chatEndpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    modelsEndpoint: 'https://api.groq.com/openai/v1/models',
+    id: 'opencode-go',
+    name: 'Opencode Go',
+    chatEndpoint: 'https://api.opencode.ai/v1/chat/completions',
+    modelsEndpoint: 'https://api.opencode.ai/v1/models',
     getHeaders: (apiKey) => ({
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -171,7 +135,75 @@ export const PROVIDERS = [
     }),
     parseModels: (data) =>
       (data.data || [])
-        .filter((m) => m.id.startsWith('llama') || m.id.startsWith('mixtral') || m.id.startsWith('deepseek') || m.id.startsWith('qwen'))
+        .map((m) => ({ id: m.id, name: m.id }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    parseStreamLine: (line) => {
+      if (!line.startsWith('data: ')) return null;
+      const data = line.slice(6);
+      if (data === '[DONE]') return { done: true };
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta != null) return delta;
+        if (parsed.choices?.[0]?.finish_reason) return { done: true };
+        return null;
+      } catch {
+        return null;
+      }
+    },
+  },
+  {
+    id: 'nvidia',
+    name: 'Nvidia',
+    chatEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
+    modelsEndpoint: 'https://integrate.api.nvidia.com/v1/models',
+    getHeaders: (apiKey) => ({
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    }),
+    formatBody: (messages, model) => ({
+      model,
+      messages,
+      stream: true,
+      max_tokens: 16384,
+    }),
+    parseModels: (data) =>
+      (data.data || [])
+        .map((m) => ({ id: m.id, name: m.id }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    parseStreamLine: (line) => {
+      if (!line.startsWith('data: ')) return null;
+      const data = line.slice(6);
+      if (data === '[DONE]') return { done: true };
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta != null) return delta;
+        if (parsed.choices?.[0]?.finish_reason) return { done: true };
+        return null;
+      } catch {
+        return null;
+      }
+    },
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    chatEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    modelsEndpoint: 'https://openrouter.ai/api/v1/models',
+    getHeaders: (apiKey) => ({
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    }),
+    formatBody: (messages, model) => ({
+      model,
+      messages,
+      stream: true,
+      max_tokens: 16384,
+    }),
+    parseModels: (data) =>
+      (data.data || [])
+        .filter((m) => !m.id.includes('vision') && !m.id.includes('image'))
         .map((m) => ({ id: m.id, name: m.id }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     parseStreamLine: (line) => {

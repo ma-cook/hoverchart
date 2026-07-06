@@ -405,9 +405,11 @@ function buildSceneContext(objects) {
       return `- ${nodeId} (${nodeType}) — ${name}${hasCode}`;
     });
 
-  if (nodes.length === 0) return '';
+  const planContext = getAllPlanContext();
 
-  return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections.`;
+  if (nodes.length === 0) return planContext || '';
+
+  return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections.${planContext}`;
 }
 
 function buildCodeSceneContext(objects) {
@@ -440,11 +442,15 @@ function buildCodeSceneContext(objects) {
     for (const id of connections) lines.push(`- ${id}`);
   }
 
+  const planContext = getAllPlanContext();
+  if (planContext) lines.push(planContext);
+
   return lines.join('\n');
 }
 
 import { sendToProvider } from './llmProviders';
 import useLlmStore from '../stores/llmStore';
+import { getAllPlanContext } from './planService';
 
 export async function sendToZen({ messages, onChunk, signal }) {
   const { providerId, apiKey, selectedModel } = useLlmStore.getState();

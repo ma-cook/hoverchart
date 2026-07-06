@@ -1300,7 +1300,7 @@ body {
   width: 100%;
   background: transparent;
   border: none;
-  color: rgba(255,255,255,0.85);
+  color: #333;
   padding: 10px 14px;
   cursor: pointer;
   font-size: 13px;
@@ -1309,11 +1309,12 @@ body {
 }
 
 .space-chat-provider-option:hover {
-  background: rgba(74,144,217,0.2);
+  background: #e3f2fd;
 }
 
 .space-chat-provider-option.selected {
-  color: #4a90d9;
+  color: #1976d2;
+  font-weight: 600;
 }
 
 .space-chat-provider-error {
@@ -1999,4 +2000,43 @@ body {
 
 .code-workspace-code {
   font-family: inherit;
+}
+
+/* ── Plan mode UI ──────────────────────────────────────────────────── */
+.space-chat-plan-new-btn {
+  background: rgba(76, 175, 80, 0.15);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 6px;
+  color: #4CAF50;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+
+.space-chat-plan-new-btn:hover:not(:disabled) {
+  background: rgba(76, 175, 80, 0.25);
+}
+
+.space-chat-plan-new-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.space-chat-plan-select {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 11px;
+  padding: 3px 6px;
+  cursor: pointer;
+  max-width: 140px;
+  min-width: 80px;
+}
+
+.space-chat-plan-select:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
