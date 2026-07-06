@@ -331,6 +331,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const [providerModels, setProviderModels] = useState([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelFetchError, setModelFetchError] = useState(null);
+  const [showManualModelInput, setShowManualModelInput] = useState(false);
+  const [manualModelInput, setManualModelInput] = useState('');
   const [pendingProviderId, setPendingProviderId] = useState(null);
   const [showTechStackPrompt, setShowTechStackPrompt] = useState(false);
   const [techStackInput, setTechStackInput] = useState('');
@@ -723,6 +725,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       setShowApiKeyInput(false);
       if (models.length > 0) {
         llmStore.setSelectedModel(models[0].id);
+      } else {
+        setShowManualModelInput(true);
+        setManualModelInput('');
       }
     } catch (err) {
       setModelFetchError(err.message);
@@ -730,6 +735,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       setFetchingModels(false);
     }
   }, [apiKeyInput, pendingProviderId]);
+
+  const handleManualModelSubmit = () => {
+    const model = manualModelInput.trim();
+    if (model) {
+      llmStore.setSelectedModel(model);
+    }
+    setShowManualModelInput(false);
+    setManualModelInput('');
+    setProviderModels([]);
+    setShowProviderModal(false);
+  };
 
   const handleModelSelect = (modelId) => {
     llmStore.setSelectedModel(modelId);
@@ -1377,6 +1393,32 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             </div>
             <div className="space-chat-modal-actions">
               <button className="space-chat-modal-btn" onClick={() => { setShowProviderModal(false); setProviderModels([]); }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showManualModelInput && (
+        <div className="space-chat-modal-overlay" onClick={() => setShowManualModelInput(false)}>
+          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
+            <div className="space-chat-modal-title">Enter Model Name</div>
+            <div className="space-chat-modal-body">
+              <p>Could not fetch model list. Type your model name manually:</p>
+              <input
+                className="space-chat-modal-input"
+                type="text"
+                placeholder="e.g., gpt-4o, claude-3-opus-20240229"
+                value={manualModelInput}
+                onChange={e => setManualModelInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleManualModelSubmit(); }}
+                autoFocus
+              />
+              <div className="space-chat-modal-actions">
+                <button className="space-chat-modal-btn" onClick={() => setShowManualModelInput(false)}>Cancel</button>
+                <button className="space-chat-modal-btn primary" onClick={handleManualModelSubmit} disabled={!manualModelInput.trim()}>
+                  Confirm
+                </button>
+              </div>
             </div>
           </div>
         </div>

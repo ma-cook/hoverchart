@@ -233,15 +233,16 @@ export async function fetchModels(providerId, apiKey) {
 
   const headers = provider.getHeaders(apiKey);
   const url = provider.modelsEndpoint;
-  const res = await fetch(url, { headers });
+  if (!url) return [];
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Failed to fetch models (${res.status}): ${text}`);
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return provider.parseModels(data);
+  } catch {
+    return [];
   }
-
-  const data = await res.json();
-  return provider.parseModels(data);
 }
 
 export async function sendToProvider({
