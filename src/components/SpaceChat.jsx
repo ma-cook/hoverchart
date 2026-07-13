@@ -335,6 +335,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const [manualModelInput, setManualModelInput] = useState('');
   const [pendingProviderId, setPendingProviderId] = useState(null);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [authError, setAuthError] = useState(null);
   const [showTechStackPrompt, setShowTechStackPrompt] = useState(false);
   const [techStackInput, setTechStackInput] = useState('');
   const [pushNotification, setPushNotification] = useState(null);
@@ -525,7 +526,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       }
     } catch (err) {
       if (err.name === 'AbortError') return;
-      setLlmError(err.message || 'Failed to reach LLM. Check your connection.');
+      const msg = err.message || 'Failed to reach LLM. Check your connection.';
+      setLlmError(msg);
+      if (/401|auth|invalid api key/i.test(msg)) {
+        setAuthError(msg);
+      }
       setPlanMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
     } finally {
       setStreaming(false);
@@ -619,7 +624,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       }
     } catch (err) {
       if (err.name === 'AbortError') return;
-      setLlmError(err.message || 'Failed to reach LLM. Check your connection.');
+      const msg = err.message || 'Failed to reach LLM. Check your connection.';
+      setLlmError(msg);
+      if (/401|auth|invalid api key/i.test(msg)) {
+        setAuthError(msg);
+      }
       setCodeMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
     } finally {
       setStreaming(false);
@@ -643,6 +652,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const handleModeSwitch = useCallback((mode) => {
     setChatMode(mode);
     setLlmError(null);
+    setAuthError(null);
     setAssociatedCount(0);
     setPushNotification(null);
 
@@ -725,6 +735,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       setProviderModels(models);
       setShowApiKeyInput(false);
       setShowProviderModal(false);
+      setAuthError(null);
+      setLlmError(null);
       if (models.length > 0) {
         setShowModelDropdown(true);
       } else {
@@ -1246,6 +1258,27 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               </div>
             )}
             {llmError && <div className="space-chat-error">{llmError}</div>}
+            {authError && (
+              <div className="space-chat-auth-error">
+                <span>Invalid API key for {llmStore.providerId ? PROVIDERS.find(p => p.id === llmStore.providerId)?.name || llmStore.providerId : 'provider'}</span>
+                <button
+                  className="space-chat-auth-error-btn"
+                  onClick={() => {
+                    setAuthError(null);
+                    setLlmError(null);
+                    setShowProviderModal(true);
+                  }}
+                >
+                  Configure
+                </button>
+                <button
+                  className="space-chat-auth-error-dismiss"
+                  onClick={() => setAuthError(null)}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {streaming && !llmMessages.some(m => m.streaming) && (
               <div className="space-chat-loading">
                 <span className="space-chat-spinner" />
@@ -1354,10 +1387,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                   className={`space-chat-provider-option ${llmStore.providerId === p.id ? 'selected' : ''}`}
                     onClick={() => {
                     setPendingProviderId(p.id);
-                    if (llmStore.apiKey && llmStore.providerId === p.id) {
-                      setShowProviderModal(false);
-                      return;
-                    }
                     setApiKeyInput(llmStore.providerId === p.id && llmStore.apiKey ? llmStore.apiKey : '');
                     setShowApiKeyInput(true);
                   }}
