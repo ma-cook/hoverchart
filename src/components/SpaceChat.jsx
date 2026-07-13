@@ -334,6 +334,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const [showManualModelInput, setShowManualModelInput] = useState(false);
   const [manualModelInput, setManualModelInput] = useState('');
   const [pendingProviderId, setPendingProviderId] = useState(null);
+  const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showTechStackPrompt, setShowTechStackPrompt] = useState(false);
   const [techStackInput, setTechStackInput] = useState('');
   const [pushNotification, setPushNotification] = useState(null);
@@ -723,8 +724,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       llmStore.setApiKey(key);
       setProviderModels(models);
       setShowApiKeyInput(false);
+      setShowProviderModal(false);
       if (models.length > 0) {
-        llmStore.setSelectedModel(models[0].id);
+        setShowModelDropdown(true);
       } else {
         setShowManualModelInput(true);
         setManualModelInput('');
@@ -745,13 +747,37 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     setManualModelInput('');
     setProviderModels([]);
     setShowProviderModal(false);
+    setShowModelDropdown(false);
   };
 
   const handleModelSelect = (modelId) => {
     llmStore.setSelectedModel(modelId);
     setProviderModels([]);
-    setShowProviderModal(false);
+    setShowModelDropdown(false);
   };
+
+  const handleModelButtonClick = useCallback(async () => {
+    if (!llmStore.providerId || !llmStore.apiKey) {
+      setShowProviderModal(true);
+      return;
+    }
+    if (showModelDropdown) {
+      setShowModelDropdown(false);
+      return;
+    }
+    setFetchingModels(true);
+    setModelFetchError(null);
+    try {
+      const models = await fetchModels(llmStore.providerId, llmStore.apiKey);
+      setProviderModels(models);
+      setShowModelDropdown(true);
+    } catch (err) {
+      setModelFetchError(err.message);
+      setShowProviderModal(true);
+    } finally {
+      setFetchingModels(false);
+    }
+  }, [llmStore.providerId, llmStore.apiKey, showModelDropdown]);
 
   const handleGithubLogin = () => {
     window.location.href = getGithubOAuthUrl();
@@ -1298,9 +1324,19 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             onClick={() => setShowProviderModal(true)}
             disabled={streaming}
           >
-            {llmStore.providerId && llmStore.selectedModel
-              ? `${PROVIDERS.find(p => p.id === llmStore.providerId)?.name || llmStore.providerId} · ${llmStore.selectedModel}`
-              : 'Configure LLM'}
+            {llmStore.providerId
+              ? PROVIDERS.find(p => p.id === llmStore.providerId)?.name || llmStore.providerId
+              : 'Provider'}
+            <span className="space-chat-model-arrow">▼</span>
+          </button>
+          <button
+            className="space-chat-model-btn"
+            onClick={handleModelButtonClick}
+            disabled={streaming || fetchingModels}
+          >
+            {fetchingModels
+              ? 'Loading…'
+              : llmStore.selectedModel || 'Model'}
             <span className="space-chat-model-arrow">▼</span>
           </button>
         </div>
@@ -1367,7 +1403,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         </div>
       )}
 
-      {/* Model Selection Modal */}
+      {/* Model Selection Modal (loading) */}
       {fetchingModels && !modelFetchError && (
         <div className="space-chat-modal-overlay">
           <div className="space-chat-modal">
@@ -1375,8 +1411,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           </div>
         </div>
       )}
-      {!fetchingModels && providerModels.length > 0 && (
-        <div className="space-chat-modal-overlay" onClick={() => { setShowProviderModal(false); setProviderModels([]); }}>
+
+      {/* Model Selection Dropdown */}
+      {showModelDropdown && providerModels.length > 0 && (
+        <div className="space-chat-modal-overlay" onClick={() => { setShowModelDropdown(false); setProviderModels([]); }}>
           <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
             <div className="space-chat-modal-title">Select Model</div>
             <div className="space-chat-provider-list">
@@ -1392,7 +1430,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               ))}
             </div>
             <div className="space-chat-modal-actions">
-              <button className="space-chat-modal-btn" onClick={() => { setShowProviderModal(false); setProviderModels([]); }}>Cancel</button>
+              <button className="space-chat-modal-btn" onClick={() => { setShowModelDropdown(false); setProviderModels([]); }}>Cancel</button>
             </div>
           </div>
         </div>
