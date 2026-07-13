@@ -101,7 +101,7 @@ const InstancedAtlasText = ({
   // Phase 2: Read post-resize UVs and group items by atlas page texture.
   // -----------------------------------------------------------------------
   const pageGroups = useMemo(() => {
-    if (!labels || labels.length === 0) return [];
+    if (!atlas || !labels || labels.length === 0) return [];
 
     // Phase 1 — add all texts (triggers any needed resizes)
     const atlasEntries = [];

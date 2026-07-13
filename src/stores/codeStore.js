@@ -1,37 +1,56 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 
-function loadPersisted(key) {
+const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource'];
+
+function loadPersisted(spaceId, key) {
   try {
-    const raw = localStorage.getItem(`code:${key}`);
+    const ns = spaceId ? `${spaceId}:` : '';
+    const raw = localStorage.getItem(`code:${ns}${key}`);
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
 
-function persist(key, value) {
+function persist(spaceId, key, value) {
   try {
+    const ns = spaceId ? `${spaceId}:` : '';
+    const storageKey = `code:${ns}${key}`;
     if (value === null || value === undefined) {
-      localStorage.removeItem(`code:${key}`);
+      localStorage.removeItem(storageKey);
     } else {
-      localStorage.setItem(`code:${key}`, JSON.stringify(value));
+      localStorage.setItem(storageKey, JSON.stringify(value));
     }
   } catch {}
 }
 
-const useCodeStore = createWithEqualityFn((set) => ({
+const useCodeStore = createWithEqualityFn((set, get) => ({
+  _spaceId: null,
   githubConnected: false,
   githubToken: null,
   repoOwner: null,
   repoName: null,
-  selectedRepo: loadPersisted('selectedRepo') || null,
-  selectedBranch: loadPersisted('selectedBranch') || null,
+  selectedRepo: null,
+  selectedBranch: null,
   availableBranches: [],
-  branchStrategy: loadPersisted('branchStrategy') || null,
-  techStack: loadPersisted('techStack') || '',
-  techStackSource: loadPersisted('techStackSource') || null,
+  branchStrategy: null,
+  techStack: '',
+  techStackSource: null,
   pushStatus: 'idle',
   expandedView: false,
   activeCodeObjectId: null,
+
+  setSpaceId: (spaceId) => {
+    const prev = get()._spaceId;
+    if (prev === spaceId) return;
+    set({
+      _spaceId: spaceId,
+      selectedRepo: loadPersisted(spaceId, 'selectedRepo'),
+      selectedBranch: loadPersisted(spaceId, 'selectedBranch'),
+      branchStrategy: loadPersisted(spaceId, 'branchStrategy'),
+      techStack: loadPersisted(spaceId, 'techStack') || '',
+      techStackSource: loadPersisted(spaceId, 'techStackSource'),
+    });
+  },
 
   setGithubConnected: (connected) => set({ githubConnected: connected }),
   setGithubToken: (token) => set({ githubToken: token }),
@@ -39,8 +58,9 @@ const useCodeStore = createWithEqualityFn((set) => ({
   setRepoName: (name) => set({ repoName: name }),
 
   setSelectedRepo: (repo) => {
-    persist('selectedRepo', repo);
-    persist('selectedBranch', repo?.default_branch || 'main');
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'selectedRepo', repo);
+    persist(spaceId, 'selectedBranch', repo?.default_branch || 'main');
     set({
       selectedRepo: repo,
       selectedBranch: repo?.default_branch || 'main',
@@ -49,7 +69,8 @@ const useCodeStore = createWithEqualityFn((set) => ({
   },
 
   setSelectedBranch: (branch) => {
-    persist('selectedBranch', branch);
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'selectedBranch', branch);
     set({
       selectedBranch: branch,
       branchStrategy: branch === 'main' || branch === 'master' ? 'main' : 'existing',
@@ -59,13 +80,15 @@ const useCodeStore = createWithEqualityFn((set) => ({
   setAvailableBranches: (branches) => set({ availableBranches: branches }),
 
   setBranchStrategy: (strategy) => {
-    persist('branchStrategy', strategy);
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'branchStrategy', strategy);
     set({ branchStrategy: strategy });
   },
 
   setTechStack: (stack, source) => {
-    persist('techStack', stack);
-    persist('techStackSource', source || 'user');
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'techStack', stack);
+    persist(spaceId, 'techStackSource', source || 'user');
     set({
       techStack: stack,
       techStackSource: source || 'user',
@@ -79,8 +102,10 @@ const useCodeStore = createWithEqualityFn((set) => ({
   setActiveCodeObjectId: (id) => set({ activeCodeObjectId: id }),
 
   reset: () => {
-    ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource'].forEach((k) => {
-      try { localStorage.removeItem(`code:${k}`); } catch {}
+    const spaceId = get()._spaceId;
+    const ns = spaceId ? `${spaceId}:` : '';
+    SPACE_SCOPED_KEYS.forEach((k) => {
+      try { localStorage.removeItem(`code:${ns}${k}`); } catch {}
     });
     set({
       githubToken: null,

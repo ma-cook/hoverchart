@@ -348,6 +348,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const codeStore = useCodeStore();
   const llmStore = useLlmStore();
 
+  useEffect(() => {
+    codeStore.setSpaceId(spaceId);
+  }, [spaceId]);
+
   const [showGithubPanel, setShowGithubPanel] = useState(false);
   const [repos, setRepos] = useState([]);
   const [showRepos, setShowRepos] = useState(false);

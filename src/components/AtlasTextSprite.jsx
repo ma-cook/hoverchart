@@ -156,6 +156,9 @@ const AtlasTextSprite = ({
 
   // Create geometry and material using the atlas
   const { geometry, material } = useMemo(() => {
+    if (!atlas) {
+      return { geometry: null, material: null };
+    }
     if (!text || text.trim() === '') {
       atlasEntryKeyRef.current = null;
       return { geometry: null, material: null };
