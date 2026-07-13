@@ -1,3 +1,5 @@
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+
 export const PROVIDERS = [
   {
     id: 'anthropic',
@@ -201,7 +203,11 @@ export async function fetchModels(providerId, apiKey) {
   if (!url) return [];
 
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetch(`${API_BASE}/api/llm/models`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, headers }),
+    });
     if (!res.ok) return [];
     const data = await res.json();
     return provider.parseModels(data);
@@ -225,14 +231,12 @@ export async function sendToProvider({
   const url = provider.formatEndpoint
     ? provider.formatEndpoint(apiKey, model)
     : provider.chatEndpoint;
-  const headers = provider.formatEndpoint
-    ? provider.getHeaders(apiKey)
-    : provider.getHeaders(apiKey);
+  const headers = provider.getHeaders(apiKey);
 
-  const res = await fetch(url, {
+  const res = await fetch(`${API_BASE}/api/llm/chat`, {
     method: 'POST',
-    headers,
-    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, headers, body }),
     signal,
   });
 

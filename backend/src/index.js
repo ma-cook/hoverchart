@@ -48,6 +48,10 @@ app.use('/api/storage', authenticate, storageRouter);
 app.use('/api/bulk', authenticate, bulkRouter);
 app.use('/api/updates', authenticate, updatesRouter);
 
+// LLM proxy (no app auth needed — provider API key passed by client)
+import { llmRouter } from './api/llm.js';
+app.use('/api/llm', llmRouter);
+
 // Admin routes
 import { router as zenRouter } from './workers/runtimeScan.js';
 app.use('/api/zen', authenticate, zenRouter);
