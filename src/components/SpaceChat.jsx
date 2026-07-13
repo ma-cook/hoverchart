@@ -618,7 +618,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             const streamMsg = {
               key: currentStreamKey,
               role: 'assistant',
-              content: fullText,
+              content: stripCodeBlocks(fullText),
               streaming: true,
             };
             const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);

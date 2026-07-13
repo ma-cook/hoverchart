@@ -140,8 +140,9 @@ export function hasCodeBlocks(text) {
 }
 
 const STRIP_CODE_BLOCK_REGEX = /```[\s\S]*?```/g;
+const STRIP_OPEN_CODE_BLOCK_REGEX = /```[\s\S]*$/;
 
 export function stripCodeBlocks(text) {
   if (!text) return '';
-  return text.replace(STRIP_CODE_BLOCK_REGEX, '').trim();
+  return text.replace(STRIP_CODE_BLOCK_REGEX, '').replace(STRIP_OPEN_CODE_BLOCK_REGEX, '').trim();
 }
