@@ -76,15 +76,34 @@ router.patch('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   const userId = req.user.sub;
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      `DELETE FROM spaces WHERE id = $1 AND owner_id = $2 RETURNING id`,
+    await client.query('BEGIN');
+
+    const auth = await client.query(
+      `SELECT id FROM spaces WHERE id = $1 AND owner_id = $2`,
       [req.params.id, userId]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Space not found or not owner' });
+    if (auth.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Space not found or not owner' });
+    }
+
+    const spaceId = req.params.id;
+    await client.query(`DELETE FROM user_presence WHERE space_id = $1`, [spaceId]);
+    await client.query(`DELETE FROM chat_messages WHERE space_id = $1`, [spaceId]);
+    await client.query(`DELETE FROM objects WHERE space_id = $1`, [spaceId]);
+    await client.query(`DELETE FROM connections WHERE space_id = $1`, [spaceId]);
+    await client.query(`DELETE FROM spatial_cells WHERE space_id = $1`, [spaceId]);
+    await client.query(`DELETE FROM spaces WHERE id = $1`, [spaceId]);
+
+    await client.query('COMMIT');
     res.json({ deleted: true });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Delete space error:', err);
     res.status(500).json({ error: 'Failed to delete space' });
+  } finally {
+    client.release();
   }
 });

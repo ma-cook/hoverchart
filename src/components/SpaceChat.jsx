@@ -352,6 +352,16 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     codeStore.setSpaceId(spaceId);
   }, [spaceId]);
 
+  useEffect(() => {
+    const handleObjectsCleared = () => {
+      setGroupMessages([]);
+      setPlanMessages([]);
+      setCodeMessages([]);
+    };
+    window.addEventListener('space-objects-cleared', handleObjectsCleared);
+    return () => window.removeEventListener('space-objects-cleared', handleObjectsCleared);
+  }, []);
+
   const [showGithubPanel, setShowGithubPanel] = useState(false);
   const [repos, setRepos] = useState([]);
   const [showRepos, setShowRepos] = useState(false);

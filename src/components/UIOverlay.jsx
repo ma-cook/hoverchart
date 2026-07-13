@@ -1,6 +1,7 @@
 import { useUIOverlayStore, useDiagramStore, useSpatialManagerStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
+import useCodeStore from '../stores/codeStore';
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import {
   uploadModelToStorage,
@@ -903,6 +904,11 @@ const UIOverlay = ({
 
       // Clear 2D diagram and analysis state
       useDiagramStore.getState().clear();
+
+      // Clear code/repo/techStack and notify SpaceChat to clear messages
+      useCodeStore.getState().reset();
+      window.dispatchEvent(new CustomEvent('space-objects-cleared'));
+
       window._bulkDeleteInProgress = false;
       setIsDeleting(false);
       setCurrentDiagramRepo(null);

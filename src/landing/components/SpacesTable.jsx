@@ -225,7 +225,7 @@ export const SpacesTable = React.memo(
                       </div>
                     </td>
                     <td style={tdStyles}>
-                      {new Date(space.createdAt).toLocaleDateString()}
+                      {new Date(space.created_at).toLocaleDateString()}
                     </td>
                     <td style={tdStyles}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -281,7 +281,7 @@ export const SpacesTable = React.memo(
                     </td>
                     <td style={tdStyles}>Shared</td>
                     <td style={tdStyles}>
-                      {new Date(space.createdAt).toLocaleDateString()}
+                      {new Date(space.created_at).toLocaleDateString()}
                     </td>
                     <td style={tdStyles}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
