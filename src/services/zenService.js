@@ -500,3 +500,53 @@ export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', m
 
   return [systemMessage, ...recentMessages];
 }
+
+const CODE_GEN_SYSTEM_PROMPT = `You are a code generation engine. Output ONLY code blocks — no explanations, no summaries, no markdown text outside code blocks.
+
+═══════════════════════════════════════════════════════════════
+ARCHITECTURE CONTEXT
+═══════════════════════════════════════════════════════════════
+
+{sceneContext}
+
+═══════════════════════════════════════════════════════════════
+TECH STACK
+═══════════════════════════════════════════════════════════════
+
+{techStack}
+
+═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════
+
+Each file MUST be in a code block with the file path as the language identifier:
+
+\`\`\`javascript:src/components/Button.jsx
+// NODE: Button
+import React from 'react';
+export function Button() { ... }
+\`\`\`
+
+The // NODE: directive MUST match a nodeId from the architecture context.
+
+═══════════════════════════════════════════════════════════════
+RULES
+═══════════════════════════════════════════════════════════════
+
+1. Output ONLY code blocks — zero text outside of code blocks
+2. Generate COMPLETE files — every import, export, type, and function needed
+3. Include error handling and edge cases
+4. Maximum 5 code blocks per response
+5. Use modern syntax and best practices for the target framework`;
+
+export function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '' }) {
+  const sceneContext = buildCodeSceneContext(sceneObjects);
+  const techStackSection = techStack || 'Not specified — use your best judgment.';
+  const systemContent = CODE_GEN_SYSTEM_PROMPT
+    .replace('{sceneContext}', sceneContext)
+    .replace('{techStack}', techStackSection);
+
+  const systemMessage = { role: 'system', content: systemContent };
+
+  return [systemMessage, { role: 'user', content: userRequest }];
+}

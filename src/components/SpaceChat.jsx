@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages, buildCodeMessages } from '../services/zenService';
+import { sendToZen, buildZenMessages, buildCodeMessages, buildCodeGenMessages } from '../services/zenService';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
@@ -602,14 +602,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
     setStreaming(true);
     streamingRef.current = '';
-    streamingMsgKeyRef.current = `code-stream-${Date.now()}`;
-    const currentStreamKey = streamingMsgKeyRef.current;
+    const currentStreamKey = `code-stream-${Date.now()}`;
+    streamingMsgKeyRef.current = currentStreamKey;
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
     try {
-      await sendToZen({
+      const summaryText = await sendToZen({
         messages: zenMessages,
         signal: abortController.signal,
         onChunk: (delta, fullText) => {
@@ -618,7 +618,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             const streamMsg = {
               key: currentStreamKey,
               role: 'assistant',
-              content: stripCodeBlocks(fullText),
+              content: fullText,
               streaming: true,
             };
             const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
@@ -627,67 +627,59 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         },
       });
 
-      const finalText = streamingRef.current;
-      const codeBlocks = extractCodeBlocks(finalText);
-      const summaryText = stripCodeBlocks(finalText) || (codeBlocks.length > 0
-        ? `Generated ${codeBlocks.length} file(s): ${codeBlocks.map(b => b.filePath || 'unknown').join(', ')}`
-        : 'No code blocks found in the response.');
-
-      const commitKey = `commit-${Date.now()}`;
-      let commitMsg = null;
-
-      if (codeBlocks.length > 0 && codeStore.selectedRepo && codeStore.selectedBranch) {
-        const token = getGithubToken();
-        if (token) {
-          const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
-          const repoName = codeStore.selectedRepo.name;
-          const branchName = codeStore.selectedBranch;
-          const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
-
-          const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
-          setAssociatedCount(count);
-
-          if (result.success) {
-            commitMsg = {
-              key: commitKey,
-              role: 'system',
-              type: 'commit',
-              content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
-              branch: branchName,
-            };
-          } else {
-            commitMsg = {
-              key: commitKey,
-              role: 'system',
-              type: 'commit-error',
-              content: `Committed ${result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
-              branch: branchName,
-            };
-          }
-        }
-      } else if (codeBlocks.length > 0) {
-        const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
-        setAssociatedCount(count);
-      }
-
-      const fileList = codeBlocks.map(b => b.filePath).filter(Boolean);
-      const displaySummary = fileList.length > 0
-        ? `${summaryText}\n\nFiles: ${fileList.join(', ')}`
-        : summaryText;
-
       setCodeMessages((prev) => {
         const finalMsg = {
           key: currentStreamKey,
           role: 'assistant',
-          content: displaySummary,
+          content: summaryText,
           streaming: false,
-          codeCreated: codeBlocks.length > 0,
         };
         const withoutStream = prev.filter(m => m.key !== currentStreamKey);
-        return commitMsg
-          ? [...withoutStream, finalMsg, commitMsg]
-          : [...withoutStream, finalMsg];
+        return [...withoutStream, finalMsg];
       });
+
+      if (codeStore.selectedRepo && codeStore.selectedBranch) {
+        const token = getGithubToken();
+        if (token) {
+          const codeGenMessages = buildCodeGenMessages({
+            userRequest: text,
+            sceneObjects,
+            techStack,
+          });
+
+          const codeResponse = await sendToZen({ messages: codeGenMessages });
+          const codeBlocks = extractCodeBlocks(codeResponse);
+
+          if (codeBlocks.length > 0) {
+            const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
+            setAssociatedCount(count);
+
+            const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
+            const repoName = codeStore.selectedRepo.name;
+            const branchName = codeStore.selectedBranch;
+            const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
+
+            const commitKey = `commit-${Date.now()}`;
+            if (result.success) {
+              setCodeMessages((prev) => [...prev, {
+                key: commitKey,
+                role: 'system',
+                type: 'commit',
+                content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
+                branch: branchName,
+              }]);
+            } else {
+              setCodeMessages((prev) => [...prev, {
+                key: commitKey,
+                role: 'system',
+                type: 'commit-error',
+                content: `Committed ${result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
+                branch: branchName,
+              }]);
+            }
+          }
+        }
+      }
     } catch (err) {
       if (err.name === 'AbortError') return;
       const msg = err.message || 'Failed to reach LLM. Check your connection.';
