@@ -202,7 +202,7 @@ async function associateCodeWithScene(codeBlocks, spaceId, user) {
 }
 
 async function pushCodeToGitHub(codeBlocks, owner, repo, branch, token) {
-  if (!token || !owner || !repo || !branch) return { success: false, pushed: 0 };
+  if (!token || !owner || !repo || !branch) return { success: false, pushed: 0, errors: [] };
 
   let pushed = 0;
   const errors = [];
@@ -215,10 +215,14 @@ async function pushCodeToGitHub(codeBlocks, owner, repo, branch, token) {
       let sha = null;
       try {
         const existing = await getFileContents(token, owner, repo, path, branch);
-        if (existing?.data) sha = existing.data.sha;
+        if (existing?.ok && existing?.data) sha = existing.data.sha;
       } catch {}
-      await createFileOnBranch(token, owner, repo, path, block.code, branch, message, sha);
-      pushed++;
+      const result = await createFileOnBranch(token, owner, repo, path, block.code, branch, message, sha);
+      if (result.ok) {
+        pushed++;
+      } else {
+        errors.push({ file: block.filePath, error: result.error || 'Unknown error' });
+      }
     } catch (err) {
       errors.push({ file: block.filePath, error: err.message });
     }
@@ -619,6 +623,26 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                 : `Pushed ${result.pushed}/${codeBlocks.length} file(s) — ${result.errors?.length} error(s)`,
             });
             setTimeout(() => setPushNotification(null), 5000);
+
+            const commitKey = `commit-${Date.now()}`;
+            const branchName = codeStore.selectedBranch;
+            if (result.success) {
+              setCodeMessages((prev) => [...prev, {
+                key: commitKey,
+                role: 'system',
+                type: 'commit',
+                content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
+                branch: branchName,
+              }]);
+            } else {
+              setCodeMessages((prev) => [...prev, {
+                key: commitKey,
+                role: 'system',
+                type: 'commit-error',
+                content: `Failed to commit ${codeBlocks.length - result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
+                branch: branchName,
+              }]);
+            }
           }
         }
       }
@@ -1302,6 +1326,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               </div>
             )}
             {llmMessages.map((msg) => {
+              if (msg.role === 'system') {
+                return (
+                  <div key={msg.key} className={`space-chat-commit ${msg.type === 'commit-error' ? 'error' : ''}`}>
+                    {msg.type === 'commit' ? '✓' : '✕'} {msg.content}
+                  </div>
+                );
+              }
               const isUser = msg.role === 'user';
               return (
                 <div key={msg.key} className={`space-chat-message ${isUser ? 'own llm-user' : 'llm-assistant'}`}>

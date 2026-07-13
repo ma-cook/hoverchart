@@ -1364,6 +1364,21 @@ body {
   gap: 4px;
 }
 
+.space-chat-commit {
+  font-size: 11px;
+  color: #4CAF50;
+  text-align: center;
+  padding: 4px 10px;
+  margin: 2px 0;
+  background: rgba(76,175,80,0.1);
+  border-radius: 6px;
+}
+
+.space-chat-commit.error {
+  color: #f44336;
+  background: rgba(244,67,54,0.1);
+}
+
 .space-chat-error {
   background: rgba(244,67,54,0.15);
   color: #f44336;
