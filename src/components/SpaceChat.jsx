@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages, buildCodeMessages, buildCodeGenMessages } from '../services/zenService';
+import { sendToZen, buildZenMessages, buildCodeMessages, buildCodeGenMessages, fetchRepoContext } from '../services/zenService';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
@@ -645,10 +645,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       if (codeStore.selectedRepo && codeStore.selectedBranch) {
         const token = getGithubToken();
         if (token) {
+          const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
+          const repoName = codeStore.selectedRepo.name;
+          const branchName = codeStore.selectedBranch;
+
+          const repoContext = await fetchRepoContext(token, owner, repoName, branchName);
+
           const codeGenMessages = buildCodeGenMessages({
             userRequest: text,
             sceneObjects,
             techStack,
+            repoContext,
           });
 
           const codeResponse = await sendToZen({ messages: codeGenMessages });
@@ -658,9 +665,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
             setAssociatedCount(count);
 
-            const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
-            const repoName = codeStore.selectedRepo.name;
-            const branchName = codeStore.selectedBranch;
             const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
 
             const commitKey = `commit-${Date.now()}`;

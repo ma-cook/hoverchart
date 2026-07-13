@@ -455,6 +455,47 @@ function buildCodeSceneContext(objects) {
 import { sendToProvider } from './llmProviders';
 import useLlmStore from '../stores/llmStore';
 import { getAllPlanContext } from './planService';
+import { getRepoTree, getFileContents } from './githubIssuesService';
+
+const KEY_FILE_PATTERNS = [
+  'package.json', 'tsconfig.json', 'vite.config.js', 'vite.config.ts',
+  'webpack.config.js', 'next.config.js', 'next.config.mjs',
+  'src/index.jsx', 'src/index.js', 'src/index.tsx', 'src/index.ts',
+  'src/main.jsx', 'src/main.js', 'src/main.tsx', 'src/main.ts',
+  'src/App.jsx', 'src/App.js', 'src/App.tsx', 'src/App.ts',
+  'app/layout.tsx', 'app/page.tsx',
+  'index.html', 'index.htm',
+];
+
+function isKeyFile(path) {
+  const lower = path.toLowerCase();
+  return KEY_FILE_PATTERNS.some(p => lower === p || lower.endsWith('/' + p));
+}
+
+export async function fetchRepoContext(token, owner, repo, branch) {
+  const treeResult = await getRepoTree(token, owner, repo, branch);
+  if (!treeResult.ok || !treeResult.data?.tree) {
+    return { fileTree: [], fileContents: {}, error: treeResult.error };
+  }
+
+  const entries = treeResult.data.tree.filter(e => e.type === 'blob');
+  const filePaths = entries.map(e => e.path);
+
+  const filesToFetch = filePaths.filter(isKeyFile).slice(0, 8);
+
+  const fileContents = {};
+  await Promise.all(filesToFetch.map(async (path) => {
+    const result = await getFileContents(token, owner, repo, path, branch);
+    if (result.ok && result.data) {
+      try {
+        const raw = atob(result.data.content);
+        fileContents[path] = decodeURIComponent(escape(raw));
+      } catch {}
+    }
+  }));
+
+  return { fileTree: filePaths, fileContents, error: null };
+}
 
 export async function sendToZen({ messages, onChunk, signal }) {
   const { providerId, apiKey, selectedModel } = useLlmStore.getState();
@@ -504,6 +545,18 @@ export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', m
 const CODE_GEN_SYSTEM_PROMPT = `You are a code generation engine. Output ONLY code blocks — no explanations, no summaries, no markdown text outside code blocks.
 
 ═══════════════════════════════════════════════════════════════
+EXISTING REPOSITORY STRUCTURE
+═══════════════════════════════════════════════════════════════
+
+The repository already has files. You MUST respect the existing file structure and import paths.
+
+FILE TREE:
+{fileTree}
+
+EXISTING KEY FILES:
+{existingFiles}
+
+═══════════════════════════════════════════════════════════════
 ARCHITECTURE CONTEXT
 ═══════════════════════════════════════════════════════════════
 
@@ -534,15 +587,38 @@ RULES
 ═══════════════════════════════════════════════════════════════
 
 1. Output ONLY code blocks — zero text outside of code blocks
-2. Generate COMPLETE files — every import, export, type, and function needed
-3. Include error handling and edge cases
-4. Maximum 5 code blocks per response
-5. Use modern syntax and best practices for the target framework`;
+2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
+3. If a file already exists (shown in Existing Key Files), modify it in place — do NOT recreate it
+4. Use the SAME import paths the existing code uses (check package.json, entry points, etc.)
+5. Generate COMPLETE files — every import, export, type, and function needed
+6. Include error handling and edge cases
+7. Maximum 5 code blocks per response
+8. Use modern syntax and best practices for the target framework`;
 
-export function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '' }) {
+function buildFileTreeSection(fileTree) {
+  if (!fileTree || fileTree.length === 0) return '(no repository files available)';
+  return fileTree.join('\n');
+}
+
+function buildExistingFilesSection(fileContents) {
+  if (!fileContents || Object.keys(fileContents).length === 0) return '(no key files available)';
+  const sections = [];
+  for (const [path, content] of Object.entries(fileContents)) {
+    const truncated = content.length > 1500 ? content.slice(0, 1500) + '\n... (truncated)' : content;
+    sections.push(`--- ${path} ---\n${truncated}`);
+  }
+  return sections.join('\n\n');
+}
+
+export function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const sceneContext = buildCodeSceneContext(sceneObjects);
   const techStackSection = techStack || 'Not specified — use your best judgment.';
+  const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
+  const existingFilesSection = buildExistingFilesSection(repoContext?.fileContents);
+
   const systemContent = CODE_GEN_SYSTEM_PROMPT
+    .replace('{fileTree}', fileTreeSection)
+    .replace('{existingFiles}', existingFilesSection)
     .replace('{sceneContext}', sceneContext)
     .replace('{techStack}', techStackSection);
 

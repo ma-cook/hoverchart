@@ -125,6 +125,23 @@ export async function getFileContents(token, owner, repo, path, branch) {
   return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/contents/${path}${query}`);
 }
 
+export async function getRepoTree(token, owner, repo, branch) {
+  const ref = branch || 'main';
+  const refResult = await githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/ref/heads/${enc(ref)}`);
+  if (!refResult.ok) return refResult;
+
+  const commitSha = refResult.data?.object?.sha;
+  if (!commitSha) return { ok: false, data: null, error: 'Could not resolve branch to commit SHA' };
+
+  const commitResult = await githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/commits/${commitSha}`);
+  if (!commitResult.ok) return commitResult;
+
+  const treeSha = commitResult.data?.tree?.sha;
+  if (!treeSha) return { ok: false, data: null, error: 'Could not resolve commit to tree SHA' };
+
+  return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/trees/${treeSha}?recursive=1`);
+}
+
 export async function createFileOnBranch(token, owner, repo, path, content, branch, message, sha) {
   const payload = {
     message,
