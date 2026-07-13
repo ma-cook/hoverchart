@@ -21,6 +21,7 @@ steps:
       - '--concurrency=40'
       - '--cpu=1'
       - '--memory=512Mi'
+      - '--timeout=300'
       - '--service-account=hoverchart-api-sa@$PROJECT_ID.iam.gserviceaccount.com'
       - '--add-cloudsql-instances=$PROJECT_ID:us-central1:volscape'
       - '--set-secrets=DATABASE_URL=DATABASE_URL:latest'

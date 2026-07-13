@@ -21,7 +21,7 @@ export const PROVIDERS = [
           role: m.role === 'assistant' ? 'assistant' : 'user',
           content: m.content,
         })),
-        max_tokens: 16384,
+        max_tokens: 32768,
         stream: true,
       };
     },
@@ -99,7 +99,7 @@ export const PROVIDERS = [
       model,
       messages,
       stream: true,
-      max_tokens: 16384,
+      max_tokens: 32768,
     }),
     parseModels: (data) =>
       (data.data || [])
@@ -133,7 +133,7 @@ export const PROVIDERS = [
       model,
       messages,
       stream: true,
-      max_tokens: 16384,
+      max_tokens: 32768,
     }),
     parseModels: (data) =>
       (data.data || [])
@@ -167,7 +167,7 @@ export const PROVIDERS = [
       model,
       messages,
       stream: true,
-      max_tokens: 16384,
+      max_tokens: 32768,
     }),
     parseModels: (data) =>
       (data.data || [])
@@ -249,8 +249,9 @@ export async function sendToProvider({
   const decoder = new TextDecoder();
   let fullText = '';
   let buffer = '';
+  let streamDone = false;
 
-  while (true) {
+  while (!streamDone) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -261,7 +262,7 @@ export async function sendToProvider({
       if (!trimmed) continue;
       const result = provider.parseStreamLine(trimmed);
       if (result === null) continue;
-      if (result.done) break;
+      if (result.done) { streamDone = true; break; }
       if (typeof result === 'string') {
         fullText += result;
         onChunk?.(result, fullText);

@@ -133,7 +133,7 @@ async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
 async function associateCodeWithScene(codeBlocks, spaceId, user) {
   if (!codeBlocks || codeBlocks.length === 0) return 0;
 
-  const { default: spatialPartitioning } = await import('../services/spatialPartitioning');
+  const spatialPartitioning = await import('../services/spatialPartitioning');
   const getCellCoordinates = spatialPartitioning.getCellCoordinates;
   const getCellId = spatialPartitioning.getCellId;
   const { saveObjectToCell } = await import('../services/spatialObjectsService');
