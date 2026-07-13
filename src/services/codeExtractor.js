@@ -138,3 +138,10 @@ export function hasCodeBlocks(text) {
   CODE_BLOCK_REGEX.lastIndex = 0;
   return CODE_BLOCK_REGEX.test(text);
 }
+
+const STRIP_CODE_BLOCK_REGEX = /```[\s\S]*?```/g;
+
+export function stripCodeBlocks(text) {
+  if (!text) return '';
+  return text.replace(STRIP_CODE_BLOCK_REGEX, '').trim();
+}

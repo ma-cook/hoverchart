@@ -88,7 +88,9 @@ When generating code:
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
-Each file must be in a code block with the file path as the language identifier label:
+FIRST: Write a brief 2-4 sentence summary of what you are creating or changing. This summary will be shown to the user.
+
+THEN: Output each file as a code block with the file path as the language identifier label:
 
 \`\`\`javascript:src/components/Button.jsx
 // NODE: Button
@@ -111,14 +113,16 @@ TECH STACK
 RULES
 ═══════════════════════════════════════════════════════════════
 
-1. Generate COMPLETE files - every import, export, type, and function needed
-2. Group related files by feature or module
-3. Follow idiomatic patterns for the target language/framework
-4. Include error handling, input validation, and edge cases
-5. Use modern syntax and best practices
-6. When updating existing code (shown in context), only output the changed file in full
-7. Files are read-only to users - you are the only one who writes code
-8. If you need additional context from the repository, explain what you need`;
+1. Start with a brief summary (2-4 sentences) of what you are doing
+2. Generate COMPLETE files - every import, export, type, and function needed
+3. Group related files by feature or module
+4. Follow idiomatic patterns for the target language/framework
+5. Include error handling, input validation, and edge cases
+6. Use modern syntax and best practices
+7. When updating existing code (shown in context), only output the changed file in full
+8. Keep code blocks as short as possible - split large files into smaller modules
+9. Maximum 5 code blocks per response to avoid truncation
+10. Files are read-only to users - you are the only one who writes code`;
 
 const FEW_SHOT_EXAMPLES = [
   {

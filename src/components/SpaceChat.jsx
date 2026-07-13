@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
 import { sendToZen, buildZenMessages, buildCodeMessages } from '../services/zenService';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
-import { extractCodeBlocks } from '../services/codeExtractor';
+import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useLlmStore from '../stores/llmStore';
@@ -246,6 +246,34 @@ const SPACE_CHAT_MIN_HEIGHT = 200;
 const SPACE_CHAT_DEFAULT_WIDTH = 300;
 const SPACE_CHAT_DEFAULT_HEIGHT = 360;
 
+const MAX_PERSISTED_MESSAGES = 50;
+
+function loadPersistedMessages(spaceId, mode) {
+  try {
+    const raw = localStorage.getItem(`chat:${spaceId}:${mode}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function persistMessages(spaceId, mode, messages) {
+  try {
+    const toSave = messages.slice(-MAX_PERSISTED_MESSAGES);
+    localStorage.setItem(`chat:${spaceId}:${mode}`, JSON.stringify(toSave));
+  } catch {}
+}
+
+function loadPersistedMode(spaceId) {
+  try {
+    return localStorage.getItem(`chat:${spaceId}:mode`) || 'group';
+  } catch { return 'group'; }
+}
+
+function persistMode(spaceId, mode) {
+  try {
+    localStorage.setItem(`chat:${spaceId}:mode`, mode);
+  } catch {}
+}
+
 const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [chatSize, setChatSize] = useState({ width: SPACE_CHAT_DEFAULT_WIDTH, height: SPACE_CHAT_DEFAULT_HEIGHT });
@@ -308,9 +336,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [input, isExpanded]);
 
-  const [chatMode, setChatMode] = useState('group');
-  const [planMessages, setPlanMessages] = useState([]);
-  const [codeMessages, setCodeMessages] = useState([]);
+  const [chatMode, setChatMode] = useState(() => loadPersistedMode(spaceId));
+  const [planMessages, setPlanMessages] = useState(() => loadPersistedMessages(spaceId, 'plan'));
+  const [codeMessages, setCodeMessages] = useState(() => loadPersistedMessages(spaceId, 'code'));
   const [streaming, setStreaming] = useState(false);
   const [llmError, setLlmError] = useState(null);
   const streamingRef = useRef('');
@@ -428,6 +456,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       setShowNewPlanPrompt(true);
     }
   }, [chatMode]);
+
+  useEffect(() => {
+    persistMessages(spaceId, 'plan', planMessages);
+  }, [spaceId, planMessages]);
+
+  useEffect(() => {
+    persistMessages(spaceId, 'code', codeMessages);
+  }, [spaceId, codeMessages]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -593,59 +629,65 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
       const finalText = streamingRef.current;
       const codeBlocks = extractCodeBlocks(finalText);
+      const summaryText = stripCodeBlocks(finalText) || (codeBlocks.length > 0
+        ? `Generated ${codeBlocks.length} file(s): ${codeBlocks.map(b => b.filePath || 'unknown').join(', ')}`
+        : 'No code blocks found in the response.');
+
+      const commitKey = `commit-${Date.now()}`;
+      let commitMsg = null;
+
+      if (codeBlocks.length > 0 && codeStore.selectedRepo && codeStore.selectedBranch) {
+        const token = getGithubToken();
+        if (token) {
+          const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
+          const repoName = codeStore.selectedRepo.name;
+          const branchName = codeStore.selectedBranch;
+          const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
+
+          const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
+          setAssociatedCount(count);
+
+          if (result.success) {
+            commitMsg = {
+              key: commitKey,
+              role: 'system',
+              type: 'commit',
+              content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
+              branch: branchName,
+            };
+          } else {
+            commitMsg = {
+              key: commitKey,
+              role: 'system',
+              type: 'commit-error',
+              content: `Committed ${result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
+              branch: branchName,
+            };
+          }
+        }
+      } else if (codeBlocks.length > 0) {
+        const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
+        setAssociatedCount(count);
+      }
+
+      const fileList = codeBlocks.map(b => b.filePath).filter(Boolean);
+      const displaySummary = fileList.length > 0
+        ? `${summaryText}\n\nFiles: ${fileList.join(', ')}`
+        : summaryText;
 
       setCodeMessages((prev) => {
         const finalMsg = {
           key: currentStreamKey,
           role: 'assistant',
-          content: finalText,
+          content: displaySummary,
           streaming: false,
           codeCreated: codeBlocks.length > 0,
         };
         const withoutStream = prev.filter(m => m.key !== currentStreamKey);
-        return [...withoutStream, finalMsg];
+        return commitMsg
+          ? [...withoutStream, finalMsg, commitMsg]
+          : [...withoutStream, finalMsg];
       });
-
-      if (codeBlocks.length > 0) {
-        const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
-        setAssociatedCount(count);
-
-        if (codeStore.selectedRepo && codeStore.selectedBranch) {
-          const token = getGithubToken();
-          if (token) {
-            const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
-            const repoName = codeStore.selectedRepo.name;
-            const result = await pushCodeToGitHub(codeBlocks, owner, repoName, codeStore.selectedBranch, token);
-            setPushNotification({
-              type: result.success ? 'success' : 'error',
-              message: result.success
-                ? `Pushed ${result.pushed} file(s) to ${owner}/${repoName}:${codeStore.selectedBranch}`
-                : `Pushed ${result.pushed}/${codeBlocks.length} file(s) — ${result.errors?.length} error(s)`,
-            });
-            setTimeout(() => setPushNotification(null), 5000);
-
-            const commitKey = `commit-${Date.now()}`;
-            const branchName = codeStore.selectedBranch;
-            if (result.success) {
-              setCodeMessages((prev) => [...prev, {
-                key: commitKey,
-                role: 'system',
-                type: 'commit',
-                content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
-                branch: branchName,
-              }]);
-            } else {
-              setCodeMessages((prev) => [...prev, {
-                key: commitKey,
-                role: 'system',
-                type: 'commit-error',
-                content: `Failed to commit ${codeBlocks.length - result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
-                branch: branchName,
-              }]);
-            }
-          }
-        }
-      }
     } catch (err) {
       if (err.name === 'AbortError') return;
       const msg = err.message || 'Failed to reach LLM. Check your connection.';
@@ -675,6 +717,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
   const handleModeSwitch = useCallback((mode) => {
     setChatMode(mode);
+    persistMode(spaceId, mode);
     setLlmError(null);
     setAuthError(null);
     setAssociatedCount(0);
@@ -683,7 +726,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     if (mode === 'code' && !codeStore.techStack) {
       setShowTechStackPrompt(true);
     }
-  }, [codeStore]);
+  }, [spaceId, codeStore]);
 
   const handleCreatePlan = useCallback(async () => {
     let container = planContainer || await createPlanContainer(user, spaceId);
