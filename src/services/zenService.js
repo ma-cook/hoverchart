@@ -588,12 +588,13 @@ RULES
 
 1. Output ONLY code blocks — zero text outside of code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. If a file already exists (shown in Existing Key Files), modify it in place — do NOT recreate it
-4. Use the SAME import paths the existing code uses (check package.json, entry points, etc.)
-5. Generate COMPLETE files — every import, export, type, and function needed
-6. Include error handling and edge cases
-7. Maximum 5 code blocks per response
-8. Use modern syntax and best practices for the target framework`;
+3. For existing files shown in "Existing Key Files": output the COMPLETE file with ALL existing code preserved. Only modify the specific parts the user requested. Never remove existing code unless explicitly told to.
+4. For new files not in the repo: output the complete file from scratch
+5. Use the SAME import paths the existing code uses (check package.json, entry points, etc.)
+6. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions, no partial files
+7. Include error handling and edge cases
+8. Maximum 5 code blocks per response
+9. Use modern syntax and best practices for the target framework`;
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
@@ -604,7 +605,7 @@ function buildExistingFilesSection(fileContents) {
   if (!fileContents || Object.keys(fileContents).length === 0) return '(no key files available)';
   const sections = [];
   for (const [path, content] of Object.entries(fileContents)) {
-    const truncated = content.length > 1500 ? content.slice(0, 1500) + '\n... (truncated)' : content;
+    const truncated = content.length > 4000 ? content.slice(0, 4000) + '\n... (truncated, ' + content.length + ' chars total)' : content;
     sections.push(`--- ${path} ---\n${truncated}`);
   }
   return sections.join('\n\n');

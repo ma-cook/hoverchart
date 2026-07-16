@@ -155,6 +155,63 @@ export async function createFileOnBranch(token, owner, repo, path, content, bran
   });
 }
 
+export async function createTree(token, owner, repo, baseTreeSha, files) {
+  const tree = files.map(f => ({
+    path: f.path,
+    mode: '100644',
+    type: 'blob',
+    content: f.content,
+  }));
+
+  return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/trees`, {
+    method: 'POST',
+    body: JSON.stringify({ base_tree: baseTreeSha, tree }),
+  });
+}
+
+export async function createCommit(token, owner, repo, message, treeSha, parentCommitSha) {
+  const payload = {
+    message,
+    tree: treeSha,
+    parents: parentCommitSha ? [parentCommitSha] : [],
+  };
+
+  return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/commits`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateRef(token, owner, repo, refName, commitSha) {
+  return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/refs/heads/${enc(refName)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ sha: commitSha, force: false }),
+  });
+}
+
+export async function multiFileCommit(token, owner, repo, branch, files, message) {
+  const refResult = await githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/ref/heads/${enc(branch)}`);
+  if (!refResult.ok) return { ok: false, error: `Could not resolve branch: ${refResult.error}` };
+
+  const commitSha = refResult.data.object.sha;
+
+  const commitResult = await githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/git/commits/${commitSha}`);
+  if (!commitResult.ok) return { ok: false, error: `Could not get commit: ${commitResult.error}` };
+
+  const baseTreeSha = commitResult.data.tree.sha;
+
+  const treeResult = await createTree(token, owner, repo, baseTreeSha, files);
+  if (!treeResult.ok) return { ok: false, error: `Could not create tree: ${treeResult.error}` };
+
+  const newCommitResult = await createCommit(token, owner, repo, message, treeResult.data.sha, commitSha);
+  if (!newCommitResult.ok) return { ok: false, error: `Could not create commit: ${newCommitResult.error}` };
+
+  const updateResult = await updateRef(token, owner, repo, branch, newCommitResult.data.sha);
+  if (!updateResult.ok) return { ok: false, error: `Could not update ref: ${updateResult.error}` };
+
+  return { ok: true, data: { sha: newCommitResult.data.sha, message }, error: null };
+}
+
 export async function createPullRequest(token, owner, repo, { title, body, head, base }) {
   return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}/pulls`, {
     method: 'POST',
