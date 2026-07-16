@@ -921,29 +921,33 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         }
       );
       if (result.success) {
+        setScanProgress(null);
         setPushNotification({
           type: 'success',
           message: `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,
         });
+        setTimeout(() => setPushNotification(null), 5000);
 
         const token = getGithubToken();
         if (token) {
           const owner = repo.owner?.login || repo.owner;
           const repoName = repo.name;
           const branch = codeStore.selectedBranch || repo.default_branch || 'main';
-          try {
-            const ctx = await fetchRepoContext(token, owner, repoName, branch);
-            codeStore.setRepoContext(ctx.fileTree, ctx.fileContents);
-            populateContentStore();
-          } catch {}
+          fetchRepoContext(token, owner, repoName, branch)
+            .then(ctx => {
+              codeStore.setRepoContext(ctx.fileTree, ctx.fileContents);
+              populateContentStore();
+            })
+            .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message));
         }
       } else {
+        setScanProgress(null);
         setPushNotification({ type: 'error', message: 'Failed to create diagram from repo.' });
+        setTimeout(() => setPushNotification(null), 5000);
       }
     } catch (err) {
-      setPushNotification({ type: 'error', message: `Scan error: ${err.message}` });
-    } finally {
       setScanProgress(null);
+      setPushNotification({ type: 'error', message: `Scan error: ${err.message}` });
       setTimeout(() => setPushNotification(null), 5000);
     }
   };
