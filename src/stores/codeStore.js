@@ -38,6 +38,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   pushStatus: 'idle',
   expandedView: false,
   activeCodeObjectId: null,
+  repoFileTree: null,
+  repoFileContents: null,
 
   setSpaceId: (spaceId) => {
     const prev = get()._spaceId;
@@ -97,6 +99,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setPushStatus: (status) => set({ pushStatus: status }),
 
+  setRepoContext: (fileTree, fileContents) => set({ repoFileTree: fileTree, repoFileContents: fileContents }),
+
   setExpandedView: (expanded) => set({ expandedView: expanded }),
 
   setActiveCodeObjectId: (id) => set({ activeCodeObjectId: id }),
@@ -119,6 +123,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       techStackSource: null,
       pushStatus: 'idle',
       activeCodeObjectId: null,
+      repoFileTree: null,
+      repoFileContents: null,
     });
   },
 }), shallow);

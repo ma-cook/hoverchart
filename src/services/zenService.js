@@ -542,7 +542,7 @@ export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', m
   return [systemMessage, ...recentMessages];
 }
 
-const CODE_GEN_SYSTEM_PROMPT = `You are a code generation engine. Output ONLY code blocks — no explanations, no summaries, no markdown text outside code blocks.
+const CODE_GEN_SYSTEM_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request and the repository context below.
 
 ═══════════════════════════════════════════════════════════════
 EXISTING REPOSITORY STRUCTURE
@@ -583,10 +583,23 @@ export function Button() { ... }
 The // NODE: directive MUST match a nodeId from the architecture context.
 
 ═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════
+
+FIRST: Write a brief 1-2 sentence summary of what you are doing.
+THEN: Output each file as a code block with the file path as the language identifier:
+
+\`\`\`javascript:src/components/Button.jsx
+// NODE: Button
+import React from 'react';
+export function Button() { ... }
+\`\`\`
+
+═══════════════════════════════════════════════════════════════
 RULES
 ═══════════════════════════════════════════════════════════════
 
-1. Output ONLY code blocks — zero text outside of code blocks
+1. Start with a brief 1-2 sentence summary, then output code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
 3. For existing files shown in "Existing Key Files": output the COMPLETE file with ALL existing code preserved. Only modify the specific parts the user requested. Never remove existing code unless explicitly told to.
 4. For new files not in the repo: output the complete file from scratch

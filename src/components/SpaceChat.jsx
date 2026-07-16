@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages, buildCodeMessages, buildCodeGenMessages, fetchRepoContext } from '../services/zenService';
+import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext } from '../services/zenService';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
@@ -607,12 +607,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
     const sceneObjects = useObjectsStore.getState().objects;
     const techStack = codeStore.techStack;
-    const zenMessages = buildCodeMessages({
-      llmMessages: updatedMessages,
-      sceneObjects,
-      techStack,
-      maxMessages: 20,
-    });
 
     setStreaming(true);
     streamingRef.current = '';
@@ -623,8 +617,31 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     abortControllerRef.current = abortController;
 
     try {
-      const summaryText = await sendToZen({
-        messages: zenMessages,
+      let repoContext = null;
+      if (codeStore.selectedRepo && codeStore.selectedBranch) {
+        if (codeStore.repoFileTree) {
+          repoContext = { fileTree: codeStore.repoFileTree, fileContents: codeStore.repoFileContents || {} };
+        } else {
+          const token = getGithubToken();
+          if (token) {
+            const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
+            const repoName = codeStore.selectedRepo.name;
+            const branchName = codeStore.selectedBranch;
+            repoContext = await fetchRepoContext(token, owner, repoName, branchName);
+            codeStore.setRepoContext(repoContext.fileTree, repoContext.fileContents);
+          }
+        }
+      }
+
+      const codeGenMessages = buildCodeGenMessages({
+        userRequest: text,
+        sceneObjects,
+        techStack,
+        repoContext,
+      });
+
+      const codeResponse = await sendToZen({
+        messages: codeGenMessages,
         signal: abortController.signal,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
@@ -645,56 +662,44 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         const finalMsg = {
           key: currentStreamKey,
           role: 'assistant',
-          content: summaryText,
+          content: codeResponse,
           streaming: false,
         };
         const withoutStream = prev.filter(m => m.key !== currentStreamKey);
         return [...withoutStream, finalMsg];
       });
 
-      if (codeStore.selectedRepo && codeStore.selectedBranch) {
+      const codeBlocks = extractCodeBlocks(codeResponse);
+
+      if (codeBlocks.length > 0 && codeStore.selectedRepo && codeStore.selectedBranch) {
         const token = getGithubToken();
         if (token) {
           const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
           const repoName = codeStore.selectedRepo.name;
           const branchName = codeStore.selectedBranch;
 
-          const repoContext = await fetchRepoContext(token, owner, repoName, branchName);
+          const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
+          setAssociatedCount(count);
 
-          const codeGenMessages = buildCodeGenMessages({
-            userRequest: text,
-            sceneObjects,
-            techStack,
-            repoContext,
-          });
+          const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
 
-          const codeResponse = await sendToZen({ messages: codeGenMessages });
-          const codeBlocks = extractCodeBlocks(codeResponse);
-
-          if (codeBlocks.length > 0) {
-            const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
-            setAssociatedCount(count);
-
-            const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
-
-            const commitKey = `commit-${Date.now()}`;
-            if (result.success) {
-              setCodeMessages((prev) => [...prev, {
-                key: commitKey,
-                role: 'system',
-                type: 'commit',
-                content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
-                branch: branchName,
-              }]);
-            } else {
-              setCodeMessages((prev) => [...prev, {
-                key: commitKey,
-                role: 'system',
-                type: 'commit-error',
-                content: `Committed ${result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
-                branch: branchName,
-              }]);
-            }
+          const commitKey = `commit-${Date.now()}`;
+          if (result.success) {
+            setCodeMessages((prev) => [...prev, {
+              key: commitKey,
+              role: 'system',
+              type: 'commit',
+              content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
+              branch: branchName,
+            }]);
+          } else {
+            setCodeMessages((prev) => [...prev, {
+              key: commitKey,
+              role: 'system',
+              type: 'commit-error',
+              content: `Committed ${result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
+              branch: branchName,
+            }]);
           }
         }
       }
@@ -908,6 +913,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           type: 'success',
           message: `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,
         });
+
+        const token = getGithubToken();
+        if (token) {
+          const owner = repo.owner?.login || repo.owner;
+          const repoName = repo.name;
+          const branch = codeStore.selectedBranch || repo.default_branch || 'main';
+          try {
+            const ctx = await fetchRepoContext(token, owner, repoName, branch);
+            codeStore.setRepoContext(ctx.fileTree, ctx.fileContents);
+          } catch {}
+        }
       } else {
         setPushNotification({ type: 'error', message: 'Failed to create diagram from repo.' });
       }
