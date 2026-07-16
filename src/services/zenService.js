@@ -456,6 +456,13 @@ import { sendToProvider } from './llmProviders';
 import useLlmStore from '../stores/llmStore';
 import { getAllPlanContext } from './planService';
 import { getRepoTree, getFileContents } from './githubIssuesService';
+import { getContentStore, ContentCategory } from './context/contentStore';
+import { getBase64Store } from './context/base64Store';
+import { buildContext } from './context/contextBuilder';
+import { RETRIEVAL_PROTOCOL_PROMPT } from './context/retrievalPrompt';
+import useCodeStore from '../stores/codeStore';
+import useObjectsStore from '../stores/objectsStore';
+import useContentIndexStore from '../stores/contentIndexStore';
 
 const KEY_FILE_PATTERNS = [
   'package.json', 'tsconfig.json', 'vite.config.js', 'vite.config.ts',
@@ -497,6 +504,57 @@ export async function fetchRepoContext(token, owner, repo, branch) {
   return { fileTree: filePaths, fileContents, error: null };
 }
 
+export function populateContentStore() {
+  const store = getContentStore();
+  const codeState = useCodeStore.getState();
+
+  if (codeState.repoFileContents) {
+    for (const [filePath, content] of Object.entries(codeState.repoFileContents)) {
+      store.upsert(
+        `repo:${filePath}`,
+        ContentCategory.REPO_FILE,
+        content,
+        { sourcePath: filePath, tags: ['repo', 'code'] }
+      );
+    }
+  }
+
+  const objects = useObjectsStore.getState().objects;
+  if (objects && objects.length > 0) {
+    const lines = [];
+    for (const obj of objects) {
+      if (!obj.merfolkData?.nodeId || obj.merfolkData?.isContainer) continue;
+      const nodeId = obj.merfolkData.nodeId;
+      const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
+      const name = obj.headerText || nodeId;
+      const hasCode = obj.metadata?.code ? '\n' + obj.metadata.code : '';
+      lines.push(`[${nodeId}] (${nodeType}) "${name}"${hasCode}`);
+    }
+    if (lines.length > 0) {
+      store.upsert('scene:architecture', ContentCategory.SCENE_CONTEXT, lines.join('\n\n'), {
+        sourcePath: 'scene',
+        tags: ['architecture', 'scene'],
+      });
+    }
+  }
+
+  const planContext = getAllPlanContext();
+  if (planContext) {
+    store.upsert('plans:all', ContentCategory.PLAN, planContext, {
+      sourcePath: 'plans',
+      tags: ['plans'],
+    });
+  }
+
+  const base64Store = getBase64Store();
+  base64Store.encodeAll();
+
+  const indexState = useContentIndexStore.getState();
+  indexState.setManifest(store.getManifest());
+  indexState.setTotalChunks(store.totalChunks);
+  indexState.setPopulated(Date.now());
+}
+
 export async function sendToZen({ messages, onChunk, signal }) {
   const { providerId, apiKey, selectedModel } = useLlmStore.getState();
 
@@ -514,20 +572,22 @@ export async function sendToZen({ messages, onChunk, signal }) {
   });
 }
 
-export function buildZenMessages({ llmMessages, sceneObjects, maxMessages = 20 }) {
-  const recentMessages = llmMessages.slice(-maxMessages);
-
+export async function buildZenMessages({ llmMessages, sceneObjects, modelId, signal }) {
   const sceneContext = buildSceneContext(sceneObjects);
-  const systemContent = PLAN_SYSTEM_PROMPT + sceneContext;
 
-  const systemMessage = { role: 'system', content: systemContent };
+  const base64Store = getBase64Store();
+  const manifest = base64Store.totalChunks > 0 ? '\n\n' + base64Store.generateManifest() : '';
 
-  const fewShotWithScene = FEW_SHOT_EXAMPLES.map(msg => ({
-    ...msg,
-    content: msg.content
-  }));
+  const { messages } = await buildContext({
+    systemPrompt: PLAN_SYSTEM_PROMPT + manifest,
+    fewShotExamples: FEW_SHOT_EXAMPLES,
+    sceneContextParts: [sceneContext],
+    messages: llmMessages,
+    modelId,
+    signal,
+  });
 
-  return [systemMessage, ...fewShotWithScene, ...recentMessages];
+  return messages;
 }
 
 export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', maxMessages = 20 }) {
@@ -624,17 +684,22 @@ function buildExistingFilesSection(fileContents) {
   return sections.join('\n\n');
 }
 
-export function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
+export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const sceneContext = buildCodeSceneContext(sceneObjects);
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
   const existingFilesSection = buildExistingFilesSection(repoContext?.fileContents);
 
+  const base64Store = getBase64Store();
+  const manifest = base64Store.totalChunks > 0
+    ? '\n\n' + base64Store.generateManifest() + '\n\n' + RETRIEVAL_PROTOCOL_PROMPT
+    : '';
+
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
     .replace('{existingFiles}', existingFilesSection)
     .replace('{sceneContext}', sceneContext)
-    .replace('{techStack}', techStackSection);
+    .replace('{techStack}', techStackSection) + manifest;
 
   const systemMessage = { role: 'system', content: systemContent };
 

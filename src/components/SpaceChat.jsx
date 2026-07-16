@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext } from '../services/zenService';
+import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStore } from '../services/zenService';
+import { sendWithRetrieval, getBase64Store } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
@@ -509,11 +510,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     const updatedMessages = [...planMessages, userMessage];
     setPlanMessages(updatedMessages);
 
+    populateContentStore();
+
     const sceneObjects = useObjectsStore.getState().objects;
-    const zenMessages = buildZenMessages({
+    const zenMessages = await buildZenMessages({
       llmMessages: updatedMessages,
       sceneObjects,
-      maxMessages: 20,
+      modelId: llmStore.selectedModel,
+      signal: new AbortController().signal,
     });
 
     setStreaming(true);
@@ -525,7 +529,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     abortControllerRef.current = abortController;
 
     try {
-      await sendToZen({
+      await sendWithRetrieval({
         messages: zenMessages,
         signal: abortController.signal,
         onChunk: (delta, fullText) => {
@@ -540,6 +544,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
             return [...withoutStreaming, streamMsg];
           });
+        },
+        onRetrieval: ({ chunkIds, round }) => {
+          console.log(`[Context] Retrieval round ${round}: ${chunkIds.length} chunks`);
         },
       });
 
@@ -633,14 +640,16 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         }
       }
 
-      const codeGenMessages = buildCodeGenMessages({
+      const codeGenMessages = await buildCodeGenMessages({
         userRequest: text,
         sceneObjects,
         techStack,
         repoContext,
       });
 
-      const codeResponse = await sendToZen({
+      populateContentStore();
+
+      const codeResponse = await sendWithRetrieval({
         messages: codeGenMessages,
         signal: abortController.signal,
         onChunk: (delta, fullText) => {
@@ -655,6 +664,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
             return [...withoutStreaming, streamMsg];
           });
+        },
+        onRetrieval: ({ chunkIds, round }) => {
+          console.log(`[Context] Code retrieval round ${round}: ${chunkIds.length} chunks`);
         },
       });
 
@@ -922,6 +934,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           try {
             const ctx = await fetchRepoContext(token, owner, repoName, branch);
             codeStore.setRepoContext(ctx.fileTree, ctx.fileContents);
+            populateContentStore();
           } catch {}
         }
       } else {
