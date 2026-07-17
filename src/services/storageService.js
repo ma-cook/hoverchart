@@ -1,5 +1,7 @@
-import { api } from '../api-client';
 import { v4 as uuidv4 } from 'uuid';
+import { loadTokens } from '../api-client';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']);
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -8,16 +10,24 @@ const MAX_MODEL_SIZE = 50 * 1024 * 1024;
 const uploadFileGeneric = async (file, userId, spaceId, folder, progressCallback = null) => {
   const fileExtension = file.name?.split('.').pop() || 'bin';
   const fileName = `${uuidv4()}.${fileExtension}`;
+  const contentType = file.type || 'application/octet-stream';
 
-  const { signedUrl, path } = await api.post('/api/storage/upload', {
-    fileName,
-    contentType: file.type || 'application/octet-stream',
-  });
+  const { accessToken } = loadTokens();
+  const { path: destPath } = await fetch(`${API_BASE}/api/storage/upload`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+    body: JSON.stringify({ fileName, contentType }),
+  }).then(r => r.json());
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('PUT', signedUrl, true);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.open('PUT', `${API_BASE}/api/storage/proxy-upload`, true);
+    xhr.setRequestHeader('X-File-Path', destPath);
+    xhr.setRequestHeader('X-Content-Type', contentType);
+    if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && progressCallback) {
@@ -27,7 +37,7 @@ const uploadFileGeneric = async (file, userId, spaceId, folder, progressCallback
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(`${window.location.origin}/api/storage/${path}`);
+        resolve(`${window.location.origin}/api/storage/${destPath}`);
       } else {
         reject(new Error(`Upload failed: ${xhr.status}`));
       }

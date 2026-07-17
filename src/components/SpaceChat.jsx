@@ -968,7 +968,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                 }, 100);
               }
             })
-            .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message));
+            .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message, err.stack));
         }
       } else {
         setScanProgress(null);

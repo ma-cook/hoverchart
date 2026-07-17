@@ -27,18 +27,39 @@ router.post('/upload', async (req, res) => {
   if (!storage) return res.status(501).json({ error: 'Storage not configured' });
   const { fileName, contentType } = req.body;
   if (!fileName) return res.status(400).json({ error: 'fileName is required' });
+  const destPath = `uploads/${userId}/${Date.now()}_${fileName}`;
+  res.json({ path: destPath });
+});
+
+router.put('/proxy-upload', async (req, res) => {
+  const userId = req.user.sub;
+  if (!storage) return res.status(501).json({ error: 'Storage not configured' });
+
+  const destPath = req.headers['x-file-path'];
+  if (!destPath) return res.status(400).json({ error: 'X-File-Path header is required' });
+  if (!destPath.startsWith(`uploads/${userId}/`)) {
+    return res.status(403).json({ error: 'Path must start with your user ID prefix' });
+  }
+
   try {
-    const destPath = `uploads/${userId}/${Date.now()}_${fileName}`;
     const file = storage.bucket(bucketName).file(destPath);
-    const [signedUrl] = await file.getSignedUrl({
-      version: 'v4',
-      action: 'write',
-      expires: Date.now() + 15 * 60 * 1000,
-      contentType: contentType || 'application/octet-stream',
+    const stream = file.createWriteStream({
+      resumable: false,
+      metadata: {
+        contentType: req.headers['x-content-type'] || 'application/octet-stream',
+      },
     });
-    res.json({ signedUrl, path: destPath });
+
+    await new Promise((resolve, reject) => {
+      req.on('error', reject);
+      req.pipe(stream);
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    res.json({ path: destPath });
   } catch (err) {
-    console.error('Upload URL error:', err);
-    res.status(500).json({ error: 'Failed to generate upload URL' });
+    console.error('Proxy upload error:', err);
+    res.status(500).json({ error: 'Failed to upload file' });
   }
 });

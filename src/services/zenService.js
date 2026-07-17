@@ -475,6 +475,7 @@ const KEY_FILE_PATTERNS = [
 ];
 
 function isKeyFile(path) {
+  if (typeof path !== 'string') return false;
   const lower = path.toLowerCase();
   return KEY_FILE_PATTERNS.some(p => lower === p || lower.endsWith('/' + p));
 }
@@ -489,9 +490,9 @@ export async function fetchRepoContext(token, owner, repo, branch) {
 
   const treeEntries = treeResult.data.tree;
   const entries = treeEntries.filter(e => e.type === 'blob');
-  const filePaths = entries.map(e => e.path).slice(0, 5000);
+  const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
 
-  const filesToFetch = entries.filter(isKeyFile).slice(0, 8);
+  const filesToFetch = filePaths.filter(isKeyFile).slice(0, 8);
 
   const fileContents = {};
   await Promise.all(filesToFetch.map(async (path) => {
