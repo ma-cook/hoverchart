@@ -485,10 +485,13 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     return { fileTree: [], fileContents: {}, error: treeResult.error };
   }
 
-  const entries = treeResult.data.tree.filter(e => e.type === 'blob');
-  const filePaths = entries.map(e => e.path);
+  await new Promise(r => setTimeout(r, 0));
 
-  const filesToFetch = filePaths.filter(isKeyFile).slice(0, 8);
+  const treeEntries = treeResult.data.tree;
+  const entries = treeEntries.filter(e => e.type === 'blob');
+  const filePaths = entries.map(e => e.path).slice(0, 5000);
+
+  const filesToFetch = entries.filter(isKeyFile).slice(0, 8);
 
   const fileContents = {};
   await Promise.all(filesToFetch.map(async (path) => {

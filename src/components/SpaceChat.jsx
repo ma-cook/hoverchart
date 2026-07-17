@@ -748,7 +748,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, codeMessages, spaceId, user, codeStore.selectedRepo, codeStore.selectedBranch, codeStore.techStack]);
+  }, [input, streaming, codeMessages, spaceId, user, codeStore.selectedRepo, codeStore.selectedBranch, codeStore.techStack, codeStore.repoFileTree]);
 
   const handleKeyDown = useCallback(
     (e) => {
