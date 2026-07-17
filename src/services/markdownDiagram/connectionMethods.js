@@ -74,7 +74,7 @@ export const connectionMethods = {
     }
 
     const existingConnections = useConnectionStore.getState().connections;
-    const existingConnectionPairs = new Set(existingConnections.length);
+    const existingConnectionPairs = new Set();
     for (let i = 0; i < existingConnections.length; i++) {
       const conn = existingConnections[i];
       const sId = conn.start?.objectId;
