@@ -3302,6 +3302,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     const poolSize = Math.min(MAX_CONCURRENCY, filesToProcess.length);
     await Promise.all(Array.from({ length: poolSize }, () => fetchWorker()));
 
+    const PROCESS_YIELD_EVERY = 50;
     for (let idx = 0; idx < fetched.length; idx++) {
       const entry = fetched[idx];
       if (!entry) continue;
@@ -3310,6 +3311,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       if (onProgress) {
         const pct = 35 + Math.round(((idx + 1) / fetched.length) * 5);
         onProgress(pct, `Processing files (${idx + 1}/${fetched.length})...`);
+      }
+      if (idx % PROCESS_YIELD_EVERY === 0) {
+        await new Promise(r => setTimeout(r, 0));
       }
     }
 

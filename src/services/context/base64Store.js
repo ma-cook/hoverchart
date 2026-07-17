@@ -6,10 +6,14 @@ export class Base64Store {
     this.encodedChunks = new Map();
   }
 
-  encodeAll() {
+  async encodeAll() {
     this.encodedChunks.clear();
 
-    for (const [entryId, entry] of this.contentStore.entries) {
+    const entries = Array.from(this.contentStore.entries);
+    const CHUNK_ENCODE_BATCH = 200;
+
+    for (let i = 0; i < entries.length; i++) {
+      const [entryId, entry] = entries[i];
       for (const chunk of entry.chunks) {
         const b64 = btoa(unescape(encodeURIComponent(chunk.text)));
         this.encodedChunks.set(chunk.id, {
@@ -25,6 +29,9 @@ export class Base64Store {
             endIndex: chunk.endIndex,
           },
         });
+      }
+      if (i % CHUNK_ENCODE_BATCH === 0 && i > 0) {
+        await new Promise(r => setTimeout(r, 0));
       }
     }
   }

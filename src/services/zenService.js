@@ -556,10 +556,10 @@ export function populateContentStore() {
   }
 }
 
-export function finalizeContentStore() {
+export async function finalizeContentStore() {
   const store = getContentStore();
   const base64Store = getBase64Store();
-  base64Store.encodeAll();
+  await base64Store.encodeAll();
 
   const indexState = useContentIndexStore.getState();
   indexState.setManifest(store.getManifest());

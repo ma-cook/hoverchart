@@ -74,7 +74,14 @@ export const hierarchyMethods = {
     const componentConnectionTypes = new Map(); // Track connection types between components: 'parent->child' -> Set of types
 
     if (graph.connections && graph.connections.size > 0) {
+      // Cache DFS results to avoid O(N*M) repeated traversals.
+      // Key: "startNode->targetNode", Value: true (would cycle) / false (safe)
+      const cycleCache = new Map();
+
       const wouldCreateCycle = (startNodeId, targetNodeId) => {
+        const cacheKey = `${startNodeId}->${targetNodeId}`;
+        if (cycleCache.has(cacheKey)) return cycleCache.get(cacheKey);
+
         const visited = new Set();
         const dfs = (nodeId) => {
           if (nodeId === targetNodeId) return true;
@@ -87,7 +94,9 @@ export const hierarchyMethods = {
           }
           return false;
         };
-        return dfs(startNodeId);
+        const result = dfs(startNodeId);
+        cycleCache.set(cacheKey, result);
+        return result;
       };
 
       const warnedCycles = new Set();

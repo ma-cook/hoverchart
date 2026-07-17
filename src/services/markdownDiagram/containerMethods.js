@@ -251,7 +251,7 @@ export const containerMethods = {
     }
 
     if (containerCubes.length > 0) {
-      const currentObjects = useObjectsStore.getState().objects;
+      const currentObjects = existingObjectsSnapshot;
       useObjectsStore.getState().setObjects([...currentObjects, ...containerCubes]);
     }
   },
@@ -414,7 +414,7 @@ export const containerMethods = {
 
     allObjectsToSave.push(containerForSave);
 
-    const currentObjects = useObjectsStore.getState().objects;
+    const currentObjects = existingObjectsForHierarchy;
     useObjectsStore.getState().setObjects([...currentObjects, containerCube]);
   },
 
@@ -775,7 +775,7 @@ export const containerMethods = {
     }
 
     if (containerCubes.length > 0) {
-      const currentObjects = useObjectsStore.getState().objects;
+      const currentObjects = existingObjectsForContainers;
       useObjectsStore.getState().setObjects([...currentObjects, ...containerCubes]);
     }
   },

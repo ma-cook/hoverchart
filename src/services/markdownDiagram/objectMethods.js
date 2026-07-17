@@ -152,7 +152,7 @@ export const objectMethods = {
     // Flush accumulated objects to the Zustand store every STORE_FLUSH_SIZE items
     // so React can start progressive mounting while more objects are being built.
     const YIELD_EVERY_N_BATCHES = 1;      // yield after every batch
-    const STORE_FLUSH_SIZE = 500;
+    const STORE_FLUSH_SIZE = 1000;
 
     // Build a lookup map of existing objects by merfolkData.nodeId to avoid re-creating
     const existingObjects = useObjectsStore.getState().objects;
@@ -430,22 +430,20 @@ export const objectMethods = {
     // ── Apply position updates in a single pass ──────────────────────
     if (positionUpdates.size > 0) {
       const currentObjects = useObjectsStore.getState().objects;
-      const idToObject = new Map(currentObjects.map(obj => [obj.id, obj]));
-      const updated = currentObjects.map((obj) =>
-        positionUpdates.has(obj.id)
-          ? { ...obj, position: positionUpdates.get(obj.id) }
-          : obj
-      );
-      useObjectsStore.getState().setObjects(updated);
+      for (let i = 0; i < currentObjects.length; i++) {
+        const obj = currentObjects[i];
+        if (positionUpdates.has(obj.id)) {
+          currentObjects[i] = { ...obj, position: positionUpdates.get(obj.id) };
+        }
+      }
+      useObjectsStore.getState().setObjects(currentObjects);
 
       // Persist position updates for existing objects that were repositioned
-      // by the layout computation. Use the store's current data (which preserves
-      // any manual edits) with only the position changed.
       for (const [objId, newPos] of positionUpdates) {
-        const existing = idToObject.get(objId);
-        if (existing) {
+        const updated = currentObjects.find(o => o.id === objId);
+        if (updated) {
           allObjectsToSave.push({
-            ...existing,
+            ...updated,
             position: newPos,
           });
         }
@@ -477,7 +475,9 @@ export const objectMethods = {
       allObjectsToSave
     );
 
+    await new Promise(r => setTimeout(r, 0));
     await this.createGroupContainers(context, allObjectsToSave);
+    await new Promise(r => setTimeout(r, 0));
     await this.createRootHierarchyContainer(context, allObjectsToSave);
 
     return objectsCreated;

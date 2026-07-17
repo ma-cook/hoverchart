@@ -74,11 +74,15 @@ export const connectionMethods = {
     }
 
     const existingConnections = useConnectionStore.getState().connections;
-    const existingConnectionPairs = new Set(
-      existingConnections
-        .filter((conn) => conn.start?.objectId && conn.end?.objectId)
-        .map((conn) => `${conn.start.objectId}|${conn.end.objectId}`)
-    );
+    const existingConnectionPairs = new Set(existingConnections.length);
+    for (let i = 0; i < existingConnections.length; i++) {
+      const conn = existingConnections[i];
+      const sId = conn.start?.objectId;
+      const eId = conn.end?.objectId;
+      if (sId && eId) {
+        existingConnectionPairs.add(`${sId}|${eId}`);
+      }
+    }
 
     const objectsById = new Map(
       useObjectsStore.getState().objects.map(obj => [obj.id, obj])

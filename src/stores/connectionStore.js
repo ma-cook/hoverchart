@@ -154,9 +154,29 @@ const useConnectionStore = create((set, get) => ({
       }
 
       const newConns = [...state.connections, ...newConnections];
+      // Incrementally merge into existing index instead of rebuilding from scratch
+      const newIndex = new Map(state.connectionsByObjectId);
+      for (let i = 0; i < newConnections.length; i++) {
+        const conn = newConnections[i];
+        const startId = conn.start?.objectId || conn.start?.cube?.id || conn.start?.id;
+        const endId = conn.end?.objectId || conn.end?.cube?.id || conn.end?.id;
+        const sKey = startId != null ? String(startId) : null;
+        const eKey = endId != null ? String(endId) : null;
+        if (sKey) {
+          let arr = newIndex.get(sKey);
+          if (!arr) { arr = []; newIndex.set(sKey, arr); }
+          arr.push(conn);
+        }
+        if (eKey && eKey !== sKey) {
+          let arr = newIndex.get(eKey);
+          if (!arr) { arr = []; newIndex.set(eKey, arr); }
+          arr.push(conn);
+        }
+      }
+
       const newState = {
         connections: newConns,
-        connectionsByObjectId: _buildConnectionsByObjectId(newConns),
+        connectionsByObjectId: newIndex,
       };
 
       // Log state after update
