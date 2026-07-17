@@ -169,6 +169,7 @@ export const objectMethods = {
     const nodeEntries = Array.from(nodePositions);
     let objectsCreated = 0;
     let storeBatch = [];
+    let prevObjectCount = existingObjects.length;
 
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
@@ -389,7 +390,13 @@ export const objectMethods = {
           i + OBJECT_BATCH_SIZE >= nodeEntries.length) {
         if (storeBatch.length > 0) {
           const currentObjects = useObjectsStore.getState().objects;
-          useObjectsStore.getState().setObjects([...currentObjects, ...storeBatch]);
+          if (storeBatch.length > 0) {
+            const updated = currentObjects.length === prevObjectCount
+              ? [...currentObjects, ...storeBatch]
+              : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
+            useObjectsStore.getState().setObjects(updated);
+            prevObjectCount = updated.length;
+          }
 
           // Cache in allCellObjects so objects survive unload/reload
           const byCell = new Map();
@@ -412,13 +419,18 @@ export const objectMethods = {
     // Flush any remaining batch
     if (storeBatch.length > 0) {
       const currentObjects = useObjectsStore.getState().objects;
-      useObjectsStore.getState().setObjects([...currentObjects, ...storeBatch]);
+      const updated = currentObjects.length === prevObjectCount
+        ? [...currentObjects, ...storeBatch]
+        : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
+      useObjectsStore.getState().setObjects(updated);
+      prevObjectCount = updated.length;
       storeBatch = [];
     }
 
     // ── Apply position updates in a single pass ──────────────────────
     if (positionUpdates.size > 0) {
       const currentObjects = useObjectsStore.getState().objects;
+      const idToObject = new Map(currentObjects.map(obj => [obj.id, obj]));
       const updated = currentObjects.map((obj) =>
         positionUpdates.has(obj.id)
           ? { ...obj, position: positionUpdates.get(obj.id) }
@@ -430,7 +442,7 @@ export const objectMethods = {
       // by the layout computation. Use the store's current data (which preserves
       // any manual edits) with only the position changed.
       for (const [objId, newPos] of positionUpdates) {
-        const existing = currentObjects.find(o => o.id === objId);
+        const existing = idToObject.get(objId);
         if (existing) {
           allObjectsToSave.push({
             ...existing,

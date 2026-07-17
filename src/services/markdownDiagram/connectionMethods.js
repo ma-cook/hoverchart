@@ -80,6 +80,10 @@ export const connectionMethods = {
         .map((conn) => `${conn.start.objectId}|${conn.end.objectId}`)
     );
 
+    const objectsById = new Map(
+      useObjectsStore.getState().objects.map(obj => [obj.id, obj])
+    );
+
     Array.from(graph.connections.values()).forEach((connection) => {
       const sourceNodeId = connection.source?.nodeId || connection.source;
       const targetNodeId = connection.target?.nodeId || connection.target;
@@ -114,13 +118,8 @@ export const connectionMethods = {
           sourceObject = nodeDataMap.get(sourceNodeId);
           targetObject = nodeDataMap.get(targetNodeId);
         } else {
-          const objectsStore = useObjectsStore.getState();
-          sourceObject = objectsStore.objects.find(
-            (obj) => obj.id === sourceObjectId
-          );
-          targetObject = objectsStore.objects.find(
-            (obj) => obj.id === targetObjectId
-          );
+          sourceObject = objectsById.get(sourceObjectId);
+          targetObject = objectsById.get(targetObjectId);
         }
 
         if (!sourceObject || !targetObject) {
