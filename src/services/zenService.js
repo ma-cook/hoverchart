@@ -481,31 +481,36 @@ function isKeyFile(path) {
 }
 
 export async function fetchRepoContext(token, owner, repo, branch) {
-  const treeResult = await getRepoTree(token, owner, repo, branch);
-  if (!treeResult.ok || !treeResult.data?.tree) {
-    return { fileTree: [], fileContents: {}, error: treeResult.error };
-  }
-
-  await new Promise(r => setTimeout(r, 0));
-
-  const treeEntries = treeResult.data.tree;
-  const entries = treeEntries.filter(e => e.type === 'blob');
-  const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
-
-  const filesToFetch = filePaths.filter(isKeyFile).slice(0, 8);
-
-  const fileContents = {};
-  await Promise.all(filesToFetch.map(async (path) => {
-    const result = await getFileContents(token, owner, repo, path, branch);
-    if (result.ok && result.data) {
-      try {
-        const raw = atob(result.data.content);
-        fileContents[path] = decodeURIComponent(escape(raw));
-      } catch {}
+  try {
+    const treeResult = await getRepoTree(token, owner, repo, branch);
+    if (!treeResult.ok || !treeResult.data?.tree) {
+      return { fileTree: [], fileContents: {}, error: treeResult.error };
     }
-  }));
 
-  return { fileTree: filePaths, fileContents, error: null };
+    await new Promise(r => setTimeout(r, 0));
+
+    const treeEntries = treeResult.data.tree;
+    const entries = treeEntries.filter(e => e.type === 'blob');
+    const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
+
+    const filesToFetch = filePaths.filter(isKeyFile).slice(0, 8);
+
+    const fileContents = {};
+    await Promise.all(filesToFetch.map(async (path) => {
+      const result = await getFileContents(token, owner, repo, path, branch);
+      if (result.ok && result.data) {
+        try {
+          const raw = atob(result.data.content);
+          fileContents[path] = decodeURIComponent(escape(raw));
+        } catch {}
+      }
+    }));
+
+    return { fileTree: filePaths, fileContents, error: null };
+  } catch (err) {
+    console.error('[fetchRepoContext] step failed:', err.message, err.stack);
+    throw err;
+  }
 }
 
 export function populateContentStore() {
