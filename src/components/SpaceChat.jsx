@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStore } from '../services/zenService';
+import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStore, finalizeContentStore } from '../services/zenService';
 import { sendWithRetrieval, getBase64Store } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
@@ -511,6 +511,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     setPlanMessages(updatedMessages);
 
     populateContentStore();
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => finalizeContentStore());
+    } else {
+      setTimeout(() => finalizeContentStore(), 100);
+    }
 
     const sceneObjects = useObjectsStore.getState().objects;
     const zenMessages = await buildZenMessages({
@@ -648,6 +653,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       });
 
       populateContentStore();
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(() => finalizeContentStore());
+      } else {
+        setTimeout(() => finalizeContentStore(), 100);
+      }
 
       const codeResponse = await sendWithRetrieval({
         messages: codeGenMessages,
@@ -694,6 +704,16 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           setAssociatedCount(count);
 
           const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
+
+          if (result.success) {
+            const updatedContents = { ...(codeStore.repoFileContents || {}) };
+            for (const block of codeBlocks) {
+              if (block.filePath && block.code) {
+                updatedContents[block.filePath] = block.code;
+              }
+            }
+            codeStore.setRepoContext(codeStore.repoFileTree, updatedContents);
+          }
 
           const commitKey = `commit-${Date.now()}`;
           if (result.success) {
@@ -936,7 +956,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           fetchRepoContext(token, owner, repoName, branch)
             .then(ctx => {
               codeStore.setRepoContext(ctx.fileTree, ctx.fileContents);
-              populateContentStore();
+              if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(() => {
+                  populateContentStore();
+                  finalizeContentStore();
+                });
+              } else {
+                setTimeout(() => {
+                  populateContentStore();
+                  finalizeContentStore();
+                }, 100);
+              }
             })
             .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message));
         }

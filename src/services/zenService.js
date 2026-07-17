@@ -545,7 +545,10 @@ export function populateContentStore() {
       tags: ['plans'],
     });
   }
+}
 
+export function finalizeContentStore() {
+  const store = getContentStore();
   const base64Store = getBase64Store();
   base64Store.encodeAll();
 
