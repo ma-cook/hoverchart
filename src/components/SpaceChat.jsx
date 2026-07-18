@@ -7,6 +7,7 @@ import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useLlmStore from '../stores/llmStore';
+import useDiagramStore from '../stores/diagramStore';
 import { PROVIDERS, fetchModels } from '../services/llmProviders';
 import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
 import { markdownDiagramService } from '../services/markdownDiagramService';
@@ -933,6 +934,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const scanRepoForDiagram = async (repo) => {
     if (!repo || !user || !spaceId || !onCreateObject) return;
     setScanProgress({ stage: 'Starting scan...', progress: 0 });
+    let lastProgressTime = 0;
     try {
       const result = await scanRepositoryAndGenerateDiagram(
         repo,
@@ -942,7 +944,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         uploadMarkdownToStorage,
         markdownDiagramService,
         (progress, stage) => {
-          setScanProgress({ stage, progress });
+          const now = Date.now();
+          if (now - lastProgressTime > 300) {
+            lastProgressTime = now;
+            setScanProgress({ stage, progress });
+          }
         }
       );
       if (result.success) {
@@ -960,18 +966,23 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           const branch = selectedBranch || repo.default_branch || 'main';
           fetchRepoContext(token, owner, repoName, branch)
             .then(ctx => {
+              const applyContext = () => {
+                useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
+                populateContentStore();
+                finalizeContentStore();
+              };
+              const waitForMount = () => {
+                const progress = useDiagramStore.getState().renderProgress;
+                if (progress && progress.mounted < progress.total) {
+                  requestIdleCallback(waitForMount);
+                } else {
+                  applyContext();
+                }
+              };
               if (typeof requestIdleCallback === 'function') {
-                requestIdleCallback(() => {
-                  useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
-                  populateContentStore();
-                  finalizeContentStore();
-                });
+                requestIdleCallback(waitForMount);
               } else {
-                setTimeout(() => {
-                  useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
-                  populateContentStore();
-                  finalizeContentStore();
-                }, 100);
+                setTimeout(waitForMount, 100);
               }
             })
             .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message, err.stack));

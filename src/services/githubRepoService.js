@@ -3302,7 +3302,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     const poolSize = Math.min(MAX_CONCURRENCY, filesToProcess.length);
     await Promise.all(Array.from({ length: poolSize }, () => fetchWorker()));
 
-    const PROCESS_YIELD_EVERY = 50;
+    const PROCESS_YIELD_EVERY = 10;
     for (let idx = 0; idx < fetched.length; idx++) {
       const entry = fetched[idx];
       if (!entry) continue;
