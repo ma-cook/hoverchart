@@ -42,6 +42,11 @@ const precomputedResults = new Map();
 /** True while a worker batch is in-flight to avoid duplicate dispatches. */
 let _workerBusy = false;
 
+/** Check if the pathfinding worker is currently computing. */
+export function isWorkerBusy() {
+  return _workerBusy;
+}
+
 /**
  * Completely clear all path-finding caches.
  * Call this whenever objects move so that intersection checks use fresh geometry.

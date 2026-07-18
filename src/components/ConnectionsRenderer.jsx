@@ -15,6 +15,7 @@ import {
   invalidatePathfindingCaches,
   computeConnectionPath,
   precomputePathsBatch,
+  isWorkerBusy,
 } from '../utils/pathfindingUtils';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
@@ -1190,16 +1191,26 @@ const ConnectionsRenderer = ({
     const inputsRef = lastCategorizationInputsRef.current;
     const cacheRef = lastCategorizationRef.current;
 
+    // During bulk operations (repo scan), suppress expensive pathfinding.
+    // Connections already have correct positions from createConnectionsFromDiagram.
+    // Return cached results (or treat all as batched) to avoid O(C*N) blocking.
+    // Also skip while the worker is computing — cache will be populated soon.
+    if (window._connectionUpdateSkip || isWorkerBusy()) {
+      if (cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0) {
+        return cacheRef;
+      }
+      // No cache yet — treat all as batched (straight lines, no intersection checks)
+      return {
+        batchedConnections: progressiveConnections || [],
+        textConnections: [],
+        curvedConnections: [],
+        individualConnections: [],
+      };
+    }
+
     const objectsChanged = pathfindingObjects !== prevPathfindingObjectsRef.current;
-    
+
     // True early exit: nothing at all changed
-    // IMPORTANT: never skip when objects changed — a moved object may now intersect lines
-    // that are not connected to it, requiring those lines to switch to curved.
-    // BUGFIX: Compare progressiveConnections by REFERENCE, not just length.
-    // When RealTimeConnectionUpdater updates connection positions in the store,
-    // progressiveConnections gets a new reference with updated position data.
-    // Comparing only length would return stale cached connection objects with
-    // old positions, causing text labels to cluster at outdated coordinates.
     if (
       !objectsChanged &&
       progressiveConnections === inputsRef.progressiveConnectionsRef &&
