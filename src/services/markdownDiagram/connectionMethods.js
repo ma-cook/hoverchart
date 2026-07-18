@@ -61,7 +61,7 @@ export const connectionMethods = {
     return content.replace(/^[ \t]*flowpath\b[^\n]*/gm, '');
   },
 
-  createConnectionsFromDiagram(
+  async createConnectionsFromDiagram(
     diagram,
     nodeToObjectIdMap,
     allConnectionsToSave,
@@ -88,7 +88,11 @@ export const connectionMethods = {
       useObjectsStore.getState().objects.map(obj => [obj.id, obj])
     );
 
-    Array.from(graph.connections.values()).forEach((connection) => {
+    const connectionsArray = Array.from(graph.connections.values());
+    const CONN_YIELD_EVERY = 100;
+
+    for (let ci = 0; ci < connectionsArray.length; ci++) {
+      const connection = connectionsArray[ci];
       const sourceNodeId = connection.source?.nodeId || connection.source;
       const targetNodeId = connection.target?.nodeId || connection.target;
 
@@ -349,7 +353,11 @@ export const connectionMethods = {
 
         allConnectionsToSave.push(connectionData);
       }
-    });
+
+      if (ci % CONN_YIELD_EVERY === 0) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
   },
 
   async saveConnections(

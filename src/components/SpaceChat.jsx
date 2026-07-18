@@ -346,11 +346,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const streamingMsgKeyRef = useRef(0);
   const abortControllerRef = useRef(null);
 
-  const codeStore = useCodeStore();
+  const githubConnected = useCodeStore(s => s.githubConnected);
+  const selectedRepo = useCodeStore(s => s.selectedRepo);
+  const selectedBranch = useCodeStore(s => s.selectedBranch);
+  const branchStrategy = useCodeStore(s => s.branchStrategy);
+  const techStack = useCodeStore(s => s.techStack);
   const llmStore = useLlmStore();
 
   useEffect(() => {
-    codeStore.setSpaceId(spaceId);
+    useCodeStore.getState().setSpaceId(spaceId);
   }, [spaceId]);
 
   useEffect(() => {
@@ -618,7 +622,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     setCodeMessages(updatedMessages);
 
     const sceneObjects = useObjectsStore.getState().objects;
-    const techStack = codeStore.techStack;
 
     setStreaming(true);
     streamingRef.current = '';
@@ -630,17 +633,18 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
     try {
       let repoContext = null;
-      if (codeStore.selectedRepo && codeStore.selectedBranch) {
-        if (codeStore.repoFileTree) {
-          repoContext = { fileTree: codeStore.repoFileTree, fileContents: codeStore.repoFileContents || {} };
+      if (selectedRepo && selectedBranch) {
+        const _cs = useCodeStore.getState();
+        if (_cs.repoFileTree) {
+          repoContext = { fileTree: _cs.repoFileTree, fileContents: _cs.repoFileContents || {} };
         } else {
           const token = getGithubToken();
           if (token) {
-            const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
-            const repoName = codeStore.selectedRepo.name;
-            const branchName = codeStore.selectedBranch;
+            const owner = selectedRepo.owner?.login || selectedRepo.owner;
+            const repoName = selectedRepo.name;
+            const branchName = selectedBranch;
             repoContext = await fetchRepoContext(token, owner, repoName, branchName);
-            codeStore.setRepoContext(repoContext.fileTree, repoContext.fileContents);
+            useCodeStore.getState().setRepoContext(repoContext.fileTree, repoContext.fileContents);
           }
         }
       }
@@ -693,12 +697,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
       const codeBlocks = extractCodeBlocks(codeResponse);
 
-      if (codeBlocks.length > 0 && codeStore.selectedRepo && codeStore.selectedBranch) {
+      if (codeBlocks.length > 0 && selectedRepo && selectedBranch) {
         const token = getGithubToken();
         if (token) {
-          const owner = codeStore.selectedRepo.owner?.login || codeStore.selectedRepo.owner;
-          const repoName = codeStore.selectedRepo.name;
-          const branchName = codeStore.selectedBranch;
+          const owner = selectedRepo.owner?.login || selectedRepo.owner;
+          const repoName = selectedRepo.name;
+          const branchName = selectedBranch;
 
           const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
           setAssociatedCount(count);
@@ -706,13 +710,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
 
           if (result.success) {
-            const updatedContents = { ...(codeStore.repoFileContents || {}) };
+            const _cs2 = useCodeStore.getState();
+            const updatedContents = { ...(_cs2.repoFileContents || {}) };
             for (const block of codeBlocks) {
               if (block.filePath && block.code) {
                 updatedContents[block.filePath] = block.code;
               }
             }
-            codeStore.setRepoContext(codeStore.repoFileTree, updatedContents);
+            _cs2.setRepoContext(_cs2.repoFileTree, updatedContents);
           }
 
           const commitKey = `commit-${Date.now()}`;
@@ -748,7 +753,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, codeMessages, spaceId, user, codeStore.selectedRepo, codeStore.selectedBranch, codeStore.techStack, codeStore.repoFileTree]);
+  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -770,10 +775,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     setAssociatedCount(0);
     setPushNotification(null);
 
-    if (mode === 'code' && !codeStore.techStack) {
+    if (mode === 'code' && !techStack) {
       setShowTechStackPrompt(true);
     }
-  }, [spaceId, codeStore]);
+  }, [spaceId, techStack]);
 
   const handleCreatePlan = useCallback(async () => {
     let container = planContainer || await createPlanContainer(user, spaceId);
@@ -798,16 +803,16 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
   useEffect(() => {
     const githubConnected = isGithubAuthenticated();
-    if (githubConnected !== codeStore.githubConnected) {
-      codeStore.setGithubConnected(githubConnected);
+    if (githubConnected !== githubConnected) {
+      useCodeStore.getState().setGithubConnected(githubConnected);
     }
-  }, [codeStore.githubConnected]);
+  }, [githubConnected]);
 
   useEffect(() => {
     if (!showBranchPrompt) return;
-    if (codeStore.branchStrategy !== 'existing') return;
+    if (branchStrategy !== 'existing') return;
 
-    const repo = codeStore.selectedRepo;
+    const repo = selectedRepo;
     if (!repo) return;
     const owner = repo.owner?.login || repo.owner;
     const repoName = repo.name;
@@ -824,14 +829,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       })
       .catch(() => setAvailableBranches([]))
       .finally(() => setBranchFetching(false));
-  }, [showBranchPrompt, codeStore.branchStrategy, codeStore.selectedRepo]);
+  }, [showBranchPrompt, branchStrategy, selectedRepo]);
 
   const handleTechStackSubmit = () => {
     const stack = techStackInput.trim();
     if (stack) {
-      codeStore.setTechStack(stack, 'user');
+      useCodeStore.getState().setTechStack(stack, 'user');
     } else {
-      codeStore.setTechStack('Let the LLM decide what tech stack is best for this architecture', 'llm');
+      useCodeStore.getState().setTechStack('Let the LLM decide what tech stack is best for this architecture', 'llm');
     }
     setShowTechStackPrompt(false);
     setTechStackInput('');
@@ -919,7 +924,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   };
 
   const handleSelectRepo = async (repo) => {
-    codeStore.setSelectedRepo(repo);
+    useCodeStore.getState().setSelectedRepo(repo);
     setShowRepos(false);
     setShowBranchPrompt(true);
     await scanRepoForDiagram(repo);
@@ -952,17 +957,18 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         if (token) {
           const owner = repo.owner?.login || repo.owner;
           const repoName = repo.name;
-          const branch = codeStore.selectedBranch || repo.default_branch || 'main';
+          const branch = selectedBranch || repo.default_branch || 'main';
           fetchRepoContext(token, owner, repoName, branch)
             .then(ctx => {
-              codeStore.setRepoContext(ctx.fileTree, ctx.fileContents);
               if (typeof requestIdleCallback === 'function') {
                 requestIdleCallback(() => {
+                  useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
                   populateContentStore();
                   finalizeContentStore();
                 });
               } else {
                 setTimeout(() => {
+                  useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
                   populateContentStore();
                   finalizeContentStore();
                 }, 100);
@@ -998,7 +1004,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       });
       if (!res.ok) throw new Error(`Failed to create repo: ${res.status}`);
       const repo = await res.json();
-      codeStore.setSelectedRepo(repo);
+      useCodeStore.getState().setSelectedRepo(repo);
       setShowNewRepoInput(false);
       setNewRepoName('');
       setShowBranchPrompt(true);
@@ -1011,14 +1017,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   };
 
   const handleBranchConfirm = async () => {
-    const repo = codeStore.selectedRepo;
+    const repo = selectedRepo;
     if (!repo) return;
     const owner = repo.owner?.login || repo.owner;
     const repoName = repo.name;
     const token = getGithubToken();
     if (!token) return;
 
-    const strategy = codeStore.branchStrategy;
+    const strategy = branchStrategy;
     let branch = 'main';
 
     if (strategy === 'new') {
@@ -1040,7 +1046,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       branch = repo.default_branch || 'main';
     }
 
-    codeStore.setSelectedBranch(branch);
+    useCodeStore.getState().setSelectedBranch(branch);
     setShowBranchPrompt(false);
     setBranchNameInput('');
     setPushNotification({ type: 'success', message: `Working in ${owner}/${repoName}:${branch}` });
@@ -1095,7 +1101,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               onClick={() => setShowGithubPanel(v => !v)}
               title="GitHub"
             >
-              {codeStore.githubConnected ? '◉' : '○'}
+              {githubConnected ? '◉' : '○'}
             </button>
           )}
           <button
@@ -1141,7 +1147,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                 autoFocus
               />
               <div className="space-chat-modal-actions">
-                <button className="space-chat-modal-btn" onClick={() => { codeStore.setTechStack('', 'llm'); setShowTechStackPrompt(false); }}>
+                <button className="space-chat-modal-btn" onClick={() => { useCodeStore.getState().setTechStack('', 'llm'); setShowTechStackPrompt(false); }}>
                   Let LLM decide
                 </button>
                 <button className="space-chat-modal-btn primary" onClick={handleTechStackSubmit}>
@@ -1192,14 +1198,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
             <div className="space-chat-modal-title">Commit Strategy</div>
             <div className="space-chat-modal-body">
-              <p>How should code be committed to {codeStore.selectedRepo?.name}?</p>
+              <p>How should code be committed to {selectedRepo?.name}?</p>
               <div className="space-chat-modal-options">
                 <label className="space-chat-modal-option">
                   <input
                     type="radio"
                     name="branchStrategy"
-                    checked={codeStore.branchStrategy === 'main'}
-                    onChange={() => codeStore.setBranchStrategy('main')}
+                    checked={branchStrategy === 'main'}
+                    onChange={() => useCodeStore.getState().setBranchStrategy('main')}
                   />
                   <span>Commit to main/master</span>
                 </label>
@@ -1207,8 +1213,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                   <input
                     type="radio"
                     name="branchStrategy"
-                    checked={codeStore.branchStrategy === 'new'}
-                    onChange={() => codeStore.setBranchStrategy('new')}
+                    checked={branchStrategy === 'new'}
+                    onChange={() => useCodeStore.getState().setBranchStrategy('new')}
                   />
                   <span>Create new branch</span>
                 </label>
@@ -1216,13 +1222,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                   <input
                     type="radio"
                     name="branchStrategy"
-                    checked={codeStore.branchStrategy === 'existing'}
-                    onChange={() => codeStore.setBranchStrategy('existing')}
+                    checked={branchStrategy === 'existing'}
+                    onChange={() => useCodeStore.getState().setBranchStrategy('existing')}
                   />
                   <span>Select existing branch</span>
                 </label>
               </div>
-              {codeStore.branchStrategy === 'new' && (
+              {branchStrategy === 'new' && (
                 <input
                   className="space-chat-modal-input"
                   type="text"
@@ -1233,7 +1239,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                   autoFocus
                 />
               )}
-              {codeStore.branchStrategy === 'existing' && (
+              {branchStrategy === 'existing' && (
                 <select
                   className="space-chat-modal-input space-chat-modal-select"
                   value={branchNameInput}
@@ -1265,18 +1271,18 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       {/* GitHub Panel */}
       {showGithubPanel && chatMode === 'code' && (
         <div className="space-chat-github-panel">
-          {!codeStore.githubConnected ? (
+          {!githubConnected ? (
             <button className="github-login-button" onClick={handleGithubLogin}>
               Connect to GitHub
             </button>
           ) : (
             <div className="space-chat-github-connected">
-              {codeStore.selectedRepo ? (
+              {selectedRepo ? (
                 <div className="space-chat-repo-info">
                   <span className="space-chat-repo-name">
-                    {codeStore.selectedRepo.full_name || codeStore.selectedRepo.name}
+                    {selectedRepo.full_name || selectedRepo.name}
                   </span>
-                  <span className="space-chat-branch-name">:{codeStore.selectedBranch}</span>
+                  <span className="space-chat-branch-name">:{selectedBranch}</span>
                   <button
                     className="space-chat-small-btn"
                     onClick={() => setShowBranchPrompt(true)}
@@ -1388,8 +1394,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                   <>
                     Generate code from your architecture diagram.
                     <br /><br />
-                    {codeStore.techStack ? (
-                      <>Tech stack: {codeStore.techStack}</>
+                    {techStack ? (
+                      <>Tech stack: {techStack}</>
                     ) : (
                       <>I&apos;ll ask about your tech stack first.</>
                     )}

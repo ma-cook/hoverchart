@@ -246,7 +246,7 @@ export const processMethods = {
 
       totalObjectsCreated += objectsCreated;
 
-      this.createConnectionsFromDiagram(
+      await this.createConnectionsFromDiagram(
         diagram,
         nodeToObjectIdMap,
         allConnectionsToSave,
@@ -262,6 +262,7 @@ export const processMethods = {
     // Objects that have a merfolkData.nodeId that no longer exists in
     // the current diagram are leftovers from previous scans.  Delete
     // them from the store and backend so they don't accumulate.
+    await new Promise(r => setTimeout(r, 0));
     const activeNodeIds = new Set(nodeToObjectIdMap.keys());
     const allObjects = useObjectsStore.getState().objects;
     const orphans = allObjects.filter(
@@ -276,6 +277,8 @@ export const processMethods = {
         allObjects.filter((o) => !orphanIds.has(o.id))
       );
 
+      await new Promise(r => setTimeout(r, 0));
+
       // Clean up any connections attached to orphaned objects
       const connectionStore = useConnectionStore.getState();
       const remainingConnections = connectionStore.connections.filter(
@@ -284,6 +287,8 @@ export const processMethods = {
           !orphanIds.has(conn.end?.objectId)
       );
       useConnectionStore.getState().setConnections(remainingConnections);
+
+      await new Promise(r => setTimeout(r, 0));
 
       // Fire-and-forget backend deletions for orphaned objects
       if (user && currentSpaceId) {
