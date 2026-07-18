@@ -802,9 +802,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   }, []);
 
   useEffect(() => {
-    const githubConnected = isGithubAuthenticated();
-    if (githubConnected !== githubConnected) {
-      useCodeStore.getState().setGithubConnected(githubConnected);
+    const isAuth = isGithubAuthenticated();
+    if (isAuth !== githubConnected) {
+      useCodeStore.getState().setGithubConnected(isAuth);
     }
   }, [githubConnected]);
 
