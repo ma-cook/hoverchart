@@ -378,9 +378,20 @@ const useConnectionStore = create((set, get) => ({
       const newConnections = [...state.connections];
       newConnections[connectionIndex] = { ...currentConnection, ...updates };
 
+      // Incremental index update: replace this connection in-place
+      const updatedConn = newConnections[connectionIndex];
+      const newIndex = new Map(state.connectionsByObjectId);
+      for (const [, arr] of newIndex) {
+        for (let i = 0; i < arr.length; i++) {
+          if (arr[i].id === updatedConn.id) {
+            arr[i] = updatedConn;
+          }
+        }
+      }
+
       return {
         connections: newConnections,
-        connectionsByObjectId: _buildConnectionsByObjectId(newConnections),
+        connectionsByObjectId: newIndex,
       };
     });
     // PERFORMANCE: Disable logging during style updates to prevent any potential issues
@@ -395,6 +406,7 @@ const useConnectionStore = create((set, get) => ({
 
     set((state) => {
       let newConnections = null; // PERFORMANCE: Defer array copy until we know there are changes
+      const updatedIds = new Set(connectionUpdates.keys());
 
       // Apply all updates in a single pass
       connectionUpdates.forEach((updates, connectionId) => {
@@ -447,9 +459,20 @@ const useConnectionStore = create((set, get) => ({
         return state; // No actual changes, no array copy was made
       }
 
+      // Incremental index update: only replace changed connections in-place
+      // instead of rebuilding the entire Map from scratch.
+      const byId = new Map(newConnections.map(c => [c.id, c]));
+      const newIndex = new Map(state.connectionsByObjectId);
+      for (const [, arr] of newIndex) {
+        for (let i = 0; i < arr.length; i++) {
+          const updated = byId.get(arr[i].id);
+          if (updated) arr[i] = updated;
+        }
+      }
+
       return {
         connections: newConnections,
-        connectionsByObjectId: _buildConnectionsByObjectId(newConnections),
+        connectionsByObjectId: newIndex,
       };
     });
 

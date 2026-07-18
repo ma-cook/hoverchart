@@ -935,6 +935,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     if (!repo || !user || !spaceId || !onCreateObject) return;
     setScanProgress({ stage: 'Starting scan...', progress: 0 });
     let lastProgressTime = 0;
+    window._connectionUpdateSkip = true;
     try {
       const result = await scanRepositoryAndGenerateDiagram(
         repo,
@@ -969,6 +970,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               const applyContext = async () => {
                 useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
                 await populateContentStore();
+                window._connectionUpdateSkip = false;
                 if (typeof requestIdleCallback === 'function') {
                   requestIdleCallback(() => finalizeContentStore());
                 } else {
@@ -992,11 +994,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message, err.stack));
         }
       } else {
+        window._connectionUpdateSkip = false;
         setScanProgress(null);
         setPushNotification({ type: 'error', message: 'Failed to create diagram from repo.' });
         setTimeout(() => setPushNotification(null), 5000);
       }
     } catch (err) {
+      window._connectionUpdateSkip = false;
       setScanProgress(null);
       setPushNotification({ type: 'error', message: `Scan error: ${err.message}` });
       setTimeout(() => setPushNotification(null), 5000);
