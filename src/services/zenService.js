@@ -462,6 +462,7 @@ import { buildContext } from './context/contextBuilder';
 import { RETRIEVAL_PROTOCOL_PROMPT } from './context/retrievalPrompt';
 import useCodeStore from '../stores/codeStore';
 import useObjectsStore from '../stores/objectsStore';
+import { getContentStoreWorker } from '../workers/contentStoreWorkerClient';
 import useContentIndexStore from '../stores/contentIndexStore';
 
 const KEY_FILE_PATTERNS = [
@@ -575,6 +576,33 @@ export async function finalizeContentStore() {
   const indexState = useContentIndexStore.getState();
   indexState.setManifest(store.getManifest());
   indexState.setTotalChunks(store.totalChunks);
+  indexState.setPopulated(Date.now());
+}
+
+export async function populateContentStoreWorker() {
+  const codeState = useCodeStore.getState();
+  const objects = useObjectsStore.getState().objects;
+  const planContext = getAllPlanContext();
+
+  const worker = getContentStoreWorker();
+  const result = await worker.processContent({
+    repoFileContents: codeState.repoFileContents || null,
+    objects: (objects || []).map(o => ({
+      nodeId: o.merfolkData?.nodeId,
+      nodeType: o.merfolkData?.nodeType || o.type,
+      name: o.headerText,
+      code: o.metadata?.code,
+      isContainer: o.merfolkData?.isContainer,
+    })),
+    planContext: planContext || '',
+  });
+
+  getContentStore().hydrate(result.entries, result.invertedIndexEntries, result.totalChunks);
+  getBase64Store().hydrate(result.encodedChunksEntries);
+
+  const indexState = useContentIndexStore.getState();
+  indexState.setManifest(result.manifest);
+  indexState.setTotalChunks(result.totalChunks);
   indexState.setPopulated(Date.now());
 }
 

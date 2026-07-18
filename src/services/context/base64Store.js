@@ -36,6 +36,13 @@ export class Base64Store {
     }
   }
 
+  hydrate(serializedEncodedChunks) {
+    this.encodedChunks.clear();
+    for (const [chunkId, data] of serializedEncodedChunks) {
+      this.encodedChunks.set(chunkId, data);
+    }
+  }
+
   getChunk(chunkId) {
     const encoded = this.encodedChunks.get(chunkId);
     if (!encoded) return null;

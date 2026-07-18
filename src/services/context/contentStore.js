@@ -70,6 +70,17 @@ export class ContentStore {
     this.totalChunks = 0;
   }
 
+  hydrate(serializedEntries, serializedInvertedIndex, totalChunks) {
+    this.clear();
+    for (const [id, entry] of serializedEntries) {
+      this.entries.set(id, entry);
+    }
+    for (const [keyword, chunkIds] of serializedInvertedIndex) {
+      this.invertedIndex.set(keyword, new Set(chunkIds));
+    }
+    this.totalChunks = totalChunks;
+  }
+
   search(query, { maxChunks = 10, category = null, entryIds = null } = {}) {
     const queryKeywords = extractKeywords(query, 20);
     const scores = new Map();

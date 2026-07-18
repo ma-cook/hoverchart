@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStore, finalizeContentStore } from '../services/zenService';
+import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
 import { sendWithRetrieval, getBase64Store } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
@@ -515,12 +515,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     const updatedMessages = [...planMessages, userMessage];
     setPlanMessages(updatedMessages);
 
-    populateContentStore();
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(() => finalizeContentStore());
-    } else {
-      setTimeout(() => finalizeContentStore(), 100);
-    }
+    populateContentStoreWorker();
 
     const sceneObjects = useObjectsStore.getState().objects;
     const zenMessages = await buildZenMessages({
@@ -657,12 +652,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         repoContext,
       });
 
-      populateContentStore();
-      if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(() => finalizeContentStore());
-      } else {
-        setTimeout(() => finalizeContentStore(), 100);
-      }
+      populateContentStoreWorker();
 
       const codeResponse = await sendWithRetrieval({
         messages: codeGenMessages,
@@ -971,14 +961,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               const applyContext = async () => {
                 useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
                 window._connectionUpdateSkip = false;
-                // Fire-and-forget: populate content store in background, never block main thread
-                populateContentStore().then(() => {
-                  if (typeof requestIdleCallback === 'function') {
-                    requestIdleCallback(() => finalizeContentStore());
-                  } else {
-                    setTimeout(() => finalizeContentStore(), 100);
-                  }
-                });
+                // Fire-and-forget: populate content store in background via worker
+                populateContentStoreWorker();
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;
