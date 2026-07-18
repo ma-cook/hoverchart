@@ -515,7 +515,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     const updatedMessages = [...planMessages, userMessage];
     setPlanMessages(updatedMessages);
 
-    populateContentStore();
+    await populateContentStore();
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(() => finalizeContentStore());
     } else {
@@ -657,7 +657,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         repoContext,
       });
 
-      populateContentStore();
+      await populateContentStore();
       if (typeof requestIdleCallback === 'function') {
         requestIdleCallback(() => finalizeContentStore());
       } else {
@@ -966,10 +966,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           const branch = selectedBranch || repo.default_branch || 'main';
           fetchRepoContext(token, owner, repoName, branch)
             .then(ctx => {
-              const applyContext = () => {
+              const applyContext = async () => {
                 useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
-                populateContentStore();
-                finalizeContentStore();
+                await populateContentStore();
+                if (typeof requestIdleCallback === 'function') {
+                  requestIdleCallback(() => finalizeContentStore());
+                } else {
+                  setTimeout(() => finalizeContentStore(), 100);
+                }
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;

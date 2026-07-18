@@ -513,31 +513,42 @@ export async function fetchRepoContext(token, owner, repo, branch) {
   }
 }
 
-export function populateContentStore() {
+const POPULATE_YIELD_EVERY = 50;
+
+export async function populateContentStore() {
   const store = getContentStore();
   const codeState = useCodeStore.getState();
 
   if (codeState.repoFileContents) {
-    for (const [filePath, content] of Object.entries(codeState.repoFileContents)) {
+    const entries = Object.entries(codeState.repoFileContents);
+    for (let i = 0; i < entries.length; i++) {
+      const [filePath, content] = entries[i];
       store.upsert(
         `repo:${filePath}`,
         ContentCategory.REPO_FILE,
         content,
         { sourcePath: filePath, tags: ['repo', 'code'] }
       );
+      if (i % POPULATE_YIELD_EVERY === 0 && i > 0) {
+        await new Promise(r => setTimeout(r, 0));
+      }
     }
   }
 
   const objects = useObjectsStore.getState().objects;
   if (objects && objects.length > 0) {
     const lines = [];
-    for (const obj of objects) {
+    for (let i = 0; i < objects.length; i++) {
+      const obj = objects[i];
       if (!obj.merfolkData?.nodeId || obj.merfolkData?.isContainer) continue;
       const nodeId = obj.merfolkData.nodeId;
       const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
       const name = obj.headerText || nodeId;
       const hasCode = obj.metadata?.code ? '\n' + obj.metadata.code : '';
       lines.push(`[${nodeId}] (${nodeType}) "${name}"${hasCode}`);
+      if (i % POPULATE_YIELD_EVERY === 0 && i > 0) {
+        await new Promise(r => setTimeout(r, 0));
+      }
     }
     if (lines.length > 0) {
       store.upsert('scene:architecture', ContentCategory.SCENE_CONTEXT, lines.join('\n\n'), {
