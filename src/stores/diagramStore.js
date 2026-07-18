@@ -28,6 +28,10 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   // { total: number, mounted: number }
   renderProgress: null,
 
+  // Progress of progressive connection mounting — null when idle
+  // { total: number, mounted: number }
+  connectionsProgress: null,
+
   setGraphs(graphs) {
     set({ graphs, is2DReady: !!graphs });
   },
@@ -65,8 +69,25 @@ const useDiagramStore = createWithEqualityFn((set) => ({
     set({ renderProgress: { total, mounted } });
   },
 
+  setConnectionsProgress(total, mounted) {
+    if (total === 0) {
+      set({ connectionsProgress: null });
+      return;
+    }
+    // Clear when fully mounted
+    if (mounted >= total) {
+      set({ connectionsProgress: null });
+      return;
+    }
+    set({ connectionsProgress: { total, mounted } });
+  },
+
   clearRenderProgress() {
     set({ renderProgress: null });
+  },
+
+  clearConnectionsProgress() {
+    set({ connectionsProgress: null });
   },
 
   clear() {
@@ -79,6 +100,7 @@ const useDiagramStore = createWithEqualityFn((set) => ({
       is2DReady: false,
       selectedNodeId: null,
       renderProgress: null,
+      connectionsProgress: null,
     });
   },
 }));

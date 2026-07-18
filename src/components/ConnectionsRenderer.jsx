@@ -28,6 +28,7 @@ import {
 } from '../hooks/useConnectionsRendererStore';
 import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
 import useConnectionStore from '../stores/connectionStore';
+import useDiagramStore from '../stores/diagramStore';
 
 // PERFORMANCE: Hoisted pointer handlers — identical for every connection,
 // avoids creating new closures on each render.
@@ -1077,6 +1078,9 @@ const ConnectionsRenderer = ({
       toAdd.forEach(id => current.add(id));
       if (removed || toAdd.length > 0) {
         setMountedConnIds(new Set(current));
+        const total = frustumCulledConnections.length;
+        const mounted = current.size;
+        useDiagramStore.getState().setConnectionsProgress(total, mounted);
       }
       return;
     }
@@ -1086,6 +1090,8 @@ const ConnectionsRenderer = ({
     const firstBatch = pendingConnsRef.current.splice(0, CONNECTION_MOUNT_BUDGET);
     firstBatch.forEach(id => current.add(id));
     setMountedConnIds(new Set(current));
+    // Report initial progress
+    useDiagramStore.getState().setConnectionsProgress(frustumCulledConnections.length, current.size);
 
     const mountNextBatch = () => {
       const pending = pendingConnsRef.current;
@@ -1117,11 +1123,16 @@ const ConnectionsRenderer = ({
 
       if (added > 0) {
         setMountedConnIds(new Set(mountedConnIdsRef.current));
+        const total = frustumCulledConnections.length;
+        const mounted = mountedConnIdsRef.current.size;
+        useDiagramStore.getState().setConnectionsProgress(total, mounted);
       }
 
       if (pending.length > 0) {
         connRafIdRef.current = requestAnimationFrame(mountNextBatch);
       } else {
+        // All connections mounted - clear progress
+        useDiagramStore.getState().setConnectionsProgress(frustumCulledConnections.length, frustumCulledConnections.length);
         connRafIdRef.current = null;
       }
     };

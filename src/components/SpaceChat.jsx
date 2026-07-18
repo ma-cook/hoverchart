@@ -936,6 +936,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     setScanProgress({ stage: 'Starting scan...', progress: 0 });
     let lastProgressTime = 0;
     window._connectionUpdateSkip = true;
+    useDiagramStore.getState().clearConnectionsProgress();
     try {
       const result = await scanRepositoryAndGenerateDiagram(
         repo,
@@ -981,10 +982,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;
-                if (progress && progress.mounted < progress.total) {
-                  requestIdleCallback(waitForMount);
-                } else {
+                const connProgress = useDiagramStore.getState().connectionsProgress;
+                const objectsDone = !progress || progress.mounted >= progress.total;
+                const connectionsDone = !connProgress || connProgress.mounted >= connProgress.total;
+                if (objectsDone && connectionsDone) {
                   applyContext();
+                } else {
+                  requestIdleCallback(waitForMount);
                 }
               };
               if (typeof requestIdleCallback === 'function') {
