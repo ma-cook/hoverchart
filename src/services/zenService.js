@@ -537,7 +537,8 @@ export async function populateContentStore() {
 
   const objects = useObjectsStore.getState().objects;
   if (objects && objects.length > 0) {
-    const lines = [];
+    const BATCH = 10;
+    let upsertIdx = 0;
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
       if (!obj.merfolkData?.nodeId || obj.merfolkData?.isContainer) continue;
@@ -545,16 +546,15 @@ export async function populateContentStore() {
       const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
       const name = obj.headerText || nodeId;
       const hasCode = obj.metadata?.code ? '\n' + obj.metadata.code : '';
-      lines.push(`[${nodeId}] (${nodeType}) "${name}"${hasCode}`);
-      if (i % POPULATE_YIELD_EVERY === 0 && i > 0) {
+      const text = `[${nodeId}] (${nodeType}) "${name}"${hasCode}`;
+      store.upsert(`scene:${nodeId}`, ContentCategory.SCENE_CONTEXT, text, {
+        sourcePath: 'scene',
+        tags: ['architecture', 'scene', nodeId],
+      });
+      upsertIdx++;
+      if (upsertIdx % BATCH === 0) {
         await new Promise(r => setTimeout(r, 0));
       }
-    }
-    if (lines.length > 0) {
-      store.upsert('scene:architecture', ContentCategory.SCENE_CONTEXT, lines.join('\n\n'), {
-        sourcePath: 'scene',
-        tags: ['architecture', 'scene'],
-      });
     }
   }
 
