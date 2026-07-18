@@ -515,7 +515,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     const updatedMessages = [...planMessages, userMessage];
     setPlanMessages(updatedMessages);
 
-    await populateContentStore();
+    populateContentStore();
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(() => finalizeContentStore());
     } else {
@@ -657,7 +657,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         repoContext,
       });
 
-      await populateContentStore();
+      populateContentStore();
       if (typeof requestIdleCallback === 'function') {
         requestIdleCallback(() => finalizeContentStore());
       } else {
@@ -969,13 +969,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             .then(ctx => {
               const applyContext = async () => {
                 useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
-                await populateContentStore();
                 window._connectionUpdateSkip = false;
-                if (typeof requestIdleCallback === 'function') {
-                  requestIdleCallback(() => finalizeContentStore());
-                } else {
-                  setTimeout(() => finalizeContentStore(), 100);
-                }
+                // Fire-and-forget: populate content store in background, never block main thread
+                populateContentStore().then(() => {
+                  if (typeof requestIdleCallback === 'function') {
+                    requestIdleCallback(() => finalizeContentStore());
+                  } else {
+                    setTimeout(() => finalizeContentStore(), 100);
+                  }
+                });
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;
