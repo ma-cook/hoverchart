@@ -64,6 +64,14 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
 
       const isKnownFile = existingContent !== null;
 
+      if (isKnownFile && !hasSearchReplaceMarkers(block.code)) {
+        skipped.push({
+          path: block.filePath,
+          error: `Existing file "${block.filePath}" must use SEARCH/REPLACE markers — outputting the full file will lose code. Use <<<<<<< SEARCH / >>>>>>> REPLACE markers with the exact existing code.`,
+        });
+        continue;
+      }
+
       if (hasSearchReplaceMarkers(block.code)) {
         if (!existingContent) {
           skipped.push({ path: block.filePath, error: 'File not found in repo — cannot apply SEARCH/REPLACE' });
@@ -81,13 +89,6 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
         });
         continue;
       } else {
-        if (isKnownFile && block.code.length < existingContent.length * 0.5) {
-          skipped.push({
-            path: block.filePath,
-            error: `Rejected: output (${block.code.length} chars) is less than 50% of existing file (${existingContent.length} chars) — refusing to overwrite`,
-          });
-          continue;
-        }
         files.push({ path: block.filePath, content: block.code });
         merged[block.filePath] = block.code;
       }

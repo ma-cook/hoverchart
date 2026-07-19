@@ -500,7 +500,7 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const entries = treeEntries.filter(e => e.type === 'blob');
     const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
 
-    const filesToFetch = filePaths.filter(isKeyFile).slice(0, 8);
+    const filesToFetch = filePaths.filter(isKeyFile).slice(0, 30);
 
     const fileContents = {};
     await Promise.all(filesToFetch.map(async (path) => {
@@ -670,7 +670,7 @@ The repository already has files. You MUST respect the existing file structure a
 FILE TREE:
 {fileTree}
 
-EXISTING KEY FILES:
+EXISTING KEY FILES (full content provided):
 {existingFiles}
 
 ═══════════════════════════════════════════════════════════════
@@ -686,13 +686,24 @@ TECH STACK
 {techStack}
 
 ═══════════════════════════════════════════════════════════════
+CRITICAL RULE: HOW TO MODIFY EXISTING FILES
+═══════════════════════════════════════════════════════════════
+
+NEVER output a complete existing file. You will LOSE code because you cannot fit the entire file in your response.
+
+For ANY file that appears in "EXISTING KEY FILES" above, you MUST use SEARCH/REPLACE markers.
+The SEARCH block must be copied EXACTLY from the file content shown above — character for character, including all whitespace and indentation.
+
+You can use multiple SEARCH/REPLACE blocks per file.
+
+═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
 FIRST: Write a brief 1-2 sentence summary of what you are doing.
 THEN: Output each file as a code block with the file path as the language identifier.
 
-For NEW files (not in the repo), output the complete file:
+--- For NEW files (not in the repo), output the complete file ---
 
 \`\`\`javascript:src/components/NewWidget.jsx
 // NODE: NewWidget
@@ -700,16 +711,14 @@ import React from 'react';
 export function NewWidget() { ... }
 \`\`\`
 
-For EXISTING files (shown in "Existing Key Files"), output ONLY the changes using SEARCH/REPLACE markers. Do NOT output the entire file — you may not have the full content. Use this exact format:
+--- For EXISTING files, use SEARCH/REPLACE markers ---
 
 \`\`\`javascript:src/components/Button.jsx
 <<<<<<< SEARCH
-import React from 'react';
 export function Button() {
   return <button>Click</button>;
 }
 =======
-import React from 'react';
 import { useState } from 'react';
 export function Button() {
   const [count, setCount] = useState(0);
@@ -718,7 +727,7 @@ export function Button() {
 >>>>>>> REPLACE
 \`\`\`
 
-You can use multiple SEARCH/REPLACE blocks per file. Each SEARCH block must match the existing code exactly — copy it verbatim from the "Existing Key Files" section or from retrieved content.
+The SEARCH block must match the existing code EXACTLY. Copy it verbatim from the "EXISTING KEY FILES" section above.
 
 ═══════════════════════════════════════════════════════════════
 RULES
@@ -726,12 +735,12 @@ RULES
 
 1. Start with a brief 1-2 sentence summary, then output code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. For EXISTING files: use SEARCH/REPLACE markers. Each SEARCH block must match the existing code exactly. Never output the entire file — only output the specific changes.
-4. For NEW files not in the repo: output the complete file from scratch
-5. Use the SAME import paths the existing code uses (check package.json, entry points, etc.)
-6. Every NEW file code block MUST be a complete, valid file — no placeholders, no "..." omissions, no partial files
+3. EXISTING files → SEARCH/REPLACE markers ONLY. NEVER output a complete existing file. The SEARCH block must match the code shown in "EXISTING KEY FILES" exactly.
+4. NEW files → output the complete file from scratch
+5. Use the SAME import paths the existing code uses
+6. Every NEW file code block MUST be a complete, valid file — no placeholders, no "..." omissions
 7. Include error handling and edge cases
-8. Maximum 5 code blocks per response
+8. Maximum 10 code blocks per response
 9. Use modern syntax and best practices for the target framework`;
 
 function buildFileTreeSection(fileTree) {
@@ -743,8 +752,7 @@ function buildExistingFilesSection(fileContents) {
   if (!fileContents || Object.keys(fileContents).length === 0) return '(no key files available)';
   const sections = [];
   for (const [path, content] of Object.entries(fileContents)) {
-    const truncated = content.length > 4000 ? content.slice(0, 4000) + '\n... (truncated, ' + content.length + ' chars total)' : content;
-    sections.push(`--- ${path} ---\n${truncated}`);
+    sections.push(`--- ${path} ---\n${content}`);
   }
   return sections.join('\n\n');
 }
