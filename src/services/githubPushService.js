@@ -53,7 +53,16 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
     for (const block of blocks) {
       if (!block.filePath || !block.code) continue;
 
-      const existingContent = await fetchFileContent(finalOwner, finalRepo, block.filePath, finalToken);
+      let existingContent = await fetchFileContent(finalOwner, finalRepo, block.filePath, finalToken);
+
+      if (!existingContent) {
+        const cs = useCodeStore.getState();
+        if (cs.repoFileContents && cs.repoFileContents[block.filePath]) {
+          existingContent = cs.repoFileContents[block.filePath];
+        }
+      }
+
+      const isKnownFile = existingContent !== null;
 
       if (hasSearchReplaceMarkers(block.code)) {
         if (!existingContent) {
@@ -61,17 +70,21 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
           continue;
         }
         const result = applySearchReplace(existingContent, block.code);
-        if (!result) {
-          skipped.push({ path: block.filePath, error: 'SEARCH block did not match existing content' });
+        if (result) {
+          files.push({ path: block.filePath, content: result });
+          merged[block.filePath] = result;
           continue;
         }
-        files.push({ path: block.filePath, content: result });
-        merged[block.filePath] = result;
+        skipped.push({
+          path: block.filePath,
+          error: `SEARCH/REPLACE did not match existing content for ${block.filePath} — refusing to overwrite`,
+        });
+        continue;
       } else {
-        if (existingContent && block.code.length < existingContent.length * 0.5) {
+        if (isKnownFile && block.code.length < existingContent.length * 0.5) {
           skipped.push({
             path: block.filePath,
-            error: `Rejected: output (${block.code.length} chars) is less than 50% of existing file (${existingContent.length} chars). Use SEARCH/REPLACE markers for existing files.`,
+            error: `Rejected: output (${block.code.length} chars) is less than 50% of existing file (${existingContent.length} chars) — refusing to overwrite`,
           });
           continue;
         }
