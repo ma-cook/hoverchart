@@ -636,6 +636,8 @@ export async function sendToZen({ messages, onChunk, signal }) {
     throw new Error('LLM not configured. Click the model button to set up a provider.');
   }
 
+  console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length}`);
+
   return sendToProvider({
     providerId,
     apiKey,
@@ -706,21 +708,24 @@ TECH STACK
 HOW TO MODIFY EXISTING FILES
 ═══════════════════════════════════════════════════════════════
 
-IMPORTANT: Only key config files are provided above. Source files (components, services, hooks, etc.) are NOT included — you must fetch them on-demand.
+If a file you need to edit IS provided in KEY CONFIG FILES above: output the COMPLETE modified file directly. Preserve ALL existing code. Only add or change what the user requested.
 
-Before modifying ANY existing file, you MUST retrieve it first:
+If a file you need to edit is NOT provided above (most source files): retrieve it first, then output the COMPLETE modified file:
   [RETRIEVE:github:src/components/Button.jsx]
 
-After retrieving, output the COMPLETE modified file. Preserve ALL existing code, imports, exports, types, and functions. Only add or change what the user requested.
+Try to retrieve ALL needed files in a SINGLE retrieval call:
+  [RETRIEVE:github:src/components/Button.jsx]
+  [RETRIEVE:github:src/hooks/useAuth.ts]
 
-If a file you need to edit IS provided in KEY CONFIG FILES above: output the COMPLETE modified file directly (no need to retrieve).
+This is faster because the system fetches all files in parallel and you only need one more round trip.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
 FIRST: Write a brief 1-2 sentence summary of what you are doing.
-THEN: Output each file as a code block with the file path as the language identifier.
+THEN: If you need to retrieve files, output ONLY the retrieval markers (no summary yet).
+      After receiving the files, output your summary and the code blocks.
 
 --- For NEW files (not in the repo), output the complete file ---
 
@@ -730,11 +735,7 @@ import React from 'react';
 export function NewWidget() { ... }
 \`\`\`
 
---- For EXISTING files, retrieve first, then output the COMPLETE modified file ---
-
-[RETRIEVE:github:src/components/Button.jsx]
-(receive the full file content)
-Then output the complete modified file:
+--- For EXISTING files, output the COMPLETE modified file ---
 
 \`\`\`javascript:src/components/Button.jsx
 import { useState } from 'react';
@@ -750,14 +751,15 @@ RULES
 
 1. Start with a brief 1-2 sentence summary, then output code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. EXISTING files → retrieve them first with [RETRIEVE:github:filepath], then output the COMPLETE modified file. Preserve ALL existing code. Only add or change what was requested.
-4. KEY CONFIG FILES (provided above) → output the COMPLETE modified file directly (no retrieval needed)
-5. NEW files → output the complete file from scratch
-6. Use the SAME import paths the existing code uses
-7. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
-8. Include error handling and edge cases
-9. Maximum 10 code blocks per response
-10. Use modern syntax and best practices for the target framework`;
+3. Files in KEY CONFIG FILES above → output the COMPLETE modified file directly (no retrieval needed)
+4. Other existing files → retrieve them with [RETRIEVE:github:filepath], then output the COMPLETE modified file
+5. Retrieve ALL needed files in a SINGLE call when possible (faster — parallel fetch)
+6. NEW files → output the complete file from scratch
+7. Use the SAME import paths the existing code uses
+8. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
+9. Include error handling and edge cases
+10. Maximum 10 code blocks per response
+11. Use modern syntax and best practices for the target framework`;
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';

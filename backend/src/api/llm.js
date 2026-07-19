@@ -25,11 +25,20 @@ router.post('/chat', async (req, res) => {
   }
 
   try {
-    const upstream = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 5 * 60 * 1000);
+
+    let upstream;
+    try {
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: timeoutController.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     res.status(upstream.status);
 

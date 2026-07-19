@@ -81,6 +81,7 @@ export async function sendWithRetrieval({
 
   while (rounds <= MAX_RETRIEVAL_ROUNDS) {
     let streamedText = '';
+    console.log(`[Retrieval] Round ${rounds}/${MAX_RETRIEVAL_ROUNDS} - sending ${currentMessages.length} messages`);
 
     const result = await sendToZen({
       messages: currentMessages,
@@ -93,6 +94,7 @@ export async function sendWithRetrieval({
     });
 
     finalText = streamedText || result;
+    console.log(`[Retrieval] Round ${rounds} complete. Response length: ${finalText.length} chars`);
 
     const retrievalIds = detectRetrievalRequest(finalText);
 

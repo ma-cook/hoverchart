@@ -233,41 +233,56 @@ export async function sendToProvider({
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
 
-  const res = await fetch(`${API_BASE}/api/llm/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, headers, body }),
-    signal,
-  });
+  const timeoutMs = 5 * 60 * 1000;
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${provider.name} error ${res.status}: ${text}`);
-  }
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal;
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let fullText = '';
-  let buffer = '';
-  let streamDone = false;
+  try {
+    const res = await fetch(`${API_BASE}/api/llm/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, headers, body }),
+      signal: combinedSignal,
+    });
 
-  while (!streamDone) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const result = provider.parseStreamLine(trimmed);
-      if (result === null) continue;
-      if (result.done) { streamDone = true; break; }
-      if (typeof result === 'string') {
-        fullText += result;
-        onChunk?.(result, fullText);
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`${provider.name} error ${res.status}: ${text}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buffer = '';
+    let streamDone = false;
+
+    while (!streamDone) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const result = provider.parseStreamLine(trimmed);
+        if (result === null) continue;
+        if (result.done) { streamDone = true; break; }
+        if (typeof result === 'string') {
+          fullText += result;
+          onChunk?.(result, fullText);
+        }
       }
     }
+    return fullText;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
   }
-  return fullText;
 }

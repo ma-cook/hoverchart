@@ -604,26 +604,34 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         const _cs = useCodeStore.getState();
         if (_cs.repoFileTree) {
           repoContext = { fileTree: _cs.repoFileTree, fileContents: _cs.repoFileContents || {} };
+          console.log(`[CodeSend] Using cached repo context: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
         } else {
           const token = getGithubToken();
           if (token) {
             const owner = selectedRepo.owner?.login || selectedRepo.owner;
             const repoName = selectedRepo.name;
             const branchName = selectedBranch;
+            console.log('[CodeSend] Fetching repo context from GitHub...');
             repoContext = await fetchRepoContext(token, owner, repoName, branchName);
             useCodeStore.getState().setRepoContext(repoContext.fileTree, repoContext.fileContents);
+            console.log(`[CodeSend] Fetched: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
           }
         }
       }
 
+      console.log('[CodeSend] Populating content store worker...');
       await populateContentStoreWorker();
+      console.log('[CodeSend] Content store populated');
 
+      console.log('[CodeSend] Building code gen messages...');
       const codeGenMessages = await buildCodeGenMessages({
         userRequest: text,
         sceneObjects,
         techStack,
         repoContext,
       });
+      const systemLen = codeGenMessages[0]?.content?.length || 0;
+      console.log(`[CodeSend] Messages built. System message: ${systemLen} chars`);
 
       const githubContext = selectedRepo && selectedBranch ? {
         owner: selectedRepo.owner?.login || selectedRepo.owner,
@@ -632,6 +640,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         token: getGithubToken(),
       } : null;
 
+      console.log('[CodeSend] Sending to LLM...');
       const codeResponse = await sendWithRetrieval({
         messages: codeGenMessages,
         signal: abortController.signal,
