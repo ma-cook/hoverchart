@@ -1,5 +1,14 @@
-export const RETRIEVAL_MARKER_REGEX = /\[RETRIEVE:([a-zA-Z0-9_\-,\s]+)\]/g;
+export const RETRIEVAL_MARKER_REGEX = /\[RETRIEVE:([^\]]+)\]/g;
 export const MAX_RETRIEVAL_ROUNDS = 3;
+export const GITHUB_FILE_PREFIX = 'github:';
+
+export function isGithubFileRequest(chunkId) {
+  return chunkId.startsWith(GITHUB_FILE_PREFIX);
+}
+
+export function extractGithubPath(chunkId) {
+  return chunkId.slice(GITHUB_FILE_PREFIX.length);
+}
 
 export function detectRetrievalRequest(text) {
   const matches = [...text.matchAll(RETRIEVAL_MARKER_REGEX)];

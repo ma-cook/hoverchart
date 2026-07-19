@@ -5,6 +5,6 @@ export { fitConversationWithSummarization } from './conversationSummarizer';
 export { chunkText, extractKeywords } from './chunkIndex';
 export { ContentStore, getContentStore, ContentCategory } from './contentStore';
 export { Base64Store, getBase64Store } from './base64Store';
-export { detectRetrievalRequest, stripRetrievalMarkers, buildRetrievalInjection, MAX_RETRIEVAL_ROUNDS } from './retrievalProtocol';
+export { detectRetrievalRequest, stripRetrievalMarkers, buildRetrievalInjection, MAX_RETRIEVAL_ROUNDS, isGithubFileRequest, extractGithubPath, GITHUB_FILE_PREFIX } from './retrievalProtocol';
 export { RETRIEVAL_PROTOCOL_PROMPT, RETRIEVAL_PROTOCOL_PROMPT_CONDENSED } from './retrievalPrompt';
 export { sendWithRetrieval } from './retrievalOrchestrator';

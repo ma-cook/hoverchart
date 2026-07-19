@@ -534,9 +534,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     abortControllerRef.current = abortController;
 
     try {
+      const githubContext = selectedRepo && selectedBranch ? {
+        owner: selectedRepo.owner?.login || selectedRepo.owner,
+        repo: selectedRepo.name,
+        branch: selectedBranch,
+        token: getGithubToken(),
+      } : null;
+
       await sendWithRetrieval({
         messages: zenMessages,
         signal: abortController.signal,
+        githubContext,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           setPlanMessages((prev) => {
@@ -654,9 +662,17 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
       populateContentStoreWorker();
 
+      const githubContext = selectedRepo && selectedBranch ? {
+        owner: selectedRepo.owner?.login || selectedRepo.owner,
+        repo: selectedRepo.name,
+        branch: selectedBranch,
+        token: getGithubToken(),
+      } : null;
+
       const codeResponse = await sendWithRetrieval({
         messages: codeGenMessages,
         signal: abortController.signal,
+        githubContext,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           setCodeMessages((prev) => {

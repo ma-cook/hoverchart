@@ -19,12 +19,23 @@ Rules:
 5. The retrieval markers [RETRIEVE:...] will be stripped from your output
 6. After retrieval, continue your response naturally with the new context
 
+You can also request any file from the connected GitHub repository by its path:
+
+  [RETRIEVE:github:src/components/Button.jsx]
+  [RETRIEVE:github:src/hooks/useAuth.ts]
+  [RETRIEVE:github:lib/utils.js]
+
+This fetches the full file content directly from the repository. Use this when
+you need to see an existing file's code before modifying it, especially for
+files not shown in "Existing Key Files" above.
+
 Example:
-  User: "Explain how the authentication flow works"
-  You: "Let me look at the auth-related files.
-        [RETRIEVE:chunk-12,chunk-15,chunk-23]"
-  (System injects the auth files)
-  You: "Based on the authentication service code, here's how the flow works..."
+  User: "Add a loading state to the Button component"
+  You: "Let me first look at the current Button component.
+        [RETRIEVE:github:src/components/Button.jsx]"
+  (System injects the full file content)
+  You: "I can see the current implementation. Here's the modified version
+        with a loading state added..."
 
 ═══════════════════════════════════════════════════════════════
 `;
