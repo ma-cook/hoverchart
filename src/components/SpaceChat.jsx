@@ -620,8 +620,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       }
 
       console.log('[CodeSend] Populating content store worker...');
-      await populateContentStoreWorker();
-      console.log('[CodeSend] Content store populated');
+      populateContentStoreWorker().then(() => {
+        console.log('[CodeSend] Content store populated');
+      }).catch(err => {
+        console.warn('[CodeSend] Content store worker failed:', err);
+      });
 
       console.log('[CodeSend] Building code gen messages...');
       const codeGenMessages = await buildCodeGenMessages({
