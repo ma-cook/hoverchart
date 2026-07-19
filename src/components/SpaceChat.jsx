@@ -191,11 +191,14 @@ async function associateCodeWithScene(codeBlocks, spaceId, user) {
 
         newTextObjects.push(textObject);
         objectsStore.setObjects(current => [...current, textObject]);
-        try {
-          await saveObjectToCell(user?.uid || user, spaceId, textObject);
-        } catch {}
       }
     }
+  }
+
+  if (newTextObjects.length > 0) {
+    await Promise.all(newTextObjects.map(obj =>
+      saveObjectToCell(user?.uid || user, spaceId, obj).catch(() => {})
+    ));
   }
 
   return { count: associatedCount, newTextObjects };
@@ -441,7 +444,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   }, [spaceId, planMessages]);
 
   useEffect(() => {
-    persistMessages(spaceId, 'code', codeMessages);
+    const timer = setTimeout(() => persistMessages(spaceId, 'code', codeMessages), 1000);
+    return () => clearTimeout(timer);
   }, [spaceId, codeMessages]);
 
   const handleSend = useCallback(async () => {
@@ -638,7 +642,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
             const streamMsg = {
               key: currentStreamKey,
               role: 'assistant',
-              content: fullText,
+              content: 'Generating code...',
               streaming: true,
             };
             const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
@@ -648,17 +652,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         onRetrieval: ({ chunkIds, round }) => {
           console.log(`[Context] Code retrieval round ${round}: ${chunkIds.length} chunks`);
         },
-      });
-
-      setCodeMessages((prev) => {
-        const finalMsg = {
-          key: currentStreamKey,
-          role: 'assistant',
-          content: codeResponse,
-          streaming: false,
-        };
-        const withoutStream = prev.filter(m => m.key !== currentStreamKey);
-        return [...withoutStream, finalMsg];
       });
 
       const codeBlocks = extractCodeBlocks(codeResponse);
@@ -676,26 +669,40 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         const { count } = await associateCodeWithScene(mergedBlocks, spaceId, user);
         setAssociatedCount(count);
 
-        for (const block of mergedBlocks) {
-          if (block.filePath && block.code) {
-            const original = csState.repoFileContents?.[block.filePath] || null;
-            csState.addPendingChange({
-              filePath: block.filePath,
-              original,
-              proposed: block.code,
-              action: original ? 'modify' : 'create',
-            });
-          }
-        }
+        const newChanges = mergedBlocks
+          .filter(block => block.filePath && block.code)
+          .map(block => ({
+            filePath: block.filePath,
+            original: csState.repoFileContents?.[block.filePath] || null,
+            proposed: block.code,
+            action: csState.repoFileContents?.[block.filePath] ? 'modify' : 'create',
+          }));
+        csState.addPendingChanges(newChanges);
 
-        const pendingCount = useCodeStore.getState().pendingChanges.filter(c => c.status === 'pending').length;
+        const modifiedCount = newChanges.filter(c => c.action === 'modify').length;
+        const createdCount = newChanges.filter(c => c.action === 'create').length;
+        const summary = `Generated ${mergedBlocks.length} file(s). ${modifiedCount} modified, ${createdCount} created. Review in the sidebar panel.`;
+
         const commitKey = `pending-${Date.now()}`;
-        setCodeMessages((prev) => [...prev, {
-          key: commitKey,
-          role: 'system',
-          type: 'pending-changes',
-          content: `${mergedBlocks.length} file(s) ready for review. ${pendingCount} total pending changes. Review in the sidebar panel.`,
-        }]);
+        setCodeMessages((prev) => {
+          const withoutStream = prev.filter(m => m.key !== currentStreamKey);
+          return [...withoutStream, {
+            key: commitKey,
+            role: 'assistant',
+            content: summary,
+            streaming: false,
+          }];
+        });
+      } else {
+        setCodeMessages((prev) => {
+          const withoutStream = prev.filter(m => m.key !== currentStreamKey);
+          return [...withoutStream, {
+            key: currentStreamKey,
+            role: 'assistant',
+            content: codeResponse || 'No code blocks generated.',
+            streaming: false,
+          }];
+        });
       }
     } catch (err) {
       if (err.name === 'AbortError') return;

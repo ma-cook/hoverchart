@@ -13,6 +13,7 @@ export function extractCodeBlocks(text) {
   const seenPaths = new Set();
   let match;
 
+  CODE_BLOCK_REGEX.lastIndex = 0;
   while ((match = CODE_BLOCK_REGEX.exec(text)) !== null) {
     const lang = match[1];
     const pathFromLabel = match[2] ? match[2].trim() : null;
