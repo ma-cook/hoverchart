@@ -928,7 +928,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                 useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
                 window._connectionUpdateSkip = false;
                 // Fire-and-forget: populate content store in background via worker
-                populateContentStoreWorker();
+      await populateContentStoreWorker();
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;

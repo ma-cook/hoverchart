@@ -460,6 +460,7 @@ function buildCodeSceneContext(objects) {
 
 import { sendToProvider } from './llmProviders';
 import useLlmStore from '../stores/llmStore';
+import { estimateTokens, getContextWindow } from './context/tokenEstimator';
 import { getAllPlanContext } from './planService';
 import { getRepoTree, getFileContents } from './githubIssuesService';
 import { getContentStore, ContentCategory } from './context/contentStore';
@@ -471,7 +472,7 @@ import useObjectsStore from '../stores/objectsStore';
 import { getContentStoreWorker } from '../workers/contentStoreWorkerClient';
 import useContentIndexStore from '../stores/contentIndexStore';
 
-const KEY_FILE_PATTERNS = [
+const CONFIG_FILE_PATTERNS = [
   'package.json', 'tsconfig.json', 'vite.config.js', 'vite.config.ts',
   'webpack.config.js', 'next.config.js', 'next.config.mjs',
   'src/index.jsx', 'src/index.js', 'src/index.tsx', 'src/index.ts',
@@ -481,11 +482,22 @@ const KEY_FILE_PATTERNS = [
   'index.html', 'index.htm',
 ];
 
-function isKeyFile(path) {
+const SRC_FILE_REGEX = /^src\/.+\.(jsx|tsx|js|ts)$/i;
+const CONFIG_FILE_SET = new Set(CONFIG_FILE_PATTERNS.map(p => p.toLowerCase()));
+
+function isConfigFile(path) {
   if (typeof path !== 'string') return false;
   const lower = path.toLowerCase();
-  return KEY_FILE_PATTERNS.some(p => lower === p || lower.endsWith('/' + p));
+  return CONFIG_FILE_SET.has(lower) || lower.endsWith('/' + lower);
 }
+
+function isSourceFile(path) {
+  if (typeof path !== 'string') return false;
+  return SRC_FILE_REGEX.test(path);
+}
+
+const FETCH_BUDGET_CHARS = 60000;
+const MAX_FILES_TO_FETCH = 80;
 
 export async function fetchRepoContext(token, owner, repo, branch) {
   try {
@@ -500,18 +512,39 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const entries = treeEntries.filter(e => e.type === 'blob');
     const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
 
-    const filesToFetch = filePaths.filter(isKeyFile).slice(0, 30);
+    const configFiles = filePaths.filter(isConfigFile);
+    const srcFiles = filePaths.filter(isSourceFile)
+      .filter(p => !isConfigFile(p))
+      .sort((a, b) => {
+        const depthA = a.split('/').length;
+        const depthB = b.split('/').length;
+        return depthA - depthB || a.localeCompare(b);
+      });
+
+    const filesToFetch = [...configFiles, ...srcFiles].slice(0, MAX_FILES_TO_FETCH);
 
     const fileContents = {};
-    await Promise.all(filesToFetch.map(async (path) => {
+    let totalChars = 0;
+
+    const fetches = filesToFetch.map(async (path) => {
       const result = await getFileContents(token, owner, repo, path, branch);
       if (result.ok && result.data) {
         try {
           const raw = atob(result.data.content);
-          fileContents[path] = decodeURIComponent(escape(raw));
+          const decoded = decodeURIComponent(escape(raw));
+          return { path, content: decoded };
         } catch {}
       }
-    }));
+      return null;
+    });
+
+    const results = await Promise.all(fetches);
+    for (const r of results) {
+      if (!r) continue;
+      if (totalChars + r.content.length > FETCH_BUDGET_CHARS) continue;
+      fileContents[r.path] = r.content;
+      totalChars += r.content.length;
+    }
 
     return { fileTree: filePaths, fileContents, error: null };
   } catch (err) {
@@ -670,7 +703,7 @@ The repository already has files. You MUST respect the existing file structure a
 FILE TREE:
 {fileTree}
 
-EXISTING KEY FILES (full content provided):
+EXISTING FILES (provided below):
 {existingFiles}
 
 ═══════════════════════════════════════════════════════════════
@@ -686,13 +719,12 @@ TECH STACK
 {techStack}
 
 ═══════════════════════════════════════════════════════════════
-CRITICAL RULE: HOW TO MODIFY EXISTING FILES
+HOW TO MODIFY EXISTING FILES
 ═══════════════════════════════════════════════════════════════
 
-The full content of each existing file is provided in "EXISTING KEY FILES" above.
-You have the COMPLETE file content — use it.
+If a file you need to edit IS provided above: output the COMPLETE modified file. Preserve ALL existing code, imports, exports, types, and functions. Only add or change what the user requested.
 
-For EXISTING files: output the COMPLETE modified file. Preserve ALL existing code, imports, exports, types, and functions. Only add or change what the user requested.
+If a file you need to edit is NOT provided above: use \`\`\`[RETRIEVE:github:filepath]\`\`\` to fetch it, then output the modified file.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -711,7 +743,7 @@ export function NewWidget() { ... }
 
 --- For EXISTING files, output the COMPLETE modified file ---
 
-Copy the entire file from "EXISTING KEY FILES" above, make your changes, and output the full result. Do NOT omit any code. Do NOT use SEARCH/REPLACE markers.
+Copy the entire file from "EXISTING FILES" above, make your changes, and output the full result. Do NOT omit any code. Do NOT use SEARCH/REPLACE markers.
 
 \`\`\`javascript:src/components/Button.jsx
 import { useState } from 'react';
@@ -727,13 +759,14 @@ RULES
 
 1. Start with a brief 1-2 sentence summary, then output code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. EXISTING files → output the COMPLETE modified file. Preserve ALL existing code. Only add or change what was requested.
-4. NEW files → output the complete file from scratch
-5. Use the SAME import paths the existing code uses
-6. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
-7. Include error handling and edge cases
-8. Maximum 10 code blocks per response
-9. Use modern syntax and best practices for the target framework`;
+3. EXISTING files (provided above) → output the COMPLETE modified file. Preserve ALL existing code. Only add or change what was requested.
+4. MISSING files (not provided above) → use [RETRIEVE:github:filepath] to fetch them first, then output the modified file
+5. NEW files → output the complete file from scratch
+6. Use the SAME import paths the existing code uses
+7. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
+8. Include error handling and edge cases
+9. Maximum 10 code blocks per response
+10. Use modern syntax and best practices for the target framework`;
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
@@ -835,6 +868,15 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
     .replace('{existingFiles}', existingFilesSection)
     .replace('{sceneContext}', sceneContext)
     .replace('{techStack}', techStackSection) + largeFileInstructions + manifest;
+
+  const { selectedModel } = useLlmStore.getState();
+  const contextWindow = getContextWindow(selectedModel);
+  const systemTokens = estimateTokens(systemContent);
+  const maxAllowed = Math.floor(contextWindow * 0.6);
+
+  if (systemTokens > maxAllowed) {
+    console.warn(`[buildCodeGenMessages] System message ${systemTokens} tokens exceeds 60% of ${contextWindow} context window`);
+  }
 
   const systemMessage = { role: 'system', content: systemContent };
 
