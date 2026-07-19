@@ -20,10 +20,8 @@ import {
 import {
   getBranchRef,
   createBranchRef,
-  createFileOnBranch,
-  getFileContents,
 } from '../services/githubIssuesService';
-import { listBranches } from '../services/githubPushService';
+import { listBranches, pushCodeToGitHub } from '../services/githubPushService';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
 import {
@@ -203,45 +201,6 @@ async function associateCodeWithScene(codeBlocks, spaceId, user) {
   return { count: associatedCount, newTextObjects };
 }
 
-async function pushCodeToGitHub(codeBlocks, owner, repo, branch, token) {
-  if (!token || !owner || !repo || !branch) return { success: false, pushed: 0, errors: [] };
-
-  let pushed = 0;
-  const errors = [];
-
-  for (const block of codeBlocks) {
-    if (!block.code || !block.filePath) continue;
-    try {
-      const path = block.filePath;
-      const message = `Code: ${block.nodeId ? `updated ${block.nodeId}` : `updated ${path}`}`;
-      let sha = null;
-      try {
-        const existing = await getFileContents(token, owner, repo, path, branch);
-        if (existing?.ok && existing?.data) sha = existing.data.sha;
-      } catch {}
-      const result = await createFileOnBranch(token, owner, repo, path, block.code, branch, message, sha);
-      if (result.ok) {
-        pushed++;
-      } else {
-        errors.push({ file: block.filePath, error: result.error || 'Unknown error' });
-      }
-    } catch (err) {
-      errors.push({ file: block.filePath, error: err.message });
-    }
-  }
-
-  return { success: errors.length === 0, pushed, errors };
-}
-
-async function getGithubFileContents(token, owner, repo, path, branch) {
-  const baseUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-  const url = branch ? `${baseUrl}?ref=${branch}` : baseUrl;
-  const res = await fetch(url, {
-    headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
-  });
-  if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
-  return res.json();
-}
 
 const SPACE_CHAT_MIN_WIDTH = 240;
 const SPACE_CHAT_MIN_HEIGHT = 200;
