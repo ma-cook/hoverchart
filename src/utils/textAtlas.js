@@ -381,6 +381,10 @@ class MultiPageTextAtlas {
       return this.entries.get(key);
     }
 
+    if (this._pages.length === 0) {
+      this._addPage();
+    }
+
     // Try current page
     let page = this._pages[this._pages.length - 1];
     let entry = page.addText(text, style);
