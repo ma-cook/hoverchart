@@ -854,7 +854,7 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const base64Store = getBase64Store();
   const manifest = base64Store.totalChunks > 0
     ? '\n\n' + base64Store.generateManifest() + '\n\n' + RETRIEVAL_PROTOCOL_PROMPT
-    : RETRIEVAL_PROTOCOL_PROMPT;
+    : '';
 
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)

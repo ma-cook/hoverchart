@@ -616,14 +616,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         }
       }
 
+      await populateContentStoreWorker();
+
       const codeGenMessages = await buildCodeGenMessages({
         userRequest: text,
         sceneObjects,
         techStack,
         repoContext,
       });
-
-      await populateContentStoreWorker();
 
       const githubContext = selectedRepo && selectedBranch ? {
         owner: selectedRepo.owner?.login || selectedRepo.owner,
