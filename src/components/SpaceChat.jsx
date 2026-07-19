@@ -623,7 +623,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         repoContext,
       });
 
-      populateContentStoreWorker();
+      await populateContentStoreWorker();
 
       const githubContext = selectedRepo && selectedBranch ? {
         owner: selectedRepo.owner?.login || selectedRepo.owner,

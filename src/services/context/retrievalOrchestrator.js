@@ -20,8 +20,9 @@ async function fetchGithubFiles(ids, githubContext) {
   for (const id of ids) {
     const filePath = extractGithubPath(id);
     const storeId = `github:${filePath}`;
+    const repoStoreId = `repo:${filePath}`;
 
-    const existing = contentStore.getEntry(storeId);
+    const existing = contentStore.getEntry(storeId) || contentStore.getEntry(repoStoreId);
     if (existing) {
       const chunks = base64Store.getChunks(existing.chunks.map(c => c.id));
       if (chunks.length > 0) {

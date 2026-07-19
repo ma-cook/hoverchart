@@ -460,7 +460,6 @@ function buildCodeSceneContext(objects) {
 
 import { sendToProvider } from './llmProviders';
 import useLlmStore from '../stores/llmStore';
-import { estimateTokens, getContextWindow } from './context/tokenEstimator';
 import { getAllPlanContext } from './planService';
 import { getRepoTree, getFileContents } from './githubIssuesService';
 import { getContentStore, ContentCategory } from './context/contentStore';
@@ -482,7 +481,6 @@ const CONFIG_FILE_PATTERNS = [
   'index.html', 'index.htm',
 ];
 
-const SRC_FILE_REGEX = /^src\/.+\.(jsx|tsx|js|ts)$/i;
 const CONFIG_FILE_SET = new Set(CONFIG_FILE_PATTERNS.map(p => p.toLowerCase()));
 
 function isConfigFile(path) {
@@ -491,13 +489,8 @@ function isConfigFile(path) {
   return CONFIG_FILE_SET.has(lower) || lower.endsWith('/' + lower);
 }
 
-function isSourceFile(path) {
-  if (typeof path !== 'string') return false;
-  return SRC_FILE_REGEX.test(path);
-}
-
-const FETCH_BUDGET_CHARS = 60000;
-const MAX_FILES_TO_FETCH = 80;
+const KEY_FILE_BUDGET_CHARS = 10000;
+const MAX_KEY_FILES = 15;
 
 export async function fetchRepoContext(token, owner, repo, branch) {
   try {
@@ -512,21 +505,12 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const entries = treeEntries.filter(e => e.type === 'blob');
     const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
 
-    const configFiles = filePaths.filter(isConfigFile);
-    const srcFiles = filePaths.filter(isSourceFile)
-      .filter(p => !isConfigFile(p))
-      .sort((a, b) => {
-        const depthA = a.split('/').length;
-        const depthB = b.split('/').length;
-        return depthA - depthB || a.localeCompare(b);
-      });
-
-    const filesToFetch = [...configFiles, ...srcFiles].slice(0, MAX_FILES_TO_FETCH);
+    const configFiles = filePaths.filter(isConfigFile).slice(0, MAX_KEY_FILES);
 
     const fileContents = {};
     let totalChars = 0;
 
-    const fetches = filesToFetch.map(async (path) => {
+    const fetches = configFiles.map(async (path) => {
       const result = await getFileContents(token, owner, repo, path, branch);
       if (result.ok && result.data) {
         try {
@@ -541,7 +525,7 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const results = await Promise.all(fetches);
     for (const r of results) {
       if (!r) continue;
-      if (totalChars + r.content.length > FETCH_BUDGET_CHARS) continue;
+      if (totalChars + r.content.length > KEY_FILE_BUDGET_CHARS) continue;
       fileContents[r.path] = r.content;
       totalChars += r.content.length;
     }
@@ -700,11 +684,11 @@ EXISTING REPOSITORY STRUCTURE
 
 The repository already has files. You MUST respect the existing file structure and import paths.
 
-FILE TREE:
+FILE TREE (all files in the repo):
 {fileTree}
 
-EXISTING FILES (provided below):
-{existingFiles}
+KEY CONFIG FILES (provided below):
+{keyFiles}
 
 ═══════════════════════════════════════════════════════════════
 ARCHITECTURE CONTEXT
@@ -722,9 +706,14 @@ TECH STACK
 HOW TO MODIFY EXISTING FILES
 ═══════════════════════════════════════════════════════════════
 
-If a file you need to edit IS provided above: output the COMPLETE modified file. Preserve ALL existing code, imports, exports, types, and functions. Only add or change what the user requested.
+IMPORTANT: Only key config files are provided above. Source files (components, services, hooks, etc.) are NOT included — you must fetch them on-demand.
 
-If a file you need to edit is NOT provided above: use \`\`\`[RETRIEVE:github:filepath]\`\`\` to fetch it, then output the modified file.
+Before modifying ANY existing file, you MUST retrieve it first:
+  [RETRIEVE:github:src/components/Button.jsx]
+
+After retrieving, output the COMPLETE modified file. Preserve ALL existing code, imports, exports, types, and functions. Only add or change what the user requested.
+
+If a file you need to edit IS provided in KEY CONFIG FILES above: output the COMPLETE modified file directly (no need to retrieve).
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -741,9 +730,11 @@ import React from 'react';
 export function NewWidget() { ... }
 \`\`\`
 
---- For EXISTING files, output the COMPLETE modified file ---
+--- For EXISTING files, retrieve first, then output the COMPLETE modified file ---
 
-Copy the entire file from "EXISTING FILES" above, make your changes, and output the full result. Do NOT omit any code. Do NOT use SEARCH/REPLACE markers.
+[RETRIEVE:github:src/components/Button.jsx]
+(receive the full file content)
+Then output the complete modified file:
 
 \`\`\`javascript:src/components/Button.jsx
 import { useState } from 'react';
@@ -759,8 +750,8 @@ RULES
 
 1. Start with a brief 1-2 sentence summary, then output code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. EXISTING files (provided above) → output the COMPLETE modified file. Preserve ALL existing code. Only add or change what was requested.
-4. MISSING files (not provided above) → use [RETRIEVE:github:filepath] to fetch them first, then output the modified file
+3. EXISTING files → retrieve them first with [RETRIEVE:github:filepath], then output the COMPLETE modified file. Preserve ALL existing code. Only add or change what was requested.
+4. KEY CONFIG FILES (provided above) → output the COMPLETE modified file directly (no retrieval needed)
 5. NEW files → output the complete file from scratch
 6. Use the SAME import paths the existing code uses
 7. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
@@ -770,11 +761,13 @@ RULES
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
-  return fileTree.join('\n');
+  const capped = fileTree.length > 200 ? fileTree.slice(0, 200) : fileTree;
+  const suffix = fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : '';
+  return capped.join('\n') + suffix;
 }
 
-function buildExistingFilesSection(fileContents) {
-  if (!fileContents || Object.keys(fileContents).length === 0) return '(no key files available)';
+function buildKeyFilesSection(fileContents) {
+  if (!fileContents || Object.keys(fileContents).length === 0) return '(no key config files available)';
   const sections = [];
   for (const [path, content] of Object.entries(fileContents)) {
     sections.push(`--- ${path} ---\n${content}`);
@@ -853,7 +846,7 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const sceneContext = buildCodeSceneContext(sceneObjects);
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
-  const existingFilesSection = buildExistingFilesSection(repoContext?.fileContents);
+  const keyFilesSection = buildKeyFilesSection(repoContext?.fileContents);
 
   const largeFiles = detectLargeFiles(repoContext?.fileContents);
   const largeFileInstructions = buildLargeFileInstructions(largeFiles);
@@ -861,22 +854,13 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const base64Store = getBase64Store();
   const manifest = base64Store.totalChunks > 0
     ? '\n\n' + base64Store.generateManifest() + '\n\n' + RETRIEVAL_PROTOCOL_PROMPT
-    : '';
+    : RETRIEVAL_PROTOCOL_PROMPT;
 
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
-    .replace('{existingFiles}', existingFilesSection)
+    .replace('{keyFiles}', keyFilesSection)
     .replace('{sceneContext}', sceneContext)
     .replace('{techStack}', techStackSection) + largeFileInstructions + manifest;
-
-  const { selectedModel } = useLlmStore.getState();
-  const contextWindow = getContextWindow(selectedModel);
-  const systemTokens = estimateTokens(systemContent);
-  const maxAllowed = Math.floor(contextWindow * 0.6);
-
-  if (systemTokens > maxAllowed) {
-    console.warn(`[buildCodeGenMessages] System message ${systemTokens} tokens exceeds 60% of ${contextWindow} context window`);
-  }
 
   const systemMessage = { role: 'system', content: systemContent };
 
