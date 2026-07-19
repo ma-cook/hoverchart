@@ -40,6 +40,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   activeCodeObjectId: null,
   repoFileTree: null,
   repoFileContents: null,
+  pendingChanges: [],
 
   setSpaceId: (spaceId) => {
     const prev = get()._spaceId;
@@ -105,6 +106,32 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setActiveCodeObjectId: (id) => set({ activeCodeObjectId: id }),
 
+  addPendingChange: (change) => set((state) => ({
+    pendingChanges: [...state.pendingChanges, { ...change, status: change.status || 'pending' }],
+  })),
+
+  addPendingChanges: (changes) => set((state) => ({
+    pendingChanges: [...state.pendingChanges, ...changes.map(c => ({ ...c, status: c.status || 'pending' }))],
+  })),
+
+  acceptPendingChange: (filePath) => set((state) => ({
+    pendingChanges: state.pendingChanges.map(c =>
+      c.filePath === filePath ? { ...c, status: 'accepted' } : c
+    ),
+  })),
+
+  rejectPendingChange: (filePath) => set((state) => ({
+    pendingChanges: state.pendingChanges.filter(c => c.filePath !== filePath),
+  })),
+
+  acceptAllPendingChanges: () => set((state) => ({
+    pendingChanges: state.pendingChanges.map(c => ({ ...c, status: 'accepted' })),
+  })),
+
+  rejectAllPendingChanges: () => set({ pendingChanges: [] }),
+
+  clearPendingChanges: () => set({ pendingChanges: [] }),
+
   reset: () => {
     const spaceId = get()._spaceId;
     const ns = spaceId ? `${spaceId}:` : '';
@@ -125,6 +152,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       activeCodeObjectId: null,
       repoFileTree: null,
       repoFileContents: null,
+      pendingChanges: [],
     });
   },
 }), shallow);

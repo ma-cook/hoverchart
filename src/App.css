@@ -616,6 +616,133 @@ canvas {
   cursor: not-allowed;
 }
 
+/* Pending Changes Panel */
+.pending-changes-section {
+  border-top: 1px solid #ddd;
+  padding: 8px 0;
+}
+
+.pending-changes-header {
+  padding: 4px 8px;
+  color: #333;
+}
+
+.pending-changes-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.pending-change-item {
+  border-bottom: 1px solid #eee;
+}
+
+.pending-change-row {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.pending-change-row:hover {
+  background-color: #f5f5f5;
+}
+
+.pending-change-icon {
+  color: #888;
+  font-weight: bold;
+  width: 12px;
+  text-align: center;
+}
+
+.pending-change-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.pending-change-status {
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.pending-change-detail {
+  padding: 4px 8px 8px;
+}
+
+.pending-change-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.pending-btn {
+  padding: 3px 8px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  background: white;
+}
+
+.pending-btn:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+.pending-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.accept-btn {
+  border-color: #4caf50;
+  color: #4caf50;
+}
+
+.reject-btn {
+  border-color: #f44336;
+  color: #f44336;
+}
+
+.pending-changes-footer {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid #ddd;
+}
+
+.pending-footer-btn {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  background: white;
+}
+
+.pending-footer-btn:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+.pending-footer-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.push-btn {
+  background: #2196f3;
+  color: white;
+  border-color: #1976d2;
+}
+
+.push-btn:hover:not(:disabled) {
+  background: #1976d2;
+}
+
 /* Mobile-specific optimizations */
 @media (max-width: 768px) or (pointer: coarse) {
   /* Ensure canvas fills the viewport properly on mobile */

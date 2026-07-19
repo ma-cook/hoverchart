@@ -31,6 +31,7 @@ import SpacePresenceAvatars from './SpacePresenceAvatars';
 import ObjectSearch from './ObjectSearch';
 import SpaceChat from './SpaceChat';
 import CodeWorkspace from './CodeWorkspace';
+import PendingChangesPanel from './PendingChangesPanel';
 import RepoAnalysisOverlay from './RepoAnalysisOverlay';
 import RecordingFormatPrompt from './RecordingFormatPrompt';
 import './RepoAnalysisOverlay.css';
@@ -1636,6 +1637,8 @@ const UIOverlay = ({
               </div>
             )}
           </div>
+          {/* Pending Changes Panel */}
+          <PendingChangesPanel />
           {/* Markdown Upload Section */}
           <div className="markdown-section">
             <button

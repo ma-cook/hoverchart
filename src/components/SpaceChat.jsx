@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
+import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, parseSectionedResponse } from '../services/zenService';
 import { sendWithRetrieval } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks } from '../services/codeExtractor';
@@ -21,7 +21,7 @@ import {
   getBranchRef,
   createBranchRef,
 } from '../services/githubIssuesService';
-import { listBranches, pushCodeToGitHub } from '../services/githubPushService';
+import { listBranches } from '../services/githubPushService';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
 import {
@@ -663,48 +663,39 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
       const codeBlocks = extractCodeBlocks(codeResponse);
 
-      if (codeBlocks.length > 0 && selectedRepo && selectedBranch) {
-        const token = getGithubToken();
-        if (token) {
-          const owner = selectedRepo.owner?.login || selectedRepo.owner;
-          const repoName = selectedRepo.name;
-          const branchName = selectedBranch;
+      const csState = useCodeStore.getState();
+      const reassembled = parseSectionedResponse(codeResponse, csState.repoFileContents);
+      const mergedBlocks = codeBlocks.map(block => {
+        if (reassembled[block.filePath]) {
+          return { ...block, code: reassembled[block.filePath] };
+        }
+        return block;
+      });
 
-          const { count } = await associateCodeWithScene(codeBlocks, spaceId, user);
-          setAssociatedCount(count);
+      if (mergedBlocks.length > 0 && selectedRepo && selectedBranch) {
+        const { count } = await associateCodeWithScene(mergedBlocks, spaceId, user);
+        setAssociatedCount(count);
 
-          const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token);
-
-          if (result.success) {
-            const _cs2 = useCodeStore.getState();
-            const updatedContents = { ...(_cs2.repoFileContents || {}) };
-            if (result.merged) {
-              for (const [filePath, content] of Object.entries(result.merged)) {
-                updatedContents[filePath] = content;
-              }
-            }
-            _cs2.setRepoContext(_cs2.repoFileTree, updatedContents);
-          }
-
-          const commitKey = `commit-${Date.now()}`;
-          if (result.success) {
-            setCodeMessages((prev) => [...prev, {
-              key: commitKey,
-              role: 'system',
-              type: 'commit',
-              content: `Committed ${result.pushed} file(s) to ${owner}/${repoName}:${branchName}`,
-              branch: branchName,
-            }]);
-          } else {
-            setCodeMessages((prev) => [...prev, {
-              key: commitKey,
-              role: 'system',
-              type: 'commit-error',
-              content: `Committed ${result.pushed}/${codeBlocks.length} file(s) to ${owner}/${repoName}:${branchName}${result.errors?.length ? ` — ${result.errors[0].error}` : ''}`,
-              branch: branchName,
-            }]);
+        for (const block of mergedBlocks) {
+          if (block.filePath && block.code) {
+            const original = csState.repoFileContents?.[block.filePath] || null;
+            csState.addPendingChange({
+              filePath: block.filePath,
+              original,
+              proposed: block.code,
+              action: original ? 'modify' : 'create',
+            });
           }
         }
+
+        const pendingCount = useCodeStore.getState().pendingChanges.filter(c => c.status === 'pending').length;
+        const commitKey = `pending-${Date.now()}`;
+        setCodeMessages((prev) => [...prev, {
+          key: commitKey,
+          role: 'system',
+          type: 'pending-changes',
+          content: `${mergedBlocks.length} file(s) ready for review. ${pendingCount} total pending changes. Review in the sidebar panel.`,
+        }]);
       }
     } catch (err) {
       if (err.name === 'AbortError') return;

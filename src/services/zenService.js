@@ -689,12 +689,10 @@ TECH STACK
 CRITICAL RULE: HOW TO MODIFY EXISTING FILES
 ═══════════════════════════════════════════════════════════════
 
-NEVER output a complete existing file. You will LOSE code because you cannot fit the entire file in your response.
+The full content of each existing file is provided in "EXISTING KEY FILES" above.
+You have the COMPLETE file content — use it.
 
-For ANY file that appears in "EXISTING KEY FILES" above, you MUST use SEARCH/REPLACE markers.
-The SEARCH block must be copied EXACTLY from the file content shown above — character for character, including all whitespace and indentation.
-
-You can use multiple SEARCH/REPLACE blocks per file.
+For EXISTING files: output the COMPLETE modified file. Preserve ALL existing code, imports, exports, types, and functions. Only add or change what the user requested.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -711,23 +709,17 @@ import React from 'react';
 export function NewWidget() { ... }
 \`\`\`
 
---- For EXISTING files, use SEARCH/REPLACE markers ---
+--- For EXISTING files, output the COMPLETE modified file ---
+
+Copy the entire file from "EXISTING KEY FILES" above, make your changes, and output the full result. Do NOT omit any code. Do NOT use SEARCH/REPLACE markers.
 
 \`\`\`javascript:src/components/Button.jsx
-<<<<<<< SEARCH
-export function Button() {
-  return <button>Click</button>;
-}
-=======
 import { useState } from 'react';
 export function Button() {
   const [count, setCount] = useState(0);
   return <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>;
 }
->>>>>>> REPLACE
 \`\`\`
-
-The SEARCH block must match the existing code EXACTLY. Copy it verbatim from the "EXISTING KEY FILES" section above.
 
 ═══════════════════════════════════════════════════════════════
 RULES
@@ -735,10 +727,10 @@ RULES
 
 1. Start with a brief 1-2 sentence summary, then output code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. EXISTING files → SEARCH/REPLACE markers ONLY. NEVER output a complete existing file. The SEARCH block must match the code shown in "EXISTING KEY FILES" exactly.
+3. EXISTING files → output the COMPLETE modified file. Preserve ALL existing code. Only add or change what was requested.
 4. NEW files → output the complete file from scratch
 5. Use the SAME import paths the existing code uses
-6. Every NEW file code block MUST be a complete, valid file — no placeholders, no "..." omissions
+6. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
 7. Include error handling and edge cases
 8. Maximum 10 code blocks per response
 9. Use modern syntax and best practices for the target framework`;
@@ -757,11 +749,81 @@ function buildExistingFilesSection(fileContents) {
   return sections.join('\n\n');
 }
 
+function detectLargeFiles(fileContents) {
+  if (!fileContents) return [];
+  const large = [];
+  for (const [path, content] of Object.entries(fileContents)) {
+    if (content && content.length > 10000) {
+      large.push({ path, content, lines: content.split('\n').length });
+    }
+  }
+  return large;
+}
+
+function buildLargeFileInstructions(largeFiles) {
+  if (largeFiles.length === 0) return '';
+  let instructions = '\n\n═══════════════════════════════════════════════════════════════\n';
+  instructions += 'LARGE FILE HANDLING\n';
+  instructions += '═══════════════════════════════════════════════════════════════\n\n';
+  instructions += 'The following files are too large to output completely. Split them into sections:\n\n';
+
+  for (const file of largeFiles) {
+    const sectionCount = Math.ceil(file.lines / 200);
+    instructions += `• \`${file.path}\` (${file.lines} lines) → split into ${sectionCount} sections of ~200 lines each\n`;
+  }
+
+  instructions += "\nFor each large file, output each section in its own code block using the format:\n";
+  instructions += "`section-N:filepath` (where N is the 1-based section number)\n\n";
+  instructions += "Example for a 450-line file split into 3 sections:\n";
+  instructions += "```section-1:src/App.jsx\n...lines 1-200...\n```\n";
+  instructions += "```section-2:src/App.jsx\n...lines 201-400...\n```\n";
+  instructions += "```section-3:src/App.jsx\n...lines 401-450...\n```\n\n";
+  instructions += "Output ALL sections in order. Do NOT skip any section. For unchanged sections, copy them exactly.\n";
+
+  return instructions;
+}
+
+export function parseSectionedResponse(text, fileContents) {
+  const sectionRegex = /```section-(\d+):([^\n]+)\n([\s\S]*?)```/g;
+  const fileSections = {};
+  let match;
+
+  while ((match = sectionRegex.exec(text)) !== null) {
+    const sectionNum = parseInt(match[1], 10);
+    const filePath = match[2].trim();
+    const content = match[3];
+
+    if (!fileSections[filePath]) fileSections[filePath] = [];
+    fileSections[filePath].push({ index: sectionNum - 1, content });
+  }
+
+  const reassembled = {};
+  for (const [filePath, sections] of Object.entries(fileSections)) {
+    const original = fileContents?.[filePath];
+    if (!original) continue;
+
+    const sorted = [...sections].sort((a, b) => a.index - b.index);
+    const totalExpected = Math.ceil(original.split('\n').length / 200);
+
+    if (sorted.length < totalExpected) continue;
+
+    reassembled[filePath] = sorted.map(s => {
+      const c = s.content;
+      return c.endsWith('\n') ? c.slice(0, -1) : c;
+    }).join('\n');
+  }
+
+  return reassembled;
+}
+
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const sceneContext = buildCodeSceneContext(sceneObjects);
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
   const existingFilesSection = buildExistingFilesSection(repoContext?.fileContents);
+
+  const largeFiles = detectLargeFiles(repoContext?.fileContents);
+  const largeFileInstructions = buildLargeFileInstructions(largeFiles);
 
   const base64Store = getBase64Store();
   const manifest = base64Store.totalChunks > 0
@@ -772,7 +834,7 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
     .replace('{fileTree}', fileTreeSection)
     .replace('{existingFiles}', existingFilesSection)
     .replace('{sceneContext}', sceneContext)
-    .replace('{techStack}', techStackSection) + manifest;
+    .replace('{techStack}', techStackSection) + largeFileInstructions + manifest;
 
   const systemMessage = { role: 'system', content: systemContent };
 
