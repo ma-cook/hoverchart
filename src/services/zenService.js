@@ -119,7 +119,13 @@ RULES
 4. Follow idiomatic patterns for the target language/framework
 5. Include error handling, input validation, and edge cases
 6. Use modern syntax and best practices
-7. When updating existing code (shown in context), only output the changed file in full
+7. For EXISTING files shown in context: output ONLY the specific changes using SEARCH/REPLACE markers. Do NOT output the entire file. Use this format:
+   <<<<<<< SEARCH
+   exact code to find and replace
+   =======
+   replacement code
+   >>>>>>> REPLACE
+   You can use multiple SEARCH/REPLACE blocks per file. Each SEARCH block must match the existing code exactly.
 8. Keep code blocks as short as possible - split large files into smaller modules
 9. Maximum 5 code blocks per response to avoid truncation
 10. Files are read-only to users - you are the only one who writes code`;
@@ -683,28 +689,36 @@ TECH STACK
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
-Each file MUST be in a code block with the file path as the language identifier:
-
-\`\`\`javascript:src/components/Button.jsx
-// NODE: Button
-import React from 'react';
-export function Button() { ... }
-\`\`\`
-
-The // NODE: directive MUST match a nodeId from the architecture context.
-
-═══════════════════════════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════
-
 FIRST: Write a brief 1-2 sentence summary of what you are doing.
-THEN: Output each file as a code block with the file path as the language identifier:
+THEN: Output each file as a code block with the file path as the language identifier.
+
+For NEW files (not in the repo), output the complete file:
+
+\`\`\`javascript:src/components/NewWidget.jsx
+// NODE: NewWidget
+import React from 'react';
+export function NewWidget() { ... }
+\`\`\`
+
+For EXISTING files (shown in "Existing Key Files"), output ONLY the changes using SEARCH/REPLACE markers. Do NOT output the entire file — you may not have the full content. Use this exact format:
 
 \`\`\`javascript:src/components/Button.jsx
-// NODE: Button
+<<<<<<< SEARCH
 import React from 'react';
-export function Button() { ... }
+export function Button() {
+  return <button>Click</button>;
+}
+=======
+import React from 'react';
+import { useState } from 'react';
+export function Button() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>;
+}
+>>>>>>> REPLACE
 \`\`\`
+
+You can use multiple SEARCH/REPLACE blocks per file. Each SEARCH block must match the existing code exactly — copy it verbatim from the "Existing Key Files" section or from retrieved content.
 
 ═══════════════════════════════════════════════════════════════
 RULES
@@ -712,10 +726,10 @@ RULES
 
 1. Start with a brief 1-2 sentence summary, then output code blocks
 2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. For existing files shown in "Existing Key Files": output the COMPLETE file with ALL existing code preserved. Only modify the specific parts the user requested. Never remove existing code unless explicitly told to.
-4. For new files not in the repo: output the complete file from scratch
+3. For EXISTING files: use SEARCH/REPLACE markers. Each SEARCH block must match the existing code exactly. Never output the entire file — only output the specific changes.
+4. For NEW files not in the repo: output the complete file from scratch
 5. Use the SAME import paths the existing code uses (check package.json, entry points, etc.)
-6. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions, no partial files
+6. Every NEW file code block MUST be a complete, valid file — no placeholders, no "..." omissions, no partial files
 7. Include error handling and edge cases
 8. Maximum 5 code blocks per response
 9. Use modern syntax and best practices for the target framework`;

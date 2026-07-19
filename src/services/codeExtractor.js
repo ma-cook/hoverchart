@@ -146,3 +146,11 @@ export function stripCodeBlocks(text) {
   if (!text) return '';
   return text.replace(STRIP_CODE_BLOCK_REGEX, '').replace(STRIP_OPEN_CODE_BLOCK_REGEX, '').trim();
 }
+
+const SEARCH_MARKER = /<<<<<<<\s*SEARCH/m;
+const DIVIDER_MARKER = /=======/m;
+const REPLACE_MARKER = />>>>>>>\s*REPLACE/m;
+
+export function hasSearchReplaceMarkers(code) {
+  return SEARCH_MARKER.test(code) && DIVIDER_MARKER.test(code) && REPLACE_MARKER.test(code);
+}

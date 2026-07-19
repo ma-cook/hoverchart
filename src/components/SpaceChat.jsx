@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { sendToZen, buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
-import { sendWithRetrieval, getBase64Store } from '../services/context';
+import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
+import { sendWithRetrieval } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
-import { extractCodeBlocks, stripCodeBlocks } from '../services/codeExtractor';
+import { extractCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useLlmStore from '../stores/llmStore';
@@ -719,9 +719,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           if (result.success) {
             const _cs2 = useCodeStore.getState();
             const updatedContents = { ...(_cs2.repoFileContents || {}) };
-            for (const block of codeBlocks) {
-              if (block.filePath && block.code) {
-                updatedContents[block.filePath] = block.code;
+            if (result.merged) {
+              for (const [filePath, content] of Object.entries(result.merged)) {
+                updatedContents[filePath] = content;
               }
             }
             _cs2.setRepoContext(_cs2.repoFileTree, updatedContents);
