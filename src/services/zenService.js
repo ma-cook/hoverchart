@@ -422,6 +422,9 @@ function buildSceneContext(objects) {
   return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections.${planContext}`;
 }
 
+const SCENE_CONTEXT_BUDGET = 8000;
+const PLAN_CONTEXT_BUDGET = 2000;
+
 function buildCodeSceneContext(objects) {
   if (!objects || objects.length === 0) return 'No architecture objects found in the scene.\n';
 
@@ -429,17 +432,32 @@ function buildCodeSceneContext(objects) {
   const merfolkObjects = objects.filter(o => o.merfolkData?.nodeId && !o.merfolkData?.isContainer);
 
   lines.push('=== SYSTEM ARCHITECTURE ===\n');
+  let charCount = lines[0].length;
+  let truncated = 0;
+
   for (const obj of merfolkObjects) {
     const nodeId = obj.merfolkData.nodeId;
     const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
     const name = obj.headerText || nodeId;
-    lines.push(`[${nodeId}] ${nodeType} — "${name}"`);
+    const entry = `[${nodeId}] ${nodeType} — "${name}"`;
 
     if (obj.metadata?.code) {
       const preview = obj.metadata.code.slice(0, 200).replace(/\n/g, '\\n');
-      lines.push(`  Existing code (${obj.metadata.codeLanguage || 'unknown'}, ${obj.metadata.codeFilePath || 'unknown path'}):`);
-      lines.push(`  \`${preview}...\``);
+      const codeEntry = `  Existing code (${obj.metadata.codeLanguage || 'unknown'}, ${obj.metadata.codeFilePath || 'unknown path'}):\n  \`${preview}...\``;
+      const entryLen = entry.length + codeEntry.length + 2;
+      if (charCount + entryLen > SCENE_CONTEXT_BUDGET) { truncated++; continue; }
+      lines.push(entry);
+      lines.push(codeEntry);
+      charCount += entryLen;
+    } else {
+      if (charCount + entry.length + 1 > SCENE_CONTEXT_BUDGET) { truncated++; continue; }
+      lines.push(entry);
+      charCount += entry.length + 1;
     }
+  }
+
+  if (truncated > 0) {
+    lines.push(`\n... and ${truncated} more objects (truncated for context size)`);
   }
 
   const connections = objects.reduce((acc, o) => {
@@ -448,12 +466,27 @@ function buildCodeSceneContext(objects) {
   }, new Set());
 
   if (connections.size > 0) {
-    lines.push('\n=== NODES IN SCENE ===');
-    for (const id of connections) lines.push(`- ${id}`);
+    const nodeHeader = '\n=== NODES IN SCENE ===';
+    if (charCount + nodeHeader.length < SCENE_CONTEXT_BUDGET) {
+      lines.push(nodeHeader);
+      for (const id of connections) {
+        const nodeLine = `- ${id}`;
+        if (charCount + nodeLine.length + 1 > SCENE_CONTEXT_BUDGET) break;
+        lines.push(nodeLine);
+        charCount += nodeLine.length + 1;
+      }
+    }
   }
 
-  const planContext = getAllPlanContext();
-  if (planContext) lines.push(planContext);
+  let planContext = getAllPlanContext();
+  if (planContext) {
+    if (planContext.length > PLAN_CONTEXT_BUDGET) {
+      planContext = planContext.slice(0, PLAN_CONTEXT_BUDGET) + '\n... (plans truncated)';
+    }
+    if (charCount + planContext.length < SCENE_CONTEXT_BUDGET) {
+      lines.push(planContext);
+    }
+  }
 
   return lines.join('\n');
 }
@@ -843,6 +876,8 @@ export function parseSectionedResponse(text, fileContents) {
   return reassembled;
 }
 
+const SYSTEM_MESSAGE_MAX_CHARS = 30000;
+
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const sceneContext = buildCodeSceneContext(sceneObjects);
   const techStackSection = techStack || 'Not specified — use your best judgment.';
@@ -852,11 +887,26 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const largeFiles = detectLargeFiles(repoContext?.fileContents);
   const largeFileInstructions = buildLargeFileInstructions(largeFiles);
 
-  const systemContent = CODE_GEN_SYSTEM_PROMPT
+  let systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
     .replace('{keyFiles}', keyFilesSection)
     .replace('{sceneContext}', sceneContext)
     .replace('{techStack}', techStackSection) + largeFileInstructions;
+
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} keyFiles=${keyFilesSection.length} sceneContext=${sceneContext.length} total=${systemContent.length}`);
+
+  if (systemContent.length > SYSTEM_MESSAGE_MAX_CHARS) {
+    console.warn(`[buildCodeGenMessages] System message ${systemContent.length} chars exceeds ${SYSTEM_MESSAGE_MAX_CHARS} cap — truncating scene context`);
+    const excess = systemContent.length - SYSTEM_MESSAGE_MAX_CHARS;
+    const newSceneLen = Math.max(0, sceneContext.length - excess);
+    const truncatedScene = sceneContext.slice(0, newSceneLen) + '\n... (scene context truncated for size)';
+    systemContent = CODE_GEN_SYSTEM_PROMPT
+      .replace('{fileTree}', fileTreeSection)
+      .replace('{keyFiles}', keyFilesSection)
+      .replace('{sceneContext}', truncatedScene)
+      .replace('{techStack}', techStackSection) + largeFileInstructions;
+    console.log(`[buildCodeGenMessages] After truncation: total=${systemContent.length}`);
+  }
 
   const systemMessage = { role: 'system', content: systemContent };
 
