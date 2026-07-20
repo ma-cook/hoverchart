@@ -508,6 +508,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         messages: zenMessages,
         signal: abortController.signal,
         githubContext,
+        fileTree: useCodeStore.getState().repoFileTree || [],
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           setPlanMessages((prev) => {
@@ -522,7 +523,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           });
         },
         onRetrieval: ({ chunkIds, round }) => {
-          console.log(`[Context] Retrieval round ${round}: ${chunkIds.length} chunks`);
+          console.log(`[ToolRound] Plan tool round ${round}: ${chunkIds.join(', ')}`);
         },
       });
 
@@ -641,6 +642,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         messages: codeGenMessages,
         signal: abortController.signal,
         githubContext,
+        fileTree: repoContext?.fileTree || [],
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           setCodeMessages((prev) => {
@@ -655,7 +657,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           });
         },
         onRetrieval: ({ chunkIds, round }) => {
-          console.log(`[Context] Code retrieval round ${round}: ${chunkIds.length} chunks`);
+          console.log(`[ToolRound] Tool execution round ${round}: ${chunkIds.join(', ')}`);
         },
       });
 

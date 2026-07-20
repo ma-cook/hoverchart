@@ -661,23 +661,27 @@ export async function populateContentStoreWorker() {
   indexState.setPopulated(Date.now());
 }
 
-export async function sendToZen({ messages, onChunk, signal }) {
+export async function sendToZen({ messages, tools, onChunk, signal }) {
   const { providerId, apiKey, selectedModel } = useLlmStore.getState();
 
   if (!providerId || !apiKey || !selectedModel) {
     throw new Error('LLM not configured. Click the model button to set up a provider.');
   }
 
-  console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length}`);
+  console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length} tools=${tools ? tools.length : 0}`);
 
-  return sendToProvider({
+  const result = await sendToProvider({
     providerId,
     apiKey,
     model: selectedModel,
     messages,
+    tools,
     onChunk,
     signal,
   });
+
+  if (tools) return result;
+  return result.text;
 }
 
 export async function buildZenMessages({ llmMessages, sceneObjects, modelId, signal }) {
@@ -734,37 +738,33 @@ TECH STACK
 {techStack}
 
 ═══════════════════════════════════════════════════════════════
-HOW TO MODIFY EXISTING FILES
+HOW TO ACCESS FILES
 ═══════════════════════════════════════════════════════════════
 
-If a file you need to edit IS provided in KEY CONFIG FILES above: output the COMPLETE modified file directly. Preserve ALL existing code. Only add or change what the user requested.
+Files in KEY CONFIG FILES above are already loaded — output them directly.
 
-If a file you need to edit is NOT provided above (most source files): retrieve it first, then output the COMPLETE modified file:
-  [RETRIEVE:github:src/components/Button.jsx]
+For ALL other source files, use the read_file tool to read them:
+  read_file(path="src/components/Button.jsx")
 
-Try to retrieve ALL needed files in a SINGLE retrieval call:
-  [RETRIEVE:github:src/components/Button.jsx]
-  [RETRIEVE:github:src/hooks/useAuth.ts]
+You can call read_file for multiple files in the same tool-use round.
+After reading, output the COMPLETE modified file.
 
-This is faster because the system fetches all files in parallel and you only need one more round trip.
+═══════════════════════════════════════════════════════════════
+RESPONSE FLOW
+═══════════════════════════════════════════════════════════════
+
+Step 1: If you need files NOT in KEY CONFIG FILES → use read_file tool to read them.
+        Call read_file for every file you need in a single tool-use round.
+
+Step 2: After receiving the file contents, write your summary and code blocks.
+
+If ALL needed files are already in KEY CONFIG FILES, skip Step 1 and go straight to Step 2.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
-FIRST: Write a brief 1-2 sentence summary of what you are doing.
-THEN: If you need to retrieve files, output ONLY the retrieval markers (no summary yet).
-      After receiving the files, output your summary and the code blocks.
-
---- For NEW files (not in the repo), output the complete file ---
-
-\`\`\`javascript:src/components/NewWidget.jsx
-// NODE: NewWidget
-import React from 'react';
-export function NewWidget() { ... }
-\`\`\`
-
---- For EXISTING files, output the COMPLETE modified file ---
+Write a 1-2 sentence summary, then output code blocks:
 
 \`\`\`javascript:src/components/Button.jsx
 import { useState } from 'react';
@@ -774,15 +774,17 @@ export function Button() {
 }
 \`\`\`
 
+For NEW files, use the same format with a path that doesn't exist yet.
+
 ═══════════════════════════════════════════════════════════════
 RULES
 ═══════════════════════════════════════════════════════════════
 
-1. Start with a brief 1-2 sentence summary, then output code blocks
-2. PRESERVE existing file paths — do NOT invent new paths like "./components/App"
-3. Files in KEY CONFIG FILES above → output the COMPLETE modified file directly (no retrieval needed)
-4. Other existing files → retrieve them with [RETRIEVE:github:filepath], then output the COMPLETE modified file
-5. Retrieve ALL needed files in a SINGLE call when possible (faster — parallel fetch)
+1. Use read_file tool to access any source file not provided in KEY CONFIG FILES
+2. PRESERVE existing file paths — do NOT invent new paths
+3. Files in KEY CONFIG FILES → output the COMPLETE modified file directly
+4. Other files → read with read_file, then output the COMPLETE modified file
+5. Read ALL needed files in a single tool-use round
 6. NEW files → output the complete file from scratch
 7. Use the SAME import paths the existing code uses
 8. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
@@ -873,17 +875,28 @@ export function parseSectionedResponse(text, fileContents) {
   return reassembled;
 }
 
+const SCENE_COMPONENT_BUDGET = 2000;
+
 function buildMinimalSceneContext(objects) {
   if (!objects || objects.length === 0) return '(no scene components)';
   const lines = [];
+  let charCount = 0;
+  let truncated = 0;
+
   for (const obj of objects) {
     if (!obj.merfolkData?.nodeId) continue;
     const nodeId = obj.merfolkData.nodeId;
     const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
     const name = obj.headerText || nodeId;
     const filePath = obj.metadata?.codeFilePath || '';
-    lines.push(filePath ? `[${nodeId}] ${nodeType} — "${name}" → ${filePath}` : `[${nodeId}] ${nodeType} — "${name}"`);
+    const line = filePath ? `[${nodeId}] ${nodeType} — "${name}" → ${filePath}` : `[${nodeId}] ${nodeType} — "${name}"`;
+
+    if (charCount + line.length + 1 > SCENE_COMPONENT_BUDGET) { truncated++; continue; }
+    lines.push(line);
+    charCount += line.length + 1;
   }
+
+  if (truncated > 0) lines.push(`... and ${truncated} more components`);
   return lines.length > 0 ? lines.join('\n') : '(no scene components)';
 }
 

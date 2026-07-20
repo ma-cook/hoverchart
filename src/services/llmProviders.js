@@ -95,12 +95,11 @@ export const PROVIDERS = [
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model) => ({
-      model,
-      messages,
-      stream: true,
-      max_tokens: 32768,
-    }),
+    formatBody: (messages, model, tools) => {
+      const body = { model, messages, stream: true, max_tokens: 32768 };
+      if (tools) body.tools = tools;
+      return body;
+    },
     parseModels: (data) =>
       (data.data || [])
         .map((m) => ({ id: m.id, name: m.id }))
@@ -111,9 +110,12 @@ export const PROVIDERS = [
       if (data === '[DONE]') return { done: true };
       try {
         const parsed = JSON.parse(data);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta != null) return delta;
-        if (parsed.choices?.[0]?.finish_reason) return { done: true };
+        const choice = parsed.choices?.[0];
+        if (!choice) return null;
+        const delta = choice.delta;
+        if (delta?.content) return { type: 'text', text: delta.content };
+        if (delta?.tool_calls) return { type: 'tool_calls', tool_calls: delta.tool_calls };
+        if (choice.finish_reason) return { done: true, finish_reason: choice.finish_reason };
         return null;
       } catch {
         return null;
@@ -129,12 +131,11 @@ export const PROVIDERS = [
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model) => ({
-      model,
-      messages,
-      stream: true,
-      max_tokens: 32768,
-    }),
+    formatBody: (messages, model, tools) => {
+      const body = { model, messages, stream: true, max_tokens: 32768 };
+      if (tools) body.tools = tools;
+      return body;
+    },
     parseModels: (data) =>
       (data.data || [])
         .map((m) => ({ id: m.id, name: m.id }))
@@ -145,9 +146,12 @@ export const PROVIDERS = [
       if (data === '[DONE]') return { done: true };
       try {
         const parsed = JSON.parse(data);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta != null) return delta;
-        if (parsed.choices?.[0]?.finish_reason) return { done: true };
+        const choice = parsed.choices?.[0];
+        if (!choice) return null;
+        const delta = choice.delta;
+        if (delta?.content) return { type: 'text', text: delta.content };
+        if (delta?.tool_calls) return { type: 'tool_calls', tool_calls: delta.tool_calls };
+        if (choice.finish_reason) return { done: true, finish_reason: choice.finish_reason };
         return null;
       } catch {
         return null;
@@ -163,12 +167,11 @@ export const PROVIDERS = [
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model) => ({
-      model,
-      messages,
-      stream: true,
-      max_tokens: 32768,
-    }),
+    formatBody: (messages, model, tools) => {
+      const body = { model, messages, stream: true, max_tokens: 32768 };
+      if (tools) body.tools = tools;
+      return body;
+    },
     parseModels: (data) =>
       (data.data || [])
         .map((m) => ({ id: m.id, name: m.id }))
@@ -179,9 +182,12 @@ export const PROVIDERS = [
       if (data === '[DONE]') return { done: true };
       try {
         const parsed = JSON.parse(data);
-        const delta = parsed.choices?.[0]?.delta?.content;
-        if (delta != null) return delta;
-        if (parsed.choices?.[0]?.finish_reason) return { done: true };
+        const choice = parsed.choices?.[0];
+        if (!choice) return null;
+        const delta = choice.delta;
+        if (delta?.content) return { type: 'text', text: delta.content };
+        if (delta?.tool_calls) return { type: 'tool_calls', tool_calls: delta.tool_calls };
+        if (choice.finish_reason) return { done: true, finish_reason: choice.finish_reason };
         return null;
       } catch {
         return null;
@@ -221,13 +227,14 @@ export async function sendToProvider({
   apiKey,
   model,
   messages,
+  tools,
   onChunk,
   signal,
 }) {
   const provider = getProvider(providerId);
   if (!provider) throw new Error(`Unknown provider: ${providerId}`);
 
-  const body = provider.formatBody(messages, model);
+  const body = provider.formatBody(messages, model, tools);
   const url = provider.formatEndpoint
     ? provider.formatEndpoint(apiKey, model)
     : provider.chatEndpoint;
@@ -261,6 +268,8 @@ export async function sendToProvider({
     let fullText = '';
     let buffer = '';
     let streamDone = false;
+    let finishReason = null;
+    const toolCallsMap = new Map();
 
     while (!streamDone) {
       const { done, value } = await reader.read();
@@ -273,14 +282,41 @@ export async function sendToProvider({
         if (!trimmed) continue;
         const result = provider.parseStreamLine(trimmed);
         if (result === null) continue;
-        if (result.done) { streamDone = true; break; }
-        if (typeof result === 'string') {
+        if (result.done) {
+          streamDone = true;
+          finishReason = result.finish_reason || null;
+          break;
+        }
+        if (result.type === 'text') {
+          fullText += result.text;
+          onChunk?.(result.text, fullText);
+        } else if (result.type === 'tool_calls') {
+          for (const tc of result.tool_calls) {
+            const idx = tc.index ?? 0;
+            if (!toolCallsMap.has(idx)) {
+              toolCallsMap.set(idx, { id: tc.id || '', name: '', arguments: '' });
+            }
+            const existing = toolCallsMap.get(idx);
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name += tc.function.name;
+            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+          }
+        } else if (typeof result === 'string') {
           fullText += result;
           onChunk?.(result, fullText);
         }
       }
     }
-    return fullText;
+
+    const toolCalls = finishReason === 'tool_calls' && toolCallsMap.size > 0
+      ? [...toolCallsMap.values()].map(tc => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: JSON.parse(tc.arguments || '{}'),
+        }))
+      : [];
+
+    return { text: fullText, toolCalls };
   } catch (err) {
     clearTimeout(timeoutId);
     throw err;
