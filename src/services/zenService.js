@@ -465,7 +465,6 @@ import { getRepoTree, getFileContents } from './githubIssuesService';
 import { getContentStore, ContentCategory } from './context/contentStore';
 import { getBase64Store } from './context/base64Store';
 import { buildContext } from './context/contextBuilder';
-import { RETRIEVAL_PROTOCOL_PROMPT } from './context/retrievalPrompt';
 import useCodeStore from '../stores/codeStore';
 import useObjectsStore from '../stores/objectsStore';
 import { getContentStoreWorker } from '../workers/contentStoreWorkerClient';
@@ -853,16 +852,11 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const largeFiles = detectLargeFiles(repoContext?.fileContents);
   const largeFileInstructions = buildLargeFileInstructions(largeFiles);
 
-  const base64Store = getBase64Store();
-  const manifest = base64Store.totalChunks > 0
-    ? '\n\n' + base64Store.generateManifest() + '\n\n' + RETRIEVAL_PROTOCOL_PROMPT
-    : '';
-
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
     .replace('{keyFiles}', keyFilesSection)
     .replace('{sceneContext}', sceneContext)
-    .replace('{techStack}', techStackSection) + largeFileInstructions + manifest;
+    .replace('{techStack}', techStackSection) + largeFileInstructions;
 
   const systemMessage = { role: 'system', content: systemContent };
 

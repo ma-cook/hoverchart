@@ -14,18 +14,9 @@ import { ContentStore, ContentCategory } from '../services/context/contentStore'
 import { Base64Store } from '../services/context/base64Store';
 
 const workerApi = {
-  /**
-   * Process repo files, scene objects, and plan context into a fully
-   * chunked, indexed, and base64-encoded content store.
-   *
-   * @param {{ repoFileContents: Record<string, string> | null,
-   *           objects: Array<{ nodeId, nodeType, name, code, isContainer }>,
-   *           planContext: string }} data
-   * @returns {{ entries, invertedIndexEntries, totalChunks,
-   *             encodedChunksEntries, manifest }}
-   */
   async processContent({ repoFileContents, objects, planContext }) {
     const store = new ContentStore();
+    const YIELD_EVERY = 50;
 
     // --- Repo files ---
     if (repoFileContents) {
@@ -38,11 +29,15 @@ const workerApi = {
           content,
           { sourcePath: filePath, tags: ['repo', 'code'] }
         );
+        if (i % YIELD_EVERY === 0 && i > 0) {
+          await new Promise(r => setTimeout(r, 0));
+        }
       }
     }
 
     // --- Scene objects ---
     if (objects && objects.length > 0) {
+      let upsertCount = 0;
       for (let i = 0; i < objects.length; i++) {
         const obj = objects[i];
         if (!obj.nodeId || obj.isContainer) continue;
@@ -54,6 +49,10 @@ const workerApi = {
           sourcePath: 'scene',
           tags: ['architecture', 'scene', obj.nodeId],
         });
+        upsertCount++;
+        if (upsertCount % YIELD_EVERY === 0) {
+          await new Promise(r => setTimeout(r, 0));
+        }
       }
     }
 
