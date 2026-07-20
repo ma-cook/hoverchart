@@ -308,6 +308,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const streamingRef = useRef('');
   const streamingMsgKeyRef = useRef(0);
   const abortControllerRef = useRef(null);
+  const rafPendingRef = useRef(false);
 
   const githubConnected = useCodeStore(s => s.githubConnected);
   const selectedRepo = useCodeStore(s => s.selectedRepo);
@@ -511,16 +512,23 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         fileTree: useCodeStore.getState().repoFileTree || [],
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
-          setPlanMessages((prev) => {
-            const streamMsg = {
-              key: currentStreamKey,
-              role: 'assistant',
-              content: fullText,
-              streaming: true,
-            };
-            const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
-            return [...withoutStreaming, streamMsg];
-          });
+          if (!rafPendingRef.current) {
+            rafPendingRef.current = true;
+            requestAnimationFrame(() => {
+              rafPendingRef.current = false;
+              const snapshot = streamingRef.current;
+              setPlanMessages((prev) => {
+                const streamMsg = {
+                  key: currentStreamKey,
+                  role: 'assistant',
+                  content: snapshot,
+                  streaming: true,
+                };
+                const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
+                return [...withoutStreaming, streamMsg];
+              });
+            });
+          }
         },
         onRetrieval: ({ chunkIds, round }) => {
           console.log(`[ToolRound] Plan tool round ${round}: ${chunkIds.join(', ')}`);
@@ -645,16 +653,23 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         fileTree: repoContext?.fileTree || [],
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
-          setCodeMessages((prev) => {
-            const streamMsg = {
-              key: currentStreamKey,
-              role: 'assistant',
-              content: 'Generating code...',
-              streaming: true,
-            };
-            const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
-            return [...withoutStreaming, streamMsg];
-          });
+          if (!rafPendingRef.current) {
+            rafPendingRef.current = true;
+            requestAnimationFrame(() => {
+              rafPendingRef.current = false;
+              const snapshot = streamingRef.current;
+              setCodeMessages((prev) => {
+                const streamMsg = {
+                  key: currentStreamKey,
+                  role: 'assistant',
+                  content: snapshot,
+                  streaming: true,
+                };
+                const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
+                return [...withoutStreaming, streamMsg];
+              });
+            });
+          }
         },
         onRetrieval: ({ chunkIds, round }) => {
           console.log(`[ToolRound] Tool execution round ${round}: ${chunkIds.join(', ')}`);
