@@ -130,7 +130,8 @@ export default function PendingChangesPanel() {
   if (pendingChanges.length === 0) return null;
 
   return (
-    <div className="pending-changes-section">
+    <div className="pending-changes-panel">
+      <div className="pending-changes-section">
       <div className="pending-changes-header">
         <span style={{ fontWeight: 600, fontSize: '12px' }}>
           Pending Changes ({pending.length} pending, {accepted.length} accepted)
@@ -196,6 +197,7 @@ export default function PendingChangesPanel() {
         >
           {pushing ? 'Pushing...' : `Push ${accepted.length} file(s)`}
         </button>
+      </div>
       </div>
     </div>
   );

@@ -1637,8 +1637,6 @@ const UIOverlay = ({
               </div>
             )}
           </div>
-          {/* Pending Changes Panel */}
-          <PendingChangesPanel />
           {/* Markdown Upload Section */}
           <div className="markdown-section">
             <button
@@ -2130,6 +2128,8 @@ const UIOverlay = ({
           </div>
         </div>
       )}
+
+      <PendingChangesPanel />
     </>
   );
 };
