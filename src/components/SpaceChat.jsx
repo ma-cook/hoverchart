@@ -588,8 +588,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     const updatedMessages = [...codeMessages, userMessage];
     setCodeMessages(updatedMessages);
 
-    const sceneObjects = useObjectsStore.getState().objects;
-
     setStreaming(true);
     streamingRef.current = '';
     const currentStreamKey = `code-stream-${Date.now()}`;
@@ -622,7 +620,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       console.log('[CodeSend] Building code gen messages...');
       const codeGenMessages = await buildCodeGenMessages({
         userRequest: text,
-        sceneObjects,
         techStack,
         repoContext,
       });

@@ -79,9 +79,36 @@ export async function sendWithRetrieval({
   let finalText = '';
   let rounds = 0;
 
+  const MAX_TOTAL_CHARS = 40000;
+
+  function estimateMessagesSize(msgs) {
+    let total = 0;
+    for (const m of msgs) total += (m.content || '').length;
+    return total;
+  }
+
+  function trimMessages(msgs) {
+    const systemMsg = msgs[0];
+    const userMsg = msgs[1];
+    const rest = msgs.slice(2);
+
+    while (rest.length > 2 && estimateMessagesSize([systemMsg, userMsg, ...rest]) > MAX_TOTAL_CHARS) {
+      rest.shift();
+      rest.shift();
+    }
+
+    console.log(`[Retrieval] Trimmed messages to ${rest.length / 2} pairs (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
+    return [systemMsg, userMsg, ...rest];
+  }
+
   while (rounds <= MAX_RETRIEVAL_ROUNDS) {
+    const totalChars = estimateMessagesSize(currentMessages);
+    if (totalChars > MAX_TOTAL_CHARS) {
+      currentMessages = trimMessages(currentMessages);
+    }
+
     let streamedText = '';
-    console.log(`[Retrieval] Round ${rounds}/${MAX_RETRIEVAL_ROUNDS} - sending ${currentMessages.length} messages`);
+    console.log(`[Retrieval] Round ${rounds}/${MAX_RETRIEVAL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
 
     const result = await sendToZen({
       messages: currentMessages,

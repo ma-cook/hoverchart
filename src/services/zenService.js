@@ -725,12 +725,6 @@ KEY CONFIG FILES (provided below):
 {keyFiles}
 
 ═══════════════════════════════════════════════════════════════
-ARCHITECTURE CONTEXT
-═══════════════════════════════════════════════════════════════
-
-{sceneContext}
-
-═══════════════════════════════════════════════════════════════
 TECH STACK
 ═══════════════════════════════════════════════════════════════
 
@@ -876,10 +870,7 @@ export function parseSectionedResponse(text, fileContents) {
   return reassembled;
 }
 
-const SYSTEM_MESSAGE_MAX_CHARS = 30000;
-
-export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
-  const sceneContext = buildCodeSceneContext(sceneObjects);
+export async function buildCodeGenMessages({ userRequest, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
   const keyFilesSection = buildKeyFilesSection(repoContext?.fileContents);
@@ -887,26 +878,12 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const largeFiles = detectLargeFiles(repoContext?.fileContents);
   const largeFileInstructions = buildLargeFileInstructions(largeFiles);
 
-  let systemContent = CODE_GEN_SYSTEM_PROMPT
+  const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
     .replace('{keyFiles}', keyFilesSection)
-    .replace('{sceneContext}', sceneContext)
     .replace('{techStack}', techStackSection) + largeFileInstructions;
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} keyFiles=${keyFilesSection.length} sceneContext=${sceneContext.length} total=${systemContent.length}`);
-
-  if (systemContent.length > SYSTEM_MESSAGE_MAX_CHARS) {
-    console.warn(`[buildCodeGenMessages] System message ${systemContent.length} chars exceeds ${SYSTEM_MESSAGE_MAX_CHARS} cap — truncating scene context`);
-    const excess = systemContent.length - SYSTEM_MESSAGE_MAX_CHARS;
-    const newSceneLen = Math.max(0, sceneContext.length - excess);
-    const truncatedScene = sceneContext.slice(0, newSceneLen) + '\n... (scene context truncated for size)';
-    systemContent = CODE_GEN_SYSTEM_PROMPT
-      .replace('{fileTree}', fileTreeSection)
-      .replace('{keyFiles}', keyFilesSection)
-      .replace('{sceneContext}', truncatedScene)
-      .replace('{techStack}', techStackSection) + largeFileInstructions;
-    console.log(`[buildCodeGenMessages] After truncation: total=${systemContent.length}`);
-  }
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} keyFiles=${keyFilesSection.length} total=${systemContent.length}`);
 
   const systemMessage = { role: 'system', content: systemContent };
 
