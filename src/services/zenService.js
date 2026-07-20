@@ -724,6 +724,9 @@ FILE TREE (all files in the repo):
 KEY CONFIG FILES (provided below):
 {keyFiles}
 
+SCENE COMPONENTS (architecture diagram nodes — these map to source files):
+{sceneContext}
+
 ═══════════════════════════════════════════════════════════════
 TECH STACK
 ═══════════════════════════════════════════════════════════════
@@ -870,10 +873,25 @@ export function parseSectionedResponse(text, fileContents) {
   return reassembled;
 }
 
-export async function buildCodeGenMessages({ userRequest, techStack = '', repoContext }) {
+function buildMinimalSceneContext(objects) {
+  if (!objects || objects.length === 0) return '(no scene components)';
+  const lines = [];
+  for (const obj of objects) {
+    if (!obj.merfolkData?.nodeId) continue;
+    const nodeId = obj.merfolkData.nodeId;
+    const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
+    const name = obj.headerText || nodeId;
+    const filePath = obj.metadata?.codeFilePath || '';
+    lines.push(filePath ? `[${nodeId}] ${nodeType} — "${name}" → ${filePath}` : `[${nodeId}] ${nodeType} — "${name}"`);
+  }
+  return lines.length > 0 ? lines.join('\n') : '(no scene components)';
+}
+
+export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
   const keyFilesSection = buildKeyFilesSection(repoContext?.fileContents);
+  const sceneContextSection = buildMinimalSceneContext(sceneObjects);
 
   const largeFiles = detectLargeFiles(repoContext?.fileContents);
   const largeFileInstructions = buildLargeFileInstructions(largeFiles);
@@ -881,9 +899,10 @@ export async function buildCodeGenMessages({ userRequest, techStack = '', repoCo
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
     .replace('{keyFiles}', keyFilesSection)
+    .replace('{sceneContext}', sceneContextSection)
     .replace('{techStack}', techStackSection) + largeFileInstructions;
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} keyFiles=${keyFilesSection.length} total=${systemContent.length}`);
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} keyFiles=${keyFilesSection.length} sceneContext=${sceneContextSection.length} total=${systemContent.length}`);
 
   const systemMessage = { role: 'system', content: systemContent };
 
