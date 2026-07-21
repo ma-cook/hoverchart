@@ -533,6 +533,34 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         onRetrieval: ({ chunkIds, round }) => {
           console.log(`[ToolRound] Plan tool round ${round}: ${chunkIds.join(', ')}`);
         },
+        onToolProgress: ({ tool, index, total, status }) => {
+          let label;
+          if (status === 'complete') {
+            label = 'Processing results...';
+          } else if (status === 'error') {
+            label = `Tool ${tool} failed`;
+          } else {
+            label = `Executing ${tool} (${index}/${total})...`;
+          }
+          streamingRef.current = label;
+          if (!rafPendingRef.current) {
+            rafPendingRef.current = true;
+            requestAnimationFrame(() => {
+              rafPendingRef.current = false;
+              const snapshot = streamingRef.current;
+              setPlanMessages((prev) => {
+                const streamMsg = {
+                  key: currentStreamKey,
+                  role: 'assistant',
+                  content: snapshot,
+                  streaming: true,
+                };
+                const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
+                return [...withoutStreaming, streamMsg];
+              });
+            });
+          }
+        },
       });
 
       const finalText = streamingRef.current;
@@ -673,6 +701,34 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         },
         onRetrieval: ({ chunkIds, round }) => {
           console.log(`[ToolRound] Tool execution round ${round}: ${chunkIds.join(', ')}`);
+        },
+        onToolProgress: ({ tool, index, total, status }) => {
+          let label;
+          if (status === 'complete') {
+            label = 'Processing results...';
+          } else if (status === 'error') {
+            label = `Tool ${tool} failed`;
+          } else {
+            label = `Executing ${tool} (${index}/${total})...`;
+          }
+          streamingRef.current = label;
+          if (!rafPendingRef.current) {
+            rafPendingRef.current = true;
+            requestAnimationFrame(() => {
+              rafPendingRef.current = false;
+              const snapshot = streamingRef.current;
+              setCodeMessages((prev) => {
+                const streamMsg = {
+                  key: currentStreamKey,
+                  role: 'assistant',
+                  content: snapshot,
+                  streaming: true,
+                };
+                const withoutStreaming = prev.filter(m => m.key !== currentStreamKey);
+                return [...withoutStreaming, streamMsg];
+              });
+            });
+          }
         },
       });
 

@@ -2,6 +2,27 @@ import { getContentStore } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
 
+const TOOL_TIMEOUT_MS = 60_000;
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+function asyncCacheFile(storeId, content, metadata) {
+  setTimeout(() => {
+    try {
+      const store = getContentStore();
+      store.upsert(storeId, 'repo_file', content, metadata);
+    } catch { /* best-effort */ }
+  }, 0);
+}
+
 export const CODE_GEN_TOOLS = [
   {
     type: 'function',
@@ -66,9 +87,13 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
 
       if (githubContext) {
         try {
-          const content = await fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token);
+          const content = await withTimeout(
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            TOOL_TIMEOUT_MS,
+            `read_file(${path})`,
+          );
           if (content) {
-            store.upsert(storeId, 'repo_file', content, { sourcePath: path, tags: ['github', 'repo', 'code'] });
+            asyncCacheFile(storeId, content, { sourcePath: path, tags: ['github', 'repo', 'code'] });
             return { success: true, content };
           }
         } catch (err) {

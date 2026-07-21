@@ -1,5 +1,14 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
+function sanitizeMessages(messages) {
+  return messages.map(m => {
+    if (m.role === 'assistant' && m.content == null && m.tool_calls) {
+      return { ...m, content: '' };
+    }
+    return m;
+  });
+}
+
 export const PROVIDERS = [
   {
     id: 'anthropic',
@@ -96,7 +105,7 @@ export const PROVIDERS = [
       'Content-Type': 'application/json',
     }),
     formatBody: (messages, model, tools) => {
-      const body = { model, messages, stream: true, max_tokens: 32768 };
+      const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools) body.tools = tools;
       return body;
     },
@@ -132,7 +141,7 @@ export const PROVIDERS = [
       'Content-Type': 'application/json',
     }),
     formatBody: (messages, model, tools) => {
-      const body = { model, messages, stream: true, max_tokens: 32768 };
+      const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools) body.tools = tools;
       return body;
     },
@@ -168,7 +177,7 @@ export const PROVIDERS = [
       'Content-Type': 'application/json',
     }),
     formatBody: (messages, model, tools) => {
-      const body = { model, messages, stream: true, max_tokens: 32768 };
+      const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools) body.tools = tools;
       return body;
     },

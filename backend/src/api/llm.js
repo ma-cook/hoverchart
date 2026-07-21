@@ -51,19 +51,36 @@ router.post('/chat', async (req, res) => {
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
 
+      const PUMP_WATCHDOG_MS = 5 * 60 * 1000;
+      let pumpWatchdogId = null;
+      const resetPumpWatchdog = () => {
+        clearTimeout(pumpWatchdogId);
+        pumpWatchdogId = setTimeout(() => {
+          reader.cancel('pump watchdog timeout');
+        }, PUMP_WATCHDOG_MS);
+      };
+
       const pump = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            res.end();
-            return;
+        try {
+          while (true) {
+            resetPumpWatchdog();
+            const { done, value } = await reader.read();
+            clearTimeout(pumpWatchdogId);
+            if (done) {
+              res.end();
+              return;
+            }
+            const chunk = decoder.decode(value, { stream: true });
+            res.write(chunk);
           }
-          const chunk = decoder.decode(value, { stream: true });
-          res.write(chunk);
+        } catch (err) {
+          clearTimeout(pumpWatchdogId);
+          if (!res.writableEnded) res.end();
         }
       };
 
       req.on('close', () => {
+        clearTimeout(pumpWatchdogId);
         reader.cancel();
       });
 
