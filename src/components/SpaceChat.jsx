@@ -772,12 +772,21 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           }];
         });
       } else {
+        const hasCode = /```[\s\S]+?```/.test(codeResponse);
+        let displayContent;
+        if (hasCode) {
+          displayContent = codeResponse;
+        } else if (codeResponse && codeResponse.trim().length > 20) {
+          displayContent = codeResponse.trim() + '\n\n_No code blocks were generated. The LLM may need more specific instructions or different files._';
+        } else {
+          displayContent = 'No code blocks were generated. The LLM spent its rounds searching for files without producing code. Try:\n- Providing more specific file paths in your request\n- Reducing the scope of the change\n- Mentioning the exact files to modify';
+        }
         setCodeMessages((prev) => {
           const withoutStream = prev.filter(m => m.key !== currentStreamKey);
           return [...withoutStream, {
             key: currentStreamKey,
             role: 'assistant',
-            content: codeResponse || 'No code blocks generated.',
+            content: displayContent,
             streaming: false,
           }];
         });

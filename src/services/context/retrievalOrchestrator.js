@@ -4,6 +4,7 @@ import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 40000;
+const MAX_SEARCH_ONLY_ROUNDS = 3;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -62,6 +63,7 @@ export async function sendWithRetrieval({
   let currentMessages = [...messages];
   let finalText = '';
   let rounds = 0;
+  let consecutiveSearchOnlyRounds = 0;
 
   while (rounds <= MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
@@ -80,10 +82,25 @@ export async function sendWithRetrieval({
     });
 
     const { text, toolCalls } = result;
-    finalText = text || finalText;
+    if (text) {
+      finalText = finalText ? finalText + '\n\n' + text : text;
+    }
     console.log(`[ToolRound] Round ${rounds} complete. Text: ${finalText.length} chars, Tool calls: ${toolCalls.length}`);
 
     if (toolCalls.length === 0) {
+      break;
+    }
+
+    const SEARCH_TOOLS = new Set(['search_code', 'list_files']);
+    const isSearchOnly = toolCalls.every(tc => SEARCH_TOOLS.has(tc.name));
+    if (isSearchOnly) {
+      consecutiveSearchOnlyRounds++;
+    } else {
+      consecutiveSearchOnlyRounds = 0;
+    }
+
+    if (consecutiveSearchOnlyRounds >= MAX_SEARCH_ONLY_ROUNDS) {
+      console.warn(`[ToolRound] Breaking after ${consecutiveSearchOnlyRounds} consecutive search-only rounds — LLM is not progressing`);
       break;
     }
 

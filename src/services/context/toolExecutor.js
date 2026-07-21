@@ -106,6 +106,22 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
     case 'search_code': {
       const pattern = (args.pattern || '').toLowerCase();
       if (!pattern) return { success: false, content: 'search_code requires a "pattern" parameter' };
+
+      const storeResults = store.search(pattern, { maxChunks: 20 });
+      if (storeResults.length > 0) {
+        const seen = new Set();
+        const lines = [];
+        for (const r of storeResults) {
+          const path = r.sourcePath;
+          if (seen.has(path)) continue;
+          seen.add(path);
+          const snippet = r.chunk.text.slice(0, 200).replace(/\n/g, ' ');
+          lines.push(`${path}: ...${snippet}...`);
+          if (lines.length >= 20) break;
+        }
+        return { success: true, content: lines.join('\n') || 'No matching content found' };
+      }
+
       const matching = fileTree.filter(f => f.toLowerCase().includes(pattern)).slice(0, 50);
       return { success: true, content: matching.length > 0 ? matching.join('\n') : 'No matching files found' };
     }
