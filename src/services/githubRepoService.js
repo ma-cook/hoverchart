@@ -27,7 +27,11 @@ const TREE_SITTER_EXTENSIONS = [
 
 // ── Retry / rate-limit helpers ────────────────────────────────────────────
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms, signal) => new Promise((r, reject) => {
+  if (signal?.aborted) { reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })); return; }
+  const id = setTimeout(r, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(id); reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })); }, { once: true });
+});
 
 const GITHUB_API_HEADERS = { Accept: 'application/vnd.github.v3+json' };
 
@@ -36,20 +40,21 @@ const GITHUB_API_HEADERS = { Accept: 'application/vnd.github.v3+json' };
  * with exponential backoff + jitter.  All other errors propagate immediately.
  */
 async function fetchWithRetry(url, options = {}, retries = 3) {
+  const { signal } = options;
   for (let attempt = 1; attempt <= retries; attempt++) {
+    if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
     const response = await fetch(url, options);
     if (response.ok) return response;
     if ((response.status === 429 || response.status === 403) && attempt < retries) {
       const retryAfter = response.headers.get('Retry-After');
       const baseDelay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000 * Math.pow(2, attempt);
       const jitter = Math.random() * 1000;
-      const delay = Math.min(baseDelay + jitter, 30_000);
+      const delay = Math.min(baseDelay + jitter, 10_000);
       console.warn(`⏳ GitHub API rate-limited (${response.status}), retrying in ${Math.round(delay)}ms…`);
-      await sleep(delay);
+      await sleep(delay, signal);
       continue;
     }
-    // Non-retryable or final attempt
-    if (response.status === 404) return response; // let caller handle
+    if (response.status === 404) return response;
     throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
   }
 }

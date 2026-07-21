@@ -2,7 +2,7 @@ import { getContentStore } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
 
-const TOOL_TIMEOUT_MS = 60_000;
+const TOOL_TIMEOUT_MS = 20_000;
 
 function withTimeout(promise, ms, label) {
   let timer;
@@ -12,15 +12,6 @@ function withTimeout(promise, ms, label) {
       timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
     }),
   ]).finally(() => clearTimeout(timer));
-}
-
-function asyncCacheFile(storeId, content, metadata) {
-  setTimeout(() => {
-    try {
-      const store = getContentStore();
-      store.upsert(storeId, 'repo_file', content, metadata);
-    } catch { /* best-effort */ }
-  }, 0);
 }
 
 export const CODE_GEN_TOOLS = [
@@ -93,7 +84,6 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
             `read_file(${path})`,
           );
           if (content) {
-            asyncCacheFile(storeId, content, { sourcePath: path, tags: ['github', 'repo', 'code'] });
             return { success: true, content };
           }
         } catch (err) {
