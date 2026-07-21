@@ -3,14 +3,14 @@ import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 
 const MAX_TOOL_ROUNDS = 10;
-const MAX_TOTAL_CHARS = 40000;
-const MAX_TOOL_ONLY_ROUNDS = 6;
+const MAX_TOTAL_CHARS = 70000;
+const MAX_TOOL_ONLY_ROUNDS = 3;
 const MAX_UNHELPFUL_ROUNDS = 3;
 const CODE_REMINDER = `
-You have called tools multiple times without producing a code response.
-If you have enough context, write your COMPLETE code response NOW.
-If you still need to read files, do so, but write your code after reading.
-Do NOT keep calling search_code or list_files — use read_file for specific files, then produce code.`;
+CRITICAL: You have been calling tools for multiple rounds without producing code.
+STOP calling search_code or list_files. You have enough context now.
+Write your COMPLETE code response NOW — output the full implementation with code blocks.
+If you absolutely need one more specific file, use read_file for that exact path, then IMMEDIATELY write your code.`;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -33,10 +33,11 @@ function trimMessages(msgs) {
   const rest = msgs.slice(2);
 
   const systemLen = (systemMsg.content || '').length;
-  if (systemLen > MAX_TOTAL_CHARS * 0.75) {
+  if (systemLen > MAX_TOTAL_CHARS * 0.5) {
     const userRestSize = estimateMessagesSize([userMsg, ...rest]);
     const systemBudget = Math.max(4000, MAX_TOTAL_CHARS - userRestSize);
     systemMsg.content = systemMsg.content.slice(0, systemBudget);
+    console.warn(`[Retrieval] Truncated system message to ${systemBudget} chars`);
   }
 
   while (rest.length > 0 && estimateMessagesSize([systemMsg, userMsg, ...rest]) > MAX_TOTAL_CHARS) {
@@ -49,7 +50,8 @@ function trimMessages(msgs) {
     } else {
       removeCount = 1;
     }
-    rest.splice(0, Math.min(removeCount, rest.length));
+    const removed = rest.splice(0, Math.min(removeCount, rest.length));
+    console.warn(`[Retrieval] Removed ${removed.length} messages (${removed.map(m => m.role).join(', ')})`);
   }
 
   console.log(`[Retrieval] Trimmed to ${rest.length + 2} messages (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
@@ -230,6 +232,31 @@ export async function sendWithRetrieval({
 
   if (!hasCodeBlocks(finalText)) {
     console.warn(`[ToolRound] Exiting with no code blocks after ${rounds} rounds (${finalText.length} chars of text)`);
+    console.warn(`[ToolRound] Attempting forced code generation round (no tools)...`);
+
+    const forcedMessages = [
+      ...currentMessages,
+      { role: 'system', content: 'You MUST write your COMPLETE code response NOW. Output the full implementation with code blocks. No more tool calls — just code.' },
+    ];
+
+    try {
+      const forcedResult = await sendToZen({
+        messages: forcedMessages,
+        tools: [],
+        signal,
+        onChunk: (delta, fullText) => {
+          onChunk?.(delta, stripRetrievalMarkers(fullText));
+        },
+      });
+
+      const forcedText = typeof forcedResult === 'string' ? forcedResult : forcedResult?.text || '';
+      if (forcedText) {
+        finalText = finalText ? finalText + '\n\n' + forcedText : forcedText;
+        console.warn(`[ToolRound] Forced round produced ${forcedText.length} chars`);
+      }
+    } catch (e) {
+      console.warn(`[ToolRound] Forced round failed:`, e.message);
+    }
   }
 
   return stripRetrievalMarkers(finalText);

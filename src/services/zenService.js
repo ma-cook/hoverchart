@@ -513,16 +513,28 @@ const CONFIG_FILE_PATTERNS = [
   'index.html', 'index.htm',
 ];
 
+const HIGH_PRIORITY_PATTERNS = [
+  /stores?\/.*\.(js|jsx|ts|tsx)$/i,
+  /services?\/.*\.(js|jsx|ts|tsx)$/i,
+  /hooks?\/.*\.(js|jsx|ts|tsx)$/i,
+  /components?\/.*\.(js|jsx|ts|tsx)$/i,
+  /api[-_]?client\.(js|jsx|ts|tsx)$/i,
+  /AppShell\.(js|jsx|ts|tsx)$/i,
+  /Router\.(js|jsx|ts|tsx)$/i,
+];
+
 const CONFIG_FILE_SET = new Set(CONFIG_FILE_PATTERNS.map(p => p.toLowerCase()));
 
 function isConfigFile(path) {
   if (typeof path !== 'string') return false;
   const lower = path.toLowerCase();
-  return CONFIG_FILE_SET.has(lower) || lower.endsWith('/' + lower);
+  if (CONFIG_FILE_SET.has(lower)) return true;
+  const basename = lower.split('/').pop();
+  return CONFIG_FILE_SET.has(basename);
 }
 
-const KEY_FILE_BUDGET_CHARS = 10000;
-const MAX_KEY_FILES = 15;
+const KEY_FILE_BUDGET_CHARS = 50000;
+const MAX_KEY_FILES = 60;
 
 export async function fetchRepoContext(token, owner, repo, branch) {
   try {
@@ -537,12 +549,16 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const entries = treeEntries.filter(e => e.type === 'blob');
     const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
 
-    const configFiles = filePaths.filter(isConfigFile).slice(0, MAX_KEY_FILES);
+    const configPaths = filePaths.filter(isConfigFile);
+    const highPriorityPaths = filePaths.filter(p =>
+      !isConfigFile(p) && HIGH_PRIORITY_PATTERNS.some(re => re.test(p))
+    );
+    const candidatePaths = [...configPaths, ...highPriorityPaths].slice(0, MAX_KEY_FILES + 20);
 
     const fileContents = {};
     let totalChars = 0;
 
-    const fetches = configFiles.map(async (path) => {
+    const fetches = candidatePaths.map(async (path) => {
       const result = await getFileContents(token, owner, repo, path, branch);
       if (result.ok && result.data) {
         try {
@@ -557,10 +573,13 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const results = await Promise.all(fetches);
     for (const r of results) {
       if (!r) continue;
+      if (Object.keys(fileContents).length >= MAX_KEY_FILES) break;
       if (totalChars + r.content.length > KEY_FILE_BUDGET_CHARS) continue;
       fileContents[r.path] = r.content;
       totalChars += r.content.length;
     }
+
+    console.log(`[fetchRepoContext] Pre-loaded ${Object.keys(fileContents).length} files (${totalChars} chars) into ContentStore`);
 
     return { fileTree: filePaths, fileContents, error: null };
   } catch (err) {
