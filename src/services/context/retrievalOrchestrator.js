@@ -29,12 +29,21 @@ export async function sendWithRetrieval({
     const userMsg = msgs[1];
     const rest = msgs.slice(2);
 
-    while (rest.length > 2 && estimateMessagesSize([systemMsg, userMsg, ...rest]) > MAX_TOTAL_CHARS) {
-      rest.shift();
-      rest.shift();
+    while (rest.length > 0 && estimateMessagesSize([systemMsg, userMsg, ...rest]) > MAX_TOTAL_CHARS) {
+      let removeCount = 0;
+      if (rest[0]?.role === 'assistant') {
+        removeCount = 1;
+        while (removeCount < rest.length && rest[removeCount]?.role === 'tool') {
+          removeCount++;
+        }
+      } else {
+        removeCount = 1;
+      }
+      if (removeCount >= rest.length) break;
+      rest.splice(0, removeCount);
     }
 
-    console.log(`[Retrieval] Trimmed messages to ${rest.length / 2} pairs (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
+    console.log(`[Retrieval] Trimmed messages to ${rest.length} messages (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
     return [systemMsg, userMsg, ...rest];
   }
 
@@ -63,7 +72,7 @@ export async function sendWithRetrieval({
       break;
     }
 
-    onRetrieval?.({ chunkIds: toolCalls.map(tc => tc.name + ':' + tc.arguments.path), round: rounds + 1 });
+    onRetrieval?.({ chunkIds: toolCalls.map(tc => tc.name + ':' + JSON.stringify(tc.arguments)), round: rounds + 1 });
 
     const assistantMessage = { role: 'assistant', content: finalText || null, tool_calls: toolCalls.map(tc => ({
       id: tc.id,

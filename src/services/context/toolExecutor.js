@@ -89,7 +89,8 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
     }
 
     case 'search_code': {
-      const pattern = args.pattern.toLowerCase();
+      const pattern = (args.pattern || '').toLowerCase();
+      if (!pattern) return { success: false, content: 'search_code requires a "pattern" parameter' };
       const matching = fileTree.filter(f => f.toLowerCase().includes(pattern)).slice(0, 50);
       return { success: true, content: matching.length > 0 ? matching.join('\n') : 'No matching files found' };
     }

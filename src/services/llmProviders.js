@@ -271,9 +271,18 @@ export async function sendToProvider({
     let finishReason = null;
     const toolCallsMap = new Map();
 
+    let streamWatchdogId = null;
+    const resetStreamWatchdog = () => {
+      clearTimeout(streamWatchdogId);
+      streamWatchdogId = setTimeout(() => reader.cancel(), timeoutMs);
+    };
+    resetStreamWatchdog();
+
     while (!streamDone) {
       const { done, value } = await reader.read();
+      clearTimeout(streamWatchdogId);
       if (done) break;
+      resetStreamWatchdog();
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop();

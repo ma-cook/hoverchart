@@ -128,18 +128,28 @@ export const fetchRepositories = async (token) => {
  * @returns {Promise<string|null>} - File content or null if failed
  */
 export const fetchFileContent = async (owner, repoName, filePath, token) => {
+  const fetchTimeout = (ms) => {
+    const c = new AbortController();
+    const id = setTimeout(() => c.abort(), ms);
+    return { signal: c.signal, clear: () => clearTimeout(id) };
+  };
+
   // When a ref SHA is pinned, fetch from the raw CDN (0 rate-limit cost).
   // Falls back to the Contents API if the CDN fails.
   if (repoRefSha) {
     const rawUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${repoRefSha}/${filePath}`;
+    const rawT = fetchTimeout(30_000);
     try {
-      const res = await fetch(rawUrl);
+      const res = await fetch(rawUrl, { signal: rawT.signal });
+      rawT.clear();
       if (res.ok) return await res.text();
     } catch {
+      rawT.clear();
       // network error — fall through to API
     }
   }
 
+  const apiT = fetchTimeout(30_000);
   try {
     const url = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/contents/${filePath}`;
     const response = await fetchWithRetry(url, {
@@ -147,7 +157,9 @@ export const fetchFileContent = async (owner, repoName, filePath, token) => {
         Authorization: `token ${token}`,
         Accept: 'application/vnd.github.v3.raw', // Get raw content directly
       },
+      signal: apiT.signal,
     });
+    apiT.clear();
 
     if (!response.ok) {
       if (response.status === 404) return null; // file not found
@@ -158,6 +170,11 @@ export const fetchFileContent = async (owner, repoName, filePath, token) => {
     // Get the raw text content
     return await response.text();
   } catch (error) {
+    apiT.clear();
+    if (error.name === 'AbortError') {
+      console.warn(`⏱️  Timeout fetching ${filePath} after 30s`);
+      return null;
+    }
     console.warn(`⚠️  Error fetching ${filePath}:`, error.message);
     return null;
   }
