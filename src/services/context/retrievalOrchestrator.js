@@ -85,6 +85,7 @@ export async function sendWithRetrieval({
   let consecutiveUnhelpfulRounds = 0;
   const readFiles = new Set();
   let duplicateReadRounds = 0;
+  const toolCallHistory = new Map();
 
   while (rounds < MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
@@ -120,6 +121,21 @@ export async function sendWithRetrieval({
     console.log(`[ToolRound] Round ${rounds + 1} complete. Text: ${(text || '').length} chars (total: ${finalText.length}), Tool calls: ${toolCalls.length}`);
 
     if (toolCalls.length === 0) {
+      break;
+    }
+
+    let doomLoopDetected = false;
+    for (const tc of toolCalls) {
+      const key = `${tc.name}:${JSON.stringify(tc.arguments)}`;
+      const count = (toolCallHistory.get(key) || 0) + 1;
+      toolCallHistory.set(key, count);
+      if (count >= 3) {
+        console.warn(`[ToolRound] Doom loop detected: ${tc.name}(${JSON.stringify(tc.arguments)}) called ${count} times`);
+        doomLoopDetected = true;
+      }
+    }
+    if (doomLoopDetected) {
+      console.warn(`[ToolRound] Breaking: same tool called 3+ times with identical arguments`);
       break;
     }
 

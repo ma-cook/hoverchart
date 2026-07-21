@@ -714,51 +714,42 @@ export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', m
   return [systemMessage, ...recentMessages];
 }
 
-const CODE_GEN_SYSTEM_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request and the repository context below.
+const CODE_GEN_SYSTEM_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request.
 
 ═══════════════════════════════════════════════════════════════
-EXISTING REPOSITORY STRUCTURE
+REPOSITORY STRUCTURE
 ═══════════════════════════════════════════════════════════════
 
 The repository already has files. You MUST respect the existing file structure and import paths.
 
-FILE TREE (all files in the repo):
+FILE TREE:
 {fileTree}
 
-KEY CONFIG FILES (provided below):
-{keyFiles}
-
-SCENE COMPONENTS (architecture diagram nodes — these map to source files):
+SCENE COMPONENTS:
 {sceneContext}
 
-═══════════════════════════════════════════════════════════════
-TECH STACK
-═══════════════════════════════════════════════════════════════
-
-{techStack}
+TECH STACK: {techStack}
 
 ═══════════════════════════════════════════════════════════════
-HOW TO ACCESS FILES
+TOOLS
 ═══════════════════════════════════════════════════════════════
 
-Files in KEY CONFIG FILES above are already loaded — output them directly.
+You have these tools:
+• read_file(path) — read a source file's contents
+• list_files(path) — list files in a directory
+• search_code(pattern) — search for files matching a pattern
 
-For ALL other source files, use the read_file tool to read them:
-  read_file(path="src/components/Button.jsx")
-
-You can call read_file for multiple files in the same tool-use round.
-After reading, output the COMPLETE modified file.
+Use them to read files you need. Call read_file for ALL files you need in ONE round.
 
 ═══════════════════════════════════════════════════════════════
-RESPONSE FLOW
+WORKFLOW
 ═══════════════════════════════════════════════════════════════
 
-Step 1: If you need files NOT in KEY CONFIG FILES → use read_file tool to read them.
-        Call read_file for every file you need in a single tool-use round.
+1. Read the user request and identify which files need changes
+2. Call read_file for ALL those files in a SINGLE tool-use round
+3. In your NEXT response, output the complete modified files as code blocks
 
-Step 2: After receiving the file contents, write your summary and code blocks.
-
-If ALL needed files are already in KEY CONFIG FILES, skip Step 1 and go straight to Step 2.
+Do NOT keep searching after reading files. Write your code after reading.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -780,66 +771,18 @@ For NEW files, use the same format with a path that doesn't exist yet.
 RULES
 ═══════════════════════════════════════════════════════════════
 
-1. Use read_file tool to access any source file not provided in KEY CONFIG FILES
+1. Read ALL needed files in ONE tool-use round, then write code
 2. PRESERVE existing file paths — do NOT invent new paths
-3. Files in KEY CONFIG FILES → output the COMPLETE modified file directly
-4. Other files → read with read_file, then output the COMPLETE modified file
-5. Read ALL needed files in a single tool-use round
-6. NEW files → output the complete file from scratch
-7. Use the SAME import paths the existing code uses
-8. Every code block MUST be a complete, valid file — no placeholders, no "..." omissions
-9. Include error handling and edge cases
-10. Maximum 10 code blocks per response
-11. Use modern syntax and best practices for the target framework`;
+3. Use the SAME import paths the existing code uses
+4. Every code block MUST be a complete, valid file — no placeholders
+5. Maximum 10 code blocks per response
+6. Use modern syntax and best practices for the target framework`;
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
   const capped = fileTree.length > 200 ? fileTree.slice(0, 200) : fileTree;
   const suffix = fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : '';
   return capped.join('\n') + suffix;
-}
-
-function buildKeyFilesSection(fileContents) {
-  if (!fileContents || Object.keys(fileContents).length === 0) return '(no key config files available)';
-  const sections = [];
-  for (const [path, content] of Object.entries(fileContents)) {
-    sections.push(`--- ${path} ---\n${content}`);
-  }
-  return sections.join('\n\n');
-}
-
-function detectLargeFiles(fileContents) {
-  if (!fileContents) return [];
-  const large = [];
-  for (const [path, content] of Object.entries(fileContents)) {
-    if (content && content.length > 10000) {
-      large.push({ path, content, lines: content.split('\n').length });
-    }
-  }
-  return large;
-}
-
-function buildLargeFileInstructions(largeFiles) {
-  if (largeFiles.length === 0) return '';
-  let instructions = '\n\n═══════════════════════════════════════════════════════════════\n';
-  instructions += 'LARGE FILE HANDLING\n';
-  instructions += '═══════════════════════════════════════════════════════════════\n\n';
-  instructions += 'The following files are too large to output completely. Split them into sections:\n\n';
-
-  for (const file of largeFiles) {
-    const sectionCount = Math.ceil(file.lines / 200);
-    instructions += `• \`${file.path}\` (${file.lines} lines) → split into ${sectionCount} sections of ~200 lines each\n`;
-  }
-
-  instructions += "\nFor each large file, output each section in its own code block using the format:\n";
-  instructions += "`section-N:filepath` (where N is the 1-based section number)\n\n";
-  instructions += "Example for a 450-line file split into 3 sections:\n";
-  instructions += "```section-1:src/App.jsx\n...lines 1-200...\n```\n";
-  instructions += "```section-2:src/App.jsx\n...lines 201-400...\n```\n";
-  instructions += "```section-3:src/App.jsx\n...lines 401-450...\n```\n\n";
-  instructions += "Output ALL sections in order. Do NOT skip any section. For unchanged sections, copy them exactly.\n";
-
-  return instructions;
 }
 
 export function parseSectionedResponse(text, fileContents) {
@@ -903,19 +846,14 @@ function buildMinimalSceneContext(objects) {
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
-  const keyFilesSection = buildKeyFilesSection(repoContext?.fileContents);
   const sceneContextSection = buildMinimalSceneContext(sceneObjects);
-
-  const largeFiles = detectLargeFiles(repoContext?.fileContents);
-  const largeFileInstructions = buildLargeFileInstructions(largeFiles);
 
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
-    .replace('{keyFiles}', keyFilesSection)
     .replace('{sceneContext}', sceneContextSection)
-    .replace('{techStack}', techStackSection) + largeFileInstructions;
+    .replace('{techStack}', techStackSection);
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} keyFiles=${keyFilesSection.length} sceneContext=${sceneContextSection.length} total=${systemContent.length}`);
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} sceneContext=${sceneContextSection.length} total=${systemContent.length}`);
 
   const systemMessage = { role: 'system', content: systemContent };
 
