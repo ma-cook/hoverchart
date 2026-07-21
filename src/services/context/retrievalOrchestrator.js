@@ -299,7 +299,15 @@ export async function sendWithRetrieval({
     const cleanedHistory = stripToolCallsFromHistory(currentMessages);
     const forcedMessages = [
       ...cleanedHistory,
-      { role: 'system', content: 'You MUST write your COMPLETE code response NOW. Output the full implementation with code blocks. No more tool calls — just code.' },
+      { role: 'system', content: `IMPORTANT: Output ONLY code blocks. Do NOT use tool calls, do NOT use XML tags, do NOT use DSML format.
+
+Use this exact format for each file you want to create or modify:
+
+\`\`\`jsx:src/components/FileName.jsx
+// your code here
+\`\`\`
+
+Write the COMPLETE file contents. Each code block must have the file path after the language tag.` },
     ];
 
     try {

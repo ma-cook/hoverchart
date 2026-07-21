@@ -1,4 +1,4 @@
-import { getContentStore } from './contentStore';
+import { getContentStore, ContentCategory } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
 
@@ -96,6 +96,13 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
             `read_file(${path})`,
           );
           if (content) {
+            store.upsert(
+              `repo:${path}`,
+              ContentCategory.REPO_FILE,
+              content,
+              { sourcePath: path, tags: ['repo', 'code'] }
+            );
+
             const sliced = content.slice(offset, offset + limit);
             if (sliced.length === 0) {
               return { success: true, content: `[End of file: ${path} has ${content.length} chars]` };
