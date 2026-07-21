@@ -779,7 +779,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         } else if (codeResponse && codeResponse.trim().length > 20) {
           displayContent = codeResponse.trim() + '\n\n_No code blocks were generated. The LLM may need more specific instructions or different files._';
         } else {
-          displayContent = 'No code blocks were generated. The LLM spent its rounds searching for files without producing code. Try:\n- Providing more specific file paths in your request\n- Reducing the scope of the change\n- Mentioning the exact files to modify';
+          displayContent = 'No code blocks were generated. The tools could not locate the needed files, or the LLM did not produce code after reading them. Try:\n- Providing the exact file paths to modify\n- Reducing the scope of the change\n- Checking that the repository is connected and the files exist';
         }
         setCodeMessages((prev) => {
           const withoutStream = prev.filter(m => m.key !== currentStreamKey);

@@ -4,7 +4,14 @@ import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 40000;
-const MAX_SEARCH_ONLY_ROUNDS = 3;
+const MAX_TOOL_ONLY_ROUNDS = 6;
+const MAX_UNHELPFUL_ROUNDS = 3;
+const UNHELPFUL_THRESHOLD = 30;
+const CODE_REMINDER = `
+You have called tools multiple times without producing a code response.
+If you have enough context, write your COMPLETE code response NOW.
+If you still need to read files, do so, but write your code after reading.
+Do NOT keep calling search_code or list_files — use read_file for specific files, then produce code.`;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -26,6 +33,13 @@ function trimMessages(msgs) {
   const userMsg = msgs[1];
   const rest = msgs.slice(2);
 
+  const systemLen = (systemMsg.content || '').length;
+  if (systemLen > MAX_TOTAL_CHARS * 0.75) {
+    const userRestSize = estimateMessagesSize([userMsg, ...rest]);
+    const systemBudget = Math.max(4000, MAX_TOTAL_CHARS - userRestSize);
+    systemMsg.content = systemMsg.content.slice(0, systemBudget);
+  }
+
   while (rest.length > 0 && estimateMessagesSize([systemMsg, userMsg, ...rest]) > MAX_TOTAL_CHARS) {
     let removeCount = 0;
     if (rest[0]?.role === 'assistant') {
@@ -40,15 +54,20 @@ function trimMessages(msgs) {
     rest.splice(0, removeCount);
   }
 
-  if (estimateMessagesSize([systemMsg, userMsg, ...rest]) > MAX_TOTAL_CHARS && systemMsg.content?.length > 4000) {
-    const budget = MAX_TOTAL_CHARS - estimateMessagesSize([userMsg, ...rest]);
-    if (budget > 0) {
-      systemMsg.content = systemMsg.content.slice(0, budget);
-    }
-  }
-
-  console.log(`[Retrieval] Trimmed to ${rest.length} messages (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
+  console.log(`[Retrieval] Trimmed to ${rest.length + 2} messages (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
   return [systemMsg, userMsg, ...rest];
+}
+
+function hasCodeBlocks(text) {
+  return text && /```[\s\S]+?```/.test(text);
+}
+
+function isUsefulToolResult(content, toolName) {
+  if (!content) return false;
+  if (content.length < UNHELPFUL_THRESHOLD) return false;
+  if (/^Error:|^File not found:|^No (matching|files)/i.test(content)) return false;
+  if (toolName === 'search_code' && !/\S/.test(content)) return false;
+  return true;
 }
 
 export async function sendWithRetrieval({
@@ -63,16 +82,27 @@ export async function sendWithRetrieval({
   let currentMessages = [...messages];
   let finalText = '';
   let rounds = 0;
-  let consecutiveSearchOnlyRounds = 0;
+  let toolOnlyRounds = 0;
+  let consecutiveUnhelpfulRounds = 0;
 
-  while (rounds <= MAX_TOOL_ROUNDS) {
+  while (rounds < MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
       currentMessages = trimMessages(currentMessages);
     }
 
-    console.log(`[ToolRound] Round ${rounds}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
+    const isReminderRound = toolOnlyRounds >= MAX_TOOL_ONLY_ROUNDS && !hasCodeBlocks(finalText);
 
-    const result = await sendToZen({
+    if (isReminderRound) {
+      currentMessages.push({
+        role: 'system',
+        content: CODE_REMINDER,
+      });
+      console.warn(`[ToolRound] Round ${rounds + 1}: injecting write-code reminder (${toolOnlyRounds} tool-only rounds)`);
+    }
+
+    console.log(`[ToolRound] Round ${rounds + 1}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
+
+    const rawResult = await sendToZen({
       messages: currentMessages,
       tools: CODE_GEN_TOOLS,
       signal,
@@ -81,32 +111,22 @@ export async function sendWithRetrieval({
       },
     });
 
+    const result = typeof rawResult === 'string' ? { text: rawResult, toolCalls: [] } : rawResult;
     const { text, toolCalls } = result;
     if (text) {
       finalText = finalText ? finalText + '\n\n' + text : text;
     }
-    console.log(`[ToolRound] Round ${rounds} complete. Text: ${finalText.length} chars, Tool calls: ${toolCalls.length}`);
+    console.log(`[ToolRound] Round ${rounds + 1} complete. Text: ${(text || '').length} chars (total: ${finalText.length}), Tool calls: ${toolCalls.length}`);
 
     if (toolCalls.length === 0) {
       break;
     }
 
-    const SEARCH_TOOLS = new Set(['search_code', 'list_files']);
-    const isSearchOnly = toolCalls.every(tc => SEARCH_TOOLS.has(tc.name));
-    if (isSearchOnly) {
-      consecutiveSearchOnlyRounds++;
-    } else {
-      consecutiveSearchOnlyRounds = 0;
-    }
-
-    if (consecutiveSearchOnlyRounds >= MAX_SEARCH_ONLY_ROUNDS) {
-      console.warn(`[ToolRound] Breaking after ${consecutiveSearchOnlyRounds} consecutive search-only rounds — LLM is not progressing`);
-      break;
-    }
+    toolOnlyRounds++;
 
     onRetrieval?.({ chunkIds: toolCalls.map(tc => tc.name + ':' + JSON.stringify(tc.arguments)), round: rounds + 1 });
 
-    const assistantMessage = { role: 'assistant', content: finalText || null, tool_calls: toolCalls.map(tc => ({
+    const assistantMessage = { role: 'assistant', content: text || null, tool_calls: toolCalls.map(tc => ({
       id: tc.id,
       type: 'function',
       function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
@@ -134,6 +154,19 @@ export async function sendWithRetrieval({
 
     const toolResults = await Promise.all(toolPromises);
 
+    const anyUseful = toolResults.some(({ tc, result }) => isUsefulToolResult(result.content, tc.name));
+    if (anyUseful) {
+      consecutiveUnhelpfulRounds = 0;
+    } else {
+      consecutiveUnhelpfulRounds++;
+      console.warn(`[ToolRound] Round ${rounds + 1}: all ${toolResults.length} tool result(s) unhelpful (${consecutiveUnhelpfulRounds}/${MAX_UNHELPFUL_ROUNDS})`);
+    }
+
+    if (consecutiveUnhelpfulRounds >= MAX_UNHELPFUL_ROUNDS) {
+      console.warn(`[ToolRound] Breaking: ${consecutiveUnhelpfulRounds} consecutive rounds with no useful tool results`);
+      break;
+    }
+
     for (const { tc, result: toolResult } of toolResults) {
       currentMessages.push({
         role: 'tool',
@@ -144,6 +177,10 @@ export async function sendWithRetrieval({
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });
     rounds++;
+  }
+
+  if (!hasCodeBlocks(finalText)) {
+    console.warn(`[ToolRound] Exiting with no code blocks after ${rounds} rounds (${finalText.length} chars of text)`);
   }
 
   return stripRetrievalMarkers(finalText);
