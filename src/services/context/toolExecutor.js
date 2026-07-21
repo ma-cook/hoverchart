@@ -102,6 +102,7 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
               content,
               { sourcePath: path, tags: ['repo', 'code'] }
             );
+            await new Promise(r => setTimeout(r, 0));
 
             const sliced = content.slice(offset, offset + limit);
             if (sliced.length === 0) {
