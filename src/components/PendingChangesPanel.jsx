@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { pushCodeToGitHub } from '../services/githubPushService';
+import './PendingChangesPanel.css';
 
 function computeDiffLines(original, proposed) {
   const origLines = (original || '').split('\n');
@@ -39,32 +40,24 @@ function DiffView({ original, proposed }) {
 
   return (
     <div style={{ fontSize: '11px', marginTop: '6px' }}>
-      <div style={{ color: '#888', marginBottom: '4px' }}>
-        <span style={{ color: '#4caf50' }}>+{additions}</span>
-        {' / '}
-        <span style={{ color: '#f44336' }}>-{deletions}</span>
+      <div className="diff-stats">
+        <span className="additions">+{additions}</span>
+        <span className="deletions">-{deletions}</span>
       </div>
-      <div style={{
-        background: '#1e1e1e',
+      <pre style={{
+        background: 'rgba(0, 0, 0, 0.3)',
         borderRadius: '4px',
         padding: '8px',
         maxHeight: '300px',
         overflowY: 'auto',
-        fontFamily: 'Consolas, "Courier New", monospace',
-        fontSize: '11px',
-        lineHeight: '1.4',
+        margin: 0,
       }}>
         {lines.map((line, idx) => (
-          <div key={idx} style={{
-            background: line.type === 'add' ? 'rgba(76,175,80,0.15)' : line.type === 'remove' ? 'rgba(244,67,54,0.15)' : 'transparent',
-            color: line.type === 'add' ? '#81c784' : line.type === 'remove' ? '#e57373' : '#d4d4d4',
-            whiteSpace: 'pre',
-            paddingLeft: '4px',
-          }}>
+          <div key={idx} className={`diff-line ${line.type}`}>
             {line.type === 'add' ? '+ ' : line.type === 'remove' ? '- ' : '  '}{line.text}
           </div>
         ))}
-      </div>
+      </pre>
     </div>
   );
 }
@@ -133,7 +126,7 @@ export default function PendingChangesPanel() {
     <div className="pending-changes-panel">
       <div className="pending-changes-section">
       <div className="pending-changes-header">
-        <span style={{ fontWeight: 600, fontSize: '12px' }}>
+        <span>
           Pending Changes ({pending.length} pending, {accepted.length} accepted)
         </span>
       </div>
@@ -144,7 +137,6 @@ export default function PendingChangesPanel() {
             <div
               className="pending-change-row"
               onClick={() => setExpandedFile(expandedFile === change.filePath ? null : change.filePath)}
-              style={{ cursor: 'pointer' }}
             >
               <span className="pending-change-icon">
                 {change.action === 'create' ? '+' : '~'}
@@ -152,9 +144,7 @@ export default function PendingChangesPanel() {
               <span className="pending-change-path" title={change.filePath}>
                 {change.filePath.split('/').pop()}
               </span>
-              <span className="pending-change-status" style={{
-                color: change.status === 'accepted' ? '#4caf50' : change.status === 'rejected' ? '#f44336' : '#888',
-              }}>
+              <span className={`pending-change-status ${change.status === 'accepted' ? 'status-accepted' : change.status === 'rejected' ? 'status-rejected' : ''}`}>
                 {change.status === 'accepted' ? '✓' : change.status === 'rejected' ? '✗' : expandedFile === change.filePath ? '▼' : '▶'}
               </span>
             </div>

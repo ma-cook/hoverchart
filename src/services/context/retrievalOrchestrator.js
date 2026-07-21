@@ -3,7 +3,7 @@ import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 
 const MAX_TOOL_ROUNDS = 10;
-const MAX_TOTAL_CHARS = 70000;
+const MAX_TOTAL_CHARS = 120000;
 const MAX_TOOL_ONLY_ROUNDS = 3;
 const MAX_UNHELPFUL_ROUNDS = 3;
 const MAX_SEARCH_ROUNDS = 4;
@@ -52,22 +52,52 @@ function trimMessages(msgs) {
     console.warn(`[Retrieval] Truncated system message to ${systemBudget} chars`);
   }
 
-  while (rest.length > 0 && estimateMessagesSize([systemMsg, userMsg, ...rest]) > MAX_TOTAL_CHARS) {
+  if (estimateMessagesSize([systemMsg, userMsg, ...rest]) <= MAX_TOTAL_CHARS) {
+    console.log(`[Retrieval] No trim needed (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
+    return [systemMsg, userMsg, ...rest];
+  }
+
+  const searchResultIndices = new Set();
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i]?.role === 'tool') {
+      const prev = i > 0 ? rest[i - 1] : null;
+      if (prev?.role === 'assistant' && prev.tool_calls) {
+        const isSearchOnly = prev.tool_calls.every(tc => tc.function?.name === 'search_code');
+        if (isSearchOnly) searchResultIndices.add(i);
+      }
+    }
+  }
+
+  const indicesToRemove = [];
+  for (const idx of searchResultIndices) {
+    if (rest[idx]) indicesToRemove.push(idx);
+  }
+
+  const toRemoveSet = new Set(indicesToRemove);
+  const filtered = rest.filter((_, i) => !toRemoveSet.has(i));
+
+  if (estimateMessagesSize([systemMsg, userMsg, ...filtered]) <= MAX_TOTAL_CHARS) {
+    console.log(`[Retrieval] Removed ${indicesToRemove.length} search results → ${filtered.length + 2} messages (${estimateMessagesSize([systemMsg, userMsg, ...filtered])} chars)`);
+    return [systemMsg, userMsg, ...filtered];
+  }
+
+  const workMsgs = [systemMsg, userMsg, ...filtered];
+  while (filtered.length > 0 && estimateMessagesSize(workMsgs) > MAX_TOTAL_CHARS) {
     let removeCount = 0;
-    if (rest[0]?.role === 'assistant') {
+    if (filtered[0]?.role === 'assistant') {
       removeCount = 1;
-      while (removeCount < rest.length && rest[removeCount]?.role === 'tool') {
+      while (removeCount < filtered.length && filtered[removeCount]?.role === 'tool') {
         removeCount++;
       }
     } else {
       removeCount = 1;
     }
-    const removed = rest.splice(0, Math.min(removeCount, rest.length));
+    const removed = filtered.splice(0, Math.min(removeCount, filtered.length));
     console.warn(`[Retrieval] Removed ${removed.length} messages (${removed.map(m => m.role).join(', ')})`);
   }
 
-  console.log(`[Retrieval] Trimmed to ${rest.length + 2} messages (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
-  return [systemMsg, userMsg, ...rest];
+  console.log(`[Retrieval] Trimmed to ${filtered.length + 2} messages (${estimateMessagesSize([systemMsg, userMsg, ...filtered])} chars)`);
+  return [systemMsg, userMsg, ...filtered];
 }
 
 function hasCodeBlocks(text) {

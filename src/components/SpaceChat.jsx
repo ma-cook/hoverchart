@@ -747,14 +747,19 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         const { count } = await associateCodeWithScene(mergedBlocks, spaceId, user);
         setAssociatedCount(count);
 
+        const repoFileTree = repoContext?.fileTree || [];
         const newChanges = mergedBlocks
           .filter(block => block.filePath && block.code)
-          .map(block => ({
-            filePath: block.filePath,
-            original: csState.repoFileContents?.[block.filePath] || null,
-            proposed: block.code,
-            action: csState.repoFileContents?.[block.filePath] ? 'modify' : 'create',
-          }));
+          .map(block => {
+            const existsInContents = !!csState.repoFileContents?.[block.filePath];
+            const existsInTree = repoFileTree.includes(block.filePath);
+            return {
+              filePath: block.filePath,
+              original: csState.repoFileContents?.[block.filePath] || null,
+              proposed: block.code,
+              action: (existsInContents || existsInTree) ? 'modify' : 'create',
+            };
+          });
         csState.addPendingChanges(newChanges);
 
         const modifiedCount = newChanges.filter(c => c.action === 'modify').length;
