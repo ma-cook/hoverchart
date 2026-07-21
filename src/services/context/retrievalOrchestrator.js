@@ -6,7 +6,6 @@ const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 40000;
 const MAX_TOOL_ONLY_ROUNDS = 6;
 const MAX_UNHELPFUL_ROUNDS = 3;
-const UNHELPFUL_THRESHOLD = 30;
 const CODE_REMINDER = `
 You have called tools multiple times without producing a code response.
 If you have enough context, write your COMPLETE code response NOW.
@@ -62,11 +61,12 @@ function hasCodeBlocks(text) {
   return text && /```[\s\S]+?```/.test(text);
 }
 
+const FAILURE_PATTERNS = /^Error:|^File not found:|^No (matching|files) found|^Unknown tool|^search_code requires/i;
+
 function isUsefulToolResult(content, toolName) {
   if (!content) return false;
-  if (content.length < UNHELPFUL_THRESHOLD) return false;
-  if (/^Error:|^File not found:|^No (matching|files)/i.test(content)) return false;
-  if (toolName === 'search_code' && !/\S/.test(content)) return false;
+  if (FAILURE_PATTERNS.test(content.trim())) return false;
+  if (toolName === 'search_code' && content.trim().split('\n').length < 1) return false;
   return true;
 }
 
@@ -159,7 +159,11 @@ export async function sendWithRetrieval({
       consecutiveUnhelpfulRounds = 0;
     } else {
       consecutiveUnhelpfulRounds++;
-      console.warn(`[ToolRound] Round ${rounds + 1}: all ${toolResults.length} tool result(s) unhelpful (${consecutiveUnhelpfulRounds}/${MAX_UNHELPFUL_ROUNDS})`);
+      for (const { tc, result } of toolResults) {
+        const preview = (result.content || '').slice(0, 150).replace(/\n/g, ' ');
+        console.warn(`[ToolRound] Round ${rounds + 1}: ${tc.name} → unhelpful (${result.content?.length || 0} chars): "${preview}"`);
+      }
+      console.warn(`[ToolRound] Unhelpful streak: ${consecutiveUnhelpfulRounds}/${MAX_UNHELPFUL_ROUNDS}`);
     }
 
     if (consecutiveUnhelpfulRounds >= MAX_UNHELPFUL_ROUNDS) {
