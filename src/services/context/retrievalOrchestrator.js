@@ -6,6 +6,8 @@ const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 70000;
 const MAX_TOOL_ONLY_ROUNDS = 3;
 const MAX_UNHELPFUL_ROUNDS = 3;
+const MAX_SEARCH_ROUNDS = 4;
+const MAX_TOTAL_READS = 8;
 const CODE_REMINDER = `
 CRITICAL: You have been calling tools for multiple rounds without producing code.
 STOP calling search_code or list_files. You have enough context now.
@@ -23,6 +25,16 @@ function estimateMessagesSize(msgs) {
     }
   }
   return total;
+}
+
+function stripToolCallsFromHistory(msgs) {
+  const cleaned = [];
+  for (const m of msgs) {
+    if (m.role === 'assistant' && m.tool_calls) continue;
+    if (m.role === 'tool') continue;
+    cleaned.push(m);
+  }
+  return cleaned;
 }
 
 function trimMessages(msgs) {
@@ -71,6 +83,13 @@ function isUsefulToolResult(content, toolName) {
   return true;
 }
 
+function readKey(tc) {
+  if (tc.name === 'read_file') {
+    return `read_file:${tc.arguments.path}:${tc.arguments.offset || 0}:${tc.arguments.limit || 8000}`;
+  }
+  return `${tc.name}:${JSON.stringify(tc.arguments)}`;
+}
+
 export async function sendWithRetrieval({
   messages,
   onChunk,
@@ -84,8 +103,10 @@ export async function sendWithRetrieval({
   let finalText = '';
   let rounds = 0;
   let toolOnlyRounds = 0;
+  let totalSearchRounds = 0;
+  let totalReads = 0;
   let consecutiveUnhelpfulRounds = 0;
-  const readFiles = new Set();
+  const readFiles = new Map();
   let duplicateReadRounds = 0;
   const toolCallHistory = new Map();
 
@@ -94,21 +115,23 @@ export async function sendWithRetrieval({
       currentMessages = trimMessages(currentMessages);
     }
 
-    const isReminderRound = toolOnlyRounds >= MAX_TOOL_ONLY_ROUNDS && !hasCodeBlocks(finalText);
+    const forceWriteCode = (toolOnlyRounds >= MAX_TOOL_ONLY_ROUNDS || totalReads >= MAX_TOTAL_READS) && !hasCodeBlocks(finalText);
+    const forceNoTools = totalSearchRounds >= MAX_SEARCH_ROUNDS;
 
-    if (isReminderRound) {
+    if (forceWriteCode || forceNoTools) {
       currentMessages.push({
         role: 'system',
         content: CODE_REMINDER,
       });
-      console.warn(`[ToolRound] Round ${rounds + 1}: injecting write-code reminder (${toolOnlyRounds} tool-only rounds)`);
+      console.warn(`[ToolRound] Round ${rounds + 1}: injecting write-code reminder (${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
     }
 
-    console.log(`[ToolRound] Round ${rounds + 1}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
+    const useTools = !forceNoTools && !forceWriteCode;
+    console.log(`[ToolRound] Round ${rounds + 1}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars) tools=${useTools}`);
 
     const rawResult = await sendToZen({
       messages: currentMessages,
-      tools: CODE_GEN_TOOLS,
+      tools: useTools ? CODE_GEN_TOOLS : [],
       signal,
       onChunk: (delta, fullText) => {
         onChunk?.(delta, stripRetrievalMarkers(fullText));
@@ -128,7 +151,7 @@ export async function sendWithRetrieval({
 
     let doomLoopDetected = false;
     for (const tc of toolCalls) {
-      const key = `${tc.name}:${JSON.stringify(tc.arguments)}`;
+      const key = readKey(tc);
       const count = (toolCallHistory.get(key) || 0) + 1;
       toolCallHistory.set(key, count);
       if (count >= 3) {
@@ -143,6 +166,11 @@ export async function sendWithRetrieval({
 
     toolOnlyRounds++;
 
+    const isSearchOnly = toolCalls.every(tc => tc.name === 'search_code');
+    if (isSearchOnly) {
+      totalSearchRounds++;
+    }
+
     onRetrieval?.({ chunkIds: toolCalls.map(tc => tc.name + ':' + JSON.stringify(tc.arguments)), round: rounds + 1 });
 
     const assistantMessage = { role: 'assistant', content: text || null, tool_calls: toolCalls.map(tc => ({
@@ -156,19 +184,23 @@ export async function sendWithRetrieval({
     const totalTools = toolCalls.length;
     onToolProgress?.({ tool: 'starting', index: 0, total: totalTools, status: 'executing' });
 
-    const readFilesBefore = new Set(readFiles);
+    const readFilesBefore = new Set(readFiles.keys());
 
     const toolPromises = toolCalls.map((tc, idx) => {
-      if (tc.name === 'read_file' && readFilesBefore.has(tc.arguments.path)) {
-        console.warn(`[ToolRound] Round ${rounds + 1}: ${tc.arguments.path} already read, skipping fetch`);
-        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-        return Promise.resolve({
-          tc,
-          result: { success: true, content: `[Already loaded: ${tc.arguments.path} — see prior tool response above]` },
-          error: null,
-        });
+      if (tc.name === 'read_file') {
+        const key = readKey(tc);
+        if (readFilesBefore.has(key)) {
+          console.warn(`[ToolRound] Round ${rounds + 1}: ${tc.arguments.path} (offset=${tc.arguments.offset||0}) already read, skipping fetch`);
+          onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+          return Promise.resolve({
+            tc,
+            result: { success: true, content: `[Already loaded: ${tc.arguments.path} — see prior tool response above]` },
+            error: null,
+          });
+        }
+        readFiles.set(key, true);
+        totalReads++;
       }
-      if (tc.name === 'read_file') readFiles.add(tc.arguments.path);
       console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
       onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
       return executeTool(tc.name, tc.arguments, githubContext, fileTree)
@@ -186,7 +218,7 @@ export async function sendWithRetrieval({
     const toolResults = await Promise.all(toolPromises);
 
     const allDuplicateReads = toolCalls.length > 0 && toolCalls.every(tc =>
-      tc.name === 'read_file' && readFilesBefore.has(tc.arguments.path)
+      tc.name === 'read_file' && readFilesBefore.has(readKey(tc))
     );
 
     const anyUseful = toolResults.some(({ tc, result }) => isUsefulToolResult(result.content, tc.name));
@@ -234,8 +266,9 @@ export async function sendWithRetrieval({
     console.warn(`[ToolRound] Exiting with no code blocks after ${rounds} rounds (${finalText.length} chars of text)`);
     console.warn(`[ToolRound] Attempting forced code generation round (no tools)...`);
 
+    const cleanedHistory = stripToolCallsFromHistory(currentMessages);
     const forcedMessages = [
-      ...currentMessages,
+      ...cleanedHistory,
       { role: 'system', content: 'You MUST write your COMPLETE code response NOW. Output the full implementation with code blocks. No more tool calls — just code.' },
     ];
 

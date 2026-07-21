@@ -106,7 +106,7 @@ export const PROVIDERS = [
     }),
     formatBody: (messages, model, tools) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
-      if (tools) body.tools = tools;
+      if (tools && tools.length > 0) body.tools = tools;
       return body;
     },
     parseModels: (data) =>
@@ -142,7 +142,7 @@ export const PROVIDERS = [
     }),
     formatBody: (messages, model, tools) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
-      if (tools) body.tools = tools;
+      if (tools && tools.length > 0) body.tools = tools;
       return body;
     },
     parseModels: (data) =>
@@ -178,7 +178,7 @@ export const PROVIDERS = [
     }),
     formatBody: (messages, model, tools) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
-      if (tools) body.tools = tools;
+      if (tools && tools.length > 0) body.tools = tools;
       return body;
     },
     parseModels: (data) =>

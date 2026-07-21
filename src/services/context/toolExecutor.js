@@ -20,11 +20,13 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the full contents of a file from the repository. Returns the complete file text.',
+      description: 'Read the contents of a file from the repository. Use offset/limit to read specific sections of large files.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'File path relative to repo root, e.g. "src/components/Button.tsx"' },
+          offset: { type: 'number', description: 'Character offset to start reading from (default 0)' },
+          limit: { type: 'number', description: 'Max characters to return (default 8000)' },
         },
         required: ['path'],
       },
@@ -66,6 +68,8 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
   switch (name) {
     case 'read_file': {
       const path = args.path;
+      const offset = Math.max(0, parseInt(args.offset, 10) || 0);
+      const limit = Math.min(Math.max(100, parseInt(args.limit, 10) || MAX_FILE_CONTENT_CHARS), MAX_FILE_CONTENT_CHARS);
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
 
@@ -74,10 +78,13 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
           const content = chunks.map(c => c.text).join('');
-          if (content.length > MAX_FILE_CONTENT_CHARS) {
-            return { success: true, content: content.slice(0, MAX_FILE_CONTENT_CHARS) + `\n\n[Truncated: showing first ${MAX_FILE_CONTENT_CHARS} of ${content.length} chars]` };
+          const sliced = content.slice(offset, offset + limit);
+          if (sliced.length === 0) {
+            return { success: true, content: `[End of file: ${path} has ${content.length} chars]` };
           }
-          return { success: true, content };
+          const prefix = offset > 0 ? `[Starting at char ${offset}]` : '';
+          const suffix = offset + limit < content.length ? `\n\n[Showing ${sliced.length} of ${content.length} chars — use offset=${offset + limit} to continue]` : '';
+          return { success: true, content: prefix + sliced + suffix };
         }
       }
 
@@ -89,10 +96,13 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
             `read_file(${path})`,
           );
           if (content) {
-            if (content.length > MAX_FILE_CONTENT_CHARS) {
-              return { success: true, content: content.slice(0, MAX_FILE_CONTENT_CHARS) + `\n\n[Truncated: showing first ${MAX_FILE_CONTENT_CHARS} of ${content.length} chars]` };
+            const sliced = content.slice(offset, offset + limit);
+            if (sliced.length === 0) {
+              return { success: true, content: `[End of file: ${path} has ${content.length} chars]` };
             }
-            return { success: true, content };
+            const prefix = offset > 0 ? `[Starting at char ${offset}]` : '';
+            const suffix = offset + limit < content.length ? `\n\n[Showing ${sliced.length} of ${content.length} chars — use offset=${offset + limit} to continue]` : '';
+            return { success: true, content: prefix + sliced + suffix };
           }
         } catch (err) {
           return { success: false, content: `Error reading ${path}: ${err.message}` };

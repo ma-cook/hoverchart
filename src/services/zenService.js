@@ -699,7 +699,7 @@ export async function sendToZen({ messages, tools, onChunk, signal }) {
     signal,
   });
 
-  if (tools) return result;
+  if (tools && tools.length > 0) return result;
   return result.text;
 }
 
