@@ -49,8 +49,7 @@ function trimMessages(msgs) {
     } else {
       removeCount = 1;
     }
-    if (removeCount >= rest.length) break;
-    rest.splice(0, removeCount);
+    rest.splice(0, Math.min(removeCount, rest.length));
   }
 
   console.log(`[Retrieval] Trimmed to ${rest.length + 2} messages (${estimateMessagesSize([systemMsg, userMsg, ...rest])} chars)`);
@@ -84,6 +83,8 @@ export async function sendWithRetrieval({
   let rounds = 0;
   let toolOnlyRounds = 0;
   let consecutiveUnhelpfulRounds = 0;
+  const readFiles = new Set();
+  let duplicateReadRounds = 0;
 
   while (rounds < MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
@@ -137,7 +138,19 @@ export async function sendWithRetrieval({
     const totalTools = toolCalls.length;
     onToolProgress?.({ tool: 'starting', index: 0, total: totalTools, status: 'executing' });
 
+    const readFilesBefore = new Set(readFiles);
+
     const toolPromises = toolCalls.map((tc, idx) => {
+      if (tc.name === 'read_file' && readFilesBefore.has(tc.arguments.path)) {
+        console.warn(`[ToolRound] Round ${rounds + 1}: ${tc.arguments.path} already read, skipping fetch`);
+        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+        return Promise.resolve({
+          tc,
+          result: { success: true, content: `[Already loaded: ${tc.arguments.path} — see prior tool response above]` },
+          error: null,
+        });
+      }
+      if (tc.name === 'read_file') readFiles.add(tc.arguments.path);
       console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
       onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
       return executeTool(tc.name, tc.arguments, githubContext, fileTree)
@@ -154,6 +167,10 @@ export async function sendWithRetrieval({
 
     const toolResults = await Promise.all(toolPromises);
 
+    const allDuplicateReads = toolCalls.length > 0 && toolCalls.every(tc =>
+      tc.name === 'read_file' && readFilesBefore.has(tc.arguments.path)
+    );
+
     const anyUseful = toolResults.some(({ tc, result }) => isUsefulToolResult(result.content, tc.name));
     if (anyUseful) {
       consecutiveUnhelpfulRounds = 0;
@@ -166,8 +183,20 @@ export async function sendWithRetrieval({
       console.warn(`[ToolRound] Unhelpful streak: ${consecutiveUnhelpfulRounds}/${MAX_UNHELPFUL_ROUNDS}`);
     }
 
+    if (allDuplicateReads) {
+      duplicateReadRounds++;
+      console.warn(`[ToolRound] Round ${rounds + 1}: all read_file calls are for already-read files (${duplicateReadRounds}/2)`);
+    } else {
+      duplicateReadRounds = 0;
+    }
+
     if (consecutiveUnhelpfulRounds >= MAX_UNHELPFUL_ROUNDS) {
       console.warn(`[ToolRound] Breaking: ${consecutiveUnhelpfulRounds} consecutive rounds with no useful tool results`);
+      break;
+    }
+
+    if (duplicateReadRounds >= 2) {
+      console.warn(`[ToolRound] Breaking: ${duplicateReadRounds} consecutive rounds of re-reading same files`);
       break;
     }
 

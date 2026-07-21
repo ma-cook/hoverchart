@@ -3,6 +3,7 @@ import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
 
 const TOOL_TIMEOUT_MS = 20_000;
+const MAX_FILE_CONTENT_CHARS = 8000;
 
 function withTimeout(promise, ms, label) {
   let timer;
@@ -72,7 +73,11 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
       if (entry) {
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
-          return { success: true, content: chunks.map(c => c.text).join('') };
+          const content = chunks.map(c => c.text).join('');
+          if (content.length > MAX_FILE_CONTENT_CHARS) {
+            return { success: true, content: content.slice(0, MAX_FILE_CONTENT_CHARS) + `\n\n[Truncated: showing first ${MAX_FILE_CONTENT_CHARS} of ${content.length} chars]` };
+          }
+          return { success: true, content };
         }
       }
 
@@ -84,6 +89,9 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
             `read_file(${path})`,
           );
           if (content) {
+            if (content.length > MAX_FILE_CONTENT_CHARS) {
+              return { success: true, content: content.slice(0, MAX_FILE_CONTENT_CHARS) + `\n\n[Truncated: showing first ${MAX_FILE_CONTENT_CHARS} of ${content.length} chars]` };
+            }
             return { success: true, content };
           }
         } catch (err) {
