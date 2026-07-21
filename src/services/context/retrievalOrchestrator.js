@@ -8,11 +8,6 @@ const MAX_TOOL_ONLY_ROUNDS = 3;
 const MAX_UNHELPFUL_ROUNDS = 3;
 const MAX_SEARCH_ROUNDS = 4;
 const MAX_TOTAL_READS = 8;
-const CODE_REMINDER = `
-CRITICAL: You have been calling tools for multiple rounds without producing code.
-STOP calling search_code or list_files. You have enough context now.
-Write your COMPLETE code response NOW — output the full implementation with code blocks.
-If you absolutely need one more specific file, use read_file for that exact path, then IMMEDIATELY write your code.`;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -27,14 +22,36 @@ function estimateMessagesSize(msgs) {
   return total;
 }
 
-function stripToolCallsFromHistory(msgs) {
-  const cleaned = [];
-  for (const m of msgs) {
-    if (m.role === 'assistant' && m.tool_calls) continue;
-    if (m.role === 'tool') continue;
-    cleaned.push(m);
+const CODE_GEN_NO_TOOLS_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request and the files provided below.
+
+═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════════
+
+Write a 1-2 sentence summary, then output code blocks:
+
+\`\`\`jsx:src/components/FileName.jsx
+import React from 'react';
+export default function FileName() {
+  return <div>...</div>;
+}
+\`\`\`
+
+Each code block MUST have the file path after the language tag.
+Write COMPLETE file contents — every import, export, and implementation.
+Do NOT use XML tags, DSML format, or any format other than standard markdown code blocks.`;
+
+function collectFileContents(messages) {
+  const parts = [];
+  for (const m of messages) {
+    if (m.role !== 'tool' || !m.content) continue;
+    if (m.content.startsWith('[Already loaded:') ||
+        m.content.startsWith('[End of file:') ||
+        m.content.startsWith('[Starting at') ||
+        m.content.startsWith('Error')) continue;
+    parts.push(m.content);
   }
-  return cleaned;
+  return parts;
 }
 
 function trimMessages(msgs) {
@@ -149,11 +166,17 @@ export async function sendWithRetrieval({
     const forceNoTools = totalSearchRounds >= MAX_SEARCH_ROUNDS;
 
     if (forceWriteCode || forceNoTools) {
-      currentMessages.push({
-        role: 'system',
-        content: CODE_REMINDER,
-      });
-      console.warn(`[ToolRound] Round ${rounds + 1}: injecting write-code reminder (${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
+      const fileContents = collectFileContents(currentMessages);
+      const userMsg = currentMessages[1];
+      const fileBlock = fileContents.length > 0
+        ? `\n\nHere are the files you found:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
+        : '';
+      currentMessages = [
+        { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
+        userMsg,
+        { role: 'user', content: `You have read the relevant files.${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
+      ];
+      console.warn(`[ToolRound] Round ${rounds + 1}: rebuilt messages for code generation (${fileContents.length} file contents, ${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
     }
 
     const useTools = !forceNoTools && !forceWriteCode;
@@ -296,18 +319,17 @@ export async function sendWithRetrieval({
     console.warn(`[ToolRound] Exiting with no code blocks after ${rounds} rounds (${finalText.length} chars of text)`);
     console.warn(`[ToolRound] Attempting forced code generation round (no tools)...`);
 
-    const cleanedHistory = stripToolCallsFromHistory(currentMessages);
+    const fileContents = collectFileContents(currentMessages);
+    const userMsg = currentMessages[1];
+
+    const fileBlock = fileContents.length > 0
+      ? `\n\nHere are the files you found:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
+      : '';
+
     const forcedMessages = [
-      ...cleanedHistory,
-      { role: 'system', content: `IMPORTANT: Output ONLY code blocks. Do NOT use tool calls, do NOT use XML tags, do NOT use DSML format.
-
-Use this exact format for each file you want to create or modify:
-
-\`\`\`jsx:src/components/FileName.jsx
-// your code here
-\`\`\`
-
-Write the COMPLETE file contents. Each code block must have the file path after the language tag.` },
+      { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
+      userMsg,
+      { role: 'user', content: `You have read the relevant files.${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
     ];
 
     try {
