@@ -1,7 +1,7 @@
 import { getContentStore } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
-import { useObjectsStore } from '../../stores/objectsStore';
+import useObjectsStore from '../../stores/objectsStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes } from './graphQuery';
 
 const TOOL_TIMEOUT_MS = 20_000;

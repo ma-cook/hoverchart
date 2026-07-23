@@ -1,7 +1,7 @@
 import { sendToZen, buildComponentIndex, buildGraphSummary } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
-import { useObjectsStore } from '../../stores/objectsStore';
+import useObjectsStore from '../../stores/objectsStore';
 import useDiagramStore from '../../stores/diagramStore';
 
 const MAX_TOOL_ROUNDS = 10;

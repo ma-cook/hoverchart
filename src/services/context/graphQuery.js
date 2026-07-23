@@ -7,7 +7,7 @@
  */
 
 import useDiagramStore from '../../stores/diagramStore';
-import { useObjectsStore } from '../../stores/objectsStore';
+import useObjectsStore from '../../stores/objectsStore';
 
 const RESULT_BUDGET = 2000;
 
