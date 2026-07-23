@@ -6,7 +6,7 @@
  * All functions enforce a 2000-char budget per result.
  */
 
-import { useDiagramStore } from '../../stores/diagramStore';
+import useDiagramStore from '../../stores/diagramStore';
 import { useObjectsStore } from '../../stores/objectsStore';
 
 const RESULT_BUDGET = 2000;
