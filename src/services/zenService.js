@@ -443,7 +443,7 @@ function buildCodeSceneContext(objects) {
 
     if (obj.metadata?.code) {
       const preview = obj.metadata.code.slice(0, 200).replace(/\n/g, '\\n');
-      const codeEntry = `  Existing code (${obj.metadata.codeLanguage || 'unknown'}, ${obj.metadata.codeFilePath || 'unknown path'}):\n  \`${preview}...\``;
+      const codeEntry = `  Existing code (${obj.metadata.codeLanguage || 'unknown'}, ${obj.merfolkData?.codeFilePath || obj.metadata.codeFilePath || 'unknown path'}):\n  \`${preview}...\``;
       const entryLen = entry.length + codeEntry.length + 2;
       if (charCount + entryLen > SCENE_CONTEXT_BUDGET) { truncated++; continue; }
       lines.push(entry);
@@ -733,6 +733,52 @@ export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', m
   return [systemMessage, ...recentMessages];
 }
 
+export function buildGraphSummary(diagramStore) {
+  const diagrams = diagramStore?.graphs || [];
+  const hierarchy = diagramStore?.hierarchy || {};
+
+  const nodeCounts = { components: 0, functions: 0, stores: 0, services: 0, hooks: 0, other: 0 };
+  const connections = [];
+  const rootNodes = [];
+
+  for (const graph of diagrams) {
+    if (!graph?.nodes) continue;
+    for (const [, node] of graph.nodes) {
+      const type = (node.type || '').toLowerCase();
+      if (type === 'component') nodeCounts.components++;
+      else if (type === 'function') nodeCounts.functions++;
+      else if (type === 'store') nodeCounts.stores++;
+      else if (type === 'service') nodeCounts.services++;
+      else if (type === 'hook') nodeCounts.hooks++;
+      else nodeCounts.other++;
+    }
+  }
+
+  for (const graph of diagrams) {
+    if (!graph?.connections) continue;
+    for (const [, conn] of graph.connections) {
+      connections.push(`${conn.source} --> ${conn.target}${conn.label ? ': ' + conn.label : ''}`);
+      if (connections.length >= 30) break;
+    }
+    if (connections.length >= 30) break;
+  }
+
+  if (hierarchy?.rootNodes) {
+    for (const nodeId of hierarchy.rootNodes) {
+      rootNodes.push(nodeId);
+    }
+  }
+
+  const totalNodes = Object.values(nodeCounts).reduce((a, b) => a + b, 0);
+  if (totalNodes === 0) return '';
+
+  const lines = [`GRAPH OVERVIEW: ${totalNodes} nodes (${nodeCounts.components} components, ${nodeCounts.functions} functions, ${nodeCounts.stores} stores, ${nodeCounts.services} services, ${nodeCounts.hooks} hooks)`];
+  if (rootNodes.length > 0) lines.push(`Root nodes: ${rootNodes.join(', ')}`);
+  if (connections.length > 0) lines.push(`Key connections:\n${connections.map(c => `  ${c}`).join('\n')}`);
+
+  return lines.join('\n');
+}
+
 const CODE_GEN_SYSTEM_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request.
 
 ═══════════════════════════════════════════════════════════════
@@ -744,8 +790,14 @@ The repository already has files. You MUST respect the existing file structure a
 FILE TREE:
 {fileTree}
 
+COMPONENT INDEX (component → file):
+{componentIndex}
+
 SCENE COMPONENTS:
 {sceneContext}
+
+GRAPH OVERVIEW:
+{graphSummary}
 
 TECH STACK: {techStack}
 
@@ -756,19 +808,24 @@ TOOLS
 You have these tools:
 • read_file(path) — read a source file's contents
 • list_files(path) — list files in a directory
-• search_code(pattern) — search for files matching a pattern
+• search_code(pattern) — search for files matching a pattern or by node name
+• get_node_info(nodeId) — get full details about a component: type, file path, all connections, parent, children
+• get_dependencies(nodeId, direction) — find upstream (who depends on me) or downstream (what I depend on) relationships
+• find_path(source, target) — find shortest data-flow path between two components
+• search_nodes(query) — search components, functions, stores, or hooks by name/type in the diagram
 
-Use them to read files you need. Call read_file for ALL files you need in ONE round.
+Use search_code or search_nodes to find WHERE each component is defined before reading files. Use get_node_info or get_dependencies to understand component relationships. Call read_file for ALL files you need in ONE round.
 
 ═══════════════════════════════════════════════════════════════
 WORKFLOW
 ═══════════════════════════════════════════════════════════════
 
-1. Read the user request and identify which files need changes
-2. Call read_file for ALL those files in a SINGLE tool-use round
-3. In your NEXT response, output the complete modified files as code blocks
-
-Do NOT keep searching after reading files. Write your code after reading.
+1. Read the user request and identify which components/files are affected
+2. Use search_nodes or search_code to find WHERE each component is defined
+3. Use get_node_info on key components to understand their connections and dependencies
+4. If modifying a component, use get_dependencies to check the blast radius of changes
+5. Call read_file for ALL files you need to modify in a SINGLE tool-use round
+6. In your NEXT response, output the complete modified files as code blocks
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -790,18 +847,56 @@ For NEW files, use the same format with a path that doesn't exist yet.
 RULES
 ═══════════════════════════════════════════════════════════════
 
-1. Read ALL needed files in ONE tool-use round, then write code
+1. ALWAYS search for component definitions before creating new files
 2. PRESERVE existing file paths — do NOT invent new paths
 3. Use the SAME import paths the existing code uses
 4. Every code block MUST be a complete, valid file — no placeholders
 5. Maximum 10 code blocks per response
-6. Use modern syntax and best practices for the target framework`;
+6. Use modern syntax and best practices for the target framework
+7. NEVER create a new file for a component that already exists in another file`;
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
   const capped = fileTree.length > 200 ? fileTree.slice(0, 200) : fileTree;
   const suffix = fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : '';
   return capped.join('\n') + suffix;
+}
+
+export function buildComponentIndex(objects) {
+  if (!objects || objects.length === 0) return '(no scene components)';
+
+  const byFile = new Map();
+  let noFile = 0;
+
+  for (const obj of objects) {
+    if (!obj.merfolkData?.nodeId) continue;
+    if (obj.merfolkData?.isContainer) continue;
+    const filePath = obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath || '';
+    const name = obj.headerText || obj.merfolkData.nodeId;
+    const type = obj.merfolkData.nodeType || obj.type || '';
+    if (filePath) {
+      if (!byFile.has(filePath)) byFile.set(filePath, []);
+      byFile.get(filePath).push({ name, type, nodeId: obj.merfolkData.nodeId });
+    } else {
+      noFile++;
+    }
+  }
+
+  const lines = [];
+  let charCount = 0;
+  const BUDGET = 3000;
+
+  const sorted = [...byFile.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [filePath, entries] of sorted) {
+    const entryNames = entries.map(e => `${e.type}:${e.name}`).join(', ');
+    const line = `${filePath}: ${entryNames}`;
+    if (charCount + line.length + 1 > BUDGET) break;
+    lines.push(line);
+    charCount += line.length + 1;
+  }
+
+  if (noFile > 0) lines.push(`(${noFile} components without file path)`);
+  return lines.length > 0 ? lines.join('\n') : '(no scene components)';
 }
 
 export function parseSectionedResponse(text, fileContents) {
@@ -850,7 +945,7 @@ function buildMinimalSceneContext(objects) {
     const nodeId = obj.merfolkData.nodeId;
     const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
     const name = obj.headerText || nodeId;
-    const filePath = obj.metadata?.codeFilePath || '';
+    const filePath = obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath || '';
     const line = filePath ? `[${nodeId}] ${nodeType} — "${name}" → ${filePath}` : `[${nodeId}] ${nodeType} — "${name}"`;
 
     if (charCount + line.length + 1 > SCENE_COMPONENT_BUDGET) { truncated++; continue; }
@@ -865,14 +960,20 @@ function buildMinimalSceneContext(objects) {
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
+  const componentIndexSection = buildComponentIndex(sceneObjects);
   const sceneContextSection = buildMinimalSceneContext(sceneObjects);
+
+  const diagramStore = repoContext?.diagramStore;
+  const graphSummarySection = buildGraphSummary(diagramStore);
 
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
+    .replace('{componentIndex}', componentIndexSection)
     .replace('{sceneContext}', sceneContextSection)
+    .replace('{graphSummary}', graphSummarySection || '(no graph available)')
     .replace('{techStack}', techStackSection);
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} sceneContext=${sceneContextSection.length} total=${systemContent.length}`);
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} total=${systemContent.length}`);
 
   const systemMessage = { role: 'system', content: systemContent };
 

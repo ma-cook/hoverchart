@@ -110,7 +110,7 @@ export const scanWithTreeSitter = async (
 
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set() });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), filePath });
     }
   };
 

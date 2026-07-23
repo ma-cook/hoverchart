@@ -758,7 +758,7 @@ const traverseVanillaAST = (
   // ── Helpers ───────────────────────────────────────────────────────────────
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set() });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), filePath });
     }
   };
 
@@ -991,7 +991,7 @@ const traversePythonSource = (
 
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set() });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), filePath });
     }
   };
 
@@ -1255,7 +1255,7 @@ const traverseVueSource = (
 
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set() });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), filePath });
     }
   };
 
@@ -1761,7 +1761,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             // Group under a "shaders" file container
             const shaderContainerName = 'shaders';
             if (!fileFunctions.has(shaderContainerName)) {
-              fileFunctions.set(shaderContainerName, { type: 'utility', functions: new Set() });
+              fileFunctions.set(shaderContainerName, { type: 'utility', functions: new Set(), filePath: file.path });
             }
             fileFunctions.get(shaderContainerName).functions.add(shaderNodeName);
             return; // Skip AST parsing for shader files
@@ -2168,7 +2168,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       }
                       // Track file→function relationship
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                        fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
 
@@ -2196,7 +2196,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   // Backend functions - tracked under backend_${fileName} container
                   elements.services.push(funcName);
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
+                    fileFunctions.set(fileName, { type: 'backend', functions: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isService) {
@@ -2204,7 +2204,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.services.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'service', functions: new Set() });
+                    fileFunctions.set(fileName, { type: 'service', functions: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isStore) {
@@ -2214,7 +2214,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship for nesting inside store file
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'store', functions: new Set() });
+                    fileFunctions.set(fileName, { type: 'store', functions: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isHook) {
@@ -2223,7 +2223,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship for nesting inside hook file
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                    fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isUtil) {
@@ -2231,7 +2231,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                    fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isWorker) {
@@ -2239,7 +2239,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
+                    fileFunctions.set(fileName, { type: 'worker', functions: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else {
@@ -2264,7 +2264,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       elements.utilities.push(funcName);
                       // Track file→function relationship so the file container is always created
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                        fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
                     }
@@ -2275,7 +2275,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       elements.utilities.push(funcName);
                       // Track file→function relationship
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
+                        fileFunctions.set(fileName, { type: 'worker', functions: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
                     }
@@ -2524,7 +2524,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                             }
                             // Track file→function relationship
                             if (!fileFunctions.has(fileName)) {
-                              fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                              fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
                             }
                             fileFunctions.get(fileName).functions.add(varName);
                           }
@@ -2534,7 +2534,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         // Backend functions - tracked under backend_${fileName} container
                         elements.services.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isService) {
@@ -2542,7 +2542,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.services.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'service', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isStore) {
@@ -2552,7 +2552,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship for nesting inside store file
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'store', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'store', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isHook) {
@@ -2561,7 +2561,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship for nesting inside hook file
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'hook', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isUtil) {
@@ -2569,7 +2569,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isWorker) {
@@ -2577,7 +2577,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'worker', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'worker', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else {
@@ -2605,6 +2605,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                               fileFunctions.set(fileName, {
                                 type: 'utility',
                                 functions: new Set(),
+                                filePath: file.path,
                               });
                             }
                             fileFunctions.get(fileName).functions.add(varName);
@@ -2619,6 +2620,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                               fileFunctions.set(fileName, {
                                 type: 'worker',
                                 functions: new Set(),
+                                filePath: file.path,
                               });
                             }
                             fileFunctions.get(fileName).functions.add(varName);
@@ -2675,7 +2677,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       // a "contains" connection (authStore -.-> useAuthStore) is emitted,
                       // preventing the file container node from appearing orphaned.
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'store', functions: new Set() });
+                        fileFunctions.set(fileName, { type: 'store', functions: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(varName);
                     }
@@ -2694,19 +2696,19 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                           elements.services.push(varName);
                         }
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'backend', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isService) {
                         elements.services.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'service', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isUtil) {
                         elements.utilities.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'utility', functions: new Set() });
+                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       }
@@ -3656,8 +3658,9 @@ const generateMerfolkMarkdown = ({
   componentFunctions.forEach((functions, componentName) => {
     const parentNeedsSuffix = filesNeedingSuffix.has(componentName);
     const parentNodeId = parentNeedsSuffix ? `${componentName}_file` : componentName;
+    const compFilePath = fileFunctions.get(componentName)?.filePath || '';
     functions.forEach((funcName) => {
-      childToParentMap.set(funcName, { parentId: parentNodeId, parentName: componentName, type: 'component' });
+      childToParentMap.set(funcName, { parentId: parentNodeId, parentName: componentName, type: 'component', filePath: compFilePath });
     });
   });
   
@@ -3692,7 +3695,7 @@ const generateMerfolkMarkdown = ({
         : fileName;
     }
     fileInfo.functions.forEach((funcName) => {
-      childToParentMap.set(funcName, { parentId: fileNodeId, parentName: fileName, type: fileInfo.type });
+      childToParentMap.set(funcName, { parentId: fileNodeId, parentName: fileName, type: fileInfo.type, filePath: fileInfo.filePath });
     });
   });
   
@@ -3700,15 +3703,17 @@ const generateMerfolkMarkdown = ({
   internalComponents.forEach((data, fileName) => {
     const parentNeedsSuffix = filesNeedingSuffix.has(data.parent);
     const parentNodeId = parentNeedsSuffix ? `${data.parent}_file` : data.parent;
+    const helperFilePath = fileFunctions.get(data.parent)?.filePath || '';
     data.helpers.forEach((helperComp) => {
-      childToParentMap.set(helperComp, { parentId: parentNodeId, parentName: data.parent, type: 'component' });
+      childToParentMap.set(helperComp, { parentId: parentNodeId, parentName: data.parent, type: 'component', filePath: helperFilePath });
     });
   });
   
   // Map internal hooks to their parent
   internalHooks.forEach((data, hookName) => {
     const parentNodeId = `${data.parent}_file`;
-    childToParentMap.set(hookName, { parentId: parentNodeId, parentName: data.parent, type: data.parentType });
+    const hookFilePath = fileFunctions.get(data.parent)?.filePath || '';
+    childToParentMap.set(hookName, { parentId: parentNodeId, parentName: data.parent, type: data.parentType, filePath: hookFilePath });
   });
 
   // Helper function to generate routed connections through parent containers
@@ -3772,6 +3777,16 @@ const generateMerfolkMarkdown = ({
     return connections;
   };
 
+  // Helper: resolve the file path for a given symbol name
+  const getFilePath = (name) => {
+    const parent = childToParentMap.get(name);
+    if (parent?.filePath) return parent.filePath;
+    for (const [, info] of fileFunctions) {
+      if (info.functions.has(name)) return info.filePath;
+    }
+    return '';
+  };
+
   // Add components (no internal functions nested - they'll be connected via arrows)
   // Components that have internal hooks with the same name get _file suffix
   if (elements.components.length > 0) {
@@ -3785,6 +3800,10 @@ const generateMerfolkMarkdown = ({
         console.warn(`ℹ️ Renamed duplicate "${nodeId}" → "${finalId}" (Component)`);
       }
       markdown += `${finalId}{Component: ${comp}}\n`;
+      const compPath = getFilePath(comp);
+      if (compPath) {
+        markdown += `{\n  codeFilePath: "${compPath}"\n}\n`;
+      }
     });
   }
 
@@ -3819,7 +3838,10 @@ const generateMerfolkMarkdown = ({
       if (finalId !== func) {
         console.warn(`ℹ️ Renamed duplicate "${func}" → "${finalId}" (Function)`);
       }
-      markdown += `${finalId}[Function: ${func}]\n`;
+      const fPath = getFilePath(func);
+      markdown += fPath
+        ? `${finalId}[Function: ${func}]{codeFilePath: "${fPath}"}\n`
+        : `${finalId}[Function: ${func}]\n`;
     });
   }
 
@@ -3831,7 +3853,10 @@ const generateMerfolkMarkdown = ({
       if (finalId !== hook) {
         console.warn(`ℹ️ Renamed duplicate "${hook}" → "${finalId}" (Hook)`);
       }
-      markdown += `${finalId}[Function: ${hook}]\n`;
+      const hPath = getFilePath(hook);
+      markdown += hPath
+        ? `${finalId}[Function: ${hook}]{codeFilePath: "${hPath}"}\n`
+        : `${finalId}[Function: ${hook}]\n`;
     });
   }
 
@@ -3851,7 +3876,10 @@ const generateMerfolkMarkdown = ({
     markdown += `\n%% Services\n`;
     elements.services.forEach((service) => {
       const finalId = uniqueNodeId(service);
-      markdown += `${finalId}[Function: ${service}]\n`;
+      const sPath = getFilePath(service);
+      markdown += sPath
+        ? `${finalId}[Function: ${service}]{codeFilePath: "${sPath}"}\n`
+        : `${finalId}[Function: ${service}]\n`;
     });
   }
 
@@ -3863,7 +3891,10 @@ const generateMerfolkMarkdown = ({
       if (finalId !== store) {
         console.warn(`ℹ️ Renamed duplicate "${store}" → "${finalId}" (Store)`);
       }
-      markdown += `${finalId}[[Store: ${store}]]\n`;
+      const stPath = getFilePath(store);
+      markdown += stPath
+        ? `${finalId}[[Store: ${store}]]{codeFilePath: "${stPath}"}\n`
+        : `${finalId}[[Store: ${store}]]\n`;
     });
   }
 
@@ -3880,7 +3911,10 @@ const generateMerfolkMarkdown = ({
         return;
       }
       const finalId = uniqueNodeId(util);
-      markdown += `${finalId}[Function: ${util}]\n`;
+      const uPath = getFilePath(util);
+      markdown += uPath
+        ? `${finalId}[Function: ${util}]{codeFilePath: "${uPath}"}\n`
+        : `${finalId}[Function: ${util}]\n`;
     });
   }
 
@@ -3889,7 +3923,10 @@ const generateMerfolkMarkdown = ({
     markdown += `\n%% Classes\n`;
     elements.classes.forEach((cls) => {
       const finalId = uniqueNodeId(cls);
-      markdown += `${finalId}[[Class: ${cls}]]\n`;
+      const cPath = getFilePath(cls);
+      markdown += cPath
+        ? `${finalId}[[Class: ${cls}]]{codeFilePath: "${cPath}"}\n`
+        : `${finalId}[[Class: ${cls}]]\n`;
     });
   }
 
@@ -3898,7 +3935,10 @@ const generateMerfolkMarkdown = ({
     markdown += `\n%% Constants\n`;
     elements.constants.forEach((cnst) => {
       const finalId = uniqueNodeId(cnst);
-      markdown += `${finalId}[Constant: ${cnst}]\n`;
+      const coPath = getFilePath(cnst);
+      markdown += coPath
+        ? `${finalId}[Constant: ${cnst}]{codeFilePath: "${coPath}"}\n`
+        : `${finalId}[Constant: ${cnst}]\n`;
     });
   }
 
@@ -3907,7 +3947,10 @@ const generateMerfolkMarkdown = ({
     markdown += `\n%% Variables\n`;
     elements.variables.forEach((v) => {
       const finalId = uniqueNodeId(v);
-      markdown += `${finalId}[Variable: ${v}]\n`;
+      const vPath = getFilePath(v);
+      markdown += vPath
+        ? `${finalId}[Variable: ${v}]{codeFilePath: "${vPath}"}\n`
+        : `${finalId}[Variable: ${v}]\n`;
     });
   }
 
@@ -3918,7 +3961,10 @@ const generateMerfolkMarkdown = ({
     markdown += `\n%% Interfaces\n`;
     elements.interfaces.forEach((iface) => {
       const finalId = uniqueNodeId(iface);
-      markdown += `${finalId}[[Interface: ${iface}]]\n`;
+      const iPath = getFilePath(iface);
+      markdown += iPath
+        ? `${finalId}[[Interface: ${iface}]]{codeFilePath: "${iPath}"}\n`
+        : `${finalId}[[Interface: ${iface}]]\n`;
     });
   }
 
@@ -3950,7 +3996,10 @@ const generateMerfolkMarkdown = ({
         console.warn(`ℹ️ Renamed duplicate "${func}" → "${finalId}" (Component Internal Function)`);
       }
       const displayName = componentFuncDisplayNames.get(func) || func;
-      markdown += `${finalId}[Function: ${displayName}]\n`;
+      const cfPath = getFilePath(func);
+      markdown += cfPath
+        ? `${finalId}[Function: ${displayName}]{codeFilePath: "${cfPath}"}\n`
+        : `${finalId}[Function: ${displayName}]\n`;
     });
 
     // Then add arrow relationships with descriptive labels
@@ -4008,6 +4057,7 @@ const generateMerfolkMarkdown = ({
     }
     markdown += `\n%% Entry-point root\n`;
     markdown += `${vanillaRootId}{Component: ${repoName}}\n`;
+    markdown += `{\n  codeFilePath: ""\n}\n`;
   }
 
   if (fileFunctions.size > 0) {
@@ -4032,6 +4082,10 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Vanilla File)`);
         }
         markdown += `${finalId}{Component: ${fileName}}\n`;
+        const vFilePath = fileInfo.filePath;
+        if (vFilePath) {
+          markdown += `{\n  codeFilePath: "${vFilePath}"\n}\n`;
+        }
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'backend') {
         const backendNodeId = `backend_${fileName}`;
@@ -4040,6 +4094,9 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${backendNodeId}" → "${finalId}" (Backend File)`);
         }
         markdown += `${finalId}((Service: ${fileName}))\n`;
+        if (fileInfo.filePath) {
+          markdown += `{\n  codeFilePath: "${fileInfo.filePath}"\n}\n`;
+        }
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'service') {
         const finalId = uniqueNodeId(fileNodeId);
@@ -4047,20 +4104,31 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Service File)`);
         }
         markdown += `${finalId}((Service: ${fileName}))\n`;
+        if (fileInfo.filePath) {
+          markdown += `{\n  codeFilePath: "${fileInfo.filePath}"\n}\n`;
+        }
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'hook') {
         const finalId = uniqueNodeId(fileNodeId);
         if (finalId !== fileNodeId) {
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Hook File)`);
         }
-        markdown += `${finalId}[Hook: ${fileName}]\n`;
+        markdown += `${finalId}[Hook: ${fileName}]`;
+        if (fileInfo.filePath) {
+          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
+        }
+        markdown += '\n';
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'store') {
         const finalId = uniqueNodeId(fileNodeId);
         if (finalId !== fileNodeId) {
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Store File)`);
         }
-        markdown += `${finalId}[[Store: ${fileName}]]\n`;
+        markdown += `${finalId}[[Store: ${fileName}]]`;
+        if (fileInfo.filePath) {
+          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
+        }
+        markdown += '\n';
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'worker') {
         const workerNodeId = `worker_${fileName}`;
@@ -4068,7 +4136,11 @@ const generateMerfolkMarkdown = ({
         if (finalId !== workerNodeId) {
           console.warn(`ℹ️ Renamed duplicate "${workerNodeId}" → "${finalId}" (Worker File)`);
         }
-        markdown += `${finalId}[Function: ${fileName}]\n`;
+        markdown += `${finalId}[Function: ${fileName}]`;
+        if (fileInfo.filePath) {
+          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
+        }
+        markdown += '\n';
         fileInfo.nodeId = finalId;
       } else {
         // utility (and shaders container)
@@ -4077,7 +4149,11 @@ const generateMerfolkMarkdown = ({
         if (finalId !== utilNodeId) {
           console.warn(`ℹ️ Renamed duplicate "${utilNodeId}" → "${finalId}" (Utility File)`);
         }
-        markdown += `${finalId}[Function: ${fileName}]\n`;
+        markdown += `${finalId}[Function: ${fileName}]`;
+        if (fileInfo.filePath) {
+          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
+        }
+        markdown += '\n';
         fileInfo.nodeId = finalId;
       }
     });
@@ -4091,7 +4167,10 @@ const generateMerfolkMarkdown = ({
         if (fileNodeId) {
           if (!nodeIds.has(funcName)) {
             const finalFuncId = uniqueNodeId(funcName);
-            markdown += `${finalFuncId}[Function: ${funcName}]\n`;
+            const ffPath = getFilePath(funcName);
+            markdown += ffPath
+              ? `${finalFuncId}[Function: ${funcName}]{codeFilePath: "${ffPath}"}\n`
+              : `${finalFuncId}[Function: ${funcName}]\n`;
           }
           const resolvedFunc = renamedIds.get(funcName) || funcName;
           markdown += `${fileNodeId} -.-> ${resolvedFunc} : "contains"\n`;
@@ -4132,6 +4211,7 @@ const generateMerfolkMarkdown = ({
       console.warn(`ℹ️ Renamed duplicate "${nextRootId}" → "${nextRootFinalId}" (Next.js root)`);
     }
     markdown += `${nextRootFinalId}{Component: ${repoName}}\n`;
+    markdown += `{\n  codeFilePath: ""\n}\n`;
 
     // Helper: resolve a route fileName to its actual Merfolk node ID.
     // Route files processed via the React AST path are emitted earlier as
@@ -4393,7 +4473,10 @@ const generateMerfolkMarkdown = ({
     markdown += '\n%% API Endpoints\n';
     apiEndpoints.forEach((ep, epKey) => {
       const finalId = uniqueNodeId(epKey);
-      markdown += `${finalId}[Endpoint: ${ep.method} ${ep.path}]\n`;
+      const epPath = ep.sourceFile ? (fileFunctions.get(ep.sourceFile)?.filePath || '') : '';
+      markdown += epPath
+        ? `${finalId}[Endpoint: ${ep.method} ${ep.path}]{codeFilePath: "${epPath}"}\n`
+        : `${finalId}[Endpoint: ${ep.method} ${ep.path}]\n`;
     });
 
     markdown += '\n%% API Containment\n';
@@ -4524,11 +4607,17 @@ const generateMerfolkMarkdown = ({
     markdown += '\n%% Error Boundaries\n';
     errorBoundaries.forEach(boundaryName => {
       const finalId = uniqueNodeId(boundaryName);
-      markdown += `${finalId}[Boundary: ${boundaryName}]\n`;
+      const ebPath = getFilePath(boundaryName);
+      markdown += ebPath
+        ? `${finalId}[Boundary: ${boundaryName}]{codeFilePath: "${ebPath}"}\n`
+        : `${finalId}[Boundary: ${boundaryName}]\n`;
     });
     suspenseBoundaries.forEach(boundaryId => {
       const finalId = uniqueNodeId(boundaryId);
-      markdown += `${finalId}[Boundary: Suspense]\n`;
+      const sbPath = getFilePath(boundaryId);
+      markdown += sbPath
+        ? `${finalId}[Boundary: Suspense]{codeFilePath: "${sbPath}"}\n`
+        : `${finalId}[Boundary: Suspense]\n`;
     });
 
     if (errorContainment.length > 0) {
@@ -4571,7 +4660,12 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${sourceFile}" → "${containerId}" (Interface Container)`);
         }
         markdown += `\n%% Interface-only file container\n`;
-        markdown += `${containerId}[Function: ${sourceFile}]\n`;
+        markdown += `${containerId}[Function: ${sourceFile}]`;
+        const ifaceFilePath = fileFunctions.get(sourceFile)?.filePath || sourceFile;
+        if (ifaceFilePath) {
+          markdown += `{codeFilePath: "${ifaceFilePath}"}`;
+        }
+        markdown += '\n';
         ifaceOnlyContainers.set(sourceFile, containerId);
       }
     });
@@ -4582,7 +4676,10 @@ const generateMerfolkMarkdown = ({
       if (finalId !== ifaceName) {
         console.warn(`ℹ️ Renamed duplicate "${ifaceName}" → "${finalId}" (Interface)`);
       }
-      markdown += `${finalId}[[Interface: ${ifaceName}]]\n`;
+      const siPath = fileFunctions.get(sourceFile)?.filePath || '';
+      markdown += siPath
+        ? `${finalId}[[Interface: ${ifaceName}]]{codeFilePath: "${siPath}"}\n`
+        : `${finalId}[[Interface: ${ifaceName}]]\n`;
     });
 
     // Second pass: emit "contains" connections from each file container to

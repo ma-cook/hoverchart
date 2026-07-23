@@ -1,6 +1,8 @@
-import { sendToZen } from '../zenService';
+import { sendToZen, buildComponentIndex, buildGraphSummary } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
+import { useObjectsStore } from '../../stores/objectsStore';
+import useDiagramStore from '../../stores/diagramStore';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 120000;
@@ -24,7 +26,7 @@ function estimateMessagesSize(msgs) {
 
 const CODE_GEN_NO_TOOLS_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request and the files provided below.
 
-═══════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
@@ -168,13 +170,22 @@ export async function sendWithRetrieval({
     if (forceWriteCode || forceNoTools) {
       const fileContents = collectFileContents(currentMessages);
       const userMsg = currentMessages[1];
+      const sceneObjects = useObjectsStore.getState().objects || [];
+      const componentIndex = buildComponentIndex(sceneObjects);
+      const graphSummary = buildGraphSummary(useDiagramStore.getState());
       const fileBlock = fileContents.length > 0
         ? `\n\nHere are the files you found:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
+        : '';
+      const indexBlock = componentIndex && componentIndex !== '(no scene components)'
+        ? `\n\nCOMPONENT INDEX (component → file):\n${componentIndex}`
+        : '';
+      const graphBlock = graphSummary
+        ? `\n\nGRAPH OVERVIEW:\n${graphSummary}`
         : '';
       currentMessages = [
         { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
         userMsg,
-        { role: 'user', content: `You have read the relevant files.${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
+        { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
       ];
       console.warn(`[ToolRound] Round ${rounds + 1}: rebuilt messages for code generation (${fileContents.length} file contents, ${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
     }
@@ -321,15 +332,26 @@ export async function sendWithRetrieval({
 
     const fileContents = collectFileContents(currentMessages);
     const userMsg = currentMessages[1];
+    const sceneObjects = useObjectsStore.getState().objects || [];
+    const componentIndex = buildComponentIndex(sceneObjects);
+    const graphSummary = buildGraphSummary(useDiagramStore.getState());
 
     const fileBlock = fileContents.length > 0
       ? `\n\nHere are the files you found:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
       : '';
 
+    const indexBlock = componentIndex && componentIndex !== '(no scene components)'
+      ? `\n\nCOMPONENT INDEX (component → file):\n${componentIndex}`
+      : '';
+
+    const graphBlock = graphSummary
+      ? `\n\nGRAPH OVERVIEW:\n${graphSummary}`
+      : '';
+
     const forcedMessages = [
       { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
       userMsg,
-      { role: 'user', content: `You have read the relevant files.${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
+      { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
     ];
 
     try {

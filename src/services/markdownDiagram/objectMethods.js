@@ -213,6 +213,7 @@ export const objectMethods = {
               color: node.visual?.color,
               opacity: node.visual?.opacity,
               ...(node.properties || {}),
+              ...(node.metadata || {}),
             },
           };
         })
@@ -301,6 +302,7 @@ export const objectMethods = {
               : {}),
             merfolkData: {
               nodeId: data.nodeId,
+              codeFilePath: data.extraData.codeFilePath || '',
               ...(data.extraData.merfolkData || {}),
             },
           };
@@ -355,6 +357,7 @@ export const objectMethods = {
             }),
             merfolkData: {
               nodeId: data.nodeId,
+              codeFilePath: data.extraData.codeFilePath || '',
               ...(data.extraData.merfolkData || {}),
             },
           };
