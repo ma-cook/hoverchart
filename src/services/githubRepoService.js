@@ -1665,7 +1665,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       componentRelationships, componentDependencies,
       internalComponents, exportedComponents,
       componentToFile, componentImportSources,
-      fileFunctions, internalHooks, filesNeedingSuffix,
+      fileFunctions, fileContentIndex, internalHooks, filesNeedingSuffix,
       functionCallRelationships, componentPropsRelationships,
       storeUsageRelationships, hookReturnValueRelationships,
       moduleImportRelationships, nextjsRouteMap,
