@@ -691,42 +691,46 @@ TOOLS
 ═══════════════════════════════════════════════════════════════
 
 You have these tools:
-• read_file(path) — read a source file's contents
+• read_file(path) — read a source file's FULL contents (this is the ONLY way to see actual code)
 • list_files(path) — list files in a directory
-• search_code(pattern) — search for files matching a pattern, by node name, or by content (grep)
+• search_code(pattern) — find WHERE code lives (file names, node names, or content matches)
 • get_node_info(nodeId) — get full details about a component: type, file path, all connections, parent, children
 • get_dependencies(nodeId, direction) — find upstream (who depends on me) or downstream (what I depend on) relationships
 • find_path(source, target) — find shortest data-flow path between two components
 • search_nodes(query) — search components, functions, stores, or hooks by name/type in the diagram
 
-Use search_code or search_nodes to find WHERE each component is defined before reading files. search_code searches file names, scene objects, AND file contents. Use get_node_info or get_dependencies to understand component relationships. Call read_file for ALL files you need in ONE round.
+IMPORTANT: search_code only tells you WHERE code is, not WHAT it contains. You MUST call read_file to see the actual source code before writing any modifications.
 
 ═══════════════════════════════════════════════════════════════
-WORKFLOW
+WORKFLOW — TWO PHASES
 ═══════════════════════════════════════════════════════════════
 
-1. Read the user request and identify which components/files are affected
-2. Use search_nodes or search_code to find WHERE each component is defined — try multiple search terms (name, type, partial match)
-3. Use get_node_info on key components to understand their connections and dependencies
-4. If modifying a component, use get_dependencies to check the blast radius of changes
-5. Call read_file for ALL files you need to modify in a SINGLE tool-use round
-6. In your NEXT response, output the complete modified files as code blocks
+PHASE 1 — DISCOVER (use tools):
+1. Identify which components/files are affected by the user's request
+2. Use search_nodes or search_code to find WHERE each component is defined
+3. Use get_node_info or get_dependencies to understand relationships
+4. MANDATORY: Call read_file on EVERY file you plan to modify — you cannot write correct code without reading the current content first
+
+PHASE 2 — GENERATE (write code):
+5. Output a 1-2 sentence summary of changes
+6. For each modified file, output a code block with the COMPLETE file content — start from what read_file returned and apply your modifications
+7. For NEW files (that don't exist yet), write them from scratch
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
-Write a 1-2 sentence summary, then output code blocks:
+Write a 1-2 sentence summary, then output code blocks. Each code block MUST be the COMPLETE file:
 
-\`\`\`javascript:src/components/Button.jsx
-import { useState } from 'react';
-export function Button() {
-  const [count, setCount] = useState(0);
-  return <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>;
+\`\`\`jsx:src/components/FileName.jsx
+import React from 'react';
+export default function FileName() {
+  return <div>...</div>;
 }
 \`\`\`
 
-For NEW files, use the same format with a path that doesn't exist yet.
+For MODIFIED files: your code block must be the full file as returned by read_file, with your changes applied. Do NOT fabricate imports, state, or structure — use what's actually in the file.
+For NEW files: write from scratch with a path that doesn't exist yet.
 
 ═══════════════════════════════════════════════════════════════
 RULES
@@ -739,9 +743,10 @@ RULES
 5. Maximum 10 code blocks per response
 6. Use modern syntax and best practices for the target framework
 7. NEVER create a new file for a component that already exists in another file
-8. HTML elements (div, span, header, section, nav, etc.) and CSS classes are NOT separate components — they live INLINE inside existing component files. Search for them in existing files, do NOT create new component files for them.
-9. When the user mentions a UI element by name (e.g. "the TopBar", "the sidebar"), search for it first. It may be defined inline in an existing file, not as a standalone component.
-10. ALWAYS read_file the target file BEFORE writing code for it — you need the full current content to produce a correct modification, not a guess.`;
+8. HTML elements (div, span, header, section, nav, etc.) and CSS classes are NOT separate components — they live INLINE inside existing component files. Do NOT create new component files for them.
+9. When the user mentions a UI element by name (e.g. "the TopBar", "the sidebar"), search for it first — it may be defined inline in an existing file, not as a standalone component.
+10. You MUST call read_file on every file you want to modify BEFORE outputting code. Without reading the file, you cannot know its imports, exports, state variables, or structure.
+11. NEVER output a fabricated version of an existing file. If you didn't read it with read_file, do NOT write code for it.`;
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';

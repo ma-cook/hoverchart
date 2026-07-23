@@ -6,7 +6,7 @@ import useDiagramStore from '../../stores/diagramStore';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 120000;
-const MAX_TOOL_ONLY_ROUNDS = 3;
+const MAX_TOOL_ONLY_ROUNDS = 5;
 const MAX_UNHELPFUL_ROUNDS = 3;
 const MAX_SEARCH_ROUNDS = 4;
 const MAX_TOTAL_READS = 8;
@@ -26,7 +26,7 @@ function estimateMessagesSize(msgs) {
 
 const CODE_GEN_NO_TOOLS_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request and the files provided below.
 
-════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
@@ -40,18 +40,27 @@ export default function FileName() {
 \`\`\`
 
 Each code block MUST have the file path after the language tag.
-Write COMPLETE file contents — every import, export, and implementation.
+For MODIFIED files: start from the content provided below and apply your changes. Do NOT fabricate imports, state, or structure.
+For NEW files: write from scratch.
 Do NOT use XML tags, DSML format, or any format other than standard markdown code blocks.`;
 
 function collectFileContents(messages) {
   const parts = [];
   for (const m of messages) {
     if (m.role !== 'tool' || !m.content) continue;
-    if (m.content.startsWith('[Already loaded:') ||
-        m.content.startsWith('[End of file:') ||
-        m.content.startsWith('[Starting at') ||
-        m.content.startsWith('Error')) continue;
-    parts.push(m.content);
+    const content = m.content;
+    if (content.startsWith('[Already loaded:') ||
+        content.startsWith('[End of file:') ||
+        content.startsWith('[Starting at') ||
+        content.startsWith('Error') ||
+        content.startsWith('No matching')) continue;
+    const lines = content.split('\n');
+    if (lines.length < 3) continue;
+    const hasCode = lines.some(l =>
+      /^\s*(import |export |const |function |class |from |\/[/*]|<[A-Z]|\{[a-z])/.test(l)
+    );
+    if (!hasCode) continue;
+    parts.push(content);
   }
   return parts;
 }
@@ -174,7 +183,7 @@ export async function sendWithRetrieval({
       const componentIndex = buildComponentIndex(sceneObjects);
       const graphSummary = buildGraphSummary(useDiagramStore.getState());
       const fileBlock = fileContents.length > 0
-        ? `\n\nHere are the files you found:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
+        ? `\n\nHere are the files you read — use them as the base for your modifications:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
         : '';
       const indexBlock = componentIndex && componentIndex !== '(no scene components)'
         ? `\n\nCOMPONENT INDEX (component → file):\n${componentIndex}`
@@ -182,10 +191,13 @@ export async function sendWithRetrieval({
       const graphBlock = graphSummary
         ? `\n\nGRAPH OVERVIEW:\n${graphSummary}`
         : '';
+      const noFilesWarning = fileContents.length === 0
+        ? `\n\nIMPORTANT: You have not read any files yet. Output your best attempt based on the search results above, but note that your code may not match the actual file contents. In future requests, always call read_file before writing code.`
+        : '';
       currentMessages = [
         { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
         userMsg,
-        { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
+        { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}${noFilesWarning}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
       ];
       console.warn(`[ToolRound] Round ${rounds + 1}: rebuilt messages for code generation (${fileContents.length} file contents, ${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
     }
@@ -356,7 +368,7 @@ export async function sendWithRetrieval({
     const graphSummary = buildGraphSummary(useDiagramStore.getState());
 
     const fileBlock = fileContents.length > 0
-      ? `\n\nHere are the files you found:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
+      ? `\n\nHere are the files you read — use them as the base for your modifications:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
       : '';
 
     const indexBlock = componentIndex && componentIndex !== '(no scene components)'
@@ -367,10 +379,14 @@ export async function sendWithRetrieval({
       ? `\n\nGRAPH OVERVIEW:\n${graphSummary}`
       : '';
 
+    const noFilesWarning2 = fileContents.length === 0
+      ? `\n\nIMPORTANT: You have not read any files yet. Output your best attempt based on the search results above, but note that your code may not match the actual file contents.`
+      : '';
+
     const forcedMessages = [
       { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
       userMsg,
-      { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag. Write COMPLETE files.` },
+      { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}${noFilesWarning2}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
     ];
 
     try {
