@@ -494,47 +494,13 @@ function buildCodeSceneContext(objects) {
 import { sendToProvider } from './llmProviders';
 import useLlmStore from '../stores/llmStore';
 import { getAllPlanContext } from './planService';
-import { getRepoTree, getFileContents } from './githubIssuesService';
-import { getContentStore, ContentCategory } from './context/contentStore';
+import { getRepoTree } from './githubIssuesService';
+import { getContentStore } from './context/contentStore';
 import { getBase64Store } from './context/base64Store';
 import { buildContext } from './context/contextBuilder';
-import useCodeStore from '../stores/codeStore';
 import useObjectsStore from '../stores/objectsStore';
 import { getContentStoreWorker } from '../workers/contentStoreWorkerClient';
 import useContentIndexStore from '../stores/contentIndexStore';
-
-const CONFIG_FILE_PATTERNS = [
-  'package.json', 'tsconfig.json', 'vite.config.js', 'vite.config.ts',
-  'webpack.config.js', 'next.config.js', 'next.config.mjs',
-  'src/index.jsx', 'src/index.js', 'src/index.tsx', 'src/index.ts',
-  'src/main.jsx', 'src/main.js', 'src/main.tsx', 'src/main.ts',
-  'src/App.jsx', 'src/App.js', 'src/App.tsx', 'src/App.ts',
-  'app/layout.tsx', 'app/page.tsx',
-  'index.html', 'index.htm',
-];
-
-const HIGH_PRIORITY_PATTERNS = [
-  /stores?\/.*\.(js|jsx|ts|tsx)$/i,
-  /services?\/.*\.(js|jsx|ts|tsx)$/i,
-  /hooks?\/.*\.(js|jsx|ts|tsx)$/i,
-  /components?\/.*\.(js|jsx|ts|tsx)$/i,
-  /api[-_]?client\.(js|jsx|ts|tsx)$/i,
-  /AppShell\.(js|jsx|ts|tsx)$/i,
-  /Router\.(js|jsx|ts|tsx)$/i,
-];
-
-const CONFIG_FILE_SET = new Set(CONFIG_FILE_PATTERNS.map(p => p.toLowerCase()));
-
-function isConfigFile(path) {
-  if (typeof path !== 'string') return false;
-  const lower = path.toLowerCase();
-  if (CONFIG_FILE_SET.has(lower)) return true;
-  const basename = lower.split('/').pop();
-  return CONFIG_FILE_SET.has(basename);
-}
-
-const KEY_FILE_BUDGET_CHARS = 50000;
-const MAX_KEY_FILES = 60;
 
 export async function fetchRepoContext(token, owner, repo, branch) {
   try {
@@ -549,96 +515,12 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const entries = treeEntries.filter(e => e.type === 'blob');
     const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
 
-    const configPaths = filePaths.filter(isConfigFile);
-    const highPriorityPaths = filePaths.filter(p =>
-      !isConfigFile(p) && HIGH_PRIORITY_PATTERNS.some(re => re.test(p))
-    );
-    const candidatePaths = [...configPaths, ...highPriorityPaths].slice(0, MAX_KEY_FILES + 20);
+    console.log(`[fetchRepoContext] Loaded file tree: ${filePaths.length} files`);
 
-    const fileContents = {};
-    let totalChars = 0;
-
-    const fetches = candidatePaths.map(async (path) => {
-      const result = await getFileContents(token, owner, repo, path, branch);
-      if (result.ok && result.data) {
-        try {
-          const raw = atob(result.data.content);
-          const decoded = decodeURIComponent(escape(raw));
-          return { path, content: decoded };
-        } catch {}
-      }
-      return null;
-    });
-
-    const results = await Promise.all(fetches);
-    for (const r of results) {
-      if (!r) continue;
-      if (Object.keys(fileContents).length >= MAX_KEY_FILES) break;
-      if (totalChars + r.content.length > KEY_FILE_BUDGET_CHARS) continue;
-      fileContents[r.path] = r.content;
-      totalChars += r.content.length;
-    }
-
-    console.log(`[fetchRepoContext] Pre-loaded ${Object.keys(fileContents).length} files (${totalChars} chars) into ContentStore`);
-
-    return { fileTree: filePaths, fileContents, error: null };
+    return { fileTree: filePaths, fileContents: {}, error: null };
   } catch (err) {
     console.error('[fetchRepoContext] step failed:', err.message, err.stack);
     throw err;
-  }
-}
-
-const POPULATE_YIELD_EVERY = 50;
-
-export async function populateContentStore() {
-  const store = getContentStore();
-  const codeState = useCodeStore.getState();
-
-  if (codeState.repoFileContents) {
-    const entries = Object.entries(codeState.repoFileContents);
-    for (let i = 0; i < entries.length; i++) {
-      const [filePath, content] = entries[i];
-      store.upsert(
-        `repo:${filePath}`,
-        ContentCategory.REPO_FILE,
-        content,
-        { sourcePath: filePath, tags: ['repo', 'code'] }
-      );
-      if (i % POPULATE_YIELD_EVERY === 0 && i > 0) {
-        await new Promise(r => setTimeout(r, 0));
-      }
-    }
-  }
-
-  const objects = useObjectsStore.getState().objects;
-  if (objects && objects.length > 0) {
-    const BATCH = 10;
-    let upsertIdx = 0;
-    for (let i = 0; i < objects.length; i++) {
-      const obj = objects[i];
-      if (!obj.merfolkData?.nodeId || obj.merfolkData?.isContainer) continue;
-      const nodeId = obj.merfolkData.nodeId;
-      const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
-      const name = obj.headerText || nodeId;
-      const hasCode = obj.metadata?.code ? '\n' + obj.metadata.code : '';
-      const text = `[${nodeId}] (${nodeType}) "${name}"${hasCode}`;
-      store.upsert(`scene:${nodeId}`, ContentCategory.SCENE_CONTEXT, text, {
-        sourcePath: 'scene',
-        tags: ['architecture', 'scene', nodeId],
-      });
-      upsertIdx++;
-      if (upsertIdx % BATCH === 0) {
-        await new Promise(r => setTimeout(r, 0));
-      }
-    }
-  }
-
-  const planContext = getAllPlanContext();
-  if (planContext) {
-    store.upsert('plans:all', ContentCategory.PLAN, planContext, {
-      sourcePath: 'plans',
-      tags: ['plans'],
-    });
   }
 }
 
@@ -654,13 +536,12 @@ export async function finalizeContentStore() {
 }
 
 export async function populateContentStoreWorker() {
-  const codeState = useCodeStore.getState();
   const objects = useObjectsStore.getState().objects;
   const planContext = getAllPlanContext();
 
   const worker = getContentStoreWorker();
   const result = await worker.processContent({
-    repoFileContents: codeState.repoFileContents || null,
+    repoFileContents: null,
     objects: (objects || []).map(o => ({
       nodeId: o.merfolkData?.nodeId,
       nodeType: o.merfolkData?.nodeType || o.type,

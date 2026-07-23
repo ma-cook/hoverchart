@@ -2,9 +2,7 @@ export { estimateTokens, estimateMessageTokens, estimateMessagesTokens, getConte
 export { buildContext } from './contextBuilder';
 export { summarizeText } from './summarizer';
 export { fitConversationWithSummarization } from './conversationSummarizer';
-export { chunkText, extractKeywords } from './chunkIndex';
-export { ContentStore, getContentStore, ContentCategory } from './contentStore';
+export { ContentStore, getContentStore } from './contentStore';
 export { Base64Store, getBase64Store } from './base64Store';
-export { detectRetrievalRequest, stripRetrievalMarkers, buildRetrievalInjection, MAX_RETRIEVAL_ROUNDS, isGithubFileRequest, extractGithubPath, GITHUB_FILE_PREFIX } from './retrievalProtocol';
-export { RETRIEVAL_PROTOCOL_PROMPT, RETRIEVAL_PROTOCOL_PROMPT_CONDENSED } from './retrievalPrompt';
+export { stripRetrievalMarkers } from './retrievalProtocol';
 export { sendWithRetrieval } from './retrievalOrchestrator';

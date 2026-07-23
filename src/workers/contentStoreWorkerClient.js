@@ -2,15 +2,9 @@
  * contentStoreWorkerClient.js
  *
  * Provides a lazily-initialised Comlink proxy for the content store worker.
- *
- * Usage:
- *   import { getContentStoreWorker } from '../workers/contentStoreWorkerClient';
- *
- *   const worker = getContentStoreWorker();
- *   const result = await worker.processContent({ repoFileContents, objects, planContext });
  */
 
-import { wrap, releaseProxy } from 'comlink';
+import { wrap } from 'comlink';
 
 import ContentStoreWorkerConstructor from './contentStoreWorker.js?worker';
 
@@ -29,18 +23,4 @@ export function getContentStoreWorker() {
     _proxy = wrap(_worker);
   }
   return _proxy;
-}
-
-/**
- * Tear down the worker and reset the singleton.
- */
-export function terminateContentStoreWorker() {
-  if (_proxy) {
-    _proxy[releaseProxy]();
-    _proxy = null;
-  }
-  if (_worker) {
-    _worker.terminate();
-    _worker = null;
-  }
 }

@@ -90,11 +90,6 @@ export class Base64Store {
     return lines.join('\n');
   }
 
-  searchChunkIds(query, maxResults = 5) {
-    const results = this.contentStore.search(query, { maxChunks: maxResults });
-    return results.map(r => r.chunk.id);
-  }
-
   get totalChunks() {
     return this.encodedChunks.size;
   }

@@ -1,4 +1,4 @@
-import { getContentStore } from './contentStore';
+import { getContentStore, ContentCategory } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
 import useObjectsStore from '../../stores/objectsStore';
@@ -156,6 +156,10 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
             `read_file(${path})`,
           );
           if (content) {
+            store.upsert(storeId, ContentCategory.REPO_FILE, content, {
+              sourcePath: path,
+              tags: ['repo', 'code'],
+            });
             const sliced = content.slice(offset, offset + limit);
             if (sliced.length === 0) {
               return { success: true, content: `[End of file: ${path} has ${content.length} chars]` };
@@ -194,34 +198,12 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
         if (!filePath) continue;
         if (nodeId.toLowerCase().includes(pattern) || name.includes(pattern)) {
           const nodeType = obj.merfolkData?.nodeType || obj.type || 'unknown';
-          sceneMatches.push({ nodeId, nodeType, name: obj.headerText || nodeId, filePath });
-          if (sceneMatches.length >= 5) break;
+          sceneMatches.push(`[${nodeType}:${obj.headerText || nodeId}] → ${filePath}`);
+          if (sceneMatches.length >= 10) break;
         }
       }
       if (sceneMatches.length > 0) {
-        const lines = [];
-        for (const m of sceneMatches) {
-          lines.push(`[${m.nodeType}:${m.name}] → ${m.filePath}`);
-          const info = getNodeInfo(m.nodeId);
-          const connLines = info.split('\n').filter(l => l.startsWith('  ')).slice(0, 4);
-          if (connLines.length > 0) lines.push(connLines.join('\n'));
-        }
-        return { success: true, content: lines.join('\n') };
-      }
-
-      const storeResults = store.search(pattern, { maxChunks: 20 });
-      if (storeResults.length > 0) {
-        const seen = new Set();
-        const lines = [];
-        for (const r of storeResults) {
-          const path = r.sourcePath;
-          if (seen.has(path)) continue;
-          seen.add(path);
-          const snippet = r.chunk.text.slice(0, 200).replace(/\n/g, ' ');
-          lines.push(`${path}: ...${snippet}...`);
-          if (lines.length >= 20) break;
-        }
-        return { success: true, content: lines.join('\n') || 'No matching content found' };
+        return { success: true, content: sceneMatches.join('\n') };
       }
 
       const matching = fileTree.filter(f => f.toLowerCase().includes(pattern)).slice(0, 50);

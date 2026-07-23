@@ -3,14 +3,12 @@ import { chunkText, extractKeywords } from './chunkIndex';
 export const ContentCategory = {
   REPO_FILE: 'repo_file',
   SCENE_CONTEXT: 'scene_context',
-  CONVERSATION: 'conversation_summary',
   PLAN: 'plan',
 };
 
 const CHUNK_CONFIGS = {
   [ContentCategory.REPO_FILE]: { chunkSize: 3000, overlap: 300 },
   [ContentCategory.SCENE_CONTEXT]: { chunkSize: 1500, overlap: 150 },
-  [ContentCategory.CONVERSATION]: { chunkSize: 2000, overlap: 200 },
   [ContentCategory.PLAN]: { chunkSize: 2500, overlap: 250 },
 };
 
@@ -48,7 +46,6 @@ export class ContentStore {
         }
         this.invertedIndex.get(keyword).add(chunk.id);
       }
-      chunk._entryId = id;
     }
 
     this.entries.set(id, entry);
@@ -112,14 +109,6 @@ export class ContentStore {
     return this.entries.get(id) || null;
   }
 
-  getChunkById(chunkId) {
-    for (const [, entry] of this.entries) {
-      const chunk = entry.chunks.find(c => c.id === chunkId);
-      if (chunk) return { chunk, entry };
-    }
-    return null;
-  }
-
   getManifest() {
     const manifest = [];
     for (const [id, entry] of this.entries) {
@@ -134,16 +123,6 @@ export class ContentStore {
       });
     }
     return manifest;
-  }
-
-  getTotalTokens() {
-    let total = 0;
-    for (const entry of this.entries.values()) {
-      for (const chunk of entry.chunks) {
-        total += Math.ceil(chunk.charCount / 4);
-      }
-    }
-    return total;
   }
 
   _removeFromIndex(entry) {
