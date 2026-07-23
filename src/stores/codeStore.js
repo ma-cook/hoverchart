@@ -1,7 +1,7 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 
-const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource'];
+const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex'];
 
 function loadPersisted(spaceId, key) {
   try {
@@ -40,6 +40,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   activeCodeObjectId: null,
   repoFileTree: null,
   repoFileContents: null,
+  contentIndex: null,
   pendingChanges: [],
 
   setSpaceId: (spaceId) => {
@@ -52,6 +53,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       branchStrategy: loadPersisted(spaceId, 'branchStrategy'),
       techStack: loadPersisted(spaceId, 'techStack') || '',
       techStackSource: loadPersisted(spaceId, 'techStackSource'),
+      contentIndex: loadPersisted(spaceId, 'contentIndex'),
     });
   },
 
@@ -101,6 +103,12 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   setPushStatus: (status) => set({ pushStatus: status }),
 
   setRepoContext: (fileTree, fileContents) => set({ repoFileTree: fileTree, repoFileContents: fileContents }),
+
+  setContentIndex: (contentIndex) => {
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'contentIndex', contentIndex);
+    set({ contentIndex });
+  },
 
   setExpandedView: (expanded) => set({ expandedView: expanded }),
 
@@ -152,6 +160,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       activeCodeObjectId: null,
       repoFileTree: null,
       repoFileContents: null,
+      contentIndex: null,
       pendingChanges: [],
     });
   },

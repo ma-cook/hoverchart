@@ -1010,6 +1010,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       );
       if (result.success) {
         setScanProgress(null);
+        if (result.contentIndex) useCodeStore.getState().setContentIndex(result.contentIndex);
         setPushNotification({
           type: 'success',
           message: `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,

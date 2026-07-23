@@ -493,6 +493,7 @@ function buildCodeSceneContext(objects) {
 
 import { sendToProvider } from './llmProviders';
 import useLlmStore from '../stores/llmStore';
+import useCodeStore from '../stores/codeStore';
 import { getAllPlanContext } from './planService';
 import { getRepoTree } from './githubIssuesService';
 import { getContentStore } from './context/contentStore';
@@ -674,6 +675,9 @@ FILE TREE:
 COMPONENT INDEX (component → file):
 {componentIndex}
 
+CONTENT INDEX (HTML elements, CSS classes, JSX refs → file):
+{contentIndex}
+
 SCENE COMPONENTS:
 {sceneContext}
 
@@ -689,20 +693,20 @@ TOOLS
 You have these tools:
 • read_file(path) — read a source file's contents
 • list_files(path) — list files in a directory
-• search_code(pattern) — search for files matching a pattern or by node name
+• search_code(pattern) — search for files matching a pattern, by node name, or by content (grep)
 • get_node_info(nodeId) — get full details about a component: type, file path, all connections, parent, children
 • get_dependencies(nodeId, direction) — find upstream (who depends on me) or downstream (what I depend on) relationships
 • find_path(source, target) — find shortest data-flow path between two components
 • search_nodes(query) — search components, functions, stores, or hooks by name/type in the diagram
 
-Use search_code or search_nodes to find WHERE each component is defined before reading files. Use get_node_info or get_dependencies to understand component relationships. Call read_file for ALL files you need in ONE round.
+Use search_code or search_nodes to find WHERE each component is defined before reading files. search_code searches file names, scene objects, AND file contents. Use get_node_info or get_dependencies to understand component relationships. Call read_file for ALL files you need in ONE round.
 
 ═══════════════════════════════════════════════════════════════
 WORKFLOW
 ═══════════════════════════════════════════════════════════════
 
 1. Read the user request and identify which components/files are affected
-2. Use search_nodes or search_code to find WHERE each component is defined
+2. Use search_nodes or search_code to find WHERE each component is defined — try multiple search terms (name, type, partial match)
 3. Use get_node_info on key components to understand their connections and dependencies
 4. If modifying a component, use get_dependencies to check the blast radius of changes
 5. Call read_file for ALL files you need to modify in a SINGLE tool-use round
@@ -728,13 +732,16 @@ For NEW files, use the same format with a path that doesn't exist yet.
 RULES
 ═══════════════════════════════════════════════════════════════
 
-1. ALWAYS search for component definitions before creating new files
+1. ALWAYS search for component definitions before creating new files — use search_nodes, search_code, and list_files
 2. PRESERVE existing file paths — do NOT invent new paths
 3. Use the SAME import paths the existing code uses
 4. Every code block MUST be a complete, valid file — no placeholders
 5. Maximum 10 code blocks per response
 6. Use modern syntax and best practices for the target framework
-7. NEVER create a new file for a component that already exists in another file`;
+7. NEVER create a new file for a component that already exists in another file
+8. HTML elements (div, span, header, section, nav, etc.) and CSS classes are NOT separate components — they live INLINE inside existing component files. Search for them in existing files, do NOT create new component files for them.
+9. When the user mentions a UI element by name (e.g. "the TopBar", "the sidebar"), search for it first. It may be defined inline in an existing file, not as a standalone component.
+10. ALWAYS read_file the target file BEFORE writing code for it — you need the full current content to produce a correct modification, not a guess.`;
 
 function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
@@ -815,6 +822,18 @@ export function parseSectionedResponse(text, fileContents) {
 
 const SCENE_COMPONENT_BUDGET = 2000;
 
+function buildContentIndexSection() {
+  try {
+    const contentIndex = useCodeStore.getState().contentIndex;
+    if (!contentIndex) return '(no content index available — run a scan first)';
+    const BUDGET = 4000;
+    if (contentIndex.length <= BUDGET) return contentIndex;
+    return contentIndex.slice(0, BUDGET) + '\n... (truncated)';
+  } catch {
+    return '(no content index available)';
+  }
+}
+
 function buildMinimalSceneContext(objects) {
   if (!objects || objects.length === 0) return '(no scene components)';
   const lines = [];
@@ -842,6 +861,7 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const techStackSection = techStack || 'Not specified — use your best judgment.';
   const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
   const componentIndexSection = buildComponentIndex(sceneObjects);
+  const contentIndexSection = buildContentIndexSection();
   const sceneContextSection = buildMinimalSceneContext(sceneObjects);
 
   const diagramStore = repoContext?.diagramStore;
@@ -850,11 +870,12 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
     .replace('{componentIndex}', componentIndexSection)
+    .replace('{contentIndex}', contentIndexSection)
     .replace('{sceneContext}', sceneContextSection)
     .replace('{graphSummary}', graphSummarySection || '(no graph available)')
     .replace('{techStack}', techStackSection);
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} total=${systemContent.length}`);
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} contentIndex=${contentIndexSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} total=${systemContent.length}`);
 
   const systemMessage = { role: 'system', content: systemContent };
 

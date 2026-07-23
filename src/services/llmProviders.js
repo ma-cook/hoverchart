@@ -249,94 +249,111 @@ export async function sendToProvider({
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
 
+  const MAX_RETRIES = 5;
   const timeoutMs = 5 * 60 * 1000;
-  const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
 
-  const combinedSignal = signal
-    ? AbortSignal.any([signal, timeoutController.signal])
-    : timeoutController.signal;
+  let res;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : timeoutController.signal;
 
-  try {
-    const res = await fetch(`${API_BASE}/api/llm/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, headers, body }),
-      signal: combinedSignal,
-    });
+    try {
+      res = await fetch(`${API_BASE}/api/llm/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, headers, body }),
+        signal: combinedSignal,
+      });
+      clearTimeout(timeoutId);
 
-    clearTimeout(timeoutId);
+      if (res.ok) break;
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`${provider.name} error ${res.status}: ${text}`);
+      if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 16000);
+        console.warn(`[sendToProvider] ${provider.name} error ${res.status}, retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, backoffMs));
+        continue;
+      }
+
+      const errText = await res.text().catch(() => '');
+      throw new Error(`${provider.name} error ${res.status}: ${errText}`);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.message?.startsWith(provider.name)) throw err;
+      if (attempt < MAX_RETRIES - 1) {
+        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 16000);
+        console.warn(`[sendToProvider] ${provider.name} request failed (${err.message}), retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, backoffMs));
+        continue;
+      }
+      throw err;
     }
+  }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let fullText = '';
-    let buffer = '';
-    let streamDone = false;
-    let finishReason = null;
-    const toolCallsMap = new Map();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = '';
+  let buffer = '';
+  let streamDone = false;
+  let finishReason = null;
+  const toolCallsMap = new Map();
 
-    let streamWatchdogId = null;
-    const resetStreamWatchdog = () => {
-      clearTimeout(streamWatchdogId);
-      streamWatchdogId = setTimeout(() => reader.cancel(), timeoutMs);
-    };
+  let streamWatchdogId = null;
+  const resetStreamWatchdog = () => {
+    clearTimeout(streamWatchdogId);
+    streamWatchdogId = setTimeout(() => reader.cancel(), timeoutMs);
+  };
+  resetStreamWatchdog();
+
+  while (!streamDone) {
+    const { done, value } = await reader.read();
+    clearTimeout(streamWatchdogId);
+    if (done) break;
     resetStreamWatchdog();
-
-    while (!streamDone) {
-      const { done, value } = await reader.read();
-      clearTimeout(streamWatchdogId);
-      if (done) break;
-      resetStreamWatchdog();
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const result = provider.parseStreamLine(trimmed);
-        if (result === null) continue;
-        if (result.done) {
-          streamDone = true;
-          finishReason = result.finish_reason || null;
-          break;
-        }
-        if (result.type === 'text') {
-          fullText += result.text;
-          onChunk?.(result.text, fullText);
-        } else if (result.type === 'tool_calls') {
-          for (const tc of result.tool_calls) {
-            const idx = tc.index ?? 0;
-            if (!toolCallsMap.has(idx)) {
-              toolCallsMap.set(idx, { id: tc.id || '', name: '', arguments: '' });
-            }
-            const existing = toolCallsMap.get(idx);
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name += tc.function.name;
-            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const result = provider.parseStreamLine(trimmed);
+      if (result === null) continue;
+      if (result.done) {
+        streamDone = true;
+        finishReason = result.finish_reason || null;
+        break;
+      }
+      if (result.type === 'text') {
+        fullText += result.text;
+        onChunk?.(result.text, fullText);
+      } else if (result.type === 'tool_calls') {
+        for (const tc of result.tool_calls) {
+          const idx = tc.index ?? 0;
+          if (!toolCallsMap.has(idx)) {
+            toolCallsMap.set(idx, { id: tc.id || '', name: '', arguments: '' });
           }
-        } else if (typeof result === 'string') {
-          fullText += result;
-          onChunk?.(result, fullText);
+          const existing = toolCallsMap.get(idx);
+          if (tc.id) existing.id = tc.id;
+          if (tc.function?.name) existing.name += tc.function.name;
+          if (tc.function?.arguments) existing.arguments += tc.function.arguments;
         }
+      } else if (typeof result === 'string') {
+        fullText += result;
+        onChunk?.(result, fullText);
       }
     }
-
-    const toolCalls = finishReason === 'tool_calls' && toolCallsMap.size > 0
-      ? [...toolCallsMap.values()].map(tc => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: JSON.parse(tc.arguments || '{}'),
-        }))
-      : [];
-
-    return { text: fullText, toolCalls };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
   }
+
+  const toolCalls = finishReason === 'tool_calls' && toolCallsMap.size > 0
+    ? [...toolCallsMap.values()].map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: JSON.parse(tc.arguments || '{}'),
+      }))
+    : [];
+
+  return { text: fullText, toolCalls };
 }

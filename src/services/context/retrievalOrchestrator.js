@@ -193,14 +193,33 @@ export async function sendWithRetrieval({
     const useTools = !forceNoTools && !forceWriteCode;
     console.log(`[ToolRound] Round ${rounds + 1}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars) tools=${useTools}`);
 
-    const rawResult = await sendToZen({
-      messages: currentMessages,
-      tools: useTools ? CODE_GEN_TOOLS : [],
-      signal,
-      onChunk: (delta, fullText) => {
-        onChunk?.(delta, stripRetrievalMarkers(fullText));
-      },
-    });
+    const MAX_SEND_RETRIES = 2;
+    let rawResult = null;
+    let sendFailed = false;
+    for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
+      try {
+        rawResult = await sendToZen({
+          messages: currentMessages,
+          tools: useTools ? CODE_GEN_TOOLS : [],
+          signal,
+          onChunk: (delta, fullText) => {
+            onChunk?.(delta, stripRetrievalMarkers(fullText));
+          },
+        });
+        break;
+      } catch (sendErr) {
+        console.warn(`[ToolRound] Round ${rounds + 1} sendToZen failed (${sendAttempt + 1}/${MAX_SEND_RETRIES + 1}): ${sendErr.message}`);
+        if (sendAttempt < MAX_SEND_RETRIES) {
+          await new Promise(r => setTimeout(r, 1000 * (sendAttempt + 1)));
+        } else {
+          sendFailed = true;
+        }
+      }
+    }
+    if (sendFailed) {
+      console.warn(`[ToolRound] Round ${rounds + 1}: all send attempts failed, breaking loop`);
+      break;
+    }
 
     const result = typeof rawResult === 'string' ? { text: rawResult, toolCalls: [] } : rawResult;
     const { text, toolCalls } = result;

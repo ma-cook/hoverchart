@@ -2,6 +2,7 @@ import { getContentStore, ContentCategory } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
 import useObjectsStore from '../../stores/objectsStore';
+import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes } from './graphQuery';
 
 const TOOL_TIMEOUT_MS = 20_000;
@@ -206,8 +207,46 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
         return { success: true, content: sceneMatches.join('\n') };
       }
 
+      const contentIndex = useCodeStore.getState().contentIndex;
+      if (contentIndex) {
+        const indexLines = contentIndex.split('\n');
+        const indexMatches = [];
+        for (const line of indexLines) {
+          if (line.toLowerCase().includes(pattern)) {
+            const filePath = line.split(':')[0]?.trim();
+            if (filePath) indexMatches.push(line);
+            if (indexMatches.length >= 10) break;
+          }
+        }
+        if (indexMatches.length > 0) {
+          return { success: true, content: indexMatches.join('\n') };
+        }
+      }
+
       const matching = fileTree.filter(f => f.toLowerCase().includes(pattern)).slice(0, 50);
-      return { success: true, content: matching.length > 0 ? matching.join('\n') : 'No matching files found' };
+      if (matching.length > 0) {
+        return { success: true, content: matching.join('\n') };
+      }
+
+      const entries = Array.from(store.entries.entries());
+      const contentMatches = [];
+      for (const [id, entry] of entries) {
+        if (!id.startsWith('repo:')) continue;
+        const filePath = id.slice(5);
+        for (const chunk of entry.chunks) {
+          const text = (chunk.text || '').toLowerCase();
+          const idx = text.indexOf(pattern);
+          if (idx >= 0) {
+            const start = Math.max(0, idx - 40);
+            const end = Math.min(text.length, idx + pattern.length + 60);
+            const snippet = chunk.text.slice(start, end).replace(/\n/g, ' ');
+            contentMatches.push(`${filePath}: ...${snippet}...`);
+            break;
+          }
+        }
+        if (contentMatches.length >= 10) break;
+      }
+      return { success: true, content: contentMatches.length > 0 ? contentMatches.join('\n') : 'No matching files found' };
     }
 
     case 'get_node_info': {

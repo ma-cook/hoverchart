@@ -758,7 +758,7 @@ const traverseVanillaAST = (
   // ── Helpers ───────────────────────────────────────────────────────────────
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set(), filePath });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath });
     }
   };
 
@@ -991,7 +991,7 @@ const traversePythonSource = (
 
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set(), filePath });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath });
     }
   };
 
@@ -1255,7 +1255,7 @@ const traverseVueSource = (
 
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set(), filePath });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath });
     }
   };
 
@@ -1587,6 +1587,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // Track file-function relationships for hooks/services/utilities/stores
     // Maps: fileName -> Set of function/hook/service names in that file
     const fileFunctions = new Map(); // Track which file each function belongs to
+    // Track structural elements per file: HTML tags, CSS classes, JSX component refs
+    // Maps: fileName -> { htmlElements: Set, cssClasses: Set, jsxRefs: Set }
+    const fileContentIndex = new Map();
 
     // Track internal hooks (hooks that share the same name as their parent component/hook file)
     // Maps: hookName -> { parent: parentName, parentType: 'component' | 'hook' }
@@ -1681,7 +1684,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
         componentRelationships, componentDependencies,
         internalComponents, exportedComponents,
         componentToFile, componentImportSources,
-        fileFunctions, internalHooks, filesNeedingSuffix,
+        fileFunctions, fileContentIndex, internalHooks, filesNeedingSuffix,
         functionCallRelationships, componentPropsRelationships,
         storeUsageRelationships, hookReturnValueRelationships,
         moduleImportRelationships, nextjsRouteMap,
@@ -1761,7 +1764,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             // Group under a "shaders" file container
             const shaderContainerName = 'shaders';
             if (!fileFunctions.has(shaderContainerName)) {
-              fileFunctions.set(shaderContainerName, { type: 'utility', functions: new Set(), filePath: file.path });
+              fileFunctions.set(shaderContainerName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
             }
             fileFunctions.get(shaderContainerName).functions.add(shaderNodeName);
             return; // Skip AST parsing for shader files
@@ -2168,7 +2171,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       }
                       // Track file→function relationship
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
 
@@ -2196,7 +2199,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   // Backend functions - tracked under backend_${fileName} container
                   elements.services.push(funcName);
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'backend', functions: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isService) {
@@ -2204,7 +2207,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.services.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'service', functions: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isStore) {
@@ -2214,7 +2217,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship for nesting inside store file
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'store', functions: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isHook) {
@@ -2223,7 +2226,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship for nesting inside hook file
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isUtil) {
@@ -2231,7 +2234,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isWorker) {
@@ -2239,7 +2242,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'worker', functions: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else {
@@ -2264,7 +2267,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       elements.utilities.push(funcName);
                       // Track file→function relationship so the file container is always created
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
                     }
@@ -2275,7 +2278,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       elements.utilities.push(funcName);
                       // Track file→function relationship
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'worker', functions: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
                     }
@@ -2524,7 +2527,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                             }
                             // Track file→function relationship
                             if (!fileFunctions.has(fileName)) {
-                              fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
+                              fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                             }
                             fileFunctions.get(fileName).functions.add(varName);
                           }
@@ -2534,7 +2537,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         // Backend functions - tracked under backend_${fileName} container
                         elements.services.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isService) {
@@ -2542,7 +2545,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.services.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isStore) {
@@ -2552,7 +2555,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship for nesting inside store file
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'store', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isHook) {
@@ -2561,7 +2564,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship for nesting inside hook file
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'hook', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isUtil) {
@@ -2569,7 +2572,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isWorker) {
@@ -2577,7 +2580,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'worker', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else {
@@ -2677,7 +2680,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       // a "contains" connection (authStore -.-> useAuthStore) is emitted,
                       // preventing the file container node from appearing orphaned.
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'store', functions: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(varName);
                     }
@@ -2696,19 +2699,19 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                           elements.services.push(varName);
                         }
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isService) {
                         elements.services.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isUtil) {
                         elements.utilities.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       }
@@ -2781,7 +2784,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 }
               }
 
-              // Track JSX elements to find component relationships
+              // Track JSX elements to find component relationships AND structural elements
               if (node.type === 'JSXElement' && currentComponent) {
                 const openingElement = node.openingElement;
                 if (openingElement && openingElement.name) {
@@ -2796,42 +2799,73 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     jsxName = openingElement.name.property.name;
                   }
 
-                  // Track all custom components (starts with uppercase) - we'll filter later
-                  if (jsxName && jsxName[0] === jsxName[0].toUpperCase()) {
-                    if (!componentRelationships.has(currentComponent)) {
-                      componentRelationships.set(currentComponent, new Set());
+                  if (jsxName) {
+                    // Ensure fileContentIndex entry exists for this file
+                    if (!fileContentIndex.has(fileName)) {
+                      fileContentIndex.set(fileName, { htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set() });
                     }
-                    componentRelationships.get(currentComponent).add(jsxName);
+                    const contentEntry = fileContentIndex.get(fileName);
 
-                    // NEW: Track props being passed to child components
-                    if (openingElement.attributes && openingElement.attributes.length > 0) {
-                      const propNames = [];
-                      openingElement.attributes.forEach((attr) => {
-                        if (attr.type === 'JSXAttribute' && attr.name) {
-                          const propName = attr.name.name;
-                          // Skip common React-specific props
-                          if (propName && !['key', 'ref', 'className', 'style', 'id'].includes(propName)) {
-                            propNames.push(propName);
+                    const isUpperCase = jsxName[0] === jsxName[0].toUpperCase();
+
+                    // Track custom component references (uppercase)
+                    if (isUpperCase) {
+                      if (!componentRelationships.has(currentComponent)) {
+                        componentRelationships.set(currentComponent, new Set());
+                      }
+                      componentRelationships.get(currentComponent).add(jsxName);
+                      contentEntry.jsxRefs.add(jsxName);
+
+                      // Track props being passed to child components
+                      if (openingElement.attributes && openingElement.attributes.length > 0) {
+                        const propNames = [];
+                        openingElement.attributes.forEach((attr) => {
+                          if (attr.type === 'JSXAttribute' && attr.name) {
+                            const propName = attr.name.name;
+                            // Skip common React-specific props
+                            if (propName && !['key', 'ref', 'className', 'style', 'id'].includes(propName)) {
+                              propNames.push(propName);
+                            }
                           }
+                          // Track spread props
+                          else if (attr.type === 'JSXSpreadAttribute' && attr.argument) {
+                            if (attr.argument.type === 'Identifier') {
+                              propNames.push(`...${attr.argument.name}`);
+                            }
+                          }
+                        });
+
+                        if (propNames.length > 0) {
+                          if (!componentPropsRelationships.has(currentComponent)) {
+                            componentPropsRelationships.set(currentComponent, new Map());
+                          }
+                          const propsMap = componentPropsRelationships.get(currentComponent);
+                          if (!propsMap.has(jsxName)) {
+                            propsMap.set(jsxName, new Set());
+                          }
+                          propNames.forEach((prop) => propsMap.get(jsxName).add(prop));
                         }
-                        // Track spread props
-                        else if (attr.type === 'JSXSpreadAttribute' && attr.argument) {
-                          if (attr.argument.type === 'Identifier') {
-                            propNames.push(`...${attr.argument.name}`);
-                          }
+                      }
+                    } else {
+                      // Track HTML elements (lowercase)
+                      contentEntry.htmlElements.add(jsxName);
+                    }
+
+                    // Extract className, id, and role from ALL JSX elements
+                    if (openingElement.attributes && openingElement.attributes.length > 0) {
+                      openingElement.attributes.forEach((attr) => {
+                        if (attr.type !== 'JSXAttribute' || !attr.name) return;
+                        const attrName = attr.name.name;
+                        if (attrName === 'className' && attr.value?.type === 'StringLiteral') {
+                          const classes = attr.value.value.split(/\s+/).filter(Boolean);
+                          classes.forEach(cls => contentEntry.cssClasses.add(cls));
+                        } else if (attrName === 'class' && attr.value?.type === 'StringLiteral') {
+                          const classes = attr.value.value.split(/\s+/).filter(Boolean);
+                          classes.forEach(cls => contentEntry.cssClasses.add(cls));
+                        } else if (attrName === 'id' && attr.value?.type === 'StringLiteral') {
+                          contentEntry.htmlElements.add(`#${attr.value.value}`);
                         }
                       });
-
-                      if (propNames.length > 0) {
-                        if (!componentPropsRelationships.has(currentComponent)) {
-                          componentPropsRelationships.set(currentComponent, new Map());
-                        }
-                        const propsMap = componentPropsRelationships.get(currentComponent);
-                        if (!propsMap.has(jsxName)) {
-                          propsMap.set(jsxName, new Set());
-                        }
-                        propNames.forEach((prop) => propsMap.get(jsxName).add(prop));
-                      }
                     }
                   }
                 }
@@ -3427,6 +3461,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       componentDependencies,
       internalComponents,
       fileFunctions,
+      fileContentIndex,
       internalHooks,
       filesNeedingSuffix,
       functionCallRelationships,
@@ -3454,10 +3489,26 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     console.log(`📝 Generated Merfolk markdown (${merfolkResult.length} chars):\n${merfolkResult.substring(0, 3000)}`);
     if (merfolkResult.length > 3000) console.log(`   ... (${merfolkResult.length - 3000} more chars)`);
 
-    return merfolkResult;
+    // Build formatted content index string for the system prompt
+    const contentIndexLines = [];
+    fileContentIndex.forEach((entry, fileName) => {
+      const parts = [];
+      if (entry.jsxRefs.size > 0) parts.push(`jsx:${[...entry.jsxRefs].join(',')}`);
+      if (entry.cssClasses.size > 0) parts.push(`css:${[...entry.cssClasses].join(',')}`);
+      if (entry.htmlElements.size > 0) parts.push(`html:${[...entry.htmlElements].join(',')}`);
+      if (parts.length > 0) {
+        const fi = fileFunctions.get(fileName);
+        const filePath = fi?.filePath || fileName;
+        contentIndexLines.push(`${filePath}: ${parts.join(' | ')}`);
+      }
+    });
+    const contentIndex = contentIndexLines.join('\n');
+    console.log(`🔍 Content index: ${contentIndexLines.length} files, ${contentIndex.length} chars`);
+
+    return { markdown: merfolkResult, contentIndex };
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
-    return `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`;
+    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '' };
   }
 };
 
@@ -3490,6 +3541,7 @@ const generateMerfolkMarkdown = ({
   componentDependencies,
   internalComponents,
   fileFunctions,
+  fileContentIndex = new Map(),
   internalHooks = new Map(),
   filesNeedingSuffix = new Set(),
   functionCallRelationships = new Map(),
@@ -4060,6 +4112,26 @@ const generateMerfolkMarkdown = ({
     markdown += `{\n  codeFilePath: ""\n}\n`;
   }
 
+  // Helper: build merfolk properties block for a file node, including content index fields
+  const buildFileNodeProps = (filePath, fileNodeId) => {
+    const props = [];
+    if (filePath) props.push(`  codeFilePath: "${filePath}"`);
+    const contentEntry = fileContentIndex.get(fileNodeId);
+    if (contentEntry) {
+      if (contentEntry.htmlElements.size > 0) {
+        props.push(`  htmlElements: "${[...contentEntry.htmlElements].join(',')}"`);
+      }
+      if (contentEntry.cssClasses.size > 0) {
+        props.push(`  cssClasses: "${[...contentEntry.cssClasses].join(',')}"`);
+      }
+      if (contentEntry.jsxRefs.size > 0) {
+        props.push(`  jsxRefs: "${[...contentEntry.jsxRefs].join(',')}"`);
+      }
+    }
+    if (props.length === 0) return '';
+    return `{\n${props.join('\n')}\n}\n`;
+  };
+
   if (fileFunctions.size > 0) {
     markdown += '\n%% File Container Nodes\n';
     fileFunctions.forEach((fileInfo, fileName) => {
@@ -4082,10 +4154,8 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Vanilla File)`);
         }
         markdown += `${finalId}{Component: ${fileName}}\n`;
-        const vFilePath = fileInfo.filePath;
-        if (vFilePath) {
-          markdown += `{\n  codeFilePath: "${vFilePath}"\n}\n`;
-        }
+        const propsBlock = buildFileNodeProps(fileInfo.filePath, fileName);
+        if (propsBlock) markdown += propsBlock;
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'backend') {
         const backendNodeId = `backend_${fileName}`;
@@ -4094,9 +4164,8 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${backendNodeId}" → "${finalId}" (Backend File)`);
         }
         markdown += `${finalId}((Service: ${fileName}))\n`;
-        if (fileInfo.filePath) {
-          markdown += `{\n  codeFilePath: "${fileInfo.filePath}"\n}\n`;
-        }
+        const backendPropsBlock = buildFileNodeProps(fileInfo.filePath, fileName);
+        if (backendPropsBlock) markdown += backendPropsBlock;
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'service') {
         const finalId = uniqueNodeId(fileNodeId);
@@ -4104,9 +4173,8 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Service File)`);
         }
         markdown += `${finalId}((Service: ${fileName}))\n`;
-        if (fileInfo.filePath) {
-          markdown += `{\n  codeFilePath: "${fileInfo.filePath}"\n}\n`;
-        }
+        const servicePropsBlock = buildFileNodeProps(fileInfo.filePath, fileName);
+        if (servicePropsBlock) markdown += servicePropsBlock;
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'hook') {
         const finalId = uniqueNodeId(fileNodeId);
@@ -4114,10 +4182,9 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Hook File)`);
         }
         markdown += `${finalId}[Hook: ${fileName}]`;
-        if (fileInfo.filePath) {
-          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
-        }
-        markdown += '\n';
+        const hookPropsBlock = buildFileNodeProps(fileInfo.filePath, fileName);
+        if (hookPropsBlock) markdown += hookPropsBlock;
+        else markdown += '\n';
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'store') {
         const finalId = uniqueNodeId(fileNodeId);
@@ -4125,10 +4192,9 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${fileNodeId}" → "${finalId}" (Store File)`);
         }
         markdown += `${finalId}[[Store: ${fileName}]]`;
-        if (fileInfo.filePath) {
-          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
-        }
-        markdown += '\n';
+        const storePropsBlock = buildFileNodeProps(fileInfo.filePath, fileName);
+        if (storePropsBlock) markdown += storePropsBlock;
+        else markdown += '\n';
         fileInfo.nodeId = finalId;
       } else if (fileInfo.type === 'worker') {
         const workerNodeId = `worker_${fileName}`;
@@ -4137,10 +4203,9 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${workerNodeId}" → "${finalId}" (Worker File)`);
         }
         markdown += `${finalId}[Function: ${fileName}]`;
-        if (fileInfo.filePath) {
-          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
-        }
-        markdown += '\n';
+        const workerPropsBlock = buildFileNodeProps(fileInfo.filePath, fileName);
+        if (workerPropsBlock) markdown += workerPropsBlock;
+        else markdown += '\n';
         fileInfo.nodeId = finalId;
       } else {
         // utility (and shaders container)
@@ -4150,10 +4215,9 @@ const generateMerfolkMarkdown = ({
           console.warn(`ℹ️ Renamed duplicate "${utilNodeId}" → "${finalId}" (Utility File)`);
         }
         markdown += `${finalId}[Function: ${fileName}]`;
-        if (fileInfo.filePath) {
-          markdown += `{codeFilePath: "${fileInfo.filePath}"}`;
-        }
-        markdown += '\n';
+        const utilPropsBlock = buildFileNodeProps(fileInfo.filePath, fileName);
+        if (utilPropsBlock) markdown += utilPropsBlock;
+        else markdown += '\n';
         fileInfo.nodeId = finalId;
       }
     });
@@ -4864,7 +4928,7 @@ export const scanRepositoryAndGenerateDiagram = async (
     if (onProgress) onProgress(10, 'Fetching repository structure...');
     
     // Generate Merfolk markdown from entire repository
-    const merfolkMarkdown = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
+    const { markdown: merfolkMarkdown, contentIndex } = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
     
     if (onProgress) onProgress(40, 'Analyzing code and generating diagram...');
 
@@ -4920,6 +4984,7 @@ export const scanRepositoryAndGenerateDiagram = async (
       connectionsCreated: result.connectionsCreated,
       storageUrl,
       markdown: merfolkMarkdown,
+      contentIndex,
       commitSha,
     };
   } catch (error) {
@@ -5095,7 +5160,7 @@ export const rescanRepositoryForChanges = async (
 
   // 5. Generate merfolk from only the changed files
   if (onProgress) onProgress(25, `Analyzing ${sourceFiles.length} changed file(s)...`);
-  const newMerfolk = await generateMerfolkFromRepository(owner, repoName, {
+  const { markdown: newMerfolkMarkdown, contentIndex: newContentIndex } = await generateMerfolkFromRepository(owner, repoName, {
     preFilteredFiles: sourceFiles,
     repoType: detectedRepoType,
     onProgress,
@@ -5104,16 +5169,17 @@ export const rescanRepositoryForChanges = async (
   // 6. Merge into existing markdown (or use the new markdown as-is)
   let mergedMarkdown;
   if (existingMarkdown) {
-    mergedMarkdown = mergeMerfolkMarkdown(existingMarkdown, newMerfolk);
+    mergedMarkdown = mergeMerfolkMarkdown(existingMarkdown, newMerfolkMarkdown);
   } else {
-    mergedMarkdown = newMerfolk;
+    mergedMarkdown = newMerfolkMarkdown;
   }
 
   return {
     noChanges: false,
     commitSha: currentSha,
     mergedMarkdown,
-    newMerfolk,
+    newMerfolk: newMerfolkMarkdown,
+    contentIndex: newContentIndex,
     changedFileCount: sourceFiles.length,
     addedFiles: addedFiles.length,
     modifiedFiles: modifiedFiles.length,
