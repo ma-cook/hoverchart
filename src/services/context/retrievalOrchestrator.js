@@ -1,6 +1,8 @@
 import { sendToZen, buildComponentIndex, buildGraphSummary, buildFileTreeSection, buildContentIndexSection } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
+import { getContentStore } from './contentStore';
+import { getBase64Store } from './base64Store';
 import useObjectsStore from '../../stores/objectsStore';
 import useDiagramStore from '../../stores/diagramStore';
 
@@ -237,6 +239,8 @@ export async function sendWithRetrieval({
   const readFiles = new Map();
   let duplicateReadRounds = 0;
   const toolCallHistory = new Map();
+  let editWriteCount = 0;
+  const editedFilePaths = new Set();
 
   while (rounds < MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
@@ -417,6 +421,10 @@ export async function sendWithRetrieval({
     }
 
     for (const { tc, result: toolResult } of toolResults) {
+      if (tc.name === 'edit' || tc.name === 'write') {
+        editWriteCount++;
+        if (tc.arguments?.filePath) editedFilePaths.add(tc.arguments.filePath);
+      }
       currentMessages.push({
         role: 'tool',
         tool_call_id: tc.id,
@@ -432,8 +440,8 @@ export async function sendWithRetrieval({
     console.warn(`[ToolRound] Hit round cap (${MAX_TOOL_ROUNDS}), exiting loop`);
   }
 
-  if (!hasCodeBlocks(finalText)) {
-    console.warn(`[ToolRound] Exiting with no code blocks after ${rounds} rounds (${finalText.length} chars of text)`);
+  if (!hasCodeBlocks(finalText) && editWriteCount === 0) {
+    console.warn(`[ToolRound] Exiting with no code blocks and no edits after ${rounds} rounds (${finalText.length} chars of text)`);
     console.warn(`[ToolRound] Attempting forced code generation round (no tools)...`);
 
     const fileContents = collectFileContents(currentMessages);
@@ -513,6 +521,28 @@ export async function sendWithRetrieval({
       if (allowedPaths.size > 0) {
         finalText = stripFabricatedNewFiles(finalText, [...allowedPaths]);
       }
+    }
+  }
+
+  if (editedFilePaths.size > 0) {
+    const store = getContentStore();
+    const base64Store = getBase64Store();
+    const syntheticBlocks = [];
+    for (const filePath of editedFilePaths) {
+      if (finalText.includes(`:${filePath}\n`)) continue;
+      const storeId = `repo:${filePath}`;
+      const entry = store.getEntry(storeId);
+      if (!entry) continue;
+      const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
+      const content = chunks.map(c => c.text).join('');
+      if (!content) continue;
+      const ext = filePath.split('.').pop() || 'txt';
+      syntheticBlocks.push(`\`\`\`${ext}:${filePath}\n${content}\n\`\`\``);
+    }
+    if (syntheticBlocks.length > 0) {
+      const blockText = syntheticBlocks.join('\n\n');
+      finalText = finalText ? finalText + '\n\n' + blockText : blockText;
+      console.log(`[ToolRound] Generated ${syntheticBlocks.length} synthetic code block(s) from edit/write tools`);
     }
   }
 

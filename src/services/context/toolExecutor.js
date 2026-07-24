@@ -8,6 +8,31 @@ import { getNodeInfo, getDependencies, findPath, searchNodes } from './graphQuer
 const TOOL_TIMEOUT_MS = 20_000;
 const MAX_FILE_CONTENT_CHARS = 8000;
 
+function persistFileContent(storeId, filePath, content) {
+  const store = getContentStore();
+  const base64Store = getBase64Store();
+  store.upsert(storeId, ContentCategory.REPO_FILE, content, { sourcePath: filePath });
+  const entry = store.getEntry(storeId);
+  if (entry) {
+    for (const chunk of entry.chunks) {
+      const b64 = btoa(unescape(encodeURIComponent(chunk.text)));
+      base64Store.encodedChunks.set(chunk.id, {
+        b64,
+        meta: {
+          entryId: storeId,
+          sourcePath: filePath,
+          category: ContentCategory.REPO_FILE,
+          keywords: chunk.keywords,
+          charCount: chunk.charCount,
+          byteSize: b64.length,
+          startIndex: chunk.startIndex,
+          endIndex: chunk.endIndex,
+        },
+      });
+    }
+  }
+}
+
 function withTimeout(promise, ms, label) {
   let timer;
   return Promise.race([
@@ -131,6 +156,37 @@ export const CODE_GEN_TOOLS = [
           prompt: { type: 'string', description: 'Clear, specific research question or task for the sub-agent. E.g. "Find all components that use the useAuth hook and list their file paths" or "Read TopBar.jsx and summarize its props, state, and child components"' },
         },
         required: ['prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit',
+      description: 'Make a targeted edit to a file by replacing an exact string match. Use this for modifications — it is more precise than regenerating the whole file. You MUST call read_file first to get the current content, then use the exact text as oldString.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: 'File path relative to repo root' },
+          oldString: { type: 'string', description: 'The exact string to find and replace (must match file content exactly)' },
+          newString: { type: 'string', description: 'The replacement string' },
+        },
+        required: ['filePath', 'oldString', 'newString'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write',
+      description: 'Create a new file or completely overwrite an existing file. Use this for NEW files only. For modifying existing files, use the edit tool instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: 'File path relative to repo root' },
+          content: { type: 'string', description: 'The complete file content' },
+        },
+        required: ['filePath', 'content'],
       },
     },
   },
@@ -315,6 +371,47 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!query) return { success: false, content: 'search_nodes requires a "query" parameter' };
       const result = searchNodes(query);
       return { success: true, content: result };
+    }
+
+    case 'edit': {
+      const filePath = args.filePath;
+      const oldString = args.oldString;
+      const newString = args.newString;
+      if (!filePath || oldString == null || newString == null) {
+        return { success: false, content: 'edit requires "filePath", "oldString", and "newString" parameters' };
+      }
+      const storeId = `repo:${filePath}`;
+      const altId = `github:${filePath}`;
+      const entry = store.getEntry(storeId) || store.getEntry(altId);
+      if (!entry) {
+        return { success: false, content: `File not found in cache: ${filePath}. Call read_file("${filePath}") first to load it.` };
+      }
+      const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
+      const fullContent = chunks.map(c => c.text).join('');
+      const idx = fullContent.indexOf(oldString);
+      if (idx === -1) {
+        const closeIdx = fullContent.indexOf(oldString.slice(0, Math.min(80, oldString.length)));
+        const hint = closeIdx !== -1 ? ` Did you mean around character ${closeIdx}? Check the exact whitespace and indentation.` : ' The oldString was not found. Re-read the file with read_file and copy the exact text.';
+        return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}` };
+      }
+      const endIdx = idx + oldString.length;
+      const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
+      persistFileContent(storeId, filePath, updated);
+      const diffPreview = `--- a/${filePath}\n+++ b/${filePath}\n@@ -${fullContent.slice(0, idx).split('\n').length},0 +${(fullContent.slice(0, idx) + newString).split('\n').length},0 @@\n${newString.split('\n').map(l => `+ ${l}`).join('\n')}`;
+      console.log(`[Edit] ${filePath}: replaced ${oldString.length} chars at offset ${idx} → ${newString.length} chars (persisted to store)`);
+      return { success: true, content: `Successfully edited ${filePath} (${fullContent.length} → ${updated.length} chars, diff at offset ${idx})\n\nDiff preview:\n${diffPreview}` };
+    }
+
+    case 'write': {
+      const filePath = args.filePath;
+      const content = args.content;
+      if (!filePath || content == null) {
+        return { success: false, content: 'write requires "filePath" and "content" parameters' };
+      }
+      const storeId = `repo:${filePath}`;
+      persistFileContent(storeId, filePath, content);
+      console.log(`[Write] ${filePath}: wrote ${content.length} chars (persisted to store)`);
+      return { success: true, content: `Successfully wrote ${content.length} chars to ${filePath}` };
     }
 
     case 'task': {
