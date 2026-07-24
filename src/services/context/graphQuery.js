@@ -74,7 +74,7 @@ export function getNodeInfo(nodeId) {
   const nodes = mergeAllNodes(diagrams);
   const node = nodes.get(nodeId);
   if (!node) {
-    return `Node "${nodeId}" not found in diagram`;
+    return `Node "${nodeId}" not found in diagram. Try search_code("${nodeId}") or list_files("") to find it in the file tree.`;
   }
 
   const filePathMap = buildFilePathMap(objects);
@@ -83,7 +83,10 @@ export function getNodeInfo(nodeId) {
 
   const lines = [];
   lines.push(`[${node.type || 'unknown'}:${node.name || nodeId}]`);
-  if (info.filePath) lines.push(`File: ${info.filePath}`);
+  if (info.filePath) {
+    lines.push(`File: ${info.filePath}`);
+    lines.push(`→ Use read_file("${info.filePath}") to see the full content.`);
+  }
 
   const allConnections = mergeAllConnections(diagrams);
   const incoming = allConnections.filter(c => c.target === nodeId);
@@ -335,8 +338,8 @@ export function searchNodes(query) {
     }
   }
 
-  if (matches.length === 0) return `No nodes matching "${query}"`;
-  return truncate(matches.join('\n'), RESULT_BUDGET);
+  if (matches.length === 0) return `No nodes matching "${query}". Try search_code("${query}") or list_files("") to browse the file tree.`;
+  return truncate(matches.join('\n') + '\n\n→ Use read_file("path") to see the full content of any file listed above.', RESULT_BUDGET);
 }
 
 /**

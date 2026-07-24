@@ -9,7 +9,7 @@ const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 120000;
 const MAX_TOOL_ONLY_ROUNDS = 5;
 const MAX_UNHELPFUL_ROUNDS = 3;
-const MAX_SEARCH_ROUNDS = 4;
+const MAX_SEARCH_ROUNDS = 2;
 const MAX_TOTAL_READS = 8;
 
 function estimateMessagesSize(msgs) {

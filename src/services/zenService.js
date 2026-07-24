@@ -744,9 +744,10 @@ RULES
 6. Use modern syntax and best practices for the target framework
 7. NEVER create a new file for a component that already exists in another file
 8. HTML elements (div, span, header, section, nav, etc.) and CSS classes are NOT separate components — they live INLINE inside existing component files. Do NOT create new component files for them.
-9. When the user mentions a UI element by name (e.g. "the TopBar", "the sidebar"), search for it first — it may be defined inline in an existing file, not as a standalone component.
+9. When the user mentions a UI element by name (e.g. "the TopBar", "the sidebar"), search for it first — it may be defined inline in an existing file, not as a standalone component. Once you find the file it lives in, IMMEDIATELY call read_file on that file.
 10. You MUST call read_file on every file you want to modify BEFORE outputting code. Without reading the file, you cannot know its imports, exports, state variables, or structure.
-11. NEVER output a fabricated version of an existing file. If you didn't read it with read_file, do NOT write code for it.`;
+11. NEVER output a fabricated version of an existing file. If you didn't read it with read_file, do NOT write code for it.
+12. After ANY tool returns a file path (from search_code, search_nodes, get_node_info, or list_files), you MUST call read_file on that path before generating code. Do NOT keep searching — read the file first.`;
 
 export function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
