@@ -3,6 +3,12 @@ import LandingApp from './landing/LandingApp';
 import DiagramApp from './App.jsx';
 import SharedCanvas from './components/SharedCanvas';
 import useSceneStore from './stores/sceneStore';
+import useObjectsStore from './stores/objectsStore';
+import useDiagramStore from './stores/diagramStore';
+import useCodeStore from './stores/codeStore';
+import useConnectionStore from './stores/connectionStore';
+import useSpatialManagerStore from './stores/spatialManagerStore';
+import { getContentStore } from './services/context/contentStore';
 
 const AppShell = () => {
   const [activeView, setActiveView] = useState('landing'); // 'landing' | 'diagram'
@@ -37,6 +43,12 @@ const AppShell = () => {
   }, []);
 
   const handleBackToLanding = useCallback(() => {
+    useObjectsStore.getState().resetObjects();
+    useConnectionStore.getState().resetConnections();
+    useDiagramStore.getState().clear();
+    useCodeStore.getState().reset();
+    useSpatialManagerStore.getState().resetSpatialManager();
+    try { getContentStore().clear(); } catch { /* singleton may not exist */ }
     window.history.pushState({}, '', window.location.pathname);
     window.isTrialMode = false;
     setTrialMode(false);
@@ -57,6 +69,12 @@ const AppShell = () => {
       if (params.get('spaceId') || params.get('space') || params.get('code')) {
         setActiveView('diagram');
       } else {
+        useObjectsStore.getState().resetObjects();
+        useConnectionStore.getState().resetConnections();
+        useDiagramStore.getState().clear();
+        useCodeStore.getState().reset();
+        useSpatialManagerStore.getState().resetSpatialManager();
+        try { getContentStore().clear(); } catch { /* singleton may not exist */ }
         setActiveView('landing');
         setSpaceContext(null);
       }

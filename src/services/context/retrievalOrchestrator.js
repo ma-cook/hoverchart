@@ -3,7 +3,6 @@ import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 import useObjectsStore from '../../stores/objectsStore';
 import useDiagramStore from '../../stores/diagramStore';
-import useCodeStore from '../../stores/codeStore';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 120000;
@@ -11,6 +10,7 @@ const MAX_TOOL_ONLY_ROUNDS = 5;
 const MAX_UNHELPFUL_ROUNDS = 3;
 const MAX_SEARCH_ROUNDS = 2;
 const MAX_TOTAL_READS = 8;
+const MIN_READS_BEFORE_CODEGEN = 2;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -97,7 +97,7 @@ function trimMessages(msgs) {
     if (rest[i]?.role === 'tool') {
       const prev = i > 0 ? rest[i - 1] : null;
       if (prev?.role === 'assistant' && prev.tool_calls) {
-        const isSearchOnly = prev.tool_calls.every(tc => tc.function?.name === 'search_code');
+        const isSearchOnly = prev.tool_calls.every(tc => tc.function?.name === 'search_code' || tc.function?.name === 'search_nodes' || tc.function?.name === 'get_node_info');
         if (isSearchOnly) searchResultIndices.add(i);
       }
     }
@@ -197,6 +197,9 @@ export async function sendWithRetrieval({
   const readFiles = new Map();
   let duplicateReadRounds = 0;
   const toolCallHistory = new Map();
+  let searchPhaseDone = false;
+  let readPhaseRounds = 0;
+  const MAX_READ_PHASE_ROUNDS = 2;
 
   while (rounds < MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
@@ -204,16 +207,17 @@ export async function sendWithRetrieval({
     }
 
     const forceWriteCode = (toolOnlyRounds >= MAX_TOOL_ONLY_ROUNDS || totalReads >= MAX_TOTAL_READS) && !hasCodeBlocks(finalText);
-    const forceNoTools = totalSearchRounds >= MAX_SEARCH_ROUNDS;
+    if (totalSearchRounds >= MAX_SEARCH_ROUNDS) searchPhaseDone = true;
+    const inReadPhase = searchPhaseDone && !forceWriteCode && totalReads < MIN_READS_BEFORE_CODEGEN && readPhaseRounds < MAX_READ_PHASE_ROUNDS;
+    const forceCodeGen = (forceWriteCode || (searchPhaseDone && !inReadPhase)) && !hasCodeBlocks(finalText);
 
-    if (forceWriteCode || forceNoTools) {
+    if (forceCodeGen) {
       const fileContents = collectFileContents(currentMessages);
       const userMsg = currentMessages[1];
       const sceneObjects = useObjectsStore.getState().objects || [];
       const componentIndex = buildComponentIndex(sceneObjects);
       const graphSummary = buildGraphSummary(useDiagramStore.getState());
-      const fileTree = useCodeStore.getState().fileTree || [];
-      const fileTreeBlock = buildFileTreeSection(fileTree);
+      const fileTreeBlock = buildFileTreeSection(fileTree || []);
       const contentIndexBlock = buildContentIndexSection();
       const fileBlock = fileContents.length > 0
         ? `\n\n═══ FILES TO MODIFY (output these same file paths with your changes applied) ═══\n\n${fileContents.join('\n\n---\n\n')}\n\n═══ END FILES ═══`
@@ -240,8 +244,9 @@ export async function sendWithRetrieval({
       console.warn(`[ToolRound] Round ${rounds + 1}: rebuilt messages for code generation (${fileContents.length} file contents, ${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
     }
 
-    const useTools = !forceNoTools && !forceWriteCode;
-    console.log(`[ToolRound] Round ${rounds + 1}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars) tools=${useTools}`);
+    const useTools = !forceCodeGen;
+    if (inReadPhase) readPhaseRounds++;
+    console.log(`[ToolRound] Round ${rounds + 1}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars) tools=${useTools}${inReadPhase ? ' [read-phase]' : ''}${forceCodeGen ? ' [codegen]' : ''}`);
 
     const MAX_SEND_RETRIES = 2;
     let rawResult = null;
@@ -299,7 +304,7 @@ export async function sendWithRetrieval({
 
     toolOnlyRounds++;
 
-    const isSearchOnly = toolCalls.every(tc => tc.name === 'search_code');
+    const isSearchOnly = toolCalls.every(tc => tc.name === 'search_code' || tc.name === 'search_nodes' || tc.name === 'get_node_info');
     if (isSearchOnly) {
       totalSearchRounds++;
     }
@@ -391,6 +396,26 @@ export async function sendWithRetrieval({
       });
     }
 
+    if (inReadPhase) {
+      const thisRoundReads = toolCalls.filter(tc => tc.name === 'read_file').length;
+      if (thisRoundReads === 0) {
+        const searchResults = toolResults
+          .filter(({ tc }) => tc.name === 'search_code' || tc.name === 'search_nodes')
+          .map(({ result }) => result.content || '')
+          .join('\n');
+        const pathMatch = searchResults.match(/(?:→|:)\s*(src\/[^\s,]+)/g) || [];
+        const filePaths = [...new Set(pathMatch.map(m => m.replace(/^(?:→|:)\s*/, '').trim()))].slice(0, 5);
+        const fileList = filePaths.length > 0
+          ? ` Specifically, call read_file on: ${filePaths.map(p => `"${p}"`).join(', ')}`
+          : ' Look at the file paths in the search results above and call read_file on the most relevant ones.';
+        currentMessages.push({
+          role: 'user',
+          content: `You are in the reading phase. You MUST call read_file on the files you found via search before generating code.${fileList} Do NOT search again — only read files.`,
+        });
+        console.warn(`[ToolRound] Round ${rounds + 1}: read phase — no reads this round, injected read_file prompt`);
+      }
+    }
+
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });
     rounds++;
   }
@@ -404,8 +429,7 @@ export async function sendWithRetrieval({
     const sceneObjects = useObjectsStore.getState().objects || [];
     const componentIndex = buildComponentIndex(sceneObjects);
     const graphSummary = buildGraphSummary(useDiagramStore.getState());
-    const fileTree = useCodeStore.getState().fileTree || [];
-    const fileTreeBlock = buildFileTreeSection(fileTree);
+    const fileTreeBlock = buildFileTreeSection(fileTree || []);
     const contentIndexBlock = buildContentIndexSection();
 
     const fileBlock = fileContents.length > 0
@@ -469,7 +493,7 @@ export async function sendWithRetrieval({
               try {
                 const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments;
                 if (args.path) allowedPaths.add(args.path);
-              } catch {}
+              } catch { /* JSON parse failed */ }
             }
           }
         }
