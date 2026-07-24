@@ -120,9 +120,48 @@ export const CODE_GEN_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'task',
+      description: 'Spawn a sub-agent to research a question about the codebase. The sub-agent can read files, search code, and query the graph — but cannot modify anything. Use this for complex exploration that would take many tool calls, to keep the main conversation clean.',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'Clear, specific research question or task for the sub-agent. E.g. "Find all components that use the useAuth hook and list their file paths" or "Read TopBar.jsx and summarize its props, state, and child components"' },
+        },
+        required: ['prompt'],
+      },
+    },
+  },
 ];
 
-export async function executeTool(name, args, githubContext, fileTree = []) {
+const SUB_AGENT_TOOLS = [
+  { type: 'function', function: { name: 'read_file', description: 'Read file contents.', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'number' }, limit: { type: 'number' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'list_files', description: 'List files in a directory.', parameters: { type: 'object', properties: { path: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'search_code', description: 'Search for files matching a pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'] } } },
+  { type: 'function', function: { name: 'get_node_info', description: 'Get details about a component.', parameters: { type: 'object', properties: { nodeId: { type: 'string' } }, required: ['nodeId'] } } },
+  { type: 'function', function: { name: 'get_dependencies', description: 'Find dependencies.', parameters: { type: 'object', properties: { nodeId: { type: 'string' }, direction: { type: 'string' } }, required: ['nodeId'] } } },
+  { type: 'function', function: { name: 'search_nodes', description: 'Search diagram nodes.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+];
+
+const SUB_AGENT_SYSTEM_PROMPT = `You are a research sub-agent. Your job is to answer a specific question about a codebase by reading files and searching code.
+
+TOOLS: You can read files, list directories, search code, and query the component graph. You CANNOT modify any files.
+
+INSTRUCTIONS:
+1. Use the tools to gather the information requested in the prompt
+2. Read files fully (8000+ chars) — do not read tiny slices
+3. Each file should be read ONCE
+4. When you have enough information, write a clear, structured summary
+
+OUTPUT FORMAT:
+- Start with a direct answer to the prompt
+- Include file paths and line numbers for key findings
+- Include relevant code snippets (keep them short)
+- Do NOT generate code or suggest changes — only report what exists`;
+
+export async function executeTool(name, args, githubContext, fileTree = [], { runSubAgent, depth = 0 } = {}) {
   const store = getContentStore();
   const base64Store = getBase64Store();
 
@@ -276,6 +315,33 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
       if (!query) return { success: false, content: 'search_nodes requires a "query" parameter' };
       const result = searchNodes(query);
       return { success: true, content: result };
+    }
+
+    case 'task': {
+      if (depth >= 1) {
+        return { success: false, content: 'Sub-agents cannot spawn further sub-agents. Complete your research with the available tools instead.' };
+      }
+      if (!runSubAgent) {
+        return { success: false, content: 'Sub-agent execution is not available in this context.' };
+      }
+      const prompt = args.prompt;
+      if (!prompt) return { success: false, content: 'task requires a "prompt" parameter' };
+      try {
+        console.log(`[SubAgent] Spawning sub-agent (depth=${depth + 1}): "${prompt.slice(0, 100)}..."`);
+        const subResult = await runSubAgent({
+          prompt,
+          tools: SUB_AGENT_TOOLS,
+          systemPrompt: SUB_AGENT_SYSTEM_PROMPT,
+          githubContext,
+          fileTree,
+          depth: depth + 1,
+        });
+        console.log(`[SubAgent] Sub-agent returned ${subResult.length} chars`);
+        return { success: true, content: subResult };
+      } catch (err) {
+        console.warn(`[SubAgent] Sub-agent failed:`, err.message);
+        return { success: false, content: `Sub-agent error: ${err.message}` };
+      }
     }
 
     default:

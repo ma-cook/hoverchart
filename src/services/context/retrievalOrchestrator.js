@@ -314,6 +314,45 @@ export async function sendWithRetrieval({
 
     const readFilesBefore = new Set(readFiles.keys());
 
+    const runSubAgent = async ({ prompt, tools, systemPrompt, githubContext: ghCtx, fileTree: ft, depth: subDepth }) => {
+      const subMessages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt },
+      ];
+      let subText = '';
+      const SUB_MAX_ROUNDS = 10;
+      for (let subRound = 0; subRound < SUB_MAX_ROUNDS; subRound++) {
+        let raw;
+        try {
+          raw = await sendToZen({ messages: subMessages, tools, signal });
+        } catch (e) {
+          console.warn(`[SubAgent] Round ${subRound + 1} sendToZen failed:`, e.message);
+          break;
+        }
+        const res = typeof raw === 'string' ? { text: raw, toolCalls: [] } : raw;
+        if (res.text) subText = subText ? subText + '\n\n' + res.text : res.text;
+        if (!res.toolCalls || res.toolCalls.length === 0) break;
+        subMessages.push({
+          role: 'assistant',
+          content: res.text || null,
+          tool_calls: res.toolCalls.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+          })),
+        });
+        const subResults = await Promise.all(res.toolCalls.map(tc =>
+          executeTool(tc.name, tc.arguments, ghCtx, ft, { runSubAgent, depth: subDepth })
+            .then(r => ({ tc, result: r }))
+            .catch(e => ({ tc, result: { success: false, content: `Error: ${e.message}` } }))
+        ));
+        for (const { tc, result: subResult } of subResults) {
+          subMessages.push({ role: 'tool', tool_call_id: tc.id, content: subResult.content });
+        }
+      }
+      return subText;
+    };
+
     const toolPromises = toolCalls.map((tc, idx) => {
       if (tc.name === 'read_file') {
         const key = readKey(tc);
@@ -330,7 +369,7 @@ export async function sendWithRetrieval({
       }
       console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
       onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
-      return executeTool(tc.name, tc.arguments, githubContext, fileTree)
+      return executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 })
         .then(result => {
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
           return { tc, result, error: null };
