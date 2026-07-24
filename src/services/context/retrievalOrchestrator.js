@@ -4,9 +4,10 @@ import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 import useObjectsStore from '../../stores/objectsStore';
 import useDiagramStore from '../../stores/diagramStore';
 
-const MAX_TOTAL_CHARS = 300000;
+const MAX_TOTAL_CHARS = 100000;
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
+const MAX_TOOL_ROUNDS = 30;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -112,6 +113,52 @@ function trimMessages(msgs) {
     return [systemMsg, userMsg, ...filtered];
   }
 
+  // Compaction: replace old read_file results with summaries when file was read again later
+  const lastReadByPath = new Map();
+  for (let i = 0; i < filtered.length; i++) {
+    const msg = filtered[i];
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.function?.name === 'read_file') {
+          try {
+            const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+            if (args.path) lastReadByPath.set(args.path, i);
+          } catch { /* JSON parse failed */ }
+        }
+      }
+    }
+  }
+
+  let compactedCount = 0;
+  for (let i = 0; i < filtered.length; i++) {
+    const msg = filtered[i];
+    if (msg.role === 'tool' && typeof msg.content === 'string' && msg.content.length > 2000) {
+      const prev = i > 0 ? filtered[i - 1] : null;
+      if (prev?.role === 'assistant' && prev.tool_calls) {
+        for (const tc of prev.tool_calls) {
+          if (tc.function?.name === 'read_file' && tc.id === msg.tool_call_id) {
+            try {
+              const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+              if (args.path && lastReadByPath.get(args.path) > i) {
+                const origLen = msg.content.length;
+                msg.content = `[Previously read: ${args.path} — ${origLen} chars — use content from the later read_file response above]`;
+                compactedCount++;
+              }
+            } catch { /* JSON parse failed */ }
+          }
+        }
+      }
+    }
+  }
+
+  if (compactedCount > 0) {
+    console.log(`[Retrieval] Compacted ${compactedCount} old read_file results → ${estimateMessagesSize([systemMsg, userMsg, ...filtered])} chars`);
+  }
+
+  if (estimateMessagesSize([systemMsg, userMsg, ...filtered]) <= MAX_TOTAL_CHARS) {
+    return [systemMsg, userMsg, ...filtered];
+  }
+
   const workMsgs = [systemMsg, userMsg, ...filtered];
   while (filtered.length > 0 && estimateMessagesSize(workMsgs) > MAX_TOTAL_CHARS) {
     let removeCount = 0;
@@ -169,7 +216,7 @@ function isUsefulToolResult(content, toolName) {
 
 function readKey(tc) {
   if (tc.name === 'read_file') {
-    return `read_file:${tc.arguments.path}:${tc.arguments.offset || 0}:${tc.arguments.limit || 8000}`;
+    return `read_file:${tc.arguments.path}`;
   }
   return `${tc.name}:${JSON.stringify(tc.arguments)}`;
 }
@@ -191,7 +238,7 @@ export async function sendWithRetrieval({
   let duplicateReadRounds = 0;
   const toolCallHistory = new Map();
 
-  while (true) {
+  while (rounds < MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
       currentMessages = trimMessages(currentMessages);
     }
@@ -340,6 +387,10 @@ export async function sendWithRetrieval({
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });
     rounds++;
+  }
+
+  if (rounds >= MAX_TOOL_ROUNDS) {
+    console.warn(`[ToolRound] Hit round cap (${MAX_TOOL_ROUNDS}), exiting loop`);
   }
 
   if (!hasCodeBlocks(finalText)) {

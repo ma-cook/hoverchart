@@ -23,7 +23,7 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file from the repository. Use offset/limit to read specific sections of large files.',
+      description: 'Read the contents of a file from the repository. Returns at least 8000 chars by default. Use offset to read specific sections of very large files (>8000 chars).',
       parameters: {
         type: 'object',
         properties: {
@@ -130,7 +130,8 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
     case 'read_file': {
       const path = args.path;
       const offset = Math.max(0, parseInt(args.offset, 10) || 0);
-      const limit = Math.min(Math.max(100, parseInt(args.limit, 10) || MAX_FILE_CONTENT_CHARS), MAX_FILE_CONTENT_CHARS);
+      const requestedLimit = parseInt(args.limit, 10) || MAX_FILE_CONTENT_CHARS;
+      const limit = Math.min(Math.max(8000, requestedLimit), MAX_FILE_CONTENT_CHARS);
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
 

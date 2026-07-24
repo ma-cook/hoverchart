@@ -712,9 +712,12 @@ PHASE 1 — DISCOVER (use tools):
 4. MANDATORY: Call read_file on EVERY file you plan to modify — you cannot write correct code without reading the current content first
 
 PHASE 2 — GENERATE (write code):
-5. Output a 1-2 sentence summary of changes
-6. For each modified file, output a code block with the COMPLETE file content — start from what read_file returned and apply your modifications
-7. For NEW files (that don't exist yet), write them from scratch
+5. Once you have read ALL the files you need, STOP using tools immediately
+6. Output a 1-2 sentence summary of changes
+7. For each modified file, output a code block with the COMPLETE file content — start from what read_file returned and apply your modifications
+8. For NEW files (that don't exist yet), write them from scratch
+
+CRITICAL: Do NOT re-read files you have already read. Do NOT search after you have already found the files you need. Once you have the file contents from read_file, use them directly to write your code. The transition from DISCOVER to GENERATE must be immediate — no extra tool calls after reading the last file.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -748,7 +751,9 @@ RULES
 10. You MUST call read_file on every file you want to modify BEFORE outputting code. Without reading the file, you cannot know its imports, exports, state variables, or structure.
 11. NEVER output a fabricated version of an existing file. If you didn't read it with read_file, do NOT write code for it.
 12. After ANY tool returns a file path (from search_code, search_nodes, get_node_info, or list_files), you MUST call read_file on that path before generating code. Do NOT keep searching — read the file first.
-13. You have UNLIMITED tool calls. Search and read as many files as you need to fully understand the codebase before writing code. Do not rush to generate code — gather complete context first.`;
+13. You have UNLIMITED tool calls. Search and read as many files as you need to fully understand the codebase before writing code. Do not rush to generate code — gather complete context first.
+14. Once you have read all the files you need, STOP calling tools and write your code immediately. Do not re-read files or re-search after finding what you need.
+15. Each file should be read ONCE. Do not call read_file on the same file multiple times at different offsets — the default limit returns 8000 chars which is enough context.`;
 
 export function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
