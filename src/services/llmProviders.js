@@ -249,7 +249,7 @@ export async function sendToProvider({
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
 
-  const MAX_RETRIES = 5;
+  const MAX_RETRIES = 20;
   const timeoutMs = 5 * 60 * 1000;
 
   let res;

@@ -457,23 +457,26 @@ export async function sendWithRetrieval({
     }
   }
 
-  if (fileContents.length > 0) {
-    const allowedPaths = new Set();
-    for (const m of currentMessages) {
-      if (m.role === 'assistant' && m.tool_calls) {
-        for (const tc of m.tool_calls) {
-          const fn = tc.function;
-          if (fn?.name === 'read_file' && fn.arguments) {
-            try {
-              const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments;
-              if (args.path) allowedPaths.add(args.path);
-            } catch {}
+  {
+    const fileContents = collectFileContents(currentMessages);
+    if (fileContents.length > 0) {
+      const allowedPaths = new Set();
+      for (const m of currentMessages) {
+        if (m.role === 'assistant' && m.tool_calls) {
+          for (const tc of m.tool_calls) {
+            const fn = tc.function;
+            if (fn?.name === 'read_file' && fn.arguments) {
+              try {
+                const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments;
+                if (args.path) allowedPaths.add(args.path);
+              } catch {}
+            }
           }
         }
       }
-    }
-    if (allowedPaths.size > 0) {
-      finalText = stripFabricatedNewFiles(finalText, [...allowedPaths]);
+      if (allowedPaths.size > 0) {
+        finalText = stripFabricatedNewFiles(finalText, [...allowedPaths]);
+      }
     }
   }
 
