@@ -540,6 +540,8 @@ const UIOverlay = ({
         }
         if (result.commitSha) setLastCommitSha(result.commitSha);
         if (result.contentIndex) useCodeStore.getState().setContentIndex(result.contentIndex);
+        if (result.fileSizes) useCodeStore.getState().setFileSizes(result.fileSizes);
+        if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
 
         // Persist diagram metadata via API
         if (currentSpaceId) {
@@ -662,6 +664,8 @@ const UIOverlay = ({
       setLastCommitSha(rescanResult.commitSha);
       setLastGeneratedMarkdown(rescanResult.mergedMarkdown);
       if (rescanResult.contentIndex) useCodeStore.getState().setContentIndex(rescanResult.contentIndex);
+      if (rescanResult.fileSizes) useCodeStore.getState().setFileSizes(rescanResult.fileSizes);
+      if (rescanResult.importGraph) useCodeStore.getState().setImportGraph(rescanResult.importGraph);
       if (storageUrl) {
         setLatestMarkdownUrl(storageUrl);
       }

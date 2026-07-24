@@ -1,7 +1,7 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 
-const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex'];
+const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex', 'importGraph'];
 
 function loadPersisted(spaceId, key) {
   try {
@@ -41,6 +41,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   repoFileTree: null,
   repoFileContents: null,
   contentIndex: null,
+  importGraph: null,
+  fileSizes: null,
   pendingChanges: [],
 
   setSpaceId: (spaceId) => {
@@ -110,6 +112,15 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
     set({ contentIndex });
   },
 
+  setFileSizes: (fileSizes) => {
+    const serialized = fileSizes instanceof Map ? [...fileSizes] : fileSizes;
+    set({ fileSizes: serialized });
+  },
+
+  setImportGraph: (importGraph) => {
+    set({ importGraph });
+  },
+
   setExpandedView: (expanded) => set({ expandedView: expanded }),
 
   setActiveCodeObjectId: (id) => set({ activeCodeObjectId: id }),
@@ -161,6 +172,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       repoFileTree: null,
       repoFileContents: null,
       contentIndex: null,
+      importGraph: null,
+      fileSizes: null,
       pendingChanges: [],
     });
   },

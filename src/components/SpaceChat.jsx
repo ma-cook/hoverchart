@@ -510,6 +510,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         signal: abortController.signal,
         githubContext,
         fileTree: useCodeStore.getState().repoFileTree || [],
+        fileSizes: useCodeStore.getState().fileSizes,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           if (!rafPendingRef.current) {
@@ -640,7 +641,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       if (selectedRepo && selectedBranch) {
         const _cs = useCodeStore.getState();
         if (_cs.repoFileTree) {
-          repoContext = { fileTree: _cs.repoFileTree, fileContents: _cs.repoFileContents || {} };
+          repoContext = { fileTree: _cs.repoFileTree, fileContents: _cs.repoFileContents || {}, fileSizes: _cs.fileSizes || null };
           console.log(`[CodeSend] Using cached repo context: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
         } else {
           const token = getGithubToken();
@@ -679,6 +680,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         signal: abortController.signal,
         githubContext,
         fileTree: repoContext?.fileTree || [],
+        fileSizes: useCodeStore.getState().fileSizes,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           if (!rafPendingRef.current) {
@@ -1011,6 +1013,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       if (result.success) {
         setScanProgress(null);
         if (result.contentIndex) useCodeStore.getState().setContentIndex(result.contentIndex);
+        if (result.fileSizes) useCodeStore.getState().setFileSizes(result.fileSizes);
+        if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
         setPushNotification({
           type: 'success',
           message: `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,

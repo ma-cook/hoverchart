@@ -303,6 +303,7 @@ export const objectMethods = {
             merfolkData: {
               nodeId: data.nodeId,
               codeFilePath: data.extraData.codeFilePath || '',
+              exports: data.extraData.exports || '',
               htmlElements: data.extraData.htmlElements || '',
               cssClasses: data.extraData.cssClasses || '',
               jsxRefs: data.extraData.jsxRefs || '',
@@ -361,6 +362,7 @@ export const objectMethods = {
             merfolkData: {
               nodeId: data.nodeId,
               codeFilePath: data.extraData.codeFilePath || '',
+              exports: data.extraData.exports || '',
               htmlElements: data.extraData.htmlElements || '',
               cssClasses: data.extraData.cssClasses || '',
               jsxRefs: data.extraData.jsxRefs || '',

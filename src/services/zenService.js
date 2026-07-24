@@ -678,6 +678,9 @@ COMPONENT INDEX (component → file):
 CONTENT INDEX (HTML elements, CSS classes, JSX refs → file):
 {contentIndex}
 
+IMPORT GRAPH (file → files it imports):
+{importGraph}
+
 SCENE COMPONENTS:
 {sceneContext}
 
@@ -755,11 +758,24 @@ RULES
 15. Each file should be read ONCE. Do not call read_file on the same file multiple times at different offsets — the default limit returns 8000 chars which is enough context.
 16. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy it precisely from the read_file output.`;
 
-export function buildFileTreeSection(fileTree) {
+function formatFileSize(chars) {
+  if (chars < 1024) return `${chars}B`;
+  if (chars < 1024 * 1024) return `${(chars / 1024).toFixed(1)}KB`;
+  return `${(chars / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+export function buildFileTreeSection(fileTree, fileSizesMap) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
   const capped = fileTree.length > 200 ? fileTree.slice(0, 200) : fileTree;
   const suffix = fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : '';
-  return capped.join('\n') + suffix;
+  const sizes = fileSizesMap instanceof Map ? fileSizesMap : (fileSizesMap ? new Map(fileSizesMap) : null);
+  const lines = capped.map((filePath) => {
+    if (!sizes) return filePath;
+    const fileName = filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue|css|scss|html|json|yaml|yml|md)$/, '') || '';
+    const size = sizes.get(fileName);
+    return size ? `${filePath} (${formatFileSize(size)})` : filePath;
+  });
+  return lines.join('\n') + suffix;
 }
 
 export function buildComponentIndex(objects) {
@@ -846,6 +862,18 @@ export function buildContentIndexSection() {
   }
 }
 
+export function buildImportGraphSection() {
+  try {
+    const importGraph = useCodeStore.getState().importGraph;
+    if (!importGraph) return '(no import graph available — run a scan first)';
+    const BUDGET = 3000;
+    if (importGraph.length <= BUDGET) return importGraph;
+    return importGraph.slice(0, BUDGET) + '\n... (truncated)';
+  } catch {
+    return '(no import graph available)';
+  }
+}
+
 function buildMinimalSceneContext(objects) {
   if (!objects || objects.length === 0) return '(no scene components)';
   const lines = [];
@@ -871,9 +899,10 @@ function buildMinimalSceneContext(objects) {
 
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
-  const fileTreeSection = buildFileTreeSection(repoContext?.fileTree);
+  const fileTreeSection = buildFileTreeSection(repoContext?.fileTree, repoContext?.fileSizes);
   const componentIndexSection = buildComponentIndex(sceneObjects);
   const contentIndexSection = buildContentIndexSection();
+  const importGraphSection = buildImportGraphSection();
   const sceneContextSection = buildMinimalSceneContext(sceneObjects);
 
   const diagramStore = repoContext?.diagramStore;
@@ -883,11 +912,12 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
     .replace('{fileTree}', fileTreeSection)
     .replace('{componentIndex}', componentIndexSection)
     .replace('{contentIndex}', contentIndexSection)
+    .replace('{importGraph}', importGraphSection)
     .replace('{sceneContext}', sceneContextSection)
     .replace('{graphSummary}', graphSummarySection || '(no graph available)')
     .replace('{techStack}', techStackSection);
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} contentIndex=${contentIndexSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} total=${systemContent.length}`);
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} contentIndex=${contentIndexSection.length} importGraph=${importGraphSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} total=${systemContent.length}`);
 
   const systemMessage = { role: 'system', content: systemContent };
 

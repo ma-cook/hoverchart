@@ -906,8 +906,12 @@ const traverseVanillaAST = (
       const d = node.declaration;
       if (d.type === 'FunctionDeclaration' && d.id) {
         addSymbol(d.id.name, false);
+        ensureContainer();
+        fileFunctions.get(fileName).exports.add(d.id.name);
       } else if (d.type === 'ClassDeclaration' && d.id) {
         addSymbol(d.id.name, true);
+        ensureContainer();
+        fileFunctions.get(fileName).exports.add(d.id.name);
       } else if (d.type === 'TSInterfaceDeclaration' || d.type === 'TSTypeAliasDeclaration') {
         // Emit TypeScript interfaces/type aliases as [[Interface:]] nodes
         if (d.id && !foundItems.interfaces.has(d.id.name)) {
@@ -915,11 +919,14 @@ const traverseVanillaAST = (
           elements.interfaces.push(d.id.name);
           ensureContainer();
           fileFunctions.get(fileName).functions.add(d.id.name);
+          fileFunctions.get(fileName).exports.add(d.id.name);
         }
       } else if (d.type === 'VariableDeclaration') {
         d.declarations.forEach((vd) => {
           if (!vd.id?.name) return;
           addVariableDecl(vd.id.name, vd.init?.type, d.kind);
+          ensureContainer();
+          fileFunctions.get(fileName).exports.add(vd.id.name);
         });
       }
       return;
@@ -928,10 +935,18 @@ const traverseVanillaAST = (
     // export default declaration
     if (node.type === 'ExportDefaultDeclaration') {
       const d = node.declaration;
-      if (d?.type === 'FunctionDeclaration' && d.id) addSymbol(d.id.name, false);
-      else if (d?.type === 'ClassDeclaration' && d.id) addSymbol(d.id.name, true);
-      else if (d?.type === 'ArrowFunctionExpression' || d?.type === 'FunctionExpression') {
+      if (d?.type === 'FunctionDeclaration' && d.id) {
+        addSymbol(d.id.name, false);
+        ensureContainer();
+        fileFunctions.get(fileName).exports.add(d.id.name);
+      } else if (d?.type === 'ClassDeclaration' && d.id) {
+        addSymbol(d.id.name, true);
+        ensureContainer();
+        fileFunctions.get(fileName).exports.add(d.id.name);
+      } else if (d?.type === 'ArrowFunctionExpression' || d?.type === 'FunctionExpression') {
         addSymbol(fileName, false); // anonymous default export — use file name
+        ensureContainer();
+        fileFunctions.get(fileName).exports.add(fileName);
       }
       return;
     }
@@ -1345,12 +1360,18 @@ const traverseVueSource = (
               const decl = node.declaration;
               if (decl.type === 'FunctionDeclaration' && decl.id) {
                 addSymbol(decl.id.name, false);
+                ensureContainer();
+                fileFunctions.get(fileName).exports.add(decl.id.name);
               } else if (decl.type === 'ClassDeclaration' && decl.id) {
                 addSymbol(decl.id.name, true);
+                ensureContainer();
+                fileFunctions.get(fileName).exports.add(decl.id.name);
               } else if (decl.type === 'VariableDeclaration') {
                 decl.declarations.forEach(d => {
                   if (d.id?.name && !importBindings.has(d.id.name)) {
                     addSymbol(d.id.name, false);
+                    ensureContainer();
+                    fileFunctions.get(fileName).exports.add(d.id.name);
                   }
                 });
               }
@@ -1366,10 +1387,16 @@ const traverseVueSource = (
             const decl = node.declaration;
             if (decl.type === 'FunctionDeclaration' && decl.id) {
               addSymbol(decl.id.name, false);
+              ensureContainer();
+              fileFunctions.get(fileName).exports.add(decl.id.name);
             } else if (decl.type === 'ClassDeclaration' && decl.id) {
               addSymbol(decl.id.name, true);
+              ensureContainer();
+              fileFunctions.get(fileName).exports.add(decl.id.name);
             } else if (decl.type === 'Identifier' && !importBindings.has(decl.name)) {
               addSymbol(decl.name, false);
+              ensureContainer();
+              fileFunctions.get(fileName).exports.add(decl.name);
             }
             return;
           }
@@ -1622,6 +1649,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // Maps: sanitizedFileName -> { segment, routePath, parentRoutePath, isLayout, isPage, isLoading, isError, isApi, filePath }
     const nextjsRouteMap = new Map();
 
+    // Track file sizes (content.length) for the system prompt file tree
+    const fileSizes = new Map();
+
     // NEW: Track API endpoints and their handler chains
     // Maps: endpointKey -> { method, path, handlers: string[], sourceFile: string }
     const apiEndpoints = new Map();
@@ -1674,7 +1704,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       eventEmitters, eventListeners,
       errorBoundaries, suspenseBoundaries, errorContainment,
       sharedInterfaces, interfaceUsages,
-      repoType, parse,
+      fileSizes, repoType, parse,
     };
 
     const processSingleFile = async (file, fileContent, ctx) => {
@@ -1693,7 +1723,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
         eventEmitters, eventListeners,
         errorBoundaries, suspenseBoundaries, errorContainment,
         sharedInterfaces, interfaceUsages,
-        repoType, parse,
+        fileSizes, repoType, parse,
       } = ctx;
 
       const fileContext = analyzeFile(file.path, repoType);
@@ -1703,6 +1733,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
           const fileName = sanitizeNodeId(
             file.path.split('/').pop().replace(/\.(jsx?|tsx?|py|vue|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
           );
+
+          // Track file size for system prompt file tree
+          fileSizes.set(fileName, fileContent.length);
 
           // ── Next.js route tracking ────────────────────────────────────────
           // For Next.js repos, track which files are route files (pages,
@@ -1974,8 +2007,14 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     exportedName = node.declaration.arguments[0].name;
                   }
                 }
-                if (exportedName && fileContext.isComponent) {
-                  exportedComponents.set(fileName, exportedName);
+                if (exportedName) {
+                  if (!fileFunctions.has(fileName)) {
+                    fileFunctions.set(fileName, { type: 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
+                  }
+                  fileFunctions.get(fileName).exports.add(exportedName);
+                  if (fileContext.isComponent) {
+                    exportedComponents.set(fileName, exportedName);
+                  }
                 }
               }
 
@@ -2992,6 +3031,23 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   });
                 }
 
+                // Track all exported names from this declaration
+                const exportedNames = [];
+                if (decl.type === 'FunctionDeclaration' && decl.id) {
+                  exportedNames.push(decl.id.name);
+                } else if (decl.type === 'ClassDeclaration' && decl.id) {
+                  exportedNames.push(decl.id.name);
+                } else if (decl.type === 'VariableDeclaration') {
+                  decl.declarations?.forEach(vd => { if (vd.id?.name) exportedNames.push(vd.id.name); });
+                }
+                if (exportedNames.length > 0) {
+                  if (!fileFunctions.has(fileName)) {
+                    fileFunctions.set(fileName, { type: 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
+                  }
+                  const fi = fileFunctions.get(fileName);
+                  exportedNames.forEach(n => fi.exports.add(n));
+                }
+
                 if (exportedMethodName && httpMethods.includes(exportedMethodName)) {
                   const method = exportedMethodName;
                   const routePath = file.path.replace(/\.(jsx?|tsx?)$/, '').replace(/(?:^|\/)(?:src\/)?(?:app|pages)\//, '/').replace(/\/route$/, '').replace(/\/page$/, '') || '/';
@@ -3451,6 +3507,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       });
     }
 
+    // Ensure all fileFunctions entries have exports field
+    fileFunctions.forEach((fi) => {
+      if (!fi.exports) fi.exports = new Set();
+    });
+
     // Generate Merfolk markdown
     const merfolkResult = generateMerfolkMarkdown({
       repoName,
@@ -3491,25 +3552,38 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
 
     // Build formatted content index string for the system prompt
     const contentIndexLines = [];
-    fileContentIndex.forEach((entry, fileName) => {
-      const fi = fileFunctions.get(fileName);
-      const filePath = fi?.filePath || fileName;
+    const allFileNames = new Set([...fileContentIndex.keys(), ...fileFunctions.keys()]);
+    for (const fn of allFileNames) {
+      const fi = fileFunctions.get(fn);
+      const entry = fileContentIndex.get(fn);
+      const filePath = fi?.filePath || fn;
       const parts = [];
+      if (fi?.exports?.size > 0) parts.push(`exports:${[...fi.exports].join(',')}`);
       if (fi?.functions?.size > 0) parts.push(`fn:${[...fi.functions].join(',')}`);
-      if (entry.jsxRefs.size > 0) parts.push(`jsx:${[...entry.jsxRefs].join(',')}`);
-      if (entry.cssClasses.size > 0) parts.push(`css:${[...entry.cssClasses].join(',')}`);
-      if (entry.htmlElements.size > 0) parts.push(`html:${[...entry.htmlElements].join(',')}`);
+      if (entry?.jsxRefs?.size > 0) parts.push(`jsx:${[...entry.jsxRefs].join(',')}`);
+      if (entry?.cssClasses?.size > 0) parts.push(`css:${[...entry.cssClasses].join(',')}`);
+      if (entry?.htmlElements?.size > 0) parts.push(`html:${[...entry.htmlElements].join(',')}`);
       if (parts.length > 0) {
         contentIndexLines.push(`${filePath}: ${parts.join(' | ')}`);
       }
-    });
+    }
     const contentIndex = contentIndexLines.join('\n');
     console.log(`🔍 Content index: ${contentIndexLines.length} files, ${contentIndex.length} chars`);
 
-    return { markdown: merfolkResult, contentIndex };
+    // Build import graph: file → files it imports (compact format)
+    const importGraphLines = [];
+    moduleImportRelationships.forEach((importedFiles, sourceFile) => {
+      if (importedFiles.size > 0) {
+        importGraphLines.push(`${sourceFile}: ${[...importedFiles].join(', ')}`);
+      }
+    });
+    const importGraph = importGraphLines.join('\n');
+    console.log(`🔗 Import graph: ${importGraphLines.length} files with imports, ${importGraph.length} chars`);
+
+    return { markdown: merfolkResult, contentIndex, fileSizes, importGraph };
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
-    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '' };
+    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '', fileSizes: new Map() };
   }
 };
 
@@ -4117,6 +4191,14 @@ const generateMerfolkMarkdown = ({
   const buildFileNodeProps = (filePath, fileNodeId) => {
     const props = [];
     if (filePath) props.push(`  codeFilePath: "${filePath}"`);
+    const fi = fileFunctions.get(fileNodeId);
+    if (fi?.exports?.size > 0) {
+      props.push(`  exports: "${[...fi.exports].join(',')}"`);
+    }
+    const fileSizeVal = fileSizes.get(fileNodeId);
+    if (fileSizeVal > 0) {
+      props.push(`  fileSize: "${fileSizeVal}"`);
+    }
     const contentEntry = fileContentIndex.get(fileNodeId);
     if (contentEntry) {
       if (contentEntry.htmlElements.size > 0) {
@@ -4929,7 +5011,7 @@ export const scanRepositoryAndGenerateDiagram = async (
     if (onProgress) onProgress(10, 'Fetching repository structure...');
     
     // Generate Merfolk markdown from entire repository
-    const { markdown: merfolkMarkdown, contentIndex } = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
+    const { markdown: merfolkMarkdown, contentIndex, fileSizes, importGraph } = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
     
     if (onProgress) onProgress(40, 'Analyzing code and generating diagram...');
 
@@ -4986,6 +5068,8 @@ export const scanRepositoryAndGenerateDiagram = async (
       storageUrl,
       markdown: merfolkMarkdown,
       contentIndex,
+      fileSizes,
+      importGraph,
       commitSha,
     };
   } catch (error) {
@@ -5161,7 +5245,7 @@ export const rescanRepositoryForChanges = async (
 
   // 5. Generate merfolk from only the changed files
   if (onProgress) onProgress(25, `Analyzing ${sourceFiles.length} changed file(s)...`);
-  const { markdown: newMerfolkMarkdown, contentIndex: newContentIndex } = await generateMerfolkFromRepository(owner, repoName, {
+  const { markdown: newMerfolkMarkdown, contentIndex: newContentIndex, fileSizes: newFileSizes, importGraph: newImportGraph } = await generateMerfolkFromRepository(owner, repoName, {
     preFilteredFiles: sourceFiles,
     repoType: detectedRepoType,
     onProgress,
@@ -5181,6 +5265,8 @@ export const rescanRepositoryForChanges = async (
     mergedMarkdown,
     newMerfolk: newMerfolkMarkdown,
     contentIndex: newContentIndex,
+    fileSizes: newFileSizes,
+    importGraph: newImportGraph,
     changedFileCount: sourceFiles.length,
     addedFiles: addedFiles.length,
     modifiedFiles: modifiedFiles.length,
