@@ -28,21 +28,27 @@ function estimateMessagesSize(msgs) {
 const CODE_GEN_NO_TOOLS_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request and the files provided below.
 
 ═══════════════════════════════════════════════════════════════
+CRITICAL RULES — VIOLATION WILL CAUSE INCORRECT OUTPUT
+═══════════════════════════════════════════════════════════════
+
+1. If files are provided below, you MUST modify THOSE EXACT FILES. Do NOT create new files.
+2. For each provided file, output a code block with that file's path containing the MODIFIED version.
+3. NEVER create a new file (e.g. TopBar.jsx) for functionality that already exists inside an existing file.
+4. Start each modified file from the content provided and apply your changes to it.
+5. Do NOT fabricate imports, state, hooks, or structure — use what is actually in the provided files.
+
+═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
 Write a 1-2 sentence summary, then output code blocks:
 
 \`\`\`jsx:src/components/FileName.jsx
-import React from 'react';
-export default function FileName() {
-  return <div>...</div>;
-}
+<entire modified file content>
 \`\`\`
 
 Each code block MUST have the file path after the language tag.
-For MODIFIED files: start from the content provided below and apply your changes. Do NOT fabricate imports, state, or structure.
-For NEW files: write from scratch.
+For MODIFIED files: the code block must be the COMPLETE file as provided below, with your changes applied.
 Do NOT use XML tags, DSML format, or any format other than standard markdown code blocks.`;
 
 function collectFileContents(messages) {
@@ -133,6 +139,29 @@ function hasCodeBlocks(text) {
   return text && /```[\s\S]+?```/.test(text);
 }
 
+function stripFabricatedNewFiles(text, allowedFilePaths) {
+  if (!text || !allowedFilePaths || allowedFilePaths.length === 0) return text;
+  const allowedSet = new Set(allowedFilePaths);
+  const BLOCK_REGEX = /```(\w+):([^\n]+)\n([\s\S]*?)```/g;
+  let match;
+  const toStrip = [];
+  while ((match = BLOCK_REGEX.exec(text)) !== null) {
+    const filePath = match[2].trim();
+    if (filePath && !allowedSet.has(filePath)) {
+      toStrip.push(match[0]);
+    }
+  }
+  if (toStrip.length > 0) {
+    let modified = text;
+    for (const block of toStrip) {
+      modified = modified.replace(block, '');
+    }
+    console.warn(`[ToolRound] Stripped ${toStrip.length} fabricated new file(s) — allowed: [${[...allowedSet].join(', ')}]`);
+    return modified;
+  }
+  return text;
+}
+
 const FAILURE_PATTERNS = /^Error:|^File not found:|^No (matching|files) found|^Unknown tool|^search_code requires/i;
 
 function isUsefulToolResult(content, toolName) {
@@ -187,7 +216,7 @@ export async function sendWithRetrieval({
       const fileTreeBlock = buildFileTreeSection(fileTree);
       const contentIndexBlock = buildContentIndexSection();
       const fileBlock = fileContents.length > 0
-        ? `\n\nHere are the files you read — use them as the base for your modifications:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
+        ? `\n\n═══ FILES TO MODIFY (output these same file paths with your changes applied) ═══\n\n${fileContents.join('\n\n---\n\n')}\n\n═══ END FILES ═══`
         : '';
       const indexBlock = componentIndex && componentIndex !== '(no scene components)'
         ? `\n\nCOMPONENT INDEX (component → file):\n${componentIndex}`
@@ -201,12 +230,12 @@ export async function sendWithRetrieval({
         ? `\n\nIMPORTANT: You have not read any files yet. Use the FILE TREE and CONTENT INDEX above to find the right files, then output your best attempt. In future requests, always call read_file before writing code.`
         : '';
       const header = fileContents.length > 0
-        ? `You have read the following files:`
+        ? `IMPORTANT: You MUST modify ONLY the files listed below. Do NOT create any new files. Output each modified file as a complete code block with the same file path.`
         : `Here is the repository context:`;
       currentMessages = [
         { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
         userMsg,
-        { role: 'user', content: `${header}${fileTreeInfo}${contentIndexInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
+        { role: 'user', content: `${header}${fileTreeInfo}${contentIndexInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning}\n\nNow write the code. Output ONLY code blocks — one per file — using the EXACT file paths shown above.` },
       ];
       console.warn(`[ToolRound] Round ${rounds + 1}: rebuilt messages for code generation (${fileContents.length} file contents, ${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
     }
@@ -380,7 +409,7 @@ export async function sendWithRetrieval({
     const contentIndexBlock = buildContentIndexSection();
 
     const fileBlock = fileContents.length > 0
-      ? `\n\nHere are the files you read — use them as the base for your modifications:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
+      ? `\n\n═══ FILES TO MODIFY (output these same file paths with your changes applied) ═══\n\n${fileContents.join('\n\n---\n\n')}\n\n═══ END FILES ═══`
       : '';
 
     const indexBlock = componentIndex && componentIndex !== '(no scene components)'
@@ -399,13 +428,13 @@ export async function sendWithRetrieval({
       : '';
 
     const header2 = fileContents.length > 0
-      ? `You have read the following files:`
+      ? `IMPORTANT: You MUST modify ONLY the files listed below. Do NOT create any new files. Output each modified file as a complete code block with the same file path.`
       : `Here is the repository context:`;
 
     const forcedMessages = [
       { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
       userMsg,
-      { role: 'user', content: `${header2}${fileTreeInfo}${contentIndexInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning2}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
+      { role: 'user', content: `${header2}${fileTreeInfo}${contentIndexInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning2}\n\nNow write the code. Output ONLY code blocks — one per file — using the EXACT file paths shown above.` },
     ];
 
     try {
@@ -425,6 +454,26 @@ export async function sendWithRetrieval({
       }
     } catch (e) {
       console.warn(`[ToolRound] Forced round failed:`, e.message);
+    }
+  }
+
+  if (fileContents.length > 0) {
+    const allowedPaths = new Set();
+    for (const m of currentMessages) {
+      if (m.role === 'assistant' && m.tool_calls) {
+        for (const tc of m.tool_calls) {
+          const fn = tc.function;
+          if (fn?.name === 'read_file' && fn.arguments) {
+            try {
+              const args = typeof fn.arguments === 'string' ? JSON.parse(fn.arguments) : fn.arguments;
+              if (args.path) allowedPaths.add(args.path);
+            } catch {}
+          }
+        }
+      }
+    }
+    if (allowedPaths.size > 0) {
+      finalText = stripFabricatedNewFiles(finalText, [...allowedPaths]);
     }
   }
 
