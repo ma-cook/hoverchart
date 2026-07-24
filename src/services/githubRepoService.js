@@ -3492,13 +3492,14 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // Build formatted content index string for the system prompt
     const contentIndexLines = [];
     fileContentIndex.forEach((entry, fileName) => {
+      const fi = fileFunctions.get(fileName);
+      const filePath = fi?.filePath || fileName;
       const parts = [];
+      if (fi?.functions?.size > 0) parts.push(`fn:${[...fi.functions].join(',')}`);
       if (entry.jsxRefs.size > 0) parts.push(`jsx:${[...entry.jsxRefs].join(',')}`);
       if (entry.cssClasses.size > 0) parts.push(`css:${[...entry.cssClasses].join(',')}`);
       if (entry.htmlElements.size > 0) parts.push(`html:${[...entry.htmlElements].join(',')}`);
       if (parts.length > 0) {
-        const fi = fileFunctions.get(fileName);
-        const filePath = fi?.filePath || fileName;
         contentIndexLines.push(`${filePath}: ${parts.join(' | ')}`);
       }
     });

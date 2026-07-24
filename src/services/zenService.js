@@ -748,7 +748,7 @@ RULES
 10. You MUST call read_file on every file you want to modify BEFORE outputting code. Without reading the file, you cannot know its imports, exports, state variables, or structure.
 11. NEVER output a fabricated version of an existing file. If you didn't read it with read_file, do NOT write code for it.`;
 
-function buildFileTreeSection(fileTree) {
+export function buildFileTreeSection(fileTree) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
   const capped = fileTree.length > 200 ? fileTree.slice(0, 200) : fileTree;
   const suffix = fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : '';
@@ -827,7 +827,7 @@ export function parseSectionedResponse(text, fileContents) {
 
 const SCENE_COMPONENT_BUDGET = 2000;
 
-function buildContentIndexSection() {
+export function buildContentIndexSection() {
   try {
     const contentIndex = useCodeStore.getState().contentIndex;
     if (!contentIndex) return '(no content index available — run a scan first)';

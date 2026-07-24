@@ -183,8 +183,10 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
     }
 
     case 'search_code': {
-      const pattern = (args.pattern || '').toLowerCase();
+      const normalize = (s) => (s || '').toLowerCase().replace(/[-_]/g, '');
+      const pattern = normalize(args.pattern);
       if (!pattern) return { success: false, content: 'search_code requires a "pattern" parameter' };
+      const READ_FILE_HINT = '\n\n→ Use read_file("path") to see the full content of any file listed above.';
 
       const sceneObjects = useObjectsStore.getState().objects || [];
       const sceneMatches = [];
@@ -193,14 +195,14 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
         const name = (obj.headerText || '').toLowerCase();
         const filePath = obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath || '';
         if (!filePath) continue;
-        if (nodeId.toLowerCase().includes(pattern) || name.includes(pattern)) {
+        if (normalize(nodeId).includes(pattern) || normalize(name).includes(pattern)) {
           const nodeType = obj.merfolkData?.nodeType || obj.type || 'unknown';
           sceneMatches.push(`[${nodeType}:${obj.headerText || nodeId}] → ${filePath}`);
           if (sceneMatches.length >= 10) break;
         }
       }
       if (sceneMatches.length > 0) {
-        return { success: true, content: sceneMatches.join('\n') };
+        return { success: true, content: sceneMatches.join('\n') + READ_FILE_HINT };
       }
 
       const contentIndex = useCodeStore.getState().contentIndex;
@@ -208,20 +210,20 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
         const indexLines = contentIndex.split('\n');
         const indexMatches = [];
         for (const line of indexLines) {
-          if (line.toLowerCase().includes(pattern)) {
+          if (normalize(line).includes(pattern)) {
             const filePath = line.split(':')[0]?.trim();
             if (filePath) indexMatches.push(line);
             if (indexMatches.length >= 10) break;
           }
         }
         if (indexMatches.length > 0) {
-          return { success: true, content: indexMatches.join('\n') };
+          return { success: true, content: indexMatches.join('\n') + READ_FILE_HINT };
         }
       }
 
-      const matching = fileTree.filter(f => f.toLowerCase().includes(pattern)).slice(0, 50);
+      const matching = fileTree.filter(f => normalize(f).includes(pattern)).slice(0, 50);
       if (matching.length > 0) {
-        return { success: true, content: matching.join('\n') };
+        return { success: true, content: matching.join('\n') + READ_FILE_HINT };
       }
 
       const entries = Array.from(store.entries.entries());
@@ -242,7 +244,7 @@ export async function executeTool(name, args, githubContext, fileTree = []) {
         }
         if (contentMatches.length >= 10) break;
       }
-      return { success: true, content: contentMatches.length > 0 ? contentMatches.join('\n') : 'No matching files found' };
+      return { success: true, content: contentMatches.length > 0 ? contentMatches.join('\n') + READ_FILE_HINT : 'No matching files found. Try different search terms or use list_files("path") to browse directories.' };
     }
 
     case 'get_node_info': {

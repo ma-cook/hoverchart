@@ -1,8 +1,9 @@
-import { sendToZen, buildComponentIndex, buildGraphSummary } from '../zenService';
+import { sendToZen, buildComponentIndex, buildGraphSummary, buildFileTreeSection, buildContentIndexSection } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 import useObjectsStore from '../../stores/objectsStore';
 import useDiagramStore from '../../stores/diagramStore';
+import useCodeStore from '../../stores/codeStore';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOTAL_CHARS = 120000;
@@ -182,6 +183,9 @@ export async function sendWithRetrieval({
       const sceneObjects = useObjectsStore.getState().objects || [];
       const componentIndex = buildComponentIndex(sceneObjects);
       const graphSummary = buildGraphSummary(useDiagramStore.getState());
+      const fileTree = useCodeStore.getState().fileTree || [];
+      const fileTreeBlock = buildFileTreeSection(fileTree);
+      const contentIndexBlock = buildContentIndexSection();
       const fileBlock = fileContents.length > 0
         ? `\n\nHere are the files you read — use them as the base for your modifications:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
         : '';
@@ -191,13 +195,18 @@ export async function sendWithRetrieval({
       const graphBlock = graphSummary
         ? `\n\nGRAPH OVERVIEW:\n${graphSummary}`
         : '';
+      const fileTreeInfo = `\n\nFILE TREE:\n${fileTreeBlock}`;
+      const contentIndexInfo = `\n\nCONTENT INDEX:\n${contentIndexBlock}`;
       const noFilesWarning = fileContents.length === 0
-        ? `\n\nIMPORTANT: You have not read any files yet. Output your best attempt based on the search results above, but note that your code may not match the actual file contents. In future requests, always call read_file before writing code.`
+        ? `\n\nIMPORTANT: You have not read any files yet. Use the FILE TREE and CONTENT INDEX above to find the right files, then output your best attempt. In future requests, always call read_file before writing code.`
         : '';
+      const header = fileContents.length > 0
+        ? `You have read the following files:`
+        : `Here is the repository context:`;
       currentMessages = [
         { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
         userMsg,
-        { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}${noFilesWarning}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
+        { role: 'user', content: `${header}${fileTreeInfo}${contentIndexInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
       ];
       console.warn(`[ToolRound] Round ${rounds + 1}: rebuilt messages for code generation (${fileContents.length} file contents, ${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
     }
@@ -366,6 +375,9 @@ export async function sendWithRetrieval({
     const sceneObjects = useObjectsStore.getState().objects || [];
     const componentIndex = buildComponentIndex(sceneObjects);
     const graphSummary = buildGraphSummary(useDiagramStore.getState());
+    const fileTree = useCodeStore.getState().fileTree || [];
+    const fileTreeBlock = buildFileTreeSection(fileTree);
+    const contentIndexBlock = buildContentIndexSection();
 
     const fileBlock = fileContents.length > 0
       ? `\n\nHere are the files you read — use them as the base for your modifications:\n\n${fileContents.join('\n\n---\n\n')}\n\n---`
@@ -379,14 +391,21 @@ export async function sendWithRetrieval({
       ? `\n\nGRAPH OVERVIEW:\n${graphSummary}`
       : '';
 
+    const fileTreeInfo = `\n\nFILE TREE:\n${fileTreeBlock}`;
+    const contentIndexInfo = `\n\nCONTENT INDEX:\n${contentIndexBlock}`;
+
     const noFilesWarning2 = fileContents.length === 0
-      ? `\n\nIMPORTANT: You have not read any files yet. Output your best attempt based on the search results above, but note that your code may not match the actual file contents.`
+      ? `\n\nIMPORTANT: You have not read any files yet. Use the FILE TREE and CONTENT INDEX above to find the right files, then output your best attempt. In future requests, always call read_file before writing code.`
       : '';
+
+    const header2 = fileContents.length > 0
+      ? `You have read the following files:`
+      : `Here is the repository context:`;
 
     const forcedMessages = [
       { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
       userMsg,
-      { role: 'user', content: `You have read the relevant files.${indexBlock}${graphBlock}${fileBlock}${noFilesWarning2}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
+      { role: 'user', content: `${header2}${fileTreeInfo}${contentIndexInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning2}\n\nNow write the code. Output ONLY code blocks with the file path after the language tag.` },
     ];
 
     try {

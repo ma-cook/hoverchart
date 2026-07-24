@@ -190,12 +190,12 @@ async function associateCodeWithScene(codeBlocks, spaceId, user) {
         };
 
         newTextObjects.push(textObject);
-        objectsStore.setObjects(current => [...current, textObject]);
       }
     }
   }
 
   if (newTextObjects.length > 0) {
+    objectsStore.setObjects(current => [...current, ...newTextObjects]);
     await Promise.all(newTextObjects.map(obj =>
       saveObjectToCell(user?.uid || user, spaceId, obj).catch(() => {})
     ));
