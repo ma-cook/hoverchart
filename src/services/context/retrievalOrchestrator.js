@@ -4,13 +4,9 @@ import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 import useObjectsStore from '../../stores/objectsStore';
 import useDiagramStore from '../../stores/diagramStore';
 
-const MAX_TOOL_ROUNDS = 10;
-const MAX_TOTAL_CHARS = 120000;
-const MAX_TOOL_ONLY_ROUNDS = 5;
-const MAX_UNHELPFUL_ROUNDS = 3;
-const MAX_SEARCH_ROUNDS = 2;
-const MAX_TOTAL_READS = 8;
-const MIN_READS_BEFORE_CODEGEN = 2;
+const MAX_TOTAL_CHARS = 300000;
+const MAX_UNHELPFUL_ROUNDS = 5;
+const MAX_SAME_FILE_READS = 2;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -190,63 +186,17 @@ export async function sendWithRetrieval({
   let currentMessages = [...messages];
   let finalText = '';
   let rounds = 0;
-  let toolOnlyRounds = 0;
-  let totalSearchRounds = 0;
-  let totalReads = 0;
   let consecutiveUnhelpfulRounds = 0;
   const readFiles = new Map();
   let duplicateReadRounds = 0;
   const toolCallHistory = new Map();
-  let searchPhaseDone = false;
-  let readPhaseRounds = 0;
-  const MAX_READ_PHASE_ROUNDS = 2;
 
-  while (rounds < MAX_TOOL_ROUNDS) {
+  while (true) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
       currentMessages = trimMessages(currentMessages);
     }
 
-    const forceWriteCode = (toolOnlyRounds >= MAX_TOOL_ONLY_ROUNDS || totalReads >= MAX_TOTAL_READS) && !hasCodeBlocks(finalText);
-    if (totalSearchRounds >= MAX_SEARCH_ROUNDS) searchPhaseDone = true;
-    const inReadPhase = searchPhaseDone && !forceWriteCode && totalReads < MIN_READS_BEFORE_CODEGEN && readPhaseRounds < MAX_READ_PHASE_ROUNDS;
-    const forceCodeGen = (forceWriteCode || (searchPhaseDone && !inReadPhase)) && !hasCodeBlocks(finalText);
-
-    if (forceCodeGen) {
-      const fileContents = collectFileContents(currentMessages);
-      const userMsg = currentMessages[1];
-      const sceneObjects = useObjectsStore.getState().objects || [];
-      const componentIndex = buildComponentIndex(sceneObjects);
-      const graphSummary = buildGraphSummary(useDiagramStore.getState());
-      const fileTreeBlock = buildFileTreeSection(fileTree || []);
-      const contentIndexBlock = buildContentIndexSection();
-      const fileBlock = fileContents.length > 0
-        ? `\n\n═══ FILES TO MODIFY (output these same file paths with your changes applied) ═══\n\n${fileContents.join('\n\n---\n\n')}\n\n═══ END FILES ═══`
-        : '';
-      const indexBlock = componentIndex && componentIndex !== '(no scene components)'
-        ? `\n\nCOMPONENT INDEX (component → file):\n${componentIndex}`
-        : '';
-      const graphBlock = graphSummary
-        ? `\n\nGRAPH OVERVIEW:\n${graphSummary}`
-        : '';
-      const fileTreeInfo = `\n\nFILE TREE:\n${fileTreeBlock}`;
-      const contentIndexInfo = `\n\nCONTENT INDEX:\n${contentIndexBlock}`;
-      const noFilesWarning = fileContents.length === 0
-        ? `\n\nIMPORTANT: You have not read any files yet. Use the FILE TREE and CONTENT INDEX above to find the right files, then output your best attempt. In future requests, always call read_file before writing code.`
-        : '';
-      const header = fileContents.length > 0
-        ? `IMPORTANT: You MUST modify ONLY the files listed below. Do NOT create any new files. Output each modified file as a complete code block with the same file path.`
-        : `Here is the repository context:`;
-      currentMessages = [
-        { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
-        userMsg,
-        { role: 'user', content: `${header}${fileTreeInfo}${contentIndexInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning}\n\nNow write the code. Output ONLY code blocks — one per file — using the EXACT file paths shown above.` },
-      ];
-      console.warn(`[ToolRound] Round ${rounds + 1}: rebuilt messages for code generation (${fileContents.length} file contents, ${toolOnlyRounds} tool-only, ${totalSearchRounds} search, ${totalReads} reads)`);
-    }
-
-    const useTools = !forceCodeGen;
-    if (inReadPhase) readPhaseRounds++;
-    console.log(`[ToolRound] Round ${rounds + 1}/${MAX_TOOL_ROUNDS} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars) tools=${useTools}${inReadPhase ? ' [read-phase]' : ''}${forceCodeGen ? ' [codegen]' : ''}`);
+    console.log(`[ToolRound] Round ${rounds + 1} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
 
     const MAX_SEND_RETRIES = 2;
     let rawResult = null;
@@ -255,7 +205,7 @@ export async function sendWithRetrieval({
       try {
         rawResult = await sendToZen({
           messages: currentMessages,
-          tools: useTools ? CODE_GEN_TOOLS : [],
+          tools: CODE_GEN_TOOLS,
           signal,
           onChunk: (delta, fullText) => {
             onChunk?.(delta, stripRetrievalMarkers(fullText));
@@ -302,13 +252,6 @@ export async function sendWithRetrieval({
       break;
     }
 
-    toolOnlyRounds++;
-
-    const isSearchOnly = toolCalls.every(tc => tc.name === 'search_code' || tc.name === 'search_nodes' || tc.name === 'get_node_info');
-    if (isSearchOnly) {
-      totalSearchRounds++;
-    }
-
     onRetrieval?.({ chunkIds: toolCalls.map(tc => tc.name + ':' + JSON.stringify(tc.arguments)), round: rounds + 1 });
 
     const assistantMessage = { role: 'assistant', content: text || null, tool_calls: toolCalls.map(tc => ({
@@ -337,7 +280,6 @@ export async function sendWithRetrieval({
           });
         }
         readFiles.set(key, true);
-        totalReads++;
       }
       console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
       onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
@@ -373,7 +315,7 @@ export async function sendWithRetrieval({
 
     if (allDuplicateReads) {
       duplicateReadRounds++;
-      console.warn(`[ToolRound] Round ${rounds + 1}: all read_file calls are for already-read files (${duplicateReadRounds}/2)`);
+      console.warn(`[ToolRound] Round ${rounds + 1}: all read_file calls are for already-read files (${duplicateReadRounds}/${MAX_SAME_FILE_READS})`);
     } else {
       duplicateReadRounds = 0;
     }
@@ -383,7 +325,7 @@ export async function sendWithRetrieval({
       break;
     }
 
-    if (duplicateReadRounds >= 2) {
+    if (duplicateReadRounds >= MAX_SAME_FILE_READS) {
       console.warn(`[ToolRound] Breaking: ${duplicateReadRounds} consecutive rounds of re-reading same files`);
       break;
     }
@@ -394,26 +336,6 @@ export async function sendWithRetrieval({
         tool_call_id: tc.id,
         content: toolResult.content,
       });
-    }
-
-    if (inReadPhase) {
-      const thisRoundReads = toolCalls.filter(tc => tc.name === 'read_file').length;
-      if (thisRoundReads === 0) {
-        const searchResults = toolResults
-          .filter(({ tc }) => tc.name === 'search_code' || tc.name === 'search_nodes')
-          .map(({ result }) => result.content || '')
-          .join('\n');
-        const pathMatch = searchResults.match(/(?:→|:)\s*(src\/[^\s,]+)/g) || [];
-        const filePaths = [...new Set(pathMatch.map(m => m.replace(/^(?:→|:)\s*/, '').trim()))].slice(0, 5);
-        const fileList = filePaths.length > 0
-          ? ` Specifically, call read_file on: ${filePaths.map(p => `"${p}"`).join(', ')}`
-          : ' Look at the file paths in the search results above and call read_file on the most relevant ones.';
-        currentMessages.push({
-          role: 'user',
-          content: `You are in the reading phase. You MUST call read_file on the files you found via search before generating code.${fileList} Do NOT search again — only read files.`,
-        });
-        console.warn(`[ToolRound] Round ${rounds + 1}: read phase — no reads this round, injected read_file prompt`);
-      }
     }
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });
