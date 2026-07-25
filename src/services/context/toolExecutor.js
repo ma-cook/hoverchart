@@ -47,6 +47,22 @@ export const CODE_GEN_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'quick_look',
+      description: 'Quick preview of a file — shows the first N lines (and optionally last N lines). Faster than read_file for checking imports, exports, or overall structure without loading the entire file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path relative to repo root' },
+          head: { type: 'number', description: 'Number of lines from the top (default 40)' },
+          tail: { type: 'number', description: 'Number of lines from the bottom (default 20, 0 to disable)' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'read_file',
       description: 'Read the contents of a file from the repository. Returns at least 8000 chars by default. Use offset to read specific sections of very large files (>8000 chars).',
       parameters: {
@@ -222,6 +238,44 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
   const base64Store = getBase64Store();
 
   switch (name) {
+    case 'quick_look': {
+      const path = args.path;
+      const headLines = Math.min(parseInt(args.head, 10) || 40, 100);
+      const tailLines = Math.min(parseInt(args.tail, 10) || 20, 50);
+      const storeId = `repo:${path}`;
+      const altId = `github:${path}`;
+
+      let content = null;
+      const entry = store.getEntry(storeId) || store.getEntry(altId);
+      if (entry) {
+        const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
+        if (chunks.length > 0) content = chunks.map(c => c.text).join('');
+      }
+
+      if (!content && githubContext) {
+        try {
+          content = await withTimeout(
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            TOOL_TIMEOUT_MS,
+            `quick_look(${path})`,
+          );
+        } catch (err) {
+          return { success: false, content: `Error reading ${path}: ${err.message}` };
+        }
+      }
+
+      if (!content) return { success: false, content: `File not found: ${path}` };
+
+      const lines = content.split('\n');
+      const totalLines = lines.length;
+      const head = lines.slice(0, headLines).map((l, i) => `${i + 1}: ${l}`).join('\n');
+      if (totalLines <= headLines + tailLines || tailLines === 0) {
+        return { success: true, content: head };
+      }
+      const tail = lines.slice(-tailLines).map((l, i) => `${totalLines - tailLines + i + 1}: ${l}`).join('\n');
+      return { success: true, content: `${head}\n\n... (${totalLines - headLines - tailLines} lines omitted) ...\n\n${tail}` };
+    }
+
     case 'read_file': {
       const path = args.path;
       const offset = Math.max(0, parseInt(args.offset, 10) || 0);
@@ -282,10 +336,13 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const normalize = (s) => (s || '').toLowerCase().replace(/[-_]/g, '');
       const pattern = normalize(args.pattern);
       if (!pattern) return { success: false, content: 'search_code requires a "pattern" parameter' };
-      const READ_FILE_HINT = '\n\n→ Use read_file("path") to see the full content of any file listed above.';
+      const READ_FILE_HINT = '\n\n→ Use quick_look("path") for a preview, or read_file("path") for full content.';
+      const MAX_RESULTS = 15;
 
+      const results = [];
+
+      // 1. Scene objects — highest relevance (directly in diagram)
       const sceneObjects = useObjectsStore.getState().objects || [];
-      const sceneMatches = [];
       for (const obj of sceneObjects) {
         const nodeId = obj.merfolkData?.nodeId || '';
         const name = (obj.headerText || '').toLowerCase();
@@ -293,54 +350,58 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         if (!filePath) continue;
         if (normalize(nodeId).includes(pattern) || normalize(name).includes(pattern)) {
           const nodeType = obj.merfolkData?.nodeType || obj.type || 'unknown';
-          sceneMatches.push(`[${nodeType}:${obj.headerText || nodeId}] → ${filePath}`);
-          if (sceneMatches.length >= 10) break;
+          results.push({ rank: 0, text: `[${nodeType}:${obj.headerText || nodeId}] → ${filePath}` });
         }
       }
-      if (sceneMatches.length > 0) {
-        return { success: true, content: sceneMatches.join('\n') + READ_FILE_HINT };
-      }
 
+      // 2. Content index — semantic matches (exports, functions, classes, CSS)
       const contentIndex = useCodeStore.getState().contentIndex;
       if (contentIndex) {
         const indexLines = contentIndex.split('\n');
-        const indexMatches = [];
         for (const line of indexLines) {
+          if (results.length >= MAX_RESULTS) break;
           if (normalize(line).includes(pattern)) {
             const filePath = line.split(':')[0]?.trim();
-            if (filePath) indexMatches.push(line);
-            if (indexMatches.length >= 10) break;
+            if (filePath) results.push({ rank: 1, text: line });
           }
         }
-        if (indexMatches.length > 0) {
-          return { success: true, content: indexMatches.join('\n') + READ_FILE_HINT };
-        }
       }
 
-      const matching = fileTree.filter(f => normalize(f).includes(pattern)).slice(0, 50);
-      if (matching.length > 0) {
-        return { success: true, content: matching.join('\n') + READ_FILE_HINT };
+      // 3. File tree — filename matches
+      const matchingFiles = fileTree.filter(f => normalize(f).includes(pattern)).slice(0, 10);
+      for (const f of matchingFiles) {
+        if (results.length >= MAX_RESULTS) break;
+        results.push({ rank: 2, text: f });
       }
 
+      // 4. ContentStore — full-text search in loaded file contents
       const entries = Array.from(store.entries.entries());
-      const contentMatches = [];
       for (const [id, entry] of entries) {
+        if (results.length >= MAX_RESULTS) break;
         if (!id.startsWith('repo:')) continue;
         const filePath = id.slice(5);
         for (const chunk of entry.chunks) {
           const text = (chunk.text || '').toLowerCase();
           const idx = text.indexOf(pattern);
           if (idx >= 0) {
-            const start = Math.max(0, idx - 40);
-            const end = Math.min(text.length, idx + pattern.length + 60);
-            const snippet = chunk.text.slice(start, end).replace(/\n/g, ' ');
-            contentMatches.push(`${filePath}: ...${snippet}...`);
+            const start = Math.max(0, idx - 50);
+            const end = Math.min(text.length, idx + pattern.length + 80);
+            const snippet = chunk.text.slice(start, end).replace(/\n/g, ' ').trim();
+            const prefix = start > 0 ? '...' : '';
+            const suffix = end < chunk.text.length ? '...' : '';
+            results.push({ rank: 3, text: `${filePath}: ${prefix}${snippet}${suffix}` });
             break;
           }
         }
-        if (contentMatches.length >= 10) break;
       }
-      return { success: true, content: contentMatches.length > 0 ? contentMatches.join('\n') + READ_FILE_HINT : 'No matching files found. Try different search terms or use list_files("path") to browse directories.' };
+
+      if (results.length === 0) {
+        return { success: true, content: 'No matching files found. Try different search terms or use list_files("path") to browse directories.' };
+      }
+
+      results.sort((a, b) => a.rank - b.rank);
+      const output = results.slice(0, MAX_RESULTS).map(r => r.text).join('\n');
+      return { success: true, content: output + READ_FILE_HINT };
     }
 
     case 'get_node_info': {
@@ -397,9 +458,20 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const endIdx = idx + oldString.length;
       const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
       persistFileContent(storeId, filePath, updated);
-      const diffPreview = `--- a/${filePath}\n+++ b/${filePath}\n@@ -${fullContent.slice(0, idx).split('\n').length},0 +${(fullContent.slice(0, idx) + newString).split('\n').length},0 @@\n${newString.split('\n').map(l => `+ ${l}`).join('\n')}`;
+      // Build a more informative diff preview
+      const oldLines = oldString.split('\n');
+      const newLines = newString.split('\n');
+      const contextLines = 2;
+      const startLine = fullContent.slice(0, idx).split('\n').length;
+      const diffLines = [];
+      diffLines.push(`--- a/${filePath}`);
+      diffLines.push(`+++ b/${filePath}`);
+      diffLines.push(`@@ -${startLine},${oldLines.length} +${startLine},${newLines.length} @@`);
+      for (const line of oldLines) diffLines.push(`- ${line}`);
+      for (const line of newLines) diffLines.push(`+ ${line}`);
+      const diffPreview = diffLines.join('\n');
       console.log(`[Edit] ${filePath}: replaced ${oldString.length} chars at offset ${idx} → ${newString.length} chars (persisted to store)`);
-      return { success: true, content: `Successfully edited ${filePath} (${fullContent.length} → ${updated.length} chars, diff at offset ${idx})\n\nDiff preview:\n${diffPreview}` };
+      return { success: true, content: `Successfully edited ${filePath} (${fullContent.length} → ${updated.length} chars)\n\nDiff preview:\n${diffPreview}` };
     }
 
     case 'write': {

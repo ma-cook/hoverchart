@@ -5,6 +5,8 @@
 import { parse } from '@babel/parser';
 import { api } from '../api-client';
 import { scanPythonWithTreeSitter, scanWithTreeSitter } from './treeSitterScanner';
+import { createModuleResolver, resolveBarrelChains } from './moduleResolver';
+import { runTypeScriptAnalysis } from './typescriptAnalyzer';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -820,12 +822,17 @@ const traverseVanillaAST = (
       }
       return;
     }
+    // Resolve the relative path against the importing file's directory
+    const fromDir = filePath.split('/').slice(0, -1).join('/');
+    const parts = (fromDir + '/' + source).split('/');
+    const normalized = [];
+    for (const part of parts) {
+      if (part === '..') normalized.pop();
+      else if (part !== '.' && part !== '') normalized.push(part);
+    }
+    const resolvedBase = normalized.join('/').split('/').pop();
     const importedBase = sanitizeNodeId(
-      source
-        .replace(/^(\.\.\/|\.\/)[\/\.]*/, '')
-        .replace(/\.(jsx?|tsx?|mjs|cjs)$/, '')
-        .split('/')
-        .pop()
+      resolvedBase.replace(/\.(jsx?|tsx?|mjs|cjs)$/, '')
     );
     if (importedBase && importedBase !== fileName) {
       if (!moduleImportRelationships.has(fileName)) {
@@ -870,7 +877,10 @@ const traverseVanillaAST = (
 
     // External / relative imports
     if (node.type === 'ImportDeclaration') {
-      trackRelativeSource(node.source.value);
+      // Skip type-only imports — they don't create runtime dependencies
+      if (node.importKind !== 'type') {
+        trackRelativeSource(node.source.value);
+      }
       return;
     }
 
@@ -1257,9 +1267,16 @@ const traverseVueSource = (
   // ── Helper: resolve an import source to a sanitised base name ─────────
   const trackRelativeSource = (importSource) => {
     if (!importSource.startsWith('.') && !importSource.startsWith('/')) return;
-    const parts = importSource.split('/');
-    let base = parts[parts.length - 1];
-    if (base === 'index' || base === '') base = parts[parts.length - 2] || base;
+    // Resolve the relative path against the importing file's directory
+    const fromDir = filePath.split('/').slice(0, -1).join('/');
+    const srcParts = (fromDir + '/' + importSource).split('/');
+    const normalized = [];
+    for (const part of srcParts) {
+      if (part === '..') normalized.pop();
+      else if (part !== '.' && part !== '') normalized.push(part);
+    }
+    let base = normalized[normalized.length - 1];
+    if (base === 'index' || base === '') base = normalized[normalized.length - 2] || base;
     base = base.replace(/\.(vue|jsx?|tsx?)$/, '');
     const sanitised = sanitizeNodeId(base);
     if (!moduleImportRelationships.has(fileName)) {
@@ -1315,11 +1332,15 @@ const traverseVueSource = (
         // ── Import declarations ─────────────────────────────────────────
         if (node.type === 'ImportDeclaration') {
           const src = node.source.value;
-          trackRelativeSource(src);
+          const isTypeImport = node.importKind === 'type';
+          // Skip type-only imports for runtime dependency tracking
+          if (!isTypeImport) {
+            trackRelativeSource(src);
+          }
 
-          // Track library imports
+          // Track library imports (skip type-only)
           if (!src.startsWith('.') && !src.startsWith('/')) {
-            if (!elements.imports.libraries.includes(src)) {
+            if (!isTypeImport && !elements.imports.libraries.includes(src)) {
               elements.imports.libraries.push(src);
             }
           }
@@ -1329,8 +1350,8 @@ const traverseVueSource = (
             const localName = spec.local?.name;
             if (localName) importBindings.add(localName);
 
-            // Track dependency type for .vue component files
-            if (isVueFile && localName) {
+            // Track dependency type for .vue component files (skip type-only imports)
+            if (isVueFile && localName && !isTypeImport) {
               if (src.includes('/store') || src.includes('pinia') || src.includes('vuex')) {
                 if (!componentDependencies.has(componentName)) {
                   componentDependencies.set(componentName, { hooks: [], services: [], stores: [], utilities: [] });
@@ -1513,6 +1534,23 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // tiny changed-file list). Full scans detect automatically.
     const repoType = options.repoType || await detectRepoType(owner, repoName, token, structure);
     console.log(`🔍 Detected repo type: ${repoType}`);
+
+    // Fetch tsconfig.json for path alias resolution (L1 improvement)
+    let moduleResolver = null;
+    if (repoType === 'react' || repoType === 'nextjs' || repoType === 'vanilla') {
+      try {
+        const tsconfigContent = await fetchFileContent(owner, repoName, 'tsconfig.json', token);
+        const jsconfigContent = !tsconfigContent ? await fetchFileContent(owner, repoName, 'jsconfig.json', token) : null;
+        const configContent = tsconfigContent || jsconfigContent;
+        if (configContent) {
+          const filePaths = structure.map(f => f.path);
+          moduleResolver = createModuleResolver(filePaths, configContent);
+          console.log(`🔧 Module resolver created: ${moduleResolver.tsConfig.paths.size} path aliases, ${moduleResolver.fileIndex.barrels.size} barrel files`);
+        }
+      } catch (err) {
+        console.warn(`⚠️  Failed to fetch tsconfig.json:`, err.message);
+      }
+    }
 
     // For vanilla/python repos, filter out example/test/debug directories that would
     // pollute the diagram with demo scripts and local variables.  React repos
@@ -1705,6 +1743,8 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       errorBoundaries, suspenseBoundaries, errorContainment,
       sharedInterfaces, interfaceUsages,
       fileSizes, repoType, parse,
+      basenameToFilePath: new Map(),  // basename -> full file path for import resolution
+      moduleResolver,  // L1: module resolver for path aliases, barrel files, etc.
     };
 
     const processSingleFile = async (file, fileContent, ctx) => {
@@ -1733,6 +1773,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
           const fileName = sanitizeNodeId(
             file.path.split('/').pop().replace(/\.(jsx?|tsx?|py|vue|glsl|wgsl|hlsl|vert|frag|comp)$/, '')
           );
+
+          // Map basename to full file path for import resolution
+          if (fileName && !ctx.basenameToFilePath.has(fileName)) {
+            ctx.basenameToFilePath.set(fileName, file.path);
+          }
 
           // Track file size for system prompt file tree
           fileSizes.set(fileName, fileContent.length);
@@ -2021,22 +2066,27 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
               // Check for import declarations to find external libraries
               if (node.type === 'ImportDeclaration') {
                 const source = node.source.value;
+                const isTypeImport = node.importKind === 'type';
                 // Only track external library imports (not relative paths)
+                // Skip type-only imports for runtime dependency tracking
                 if (!source.startsWith('./') && !source.startsWith('../')) {
-                  if (!elements.imports.libraries.includes(source)) {
+                  if (!isTypeImport && !elements.imports.libraries.includes(source)) {
                     elements.imports.libraries.push(source);
                   }
                 }
                 // Track imports from stores, services, hooks, utilities, and components for later association
-                else if (node.specifiers) {
-                  // Extract basename of imported file (no extension) for
-                  // potential component-import resolution. We add this for
-                  // any relative import — the post-process step filters
-                  // against the actual componentsSet so non-component imports
-                  // are dropped.
-                  const importBase = source
-                    .split('/')
-                    .pop()
+                // Type-only imports don't create runtime dependencies
+                else if (node.specifiers && !isTypeImport) {
+                  // Resolve the relative path against the importing file's directory
+                  // to get the correct basename (handles ../ correctly)
+                  const fromDir = file.path.split('/').slice(0, -1).join('/');
+                  const resolvedParts = (fromDir + '/' + source).split('/');
+                  const normalized = [];
+                  for (const part of resolvedParts) {
+                    if (part === '..') normalized.pop();
+                    else if (part !== '.' && part !== '') normalized.push(part);
+                  }
+                  const importBase = normalized[normalized.length - 1]
                     .replace(/\.(jsx?|tsx?|mjs|cjs)$/i, '');
                   if (importBase && !fileImports.componentBases.includes(importBase)) {
                     fileImports.componentBases.push(importBase);
@@ -3431,6 +3481,59 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       }
     }
 
+    // ── L1 Post-scan: Resolve path aliases and barrel chains ───────────────
+    // Reclassify aliased imports that were misclassified as external libraries
+    if (moduleResolver) {
+      const localFiles = new Set(structure.map(f => f.path));
+      const reclassifiedImports = [];
+
+      // Check each "library" import to see if it resolves to a local file via aliases
+      for (let i = elements.imports.libraries.length - 1; i >= 0; i--) {
+        const lib = elements.imports.libraries[i];
+        const resolved = moduleResolver.resolve(lib, 'index.tsx');  // dummy from-file
+        if (resolved && localFiles.has(resolved)) {
+          // This "library" is actually a local file via path alias
+          const basename = resolved.split('/').pop().replace(/\.(tsx?|jsx?|mjs|cjs)$/i, '');
+          reclassifiedImports.push({ alias: lib, resolved, basename });
+          elements.imports.libraries.splice(i, 1);
+        }
+      }
+
+      if (reclassifiedImports.length > 0) {
+        console.log(`🔧 Reclassified ${reclassifiedImports.length} aliased imports as local files:`);
+        for (const { alias, basename } of reclassifiedImports) {
+          console.log(`   ${alias} → ${basename}`);
+          // Add to moduleImportRelationships for files that import this alias
+          // We need to find which files imported this alias — check all fileFunctions
+          for (const [sourceFileName] of fileFunctions) {
+            // This is approximate — we'd need the actual import source to be precise
+            // For now, just ensure the basename has a container
+            if (!fileFunctions.has(basename)) {
+              fileFunctions.set(basename, {
+                type: 'utility',
+                functions: new Set(),
+                htmlElements: new Set(),
+                cssClasses: new Set(),
+                jsxRefs: new Set(),
+                filePath: reclassifiedImports.find(r => r.basename === basename)?.resolved || '',
+              });
+            }
+          }
+        }
+      }
+
+      // Apply barrel chain resolution to moduleImportRelationships
+      const resolvedImports = resolveBarrelChains(moduleImportRelationships, moduleResolver.fileIndex);
+      // Merge resolved chains back — add any new targets discovered through barrels
+      for (const [source, targets] of resolvedImports) {
+        const existing = moduleImportRelationships.get(source) || new Set();
+        for (const t of targets) {
+          existing.add(t);
+        }
+        moduleImportRelationships.set(source, existing);
+      }
+    }
+
     // ── Vanilla / Python / Vue post-processing: convert inter-module imports to connections ──
     // Each file container that imports another known file container gets a
     // directed 'imports' connection so the 3D diagram shows module dependencies.
@@ -3512,6 +3615,94 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       if (!fi.exports) fi.exports = new Set();
     });
 
+    // ── L2: TypeScript type-aware analysis ────────────────────────────────
+    // For TypeScript repos, use the TS compiler API to extract type information
+    // that enriches the Merfolk diagram with prop types, return types, and
+    // precise type-only import classification.
+    let componentPropTypes = null;
+    let hookReturnTypes = null;
+    let typeOnlyImports = null;
+
+    if (repoType === 'react' || repoType === 'nextjs' || repoType === 'vanilla') {
+      try {
+        // Build the source files map for the TS program
+        const tsSourceFiles = new Map();
+        for (const entry of fetched) {
+          if (!entry) continue;
+          const { file, fileContent } = entry;
+          if (/\.(tsx?|jsx?)$/.test(file.path) && !file.path.includes('node_modules')) {
+            tsSourceFiles.set(file.path, fileContent);
+          }
+        }
+
+        if (tsSourceFiles.size > 0) {
+          // Get tsconfig content (already fetched for module resolver, or fetch again)
+          let tsconfigForTS = null;
+          if (moduleResolver) {
+            // Re-fetch tsconfig for the TS analyzer (we need the raw content)
+            try {
+              tsconfigForTS = await fetchFileContent(owner, repoName, 'tsconfig.json', token);
+            } catch { /* ignore */ }
+          }
+
+          const tsAnalysis = await runTypeScriptAnalysis(tsSourceFiles, tsconfigForTS);
+          if (tsAnalysis) {
+            componentPropTypes = tsAnalysis.componentPropTypes;
+            hookReturnTypes = tsAnalysis.hookReturnTypes;
+            typeOnlyImports = tsAnalysis.typeImports;
+
+            // Enrich componentPropsRelationships with actual type info
+            if (componentPropTypes) {
+              for (const [compName, propInfo] of componentPropTypes) {
+                if (!componentPropsRelationships.has(compName)) {
+                  componentPropsRelationships.set(compName, new Set());
+                }
+                for (const prop of propInfo.requiredProps) {
+                  componentPropsRelationships.get(compName).add(`${prop.name}: ${prop.type}`);
+                }
+                for (const prop of propInfo.optionalProps) {
+                  componentPropsRelationships.get(compName).add(`${prop.name}?: ${prop.type}`);
+                }
+              }
+            }
+
+            // Enrich hookReturnValueRelationships with actual return types
+            if (hookReturnTypes) {
+              for (const [hookName, retInfo] of hookReturnTypes) {
+                for (const [compName] of fileFunctions) {
+                  // Find components that use this hook
+                  const hookUsageKey = `${compName}->${hookName}`;
+                  if (!hookReturnValueRelationships.has(hookUsageKey)) {
+                    hookReturnValueRelationships.set(hookUsageKey, {
+                      hook: hookName,
+                      returnValues: new Set(retInfo.returnProperties.map(p => p.name)),
+                    });
+                  }
+                }
+              }
+            }
+
+            // Use type-only import classification to remove false runtime edges
+            if (typeOnlyImports) {
+              for (const [filePath, typeImportNames] of typeOnlyImports) {
+                const fileBase = filePath.split('/').pop()?.replace(/\.(tsx?|jsx?)$/, '') || '';
+                const imports = moduleImportRelationships.get(fileBase);
+                if (imports) {
+                  for (const name of typeImportNames) {
+                    imports.delete(name);  // Remove type-only imports from runtime dependency graph
+                  }
+                }
+              }
+            }
+
+            console.log(`🔍 L2 TypeScript analysis: ${componentPropTypes.size} prop types, ${hookReturnTypes.size} hook return types, ${typeOnlyImports.size} files with type imports`);
+          }
+        }
+      } catch (err) {
+        console.warn(`⚠️  L2 TypeScript analysis failed (non-fatal):`, err.message);
+      }
+    }
+
     // Generate Merfolk markdown
     const merfolkResult = generateMerfolkMarkdown({
       repoName,
@@ -3544,6 +3735,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       errorContainment,
       sharedInterfaces,
       interfaceUsages,
+      fileSizes,
     });
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
@@ -3637,7 +3829,8 @@ const generateMerfolkMarkdown = ({
   suspenseBoundaries = new Set(),
   errorContainment = [],
   sharedInterfaces = new Map(),
-  interfaceUsages = new Map()
+  interfaceUsages = new Map(),
+  fileSizes = new Map()
 }) => {
   const isVanilla = repoType === 'vanilla' || repoType === 'python' || repoType === 'vue';
   const isNextjs = repoType === 'nextjs';

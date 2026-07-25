@@ -694,10 +694,11 @@ TOOLS
 ═══════════════════════════════════════════════════════════════
 
 You have these tools:
+• quick_look(path, head, tail) — lightweight preview: first/last N lines of a file (fast, no full load)
 • read_file(path) — read a source file's FULL contents (this is the ONLY way to see actual code)
 • list_files(path) — list files in a directory
 • search_code(pattern) — find WHERE code lives (file names, node names, or content matches)
-• get_node_info(nodeId) — get full details about a component: type, file path, all connections, parent, children
+• get_node_info(nodeId) — get full details about a component: type, file path, all connections, parent, children, exports, imports
 • get_dependencies(nodeId, direction) — find upstream (who depends on me) or downstream (what I depend on) relationships
 • find_path(source, target) — find shortest data-flow path between two components
 • search_nodes(query) — search components, functions, stores, or hooks by name/type in the diagram
@@ -756,7 +757,11 @@ RULES
 13. You have UNLIMITED tool calls. Search and read as many files as you need to fully understand the codebase before making changes. Do not rush — gather complete context first.
 14. Once you have read all the files you need, STOP reading and start editing immediately. Do not re-read files or re-search after finding what you need.
 15. Each file should be read ONCE. Do not call read_file on the same file multiple times at different offsets — the default limit returns 8000 chars which is enough context.
-16. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy it precisely from the read_file output.`;
+16. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy it precisely from the read_file output.
+17. NEVER fabricate file paths, imports, or code structure. If you are unsure whether a file or function exists, use search_code or read_file to verify — do NOT guess.
+18. Use quick_look(path) for a fast preview of a file's structure (imports, exports, first/last lines) without loading the full content. Use read_file when you need the complete file for editing.
+19. Check the CONTENT INDEX and IMPORT GRAPH sections above to understand what each file exports and which files depend on it — this prevents creating duplicate functionality.
+`;
 
 function formatFileSize(chars) {
   if (chars < 1024) return `${chars}B`;

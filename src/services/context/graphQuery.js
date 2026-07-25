@@ -8,6 +8,7 @@
 
 import useDiagramStore from '../../stores/diagramStore';
 import useObjectsStore from '../../stores/objectsStore';
+import useCodeStore from '../../stores/codeStore';
 
 const RESULT_BUDGET = 2000;
 
@@ -122,6 +123,37 @@ export function getNodeInfo(nodeId) {
     const parent = hierarchy.childParentMap?.get(nodeId);
     if (parent) {
       lines.push(`Parent: ${parent}`);
+    }
+  }
+
+  // Enrich with content index info (exports, imports, css classes)
+  if (info.filePath) {
+    const contentIndex = useCodeStore.getState().contentIndex;
+    if (contentIndex) {
+      const fileName = info.filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue|css|scss|html|json|yaml|yml|md)$/, '') || '';
+      const indexLine = contentIndex.split('\n').find(l => l.startsWith(info.filePath) || l.startsWith(fileName + '.'));
+      if (indexLine) {
+        const parts = indexLine.split(':').slice(1).join(':').trim();
+        if (parts) {
+          const exportsMatch = parts.match(/exports:([^|]+)/);
+          const fnMatch = parts.match(/fn:([^|]+)/);
+          const cssMatch = parts.match(/css:([^|]+)/);
+          if (exportsMatch) lines.push(`Exports: ${exportsMatch[1].trim()}`);
+          if (fnMatch) lines.push(`Functions: ${fnMatch[1].trim()}`);
+          if (cssMatch) lines.push(`CSS classes: ${cssMatch[1].trim()}`);
+        }
+      }
+    }
+
+    // Check import graph for what this file imports
+    const importGraph = useCodeStore.getState().importGraph;
+    if (importGraph) {
+      const fileName = info.filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue)$/, '') || '';
+      const importLine = importGraph.split('\n').find(l => l.startsWith(info.filePath) || l.startsWith(fileName + '.'));
+      if (importLine) {
+        const imports = importLine.split(':').slice(1).join(':').trim();
+        if (imports) lines.push(`Imports: ${imports}`);
+      }
     }
   }
 
