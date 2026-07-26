@@ -325,7 +325,10 @@ export async function sendWithRetrieval({
         { role: 'user', content: prompt },
       ];
       let subText = '';
-      const SUB_MAX_ROUNDS = 10;
+      const SUB_MAX_ROUNDS = 5;
+      const SUB_MAX_CHARS = 25000;
+      const SUB_MAX_TOOL_CONTENT = 6000;
+      const subReadFiles = new Set();
       for (let subRound = 0; subRound < SUB_MAX_ROUNDS; subRound++) {
         let raw;
         try {
@@ -346,13 +349,33 @@ export async function sendWithRetrieval({
             function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
           })),
         });
-        const subResults = await Promise.all(res.toolCalls.map(tc =>
-          executeTool(tc.name, tc.arguments, ghCtx, ft, { runSubAgent, depth: subDepth })
+        const subResults = await Promise.all(res.toolCalls.map(tc => {
+          if (tc.name === 'read_file') {
+            const rKey = `${tc.arguments.path}:${tc.arguments.offset || 0}:${tc.arguments.limit || 8000}`;
+            if (subReadFiles.has(rKey)) {
+              return Promise.resolve({
+                tc,
+                result: { success: true, content: `[Already loaded: ${tc.arguments.path} — see prior tool response above]` },
+              });
+            }
+            subReadFiles.add(rKey);
+          }
+          return executeTool(tc.name, tc.arguments, ghCtx, ft, { runSubAgent, depth: subDepth })
             .then(r => ({ tc, result: r }))
-            .catch(e => ({ tc, result: { success: false, content: `Error: ${e.message}` } }))
-        ));
+            .catch(e => ({ tc, result: { success: false, content: `Error: ${e.message}` } }));
+        }));
         for (const { tc, result: subResult } of subResults) {
-          subMessages.push({ role: 'tool', tool_call_id: tc.id, content: subResult.content });
+          let content = subResult.content || '';
+          if (content.length > SUB_MAX_TOOL_CONTENT) {
+            content = content.slice(0, SUB_MAX_TOOL_CONTENT) + `\n... [truncated at ${SUB_MAX_TOOL_CONTENT} chars]`;
+          }
+          subMessages.push({ role: 'tool', tool_call_id: tc.id, content });
+        }
+        const subSize = estimateMessagesSize(subMessages);
+        console.log(`[SubAgent] Round ${subRound + 1} done. Messages size: ${subSize} chars`);
+        if (subSize > SUB_MAX_CHARS) {
+          console.warn(`[SubAgent] Budget exceeded (${subSize} > ${SUB_MAX_CHARS}), stopping.`);
+          break;
         }
       }
       return subText;
