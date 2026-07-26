@@ -510,7 +510,7 @@ export class MermaidParser {
             }
 
             // Try to parse as array (simple format like [0, 0, 0])
-            if (parsedValue.startsWith('[') && parsedValue.endsWith(']')) {
+            if (typeof parsedValue === 'string' && parsedValue.startsWith('[') && parsedValue.endsWith(']')) {
               try {
                 parsedValue = JSON.parse(parsedValue);
               } catch (e) {

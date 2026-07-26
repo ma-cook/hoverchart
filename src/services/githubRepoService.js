@@ -2091,6 +2091,14 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   if (importBase && !fileImports.componentBases.includes(importBase)) {
                     fileImports.componentBases.push(importBase);
                   }
+                  // Track in moduleImportRelationships for the import graph
+                  const importedBase = sanitizeNodeId(importBase);
+                  if (importedBase && importedBase !== fileName) {
+                    if (!moduleImportRelationships.has(fileName)) {
+                      moduleImportRelationships.set(fileName, new Set());
+                    }
+                    moduleImportRelationships.get(fileName).add(importedBase);
+                  }
                   node.specifiers.forEach((spec) => {
                     if (spec.imported || spec.local) {
                       const importedName = spec.imported?.name || spec.local?.name;
