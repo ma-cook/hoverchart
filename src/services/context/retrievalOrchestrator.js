@@ -218,7 +218,7 @@ function isUsefulToolResult(content, toolName) {
 
 function readKey(tc) {
   if (tc.name === 'read_file') {
-    return `read_file:${tc.arguments.path}`;
+    return `read_file:${tc.arguments.path}:${tc.arguments.offset || 0}:${tc.arguments.limit || 8000}`;
   }
   return `${tc.name}:${JSON.stringify(tc.arguments)}`;
 }
