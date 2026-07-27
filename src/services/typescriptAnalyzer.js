@@ -32,7 +32,19 @@ async function loadTypeScript() {
     const blobUrl = URL.createObjectURL(blob);
     const mod = await import(blobUrl);
     URL.revokeObjectURL(blobUrl);
+    // TypeScript's bundled output may export namespace on .default, a nested key, or directly
     tsModule = mod.default || mod;
+    if (!tsModule.ScriptTarget) {
+      for (const key of Object.keys(tsModule)) {
+        if (tsModule[key]?.ScriptTarget) { tsModule = tsModule[key]; break; }
+      }
+    }
+    if (!tsModule.ScriptTarget) {
+      // Last resort: find ScriptTarget anywhere in the export tree
+      for (const val of Object.values(mod)) {
+        if (val?.ScriptTarget) { tsModule = val; break; }
+      }
+    }
     console.log('[TSAnalyzer] Loaded TypeScript from CDN');
     return tsModule;
   } catch (err) {
@@ -56,10 +68,10 @@ export async function createTypeScriptProgram(sourceFiles, tsconfigContent = nul
   try {
     // Parse tsconfig or create minimal compiler options
     let compilerOptions = {
-      target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.BundlerLeastStrict || ts.ModuleResolutionKind.Node10,
-      jsx: ts.JsxEmit.ReactJSX,
+      target: ts.ScriptTarget?.ESNext ?? 99,
+      module: ts.ModuleKind?.ESNext ?? 99,
+      moduleResolution: ts.ModuleResolutionKind?.BundlerLeastStrict ?? ts.ModuleResolutionKind?.Node10 ?? 99,
+      jsx: ts.JsxEmit?.ReactJSX ?? 4,
       strict: false,
       esModuleInterop: true,
       skipLibCheck: true,

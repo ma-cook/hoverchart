@@ -3836,7 +3836,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       sharedInterfaces,
       interfaceUsages,
       fileSizes,
-      richTypes: tsRichTypes,
+      richTypes: tsRichTypes || new Map(),
     });
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
