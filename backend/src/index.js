@@ -11,6 +11,7 @@ const httpServer = createServer(app);
 const io = createWSServer(httpServer);
 
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+app.use(express.raw({ type: 'application/gzip', limit: '50mb' }));
 app.use(express.json({ limit: '50mb' }));
 
 // Health check

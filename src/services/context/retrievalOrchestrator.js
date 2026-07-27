@@ -157,6 +157,33 @@ function trimMessages(msgs) {
     console.log(`[Retrieval] Compacted ${compactedCount} old read_file results → ${estimateMessagesSize([systemMsg, userMsg, ...filtered])} chars`);
   }
 
+  const SEARCH_TOOLS = new Set(['search_code', 'search_nodes', 'get_node_info']);
+  let searchCompactedCount = 0;
+  for (let i = 0; i < filtered.length; i++) {
+    const msg = filtered[i];
+    if (msg.role !== 'tool' || typeof msg.content !== 'string' || msg.content.length < 300) continue;
+    const prev = i > 0 ? filtered[i - 1] : null;
+    if (prev?.role !== 'assistant' || !prev?.tool_calls) continue;
+    const tc = prev.tool_calls.find(t => t.id === msg.tool_call_id);
+    if (!tc || !SEARCH_TOOLS.has(tc.function?.name)) continue;
+    const hasSubsequent = filtered.slice(i + 1).some(m => m.role === 'assistant');
+    if (!hasSubsequent) continue;
+    const lines = msg.content.split('\n').filter(l => l.trim());
+    const fileMatches = [];
+    for (const line of lines) {
+      const pathMatch = line.match(/^([^\s:]+\.[a-z]{1,4})[:\s]/i);
+      if (pathMatch && !fileMatches.includes(pathMatch[1])) fileMatches.push(pathMatch[1]);
+    }
+    const summary = fileMatches.length > 0
+      ? `[Search results for '${tc.function.name}(${JSON.stringify(JSON.parse(tc.function.arguments || '{}'))})' — ${lines.length} matches in: ${fileMatches.slice(0, 5).join(', ')}${fileMatches.length > 5 ? ` +${fileMatches.length - 5} more` : ''}]`
+      : `[Search results for '${tc.function.name}(${JSON.stringify(JSON.parse(tc.function.arguments || '{}'))})' — ${lines.length} lines — see earlier response]`;
+    msg.content = summary;
+    searchCompactedCount++;
+  }
+  if (searchCompactedCount > 0) {
+    console.log(`[Retrieval] Compressed ${searchCompactedCount} stale search results → ${estimateMessagesSize([systemMsg, userMsg, ...filtered])} chars`);
+  }
+
   if (estimateMessagesSize([systemMsg, userMsg, ...filtered]) <= MAX_TOTAL_CHARS) {
     return [systemMsg, userMsg, ...filtered];
   }

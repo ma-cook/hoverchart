@@ -1,5 +1,20 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
+async function gzipBytes(str) {
+  const data = new TextEncoder().encode(str);
+  const cs = new CompressionStream('gzip');
+  const w = cs.writable.getWriter();
+  w.write(data); w.close();
+  const reader = cs.readable.getReader();
+  const chunks = [];
+  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
 function sanitizeMessages(messages) {
   return messages.map(m => {
     if (m.role === 'assistant' && m.content == null && m.tool_calls) {
@@ -218,10 +233,12 @@ export async function fetchModels(providerId, apiKey) {
   if (!url) return [];
 
   try {
+    const payload = JSON.stringify({ url, headers });
+    const compressed = await gzipBytes(payload);
     const res = await fetch(`${API_BASE}/api/llm/models`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, headers }),
+      headers: { 'Content-Type': 'application/gzip' },
+      body: compressed,
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -261,10 +278,12 @@ export async function sendToProvider({
       : timeoutController.signal;
 
     try {
+      const payload = JSON.stringify({ url, headers, body });
+      const compressed = await gzipBytes(payload);
       res = await fetch(`${API_BASE}/api/llm/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, headers, body }),
+        headers: { 'Content-Type': 'application/gzip' },
+        body: compressed,
         signal: combinedSignal,
       });
       clearTimeout(timeoutId);

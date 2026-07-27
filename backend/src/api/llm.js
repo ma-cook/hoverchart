@@ -1,6 +1,26 @@
 import { Router } from 'express';
+import { createGunzip } from 'zlib';
 
 const router = Router();
+
+async function gunzipBuffer(buf) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const g = createGunzip();
+    g.on('data', c => chunks.push(c));
+    g.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    g.on('error', reject);
+    g.end(buf);
+  });
+}
+
+async function parseBody(req) {
+  if (Buffer.isBuffer(req.body)) {
+    const json = await gunzipBuffer(req.body);
+    return JSON.parse(json);
+  }
+  return req.body;
+}
 
 const ALLOWED_HOSTS = [
   'api.anthropic.com',
@@ -19,7 +39,13 @@ function isAllowed(url) {
 }
 
 router.post('/chat', async (req, res) => {
-  const { url, headers, body } = req.body;
+  let parsed;
+  try {
+    parsed = await parseBody(req);
+  } catch (e) {
+    return res.status(400).json({ error: 'Failed to parse request body', detail: e.message });
+  }
+  const { url, headers, body } = parsed;
   if (!url || !isAllowed(url)) {
     return res.status(400).json({ error: 'Invalid or disallowed URL' });
   }
@@ -109,7 +135,13 @@ router.post('/chat', async (req, res) => {
 });
 
 router.post('/models', async (req, res) => {
-  const { url, headers } = req.body;
+  let parsed;
+  try {
+    parsed = await parseBody(req);
+  } catch (e) {
+    return res.status(400).json({ error: 'Failed to parse request body', detail: e.message });
+  }
+  const { url, headers } = parsed;
   if (!url || !isAllowed(url)) {
     return res.status(400).json({ error: 'Invalid or disallowed URL' });
   }
