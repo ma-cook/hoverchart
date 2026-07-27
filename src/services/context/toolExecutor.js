@@ -6,7 +6,7 @@ import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
 
 const TOOL_TIMEOUT_MS = 20_000;
-const MAX_FILE_CONTENT_CHARS = 8000;
+const MAX_FILE_CONTENT_CHARS = 32000;
 
 function persistFileContent(storeId, filePath, content) {
   const store = getContentStore();
@@ -64,13 +64,13 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file from the repository. Returns at least 8000 chars by default. Use offset to read specific sections of very large files (>8000 chars).',
+      description: 'Read the contents of a file from the repository. Returns up to 32000 chars by default — enough for most files in a single call. Use offset only for files larger than 32K.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'File path relative to repo root, e.g. "src/components/Button.tsx"' },
           offset: { type: 'number', description: 'Character offset to start reading from (default 0)' },
-          limit: { type: 'number', description: 'Max characters to return (default 8000)' },
+          limit: { type: 'number', description: 'Max characters to return (default 32000)' },
         },
         required: ['path'],
       },
@@ -385,7 +385,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const path = args.path;
       const offset = Math.max(0, parseInt(args.offset, 10) || 0);
       const requestedLimit = parseInt(args.limit, 10) || MAX_FILE_CONTENT_CHARS;
-      const limit = Math.min(Math.max(8000, requestedLimit), MAX_FILE_CONTENT_CHARS);
+      const limit = Math.min(requestedLimit, MAX_FILE_CONTENT_CHARS);
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
 
@@ -445,6 +445,12 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const MAX_RESULTS = 15;
 
       const results = [];
+      const codeStoreState = useCodeStore.getState();
+      const fileSizeMap = new Map(codeStoreState.fileSizes || []);
+      const sizeHint = (filePath) => {
+        const sz = fileSizeMap.get(filePath);
+        return sz ? ` (${sz} chars)` : '';
+      };
 
       // 1. Scene objects — highest relevance (directly in diagram)
       const sceneObjects = useObjectsStore.getState().objects || [];
@@ -455,7 +461,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         if (!filePath) continue;
         if (normalize(nodeId).includes(pattern) || normalize(name).includes(pattern)) {
           const nodeType = obj.merfolkData?.nodeType || obj.type || 'unknown';
-          results.push({ rank: 0, text: `[${nodeType}:${obj.headerText || nodeId}] → ${filePath}` });
+          results.push({ rank: 0, text: `[${nodeType}:${obj.headerText || nodeId}] → ${filePath}${sizeHint(filePath)}` });
         }
       }
 
@@ -476,7 +482,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             if (entry.exports?.size > 0) parts.push(`exports:${[...entry.exports].join(',')}`);
             if (entry.functions?.size > 0) parts.push(`fn:${[...entry.functions].join(',')}`);
             if (entry.cssClasses?.size > 0) parts.push(`css:${[...entry.cssClasses].join(',')}`);
-            results.push({ rank: 1, text: `${filePath}: ${parts.join(' | ')}` });
+            results.push({ rank: 1, text: `${filePath}${sizeHint(filePath)}: ${parts.join(' | ')}` });
           }
         }
       }
@@ -485,7 +491,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const matchingFiles = fileTree.filter(f => normalize(f).includes(pattern)).slice(0, 10);
       for (const f of matchingFiles) {
         if (results.length >= MAX_RESULTS) break;
-        results.push({ rank: 2, text: f });
+        results.push({ rank: 2, text: `${f}${sizeHint(f)}` });
       }
 
       // 4. ContentStore — full-text search in loaded file contents
@@ -503,7 +509,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             const snippet = chunk.text.slice(start, end).replace(/\n/g, ' ').trim();
             const prefix = start > 0 ? '...' : '';
             const suffix = end < chunk.text.length ? '...' : '';
-            results.push({ rank: 3, text: `${filePath}: ${prefix}${snippet}${suffix}` });
+            results.push({ rank: 3, text: `${filePath}${sizeHint(filePath)}: ${prefix}${snippet}${suffix}` });
             break;
           }
         }

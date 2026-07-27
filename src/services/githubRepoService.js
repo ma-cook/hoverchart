@@ -3884,6 +3884,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     const importGraph = importGraphLines.join('\n');
     console.log(`🔗 Import graph: ${importGraphLines.length} files with imports, ${importGraph.length} chars`);
 
+    // Release the massive fetched array (all file contents) so GC can reclaim it.
+    // It's no longer needed after TS analysis and markdown generation.
+    fetched.length = 0;
+
     return { markdown: merfolkResult, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile };
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);

@@ -51,22 +51,45 @@ For MODIFIED files: the code block must be the COMPLETE file as provided below, 
 Do NOT use XML tags, DSML format, or any format other than standard markdown code blocks.`;
 
 function collectFileContents(messages) {
-  const parts = [];
+  const filePaths = new Set();
   for (const m of messages) {
     if (m.role !== 'tool' || !m.content) continue;
     const content = m.content;
     if (content.startsWith('[Already loaded:') ||
         content.startsWith('[End of file:') ||
         content.startsWith('[Starting at') ||
+        content.startsWith('[Search results for') ||
         content.startsWith('Error') ||
         content.startsWith('No matching')) continue;
-    const lines = content.split('\n');
-    if (lines.length < 3) continue;
-    const hasCode = lines.some(l =>
-      /^\s*(import |export |const |function |class |from |\/[/*]|<[A-Z]|\{[a-z])/.test(l)
-    );
-    if (!hasCode) continue;
-    parts.push(content);
+    const prev = messages.indexOf(m) > 0 ? messages[messages.indexOf(m) - 1] : null;
+    if (prev?.role === 'assistant' && prev.tool_calls) {
+      for (const tc of prev.tool_calls) {
+        if (tc.function?.name === 'read_file' && tc.id === m.tool_call_id) {
+          try {
+            const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+            if (args.path) filePaths.add(args.path);
+          } catch { /* JSON parse failed */ }
+        }
+      }
+    }
+  }
+
+  if (filePaths.size === 0) return [];
+
+  const store = getContentStore();
+  const base64Store = getBase64Store();
+  const parts = [];
+  for (const filePath of filePaths) {
+    const storeId = `repo:${filePath}`;
+    const altId = `github:${filePath}`;
+    const entry = store.getEntry(storeId) || store.getEntry(altId);
+    if (entry) {
+      const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
+      if (chunks.length > 0) {
+        const content = chunks.map(c => c.text).join('');
+        if (content.length > 100) parts.push(content);
+      }
+    }
   }
   return parts;
 }
