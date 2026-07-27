@@ -43,6 +43,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   contentIndex: null,
   importGraph: null,
   fileSizes: null,
+  fileIndexByPath: null,
+  importIndexByFile: null,
   pendingChanges: [],
 
   setSpaceId: (spaceId) => {
@@ -56,6 +58,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       techStack: loadPersisted(spaceId, 'techStack') || '',
       techStackSource: loadPersisted(spaceId, 'techStackSource'),
       contentIndex: loadPersisted(spaceId, 'contentIndex'),
+      importGraph: loadPersisted(spaceId, 'importGraph'),
     });
   },
 
@@ -121,6 +124,14 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
     set({ importGraph });
   },
 
+  setFileIndexByPath: (fileIndexByPath) => {
+    set({ fileIndexByPath });
+  },
+
+  setImportIndexByFile: (importIndexByFile) => {
+    set({ importIndexByFile });
+  },
+
   setExpandedView: (expanded) => set({ expandedView: expanded }),
 
   setActiveCodeObjectId: (id) => set({ activeCodeObjectId: id }),
@@ -174,9 +185,21 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       contentIndex: null,
       importGraph: null,
       fileSizes: null,
+      fileIndexByPath: null,
+      importIndexByFile: null,
       pendingChanges: [],
     });
   },
 }), shallow);
+
+export function getFileIndexEntry(filePath) {
+  const map = useCodeStore.getState().fileIndexByPath;
+  return map?.get(filePath) || null;
+}
+
+export function getFileImports(filePath) {
+  const map = useCodeStore.getState().importIndexByFile;
+  return map?.get(filePath) || null;
+}
 
 export default useCodeStore;

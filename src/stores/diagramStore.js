@@ -15,6 +15,12 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   // Flow path tags: Map<"sourceId|targetId", Set<flowPathName>>
   connectionTags: null,
 
+  // Community detection results: Array<{ id, name, nodeCount, nodeIds, nodeTypes, summary, ... }>
+  communities: null,
+
+  // Raw community assignments: Map<nodeId, communityId> (set by communityService)
+  communityAssignments: null,
+
   // Cached 2D layout result (populated later by the 2D layout worker)
   layout2D: null,
 
@@ -32,6 +38,13 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   // { total: number, mounted: number }
   connectionsProgress: null,
 
+  // LSP enrichment data: { definitions, references, hover, callGraph, moduleExports, errors }
+  // Set by the LSP enrichment service after background analysis
+  lspMetadata: null,
+
+  // True while LSP enrichment is in progress
+  isLspEnriching: false,
+
   setGraphs(graphs) {
     set({ graphs, is2DReady: !!graphs });
   },
@@ -46,6 +59,10 @@ const useDiagramStore = createWithEqualityFn((set) => ({
 
   setConnectionTags(connectionTags) {
     set({ connectionTags });
+  },
+
+  setCommunities(communities) {
+    set({ communities });
   },
 
   setLayout2D(layout2D) {
@@ -90,17 +107,29 @@ const useDiagramStore = createWithEqualityFn((set) => ({
     set({ connectionsProgress: null });
   },
 
+  setLspMetadata(lspMetadata) {
+    set({ lspMetadata, isLspEnriching: false });
+  },
+
+  setIsLspEnriching(isLspEnriching) {
+    set({ isLspEnriching });
+  },
+
   clear() {
     set({
       graphs: null,
       hierarchy: null,
       nodeToObjectIdMap: null,
       connectionTags: null,
+      communities: null,
+      communityAssignments: null,
       layout2D: null,
       is2DReady: false,
       selectedNodeId: null,
       renderProgress: null,
       connectionsProgress: null,
+      lspMetadata: null,
+      isLspEnriching: false,
     });
   },
 }));

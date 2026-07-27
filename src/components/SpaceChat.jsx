@@ -1015,6 +1015,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         if (result.contentIndex) useCodeStore.getState().setContentIndex(result.contentIndex);
         if (result.fileSizes) useCodeStore.getState().setFileSizes(result.fileSizes);
         if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
+        if (result.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(result.fileIndexByPath);
+        if (result.importIndexByFile) useCodeStore.getState().setImportIndexByFile(result.importIndexByFile);
         setPushNotification({
           type: 'success',
           message: `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,

@@ -542,6 +542,8 @@ const UIOverlay = ({
         if (result.contentIndex) useCodeStore.getState().setContentIndex(result.contentIndex);
         if (result.fileSizes) useCodeStore.getState().setFileSizes(result.fileSizes);
         if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
+        if (result.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(result.fileIndexByPath);
+        if (result.importIndexByFile) useCodeStore.getState().setImportIndexByFile(result.importIndexByFile);
 
         // Persist diagram metadata via API
         if (currentSpaceId) {
@@ -666,6 +668,8 @@ const UIOverlay = ({
       if (rescanResult.contentIndex) useCodeStore.getState().setContentIndex(rescanResult.contentIndex);
       if (rescanResult.fileSizes) useCodeStore.getState().setFileSizes(rescanResult.fileSizes);
       if (rescanResult.importGraph) useCodeStore.getState().setImportGraph(rescanResult.importGraph);
+      if (rescanResult.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(rescanResult.fileIndexByPath);
+      if (rescanResult.importIndexByFile) useCodeStore.getState().setImportIndexByFile(rescanResult.importIndexByFile);
       if (storageUrl) {
         setLatestMarkdownUrl(storageUrl);
       }

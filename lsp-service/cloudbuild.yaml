@@ -1,0 +1,36 @@
+serviceAccount: projects/$PROJECT_ID/serviceAccounts/hoverchart-api-sa@$PROJECT_ID.iam.gserviceaccount.com
+options:
+  logging: CLOUD_LOGGING_ONLY
+steps:
+  # Build the LSP service Docker image (context = lsp-service/ directory)
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/hoverchart-lsp'
+      - '-f'
+      - 'lsp-service/Dockerfile'
+      - 'lsp-service/'
+
+  # Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/hoverchart-lsp']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'hoverchart-lsp'
+      - '--image=gcr.io/$PROJECT_ID/hoverchart-lsp'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--min-instances=0'
+      - '--max-instances=2'
+      - '--concurrency=1'
+      - '--cpu=1'
+      - '--memory=1Gi'
+      - '--timeout=300'
+      - '--service-account=hoverchart-api-sa@$PROJECT_ID.iam.gserviceaccount.com'

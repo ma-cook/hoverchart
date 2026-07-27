@@ -1,4 +1,4 @@
-import { sendToZen, buildComponentIndex, buildGraphSummary, buildFileTreeSection, buildContentIndexSection, buildImportGraphSection } from '../zenService';
+import { sendToZen, buildComponentIndex, buildGraphSummary, buildFileTreeSection, buildContentIndexSection, buildImportGraphSection, buildLspOverviewSection } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
 import { getContentStore } from './contentStore';
@@ -476,6 +476,7 @@ export async function sendWithRetrieval({
     const fileTreeBlock = buildFileTreeSection(fileTree || [], fileSizes);
     const contentIndexBlock = buildContentIndexSection();
     const importGraphBlock = buildImportGraphSection();
+    const lspOverviewBlock = buildLspOverviewSection();
 
     const fileBlock = fileContents.length > 0
       ? `\n\n═══ FILES TO MODIFY (output these same file paths with your changes applied) ═══\n\n${fileContents.join('\n\n---\n\n')}\n\n═══ END FILES ═══`
@@ -495,6 +496,10 @@ export async function sendWithRetrieval({
       ? `\n\nIMPORT GRAPH:\n${importGraphBlock}`
       : '';
 
+    const lspInfo = lspOverviewBlock && lspOverviewBlock !== '(no LSP data available)'
+      ? `\n\nLSP SEMANTIC ANALYSIS:\n${lspOverviewBlock}`
+      : '';
+
     const noFilesWarning2 = fileContents.length === 0
       ? `\n\nIMPORTANT: You have not read any files yet. Use the FILE TREE and CONTENT INDEX above to find the right files, then output your best attempt. In future requests, always call read_file before writing code.`
       : '';
@@ -506,7 +511,7 @@ export async function sendWithRetrieval({
     const forcedMessages = [
       { role: 'system', content: CODE_GEN_NO_TOOLS_PROMPT },
       userMsg,
-      { role: 'user', content: `${header2}${fileTreeInfo}${contentIndexInfo}${importGraphInfo}${indexBlock}${graphBlock}${fileBlock}${noFilesWarning2}\n\nNow write the code. Output ONLY code blocks — one per file — using the EXACT file paths shown above.` },
+      { role: 'user', content: `${header2}${fileTreeInfo}${contentIndexInfo}${importGraphInfo}${indexBlock}${graphBlock}${lspInfo}${fileBlock}${noFilesWarning2}\n\nNow write the code. Output ONLY code blocks — one per file — using the EXACT file paths shown above.` },
     ];
 
     try {

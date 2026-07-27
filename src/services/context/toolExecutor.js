@@ -3,7 +3,7 @@ import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store } from './base64Store';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
-import { getNodeInfo, getDependencies, findPath, searchNodes } from './graphQuery';
+import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
 
 const TOOL_TIMEOUT_MS = 20_000;
 const MAX_FILE_CONTENT_CHARS = 8000;
@@ -164,6 +164,108 @@ export const CODE_GEN_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_community_info',
+      description: 'Get architectural overview of a community: its summary, node count, key components, internal and external connections. Use this to understand what a subsystem does before diving into specific nodes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          communityId: { type: 'number', description: 'The community ID (number, e.g. 0, 1, 2...). Use search_communities to find IDs.' },
+        },
+        required: ['communityId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_community_nodes',
+      description: 'List all nodes in a community with their types and file paths. Use this to see every component/function/hook in a subsystem.',
+      parameters: {
+        type: 'object',
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_communities',
+      description: 'Search communities by keyword (name, node types, file paths). Returns matching communities with summaries. Use this to find which subsystem handles a feature.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search term (e.g. "auth", "database", "dashboard")' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_lsp_definition',
+      description: 'Resolve where an import resolves to across the codebase using LSP type information. Shows the actual target file, line, and symbol. More accurate than the import graph for barrel re-exports.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Import name (e.g. "useAuth"), file name (e.g. "Button"), or symbol name' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_lsp_references',
+      description: 'Find all files that reference a given symbol using LSP. Shows which consumers import or use a specific export.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Symbol name (e.g. "fetchUser"), file name, or export name' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_lsp_type_info',
+      description: 'Get type signatures and documentation for a symbol from LSP. Shows parameter types, return types, and JSDoc/TSDoc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Symbol name (e.g. "Props", "useAuth", "fetchUser")' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_lsp_call_graph',
+      description: 'Show the call graph for a function — who calls it, and what it calls. Useful for understanding the impact of changing a function.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Function name (e.g. "handleSubmit") or file name' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_lsp_overview',
+      description: 'Get a summary of available LSP metadata: how many definitions, references, type entries, and call graph entries are available.',
+      parameters: { type: 'object' },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'task',
       description: 'Spawn a sub-agent to research a question about the codebase. The sub-agent can read files, search code, and query the graph — but cannot modify anything. Use this for complex exploration that would take many tool calls, to keep the main conversation clean.',
       parameters: {
@@ -215,6 +317,9 @@ const SUB_AGENT_TOOLS = [
   { type: 'function', function: { name: 'get_node_info', description: 'Get details about a component.', parameters: { type: 'object', properties: { nodeId: { type: 'string' } }, required: ['nodeId'] } } },
   { type: 'function', function: { name: 'get_dependencies', description: 'Find dependencies.', parameters: { type: 'object', properties: { nodeId: { type: 'string' }, direction: { type: 'string' } }, required: ['nodeId'] } } },
   { type: 'function', function: { name: 'search_nodes', description: 'Search diagram nodes.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'get_lsp_definition', description: 'Resolve where an import goes via LSP.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'get_lsp_references', description: 'Find all references to a symbol via LSP.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'get_lsp_type_info', description: 'Get type signature for a symbol via LSP.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
 ];
 
 const SUB_AGENT_SYSTEM_PROMPT = `You are a research sub-agent. Your job is to answer a specific question about a codebase by reading files and searching code.
@@ -355,14 +460,23 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
 
       // 2. Content index — semantic matches (exports, functions, classes, CSS)
-      const contentIndex = useCodeStore.getState().contentIndex;
-      if (contentIndex) {
-        const indexLines = contentIndex.split('\n');
-        for (const line of indexLines) {
+      const fileIndex = useCodeStore.getState().fileIndexByPath;
+      if (fileIndex) {
+        for (const [filePath, entry] of fileIndex) {
           if (results.length >= MAX_RESULTS) break;
-          if (normalize(line).includes(pattern)) {
-            const filePath = line.split(':')[0]?.trim();
-            if (filePath) results.push({ rank: 1, text: line });
+          const searchable = [
+            filePath,
+            ...(entry.exports || []),
+            ...(entry.functions || []),
+            ...(entry.cssClasses || []),
+            ...(entry.htmlElements || []),
+          ].join(' ');
+          if (normalize(searchable).includes(pattern)) {
+            const parts = [];
+            if (entry.exports?.size > 0) parts.push(`exports:${[...entry.exports].join(',')}`);
+            if (entry.functions?.size > 0) parts.push(`fn:${[...entry.functions].join(',')}`);
+            if (entry.cssClasses?.size > 0) parts.push(`css:${[...entry.cssClasses].join(',')}`);
+            results.push({ rank: 1, text: `${filePath}: ${parts.join(' | ')}` });
           }
         }
       }
@@ -434,6 +548,60 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       return { success: true, content: result };
     }
 
+    case 'get_community_info': {
+      const communityId = parseInt(args.communityId, 10);
+      if (isNaN(communityId)) return { success: false, content: 'get_community_info requires a numeric "communityId" parameter' };
+      const result = getCommunityInfo(communityId);
+      return { success: true, content: result };
+    }
+
+    case 'get_community_nodes': {
+      const communityId = parseInt(args.communityId, 10);
+      if (isNaN(communityId)) return { success: false, content: 'get_community_nodes requires a numeric "communityId" parameter' };
+      const result = getCommunityNodes(communityId);
+      return { success: true, content: result };
+    }
+
+    case 'search_communities': {
+      const query = args.query;
+      if (!query) return { success: false, content: 'search_communities requires a "query" parameter' };
+      const result = searchCommunities(query);
+      return { success: true, content: result };
+    }
+
+    case 'get_lsp_definition': {
+      const query = args.query;
+      if (!query) return { success: false, content: 'get_lsp_definition requires a "query" parameter' };
+      const result = getLspDefinition(query);
+      return { success: true, content: result };
+    }
+
+    case 'get_lsp_references': {
+      const query = args.query;
+      if (!query) return { success: false, content: 'get_lsp_references requires a "query" parameter' };
+      const result = getLspReferences(query);
+      return { success: true, content: result };
+    }
+
+    case 'get_lsp_type_info': {
+      const query = args.query;
+      if (!query) return { success: false, content: 'get_lsp_type_info requires a "query" parameter' };
+      const result = getLspTypeInfo(query);
+      return { success: true, content: result };
+    }
+
+    case 'get_lsp_call_graph': {
+      const query = args.query;
+      if (!query) return { success: false, content: 'get_lsp_call_graph requires a "query" parameter' };
+      const result = getLspCallGraph(query);
+      return { success: true, content: result };
+    }
+
+    case 'get_lsp_overview': {
+      const result = getLspOverview();
+      return { success: true, content: result };
+    }
+
     case 'edit': {
       const filePath = args.filePath;
       const oldString = args.oldString;
@@ -461,7 +629,6 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       // Build a more informative diff preview
       const oldLines = oldString.split('\n');
       const newLines = newString.split('\n');
-      const contextLines = 2;
       const startLine = fullContent.slice(0, idx).split('\n').length;
       const diffLines = [];
       diffLines.push(`--- a/${filePath}`);

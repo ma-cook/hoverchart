@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  lsp-service:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - MAX_FILES=500
+      - REQUEST_TIMEOUT=120000
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'

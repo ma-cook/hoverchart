@@ -1,3 +1,5 @@
+import useDiagramStore from '../stores/diagramStore';
+
 const PLAN_SYSTEM_PROMPT = `You are a software architecture expert and diagram assistant. You help users design, discuss, and refine system architectures.
 
 ═══════════════════════════════════════════════════════════════
@@ -687,6 +689,12 @@ SCENE COMPONENTS:
 GRAPH OVERVIEW:
 {graphSummary}
 
+ARCHITECTURAL COMMUNITIES:
+{communitySummaries}
+
+LSP SEMANTIC ANALYSIS:
+{lspOverview}
+
 TECH STACK: {techStack}
 
 ═══════════════════════════════════════════════════════════════
@@ -702,6 +710,9 @@ You have these tools:
 • get_dependencies(nodeId, direction) — find upstream (who depends on me) or downstream (what I depend on) relationships
 • find_path(source, target) — find shortest data-flow path between two components
 • search_nodes(query) — search components, functions, stores, or hooks by name/type in the diagram
+• get_community_info(communityId) — get architectural overview of a community: its summary, key components, internal and external connections
+• get_community_nodes(communityId) — list all nodes in a community with their types and file paths
+• search_communities(query) — find communities by keyword (name, node types, file paths)
 • edit(filePath, oldString, newString) — make targeted edits to existing files by replacing exact text. This is the PRIMARY way to modify files. You MUST read_file first to get the current content.
 • write(filePath, content) — create a new file or completely overwrite an existing file. Use for NEW files only.
 • task(prompt) — spawn a read-only sub-agent to research a question about the codebase
@@ -736,7 +747,7 @@ For NEW files: use the write tool with the complete file content.
 Example workflow:
 1. read_file("src/components/TopBar.jsx") → get current content
 2. edit("src/components/TopBar.jsx", oldString="export default function TopBar() {", newString="export default function TopBar({ title }) {") → targeted change
-3. edit("src/components/TopBar.jsx", oldString="<div className=\"topbar\">", newString="<div className=\"topbar\">\n      <h1>{title}</h1>") → another targeted change
+3. edit("src/components/TopBar.jsx", oldString='<div className="topbar">', newString='<div className="topbar">\n      <h1>{title}</h1>') → another targeted change
 
 ═══════════════════════════════════════════════════════════════
 RULES
@@ -879,6 +890,86 @@ export function buildImportGraphSection() {
   }
 }
 
+const COMMUNITY_BUDGET = 4000;
+
+export function buildCommunitySection() {
+  try {
+    const communities = useDiagramStore.getState().communities;
+    if (!communities || communities.length === 0) return '(no communities detected)';
+
+    const lines = [];
+    let charCount = 0;
+    let truncated = 0;
+
+    for (const community of communities) {
+      const line = community.summary;
+      if (charCount + line.length + 2 > COMMUNITY_BUDGET) {
+        truncated++;
+        continue;
+      }
+      lines.push(line);
+      charCount += line.length + 2;
+    }
+
+    if (truncated > 0) {
+      lines.push(`... and ${truncated} more communities`);
+    }
+
+    return lines.length > 0 ? lines.join('\n\n') : '(no communities detected)';
+  } catch {
+    return '(no communities detected)';
+  }
+}
+
+const LSP_OVERVIEW_BUDGET = 3000;
+
+export function buildLspOverviewSection() {
+  try {
+    const lsp = useDiagramStore.getState().lspMetadata;
+    if (!lsp) return '(no LSP data available)';
+
+    const lines = [];
+    let charCount = 0;
+
+    const defCount = (lsp.definitions || []).length;
+    const refCount = (lsp.references || []).length;
+    const hoverCount = (lsp.hover || []).length;
+    const callCount = (lsp.callGraph || []).length;
+
+    if (defCount === 0 && refCount === 0 && hoverCount === 0 && callCount === 0) {
+      return '(no LSP data available)';
+    }
+
+    lines.push(`LSP data available: ${defCount} import definitions, ${refCount} symbol references, ${hoverCount} type signatures, ${callCount} call graph entries.`);
+    charCount = lines[0].length;
+
+    // Show top definitions as a quick reference
+    if (defCount > 0 && charCount < LSP_OVERVIEW_BUDGET) {
+      const defs = lsp.definitions.slice(0, 10);
+      const defLine = `Key imports: ${defs.map(d => `${d.importName}→${d.targetFile?.split('/').pop() || '?'}`).join(', ')}`;
+      if (charCount + defLine.length + 2 <= LSP_OVERVIEW_BUDGET) {
+        lines.push(defLine);
+        charCount += defLine.length + 2;
+      }
+    }
+
+    // Show top call graph edges
+    if (callCount > 0 && charCount < LSP_OVERVIEW_BUDGET) {
+      const calls = lsp.callGraph.slice(0, 8);
+      const callLine = `Key calls: ${calls.map(c => `${c.callerName}→${c.calleeName}`).join(', ')}`;
+      if (charCount + callLine.length + 2 <= LSP_OVERVIEW_BUDGET) {
+        lines.push(callLine);
+      }
+    }
+
+    lines.push('Use get_lsp_definition, get_lsp_references, get_lsp_type_info, or get_lsp_call_graph for details.');
+
+    return lines.join('\n');
+  } catch {
+    return '(no LSP data available)';
+  }
+}
+
 function buildMinimalSceneContext(objects) {
   if (!objects || objects.length === 0) return '(no scene components)';
   const lines = [];
@@ -912,6 +1003,8 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
 
   const diagramStore = repoContext?.diagramStore;
   const graphSummarySection = buildGraphSummary(diagramStore);
+  const communitySection = buildCommunitySection();
+  const lspOverviewSection = buildLspOverviewSection();
 
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{fileTree}', fileTreeSection)
@@ -920,9 +1013,11 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
     .replace('{importGraph}', importGraphSection)
     .replace('{sceneContext}', sceneContextSection)
     .replace('{graphSummary}', graphSummarySection || '(no graph available)')
+    .replace('{communitySummaries}', communitySection || '(no communities detected)')
+    .replace('{lspOverview}', lspOverviewSection || '(no LSP data available)')
     .replace('{techStack}', techStackSection);
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} contentIndex=${contentIndexSection.length} importGraph=${importGraphSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} total=${systemContent.length}`);
+  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} contentIndex=${contentIndexSection.length} importGraph=${importGraphSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} communities=${communitySection.length} lsp=${lspOverviewSection.length} total=${systemContent.length}`);
 
   const systemMessage = { role: 'system', content: systemContent };
 

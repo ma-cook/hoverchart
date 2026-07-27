@@ -112,6 +112,14 @@ export const processMethods = {
     store.setConnectionTags(connectionTags);
     store.setHierarchy(hierarchy);
     store.setNodeToObjectIdMap(nodeToObjectIdMap);
+
+    // Detect communities after graph is hydrated
+    try {
+      const { detectAndStoreCommunities } = await import('../context/communityService');
+      await detectAndStoreCommunities();
+    } catch (commErr) {
+      console.warn('[hydrateStoreFromMarkdown] Community detection failed:', commErr.message);
+    }
   },
 
   /**
@@ -308,6 +316,14 @@ export const processMethods = {
       user,
       allObjectsToSave
     );
+
+    // Detect communities after graph is populated
+    try {
+      const { detectAndStoreCommunities } = await import('../context/communityService');
+      await detectAndStoreCommunities();
+    } catch (commErr) {
+      console.warn('[processMarkdownFile] Community detection failed:', commErr.message);
+    }
 
     const validDiagrams = diagrams.filter(
       (d) => !d.errors || d.errors.length === 0

@@ -128,31 +128,73 @@ export function getNodeInfo(nodeId) {
 
   // Enrich with content index info (exports, imports, css classes)
   if (info.filePath) {
-    const contentIndex = useCodeStore.getState().contentIndex;
-    if (contentIndex) {
-      const fileName = info.filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue|css|scss|html|json|yaml|yml|md)$/, '') || '';
-      const indexLine = contentIndex.split('\n').find(l => l.startsWith(info.filePath) || l.startsWith(fileName + '.'));
-      if (indexLine) {
-        const parts = indexLine.split(':').slice(1).join(':').trim();
-        if (parts) {
-          const exportsMatch = parts.match(/exports:([^|]+)/);
-          const fnMatch = parts.match(/fn:([^|]+)/);
-          const cssMatch = parts.match(/css:([^|]+)/);
-          if (exportsMatch) lines.push(`Exports: ${exportsMatch[1].trim()}`);
-          if (fnMatch) lines.push(`Functions: ${fnMatch[1].trim()}`);
-          if (cssMatch) lines.push(`CSS classes: ${cssMatch[1].trim()}`);
-        }
-      }
+    const fileName = info.filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue|css|scss|html|json|yaml|yml|md)$/, '') || '';
+    const codeStore = useCodeStore.getState();
+
+    // Use indexed lookup (O(1)) instead of string split + scan (O(n))
+    const fileEntry = codeStore.fileIndexByPath?.get(info.filePath) || codeStore.fileIndexByPath?.get(fileName + '.') || null;
+    if (fileEntry) {
+      if (fileEntry.exports?.size > 0) lines.push(`Exports: ${[...fileEntry.exports].join(', ')}`);
+      if (fileEntry.functions?.size > 0) lines.push(`Functions: ${[...fileEntry.functions].join(', ')}`);
+      if (fileEntry.cssClasses?.size > 0) lines.push(`CSS classes: ${[...fileEntry.cssClasses].join(', ')}`);
     }
 
-    // Check import graph for what this file imports
-    const importGraph = useCodeStore.getState().importGraph;
-    if (importGraph) {
-      const fileName = info.filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue)$/, '') || '';
-      const importLine = importGraph.split('\n').find(l => l.startsWith(info.filePath) || l.startsWith(fileName + '.'));
-      if (importLine) {
-        const imports = importLine.split(':').slice(1).join(':').trim();
-        if (imports) lines.push(`Imports: ${imports}`);
+    // Use indexed lookup for import graph
+    const imports = codeStore.importIndexByFile?.get(info.filePath) || codeStore.importIndexByFile?.get(fileName + '.') || null;
+    if (imports?.size > 0) {
+      lines.push(`Imports: ${[...imports].join(', ')}`);
+    }
+  }
+
+  // Enrich with LSP metadata (definitions, references, types, call graph)
+  if (info.filePath) {
+    const lspMetadata = useDiagramStore.getState().lspMetadata;
+    if (lspMetadata) {
+      const filePathBase = info.filePath.split('/').pop()?.replace(/\.(tsx?|jsx?|py|go)$/, '') || '';
+
+      const defs = lspMetadata.definitions.filter(d =>
+        d.sourceFile?.includes(filePathBase) || d.sourceFile === info.filePath
+      );
+      if (defs.length > 0) {
+        const defLines = defs.slice(0, 8).map(d =>
+          `  ${d.importName} → ${d.targetFile}:${d.targetLine || '?'}${d.isTypeOnly ? ' (type)' : ''}`
+        );
+        lines.push(`LSP Definitions (${defs.length}):`);
+        lines.push(defLines.join('\n'));
+      }
+
+      const refs = lspMetadata.references.filter(r =>
+        r.sourceFile?.includes(filePathBase) || r.sourceFile === info.filePath
+      );
+      if (refs.length > 0) {
+        const refLines = refs.slice(0, 8).map(r => {
+          const consumers = (r.referencedBy || []).slice(0, 5).map(ref => ref.file?.split('/').pop() || '?').join(', ');
+          return `  ${r.symbolName} ← [${consumers || '??'}]`;
+        });
+        lines.push(`LSP References (${refs.length}):`);
+        lines.push(refLines.join('\n'));
+      }
+
+      const hoverEntries = lspMetadata.hover.filter(h =>
+        h.file?.includes(filePathBase) || h.file === info.filePath
+      );
+      if (hoverEntries.length > 0) {
+        const hoverLines = hoverEntries.slice(0, 8).map(h =>
+          `  ${h.symbol}: ${h.type?.slice(0, 80) || '?'}`
+        );
+        lines.push(`LSP Types (${hoverEntries.length}):`);
+        lines.push(hoverLines.join('\n'));
+      }
+
+      const calls = (lspMetadata.callGraph || []).filter(c =>
+        c.callerFile?.includes(filePathBase) || c.callerFile === info.filePath
+      );
+      if (calls.length > 0) {
+        const callLines = calls.slice(0, 8).map(c =>
+          `  ${c.callerName}() → ${c.calleeName} (${c.calleeFile?.split('/').pop() || '?'})`
+        );
+        lines.push(`LSP Call Graph (${calls.length}):`);
+        lines.push(callLines.join('\n'));
       }
     }
   }
@@ -277,6 +319,281 @@ export function findPath(source, target) {
   }
 
   return `No path found from "${source}" to "${target}"`;
+}
+
+// ── LSP query functions ──────────────────────────────────────────────────────
+
+function getLspData() {
+  return useDiagramStore.getState().lspMetadata;
+}
+
+/**
+ * Search LSP definitions by import name or file path.
+ * Shows where imports resolve to across the codebase.
+ */
+export function getLspDefinition(query) {
+  const lsp = getLspData();
+  if (!lsp) return 'No LSP metadata available. LSP enrichment may still be in progress or not configured (set VITE_LSP_URL).';
+
+  const q = (query || '').toLowerCase();
+  if (!q) return 'get_lsp_definition requires a query parameter (import name or file name).';
+
+  const defs = lsp.definitions.filter(d =>
+    (d.importName || '').toLowerCase().includes(q) ||
+    (d.sourceFile || '').toLowerCase().includes(q) ||
+    (d.targetFile || '').toLowerCase().includes(q) ||
+    (d.targetSymbol || '').toLowerCase().includes(q)
+  );
+
+  if (defs.length === 0) return `No LSP definitions matching "${query}". Try searching by import name (e.g. "useAuth") or file name (e.g. "Button").`;
+
+  const lines = [`Found ${defs.length} definition(s) matching "${query}":`];
+  for (const d of defs.slice(0, 10)) {
+    const src = d.sourceFile?.split('/').pop() || '?';
+    const tgt = d.targetFile?.split('/').pop() || '?';
+    const type = d.isTypeOnly ? ' (type)' : '';
+    const sym = d.targetSymbol ? `.${d.targetSymbol}` : '';
+    lines.push(`  ${src}: "${d.importName}" → ${tgt}:${d.targetLine || '?'}${sym}${type}`);
+  }
+  return truncate(lines.join('\n'), RESULT_BUDGET);
+}
+
+/**
+ * Search LSP references for a symbol name.
+ * Shows which files reference a given symbol.
+ */
+export function getLspReferences(query) {
+  const lsp = getLspData();
+  if (!lsp) return 'No LSP metadata available. LSP enrichment may still be in progress or not configured (set VITE_LSP_URL).';
+
+  const q = (query || '').toLowerCase();
+  if (!q) return 'get_lsp_references requires a query parameter (symbol name or file name).';
+
+  const refs = lsp.references.filter(r =>
+    (r.symbolName || '').toLowerCase().includes(q) ||
+    (r.sourceFile || '').toLowerCase().includes(q)
+  );
+
+  if (refs.length === 0) return `No LSP references matching "${query}".`;
+
+  const lines = [`Found ${refs.length} reference(s) matching "${query}":`];
+  for (const r of refs.slice(0, 10)) {
+    const src = r.sourceFile?.split('/').pop() || '?';
+    const consumers = (r.referencedBy || []).map(ref => {
+      const file = ref.file?.split('/').pop() || '?';
+      return `${file}:${ref.line || '?'}`;
+    });
+    lines.push(`  ${r.symbolName} in ${src} ← [${consumers.join(', ')}]`);
+  }
+  return truncate(lines.join('\n'), RESULT_BUDGET);
+}
+
+/**
+ * Search LSP hover/type info for symbols.
+ * Returns type signatures and documentation.
+ */
+export function getLspTypeInfo(query) {
+  const lsp = getLspData();
+  if (!lsp) return 'No LSP metadata available. LSP enrichment may still be in progress or not configured (set VITE_LSP_URL).';
+
+  const q = (query || '').toLowerCase();
+  if (!q) return 'get_lsp_type_info requires a query parameter (symbol name).';
+
+  const entries = lsp.hover.filter(h =>
+    (h.symbol || '').toLowerCase().includes(q) ||
+    (h.file || '').toLowerCase().includes(q) ||
+    (h.type || '').toLowerCase().includes(q)
+  );
+
+  if (entries.length === 0) return `No type info matching "${query}".`;
+
+  const lines = [`Found ${entries.length} type entry(ies) matching "${query}":`];
+  for (const h of entries.slice(0, 10)) {
+    const file = h.file?.split('/').pop() || '?';
+    const doc = h.documentation ? `\n    ${h.documentation.slice(0, 100)}` : '';
+    lines.push(`  ${h.symbol}: ${h.type || '?'} (${file}:${h.line || '?'})${doc}`);
+  }
+  return truncate(lines.join('\n'), RESULT_BUDGET);
+}
+
+/**
+ * Get call graph data for a function or file.
+ * Shows callers and callees.
+ */
+export function getLspCallGraph(query) {
+  const lsp = getLspData();
+  if (!lsp) return 'No LSP metadata available. LSP enrichment may still be in progress or not configured (set VITE_LSP_URL).';
+
+  const q = (query || '').toLowerCase();
+  if (!q) return 'get_lsp_call_graph requires a query parameter (function name or file name).';
+
+  const calls = (lsp.callGraph || []).filter(c =>
+    (c.callerName || '').toLowerCase().includes(q) ||
+    (c.calleeName || '').toLowerCase().includes(q) ||
+    (c.callerFile || '').toLowerCase().includes(q) ||
+    (c.calleeFile || '').toLowerCase().includes(q)
+  );
+
+  if (calls.length === 0) return `No call graph entries matching "${query}".`;
+
+  const lines = [`Found ${calls.length} call(s) matching "${query}":`];
+  for (const c of calls.slice(0, 15)) {
+    const caller = c.callerFile?.split('/').pop() || '?';
+    const callee = c.calleeFile?.split('/').pop() || '?';
+    lines.push(`  ${caller}:${c.callerName}() → ${callee}:${c.calleeName}():${c.calleeLine || '?'}`);
+  }
+  return truncate(lines.join('\n'), RESULT_BUDGET);
+}
+
+/**
+ * Get an overview of available LSP data (counts, languages, status).
+ */
+export function getLspOverview() {
+  const lsp = getLspData();
+  if (!lsp) return 'No LSP metadata available. LSP enrichment may still be in progress or not configured (set VITE_LSP_URL).';
+
+  const lines = ['LSP Metadata Overview:'];
+  lines.push(`  Definitions: ${(lsp.definitions || []).length}`);
+  lines.push(`  References: ${(lsp.references || []).length}`);
+  lines.push(`  Type entries: ${(lsp.hover || []).length}`);
+  lines.push(`  Call graph: ${(lsp.callGraph || []).length}`);
+  lines.push(`  Module exports: ${(lsp.moduleExports || []).length}`);
+  if (lsp.errors && lsp.errors.length > 0) {
+    lines.push(`  Errors: ${lsp.errors.length}`);
+  }
+  lines.push('\nUse get_lsp_definition, get_lsp_references, get_lsp_type_info, or get_lsp_call_graph to query specifics.');
+  return truncate(lines.join('\n'), RESULT_BUDGET);
+}
+
+// ── Community query functions ─────────────────────────────────────────────────
+
+function getCommunityData() {
+  const diagrams = useDiagramStore.getState();
+  const communities = diagrams?.communities || [];
+  return communities;
+}
+
+/**
+ * Get full details about a community: summary, node types, connections, flow paths.
+ */
+export function getCommunityInfo(communityId) {
+  const communities = getCommunityData();
+  if (communities.length === 0) return 'No communities detected. The graph may be too small (< 50 nodes) for community detection.';
+
+  const community = communities.find(c => c.id === communityId);
+  if (!community) {
+    const available = communities.slice(0, 10).map(c => `[${c.id}] "${c.name}" (${c.nodeCount} nodes)`).join('\n');
+    return `Community ${communityId} not found. Available communities:\n${available}\n\nUse get_community_info(id) with one of the IDs above.`;
+  }
+
+  const lines = [];
+  lines.push(community.summary);
+
+  // External connections with target names
+  if (community.externalConnections && community.externalConnections.length > 0) {
+    lines.push('\nConnections to other communities:');
+    for (const ext of community.externalConnections.slice(0, 5)) {
+      const targetName = ext.targetName || `community:${ext.target}`;
+      lines.push(`  → ${targetName} (${ext.count} links)`);
+    }
+  }
+
+  return truncate(lines.join('\n'), RESULT_BUDGET);
+}
+
+/**
+ * List all nodes in a community with their types and file paths.
+ */
+export function getCommunityNodes(communityId) {
+  const communities = getCommunityData();
+  if (communities.length === 0) return 'No communities detected.';
+
+  const community = communities.find(c => c.id === communityId);
+  if (!community) return `Community ${communityId} not found. Use search_communities(query) to find communities.`;
+
+  const objects = useObjectsStore.getState().objects || [];
+  const filePathMap = new Map();
+  for (const obj of objects) {
+    const nodeId = obj.merfolkData?.nodeId;
+    if (nodeId) {
+      filePathMap.set(nodeId, {
+        filePath: obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath || '',
+        displayName: obj.headerText || nodeId,
+      });
+    }
+  }
+
+  const lines = [`Community ${communityId} "${community.name}" — ${community.nodeCount} nodes:\n`];
+
+  // Group by type
+  const byType = {};
+  for (const nodeId of community.nodeIds) {
+    const info = filePathMap.get(nodeId) || {};
+    const file = info.filePath ? ` → ${info.filePath}` : '';
+    const name = info.displayName || nodeId;
+
+    // Determine type from node data
+    const diagrams = useDiagramStore.getState();
+    let nodeType = 'unknown';
+    if (diagrams?.graphs) {
+      for (const graph of diagrams.graphs) {
+        const nodeData = graph.nodes?.get(nodeId);
+        if (nodeData) {
+          nodeType = (nodeData.type || 'unknown').toLowerCase();
+          break;
+        }
+      }
+    }
+
+    if (!byType[nodeType]) byType[nodeType] = [];
+    byType[nodeType].push(`  ${name}${file}`);
+  }
+
+  for (const [type, nodes] of Object.entries(byType).sort((a, b) => b[1].length - a[1].length)) {
+    lines.push(`[${type}] (${nodes.length}):`);
+    for (const nodeLine of nodes.slice(0, 15)) {
+      lines.push(nodeLine);
+    }
+    if (nodes.length > 15) lines.push(`  ... and ${nodes.length - 15} more`);
+  }
+
+  return truncate(lines.join('\n'), RESULT_BUDGET);
+}
+
+/**
+ * Search communities by keyword (name, node types, file paths).
+ */
+export function searchCommunities(query) {
+  const communities = getCommunityData();
+  if (communities.length === 0) return 'No communities detected.';
+
+  const q = (query || '').toLowerCase();
+  if (!q) return 'search_communities requires a query parameter.';
+
+  const matches = [];
+  for (const community of communities) {
+    const nameMatch = community.name.toLowerCase().includes(q);
+    const summaryMatch = (community.summary || '').toLowerCase().includes(q);
+    const fileMatch = (community.files || []).some(f => f.toLowerCase().includes(q));
+    const typeMatch = Object.keys(community.nodeTypes || {}).some(t => t.toLowerCase().includes(q));
+
+    if (nameMatch || summaryMatch || fileMatch || typeMatch) {
+      matches.push(community);
+    }
+  }
+
+  if (matches.length === 0) {
+    return `No communities matching "${query}". Try broader terms like "auth", "api", "store", "hook", or use get_community_info(id) with a specific community ID.`;
+  }
+
+  const lines = [`Found ${matches.length} matching communities:\n`];
+  for (const c of matches.slice(0, 10)) {
+    lines.push(`[community:${c.id}] "${c.name}" (${c.nodeCount} nodes)`);
+    lines.push(`  ${c.summary.split('\n').slice(0, 2).join(' | ')}`);
+    lines.push('');
+  }
+
+  return truncate(lines.join('\n'), RESULT_BUDGET);
 }
 
 /**

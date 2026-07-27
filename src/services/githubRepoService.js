@@ -3630,6 +3630,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     let componentPropTypes = null;
     let hookReturnTypes = null;
     let typeOnlyImports = null;
+    let tsImportDefinitions = null;
+    let tsModuleExports = null;
+    let tsCallGraph = null;
+    let tsExportReferences = null;
+    let tsRichTypes = null;
 
     if (repoType === 'react' || repoType === 'nextjs' || repoType === 'vanilla') {
       try {
@@ -3658,6 +3663,11 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             componentPropTypes = tsAnalysis.componentPropTypes;
             hookReturnTypes = tsAnalysis.hookReturnTypes;
             typeOnlyImports = tsAnalysis.typeImports;
+            tsImportDefinitions = tsAnalysis.importDefinitions;
+            tsModuleExports = tsAnalysis.moduleExports;
+            tsCallGraph = tsAnalysis.callGraph;
+            tsExportReferences = tsAnalysis.exportReferences;
+            tsRichTypes = tsAnalysis.richTypes;
 
             // Enrich componentPropsRelationships with actual type info
             if (componentPropTypes) {
@@ -3674,12 +3684,40 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
               }
             }
 
-            // Enrich hookReturnValueRelationships with actual return types
+            // Enrich hookReturnValueRelationships using export references
+            // (fixes spurious cross-component entries by finding actual hook consumers)
             if (hookReturnTypes) {
               for (const [hookName, retInfo] of hookReturnTypes) {
-                for (const [compName] of fileFunctions) {
-                  // Find components that use this hook
-                  const hookUsageKey = `${compName}->${hookName}`;
+                const consumers = new Set();
+
+                // Use export references to find actual consumers
+                if (tsExportReferences) {
+                  for (const [, refInfo] of tsExportReferences) {
+                    if (refInfo.symbolName === hookName) {
+                      for (const ref of refInfo.referencedBy) {
+                        // Find which component file this reference is in
+                        const refFileBase = ref.file.split('/').pop()?.replace(/\.(tsx?|jsx?)$/, '') || '';
+                        if (fileFunctions.has(refFileBase)) {
+                          consumers.add(refFileBase);
+                        }
+                      }
+                    }
+                  }
+                }
+
+                // Fallback: check componentDependencies for actual usage
+                if (consumers.size === 0) {
+                  for (const [comp, deps] of componentDependencies) {
+                    for (const dep of deps) {
+                      if (dep.name === hookName && dep.type === 'hook') {
+                        consumers.add(comp);
+                      }
+                    }
+                  }
+                }
+
+                for (const comp of consumers) {
+                  const hookUsageKey = `${comp}->${hookName}`;
                   if (!hookReturnValueRelationships.has(hookUsageKey)) {
                     hookReturnValueRelationships.set(hookUsageKey, {
                       hook: hookName,
@@ -3703,7 +3741,61 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
               }
             }
 
+            // ── TS-accurate barrel chain resolution ─────────────────────────
+            // Override heuristic barrel resolution with accurate TS import definitions.
+            // This follows re-exports transitively via `checker.getAliasedSymbol()`.
+            if (tsImportDefinitions && tsModuleExports) {
+              for (const [sourceFile, imports] of tsImportDefinitions) {
+                const sourceBase = sourceFile.split('/').pop()?.replace(/\.(tsx?|jsx?)$/, '') || '';
+                for (const [, target] of imports) {
+                  const targetBase = target.targetFile.split('/').pop()?.replace(/\.(tsx?|jsx?)$/, '') || '';
+                  if (targetBase && targetBase !== sourceBase) {
+                    const existing = moduleImportRelationships.get(sourceBase) || new Set();
+                    existing.add(targetBase);
+                    moduleImportRelationships.set(sourceBase, existing);
+                  }
+                }
+              }
+            }
+
+            // ── TS-accurate call graph ──────────────────────────────────────
+            // Overlay cross-file call relationships from the TS call graph.
+            if (tsCallGraph) {
+              for (const [callerName, callees] of tsCallGraph) {
+                // Find the component that contains this caller
+                let callerComp = null;
+                for (const [comp, info] of fileFunctions) {
+                  if (info.functions.has(callerName)) {
+                    callerComp = comp;
+                    break;
+                  }
+                }
+                if (!callerComp) callerComp = callerName;
+
+                if (!functionCallRelationships.has(callerComp)) {
+                  functionCallRelationships.set(callerComp, new Set());
+                }
+
+                for (const callee of callees) {
+                  const calleeBase = callee.calleeFile.split('/').pop()?.replace(/\.(tsx?|jsx?)$/, '') || '';
+                  // Only add if callee is a known file container
+                  if (fileFunctions.has(calleeBase) || elements.functions.includes(callee.calleeName) || elements.components.includes(callee.calleeName)) {
+                    const existing = functionCallRelationships.get(callerComp);
+                    // Deduplicate
+                    if (![...existing].some(e => e.target === callee.calleeName)) {
+                      existing.add({
+                        target: callee.calleeName,
+                        label: `calls ${callee.calleeName}`,
+                        type: 'utility',
+                      });
+                    }
+                  }
+                }
+              }
+            }
+
             console.log(`🔍 L2 TypeScript analysis: ${componentPropTypes.size} prop types, ${hookReturnTypes.size} hook return types, ${typeOnlyImports.size} files with type imports`);
+            console.log(`🔍 L2 Semantic analysis: ${tsImportDefinitions.size} resolved imports, ${tsModuleExports.size} resolved exports, ${tsCallGraph.size} call graph entries`);
           }
         }
       } catch (err) {
@@ -3744,6 +3836,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       sharedInterfaces,
       interfaceUsages,
       fileSizes,
+      richTypes: tsRichTypes,
     });
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
@@ -3752,6 +3845,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
 
     // Build formatted content index string for the system prompt
     const contentIndexLines = [];
+    const fileIndexByPath = new Map();
     const allFileNames = new Set([...fileContentIndex.keys(), ...fileFunctions.keys()]);
     for (const fn of allFileNames) {
       const fi = fileFunctions.get(fn);
@@ -3766,24 +3860,34 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       if (parts.length > 0) {
         contentIndexLines.push(`${filePath}: ${parts.join(' | ')}`);
       }
+      fileIndexByPath.set(filePath, {
+        exports: fi?.exports || new Set(),
+        functions: fi?.functions || new Set(),
+        htmlElements: entry?.htmlElements || new Set(),
+        cssClasses: entry?.cssClasses || new Set(),
+        jsxRefs: entry?.jsxRefs || new Set(),
+        type: fi?.type || '',
+      });
     }
     const contentIndex = contentIndexLines.join('\n');
     console.log(`🔍 Content index: ${contentIndexLines.length} files, ${contentIndex.length} chars`);
 
     // Build import graph: file → files it imports (compact format)
     const importGraphLines = [];
+    const importIndexByFile = new Map();
     moduleImportRelationships.forEach((importedFiles, sourceFile) => {
       if (importedFiles.size > 0) {
         importGraphLines.push(`${sourceFile}: ${[...importedFiles].join(', ')}`);
+        importIndexByFile.set(sourceFile, new Set(importedFiles));
       }
     });
     const importGraph = importGraphLines.join('\n');
     console.log(`🔗 Import graph: ${importGraphLines.length} files with imports, ${importGraph.length} chars`);
 
-    return { markdown: merfolkResult, contentIndex, fileSizes, importGraph };
+    return { markdown: merfolkResult, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile };
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
-    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '', fileSizes: new Map() };
+    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '', fileSizes: new Map(), fileIndexByPath: new Map(), importIndexByFile: new Map() };
   }
 };
 
@@ -3838,7 +3942,8 @@ const generateMerfolkMarkdown = ({
   errorContainment = [],
   sharedInterfaces = new Map(),
   interfaceUsages = new Map(),
-  fileSizes = new Map()
+  fileSizes = new Map(),
+  richTypes = new Map(),
 }) => {
   const isVanilla = repoType === 'vanilla' || repoType === 'python' || repoType === 'vue';
   const isNextjs = repoType === 'nextjs';
@@ -4129,8 +4234,12 @@ const generateMerfolkMarkdown = ({
       }
       markdown += `${finalId}{Component: ${comp}}\n`;
       const compPath = getFilePath(comp);
-      if (compPath) {
-        markdown += `{\n  codeFilePath: "${compPath}"\n}\n`;
+      const typeInfo = richTypes.get(comp);
+      const props = [];
+      if (compPath) props.push(`  codeFilePath: "${compPath}"`);
+      if (typeInfo?.typeString) props.push(`  typescriptType: "${typeInfo.typeString.replace(/"/g, '\\"').slice(0, 150)}"`);
+      if (props.length > 0) {
+        markdown += `{\n${props.join('\n')}\n}\n`;
       }
     });
   }
@@ -4182,9 +4291,15 @@ const generateMerfolkMarkdown = ({
         console.warn(`ℹ️ Renamed duplicate "${hook}" → "${finalId}" (Hook)`);
       }
       const hPath = getFilePath(hook);
-      markdown += hPath
-        ? `${finalId}[Function: ${hook}]{codeFilePath: "${hPath}"}\n`
-        : `${finalId}[Function: ${hook}]\n`;
+      const typeInfo = richTypes.get(hook);
+      const props = [];
+      if (hPath) props.push(`codeFilePath: "${hPath}"`);
+      if (typeInfo?.typeString) props.push(`typescriptType: "${typeInfo.typeString.replace(/"/g, '\\"').slice(0, 150)}"`);
+      if (props.length > 0) {
+        markdown += `${finalId}[Function: ${hook}]{${props.join(', ')}}\n`;
+      } else {
+        markdown += `${finalId}[Function: ${hook}]\n`;
+      }
     });
   }
 
@@ -4220,9 +4335,19 @@ const generateMerfolkMarkdown = ({
         console.warn(`ℹ️ Renamed duplicate "${store}" → "${finalId}" (Store)`);
       }
       const stPath = getFilePath(store);
-      markdown += stPath
-        ? `${finalId}[[Store: ${store}]]{codeFilePath: "${stPath}"}\n`
-        : `${finalId}[[Store: ${store}]]\n`;
+      const typeInfo = richTypes.get(store);
+      const props = [];
+      if (stPath) props.push(`codeFilePath: "${stPath}"`);
+      if (typeInfo?.typeString) props.push(`typescriptType: "${typeInfo.typeString.replace(/"/g, '\\"').slice(0, 150)}"`);
+      if (typeInfo?.properties) {
+        const propNames = typeInfo.properties.slice(0, 5).map(p => p.name).join(', ');
+        props.push(`storeProperties: "${propNames}${typeInfo.properties.length > 5 ? '...' : ''}"`);
+      }
+      if (props.length > 0) {
+        markdown += `${finalId}[[Store: ${store}]]{${props.join(', ')}}\n`;
+      } else {
+        markdown += `${finalId}[[Store: ${store}]]\n`;
+      }
     });
   }
 
@@ -5212,7 +5337,7 @@ export const scanRepositoryAndGenerateDiagram = async (
     if (onProgress) onProgress(10, 'Fetching repository structure...');
     
     // Generate Merfolk markdown from entire repository
-    const { markdown: merfolkMarkdown, contentIndex, fileSizes, importGraph } = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
+    const { markdown: merfolkMarkdown, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile } = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
     
     if (onProgress) onProgress(40, 'Analyzing code and generating diagram...');
 
@@ -5252,6 +5377,49 @@ export const scanRepositoryAndGenerateDiagram = async (
       currentSpaceId,
       user
     );
+
+    // Detect communities after graph is populated
+    try {
+      const { detectAndStoreCommunities } = await import('./context/communityService');
+      await detectAndStoreCommunities();
+    } catch (commErr) {
+      console.warn('[scanRepository] Community detection failed:', commErr.message);
+    }
+
+    // ── LSP enrichment (async, non-blocking) ────────────────────────────
+    // Connect to the LSP service and enrich the diagram with accurate
+    // definitions, references, and type metadata. This runs after the
+    // initial diagram is shown so the user sees results immediately.
+    try {
+      const { getLspClient } = await import('./lsp/lspClient.js');
+      const { enrichDiagramWithLsp } = await import('./lsp/enrichmentService.js');
+      const lspUrl = import.meta.env.VITE_LSP_URL;
+      if (lspUrl) {
+        const lspClient = getLspClient(lspUrl);
+        const store = (await import('../stores/diagramStore.js')).default;
+        store.getState().setIsLspEnriching(true);
+
+        // Build file list from fetched entries
+        const lspFiles = [];
+        for (const entry of fetched) {
+          if (!entry) continue;
+          lspFiles.push({ path: entry.file.path, content: entry.fileContent });
+        }
+
+        if (lspFiles.length > 0) {
+          console.log(`[scanRepository] Starting LSP enrichment for ${lspFiles.length} files...`);
+          // Don't await — run in background so the diagram is shown immediately
+          enrichDiagramWithLsp(lspClient, lspFiles, {}, (progress) => {
+            console.log(`[scanRepository] LSP enrichment: ${progress.stage} (${progress.progress}%)`);
+          }).catch(err => {
+            console.warn('[scanRepository] LSP enrichment failed (non-fatal):', err.message);
+            store.getState().setIsLspEnriching(false);
+          });
+        }
+      }
+    } catch (lspErr) {
+      console.warn('[scanRepository] LSP enrichment setup failed (non-fatal):', lspErr.message);
+    }
     
     if (onProgress) onProgress(90, 'Finalizing diagram...');
 
@@ -5271,6 +5439,8 @@ export const scanRepositoryAndGenerateDiagram = async (
       contentIndex,
       fileSizes,
       importGraph,
+      fileIndexByPath,
+      importIndexByFile,
       commitSha,
     };
   } catch (error) {
