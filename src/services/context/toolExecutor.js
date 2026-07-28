@@ -9,6 +9,8 @@ const TOOL_TIMEOUT_MS = 20_000;
 const DEFAULT_READ_LINES = 2000;
 const MAX_READ_LINES = 4000;
 
+const appliedEdits = new Map();
+
 function persistFileContent(storeId, filePath, content) {
   const store = getContentStore();
   const base64Store = getBase64Store();
@@ -485,6 +487,10 @@ OUTPUT FORMAT:
 - Include relevant code snippets (keep them short)
 - Do NOT generate code or suggest changes — only report what exists`;
 
+export function resetEditTracker() {
+  appliedEdits.clear();
+}
+
 export async function executeTool(name, args, githubContext, fileTree = [], { runSubAgent, depth = 0 } = {}) {
   const store = getContentStore();
   const base64Store = getBase64Store();
@@ -578,6 +584,9 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             TOOL_TIMEOUT_MS,
             `read_file(${path})`,
           );
+          if (fullContent) {
+            persistFileContent(storeId, path, fullContent);
+          }
         } catch (err) {
           return { success: false, content: `Error reading ${path}: ${err.message}` };
         }
@@ -595,10 +604,11 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const selectedLines = allLines.slice(startLine - 1, endLine);
       const numbered = selectedLines.map((line, i) => `${startLine + i}: ${line}`).join('\n');
+      const sectionLabel = `[Read ${path}: lines ${startLine}-${endLine} of ${totalLines}]`;
       const suffix = endLine < totalLines
-        ? `\n\n(Showing lines ${startLine}-${endLine} of ${totalLines}. Use offset=${endLine + 1} to continue.)`
-        : '';
-      return { success: true, content: numbered + suffix };
+        ? `\n\n(Use offset=${endLine + 1} to continue reading.)`
+        : '\n\n(End of file)';
+      return { success: true, content: `${sectionLabel}\n${numbered}${suffix}` };
     }
 
     case 'list_files': {
@@ -788,6 +798,12 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!filePath || oldString == null || newString == null) {
         return { success: false, content: 'edit requires "filePath", "oldString", and "newString" parameters' };
       }
+      const editKey = `${filePath}\0${oldString}`;
+      const prevCount = appliedEdits.get(editKey) || 0;
+      if (prevCount >= 1) {
+        return { success: false, content: `This edit was already applied ${prevCount} time(s) to ${filePath}. The oldString still exists in the file, which means your newString must also contain the oldString text — this creates duplicates. Re-read the file with read_file to see the current state, then make a DIFFERENT edit that doesn't re-insert the same code.` };
+      }
+      appliedEdits.set(editKey, prevCount + 1);
       const storeId = `repo:${filePath}`;
       const altId = `github:${filePath}`;
       const entry = store.getEntry(storeId) || store.getEntry(altId);
@@ -812,19 +828,21 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const endIdx = idx + oldString.length;
       const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
       persistFileContent(storeId, filePath, updated);
-      // Build a more informative diff preview
+
       const oldLines = oldString.split('\n');
       const newLines = newString.split('\n');
       const startLine = fullContent.slice(0, idx).split('\n').length;
-      const diffLines = [];
-      diffLines.push(`--- a/${filePath}`);
-      diffLines.push(`+++ b/${filePath}`);
-      diffLines.push(`@@ -${startLine},${oldLines.length} +${startLine},${newLines.length} @@`);
-      for (const line of oldLines) diffLines.push(`- ${line}`);
-      for (const line of newLines) diffLines.push(`+ ${line}`);
-      const diffPreview = diffLines.join('\n');
+      const updatedLines = updated.split('\n');
+      const contextBefore = 5;
+      const contextAfter = 5;
+      const showStart = Math.max(0, startLine - 1 - contextBefore);
+      const showEnd = Math.min(updatedLines.length, startLine - 1 + newLines.length + contextAfter);
+      const contextBlock = updatedLines.slice(showStart, showEnd)
+        .map((line, i) => `${showStart + i + 1}: ${line}`)
+        .join('\n');
+      const summary = `Successfully edited ${filePath} at line ${startLine} (${fullContent.length} → ${updated.length} chars, ${newLines.length - oldLines.length >= 0 ? '+' : ''}${newLines.length - oldLines.length} lines). File now has ${updatedLines.length} lines.`;
       console.log(`[Edit] ${filePath}: replaced ${oldString.length} chars at line ${startLine} → ${newString.length} chars (persisted to store)`);
-      return { success: true, content: `Successfully edited ${filePath} at line ${startLine} (${fullContent.length} → ${updated.length} chars)\n\nDiff preview:\n${diffPreview}` };
+      return { success: true, content: `${summary}\n\nContext around edit (${showStart + 1}-${showEnd}):\n${contextBlock}` };
     }
 
     case 'write': {

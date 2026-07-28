@@ -1,11 +1,13 @@
 import { sendToZen } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
-import { CODE_GEN_TOOLS, executeTool } from './toolExecutor';
+import { CODE_GEN_TOOLS, executeTool, resetEditTracker } from './toolExecutor';
 import { getContentStore } from './contentStore';
 import { getBase64Store } from './base64Store';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
+const MAX_CONTEXT_CHARS = 150000;
+const MAX_TOOL_ROUNDS = 50;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -18,6 +20,74 @@ function estimateMessagesSize(msgs) {
     }
   }
   return total;
+}
+
+function compressMessages(msgs) {
+  if (msgs.length <= 2) return msgs;
+
+  const systemMsg = msgs[0];
+  const userMsg = msgs[1];
+  const rest = [...msgs.slice(2)];
+
+  const lastReadByPath = new Map();
+  for (let i = 0; i < rest.length; i++) {
+    const msg = rest[i];
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.function?.name === 'read_file') {
+          try {
+            const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+            if (args.path) lastReadByPath.set(args.path, i);
+          } catch { /* ignore */ }
+        }
+      }
+    }
+  }
+
+  const SEARCH_TOOLS = new Set(['search_code', 'search_nodes', 'get_node_info']);
+  let compressedCount = 0;
+  for (let i = 0; i < rest.length; i++) {
+    const msg = rest[i];
+    if (msg.role !== 'tool' || typeof msg.content !== 'string') continue;
+    if (msg.content.length < 500) continue;
+
+    const prev = i > 0 ? rest[i - 1] : null;
+    if (prev?.role !== 'assistant' || !prev?.tool_calls) continue;
+
+    const tc = prev.tool_calls.find(t => t.id === msg.tool_call_id);
+    if (!tc) continue;
+
+    if (tc.function?.name === 'read_file') {
+      try {
+        const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+        if (args.path && lastReadByPath.get(args.path) > i) {
+          msg.content = `[Previously read: ${args.path} — ${msg.content.length} chars — see the later read_file above]`;
+          compressedCount++;
+        }
+      } catch { /* ignore */ }
+    } else if (SEARCH_TOOLS.has(tc.function?.name)) {
+      const hasSubsequent = rest.slice(i + 1).some(m => m.role === 'assistant');
+      if (hasSubsequent) {
+        const lines = msg.content.split('\n').filter(l => l.trim());
+        const fileMatches = [];
+        for (const line of lines) {
+          const pathMatch = line.match(/^([^\s:]+\.[a-z]{1,4})[:\s]/i);
+          if (pathMatch && !fileMatches.includes(pathMatch[1])) fileMatches.push(pathMatch[1]);
+        }
+        const summary = fileMatches.length > 0
+          ? `[Search results — ${lines.length} matches in: ${fileMatches.slice(0, 5).join(', ')}${fileMatches.length > 5 ? ` +${fileMatches.length - 5} more` : ''}]`
+          : `[Search results — ${lines.length} lines]`;
+        msg.content = summary;
+        compressedCount++;
+      }
+    }
+  }
+
+  if (compressedCount > 0) {
+    console.log(`[Compression] Compressed ${compressedCount} stale tool results`);
+  }
+
+  return [systemMsg, userMsg, ...rest];
 }
 
 function generateSearchReplacePatch(original, modified, filePath) {
@@ -87,7 +157,7 @@ function isUsefulToolResult(content, toolName) {
 
 function readKey(tc) {
   if (tc.name === 'read_file') {
-    return `read_file:${tc.arguments.path}:${tc.arguments.offset || 0}:${tc.arguments.limit || 8000}`;
+    return `read_file:${tc.arguments.path}:${tc.arguments.offset || 1}:${tc.arguments.limit || 2000}`;
   }
   return `${tc.name}:${JSON.stringify(tc.arguments)}`;
 }
@@ -112,7 +182,19 @@ export async function sendWithRetrieval({
   const editedFilePaths = new Set();
   const originalFileContents = new Map();
 
+  resetEditTracker();
+
   while (true) {
+    if (rounds >= MAX_TOOL_ROUNDS) {
+      console.warn(`[ToolRound] Hit round cap (${MAX_TOOL_ROUNDS}), exiting loop`);
+      break;
+    }
+
+    if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS) {
+      currentMessages = compressMessages(currentMessages);
+      console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
+    }
+
     console.log(`[ToolRound] Round ${rounds + 1} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
 
     const MAX_SEND_RETRIES = 2;
@@ -250,11 +332,13 @@ export async function sendWithRetrieval({
       if (tc.name === 'read_file') {
         const key = readKey(tc);
         if (readFilesBefore.has(key)) {
-          console.warn(`[ToolRound] Round ${rounds + 1}: ${tc.arguments.path} (offset=${tc.arguments.offset||0}) already read, skipping fetch`);
+          const off = tc.arguments.offset || 1;
+          const lim = tc.arguments.limit || 2000;
+          console.warn(`[ToolRound] Round ${rounds + 1}: ${tc.arguments.path} (offset=${off}) already read, skipping fetch`);
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
           return Promise.resolve({
             tc,
-            result: { success: true, content: `[Already loaded: ${tc.arguments.path} — see prior tool response above]` },
+            result: { success: true, content: `[Already loaded: ${tc.arguments.path} lines ${off}-${off + lim - 1} — see prior tool response above. Do NOT re-read this section.]` },
             error: null,
           });
         }
