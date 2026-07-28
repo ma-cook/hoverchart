@@ -1,4 +1,5 @@
 import { chunkText, extractKeywords } from './chunkIndex';
+import { saveContentStore, loadContentStore, clearContentStorePersistence } from './contentStorePersistence';
 
 export const ContentCategory = {
   REPO_FILE: 'repo_file',
@@ -17,6 +18,24 @@ export class ContentStore {
     this.entries = new Map();
     this.invertedIndex = new Map();
     this.totalChunks = 0;
+    this._hydrated = false;
+    this._hydratePromise = null;
+  }
+
+  async _ensureHydrated() {
+    if (this._hydrated) return;
+    if (this._hydratePromise) return this._hydratePromise;
+    this._hydratePromise = (async () => {
+      const saved = await loadContentStore();
+      if (saved) {
+        this.entries = saved.entries;
+        this.invertedIndex = saved.invertedIndex;
+        this.totalChunks = saved.totalChunks;
+        console.log(`[ContentStore] Hydrated from IndexedDB: ${this.entries.size} entries, ${this.totalChunks} chunks`);
+      }
+      this._hydrated = true;
+    })();
+    return this._hydratePromise;
   }
 
   upsert(id, category, content, metadata = {}) {
@@ -50,6 +69,7 @@ export class ContentStore {
 
     this.entries.set(id, entry);
     this.totalChunks += chunks.length;
+    this._persist();
   }
 
   remove(id) {
@@ -58,6 +78,7 @@ export class ContentStore {
       this._removeFromIndex(entry);
       this.totalChunks -= entry.chunks.length;
       this.entries.delete(id);
+      this._persist();
     }
   }
 
@@ -65,6 +86,7 @@ export class ContentStore {
     this.entries.clear();
     this.invertedIndex.clear();
     this.totalChunks = 0;
+    clearContentStorePersistence().catch(() => {});
   }
 
   hydrate(serializedEntries, serializedInvertedIndex, totalChunks) {
@@ -76,6 +98,12 @@ export class ContentStore {
       this.invertedIndex.set(keyword, new Set(chunkIds));
     }
     this.totalChunks = totalChunks;
+    this._hydrated = true;
+    this._persist();
+  }
+
+  _persist() {
+    saveContentStore(this.entries, this.invertedIndex, this.totalChunks);
   }
 
   search(query, { maxChunks = 10, category = null, entryIds = null } = {}) {
@@ -139,7 +167,16 @@ export class ContentStore {
 }
 
 let _instance = null;
+let _initPromise = null;
 export function getContentStore() {
-  if (!_instance) _instance = new ContentStore();
+  if (!_instance) {
+    _instance = new ContentStore();
+    _initPromise = _instance._ensureHydrated();
+  }
   return _instance;
+}
+
+export function waitForContentStoreHydration() {
+  if (!_instance) getContentStore();
+  return _initPromise;
 }

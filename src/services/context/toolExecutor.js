@@ -1,6 +1,6 @@
-import { getContentStore, ContentCategory } from './contentStore';
+import { getContentStore, ContentCategory, waitForContentStoreHydration } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
-import { getBase64Store } from './base64Store';
+import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
@@ -492,6 +492,7 @@ export function resetEditTracker() {
 }
 
 export async function executeTool(name, args, githubContext, fileTree = [], { runSubAgent, depth = 0 } = {}) {
+  await Promise.all([waitForContentStoreHydration(), waitForBase64StoreHydration()]);
   const store = getContentStore();
   const base64Store = getBase64Store();
 

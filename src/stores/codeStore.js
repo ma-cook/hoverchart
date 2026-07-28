@@ -1,7 +1,7 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 
-const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex', 'importGraph'];
+const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex', 'importGraph', 'repoFileTree', 'fileSizes'];
 
 function loadPersisted(spaceId, key) {
   try {
@@ -59,6 +59,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       techStackSource: loadPersisted(spaceId, 'techStackSource'),
       contentIndex: loadPersisted(spaceId, 'contentIndex'),
       importGraph: loadPersisted(spaceId, 'importGraph'),
+      repoFileTree: loadPersisted(spaceId, 'repoFileTree'),
+      fileSizes: loadPersisted(spaceId, 'fileSizes'),
     });
   },
 
@@ -107,7 +109,11 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setPushStatus: (status) => set({ pushStatus: status }),
 
-  setRepoContext: (fileTree, fileContents) => set({ repoFileTree: fileTree, repoFileContents: fileContents }),
+  setRepoContext: (fileTree, fileContents) => {
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'repoFileTree', fileTree);
+    set({ repoFileTree: fileTree, repoFileContents: fileContents });
+  },
 
   setContentIndex: (contentIndex) => {
     const spaceId = get()._spaceId;
@@ -116,7 +122,9 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   },
 
   setFileSizes: (fileSizes) => {
+    const spaceId = get()._spaceId;
     const serialized = fileSizes instanceof Map ? [...fileSizes] : fileSizes;
+    persist(spaceId, 'fileSizes', serialized);
     set({ fileSizes: serialized });
   },
 
@@ -168,6 +176,9 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
     SPACE_SCOPED_KEYS.forEach((k) => {
       try { localStorage.removeItem(`code:${ns}${k}`); } catch { /* ignore */ }
     });
+    import('../services/context/contentStorePersistence.js').then(m => m.clearContentStorePersistence()).catch(() => {});
+    import('../services/context/contentStore.js').then(m => m.getContentStore().clear()).catch(() => {});
+    import('../services/context/base64Store.js').then(m => { try { m.getBase64Store().encodedChunks.clear(); } catch { /* ignore */ } }).catch(() => {});
     set({
       githubToken: null,
       repoOwner: null,

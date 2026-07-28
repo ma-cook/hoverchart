@@ -1,9 +1,26 @@
 import { getContentStore } from './contentStore';
+import { saveBase64Store, loadBase64Store } from './contentStorePersistence';
 
 export class Base64Store {
   constructor(contentStore) {
     this.contentStore = contentStore || getContentStore();
     this.encodedChunks = new Map();
+    this._hydrated = false;
+    this._hydratePromise = null;
+  }
+
+  async _ensureHydrated() {
+    if (this._hydrated) return;
+    if (this._hydratePromise) return this._hydratePromise;
+    this._hydratePromise = (async () => {
+      const saved = await loadBase64Store();
+      if (saved) {
+        this.encodedChunks = saved;
+        console.log(`[Base64Store] Hydrated from IndexedDB: ${this.encodedChunks.size} chunks`);
+      }
+      this._hydrated = true;
+    })();
+    return this._hydratePromise;
   }
 
   async encodeAll() {
@@ -34,6 +51,9 @@ export class Base64Store {
         await new Promise(r => setTimeout(r, 0));
       }
     }
+
+    this._hydrated = true;
+    saveBase64Store(this.encodedChunks);
   }
 
   hydrate(serializedEncodedChunks) {
@@ -41,6 +61,8 @@ export class Base64Store {
     for (const [chunkId, data] of serializedEncodedChunks) {
       this.encodedChunks.set(chunkId, data);
     }
+    this._hydrated = true;
+    saveBase64Store(this.encodedChunks);
   }
 
   getChunk(chunkId) {
@@ -96,7 +118,16 @@ export class Base64Store {
 }
 
 let _instance = null;
+let _initPromise = null;
 export function getBase64Store() {
-  if (!_instance) _instance = new Base64Store(getContentStore());
+  if (!_instance) {
+    _instance = new Base64Store(getContentStore());
+    _initPromise = _instance._ensureHydrated();
+  }
   return _instance;
+}
+
+export function waitForBase64StoreHydration() {
+  if (!_instance) getBase64Store();
+  return _initPromise;
 }
