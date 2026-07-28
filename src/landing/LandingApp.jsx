@@ -30,9 +30,9 @@ import './LandingApp.css';
 import '../components/TopBar.css';
 
 function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
-  const [backgroundColor] = useState('white');
-  const [lightColor] = useState('#fff4d2');
-  const [glowColor] = useState('#fff4d2');
+  const [_backgroundColor] = useState('white');
+  const [_lightColor] = useState('#fff4d2');
+  const [_glowColor] = useState('#fff4d2');
   const windowSize = useWindowSize();
 
   const [showCreateSpacePopup, setShowCreateSpacePopup] = useState(false);

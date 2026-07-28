@@ -6,7 +6,6 @@ import Sphere from './Dodecahedron';
 import Plane from './Plane';
 import TextObject from './TextObject';
 import ModelObject from './ModelObject';
-import { isCubeUnmodified } from './GlobalCubeFullLODInstancedRenderer';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 // Module-level constant to avoid creating new object on every render

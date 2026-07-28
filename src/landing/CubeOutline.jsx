@@ -1,7 +1,6 @@
-import React, { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { Line, Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
-import * as THREE from 'three';
 
 const CubeOutline = ({
   size = 1,
@@ -11,7 +10,7 @@ const CubeOutline = ({
   onAnimationComplete = () => {},
   visible = true,
   textLabel = '3D',
-  isLastObject = false,
+  _isLastObject = false,
 }) => {
   const groupRef = useRef();
   // Use targetPosition if provided, otherwise use initial position
@@ -22,7 +21,7 @@ const CubeOutline = ({
   const dissolveStartTimeRef = useRef(null);
   const textDissolveStartTimeRef = useRef(null);
   const animationCompletedRef = useRef(false);
-  const lineRef = useRef();
+  const _lineRef = useRef();
 
   // Define individual cube edges to prevent any diagonal connections
   const edges = [

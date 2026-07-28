@@ -35,6 +35,12 @@ export default [
       ],
       'react/prop-types': 'off', // disable prop-types rule
       'react/no-unknown-property': 'off', // disable unknown-property checks
+      'react/display-name': 'off', // anonymous exports are fine
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+      }],
     },
   },
   {

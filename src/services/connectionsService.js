@@ -17,12 +17,6 @@ export async function resumeConnectionListeners() {
 }
 
 import { api } from '../api-client';
-import {
-  addConnectionToCells,
-  removeConnectionFromCells,
-  removeConnectionFromAllCells,
-  findConnectionInCells,
-} from './spatialPartitioning';
 import useConnectionStore from '../stores/connectionStore';
 import { cleanObject } from '../utils/unifiedValidationUtils';
 
@@ -181,9 +175,6 @@ export const subscribeToConnections = (
   if (isAnonymous && !ownerIdFromUrl) {
     return () => {};
   }
-
-  // Use the URL owner ID for anonymous access, or user ID for authenticated users
-  const effectiveOwnerId = isAnonymous ? ownerIdFromUrl : userId;
 
   // Ensure loadedCells is always an array
   const effectiveCells = Array.isArray(loadedCells) ? [...loadedCells] : [];

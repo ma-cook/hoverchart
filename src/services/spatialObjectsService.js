@@ -124,16 +124,6 @@ export const clearAllObjectCaches = () => {
   console.log('🧹 Cleared all object caches');
 };
 
-// Helper to remove object from caches
-const removeObjectFromCaches = (spaceId, objectId, cellId) => {
-  const cacheKey = `${spaceId}_${objectId}`;
-  objectsCache.delete(cacheKey);
-  lastReceivedObjects.delete(cacheKey);
-  cancelPendingSave(cacheKey);
-  updateThrottles.delete(cacheKey);
-  objectCellMap.delete(objectId);
-};
-
 // Helper function for position-only comparison
 const positionsEqual = (posA, posB) => {
   if (!posA || !posB) return false;
@@ -529,19 +519,6 @@ export const updateObjectInSpatialCell = async (
 /**
  * Clear cache entries for a cell
  */
-const clearCellCache = (spaceId, cellId) => {
-  // Find and remove all objects that belong to this cell
-  for (const [objectId, objCellId] of objectCellMap) {
-    if (objCellId === cellId) {
-      const cacheKey = `${spaceId}_${objectId}`;
-      objectsCache.delete(cacheKey);
-      lastReceivedObjects.delete(cacheKey);
-      cancelPendingSave(cacheKey);
-      updateThrottles.delete(cacheKey);
-      objectCellMap.delete(objectId);
-    }
-  }
-};
 
 /**
  * Keep track of object subscriptions by cell
@@ -634,7 +611,7 @@ export const subscribeToSpatialObjects = (
         }
 
         const [x, y, z] = cellKey.split(',').map(Number);
-        const cellId = cellKey;
+        const _cellId = cellKey;
 
         if (!objectSubscriptionsByCell.has(cellKey)) {
           objectSubscriptionsByCell.set(cellKey, new Set());

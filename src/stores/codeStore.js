@@ -20,7 +20,7 @@ function persist(spaceId, key, value) {
     } else {
       localStorage.setItem(storageKey, JSON.stringify(value));
     }
-  } catch {}
+  } catch { /* ignore */ }
 }
 
 const useCodeStore = createWithEqualityFn((set, get) => ({
@@ -166,7 +166,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
     const spaceId = get()._spaceId;
     const ns = spaceId ? `${spaceId}:` : '';
     SPACE_SCOPED_KEYS.forEach((k) => {
-      try { localStorage.removeItem(`code:${ns}${k}`); } catch {}
+      try { localStorage.removeItem(`code:${ns}${k}`); } catch { /* ignore */ }
     });
     set({
       githubToken: null,

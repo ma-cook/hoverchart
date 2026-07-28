@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useColorPickerStore = createWithEqualityFn((set, get) => ({
   // State for color pickers across different UI contexts

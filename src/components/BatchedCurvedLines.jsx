@@ -90,7 +90,6 @@ const BatchedCurvedLines = memo(({
   const meshRef = useRef();
   const geometryRef = useRef(null);
   const materialRef = useRef(null);
-  const connectionIndexMapRef = useRef(new Map()); // Maps instance index -> connectionId
   const segmentToConnectionRef = useRef(new Map()); // Maps segment index -> connectionId
   const bufferCapacityRef = useRef(0);
   const currentCountRef = useRef(0);

@@ -406,7 +406,7 @@ const useConnectionStore = create((set, get) => ({
 
     set((state) => {
       let newConnections = null; // PERFORMANCE: Defer array copy until we know there are changes
-      const updatedIds = new Set(connectionUpdates.keys());
+      const _updatedIds = new Set(connectionUpdates.keys());
 
       // Apply all updates in a single pass
       connectionUpdates.forEach((updates, connectionId) => {
@@ -673,17 +673,7 @@ const useConnectionStore = create((set, get) => ({
     return connectedIds;
   },
 
-  // Get connections for a specific object
-  getConnectionsForObject: (objectId) => {
-    const connections = get().connections;
-    const objIdStr = objectId?.toString();
-    
-    return connections.filter((conn) => {
-      const startId = conn.start?.objectId?.toString();
-      const endId = conn.end?.objectId?.toString();
-      return startId === objIdStr || endId === objIdStr;
-    });
-  },
+  // Get connections for a specific object (uses O(1) index lookup - see below)
 
   setIsCreatingConnection: (isCreating) => {
     set({ isCreatingConnection: isCreating });

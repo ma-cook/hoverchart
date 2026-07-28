@@ -13,7 +13,6 @@ import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions, deleteAllCellsInSpace } from '../services/spatialObjectsService';
 import { api } from '../api-client';
-import useAuthStore from '../stores/authStore';
 import * as THREE from 'three';
 import {
   handleGithubCallback,
@@ -38,8 +37,7 @@ import './RepoAnalysisOverlay.css';
 import './TopBar.css';
 import useEarthSettingsStore from '../stores/earthSettingsStore';
 import usePipelineStore from '../stores/pipelineStore';
-import { getPipelineTasks, getStatusColor, getStatusLabel, TASK_STATUS } from '../services/pipelineTaskService';
-import { startPipeline, pausePipeline, resumePipeline, stopPipeline } from '../services/pipelineOrchestrator';
+import { getPipelineTasks } from '../services/pipelineTaskService';
 import { createRepoContainer, repositionIncomingTasks, findRepoContainer, assignRepoSlugToOrphanTasks } from '../services/repoContainerService';
 
 const PRESET_LOCATIONS = [
@@ -278,12 +276,8 @@ const UIOverlay = ({
   }, []);
 
   // Pipeline store state
-  const pipelineIsRunning = usePipelineStore((s) => s.isRunning);
-  const pipelineIsPaused = usePipelineStore((s) => s.isPaused);
   const pipelineAutoApprove = usePipelineStore((s) => s.autoApprove);
-  const pipelineConnectedRepo = usePipelineStore((s) => s.connectedRepo);
   const pipelineConnectedRepos = usePipelineStore((s) => s.connectedRepos);
-  const pipelineCurrentTaskId = usePipelineStore((s) => s.currentTaskId);
   const [selectedRepoSlugs, setSelectedRepoSlugs] = useState(new Set());
 
   // Pipeline tasks derived from objects store — stabilized reference
@@ -302,14 +296,6 @@ const UIOverlay = ({
     pipelineTasksRef.current = newTasks;
     return newTasks;
   }, [allObjects]);
-  const pipelineStatusCounts = useMemo(() => {
-    const counts = {};
-    for (const task of pipelineTasks) {
-      const status = task.merfolkData?.status || TASK_STATUS.QUEUED;
-      counts[status] = (counts[status] || 0) + 1;
-    }
-    return counts;
-  }, [pipelineTasks]);
 
   // Restore pipeline state when space changes
   useEffect(() => {

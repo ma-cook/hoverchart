@@ -250,7 +250,7 @@ const Connection = React.memo(
     onLineTextSubmit,
     onLineTextStyleChange,
     // PERFORMANCE: Pass store state as props to avoid individual subscriptions
-    selectedConnection,
+    _selectedConnection,
     // PERFORMANCE: Single hash computed once in the parent for ALL objects,
     // replaces the per-Connection O(N) nearbyObjectsHash loop.
     objectsPositionHash,

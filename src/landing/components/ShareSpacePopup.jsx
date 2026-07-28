@@ -40,8 +40,6 @@ export const ShareSpacePopup = React.memo(
     const [selectedMembers, setSelectedMembers] = useState(new Set());
     const [searchQuery, setSearchQuery] = useState('');
 
-    if (!show || !space) return null;
-
     // Filter out current user, only show other org members
     const otherMembers = Array.isArray(organizationMembers)
       ? organizationMembers.filter((m) => m.userId !== currentUserId)
@@ -59,6 +57,8 @@ export const ShareSpacePopup = React.memo(
           (m.email || '').toLowerCase().includes(q)
       );
     }, [otherMembers, searchQuery]);
+
+    if (!show || !space) return null;
 
     const toggleMember = (userId) => {
       setSelectedMembers((prev) => {

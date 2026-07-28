@@ -245,12 +245,6 @@ const Octahedron = ({
   const lodLevel = useLODStore(
     useCallback((state) => state.getLODLevel(id), [id])
   );
-  const isChildOfContainer = useLODStore(
-    useCallback((state) => state.isChildOfContainer(id), [id])
-  );
-  const isParentObject = useLODStore(
-    useCallback((state) => state.isParent(id), [id])
-  );
   const showFaceText = useLODStore(
     useCallback((state) => state.faceTextVisible.get(id) !== false, [id])
   );
@@ -760,7 +754,7 @@ const Octahedron = ({
     [id, octahedronState.scale, scale, position, octahedronActions.updateOctahedron]
   );
 
-  const getFaceTextOffset = useCallback((fontSize, faceName) => {
+  const getFaceTextOffset = useCallback((fontSize, _faceName) => {
     const baseOffset = fontSize * 0.3;
     return baseOffset;
   }, []);

@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 
 import { TransformControls as DreiTransformControls, Html } from '@react-three/drei';
 import InstancedLine from './InstancedLine';
@@ -184,12 +184,6 @@ const Cube = ({
   // Get LOD level for this cube from LOD store
   const lodLevel = useLODStore(
     useCallback((state) => state.getLODLevel(id), [id])
-  );
-  const isChildOfContainer = useLODStore(
-    useCallback((state) => state.isChildOfContainer(id), [id])
-  );
-  const isParentObject = useLODStore(
-    useCallback((state) => state.isParent(id), [id])
   );
   const showFaceText = useLODStore(
     useCallback((state) => state.faceTextVisible.get(id) !== false, [id])
@@ -1420,7 +1414,6 @@ const Cube = ({
   const shouldRenderFaces = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
   const shouldRenderText = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
   const shouldRenderFaceText = shouldRenderText && showFaceText;
-  const shouldRenderIndicators = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
   const shouldRenderUI = !isLODRestricted || lodLevel === LOD_LEVELS.FULL;
 
   return (

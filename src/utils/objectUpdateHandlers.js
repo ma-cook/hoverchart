@@ -232,7 +232,6 @@ export const handleObjectUpdate = ({
 const callUpsertObjectPosition = (userId, spaceId, object) => {
   try {
     api.post('/api/objects/upsert-position', { userId, spaceId, object }).catch(() => {
-    });
-  } catch {
-  }
+    }); // eslint-disable-line no-empty
+  } catch { /* ignore */ }
 };

@@ -70,7 +70,7 @@ export const useCubeSelectors = (cubeId) => {
 };
 
 // Hook to get all store actions for a specific object type
-export const useCubeActions = (cubeId) => {
+export const useCubeActions = (_cubeId) => {
   const createCube = useCubeStore((state) => state.createCube);
   const updateCube = useCubeStore((state) => state.updateCube);
   const deleteCube = useCubeStore((state) => state.deleteCube);
@@ -167,7 +167,7 @@ export const usePlaneSelectors = (planeId) => {
   };
 };
 
-export const usePlaneActions = (planeId) => {
+export const usePlaneActions = (_planeId) => {
   const createPlane = usePlaneStore((state) => state.createPlane);
   const updatePlane = usePlaneStore((state) => state.updatePlane);
   const deletePlane = usePlaneStore((state) => state.deletePlane);

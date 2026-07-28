@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useTetrahedronStore = createWithEqualityFn((set, get) => ({
   // State for all tetrahedrons
@@ -225,7 +224,7 @@ const useTetrahedronStore = createWithEqualityFn((set, get) => ({
     });
   },
 
-  setTetrahedronIsScaleModified: (tetrahedronId, isModified) => {
+  setTetrahedronIsScaleModified: (tetrahedronId, isScaleModified) => {
     set((state) => {
       const newTetrahedrons = new Map(state.tetrahedrons);
       const tetrahedron = newTetrahedrons.get(tetrahedronId);

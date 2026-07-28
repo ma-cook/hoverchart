@@ -559,7 +559,7 @@ const useObjectsStore = createWithEqualityFn(
     },
 
     // Batch create multiple objects to prevent infinite re-render loops
-    batchCreateObjects: async (objectsData, user, currentSpaceId) => {
+    batchCreateObjects: async (objectsData, _user, _currentSpaceId) => {
       const state = get();
       const currentObjects = state.objects || [];
       const newCreatedObjectIds = new Set(state.createdObjectIds);

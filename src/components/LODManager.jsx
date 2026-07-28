@@ -60,13 +60,9 @@ const LODManager = ({ enabled = true }) => {
   // PERFORMANCE: Select only reactive LOD state with shallow equality —
   // avoids re-renders when _lodVersion bumps (which happens on every LOD update).
   const { 
-    childParentMap, 
-    parentIds,
     lodEnabled,
   } = useLODStore(
     (s) => ({
-      childParentMap: s.childParentMap,
-      parentIds: s.parentIds,
       lodEnabled: s.lodEnabled,
     }),
     shallow

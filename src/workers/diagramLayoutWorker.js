@@ -86,7 +86,7 @@ function filterConnections(connections, nodesMap, filter) {
  *      container.  Component children (internalComponentChildren) are separate
  *      tree nodes at the next depth level.
  */
-function layoutNodes(nodesEntries, connections, hierarchy, filter) {
+function layoutNodes(nodesEntries, connections, hierarchy, _filter) {
   const nodesMap = new Map(nodesEntries);
   const parentChildMap = new Map(
     (hierarchy.parentChildMap || []).map(([k, v]) => [k, new Set(v)])

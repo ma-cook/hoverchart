@@ -408,7 +408,7 @@ export const connectionMethods = {
       return obj;
     };
 
-    const startTime = performance.now();
+    const _startTime = performance.now();
 
     try {
       const objects = allObjectsToSave.map((obj) =>
@@ -536,8 +536,6 @@ export const connectionMethods = {
           );
         }
       }
-
-      const duration = ((performance.now() - startTime) / 1000).toFixed(2);
 
       return { success: true, chunks: allResults };
     } catch (error) {

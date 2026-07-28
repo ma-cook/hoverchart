@@ -11,7 +11,7 @@ function loadPersisted(key) {
 function persist(key, value) {
   try {
     localStorage.setItem(`contentIdx:${key}`, JSON.stringify(value));
-  } catch {}
+  } catch { /* ignore */ }
 }
 
 const useContentIndexStore = createWithEqualityFn((set) => ({
@@ -36,7 +36,7 @@ const useContentIndexStore = createWithEqualityFn((set) => ({
 
   reset: () => {
     ['manifest', 'lastPopulated', 'totalChunks'].forEach(k => {
-      try { localStorage.removeItem(`contentIdx:${k}`); } catch {}
+      try { localStorage.removeItem(`contentIdx:${k}`); } catch { /* ignore */ }
     });
     set({ manifest: [], lastPopulated: null, totalChunks: 0 });
   },

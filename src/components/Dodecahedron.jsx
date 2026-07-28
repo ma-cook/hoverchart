@@ -270,12 +270,6 @@ const Sphere = React.memo(
     const lodLevel = useLODStore(
       useCallback((state) => state.getLODLevel(id), [id])
     );
-    const isChildOfContainer = useLODStore(
-      useCallback((state) => state.isChildOfContainer(id), [id])
-    );
-    const isParentObject = useLODStore(
-      useCallback((state) => state.isParent(id), [id])
-    );
     const showFaceText = useLODStore(
       useCallback((state) => state.faceTextVisible.get(id) !== false, [id])
     );

@@ -1,4 +1,4 @@
-import { api, onSocket, emitSocket, connectSocket, disconnectSocket } from '../api-client';
+import { onSocket, emitSocket, connectSocket, disconnectSocket } from '../api-client';
 
 const TURN_URL = import.meta.env.VITE_TURN_URL || 'turn:relay.metered.ca:443';
 const TURN_USERNAME = import.meta.env.VITE_TURN_USERNAME || 'e8dd65f183e28d282e8b83b0';

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { Line } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 

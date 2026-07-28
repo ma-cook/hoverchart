@@ -5,7 +5,6 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']);
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
-const MAX_MODEL_SIZE = 50 * 1024 * 1024;
 
 const uploadFileGeneric = async (file, userId, spaceId, folder, progressCallback = null) => {
   const fileExtension = file.name?.split('.').pop() || 'bin';

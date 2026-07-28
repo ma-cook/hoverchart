@@ -13,7 +13,7 @@ function loadPersisted(key) {
 function persist(key, value) {
   try {
     localStorage.setItem(`llm:${key}`, JSON.stringify(value));
-  } catch {}
+  } catch { /* ignore */ }
 }
 
 const useLlmStore = createWithEqualityFn((set, get) => ({
@@ -46,7 +46,7 @@ const useLlmStore = createWithEqualityFn((set, get) => ({
 
   reset: () => {
     ['providerId', 'apiKey', 'models', 'selectedModel'].forEach((k) => {
-      try { localStorage.removeItem(`llm:${k}`); } catch {}
+      try { localStorage.removeItem(`llm:${k}`); } catch { /* ignore */ }
     });
     set({ providerId: null, apiKey: null, models: [], selectedModel: null });
   },

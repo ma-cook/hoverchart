@@ -1,6 +1,6 @@
 import { api } from '../api-client';
 
-export async function addSharedSpaceReference(db, userId, spaceId, ownerId) {
+export async function addSharedSpaceReference(db, userId, spaceId) {
   try {
     await api.patch(`/api/spaces/${spaceId}`, {
       shared_with: [userId],
@@ -29,7 +29,7 @@ export async function getSharedSpaces(db, userId) {
   } catch { return []; }
 }
 
-export async function registerSharedSpaceFromUrl(db, userId, spaceId, ownerId) {
+export async function registerSharedSpaceFromUrl(db, userId, spaceId) {
   try {
     const space = await api.get(`/api/spaces/${spaceId}`, { retries: 0 }).catch(() => null);
     if (space) {

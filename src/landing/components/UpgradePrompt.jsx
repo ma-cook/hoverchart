@@ -47,7 +47,7 @@ const UpgradePrompt = React.memo(({ show, onClose, currentTier = 'free' }) => {
           Space Limit Reached
         </h2>
         <p style={{ margin: '0 0 20px', fontSize: '14px', color: '#666', lineHeight: 1.5 }}>
-          You've reached the maximum of {limit} spaces on the{' '}
+          You&apos;ve reached the maximum of {limit} spaces on the{' '}
           <strong>{currentTier}</strong> plan. Upgrade to create up to 10 spaces.
         </p>
         <div

@@ -1,4 +1,4 @@
-import React, { useRef, memo } from 'react';
+import { useRef, memo } from 'react';
 import { PerspectiveCamera } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 

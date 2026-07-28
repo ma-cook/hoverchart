@@ -44,12 +44,6 @@ const LineUI = ({
     return baseStyle;
   };
 
-  // Extract just the base style (without direction) for UI display purposes
-  const getBaseStyle = (connection) => {
-    if (!connection) return 'straight';
-    return connection.styleType || connection.lineStyle || 'straight';
-  };
-
   // Sync currentLineStyle in store when connection changes
   useEffect(() => {
     const newFullStyle = getFullStyle(currentConnection);

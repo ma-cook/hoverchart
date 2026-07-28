@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useTextObjectStore = createWithEqualityFn((set, get) => ({
   // Text objects state - keyed by object ID

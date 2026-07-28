@@ -11,7 +11,7 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
  * @param {boolean} props.visible - Whether the indicator is visible
  */
 const SnapLineIndicator = ({ points, axis, visible }) => {
-  const [fadeOut, setFadeOut] = useState(false);
+  const [, setFadeOut] = useState(false);
 
   // Color mapping based on axes with yellow as base
   const colors = {

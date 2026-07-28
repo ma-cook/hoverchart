@@ -63,8 +63,8 @@ const KP_WRIST = 0;
 const KP_MIDDLE_MCP = 9;
 /** Match palmDecode.js: same expansion factors so the ROI shape stays stable. */
 const ROI_THETA0 = Math.PI / 2;
-const ROI_DSCALE = 2.6;
-const ROI_DY = -0.5;
+const _ROI_DSCALE = 2.6;
+const _ROI_DY = -0.5;
 
 let ort = null;
 let handDetectorSession = null;

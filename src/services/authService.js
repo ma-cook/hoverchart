@@ -1,4 +1,4 @@
-import { api, setTokens, loadTokens, clearTokens } from '../api-client';
+import { api, setTokens } from '../api-client';
 import useAuthStore from '../stores/authStore';
 
 export const signInUser = async () => {

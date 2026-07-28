@@ -9,7 +9,7 @@ const getGuestId = () => {
   return guestId;
 };
 
-export const setUserPresence = (userId, spaceId = null, userMeta = {}) => {
+export const setUserPresence = (userId, spaceId = null, _userMeta = {}) => {
   if (spaceId) {
     emitSocket('signaling:join', { spaceId });
   }

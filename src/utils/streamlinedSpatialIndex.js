@@ -7,8 +7,8 @@
 // PERFORMANCE OPTIMIZATION: Module-level reusable objects
 // Avoids GC pressure by reusing these instead of creating new objects each call
 // =============================================================================
-const tempPoint = { x: 0, y: 0, z: 0 };
-const tempBounds = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
+const _tempPoint = { x: 0, y: 0, z: 0 };
+const _tempBounds = { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 };
 
 /**
  * 3D Point class with minimal overhead

@@ -412,7 +412,6 @@ export function repositionIncomingTasks(repoSlug) {
     return headerText;
   };
 
-  const spaceOwnerId = window.currentSpaceOwner;
   const currentSpaceId = window.currentSpaceId;
 
   // Mark unpositioned tasks as positioned with correct type/style, then reposition all

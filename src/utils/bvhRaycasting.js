@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import useLODStore, { calculateLODLevel, LOD_THRESHOLDS } from '../stores/lodStore';
+import useLODStore, { calculateLODLevel } from '../stores/lodStore';
 
 /**
  * BVH (Bounding Volume Hierarchy) Accelerated Raycasting System
@@ -588,7 +588,7 @@ class BVHAcceleratedRaycaster {
 
     const ray = raycaster.ray;
     const position = virtualObject.position;
-    const scale = virtualObject.scale || { x: 1, y: 1, z: 1 };
+    const _scale = virtualObject.scale || { x: 1, y: 1, z: 1 };
 
     // Always create a large, easy-to-hit bounding box for debugging
     const size = 10; // Large size to ensure we can hit it

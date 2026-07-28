@@ -47,7 +47,7 @@ class BroadcastSession {
       await pc.setLocalDescription(offer);
       emitSocket('signaling:offer', { to: viewerId, offer: { type: offer.type, sdp: offer.sdp } });
 
-      const unsubscribeOffer = onSocket('signaling:answer', ({ from, answer }) => {
+      const _unsubscribeOffer = onSocket('signaling:answer', ({ from, answer }) => {
         if (from === viewerId && !pc.currentRemoteDescription) {
           pc.setRemoteDescription(new RTCSessionDescription(answer)).catch(console.error);
         }
@@ -91,13 +91,13 @@ export const startBroadcasting = async (userId, spaceId, planeId, stream) => {
   const broadcastSession = new BroadcastSession(broadcastId, stream, userId, spaceId);
   activeStreams.set(`${spaceId}-${planeId}`, { broadcastId, stream, broadcastSession });
 
-  const unsubOffer = onSocket('signaling:offer', async ({ from, offer }) => {
+  const unsubOffer = onSocket('signaling:offer', async ({ from, _offer }) => {
     if (from === userId) return;
     broadcastSession.createOfferForViewer(from);
   });
 
   try {
-    const user = await api.get('/api/auth/verify', { retries: 0 }).catch(() => null);
+    await api.get('/api/auth/verify', { retries: 0 }).catch(() => null);
     await api.patch(`/api/spaces/${spaceId}/objects/${planeId}`, {
       metadata: { broadcastId, broadcasting: true, broadcasterId: userId, broadcastType: 'webcam' },
     });

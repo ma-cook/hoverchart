@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { Line } from '@react-three/drei';
 import { useAnimatedConnectionLineStore } from '../stores';
 import { useAnimatedLine } from '../hooks/useConnectionAnimationManager';

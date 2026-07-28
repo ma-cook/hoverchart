@@ -117,7 +117,7 @@ const OctahedronFace = React.memo(
       [onIndicatorClick, faceName]
     );
 
-    const getFaceTextOffset = useCallback((fontSize, faceName) => {
+    const getFaceTextOffset = useCallback((fontSize, _faceName) => {
       const baseOffset = fontSize * 0.3;
       return baseOffset;
     }, []);

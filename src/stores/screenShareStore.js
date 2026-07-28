@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const DEFAULT_SCREEN_SHARE = {
   hasError: false,

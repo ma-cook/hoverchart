@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 import { saveConnection } from '../services/connectionsService';
 import useConnectionStore from './connectionStore';
 import useObjectsStore from './objectsStore';

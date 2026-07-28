@@ -15,8 +15,6 @@ const isMobile =
 const FACE_SIZE = isMobile ? 15.6 : 9.8;
 const SHARED_FACE_GEOMETRY = new THREE.BoxGeometry(FACE_SIZE, FACE_SIZE, 0.05);
 
-const SELECTED_OPACITY = 0.3;
-
 // Material cache for face materials - prevents recreating materials on every render
 const materialCache = {
   invisible: new THREE.MeshBasicMaterial({

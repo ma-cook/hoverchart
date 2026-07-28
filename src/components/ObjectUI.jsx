@@ -26,9 +26,6 @@ const ObjectUI = React.memo(
     const lastPosition = useRef(null);
 
     // Use color picker store
-    const isColorPickerOpen = useColorPickerStore(
-      (state) => state.isColorPickerOpen
-    );
     const openColorPicker = useColorPickerStore(
       (state) => state.openColorPicker
     );

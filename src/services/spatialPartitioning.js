@@ -465,7 +465,7 @@ export const cellExistsBulk = async (userId, spaceId, cellCoordsList) => {
   // For uncached cells, check in parallel
   let uncachedResults = [];
   if (uncachedCells.length > 0) {
-    const promises = uncachedCells.map(async ({ coords, cellId, cacheKey }) => {
+    const promises = uncachedCells.map(async ({ coords, _cellId, cacheKey }) => {
       try {
         const cell = await getCell(userId, spaceId, coords.x, coords.y, coords.z);
         const exists = cell !== null;
@@ -873,9 +873,6 @@ export const deleteObjectFromCell = async (
     return false;
   }
 };
-
-// Track callbacks for cell subscriptions
-const cellCallbacks = new Map(); // subscriptionKey -> Set(callbacks)
 
 /**
  * Subscribe to cell changes using polling

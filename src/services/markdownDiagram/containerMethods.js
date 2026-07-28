@@ -269,7 +269,7 @@ export const containerMethods = {
     );
     if (hierarchyContainerExists) return;
 
-    const { graphNodes, childParentMap, nodePositions, nodeScales, rootNodes } =
+    const { graphNodes, _childParentMap, nodePositions, nodeScales, rootNodes } =
       context;
 
     const hierarchyNodes = [];

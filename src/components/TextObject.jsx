@@ -29,7 +29,7 @@ import { calculateAxisSnap } from '../utils/snappingUtils';
 import SnapLineIndicator from './SnapLineIndicator';
 // Import unified global click handler
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
-import { getStatusColor, getStatusLabel, isTaskObject } from '../services/pipelineTaskService';
+import { getStatusColor, getStatusLabel } from '../services/pipelineTaskService';
 import { toggleTaskExpansion } from '../services/repoContainerService';
 import { revertCommit } from '../services/githubIssuesService';
 
@@ -496,7 +496,7 @@ const TextObject = React.memo(
         ) {
           setLocalText(text);
           textContentRef.current = text;
-        } else {
+        } else { /* ignore */
         }
       }
     }, [text, isLocallyEditing, isEditing, isActivelyEditing, localText, id]);
@@ -798,7 +798,7 @@ const TextObject = React.memo(
 
         lastUpdateRef.current = currentState;
         onUpdate(id, currentState);
-      } else {
+      } else { /* ignore */
       }
     }, [
       id,
@@ -1492,7 +1492,7 @@ const TextObject = React.memo(
     const handleStyleChange = useCallback(
       (newStyle) => {
         // Define applyStyleToSelection function inside useCallback
-        const applyStyleToSelectionInternal = (style, start, end) => {
+        const applyStyleToSelectionInternal = (style) => {
           if (!textAreaRef.current) {
             return;
           }
@@ -1514,7 +1514,7 @@ const TextObject = React.memo(
           try {
             currentSelection.selection.removeAllRanges();
             currentSelection.selection.addRange(currentSelection.range);
-          } catch (error) {
+          } catch {
             return;
           }
 
@@ -2295,7 +2295,7 @@ const TextObject = React.memo(
         {/* Camera distance calculation for dynamic transform control sizing */}
         {(() => {
           // Calculate distance from camera to object for dynamic control sizing
-          const getTransformControlSize = () => {
+          const _getTransformControlSize = () => {
             if (!groupRef.current || !camera) return 0.5; // Default size
 
             const objectPosition = new THREE.Vector3();
@@ -2312,8 +2312,6 @@ const TextObject = React.memo(
             );
             return baseSize * scaleFactor;
           };
-
-          const transformControlSize = getTransformControlSize();
 
           return (
             <>

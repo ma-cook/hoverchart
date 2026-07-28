@@ -1,5 +1,4 @@
 // UserForm.jsx
-import React from 'react';
 
 const UserForm = ({ formData, handleFormChange, handleFormSubmit }) => {
   return (

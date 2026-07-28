@@ -64,7 +64,7 @@ const workerApi = {
         }
 
         results[i] = { id, hasIntersections, pathPoints };
-      } catch (err) {
+      } catch {
         // On any per-connection error, return a straight line so the
         // connection still renders rather than disappearing.
         results[i] = {

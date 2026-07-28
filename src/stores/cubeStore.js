@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 // Selector cache to avoid creating new selector functions on every render
 const selectorCache = new Map();

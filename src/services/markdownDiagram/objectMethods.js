@@ -151,7 +151,6 @@ export const objectMethods = {
     // Yield to the main thread every N batches to keep the UI responsive.
     // Flush accumulated objects to the Zustand store every STORE_FLUSH_SIZE items
     // so React can start progressive mounting while more objects are being built.
-    const YIELD_EVERY_N_BATCHES = 1;      // yield after every batch
     const STORE_FLUSH_SIZE = 1000;
 
     // Build a lookup map of existing objects by merfolkData.nodeId to avoid re-creating

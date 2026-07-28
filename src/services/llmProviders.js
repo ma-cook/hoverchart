@@ -78,7 +78,7 @@ export const PROVIDERS = [
     getHeaders: (_apiKey) => ({
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model) => {
+    formatBody: (messages, _model) => {
       const msgs = messages.filter((m) => m.role !== 'system');
       const system = messages.find((m) => m.role === 'system')?.content;
       return {

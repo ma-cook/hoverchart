@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   createOrganization,
   getUserOrganizations,
-  getOrganizationMembers,
   inviteUserToOrganization,
   acceptInvite,
   declineInvite,
@@ -80,7 +79,7 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
       if (fetchedInvites.status === 'fulfilled') {
         setPendingInvites(fetchedInvites.value);
       }
-    } catch (e) {
+    } catch {
       // Don't wipe existing state on error
     } finally {
       setLoading(false);

@@ -1,8 +1,8 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { shaderMaterial } from '@react-three/drei';
 import { extend } from '@react-three/fiber';
-import { Color, DoubleSide, AdditiveBlending } from 'three';
+import { Color, AdditiveBlending } from 'three';
 
 /**
  * @typedef {Object} FakeGlowMaterialProps

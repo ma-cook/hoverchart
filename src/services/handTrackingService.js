@@ -73,7 +73,6 @@ async function ensureWorker() {
       numThreads,
     })
     .then((info) => {
-      // eslint-disable-next-line no-console
       console.info('[handTrackingService] worker ready', info);
       return info;
     });
@@ -132,7 +131,6 @@ async function runOnce() {
   try {
     bitmap = await createImageBitmap(video);
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('[handTrackingService] createImageBitmap failed:', err);
     return;
   }
@@ -165,7 +163,6 @@ async function runOnce() {
       fpsTimer = now;
     }
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error('[handTrackingService] detect error:', err);
     useHandTrackingStore.getState().setError(err?.message ?? String(err));
   }
@@ -251,10 +248,8 @@ export async function startHandTracking() {
     store.setEnabled(true);
     scheduleNext();
 
-    // eslint-disable-next-line no-console
     console.info('[handTrackingService] started');
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error('[handTrackingService] start failed:', err);
     store.setError(err?.message ?? String(err));
     await stopHandTracking();

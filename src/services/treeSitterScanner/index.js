@@ -97,8 +97,7 @@ export const scanWithTreeSitter = async (
   elements,
   foundItems,
   fileFunctions,
-  moduleImportRelationships,
-  _functionCallRelationships
+  moduleImportRelationships
 ) => {
   if (language === 'python' && (fileName === '__init__' || fileName === 'init')) return;
 

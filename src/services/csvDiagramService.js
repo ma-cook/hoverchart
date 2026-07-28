@@ -1,6 +1,6 @@
 import { getGroupColor, DESIRED_GAP } from './markdownDiagram/constants.js';
 import { getCellCoordinates } from './spatialPartitioning.js';
-import { saveObjectToCell } from './spatialObjectsService.js';
+
 
 // ── CSV Parsing ──────────────────────────────────────────────────────────────
 

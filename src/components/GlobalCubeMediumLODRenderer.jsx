@@ -110,7 +110,6 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       // Parent objects get a different color/opacity
       const isParent = parentIds.has(cube.id);
       const color = isParent ? '#e0e0e0' : (cube.color || '#2a2a2a');
-      const opacity = isParent ? 0.6 : 0.8;
 
       // Check if this cube's data changed
       const lastKnown = lastDataRef.current.get(cubeId);

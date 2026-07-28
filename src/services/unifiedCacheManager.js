@@ -5,12 +5,6 @@
  * connectionsService_clean.js, spatialObjectsService.js, and memoization caches
  */
 
-// Cache statistics tracking
-const cacheStats = new Map();
-
-// Main unified cache storage
-const unifiedCache = new Map();
-
 // Cache configuration
 const CACHE_CONFIG = {
   // Cell existence cache (from spatialPartitioning.js)

@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useFaceStore = createWithEqualityFn((set, get) => ({
   // State for all faces across all objects

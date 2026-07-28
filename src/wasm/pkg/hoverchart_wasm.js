@@ -262,10 +262,10 @@ function decodeText(ptr, len) {
 
 let WASM_VECTOR_LEN = 0;
 
-let wasmModule, wasm;
+let _wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
-    wasmModule = module;
+    _wasmModule = module;
     cachedFloat32ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;

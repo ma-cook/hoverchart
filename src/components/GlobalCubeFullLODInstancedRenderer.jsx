@@ -1,6 +1,6 @@
 import React, { useRef, useMemo, useCallback } from 'react';
 import * as THREE from 'three';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import { useCubeStore } from '../stores';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';

@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useIndicatorsStore = createWithEqualityFn((set, get) => ({
   // Indicator state

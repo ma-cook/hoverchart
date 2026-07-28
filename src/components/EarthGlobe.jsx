@@ -68,7 +68,7 @@ const EarthGlobe = () => {
   const flyingRef = useRef(false);
 
   const controls = useThree((state) => state.controls);
-  const camera = useThree((state) => state.camera);
+  const _camera = useThree((state) => state.camera);
 
   // --- Click-to-fly handlers ---
 

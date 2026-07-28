@@ -39,7 +39,6 @@ import {
   useTetrahedronStore,
   useDodecahedronStore,
   useSpatialManagerStore,
-  useDiagramStore,
   useCodeStore,
 } from './stores';
 
@@ -72,9 +71,8 @@ import { objectVirtualizer } from './utils/objectVirtualization';
 /**
  * Main application component
  */
-const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = false, spaceType: spaceTypeProp = 'diagram' }) => {
+const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypeProp = 'diagram' }) => {
   // Base state
-  const [backgroundColor] = useState('white');
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
   const [currentSpaceOwner, setCurrentSpaceOwner] = useState(null);
 
@@ -96,12 +94,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
     return Array.isArray(objectsFromStore) ? objectsFromStore : [];
   }, [objectsFromStore]);
   const setObjects = useObjectsStore((state) => state.setObjects);
-  const isInitialLoading = useObjectsStore(
-    (state) => state.isInitialLoading
-  );
-  const isCellsLoading = useSpatialManagerStore(
-    (state) => state.loadingCells.size > 0
-  );
   const setIsInitialLoading = useObjectsStore(
     (state) => state.setIsInitialLoading
   );
@@ -266,9 +258,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
   );
   const setShowLineTextStyleUI = useConnectionStore(
     (state) => state.setShowLineTextStyleUI
-  );
-  const connectionsVisible = useConnectionStore(
-    (state) => state.connectionsVisible
   );
   const setFocusedObjectId = useConnectionStore(
     (state) => state.setFocusedObjectId
@@ -507,9 +496,6 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
     currentSpaceOwner,
     publicSpaceReady,
   ]);
-  const isReadOnly =
-    !!publicSpaceId && (!user || currentSpaceOwner !== user?.uid);
-
   // Check for unauthorized access and redirect to volscape.com
   useEffect(() => {
     // If we have a currentSpaceId but no authentication and no public space access
@@ -714,7 +700,7 @@ const App = ({ initialSpaceContext = null, onBackToLanding = null, trialMode = f
                       continue;
                     }
                   }
-                } catch (error) { /* ignore */ }
+                } catch { /* ignore */ }
 
                 // Track object change
                 if (window.trackObjectChange) {

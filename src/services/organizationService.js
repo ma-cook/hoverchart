@@ -6,12 +6,12 @@ export const PLAN_LIMITS = {
   business: 50,
 };
 
-export const createOrganization = async (userId, orgName, plan = 'free') => {
+export const createOrganization = async (orgName, _plan = 'free') => {
   const response = await api.post('/api/organizations', { name: orgName });
   return response.data || response;
 };
 
-export const getUserOrganizations = async (userId) => {
+export const getUserOrganizations = async () => {
   try {
     const response = await api.get('/api/organizations');
     return response.data || response || [];
@@ -76,12 +76,12 @@ export const getPendingInvitesForUser = async (userEmail) => {
   }
 };
 
-export const acceptInvite = async (orgId, userId, userEmail) => {
+export const acceptInvite = async (orgId, userId) => {
   const response = await api.post(`/api/organizations/${orgId}/members`, { user_id: userId, role: 'member' });
   return response.data || response;
 };
 
-export const declineInvite = async (orgId, userEmail) => {
+export const declineInvite = async (_orgId) => {
   console.warn('declineInvite is not supported in the new API');
 };
 
@@ -103,6 +103,6 @@ export const updateOrganizationPlan = async (orgId, adminUserId, newPlan) => {
   console.warn('updateOrganizationPlan is not supported in the new API');
 };
 
-export const deleteOrganization = async (orgId, adminUserId) => {
+export const deleteOrganization = async (_orgId) => {
   console.warn('deleteOrganization is not supported in the new API');
 };

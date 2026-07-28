@@ -610,7 +610,7 @@ const detectRepoType = async (owner, repoName, token, structure) => {
     } else {
       console.log(`  [detectRepoType] package.json not found or empty`);
     }
-  } catch (_e) {
+  } catch {
     console.log(`  [detectRepoType] package.json missing or unparseable`);
   }
 
@@ -713,8 +713,7 @@ const traverseVanillaAST = (
   elements,
   foundItems,
   fileFunctions,
-  moduleImportRelationships,
-  functionCallRelationships
+  moduleImportRelationships
 ) => {
   // Determine initial container type from folder conventions (same as React rules)
   let containerType = 'utility';
@@ -997,8 +996,7 @@ const traversePythonSource = (
   elements,
   foundItems,
   fileFunctions,
-  moduleImportRelationships,
-  functionCallRelationships
+  moduleImportRelationships
 ) => {
   // Determine container type from folder conventions
   let containerType = 'utility';
@@ -1139,7 +1137,7 @@ const traversePythonSource = (
 
   // ── Extract top-level classes ─────────────────────────────────────────────
   // Pattern: `class ClassName(Base):` or `class ClassName:` at zero indentation
-  const classPattern = /^class\s+(\w+)\s*[\(:]?/gm;
+  const classPattern = /^class\s+(\w+)\s*[(]?/gm;
   let classMatch;
   while ((classMatch = classPattern.exec(source)) !== null) {
     // Verify it's at the top level (starts at column 0)
@@ -1556,7 +1554,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // pollute the diagram with demo scripts and local variables.  React repos
     // keep these because components in examples can still be meaningful.
     const nonSourceDirPattern = /(?:^|\/)(?:examples?|demos?|samples?|tests?|__tests__|__mocks__|e2e|cypress|fixtures?|stories|storybook|migrations?|alembic|__pycache__)\//i;
-    const nonSourceFilePattern = /(?:^|\/)(?:debug[\-_]|test[\-_])/i;
+    const nonSourceFilePattern = /(?:^|\/)(?:debug[-_]|test[-_])/i;
     // Vendored library subdirectories: any file nested two or more levels inside
     // a /lib/ directory (e.g. src/lib/3d-ast/types/ast.ts) is third-party code and
     // should not be scanned as application nodes.
@@ -3513,7 +3511,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
           console.log(`   ${alias} → ${basename}`);
           // Add to moduleImportRelationships for files that import this alias
           // We need to find which files imported this alias — check all fileFunctions
-          for (const [sourceFileName] of fileFunctions) {
+          for (const [_sourceFileName] of fileFunctions) {
             // This is approximate — we'd need the actual import source to be precise
             // For now, just ensure the basename has a container
             if (!fileFunctions.has(basename)) {
@@ -3932,7 +3930,6 @@ const generateMerfolkMarkdown = ({
   storeUsageRelationships = new Map(),
   hookReturnValueRelationships = new Map(),
   repoType = 'react',
-  moduleImportRelationships = new Map(),
   nextjsRouteMap = new Map(),
   apiEndpoints = new Map(),
   dbModels = new Map(),
@@ -4068,7 +4065,6 @@ const generateMerfolkMarkdown = ({
 
   // Track all node IDs to detect duplicates
   const nodeIds = new Set();
-  const duplicates = [];
 
   // When a node ID would collide, it gets renamed with a _2, _3, … suffix.
   // This map tracks old → new so connection generators can update references.
@@ -4137,7 +4133,7 @@ const generateMerfolkMarkdown = ({
   });
   
   // Map internal helper components to their parent
-  internalComponents.forEach((data, fileName) => {
+  internalComponents.forEach((data, _fileName) => {
     const parentNeedsSuffix = filesNeedingSuffix.has(data.parent);
     const parentNodeId = parentNeedsSuffix ? `${data.parent}_file` : data.parent;
     const helperFilePath = fileFunctions.get(data.parent)?.filePath || '';
@@ -4251,7 +4247,7 @@ const generateMerfolkMarkdown = ({
   // Add internal helper components with parent-child relationships
   if (internalComponents.size > 0) {
     markdown += '\n%% Internal Helper Components\n';
-    internalComponents.forEach((data, fileName) => {
+    internalComponents.forEach((data, _fileName) => {
       // Use the actual parent component (first component found in file)
       const parentComponent = data.parent;
       // Check if parent needs _file suffix
@@ -4637,7 +4633,7 @@ const generateMerfolkMarkdown = ({
 
     // Add file→function connections with dashed arrows (containment)
     markdown += '\n%% File-Function Relationships\n';
-    fileFunctions.forEach((fileInfo, fileName) => {
+    fileFunctions.forEach((fileInfo, _fileName) => {
       const fileNodeId = fileInfo.nodeId;
 
       fileInfo.functions.forEach((funcName) => {
@@ -5120,7 +5116,7 @@ const generateMerfolkMarkdown = ({
     // • Otherwise create a minimal utility container so the interface gets
     //   a parent cube rather than appearing as a floating orphan.
     const ifaceOnlyContainers = new Map(); // sourceFile -> containerNodeId
-    sharedInterfaces.forEach((sourceFile, _ifaceName) => {
+    sharedInterfaces.forEach((sourceFile) => {
       if (ifaceOnlyContainers.has(sourceFile)) return; // already handled
       const fileInfo = fileFunctions.get(sourceFile);
       if (fileInfo?.nodeId) {
@@ -5403,11 +5399,17 @@ export const scanRepositoryAndGenerateDiagram = async (
         const store = (await import('../stores/diagramStore.js')).default;
         store.getState().setIsLspEnriching(true);
 
-        // Build file list from fetched entries
+        // Build file list from the content store (populated by generateMerfolkFromRepository)
+        const { getContentStore } = await import('./context/contentStore.js');
+        const { getBase64Store } = await import('./context/base64Store.js');
+        const cs = getContentStore();
+        const b64 = getBase64Store();
         const lspFiles = [];
-        for (const entry of fetched) {
-          if (!entry) continue;
-          lspFiles.push({ path: entry.file.path, content: entry.fileContent });
+        for (const [_entryId, entry] of cs.entries) {
+          if (!entry || !entry.sourcePath) continue;
+          const chunks = b64.getChunks(entry.chunks.map(c => c.id));
+          const content = chunks.map(c => c.text).join('');
+          if (content) lspFiles.push({ path: entry.sourcePath, content });
         }
 
         if (lspFiles.length > 0) {

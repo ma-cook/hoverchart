@@ -17,7 +17,7 @@ import GlobalTetrahedronLowLODRenderer from './GlobalTetrahedronLowLODRenderer';
 import GlobalOctahedronLowLODRenderer from './GlobalOctahedronLowLODRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { useCubeStore } from '../stores';
-import { acquireBudget, isCameraMoving, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
+import { acquireBudget, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
 

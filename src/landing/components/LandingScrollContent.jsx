@@ -1,4 +1,4 @@
-import React from 'react';
+
 
 const BRAND = '#cc8500';
 const BRAND_DARK = '#8a5a00';

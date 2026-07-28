@@ -223,7 +223,7 @@ function persistMessages(spaceId, mode, messages) {
   try {
     const toSave = messages.slice(-MAX_PERSISTED_MESSAGES);
     localStorage.setItem(`chat:${spaceId}:${mode}`, JSON.stringify(toSave));
-  } catch {}
+  } catch { /* ignore */ }
 }
 
 function loadPersistedMode(spaceId) {
@@ -235,7 +235,7 @@ function loadPersistedMode(spaceId) {
 function persistMode(spaceId, mode) {
   try {
     localStorage.setItem(`chat:${spaceId}:mode`, mode);
-  } catch {}
+  } catch { /* ignore */ }
 }
 
 const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
@@ -284,7 +284,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingMore] = useState(false);
 
   const textareaRef = useRef(null);
   const bottomRef = useRef(null);
@@ -323,7 +323,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
 
   useEffect(() => {
     const handleObjectsCleared = () => {
-      setGroupMessages([]);
+      setMessages([]);
       setPlanMessages([]);
       setCodeMessages([]);
     };
@@ -452,9 +452,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || !spaceId) return;
-    const userId = user ? user.uid : getGuestId();
-    const displayName = user ? (user.displayName || user.email || 'User') : 'Guest';
-    const photoURL = user ? (user.photoURL || null) : null;
     setSending(true);
     try {
       emitSocket('chat:message', { spaceId, text });
@@ -978,7 +975,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     try {
       const reposData = await fetchRepositories(token);
       setRepos(reposData);
-    } catch {}
+    } catch { /* ignore */ }
   };
 
   const handleSelectRepo = async (repo) => {

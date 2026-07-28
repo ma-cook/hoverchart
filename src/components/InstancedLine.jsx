@@ -18,7 +18,6 @@ const BASE_POSITIONS = new Float32Array([
 const _start = new THREE.Vector3();
 const _end = new THREE.Vector3();
 const _closestPoint = new THREE.Vector3();
-const _rayDirection = new THREE.Vector3();
 // Additional pre-allocated vectors for raycast to avoid .clone() calls
 const _lineDir = new THREE.Vector3();
 const _w0 = new THREE.Vector3();

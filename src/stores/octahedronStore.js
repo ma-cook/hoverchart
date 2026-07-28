@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useOctahedronStore = createWithEqualityFn((set, get) => ({
   octahedrons: new Map(),

@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import { shallow } from 'zustand/shallow';
 
 const useWebcamStreamStore = createWithEqualityFn((set, get) => ({
   // Webcam streams state - keyed by stream ID

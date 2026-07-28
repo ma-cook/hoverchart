@@ -22,7 +22,7 @@ const _midPoint = new THREE.Vector3();
 /**
  * Check if a point is within the camera frustum (with padding)
  */
-function isPointInFrustum(point, frustum, padding = 50) {
+function isPointInFrustum(point, frustum, _padding = 50) {
   if (!point || !Array.isArray(point) || point.length < 3) return false;
   
   tempPoint.set(point[0], point[1], point[2]);
@@ -64,7 +64,7 @@ function isConnectionVisible(connection, frustum, objectPositions) {
 /**
  * Simple spatial hash for fast object lookup
  */
-class SpatialHash {
+class _SpatialHash {
   constructor(cellSize = 100) {
     this.cellSize = cellSize;
     this.cells = new Map();

@@ -322,7 +322,7 @@ export const SpacesTable = React.memo(
               style={inviteBannerStyle}
             >
               <span style={INVITE_TEXT_STYLES}>
-                You've been invited to join{' '}
+                You&apos;ve been invited to join{' '}
                 <strong>{org.name}</strong>
               </span>
               <div style={INVITE_BTN_ROW}>

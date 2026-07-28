@@ -303,7 +303,7 @@ export const calculateFacePosition = (indicator, objects) => {
         // Removed excessive logging for performance
 
         // Get position data safely
-        let worldPos;
+        let _worldPos;
 
         // Get position from the indicator if available, or from the data if stored
         const position = indicator.cube?.position || indicator.position;
