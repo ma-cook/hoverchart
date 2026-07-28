@@ -698,95 +698,56 @@ LSP SEMANTIC ANALYSIS:
 TECH STACK: {techStack}
 
 ═══════════════════════════════════════════════════════════════
-TOOLS
+TOOLS (use these — do NOT fabricate tool calls)
 ═══════════════════════════════════════════════════════════════
 
-You have these tools:
-• file_outline(path) — get a structural outline of a file: function names, component names, exports, hooks, state variables, and their line numbers. Uses ~500 chars vs 32K for read_file. Use this FIRST to understand file structure.
-• quick_look(path, head, tail) — lightweight preview: first/last N lines of a file (fast, no full load)
-• read_file(path, offset, limit) — read a source file's contents with line numbers. Each line is prefixed with "N: content". Default 2000 lines, use offset to continue.
-• list_files(path) — list files in a directory
-• search_code(pattern) — find WHERE code lives (file names, node names, or content matches)
-• get_node_info(nodeId) — get full details about a component: type, file path, all connections, parent, children, exports, imports
-• get_dependencies(nodeId, direction) — find upstream (who depends on me) or downstream (what I depend on) relationships
-• find_path(source, target) — find shortest data-flow path between two components
-• search_nodes(query) — search components, functions, stores, or hooks by name/type in the diagram
-• get_community_info(communityId) — get architectural overview of a community: its summary, key components, internal and external connections
-• get_community_nodes(communityId) — list all nodes in a community with their types and file paths
-• search_communities(query) — find communities by keyword (name, node types, file paths)
-• edit(filePath, oldString, newString) — make targeted edits to existing files by replacing exact text. This is the PRIMARY way to modify files. You MUST read_file first to get the current content.
-• write(filePath, content) — create a new file or completely overwrite an existing file. Use for NEW files only.
-• task(prompt) — spawn a read-only sub-agent to research a question about the codebase
-
-IMPORTANT: search_code only tells you WHERE code is, not WHAT it contains. You MUST call read_file to see the actual source code before writing any modifications.
+• search_code(pattern) — find WHERE code lives. Returns file paths and node matches, NOT file contents.
+• search_nodes(query) — search components by name/type in the diagram.
+• file_outline(path) — structural outline with line numbers (~500 chars vs 32K for read_file). Use FIRST.
+• quick_look(path, head, tail) — first/last N lines preview (fast, no full load).
+• read_file(path, offset, limit) — full source with line numbers ("N: content"). Default 2000 lines, use offset to continue.
+• list_files(path) — list files in a directory.
+• get_node_info(nodeId) — full component details: type, file, connections, exports, imports.
+• get_dependencies(nodeId, direction) — upstream/downstream relationships.
+• find_path(source, target) — shortest data-flow path between components.
+• get_community_info/community_nodes/search_communities — architectural community queries.
+• get_lsp_definition/references/type_info/call_graph/overview — semantic analysis queries.
+• edit(filePath, oldString, newString) — targeted text replacement in existing files.
+• write(filePath, content) — create a new file or completely overwrite an existing file.
+• task(prompt) — spawn a read-only sub-agent to research a question.
 
 ═══════════════════════════════════════════════════════════════
-WORKFLOW — TWO PHASES
+WORKFLOW — DISCOVER then EDIT
 ═══════════════════════════════════════════════════════════════
 
-PHASE 1 — DISCOVER (use tools):
-1. Identify which components/files are affected by the user's request
-2. Use search_nodes or search_code to find WHERE each component is defined
-3. Use get_node_info or get_dependencies to understand relationships
-4. MANDATORY: Call read_file on EVERY file you plan to modify — you cannot write correct code without reading the current content first
+PHASE 1 — DISCOVER:
+1. Use search_nodes/search_code to find WHERE each affected component is defined
+2. Use file_outline(path) to see structure and line numbers before reading full files
+3. MANDATORY: Call read_file on EVERY file you plan to modify — you cannot write correct edits without reading exact content first
 
-PHASE 2 — EDIT (use tools to make changes):
-5. For each modification, call edit(filePath, oldString, newString) with the EXACT text to replace
-6. For new files, call write(filePath, content) with the complete file content
-7. You can make multiple edit calls in one round — batch related changes together
-8. After all edits, write a 1-2 sentence summary of what you changed
+PHASE 2 — EDIT:
+4. For modifications: call edit(filePath, oldString, newString) — oldString must be EXACT text from read_file output
+5. For new files: call write(filePath, content) with complete file content
+6. Batch related edits together in one round when possible
+7. After all edits, write a 1-2 sentence summary
 
-CRITICAL: Do NOT re-read files you have already read. Do NOT search after you have already found the files you need. The transition from DISCOVER to EDIT must be immediate.
-
-TIP: Use file_outline(path) first to see a file's structure (components, hooks, state, exports) with line numbers. This costs ~500 chars instead of reading the full file. Then use read_file with offset/limit to read only the specific section you need to modify.
-
-═══════════════════════════════════════════════════════════════
-WHEN TO STOP EXPLORING AND START EDITING
-═══════════════════════════════════════════════════════════════
-
-You have UNLIMITED tool calls — explore as much as you need. BUT:
-- Once you have read ALL the files you plan to modify, STOP exploring and START editing immediately
-- Do NOT re-read files or re-search after finding what you need
-- Each file should be read ONCE before editing
-- If you find yourself calling search_code or read_file on files you've already seen, switch to edit/write immediately
-- The goal is to produce working code, not to exhaustively explore every file
-
-═══════════════════════════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════
-
-For MODIFIED files: use the edit tool with the exact oldString from read_file and your newString replacement. Make multiple edit calls for multiple changes to the same file.
-For NEW files: use the write tool with the complete file content.
-
-Example workflow:
-1. read_file("src/components/TopBar.jsx") → get current content
-2. edit("src/components/TopBar.jsx", oldString="export default function TopBar() {", newString="export default function TopBar({ title }) {") → targeted change
-3. edit("src/components/TopBar.jsx", oldString='<div className="topbar">', newString='<div className="topbar">\n      <h1>{title}</h1>') → another targeted change
+CRITICAL: Once you have read ALL files you need, STOP exploring and START editing immediately. Do NOT re-read files you have already read.
 
 ═══════════════════════════════════════════════════════════════
 RULES
 ═══════════════════════════════════════════════════════════════
 
-1. ALWAYS search for component definitions before creating new files — use search_nodes, search_code, and list_files
-2. PRESERVE existing file paths — do NOT invent new paths
-3. Use the SAME import paths the existing code uses
-4. Use the edit tool for ALL modifications to existing files — do NOT regenerate entire files
-5. Use the write tool ONLY for new files that don't exist yet
-6. Use modern syntax and best practices for the target framework
-7. NEVER create a new file for a component that already exists in another file
-8. HTML elements (div, span, header, section, nav, etc.) and CSS classes are NOT separate components — they live INLINE inside existing component files. Do NOT create new component files for them.
-9. When the user mentions a UI element by name (e.g. "the TopBar", "the sidebar"), search for it first — it may be defined inline in an existing file, not as a standalone component. Once you find the file it lives in, IMMEDIATELY call read_file on that file.
-10. You MUST call read_file on every file you want to modify BEFORE using the edit tool. Without reading the file, you cannot know the exact text to use as oldString.
-12. After ANY tool returns a file path (from search_code, search_nodes, get_node_info, or list_files), you MUST call read_file on that path before editing. Do NOT keep searching — read the file first.
-13. You have UNLIMITED tool calls. Search and read as many files as you need to fully understand the codebase before making changes. Do not rush — gather complete context first.
-14. Once you have read all the files you need, STOP reading and start editing immediately. Do not re-read files or re-search after finding what you need.
-15. Each file should be read ONCE. Do not call read_file on the same file multiple times at different offsets — the default limit returns up to 2000 lines which is enough context.
-16. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy it precisely from the read_file output.
-17. NEVER fabricate file paths, imports, or code structure. If you are unsure whether a file or function exists, use search_code or read_file to verify — do NOT guess.
-18. Use file_outline(path) to quickly understand a file's structure — it shows components, functions, hooks, state variables, and exports with line numbers.
-19. Use quick_look(path) for a fast preview of a file's first/last lines without loading the full content. Use read_file when you need the complete file for editing.
-20. Check the CONTENT INDEX and IMPORT GRAPH sections above to understand what each file exports and which files depend on it — this prevents creating duplicate functionality.
-21. read_file returns lines prefixed with line numbers (e.g. "42:  code here"). Use these line numbers as reference when constructing edit calls — copy the EXACT text from the read_file output for your oldString.
+1. PRESERVE existing file paths and import paths — do NOT invent new ones
+2. Use edit for ALL modifications to existing files — write ONLY for new files that don't exist yet
+3. NEVER create a new file for a component that already exists — HTML elements (div, span, header, nav) and CSS classes live INLINE inside existing component files
+4. When the user mentions a UI element by name, search for it first — it may be defined inline, not as a standalone component. IMMEDIATELY call read_file on the file you find.
+5. You MUST call read_file on every file BEFORE editing — without reading, you cannot know the exact oldString to use
+6. After ANY tool returns a file path, call read_file on that path before editing — do NOT keep searching
+7. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy precisely from read_file output (lines are prefixed "N: content").
+8. NEVER fabricate file paths, imports, or code structure. Verify with search_code or read_file — do NOT guess
+9. Each file should be read ONCE (default 2000 lines). Do not re-read at different offsets.
+10. Use file_outline(path) first (~500 chars) to see structure, then read_file with offset/limit for only the section you need
+11. Check CONTENT INDEX and IMPORT GRAPH sections above to understand exports and dependencies — this prevents duplicates
 `;
 
 function formatFileSize(chars) {
@@ -797,16 +758,26 @@ function formatFileSize(chars) {
 
 export function buildFileTreeSection(fileTree, fileSizesMap) {
   if (!fileTree || fileTree.length === 0) return '(no repository files available)';
-  const capped = fileTree.length > 200 ? fileTree.slice(0, 200) : fileTree;
-  const suffix = fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : '';
   const sizes = fileSizesMap instanceof Map ? fileSizesMap : (fileSizesMap ? new Map(fileSizesMap) : null);
-  const lines = capped.map((filePath) => {
-    if (!sizes) return filePath;
-    const fileName = filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue|css|scss|html|json|yaml|yml|md)$/, '') || '';
-    const size = sizes.get(fileName);
-    return size ? `${filePath} (${formatFileSize(size)})` : filePath;
-  });
-  return lines.join('\n') + suffix;
+  const BUDGET = 8000;
+  const lines = [];
+  let charCount = 0;
+  let shown = 0;
+  let truncated = 0;
+
+  for (const filePath of fileTree) {
+    if (shown >= 200) { truncated = fileTree.length - shown; break; }
+    const fileName = sizes ? (filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue|css|scss|html|json|yaml|yml|md)$/, '') || '') : '';
+    const size = sizes?.get(fileName);
+    const line = size ? `${filePath} (${formatFileSize(size)})` : filePath;
+    if (charCount + line.length + 1 > BUDGET) { truncated = fileTree.length - shown; break; }
+    lines.push(line);
+    charCount += line.length + 1;
+    shown++;
+  }
+
+  if (truncated > 0) lines.push(`... and ${truncated} more files`);
+  return lines.join('\n');
 }
 
 export function buildComponentIndex(objects) {

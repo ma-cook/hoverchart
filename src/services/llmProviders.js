@@ -266,7 +266,7 @@ export async function sendToProvider({
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
 
-  const MAX_RETRIES = 20;
+  const MAX_RETRIES = 5;
   const timeoutMs = 5 * 60 * 1000;
 
   let res;
@@ -291,7 +291,7 @@ export async function sendToProvider({
       if (res.ok) break;
 
       if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
-        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 16000);
+        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
         console.warn(`[sendToProvider] ${provider.name} error ${res.status}, retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, backoffMs));
         continue;
@@ -303,7 +303,7 @@ export async function sendToProvider({
       clearTimeout(timeoutId);
       if (err.message?.startsWith(provider.name)) throw err;
       if (attempt < MAX_RETRIES - 1) {
-        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 16000);
+        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
         console.warn(`[sendToProvider] ${provider.name} request failed (${err.message}), retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, backoffMs));
         continue;

@@ -6,8 +6,9 @@ import { getBase64Store } from './base64Store';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
-const MAX_CONTEXT_CHARS = 150000;
+const MAX_CONTEXT_CHARS = 120000;
 const MAX_TOOL_ROUNDS = 50;
+const MAX_TOOL_RESULT_CHARS = 30000;
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -44,7 +45,7 @@ function compressMessages(msgs) {
     }
   }
 
-  const SEARCH_TOOLS = new Set(['search_code', 'search_nodes', 'get_node_info']);
+  const SEARCH_TOOLS = new Set(['search_code', 'search_nodes', 'get_node_info', 'file_outline', 'quick_look']);
   let compressedCount = 0;
   for (let i = 0; i < rest.length; i++) {
     const msg = rest[i];
@@ -65,6 +66,13 @@ function compressMessages(msgs) {
           compressedCount++;
         }
       } catch { /* ignore */ }
+    } else if (tc.function?.name === 'edit' && msg.content.length > 300) {
+      const hasSubsequent = rest.slice(i + 1).some(m => m.role === 'assistant');
+      if (hasSubsequent) {
+        const firstLine = msg.content.split('\n')[0] || '';
+        msg.content = `[Edit applied — ${firstLine}]`;
+        compressedCount++;
+      }
     } else if (SEARCH_TOOLS.has(tc.function?.name)) {
       const hasSubsequent = rest.slice(i + 1).some(m => m.role === 'assistant');
       if (hasSubsequent) {
@@ -409,10 +417,14 @@ export async function sendWithRetrieval({
       if ((tc.name === 'edit' || tc.name === 'write') && tc.arguments?.filePath) {
         editedFilePaths.add(tc.arguments.filePath);
       }
+      let content = toolResult.content;
+      if (content && content.length > MAX_TOOL_RESULT_CHARS) {
+        content = content.slice(0, MAX_TOOL_RESULT_CHARS) + `\n\n... (truncated at ${MAX_TOOL_RESULT_CHARS} chars)`;
+      }
       currentMessages.push({
         role: 'tool',
         tool_call_id: tc.id,
-        content: toolResult.content,
+        content,
       });
     }
 

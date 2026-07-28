@@ -11,13 +11,14 @@ const MAX_READ_LINES = 4000;
 
 const appliedEdits = new Map();
 
-function persistFileContent(storeId, filePath, content) {
+async function persistFileContent(storeId, filePath, content) {
   const store = getContentStore();
   const base64Store = getBase64Store();
   store.upsert(storeId, ContentCategory.REPO_FILE, content, { sourcePath: filePath });
   const entry = store.getEntry(storeId);
   if (entry) {
-    for (const chunk of entry.chunks) {
+    for (let i = 0; i < entry.chunks.length; i++) {
+      const chunk = entry.chunks[i];
       const b64 = btoa(unescape(encodeURIComponent(chunk.text)));
       base64Store.encodedChunks.set(chunk.id, {
         b64,
@@ -32,6 +33,7 @@ function persistFileContent(storeId, filePath, content) {
           endIndex: chunk.endIndex,
         },
       });
+      if (i % 50 === 0 && i > 0) await new Promise(r => setTimeout(r, 0));
     }
   }
 }
@@ -492,7 +494,10 @@ export function resetEditTracker() {
 }
 
 export async function executeTool(name, args, githubContext, fileTree = [], { runSubAgent, depth = 0 } = {}) {
-  await Promise.all([waitForContentStoreHydration(), waitForBase64StoreHydration()]);
+  await Promise.race([
+    Promise.all([waitForContentStoreHydration(), waitForBase64StoreHydration()]),
+    new Promise(r => setTimeout(r, 5000)),
+  ]);
   const store = getContentStore();
   const base64Store = getBase64Store();
 
@@ -586,7 +591,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             `read_file(${path})`,
           );
           if (fullContent) {
-            persistFileContent(storeId, path, fullContent);
+            persistFileContent(storeId, path, fullContent).catch(() => {});
           }
         } catch (err) {
           return { success: false, content: `Error reading ${path}: ${err.message}` };
@@ -828,7 +833,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const endIdx = idx + oldString.length;
       const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
-      persistFileContent(storeId, filePath, updated);
+      persistFileContent(storeId, filePath, updated).catch(() => {});
 
       const oldLines = oldString.split('\n');
       const newLines = newString.split('\n');
@@ -861,7 +866,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
       const storeId = `repo:${filePath}`;
-      persistFileContent(storeId, filePath, content);
+      persistFileContent(storeId, filePath, content).catch(() => {});
       console.log(`[Write] ${filePath}: wrote ${content.length} chars (persisted to store)`);
       return { success: true, content: `Successfully wrote ${content.length} chars to ${filePath}` };
     }
