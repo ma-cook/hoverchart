@@ -6,7 +6,7 @@ import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
 
 const TOOL_TIMEOUT_MS = 20_000;
-const DEFAULT_READ_LINES = 1000;
+const DEFAULT_READ_LINES = 2000;
 const MAX_READ_LINES = 4000;
 
 function persistFileContent(storeId, filePath, content) {
