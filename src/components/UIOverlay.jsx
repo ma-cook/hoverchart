@@ -239,9 +239,43 @@ const UIOverlay = ({
   const [scanProgress, setScanProgress] = useState({ isScanning: false, progress: 0, stage: '' });
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [currentDiagramRepo, setCurrentDiagramRepo] = useState(null);
-  const [lastGeneratedMarkdown, setLastGeneratedMarkdown] = useState(null);
+  const [lastGeneratedMarkdownUrl, setLastGeneratedMarkdownUrl] = useState(null);
   const [latestMarkdownUrl, setLatestMarkdownUrl] = useState(null);
   const [lastCommitSha, setLastCommitSha] = useState(null);
+  const lastGeneratedMarkdownBlobRef = useRef(null);
+
+  const storeGeneratedMarkdown = useCallback((markdown) => {
+    if (lastGeneratedMarkdownBlobRef.current) {
+      URL.revokeObjectURL(lastGeneratedMarkdownBlobRef.current);
+    }
+    if (!markdown) {
+      lastGeneratedMarkdownBlobRef.current = null;
+      setLastGeneratedMarkdownUrl(null);
+      return;
+    }
+    const blob = new Blob([markdown], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    lastGeneratedMarkdownBlobRef.current = url;
+    setLastGeneratedMarkdownUrl(url);
+  }, []);
+
+  const fetchGeneratedMarkdown = useCallback(async () => {
+    if (lastGeneratedMarkdownBlobRef.current) {
+      try {
+        const resp = await fetch(lastGeneratedMarkdownBlobRef.current);
+        return await resp.text();
+      } catch { return null; }
+    }
+    return null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (lastGeneratedMarkdownBlobRef.current) {
+        URL.revokeObjectURL(lastGeneratedMarkdownBlobRef.current);
+      }
+    };
+  }, []);
 
   // Pipeline store state
   const pipelineIsRunning = usePipelineStore((s) => s.isRunning);
@@ -327,7 +361,7 @@ const UIOverlay = ({
     if (!currentSpaceId) {
       setCurrentDiagramRepo(null);
       setLatestMarkdownUrl(null);
-      setLastGeneratedMarkdown(null);
+      storeGeneratedMarkdown(null);
       return;
     }
     let stored = null;
@@ -341,7 +375,7 @@ const UIOverlay = ({
     setLatestMarkdownUrl(localUrl);
     const localSha = localStorage.getItem(`diagramCommitSha_${currentSpaceId}`) || null;
     setLastCommitSha(localSha);
-    setLastGeneratedMarkdown(null);
+    storeGeneratedMarkdown(null);
 
     // Hydrate any missing pieces from Firestore (cross-device support)
     const needsBackendFetch = !localUrl || !localSha || !stored;
@@ -362,7 +396,7 @@ const UIOverlay = ({
         })
         .catch(() => {});
     }
-  }, [currentSpaceId, user]);
+  }, [currentSpaceId, user, storeGeneratedMarkdown]);
 
   // Persist whenever the active repo changes
   useEffect(() => {
@@ -534,7 +568,7 @@ const UIOverlay = ({
       // Show notification instead of alert
       if (result.success) {
         setCurrentDiagramRepo(repo);
-        if (result.markdown) setLastGeneratedMarkdown(result.markdown);
+        if (result.markdown) storeGeneratedMarkdown(result.markdown);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
         }
@@ -586,8 +620,8 @@ const UIOverlay = ({
         return;
       }
 
-      // Resolve existing markdown: prefer in-memory, then fetch from storage
-      let existingMarkdown = lastGeneratedMarkdown;
+      // Resolve existing markdown: prefer in-memory blob URL, then fetch from storage
+      let existingMarkdown = await fetchGeneratedMarkdown();
       if (!existingMarkdown && latestMarkdownUrl) {
         try {
           const resp = await fetch(latestMarkdownUrl);
@@ -664,7 +698,7 @@ const UIOverlay = ({
 
       // Update stored state
       setLastCommitSha(rescanResult.commitSha);
-      setLastGeneratedMarkdown(rescanResult.mergedMarkdown);
+      storeGeneratedMarkdown(rescanResult.mergedMarkdown);
       if (rescanResult.contentIndex) useCodeStore.getState().setContentIndex(rescanResult.contentIndex);
       if (rescanResult.fileSizes) useCodeStore.getState().setFileSizes(rescanResult.fileSizes);
       if (rescanResult.importGraph) useCodeStore.getState().setImportGraph(rescanResult.importGraph);
@@ -721,8 +755,9 @@ const UIOverlay = ({
       URL.revokeObjectURL(url);
     };
 
-    if (lastGeneratedMarkdown) {
-      triggerDownload(lastGeneratedMarkdown);
+    const markdown = await fetchGeneratedMarkdown();
+    if (markdown) {
+      triggerDownload(markdown);
     } else if (latestMarkdownUrl) {
       try {
         const response = await fetch(latestMarkdownUrl);
@@ -732,7 +767,7 @@ const UIOverlay = ({
         alert('Failed to download markdown file.');
       }
     }
-  }, [lastGeneratedMarkdown, latestMarkdownUrl, currentDiagramRepo]);
+  }, [fetchGeneratedMarkdown, latestMarkdownUrl, currentDiagramRepo]);
 
   // Click handler to dismiss notification
   const handleScreenClick = useCallback(() => {
@@ -771,7 +806,7 @@ const UIOverlay = ({
 
       if (result.success) {
         setLastScannedUrl(url);
-        if (result.markdown) setLastGeneratedMarkdown(result.markdown);
+        if (result.markdown) storeGeneratedMarkdown(result.markdown);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
           if (currentSpaceId) {
@@ -923,7 +958,7 @@ const UIOverlay = ({
       window._bulkDeleteInProgress = false;
       setIsDeleting(false);
       setCurrentDiagramRepo(null);
-      setLastGeneratedMarkdown(null);
+      storeGeneratedMarkdown(null);
       setLatestMarkdownUrl(null);
       setLastCommitSha(null);
       setAnalysisOpen(false);
@@ -939,7 +974,7 @@ const UIOverlay = ({
       setNotification({ show: true, message: `❌ Error deleting space: ${error.message}` });
       setTimeout(() => setNotification({ show: false, message: '' }), 5000);
     }
-  }, [user, currentSpaceId, resetObjects, resetConnections]);
+  }, [user, currentSpaceId, resetObjects, resetConnections, storeGeneratedMarkdown]);
 
   const handleModelUpload = useCallback(() => {
     if (modelFileInputRef.current) {
@@ -1668,12 +1703,11 @@ const UIOverlay = ({
             <button
               className="markdown-upload-button"
               onClick={handleDownloadMarkdown}
-              disabled={!lastGeneratedMarkdown && !latestMarkdownUrl}
-              title={lastGeneratedMarkdown || latestMarkdownUrl ? 'Download the latest generated diagram markdown' : 'No diagram generated yet'}
+              disabled={!lastGeneratedMarkdownUrl && !latestMarkdownUrl}
+              title={lastGeneratedMarkdownUrl || latestMarkdownUrl ? 'Download the latest generated diagram markdown' : 'No diagram generated yet'}
               style={{
-            
-                opacity: lastGeneratedMarkdown || latestMarkdownUrl ? 1 : 0.45,
-                cursor: lastGeneratedMarkdown || latestMarkdownUrl ? 'pointer' : 'not-allowed',
+                opacity: lastGeneratedMarkdownUrl || latestMarkdownUrl ? 1 : 0.45,
+                cursor: lastGeneratedMarkdownUrl || latestMarkdownUrl ? 'pointer' : 'not-allowed',
               }}
             >
               Download Markdown

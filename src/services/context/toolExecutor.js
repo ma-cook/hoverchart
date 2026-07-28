@@ -6,7 +6,8 @@ import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
 
 const TOOL_TIMEOUT_MS = 20_000;
-const MAX_FILE_CONTENT_CHARS = 32000;
+const DEFAULT_READ_LINES = 1000;
+const MAX_READ_LINES = 4000;
 
 function persistFileContent(storeId, filePath, content) {
   const store = getContentStore();
@@ -43,6 +44,137 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer));
 }
 
+function generateFileOutline(content, filePath) {
+  const lines = content.split('\n');
+  const totalLines = lines.length;
+  const totalChars = content.length;
+  const isJSX = /\.(jsx|tsx)$/.test(filePath);
+  const isJS = /\.(js|jsx|ts|tsx|mjs)$/.test(filePath);
+
+  const imports = [];
+  const exports = [];
+  const components = [];
+  const functions = [];
+  const hooks = [];
+  const stateVars = [];
+  const classes = [];
+  const types = [];
+
+  for (let i = 0; i < totalLines; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    const lineNum = i + 1;
+
+    if (trimmed.startsWith('import ') || trimmed.startsWith('import{')) {
+      imports.push(lineNum);
+      continue;
+    }
+    if (trimmed.startsWith('export default ') || trimmed.startsWith('export const ') || trimmed.startsWith('export function ') || trimmed.startsWith('export class ') || trimmed.startsWith('export type ') || trimmed.startsWith('export interface ')) {
+      exports.push({ line: lineNum, text: trimmed.slice(0, 80) });
+    }
+
+    if (isJS) {
+      const compMatch = trimmed.match(/^(?:export\s+)?(?:default\s+)?(?:function|const|var)\s+([A-Z]\w+)/);
+      if (compMatch) {
+        const name = compMatch[1];
+        const tag = trimmed.includes('export') ? ' [exported]' : '';
+        const isDefault = trimmed.includes('export default') ? ' [default export]' : '';
+        components.push({ line: lineNum, name: name + tag + isDefault, text: trimmed.slice(0, 80) });
+      }
+
+      const funcMatch = trimmed.match(/^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)/);
+      if (funcMatch && !compMatch) {
+        functions.push({ line: lineNum, name: funcMatch[1], text: trimmed.slice(0, 80) });
+      }
+
+      if (isJSX) {
+        const hookMatch = trimmed.match(/(?:const|let|var)\s+\[?\w+\]?\s*=\s*(use\w+)\(/);
+        if (hookMatch) {
+          hooks.push({ line: lineNum, hook: hookMatch[1], text: trimmed.slice(0, 80) });
+        }
+        const useStateMatch = trimmed.match(/(?:const|let|var)\s+(\w+)\s*,\s*\w+\]\s*=\s*useState/);
+        if (useStateMatch) {
+          stateVars.push({ line: lineNum, name: useStateMatch[1], text: trimmed.slice(0, 80) });
+        }
+      }
+
+      const classMatch = trimmed.match(/^(?:export\s+)?(?:default\s+)?class\s+(\w+)/);
+      if (classMatch) {
+        classes.push({ line: lineNum, name: classMatch[1], text: trimmed.slice(0, 80) });
+      }
+
+      const typeMatch = trimmed.match(/^(?:export\s+)?(?:type|interface)\s+(\w+)/);
+      if (typeMatch) {
+        types.push({ line: lineNum, name: typeMatch[1], text: trimmed.slice(0, 80) });
+      }
+    }
+  }
+
+  const parts = [];
+  parts.push(`FILE: ${filePath} (${totalLines} lines, ${totalChars} chars)\n`);
+
+  if (imports.length > 0) {
+    parts.push(`Lines 1-${Math.max(...imports)}: imports`);
+  }
+
+  if (components.length > 0) {
+    parts.push('');
+    for (const c of components) {
+      parts.push(`  ${c.line}: ${c.name} — ${c.text}`);
+    }
+  }
+
+  if (functions.length > 0) {
+    if (components.length > 0) parts.push('');
+    parts.push('Functions:');
+    for (const f of functions) {
+      parts.push(`  ${f.line}: ${f.name}() — ${f.text}`);
+    }
+  }
+
+  if (classes.length > 0) {
+    parts.push('');
+    parts.push('Classes:');
+    for (const c of classes) {
+      parts.push(`  ${c.line}: class ${c.name} — ${c.text}`);
+    }
+  }
+
+  if (types.length > 0) {
+    parts.push('');
+    parts.push('Types:');
+    for (const t of types) {
+      parts.push(`  ${t.line}: ${t.name} — ${t.text}`);
+    }
+  }
+
+  if (hooks.length > 0) {
+    parts.push('');
+    parts.push('Hooks:');
+    for (const h of hooks) {
+      parts.push(`  ${h.line}: ${h.hook}() — ${h.text}`);
+    }
+  }
+
+  if (stateVars.length > 0) {
+    parts.push('');
+    parts.push('State:');
+    for (const s of stateVars) {
+      parts.push(`  ${s.line}: ${s.name} — ${s.text}`);
+    }
+  }
+
+  if (exports.length > 0) {
+    parts.push('');
+    parts.push('Exports:');
+    for (const e of exports) {
+      parts.push(`  ${e.line}: ${e.text}`);
+    }
+  }
+
+  return parts.join('\n');
+}
+
 export const CODE_GEN_TOOLS = [
   {
     type: 'function',
@@ -63,14 +195,28 @@ export const CODE_GEN_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'file_outline',
+      description: 'Get a structural outline of a file: function names, component names, exports, hooks, state variables, and their line numbers. Uses ~500 chars vs 32K for read_file. Use this FIRST to understand file structure before reading full content.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path relative to repo root' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'read_file',
-      description: 'Read the contents of a file from the repository. Returns up to 32000 chars by default — enough for most files in a single call. Use offset only for files larger than 32K.',
+      description: 'Read the contents of a file from the repository. Returns up to 1000 lines by default. Each line is prefixed with its line number (e.g. "42:  code here"). Use offset to read later sections of large files.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'File path relative to repo root, e.g. "src/components/Button.tsx"' },
-          offset: { type: 'number', description: 'Character offset to start reading from (default 0)' },
-          limit: { type: 'number', description: 'Max characters to return (default 32000)' },
+          offset: { type: 'number', description: 'Line number to start reading from (default 1, 1-indexed)' },
+          limit: { type: 'number', description: 'Max lines to return (default 1000)' },
         },
         required: ['path'],
       },
@@ -312,6 +458,7 @@ export const CODE_GEN_TOOLS = [
 
 const SUB_AGENT_TOOLS = [
   { type: 'function', function: { name: 'read_file', description: 'Read file contents.', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'number' }, limit: { type: 'number' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'file_outline', description: 'Get structural outline of a file.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'List files in a directory.', parameters: { type: 'object', properties: { path: { type: 'string' } } } } },
   { type: 'function', function: { name: 'search_code', description: 'Search for files matching a pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'] } } },
   { type: 'function', function: { name: 'get_node_info', description: 'Get details about a component.', parameters: { type: 'object', properties: { nodeId: { type: 'string' } }, required: ['nodeId'] } } },
@@ -381,51 +528,77 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       return { success: true, content: `${head}\n\n... (${totalLines - headLines - tailLines} lines omitted) ...\n\n${tail}` };
     }
 
+    case 'file_outline': {
+      const path = args.path;
+      const storeId = `repo:${path}`;
+      const altId = `github:${path}`;
+      let fullContent = null;
+      const entry = store.getEntry(storeId) || store.getEntry(altId);
+      if (entry) {
+        const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
+        if (chunks.length > 0) fullContent = chunks.map(c => c.text).join('');
+      }
+      if (!fullContent && githubContext) {
+        try {
+          fullContent = await withTimeout(
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            TOOL_TIMEOUT_MS,
+            `file_outline(${path})`,
+          );
+        } catch (err) {
+          return { success: false, content: `Error reading ${path}: ${err.message}` };
+        }
+      }
+      if (!fullContent) return { success: false, content: `File not found: ${path}` };
+      const outline = generateFileOutline(fullContent, path);
+      return { success: true, content: outline };
+    }
+
     case 'read_file': {
       const path = args.path;
-      const offset = Math.max(0, parseInt(args.offset, 10) || 0);
-      const requestedLimit = parseInt(args.limit, 10) || MAX_FILE_CONTENT_CHARS;
-      const limit = Math.min(requestedLimit, MAX_FILE_CONTENT_CHARS);
+      const startLine = Math.max(1, parseInt(args.offset, 10) || 1);
+      const requestedLines = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
+      const lineLimit = Math.min(requestedLines, MAX_READ_LINES);
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
 
+      let fullContent = null;
       const entry = store.getEntry(storeId) || store.getEntry(altId);
       if (entry) {
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
-          const content = chunks.map(c => c.text).join('');
-          const sliced = content.slice(offset, offset + limit);
-          if (sliced.length === 0) {
-            return { success: true, content: `[End of file: ${path} has ${content.length} chars]` };
-          }
-          const prefix = offset > 0 ? `[Starting at char ${offset}]` : '';
-          const suffix = offset + limit < content.length ? `\n\n[Showing ${sliced.length} of ${content.length} chars — use offset=${offset + limit} to continue]` : '';
-          return { success: true, content: prefix + sliced + suffix };
+          fullContent = chunks.map(c => c.text).join('');
         }
       }
 
-      if (githubContext) {
+      if (!fullContent && githubContext) {
         try {
-          const content = await withTimeout(
+          fullContent = await withTimeout(
             fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
             TOOL_TIMEOUT_MS,
             `read_file(${path})`,
           );
-          if (content) {
-            const sliced = content.slice(offset, offset + limit);
-            if (sliced.length === 0) {
-              return { success: true, content: `[End of file: ${path} has ${content.length} chars]` };
-            }
-            const prefix = offset > 0 ? `[Starting at char ${offset}]` : '';
-            const suffix = offset + limit < content.length ? `\n\n[Showing ${sliced.length} of ${content.length} chars — use offset=${offset + limit} to continue]` : '';
-            return { success: true, content: prefix + sliced + suffix };
-          }
         } catch (err) {
           return { success: false, content: `Error reading ${path}: ${err.message}` };
         }
       }
 
-      return { success: false, content: `File not found: ${path}` };
+      if (!fullContent) {
+        return { success: false, content: `File not found: ${path}` };
+      }
+
+      const allLines = fullContent.split('\n');
+      const totalLines = allLines.length;
+      const endLine = Math.min(startLine + lineLimit - 1, totalLines);
+      if (startLine > totalLines) {
+        return { success: true, content: `[End of file: ${path} has ${totalLines} lines. Use offset=${totalLines} to read the last lines.]` };
+      }
+      const selectedLines = allLines.slice(startLine - 1, endLine);
+      const numbered = selectedLines.map((line, i) => `${startLine + i}: ${line}`).join('\n');
+      const suffix = endLine < totalLines
+        ? `\n\n(Showing lines ${startLine}-${endLine} of ${totalLines}. Use offset=${endLine + 1} to continue.)`
+        : '';
+      return { success: true, content: numbered + suffix };
     }
 
     case 'list_files': {
@@ -625,8 +798,15 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const fullContent = chunks.map(c => c.text).join('');
       const idx = fullContent.indexOf(oldString);
       if (idx === -1) {
-        const closeIdx = fullContent.indexOf(oldString.slice(0, Math.min(80, oldString.length)));
-        const hint = closeIdx !== -1 ? ` Did you mean around character ${closeIdx}? Check the exact whitespace and indentation.` : ' The oldString was not found. Re-read the file with read_file and copy the exact text.';
+        const firstLine = oldString.split('\n')[0].slice(0, 80);
+        const contentLines = fullContent.split('\n');
+        let closestLine = -1;
+        for (let i = 0; i < contentLines.length; i++) {
+          if (contentLines[i].includes(firstLine)) { closestLine = i + 1; break; }
+        }
+        const hint = closestLine !== -1
+          ? ` The first line of oldString was found near line ${closestLine}. Re-read the file and use the exact text with correct whitespace/indentation.`
+          : ' The oldString was not found. Re-read the file with read_file and copy the exact text including all indentation.';
         return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}` };
       }
       const endIdx = idx + oldString.length;
@@ -643,8 +823,8 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       for (const line of oldLines) diffLines.push(`- ${line}`);
       for (const line of newLines) diffLines.push(`+ ${line}`);
       const diffPreview = diffLines.join('\n');
-      console.log(`[Edit] ${filePath}: replaced ${oldString.length} chars at offset ${idx} → ${newString.length} chars (persisted to store)`);
-      return { success: true, content: `Successfully edited ${filePath} (${fullContent.length} → ${updated.length} chars)\n\nDiff preview:\n${diffPreview}` };
+      console.log(`[Edit] ${filePath}: replaced ${oldString.length} chars at line ${startLine} → ${newString.length} chars (persisted to store)`);
+      return { success: true, content: `Successfully edited ${filePath} at line ${startLine} (${fullContent.length} → ${updated.length} chars)\n\nDiff preview:\n${diffPreview}` };
     }
 
     case 'write': {
@@ -652,6 +832,14 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const content = args.content;
       if (!filePath || content == null) {
         return { success: false, content: 'write requires "filePath" and "content" parameters' };
+      }
+      const existingFile = fileTree.some(f => f.path === filePath);
+      if (!existingFile) {
+        const parentDir = filePath.split('/').slice(0, -1).join('/');
+        const parentExists = parentDir && fileTree.some(f => f.path.startsWith(parentDir + '/') || f.path === parentDir);
+        if (!parentExists && fileTree.length > 0) {
+          return { success: false, content: `Cannot create "${filePath}": parent directory does not exist in the repository. Use list_files to find the correct location, or check the FILE TREE section for valid paths.` };
+        }
       }
       const storeId = `repo:${filePath}`;
       persistFileContent(storeId, filePath, content);

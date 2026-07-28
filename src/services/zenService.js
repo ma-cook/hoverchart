@@ -702,8 +702,9 @@ TOOLS
 ═══════════════════════════════════════════════════════════════
 
 You have these tools:
+• file_outline(path) — get a structural outline of a file: function names, component names, exports, hooks, state variables, and their line numbers. Uses ~500 chars vs 32K for read_file. Use this FIRST to understand file structure.
 • quick_look(path, head, tail) — lightweight preview: first/last N lines of a file (fast, no full load)
-• read_file(path) — read a source file's FULL contents (this is the ONLY way to see actual code)
+• read_file(path, offset, limit) — read a source file's contents with line numbers. Each line is prefixed with "N: content". Default 1000 lines, use offset to continue.
 • list_files(path) — list files in a directory
 • search_code(pattern) — find WHERE code lives (file names, node names, or content matches)
 • get_node_info(nodeId) — get full details about a component: type, file path, all connections, parent, children, exports, imports
@@ -736,6 +737,8 @@ PHASE 2 — EDIT (use tools to make changes):
 8. After all edits, write a 1-2 sentence summary of what you changed
 
 CRITICAL: Do NOT re-read files you have already read. Do NOT search after you have already found the files you need. The transition from DISCOVER to EDIT must be immediate.
+
+TIP: Use file_outline(path) first to see a file's structure (components, hooks, state, exports) with line numbers. This costs ~500 chars instead of 32K. Then use read_file with offset/limit to read only the specific section you need to modify.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -770,8 +773,10 @@ RULES
 15. Each file should be read ONCE. Do not call read_file on the same file multiple times at different offsets — the default limit returns 8000 chars which is enough context.
 16. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy it precisely from the read_file output.
 17. NEVER fabricate file paths, imports, or code structure. If you are unsure whether a file or function exists, use search_code or read_file to verify — do NOT guess.
-18. Use quick_look(path) for a fast preview of a file's structure (imports, exports, first/last lines) without loading the full content. Use read_file when you need the complete file for editing.
-19. Check the CONTENT INDEX and IMPORT GRAPH sections above to understand what each file exports and which files depend on it — this prevents creating duplicate functionality.
+18. Use file_outline(path) to quickly understand a file's structure — it shows components, functions, hooks, state variables, and exports with line numbers.
+19. Use quick_look(path) for a fast preview of a file's first/last lines without loading the full content. Use read_file when you need the complete file for editing.
+20. Check the CONTENT INDEX and IMPORT GRAPH sections above to understand what each file exports and which files depend on it — this prevents creating duplicate functionality.
+21. read_file returns lines prefixed with line numbers (e.g. "42:  code here"). Use these line numbers as reference when constructing edit calls — copy the EXACT text from the read_file output for your oldString.
 `;
 
 function formatFileSize(chars) {

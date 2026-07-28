@@ -35,6 +35,15 @@ CRITICAL RULES — VIOLATION WILL CAUSE INCORRECT OUTPUT
 3. NEVER create a new file (e.g. TopBar.jsx) for functionality that already exists inside an existing file.
 4. Start each modified file from the content provided and apply your changes to it.
 5. Do NOT fabricate imports, state, hooks, or structure — use what is actually in the provided files.
+6. NEVER output a file that does not appear in the FILES TO MODIFY section below.
+7. If you need to add a new component, describe it as a TODO comment inside the existing file where it belongs, rather than creating a new file.
+8. For EXISTING files: use SEARCH/REPLACE markers instead of outputting the entire file. This prevents accidentally losing code:
+   <<<<<<< SEARCH
+   exact code to find and replace (must match the provided content exactly)
+   =======
+   replacement code
+   >>>>>>> REPLACE
+   You can use multiple SEARCH/REPLACE blocks per file.
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -42,12 +51,21 @@ OUTPUT FORMAT
 
 Write a 1-2 sentence summary, then output code blocks:
 
+For EXISTING files (preferred — safer, prevents code loss):
 \`\`\`jsx:src/components/FileName.jsx
-<entire modified file content>
+<<<<<<< SEARCH
+exact existing code to find
+=======
+replacement code
+>>>>>>> REPLACE
+\`\`\`
+
+For NEW files only (when no existing file can be modified):
+\`\`\`jsx:src/components/NewFile.jsx
+<entire new file content>
 \`\`\`
 
 Each code block MUST have the file path after the language tag.
-For MODIFIED files: the code block must be the COMPLETE file as provided below, with your changes applied.
 Do NOT use XML tags, DSML format, or any format other than standard markdown code blocks.`;
 
 function collectFileContents(messages) {
@@ -257,6 +275,62 @@ function stripFabricatedNewFiles(text, allowedFilePaths) {
   return text;
 }
 
+function generateSearchReplacePatch(original, modified, filePath) {
+  if (!original || !modified || original === modified) return null;
+  const origLines = original.split('\n');
+  const modLines = modified.split('\n');
+  const blocks = [];
+  let i = 0;
+  let j = 0;
+  while (i < origLines.length || j < modLines.length) {
+    if (i < origLines.length && j < modLines.length && origLines[i] === modLines[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    const searchStart = i;
+    const replaceStart = j;
+    while (i < origLines.length && j < modLines.length && origLines[i] !== modLines[j]) {
+      i++;
+      j++;
+    }
+    if (i === origLines.length && j < modLines.length) {
+      while (j < modLines.length) j++;
+      break;
+    }
+    if (j === modLines.length && i < origLines.length) {
+      while (i < origLines.length) i++;
+      break;
+    }
+    const searchLines = origLines.slice(searchStart, i);
+    const replaceLines = modLines.slice(replaceStart, j);
+    if (searchLines.length > 0 || replaceLines.length > 0) {
+      const contextBefore = searchStart > 0 ? origLines[searchStart - 1] : '';
+      const contextAfter = i < origLines.length ? origLines[i] : '';
+      blocks.push({
+        search: searchLines.join('\n'),
+        replace: replaceLines.join('\n'),
+        contextBefore,
+        contextAfter,
+      });
+    }
+  }
+  if (blocks.length === 0) return null;
+  const ext = filePath.split('.').pop() || 'txt';
+  const patchParts = blocks.map(b => {
+    const lines = [];
+    if (b.contextBefore) lines.push(` ${b.contextBefore}`);
+    lines.push(`<<<<<<< SEARCH`);
+    lines.push(b.search);
+    lines.push(`=======`);
+    lines.push(b.replace);
+    lines.push(`>>>>>>> REPLACE`);
+    if (b.contextAfter) lines.push(` ${b.contextAfter}`);
+    return lines.join('\n');
+  });
+  return `\`\`\`${ext}:${filePath}\n${patchParts.join('\n\n')}\n\`\`\``;
+}
+
 const FAILURE_PATTERNS = /^Error:|^File not found:|^No (matching|files) found|^Unknown tool|^search_code requires/i;
 
 function isUsefulToolResult(content, toolName) {
@@ -292,6 +366,7 @@ export async function sendWithRetrieval({
   const toolCallHistory = new Map();
   let editWriteCount = 0;
   const editedFilePaths = new Set();
+  const originalFileContents = new Map();
 
   while (rounds < MAX_TOOL_ROUNDS) {
     if (estimateMessagesSize(currentMessages) > MAX_TOTAL_CHARS) {
@@ -444,6 +519,18 @@ export async function sendWithRetrieval({
           });
         }
         readFiles.set(key, true);
+        const filePath = tc.arguments?.path;
+        if (filePath && !originalFileContents.has(filePath)) {
+          const store = getContentStore();
+          const b64Store = getBase64Store();
+          const entry = store.getEntry(`repo:${filePath}`) || store.getEntry(`github:${filePath}`);
+          if (entry) {
+            const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
+            if (chunks.length > 0) {
+              originalFileContents.set(filePath, chunks.map(c => c.text).join(''));
+            }
+          }
+        }
       }
       console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
       onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
@@ -551,11 +638,11 @@ export async function sendWithRetrieval({
       : '';
 
     const noFilesWarning2 = fileContents.length === 0
-      ? `\n\nIMPORTANT: You have not read any files yet. Use the FILE TREE and CONTENT INDEX above to find the right files, then output your best attempt. In future requests, always call read_file before writing code.`
+      ? `\n\nIMPORTANT: You have not read any files yet. Use the FILE TREE and CONTENT INDEX above to find the right files, then output your best attempt. In future requests, always call file_outline or read_file before writing code.`
       : '';
 
     const header2 = fileContents.length > 0
-      ? `IMPORTANT: You MUST modify ONLY the files listed below. Do NOT create any new files. Output each modified file as a complete code block with the same file path.`
+      ? `IMPORTANT: You MUST modify ONLY the files listed below. Do NOT create any new files. Use SEARCH/REPLACE markers for each change to prevent losing code.`
       : `Here is the repository context:`;
 
     const forcedMessages = [
@@ -605,6 +692,10 @@ export async function sendWithRetrieval({
         finalText = stripFabricatedNewFiles(finalText, [...allowedPaths]);
       }
     }
+    if (!fileContents.length && fileTree && fileTree.length > 0) {
+      const fileTreePaths = fileTree.map(f => f.path);
+      finalText = stripFabricatedNewFiles(finalText, fileTreePaths);
+    }
   }
 
   if (editedFilePaths.size > 0) {
@@ -617,10 +708,18 @@ export async function sendWithRetrieval({
       const entry = store.getEntry(storeId);
       if (!entry) continue;
       const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
-      const content = chunks.map(c => c.text).join('');
-      if (!content) continue;
+      const modifiedContent = chunks.map(c => c.text).join('');
+      if (!modifiedContent) continue;
       const ext = filePath.split('.').pop() || 'txt';
-      syntheticBlocks.push(`\`\`\`${ext}:${filePath}\n${content}\n\`\`\``);
+      const originalContent = originalFileContents.get(filePath);
+      if (originalContent && originalContent !== modifiedContent) {
+        const patch = generateSearchReplacePatch(originalContent, modifiedContent, filePath);
+        if (patch) {
+          syntheticBlocks.push(patch);
+          continue;
+        }
+      }
+      syntheticBlocks.push(`\`\`\`${ext}:${filePath}\n${modifiedContent}\n\`\`\``);
     }
     if (syntheticBlocks.length > 0) {
       const blockText = syntheticBlocks.join('\n\n');
