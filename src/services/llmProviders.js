@@ -1,25 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 async function gzipBytes(str) {
-  if (typeof CompressionStream === 'undefined') throw new Error('CompressionStream not available');
-  const data = new TextEncoder().encode(str);
-  const cs = new CompressionStream('gzip');
-  const writer = cs.writable.getWriter();
-  const reader = cs.readable.getReader();
-  await writer.write(data);
-  await writer.close();
-  const chunks = [];
-  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
-  const total = chunks.reduce((s, c) => s + c.length, 0);
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) { out.set(c, off); off += c.length; }
-  return { data: out, gzip: true };
-}
-
-async function fallbackBytes(str) {
-  const data = new TextEncoder().encode(str);
-  return { data, gzip: false };
+  return new TextEncoder().encode(str);
 }
 
 function sanitizeMessages(messages) {
@@ -241,18 +223,10 @@ export async function fetchModels(providerId, apiKey) {
 
   try {
     const payload = JSON.stringify({ url, headers });
-    let compressed, contentType;
-    try {
-      compressed = await gzipBytes(payload);
-      contentType = 'application/gzip';
-    } catch {
-      compressed = await fallbackBytes(payload);
-      contentType = 'application/json';
-    }
     const res = await fetch(`${API_BASE}/api/llm/models`, {
       method: 'POST',
-      headers: { 'Content-Type': contentType },
-      body: compressed.data,
+      headers: { 'Content-Type': 'application/json' },
+      body: await gzipBytes(payload),
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -280,8 +254,6 @@ export async function sendToProvider({
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
 
-  console.log(`[sendToProvider] body=${JSON.stringify(body).length} url=${url}`);
-
   const MAX_RETRIES = 5;
   const timeoutMs = 5 * 60 * 1000;
 
@@ -294,33 +266,16 @@ export async function sendToProvider({
       : timeoutController.signal;
 
     try {
-      console.log(`[sendToProvider] stringifying payload...`);
       const payload = JSON.stringify({ url, headers, body });
-      console.log(`[sendToProvider] payload=${payload.length} compressing...`);
-      let compressed, contentType;
-      try {
-        compressed = await gzipBytes(payload);
-        contentType = 'application/gzip';
-        console.log(`[sendToProvider] compressed ${payload.length} -> ${compressed.data.length}`);
-      } catch (gzErr) {
-        console.warn(`[sendToProvider] gzip failed, falling back to uncompressed: ${gzErr.message}`);
-        compressed = await fallbackBytes(payload);
-        contentType = 'application/json';
-      }
-      console.log(`[sendToProvider] fetching ${API_BASE}/api/llm/chat...`);
       res = await fetch(`${API_BASE}/api/llm/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': contentType },
-        body: compressed.data,
+        headers: { 'Content-Type': 'application/json' },
+        body: await gzipBytes(payload),
         signal: combinedSignal,
       });
-      console.log(`[sendToProvider] response status=${res.status}`);
       clearTimeout(timeoutId);
 
-      if (res.ok) {
-        console.log(`[sendToProvider] starting SSE read...`);
-        break;
-      }
+      if (res.ok) break;
 
       if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
         const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
