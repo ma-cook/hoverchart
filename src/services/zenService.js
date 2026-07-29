@@ -556,7 +556,7 @@ export async function populateContentStoreWorker() {
   });
 
   getContentStore().hydrate(result.entries, result.invertedIndexEntries, result.totalChunks);
-  getBase64Store().hydrate(result.encodedChunksEntries);
+  getBase64Store().encodeAll();
 
   const indexState = useContentIndexStore.getState();
   indexState.setManifest(result.manifest);

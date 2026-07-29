@@ -355,11 +355,13 @@ export async function sendWithRetrieval({
         if (filePath && !originalFileContents.has(filePath)) {
           const store = getContentStore();
           const b64Store = getBase64Store();
-          const entry = store.getEntry(`repo:${filePath}`) || store.getEntry(`github:${filePath}`);
-          if (entry) {
-            const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
-            if (chunks.length > 0) {
-              originalFileContents.set(filePath, chunks.map(c => c.text).join(''));
+          if (store._hydrated && b64Store._hydrated) {
+            const entry = store.getEntry(`repo:${filePath}`) || store.getEntry(`github:${filePath}`);
+            if (entry) {
+              const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
+              if (chunks.length > 0) {
+                originalFileContents.set(filePath, chunks.map(c => c.text).join(''));
+              }
             }
           }
         }

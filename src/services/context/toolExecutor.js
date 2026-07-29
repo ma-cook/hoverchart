@@ -12,6 +12,7 @@ const MAX_READ_LINES = 4000;
 const appliedEdits = new Map();
 
 async function persistFileContent(storeId, filePath, content) {
+  await new Promise(r => setTimeout(r, 0));
   const store = getContentStore();
   const base64Store = getBase64Store();
   store.upsert(storeId, ContentCategory.REPO_FILE, content, { sourcePath: filePath });
@@ -19,16 +20,15 @@ async function persistFileContent(storeId, filePath, content) {
   if (entry) {
     for (let i = 0; i < entry.chunks.length; i++) {
       const chunk = entry.chunks[i];
-      const b64 = btoa(unescape(encodeURIComponent(chunk.text)));
       base64Store.encodedChunks.set(chunk.id, {
-        b64,
+        text: chunk.text,
         meta: {
           entryId: storeId,
           sourcePath: filePath,
           category: ContentCategory.REPO_FILE,
           keywords: chunk.keywords,
           charCount: chunk.charCount,
-          byteSize: b64.length,
+          byteSize: chunk.text.length,
           startIndex: chunk.startIndex,
           endIndex: chunk.endIndex,
         },

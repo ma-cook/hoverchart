@@ -11,7 +11,6 @@
 
 import { expose } from 'comlink';
 import { ContentStore, ContentCategory } from '../services/context/contentStore';
-import { Base64Store } from '../services/context/base64Store';
 
 const workerApi = {
   async processContent({ repoFileContents, objects, planContext }) {
@@ -64,23 +63,17 @@ const workerApi = {
       });
     }
 
-    // --- Base64 encoding ---
-    const base64Store = new Base64Store(store);
-    await base64Store.encodeAll();
-
     // --- Serialize results for postMessage ---
     const entries = Array.from(store.entries.entries());
     const invertedIndexEntries = Array.from(store.invertedIndex.entries()).map(
       ([keyword, chunkIdSet]) => [keyword, Array.from(chunkIdSet)]
     );
-    const encodedChunksEntries = Array.from(base64Store.encodedChunks.entries());
     const manifest = store.getManifest();
 
     return {
       entries,
       invertedIndexEntries,
       totalChunks: store.totalChunks,
-      encodedChunksEntries,
       manifest,
     };
   },

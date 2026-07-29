@@ -1,5 +1,4 @@
 import { getContentStore } from './contentStore';
-import { saveBase64Store, loadBase64Store } from './contentStorePersistence';
 
 export class Base64Store {
   constructor(contentStore) {
@@ -7,70 +6,70 @@ export class Base64Store {
     this.encodedChunks = new Map();
     this._hydrated = false;
     this._hydratePromise = null;
+    this._chunkIndex = null;
   }
 
   async _ensureHydrated() {
     if (this._hydrated) return;
     if (this._hydratePromise) return this._hydratePromise;
     this._hydratePromise = (async () => {
-      const saved = await loadBase64Store();
-      if (saved) {
-        this.encodedChunks = saved;
-        console.log(`[Base64Store] Hydrated from IndexedDB: ${this.encodedChunks.size} chunks`);
-      }
       this._hydrated = true;
     })();
     return this._hydratePromise;
   }
 
-  async encodeAll() {
-    this.encodedChunks.clear();
-
-    const entries = Array.from(this.contentStore.entries);
-    const CHUNK_ENCODE_BATCH = 200;
-
-    for (let i = 0; i < entries.length; i++) {
-      const [entryId, entry] = entries[i];
+  _buildChunkIndex() {
+    if (this._chunkIndex) return;
+    this._chunkIndex = new Map();
+    for (const [, entry] of this.contentStore.entries) {
       for (const chunk of entry.chunks) {
-        const b64 = btoa(unescape(encodeURIComponent(chunk.text)));
-        this.encodedChunks.set(chunk.id, {
-          b64,
+        this._chunkIndex.set(chunk.id, {
+          text: chunk.text,
           meta: {
-            entryId,
+            entryId: entry.id,
             sourcePath: entry.sourcePath,
             category: entry.category,
             keywords: chunk.keywords,
             charCount: chunk.charCount,
-            byteSize: b64.length,
+            byteSize: chunk.text.length,
             startIndex: chunk.startIndex,
             endIndex: chunk.endIndex,
           },
         });
       }
-      if (i % CHUNK_ENCODE_BATCH === 0 && i > 0) {
-        await new Promise(r => setTimeout(r, 0));
-      }
     }
-
-    this._hydrated = true;
-    saveBase64Store(this.encodedChunks);
   }
 
-  hydrate(serializedEncodedChunks) {
+  async encodeAll() {
     this.encodedChunks.clear();
-    for (const [chunkId, data] of serializedEncodedChunks) {
+    this._buildChunkIndex();
+    for (const [chunkId, data] of this._chunkIndex) {
       this.encodedChunks.set(chunkId, data);
     }
     this._hydrated = true;
-    saveBase64Store(this.encodedChunks);
+  }
+
+  hydrate(entries) {
+    this.encodedChunks.clear();
+    for (const [chunkId, data] of entries) {
+      this.encodedChunks.set(chunkId, data);
+    }
+    this._hydrated = true;
   }
 
   getChunk(chunkId) {
-    const encoded = this.encodedChunks.get(chunkId);
+    let encoded = this.encodedChunks.get(chunkId);
+    if (!encoded) {
+      this._buildChunkIndex();
+      encoded = this._chunkIndex?.get(chunkId) || null;
+      if (encoded) {
+        this.encodedChunks.set(chunkId, encoded);
+      }
+    }
     if (!encoded) return null;
     return {
       id: chunkId,
-      text: decodeURIComponent(escape(atob(encoded.b64))),
+      text: encoded.text,
       ...encoded.meta,
     };
   }

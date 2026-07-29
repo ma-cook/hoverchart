@@ -1,9 +1,9 @@
 /**
  * contentStorePersistence.js
  *
- * IndexedDB persistence for ContentStore and Base64Store.
+ * IndexedDB persistence for ContentStore.
  * Serializes Maps/Sets to arrays for storage, hydrates back on load.
- * Auto-saves after upserts (debounced) and after encodeAll.
+ * Auto-saves after upserts (debounced).
  */
 
 const DB_NAME = 'hoverchart-content-store';
@@ -99,22 +99,6 @@ function deserializeInvertedIndex(rows) {
   return map;
 }
 
-function serializeBase64(encodedChunksMap) {
-  return Array.from(encodedChunksMap.entries()).map(([chunkId, data]) => ({
-    chunkId,
-    ...data,
-  }));
-}
-
-function deserializeBase64(rows) {
-  const map = new Map();
-  for (const row of rows) {
-    const { chunkId, ...data } = row;
-    map.set(chunkId, data);
-  }
-  return map;
-}
-
 // --- Public API ---
 
 let _saveTimer = null;
@@ -144,19 +128,6 @@ export function saveContentStore(entries, invertedIndex, totalChunks) {
 }
 
 /**
- * Save base64 store state to IndexedDB.
- */
-export async function saveBase64Store(encodedChunksMap) {
-  try {
-    const rows = serializeBase64(encodedChunksMap);
-    await txPut(STORE_BASE64, 'encodedChunks', rows);
-    console.log(`[contentStorePersistence] Saved ${rows.length} base64 chunks`);
-  } catch (err) {
-    console.warn('[contentStorePersistence] Base64 save failed:', err.message);
-  }
-}
-
-/**
  * Load content store state from IndexedDB.
  * Returns { entries, invertedIndex, totalChunks } or null if nothing saved.
  */
@@ -175,20 +146,6 @@ export async function loadContentStore() {
     };
   } catch (err) {
     console.warn('[contentStorePersistence] Load failed:', err.message);
-    return null;
-  }
-}
-
-/**
- * Load base64 store state from IndexedDB.
- */
-export async function loadBase64Store() {
-  try {
-    const rows = await txGet(STORE_BASE64, 'encodedChunks');
-    if (!rows || rows.length === 0) return null;
-    return deserializeBase64(rows);
-  } catch (err) {
-    console.warn('[contentStorePersistence] Base64 load failed:', err.message);
     return null;
   }
 }
