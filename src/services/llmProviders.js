@@ -1,19 +1,25 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 async function gzipBytes(str) {
+  if (typeof CompressionStream === 'undefined') throw new Error('CompressionStream not available');
   const data = new TextEncoder().encode(str);
   const cs = new CompressionStream('gzip');
-  const w = cs.writable.getWriter();
-  await w.write(data);
-  await w.close();
+  const writer = cs.writable.getWriter();
+  await writer.write(data);
   const reader = cs.readable.getReader();
+  writer.close();
   const chunks = [];
   for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
   const total = chunks.reduce((s, c) => s + c.length, 0);
   const out = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) { out.set(c, off); off += c.length; }
-  return out;
+  return { data: out, gzip: true };
+}
+
+async function fallbackBytes(str) {
+  const data = new TextEncoder().encode(str);
+  return { data, gzip: false };
 }
 
 function sanitizeMessages(messages) {
@@ -235,11 +241,18 @@ export async function fetchModels(providerId, apiKey) {
 
   try {
     const payload = JSON.stringify({ url, headers });
-    const compressed = await gzipBytes(payload);
+    let compressed, contentType;
+    try {
+      compressed = await gzipBytes(payload);
+      contentType = 'application/gzip';
+    } catch {
+      compressed = await fallbackBytes(payload);
+      contentType = 'application/json';
+    }
     const res = await fetch(`${API_BASE}/api/llm/models`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/gzip' },
-      body: compressed,
+      headers: { 'Content-Type': contentType },
+      body: compressed.data,
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -280,11 +293,19 @@ export async function sendToProvider({
 
     try {
       const payload = JSON.stringify({ url, headers, body });
-      const compressed = await gzipBytes(payload);
+      let compressed, contentType;
+      try {
+        compressed = await gzipBytes(payload);
+        contentType = 'application/gzip';
+      } catch (gzErr) {
+        console.warn(`[sendToProvider] gzip failed, falling back to uncompressed: ${gzErr.message}`);
+        compressed = await fallbackBytes(payload);
+        contentType = 'application/json';
+      }
       res = await fetch(`${API_BASE}/api/llm/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/gzip' },
-        body: compressed,
+        headers: { 'Content-Type': contentType },
+        body: compressed.data,
         signal: combinedSignal,
       });
       clearTimeout(timeoutId);
