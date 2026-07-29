@@ -188,7 +188,6 @@ export async function sendWithRetrieval({
   let consecutiveUnhelpfulRounds = 0;
   const readFiles = new Map();
   let duplicateReadRounds = 0;
-  const toolCallHistory = new Map();
   const editedFilePaths = new Set();
   const originalFileContents = new Map();
 
@@ -246,18 +245,20 @@ export async function sendWithRetrieval({
       break;
     }
 
+    const roundKeys = toolCalls.map(tc => readKey(tc));
+    const dupCounts = new Map();
+    for (const key of roundKeys) {
+      dupCounts.set(key, (dupCounts.get(key) || 0) + 1);
+    }
     let doomLoopDetected = false;
-    for (const tc of toolCalls) {
-      const key = readKey(tc);
-      const count = (toolCallHistory.get(key) || 0) + 1;
-      toolCallHistory.set(key, count);
-      if (count >= 3) {
-        console.warn(`[ToolRound] Doom loop detected: ${tc.name}(${JSON.stringify(tc.arguments)}) called ${count} times`);
+    for (const [key, count] of dupCounts) {
+      if (count >= 4) {
+        console.warn(`[ToolRound] Doom loop detected: tool called ${count} times with identical args in one round`);
         doomLoopDetected = true;
       }
     }
     if (doomLoopDetected) {
-      console.warn(`[ToolRound] Breaking: same tool called 3+ times with identical arguments`);
+      console.warn(`[ToolRound] Breaking: same tool called 4+ times in a single round`);
       break;
     }
 
