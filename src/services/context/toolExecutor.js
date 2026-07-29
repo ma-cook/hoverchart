@@ -15,6 +15,7 @@ async function persistFileContent(storeId, filePath, content) {
   await new Promise(r => setTimeout(r, 0));
   const store = getContentStore();
   const base64Store = getBase64Store();
+  await new Promise(r => setTimeout(r, 0));
   store.upsert(storeId, ContentCategory.REPO_FILE, content, { sourcePath: filePath });
   const entry = store.getEntry(storeId);
   if (entry) {
@@ -33,7 +34,7 @@ async function persistFileContent(storeId, filePath, content) {
           endIndex: chunk.endIndex,
         },
       });
-      if (i % 50 === 0 && i > 0) await new Promise(r => setTimeout(r, 0));
+      if (i % 25 === 0) await new Promise(r => setTimeout(r, 0));
     }
   }
 }
