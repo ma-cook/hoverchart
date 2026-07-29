@@ -11,32 +11,32 @@ const MAX_READ_LINES = 4000;
 
 const appliedEdits = new Map();
 
-async function persistFileContent(storeId, filePath, content) {
-  await new Promise(r => setTimeout(r, 0));
-  const store = getContentStore();
-  const base64Store = getBase64Store();
-  await new Promise(r => setTimeout(r, 0));
-  store.upsert(storeId, ContentCategory.REPO_FILE, content, { sourcePath: filePath });
-  const entry = store.getEntry(storeId);
-  if (entry) {
-    for (let i = 0; i < entry.chunks.length; i++) {
-      const chunk = entry.chunks[i];
-      base64Store.encodedChunks.set(chunk.id, {
-        text: chunk.text,
-        meta: {
-          entryId: storeId,
-          sourcePath: filePath,
-          category: ContentCategory.REPO_FILE,
-          keywords: chunk.keywords,
-          charCount: chunk.charCount,
-          byteSize: chunk.text.length,
-          startIndex: chunk.startIndex,
-          endIndex: chunk.endIndex,
-        },
-      });
-      if (i % 25 === 0) await new Promise(r => setTimeout(r, 0));
+function persistFileContent(storeId, filePath, content) {
+  setTimeout(async () => {
+    const store = getContentStore();
+    const base64Store = getBase64Store();
+    store.upsert(storeId, ContentCategory.REPO_FILE, content, { sourcePath: filePath });
+    const entry = store.getEntry(storeId);
+    if (entry) {
+      for (let i = 0; i < entry.chunks.length; i++) {
+        const chunk = entry.chunks[i];
+        base64Store.encodedChunks.set(chunk.id, {
+          text: chunk.text,
+          meta: {
+            entryId: storeId,
+            sourcePath: filePath,
+            category: ContentCategory.REPO_FILE,
+            keywords: chunk.keywords,
+            charCount: chunk.charCount,
+            byteSize: chunk.text.length,
+            startIndex: chunk.startIndex,
+            endIndex: chunk.endIndex,
+          },
+        });
+        if (i % 25 === 0) await new Promise(r => setTimeout(r, 0));
+      }
     }
-  }
+  }, 0);
 }
 
 function withTimeout(promise, ms, label) {
@@ -602,7 +602,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             `read_file(${path})`,
           );
           if (fullContent) {
-            persistFileContent(storeId, path, fullContent).catch(() => {});
+            persistFileContent(storeId, path, fullContent);
           }
         } catch (err) {
           return { success: false, content: `Error reading ${path}: ${err.message}` };
@@ -846,7 +846,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const endIdx = idx + oldString.length;
       const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
-      persistFileContent(storeId, filePath, updated).catch(() => {});
+      persistFileContent(storeId, filePath, updated);
 
       const oldLines = oldString.split('\n');
       const newLines = newString.split('\n');
@@ -879,7 +879,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
       const storeId = `repo:${filePath}`;
-      persistFileContent(storeId, filePath, content).catch(() => {});
+      persistFileContent(storeId, filePath, content);
       console.log(`[Write] ${filePath}: wrote ${content.length} chars (persisted to store)`);
       return { success: true, content: `Successfully wrote ${content.length} chars to ${filePath}` };
     }
