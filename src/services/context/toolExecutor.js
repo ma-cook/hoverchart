@@ -545,13 +545,15 @@ INSTRUCTIONS:
 1. Use the tools to gather the information requested in the prompt
 2. Read files fully (8000+ chars) — do not read tiny slices
 3. Each file should be read ONCE
-4. When you have enough information, write a clear, structured summary
+4. After each round of tool use, include a text summary of what you found so far
+5. When you have enough information, write a clear, structured summary as your final response
 
 OUTPUT FORMAT:
 - Start with a direct answer to the prompt
 - Include file paths and line numbers for key findings
 - Include relevant code snippets (keep them short)
-- Do NOT generate code or suggest changes — only report what exists`;
+- Do NOT generate code or suggest changes — only report what exists
+- ALWAYS include text in your response, even if you are also using tools`;
 
 export function resetEditTracker() {
   appliedEdits.clear();

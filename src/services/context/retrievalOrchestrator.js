@@ -335,6 +335,18 @@ export async function sendWithRetrieval({
           break;
         }
       }
+      if (!subText) {
+        const toolResults = [];
+        for (let i = subMessages.length - 1; i >= 0; i--) {
+          const msg = subMessages[i];
+          if (msg.role === 'tool' && msg.content) {
+            toolResults.unshift(msg.content);
+          }
+        }
+        if (toolResults.length > 0) {
+          subText = toolResults.join('\n\n').slice(0, 8000);
+        }
+      }
       return subText;
     };
 
