@@ -498,6 +498,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     Promise.all([waitForContentStoreHydration(), waitForBase64StoreHydration()]),
     new Promise(r => setTimeout(r, 5000)),
   ]);
+  await new Promise(r => setTimeout(r, 0));
   const store = getContentStore();
   const base64Store = getBase64Store();
 
@@ -513,7 +514,10 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const entry = store.getEntry(storeId) || store.getEntry(altId);
       if (entry) {
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
-        if (chunks.length > 0) content = chunks.map(c => c.text).join('');
+        if (chunks.length > 0) {
+          await new Promise(r => setTimeout(r, 0));
+          content = chunks.map(c => c.text).join('');
+        }
       }
 
       if (!content && githubContext) {
@@ -530,6 +534,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
 
       if (!content) return { success: false, content: `File not found: ${path}` };
 
+      await new Promise(r => setTimeout(r, 0));
       const lines = content.split('\n');
       const totalLines = lines.length;
       const head = lines.slice(0, headLines).map((l, i) => `${i + 1}: ${l}`).join('\n');
@@ -548,7 +553,10 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const entry = store.getEntry(storeId) || store.getEntry(altId);
       if (entry) {
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
-        if (chunks.length > 0) fullContent = chunks.map(c => c.text).join('');
+        if (chunks.length > 0) {
+          await new Promise(r => setTimeout(r, 0));
+          fullContent = chunks.map(c => c.text).join('');
+        }
       }
       if (!fullContent && githubContext) {
         try {
@@ -562,6 +570,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
       if (!fullContent) return { success: false, content: `File not found: ${path}` };
+      await new Promise(r => setTimeout(r, 0));
       const outline = generateFileOutline(fullContent, path);
       return { success: true, content: outline };
     }
@@ -579,6 +588,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (entry) {
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
+          await new Promise(r => setTimeout(r, 0));
           fullContent = chunks.map(c => c.text).join('');
         }
       }
@@ -602,6 +612,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         return { success: false, content: `File not found: ${path}` };
       }
 
+      await new Promise(r => setTimeout(r, 0));
       const allLines = fullContent.split('\n');
       const totalLines = allLines.length;
       const endLine = Math.min(startLine + lineLimit - 1, totalLines);
@@ -684,6 +695,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
 
       // 4. ContentStore — full-text search in loaded file contents
+      await new Promise(r => setTimeout(r, 0));
       const entries = Array.from(store.entries.entries());
       for (const [id, entry] of entries) {
         if (results.length >= MAX_RESULTS) break;
