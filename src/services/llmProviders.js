@@ -4,7 +4,8 @@ async function gzipBytes(str) {
   const data = new TextEncoder().encode(str);
   const cs = new CompressionStream('gzip');
   const w = cs.writable.getWriter();
-  w.write(data); w.close();
+  await w.write(data);
+  await w.close();
   const reader = cs.readable.getReader();
   const chunks = [];
   for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
