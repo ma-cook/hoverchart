@@ -43,8 +43,11 @@ export class Base64Store {
   async encodeAll() {
     this.encodedChunks.clear();
     this._buildChunkIndex();
+    let i = 0;
     for (const [chunkId, data] of this._chunkIndex) {
       this.encodedChunks.set(chunkId, data);
+      i++;
+      if (i % 50 === 0) await new Promise(r => setTimeout(r, 0));
     }
     this._hydrated = true;
   }

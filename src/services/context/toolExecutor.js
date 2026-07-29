@@ -1,6 +1,7 @@
 import { getContentStore, ContentCategory, waitForContentStoreHydration } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
+import { extractKeywords } from './chunkIndex';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
@@ -15,26 +16,87 @@ function persistFileContent(storeId, filePath, content) {
   setTimeout(async () => {
     const store = getContentStore();
     const base64Store = getBase64Store();
-    store.upsert(storeId, ContentCategory.REPO_FILE, content, { sourcePath: filePath });
-    const entry = store.getEntry(storeId);
-    if (entry) {
-      for (let i = 0; i < entry.chunks.length; i++) {
-        const chunk = entry.chunks[i];
-        base64Store.encodedChunks.set(chunk.id, {
-          text: chunk.text,
-          meta: {
-            entryId: storeId,
-            sourcePath: filePath,
-            category: ContentCategory.REPO_FILE,
-            keywords: chunk.keywords,
-            charCount: chunk.charCount,
-            byteSize: chunk.text.length,
-            startIndex: chunk.startIndex,
-            endIndex: chunk.endIndex,
-          },
-        });
-        if (i % 25 === 0) await new Promise(r => setTimeout(r, 0));
+
+    const existing = store.entries.get(storeId);
+    if (existing) {
+      for (const chunk of existing.chunks) {
+        for (const kw of chunk.keywords) {
+          const set = store.invertedIndex.get(kw);
+          if (set) {
+            set.delete(chunk.id);
+            if (set.size === 0) store.invertedIndex.delete(kw);
+          }
+        }
       }
+      store.totalChunks -= existing.chunks.length;
+    }
+
+    await new Promise(r => setTimeout(r, 0));
+
+    const cfg = { chunkSize: 3000, overlap: 300, delimiter: '\n\n' };
+    const chunks = [];
+    let start = 0;
+    let chunkIndex = 0;
+    while (start < content.length) {
+      let end = Math.min(start + cfg.chunkSize, content.length);
+      if (end < content.length) {
+        const lastDelimiter = content.lastIndexOf(cfg.delimiter, end);
+        if (lastDelimiter > start + cfg.chunkSize * 0.5) {
+          end = lastDelimiter;
+        }
+      }
+      const slice = content.slice(start, end);
+      chunks.push({
+        id: `chunk-${chunkIndex}`,
+        text: slice,
+        startIndex: start,
+        endIndex: end,
+        keywords: extractKeywords(slice),
+        charCount: slice.length,
+      });
+      start = end - cfg.overlap;
+      if (start >= content.length) break;
+      chunkIndex++;
+      if (chunkIndex % 10 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    const entry = {
+      id: storeId,
+      category: ContentCategory.REPO_FILE,
+      chunks,
+      sourcePath: filePath,
+      tags: [],
+      lastUpdated: Date.now(),
+      totalChars: content.length,
+    };
+
+    for (const chunk of chunks) {
+      for (const kw of chunk.keywords) {
+        if (!store.invertedIndex.has(kw)) store.invertedIndex.set(kw, new Set());
+        store.invertedIndex.get(kw).add(chunk.id);
+      }
+    }
+
+    store.entries.set(storeId, entry);
+    store.totalChunks += chunks.length;
+    store._persist();
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      base64Store.encodedChunks.set(chunk.id, {
+        text: chunk.text,
+        meta: {
+          entryId: storeId,
+          sourcePath: filePath,
+          category: ContentCategory.REPO_FILE,
+          keywords: chunk.keywords,
+          charCount: chunk.charCount,
+          byteSize: chunk.text.length,
+          startIndex: chunk.startIndex,
+          endIndex: chunk.endIndex,
+        },
+      });
+      if (i % 25 === 0) await new Promise(r => setTimeout(r, 0));
     }
   }, 0);
 }
@@ -49,7 +111,7 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer));
 }
 
-function generateFileOutline(content, filePath) {
+async function generateFileOutline(content, filePath) {
   const lines = content.split('\n');
   const totalLines = lines.length;
   const totalChars = content.length;
@@ -113,6 +175,7 @@ function generateFileOutline(content, filePath) {
         types.push({ line: lineNum, name: typeMatch[1], text: trimmed.slice(0, 80) });
       }
     }
+    if (i % 200 === 199) await new Promise(r => setTimeout(r, 0));
   }
 
   const parts = [];
@@ -572,7 +635,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       if (!fullContent) return { success: false, content: `File not found: ${path}` };
       await new Promise(r => setTimeout(r, 0));
-      const outline = generateFileOutline(fullContent, path);
+      const outline = await generateFileOutline(fullContent, path);
       return { success: true, content: outline };
     }
 
@@ -698,6 +761,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       // 4. ContentStore — full-text search in loaded file contents
       await new Promise(r => setTimeout(r, 0));
       const entries = Array.from(store.entries.entries());
+      let scanCount = 0;
       for (const [id, entry] of entries) {
         if (results.length >= MAX_RESULTS) break;
         if (!id.startsWith('repo:')) continue;
@@ -715,6 +779,8 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             break;
           }
         }
+        scanCount++;
+        if (scanCount % 50 === 0) await new Promise(r => setTimeout(r, 0));
       }
 
       if (results.length === 0) {

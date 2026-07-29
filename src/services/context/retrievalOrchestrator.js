@@ -23,7 +23,7 @@ function estimateMessagesSize(msgs) {
   return total;
 }
 
-function compressMessages(msgs) {
+async function compressMessages(msgs) {
   if (msgs.length <= 2) return msgs;
 
   const systemMsg = msgs[0];
@@ -43,6 +43,7 @@ function compressMessages(msgs) {
         }
       }
     }
+    if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
   }
 
   const SEARCH_TOOLS = new Set(['search_code', 'search_nodes', 'get_node_info', 'file_outline', 'quick_look']);
@@ -89,6 +90,7 @@ function compressMessages(msgs) {
         compressedCount++;
       }
     }
+    if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
   }
 
   if (compressedCount > 0) {
@@ -199,7 +201,7 @@ export async function sendWithRetrieval({
     }
 
     if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS) {
-      currentMessages = compressMessages(currentMessages);
+      currentMessages = await compressMessages(currentMessages);
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
     }
 
