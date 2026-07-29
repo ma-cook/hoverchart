@@ -280,6 +280,8 @@ export async function sendToProvider({
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
 
+  console.log(`[sendToProvider] body=${JSON.stringify(body).length} url=${url}`);
+
   const MAX_RETRIES = 5;
   const timeoutMs = 5 * 60 * 1000;
 
@@ -292,25 +294,33 @@ export async function sendToProvider({
       : timeoutController.signal;
 
     try {
+      console.log(`[sendToProvider] stringifying payload...`);
       const payload = JSON.stringify({ url, headers, body });
+      console.log(`[sendToProvider] payload=${payload.length} compressing...`);
       let compressed, contentType;
       try {
         compressed = await gzipBytes(payload);
         contentType = 'application/gzip';
+        console.log(`[sendToProvider] compressed ${payload.length} -> ${compressed.data.length}`);
       } catch (gzErr) {
         console.warn(`[sendToProvider] gzip failed, falling back to uncompressed: ${gzErr.message}`);
         compressed = await fallbackBytes(payload);
         contentType = 'application/json';
       }
+      console.log(`[sendToProvider] fetching ${API_BASE}/api/llm/chat...`);
       res = await fetch(`${API_BASE}/api/llm/chat`, {
         method: 'POST',
         headers: { 'Content-Type': contentType },
         body: compressed.data,
         signal: combinedSignal,
       });
+      console.log(`[sendToProvider] response status=${res.status}`);
       clearTimeout(timeoutId);
 
-      if (res.ok) break;
+      if (res.ok) {
+        console.log(`[sendToProvider] starting SSE read...`);
+        break;
+      }
 
       if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
         const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
