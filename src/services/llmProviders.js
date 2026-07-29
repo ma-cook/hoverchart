@@ -5,9 +5,9 @@ async function gzipBytes(str) {
   const data = new TextEncoder().encode(str);
   const cs = new CompressionStream('gzip');
   const writer = cs.writable.getWriter();
-  await writer.write(data);
   const reader = cs.readable.getReader();
-  writer.close();
+  await writer.write(data);
+  await writer.close();
   const chunks = [];
   for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
   const total = chunks.reduce((s, c) => s + c.length, 0);
