@@ -7,7 +7,7 @@ import { getBase64Store } from './base64Store';
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
 const MAX_CONTEXT_CHARS = 120000;
-const MAX_TOOL_ROUNDS = 50;
+const MAX_TOOL_ROUNDS = 80;
 const MAX_TOOL_RESULT_CHARS = 30000;
 
 function estimateMessagesSize(msgs) {
@@ -95,6 +95,43 @@ async function compressMessages(msgs) {
 
   if (compressedCount > 0) {
     console.log(`[Compression] Compressed ${compressedCount} stale tool results`);
+  }
+
+  const totalSize = estimateMessagesSize([systemMsg, userMsg, ...rest]);
+  if (totalSize > MAX_CONTEXT_CHARS * 0.8 && rest.length > 10) {
+    const pairs = [];
+    for (let i = 0; i < rest.length; i++) {
+      const msg = rest[i];
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        const toolResults = [];
+        let j = i + 1;
+        while (j < rest.length && rest[j].role === 'tool') {
+          toolResults.push(rest[j]);
+          j++;
+        }
+        pairs.push({ assistant: msg, tools: toolResults, endIdx: j - 1 });
+        i = j - 1;
+      }
+    }
+    let dropped = 0;
+    const keepIndices = new Set(rest.map((_, i) => i));
+    for (let p = 0; p < pairs.length - 3; p++) {
+      const pair = pairs[p];
+      if (!pair.assistant.content || pair.assistant.content.length < 50) {
+        keepIndices.delete(pair.endIdx);
+        for (let k = pair.endIdx - 1; k >= 0 && rest[k] !== pair.assistant; k--) {
+          keepIndices.delete(k);
+        }
+        const idx = rest.indexOf(pair.assistant);
+        if (idx >= 0) keepIndices.delete(idx);
+        dropped++;
+      }
+    }
+    if (dropped > 0) {
+      const filtered = rest.filter((_, i) => keepIndices.has(i));
+      console.log(`[Compression] Dropped ${dropped} silent assistant+tool pairs to free context`);
+      return [systemMsg, userMsg, ...filtered];
+    }
   }
 
   return [systemMsg, userMsg, ...rest];

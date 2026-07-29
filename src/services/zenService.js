@@ -705,7 +705,7 @@ TOOLS (use these — do NOT fabricate tool calls)
 • search_nodes(query) — search components by name/type in the diagram.
 • file_outline(path) — structural outline with line numbers (~500 chars vs 32K for read_file). Use FIRST.
 • quick_look(path, head, tail) — first/last N lines preview (fast, no full load).
-• read_file(path, offset, limit) — full source with line numbers ("N: content"). Default 2000 lines, use offset to continue.
+• read_file(path, offset, limit) — full source with line numbers ("N: content"). Default 8000 lines, use offset for files longer than 8000 lines.
 • list_files(path) — list files in a directory.
 • get_node_info(nodeId) — full component details: type, file, connections, exports, imports.
 • get_dependencies(nodeId, direction) — upstream/downstream relationships.
@@ -745,9 +745,11 @@ RULES
 6. After ANY tool returns a file path, call read_file on that path before editing — do NOT keep searching
 7. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy precisely from read_file output (lines are prefixed "N: content").
 8. NEVER fabricate file paths, imports, or code structure. Verify with search_code or read_file — do NOT guess
-9. Each file should be read ONCE (default 2000 lines). Do not re-read at different offsets.
-10. Use file_outline(path) first (~500 chars) to see structure, then read_file with offset/limit for only the section you need
+9. Read files in LARGE chunks (8000+ lines per call). Avoid tiny 200-line slices — they waste rounds. Use offset only for files longer than 8000 lines.
+10. Use file_outline(path) first (~500 chars) to see structure, then read_file for the full content
 11. Check CONTENT INDEX and IMPORT GRAPH sections above to understand exports and dependencies — this prevents duplicates
+12. CRITICAL: After EVERY tool result, write a brief summary (1-3 sentences) of what you learned before making the next tool call. NEVER send only tool_calls without text — your reasoning helps you stay on track.
+13. If search_code returns "No matching files found", try a shorter/substring of the search term — the function/variable you're looking for may have a slightly different name in the codebase.
 `;
 
 function formatFileSize(chars) {

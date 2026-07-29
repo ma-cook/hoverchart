@@ -7,8 +7,8 @@ import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
 
 const TOOL_TIMEOUT_MS = 20_000;
-const DEFAULT_READ_LINES = 2000;
-const MAX_READ_LINES = 4000;
+const DEFAULT_READ_LINES = 8000;
+const MAX_READ_LINES = 10000;
 
 const appliedEdits = new Map();
 
@@ -278,13 +278,13 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: 'Read the contents of a file from the repository. Returns up to 1000 lines by default. Each line is prefixed with its line number (e.g. "42:  code here"). Use offset to read later sections of large files.',
+      description: 'Read the contents of a file from the repository. Returns up to 8000 lines by default — prefer reading large sections in one call rather than many tiny slices. Each line is prefixed with its line number (e.g. "42:  code here"). Use offset to read later sections of large files.',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'File path relative to repo root, e.g. "src/components/Button.tsx"' },
           offset: { type: 'number', description: 'Line number to start reading from (default 1, 1-indexed)' },
-          limit: { type: 'number', description: 'Max lines to return (default 1000)' },
+          limit: { type: 'number', description: 'Max lines to return (default 8000). Use a large value to read the full file in one call.' },
         },
         required: ['path'],
       },
@@ -644,7 +644,10 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     case 'read_file': {
       const path = args.path;
       const startLine = Math.max(1, parseInt(args.offset, 10) || 1);
-      const requestedLines = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
+      let requestedLines = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
+      if (requestedLines > 0 && requestedLines < 200) {
+        requestedLines = Math.min(200, DEFAULT_READ_LINES);
+      }
       const lineLimit = Math.min(requestedLines, MAX_READ_LINES);
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
@@ -786,7 +789,13 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
 
       if (results.length === 0) {
-        return { success: true, content: 'No matching files found. Try different search terms or use list_files("path") to browse directories.' };
+        const fuzzyMatches = fileTree
+          .filter(f => normalize(f).includes(pattern.slice(0, 4)))
+          .slice(0, 10);
+        const hint = fuzzyMatches.length > 0
+          ? `No exact matches for "${args.pattern}". Closest files: ${fuzzyMatches.join(', ')}`
+          : `No matching files found. Try different search terms or use list_files("path") to browse directories.`;
+        return { success: true, content: hint };
       }
 
       results.sort((a, b) => a.rank - b.rank);
