@@ -937,8 +937,9 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         .map((line, i) => `${showStart + i + 1}: ${line}`)
         .join('\n');
       const summary = `Successfully edited ${filePath} at line ${startLine} (${fullContent.length} → ${updated.length} chars, ${newLines.length - oldLines.length >= 0 ? '+' : ''}${newLines.length - oldLines.length} lines). File now has ${updatedLines.length} lines.`;
+      const importLines = updatedLines.slice(0, 30).map((line, i) => `${i + 1}: ${line}`).join('\n');
       console.log(`[Edit] ${filePath}: replaced ${oldString.length} chars at line ${startLine} → ${newString.length} chars (persisted to store)`);
-      return { success: true, content: `${summary}\n\nContext around edit (${showStart + 1}-${showEnd}):\n${contextBlock}` };
+      return { success: true, content: `${summary}\n\nImports at top of file (lines 1-${Math.min(30, updatedLines.length)}):\n${importLines}\n\nContext around edit (${showStart + 1}-${showEnd}):\n${contextBlock}` };
     }
 
     case 'write': {

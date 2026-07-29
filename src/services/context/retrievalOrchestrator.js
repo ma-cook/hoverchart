@@ -7,7 +7,6 @@ import { getBase64Store } from './base64Store';
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
 const MAX_CONTEXT_CHARS = 120000;
-const MAX_TOOL_ROUNDS = 80;
 const MAX_TOOL_RESULT_CHARS = 30000;
 
 function estimateMessagesSize(msgs) {
@@ -231,11 +230,6 @@ export async function sendWithRetrieval({
   resetEditTracker();
 
   while (true) {
-    if (rounds >= MAX_TOOL_ROUNDS) {
-      console.warn(`[ToolRound] Hit round cap (${MAX_TOOL_ROUNDS}), exiting loop`);
-      break;
-    }
-
     if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS) {
       currentMessages = await compressMessages(currentMessages);
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
