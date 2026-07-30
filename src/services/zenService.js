@@ -769,8 +769,7 @@ export function buildFileTreeSection(fileTree, fileSizesMap) {
 
   for (const filePath of fileTree) {
     if (shown >= 200) { truncated = fileTree.length - shown; break; }
-    const fileName = sizes ? (filePath.split('/').pop()?.replace(/\.(jsx?|tsx?|js|ts|py|vue|css|scss|html|json|yaml|yml|md)$/, '') || '') : '';
-    const size = sizes?.get(fileName);
+    const size = sizes?.get(filePath);
     const line = size ? `${filePath} (${formatFileSize(size)})` : filePath;
     if (charCount + line.length + 1 > BUDGET) { truncated = fileTree.length - shown; break; }
     lines.push(line);

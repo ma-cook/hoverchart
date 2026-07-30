@@ -1778,7 +1778,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
           }
 
           // Track file size for system prompt file tree
-          fileSizes.set(fileName, fileContent.length);
+          fileSizes.set(file.path, fileContent.length);
 
           // ── Next.js route tracking ────────────────────────────────────────
           // For Next.js repos, track which files are route files (pages,
@@ -4521,7 +4521,7 @@ const generateMerfolkMarkdown = ({
     if (fi?.exports?.size > 0) {
       props.push(`  exports: "${[...fi.exports].join(',')}"`);
     }
-    const fileSizeVal = fileSizes.get(fileNodeId);
+    const fileSizeVal = fileSizes.get(filePath);
     if (fileSizeVal > 0) {
       props.push(`  fileSize: "${fileSizeVal}"`);
     }

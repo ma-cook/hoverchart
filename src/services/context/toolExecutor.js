@@ -396,6 +396,13 @@ export const CODE_GEN_TOOLS = [
       description: 'List all nodes in a community with their types and file paths. Use this to see every component/function/hook in a subsystem.',
       parameters: {
         type: 'object',
+        properties: {
+          communityId: {
+            type: 'number',
+            description: 'The ID of the community to list nodes for',
+          },
+        },
+        required: ['communityId'],
       },
     },
   },
@@ -572,7 +579,8 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     case 'quick_look': {
       const path = args.path;
       const headLines = Math.min(parseInt(args.head, 10) || 40, 100);
-      const tailLines = Math.min(parseInt(args.tail, 10) || 20, 50);
+      const tailArg = args.tail;
+      const tailLines = tailArg != null ? Math.min(parseInt(tailArg, 10), 50) : 20;
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
 
@@ -649,6 +657,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         requestedLines = Math.min(200, DEFAULT_READ_LINES);
       }
       const lineLimit = Math.min(requestedLines, MAX_READ_LINES);
+      const effectiveLimit = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
 
@@ -899,7 +908,6 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (prevCount >= 1) {
         return { success: false, content: `This edit was already applied ${prevCount} time(s) to ${filePath}. The oldString still exists in the file, which means your newString must also contain the oldString text — this creates duplicates. Re-read the file with read_file to see the current state, then make a DIFFERENT edit that doesn't re-insert the same code.` };
       }
-      appliedEdits.set(editKey, prevCount + 1);
       const storeId = `repo:${filePath}`;
       const altId = `github:${filePath}`;
       const entry = store.getEntry(storeId) || store.getEntry(altId);
@@ -923,15 +931,17 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const endIdx = idx + oldString.length;
       const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
+      appliedEdits.set(editKey, (appliedEdits.get(editKey) || 0) + 1);
       persistFileContent(storeId, filePath, updated);
 
-      const primaryChunk = entry.chunks[0];
-      if (primaryChunk) {
-        const existing = base64Store.encodedChunks.get(primaryChunk.id);
+      for (let ci = 0; ci < entry.chunks.length; ci++) {
+        const chunk = entry.chunks[ci];
+        const existing = base64Store.encodedChunks.get(chunk.id);
         if (existing) {
-          base64Store.encodedChunks.set(primaryChunk.id, {
-            text: updated,
-            meta: { ...existing.meta, charCount: updated.length, byteSize: updated.length },
+          const isFirst = ci === 0;
+          base64Store.encodedChunks.set(chunk.id, {
+            text: isFirst ? updated : '',
+            meta: { ...existing.meta, charCount: isFirst ? updated.length : 0, byteSize: isFirst ? updated.length : 0 },
           });
         }
       }
@@ -959,10 +969,10 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!filePath || content == null) {
         return { success: false, content: 'write requires "filePath" and "content" parameters' };
       }
-      const existingFile = fileTree.some(f => f.path === filePath);
+      const existingFile = fileTree.some(f => f === filePath);
       if (!existingFile) {
         const parentDir = filePath.split('/').slice(0, -1).join('/');
-        const parentExists = parentDir && fileTree.some(f => f.path.startsWith(parentDir + '/') || f.path === parentDir);
+        const parentExists = parentDir && fileTree.some(f => f.startsWith(parentDir + '/') || f === parentDir);
         if (!parentExists && fileTree.length > 0) {
           return { success: false, content: `Cannot create "${filePath}": parent directory does not exist in the repository. Use list_files to find the correct location, or check the FILE TREE section for valid paths.` };
         }

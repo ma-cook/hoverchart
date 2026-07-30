@@ -203,7 +203,7 @@ function isUsefulToolResult(content, toolName) {
 
 function readKey(tc) {
   if (tc.name === 'read_file') {
-    return `read_file:${tc.arguments.path}:${tc.arguments.offset || 1}:${tc.arguments.limit || 2000}`;
+    return `read_file:${tc.arguments.path}:${tc.arguments.offset || 1}:${tc.arguments.limit || 8000}`;
   }
   return `${tc.name}:${JSON.stringify(tc.arguments)}`;
 }
@@ -429,12 +429,9 @@ export async function sendWithRetrieval({
 
     const toolResults = await Promise.all(toolPromises);
 
-    const allDuplicateReads = toolCalls.length > 0 && toolCalls.every(tc =>
-      tc.name === 'read_file' && readFilesBefore.has(readKey(tc))
-    );
-
-    const anyUseful = toolResults.some(({ tc, result }) => isUsefulToolResult(result.content, tc.name));
-    if (anyUseful) {
+    const usefulCount = toolResults.filter(({ tc, result }) => isUsefulToolResult(result.content, tc.name)).length;
+    const uselessCount = toolResults.length - usefulCount;
+    if (usefulCount > uselessCount) {
       consecutiveUnhelpfulRounds = 0;
     } else {
       consecutiveUnhelpfulRounds++;
@@ -445,9 +442,14 @@ export async function sendWithRetrieval({
       console.warn(`[ToolRound] Unhelpful streak: ${consecutiveUnhelpfulRounds}/${MAX_UNHELPFUL_ROUNDS}`);
     }
 
+    const readDupCount = toolCalls.filter(tc =>
+      tc.name === 'read_file' && readFilesBefore.has(readKey(tc))
+    ).length;
+    const allDuplicateReads = toolCalls.length > 0 && readDupCount >= Math.ceil(toolCalls.length / 2);
+
     if (allDuplicateReads) {
       duplicateReadRounds++;
-      console.warn(`[ToolRound] Round ${rounds + 1}: all read_file calls are for already-read files (${duplicateReadRounds}/${MAX_SAME_FILE_READS})`);
+      console.warn(`[ToolRound] Round ${rounds + 1}: ${readDupCount}/${toolCalls.length} read_file calls are duplicates (${duplicateReadRounds}/${MAX_SAME_FILE_READS})`);
     } else {
       duplicateReadRounds = 0;
     }
