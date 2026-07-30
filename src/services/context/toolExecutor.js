@@ -12,8 +12,7 @@ const MAX_READ_LINES = 10000;
 
 const appliedEdits = new Map();
 
-function persistFileContent(storeId, filePath, content) {
-  setTimeout(async () => {
+async function persistFileContent(storeId, filePath, content) {
     const store = getContentStore();
     const base64Store = getBase64Store();
 
@@ -98,7 +97,6 @@ function persistFileContent(storeId, filePath, content) {
       });
       if (i % 25 === 0) await new Promise(r => setTimeout(r, 0));
     }
-  }, 0);
 }
 
 function withTimeout(promise, ms, label) {
@@ -932,7 +930,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const endIdx = idx + oldString.length;
       const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
       appliedEdits.set(editKey, (appliedEdits.get(editKey) || 0) + 1);
-      persistFileContent(storeId, filePath, updated);
+      await persistFileContent(storeId, filePath, updated);
 
       for (let ci = 0; ci < entry.chunks.length; ci++) {
         const chunk = entry.chunks[ci];
@@ -978,7 +976,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
       const storeId = `repo:${filePath}`;
-      persistFileContent(storeId, filePath, content);
+      await persistFileContent(storeId, filePath, content);
 
       const kw = extractKeywords(content);
       const chunkId = `chunk-write-${Date.now()}`;

@@ -116,7 +116,8 @@ async function compressMessages(msgs) {
     const keepIndices = new Set(rest.map((_, i) => i));
     for (let p = 0; p < pairs.length - 3; p++) {
       const pair = pairs[p];
-      if (!pair.assistant.content || pair.assistant.content.length < 50) {
+      const hasCodeEdit = pair.assistant.tool_calls?.some(tc => tc.name === 'edit' || tc.name === 'write');
+      if (!pair.assistant.content || (!hasCodeEdit && pair.assistant.content.length < 50)) {
         keepIndices.delete(pair.endIdx);
         for (let k = pair.endIdx - 1; k >= 0 && rest[k] !== pair.assistant; k--) {
           keepIndices.delete(k);
