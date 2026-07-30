@@ -1,0 +1,26 @@
+{
+  "agent": {
+    "maxExplorationRounds": 8,
+    "requireEditByRound": 10,
+    "subAgentTokenBudget": 50000,
+    "enableAutoSummarize": true,
+    "phaseGate": {
+      "exploreToSummarize": 5,
+      "summarizeToGenerate": 7
+    }
+  },
+  "subAgent": {
+    "maxSpawnsPerTask": 1,
+    "deduplicatePrompts": true,
+    "tokenBudget": 50000
+  },
+  "context": {
+    "compressionThreshold": 50000,
+    "summarizeOnCompress": true,
+    "maxToolResults": 20
+  },
+  "codeGen": {
+    "triggerOnClassification": true,
+    "fallbackToEdit": true
+  }
+}
