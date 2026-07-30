@@ -101,6 +101,128 @@ async function persistFileContent(storeId, filePath, content) {
     }
 }
 
+function levenshteinDistance(a, b) {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      matrix[i][j] = a[i - 1] === b[j - 1]
+        ? matrix[i - 1][j - 1]
+        : Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + 1);
+  return matrix[a.length][b.length];
+}
+
+function lineTrimmedMatch(content, oldString) {
+  const contentLines = content.split('\n');
+  const searchLines = oldString.split('\n').filter(l => l !== '');
+  if (searchLines.length === 0) return null;
+  for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
+    let matches = true;
+    for (let j = 0; j < searchLines.length; j++) {
+      if (contentLines[i + j].trim() !== searchLines[j].trim()) { matches = false; break; }
+    }
+    if (matches) {
+      const start = contentLines.slice(0, i).join('\n').length + (i > 0 ? 1 : 0);
+      const end = contentLines.slice(0, i + searchLines.length).join('\n').length;
+      return { index: start, length: end - start };
+    }
+  }
+  return null;
+}
+
+function blockAnchorMatch(content, oldString) {
+  const searchLines = oldString.split('\n').filter(l => l !== '');
+  if (searchLines.length < 3) return null;
+  const firstLine = searchLines[0].trim();
+  const lastLine = searchLines[searchLines.length - 1].trim();
+  const contentLines = content.split('\n');
+  const candidates = [];
+  for (let i = 0; i < contentLines.length; i++) {
+    if (contentLines[i].trim() !== firstLine) continue;
+    for (let j = i + 2; j < contentLines.length; j++) {
+      if (contentLines[j].trim() === lastLine &&
+          Math.abs((j - i + 1) - searchLines.length) <= Math.max(1, Math.floor(searchLines.length * 0.25))) {
+        candidates.push({ startLine: i, endLine: j });
+        break;
+      }
+    }
+  }
+  let best = null, bestScore = 0;
+  for (const c of candidates) {
+    let score = 0, count = 0;
+    for (let k = 1; k < searchLines.length - 1 && k < (c.endLine - c.startLine); k++) {
+      const a = contentLines[c.startLine + k].trim();
+      const b = searchLines[k].trim();
+      const maxLen = Math.max(a.length, b.length);
+      if (maxLen > 0) { score += 1 - levenshteinDistance(a, b) / maxLen; count++; }
+    }
+    score = count > 0 ? score / count : 1;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  if (!best || bestScore < 0.65) return null;
+  const start = contentLines.slice(0, best.startLine).join('\n').length + (best.startLine > 0 ? 1 : 0);
+  const end = contentLines.slice(0, best.endLine + 1).join('\n').length;
+  return { index: start, length: end - start };
+}
+
+function whitespaceNormalizedMatch(content, oldString) {
+  const normalize = (s) => s.replace(/\s+/g, ' ').trim();
+  const normOld = normalize(oldString);
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (normalize(lines[i]) === normOld) {
+      const start = content.indexOf(lines[i]);
+      return { index: start, length: lines[i].length };
+    }
+  }
+  return null;
+}
+
+function indentationFlexibleMatch(content, oldString) {
+  const stripIndent = (s) => {
+    const lines = s.split('\n');
+    const nonEmpty = lines.filter(l => l.trim().length > 0);
+    if (nonEmpty.length === 0) return s;
+    const minIndent = Math.min(...nonEmpty.map(l => { const m = l.match(/^(\s*)/); return m ? m[1].length : 0; }));
+    return lines.map(l => l.trim().length === 0 ? l : l.slice(minIndent)).join('\n');
+  };
+  const normOld = stripIndent(oldString);
+  const contentLines = content.split('\n');
+  const oldLines = oldString.split('\n');
+  for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
+    const block = contentLines.slice(i, i + oldLines.length).join('\n');
+    if (stripIndent(block) === normOld) {
+      const start = contentLines.slice(0, i).join('\n').length + (i > 0 ? 1 : 0);
+      const end = contentLines.slice(0, i + oldLines.length).join('\n').length;
+      return { index: start, length: end - start };
+    }
+  }
+  return null;
+}
+
+function findMatch(content, oldString) {
+  const strategies = [
+    { name: 'exact', fn: (c, o) => { const i = c.indexOf(o); return i >= 0 ? { index: i, length: o.length } : null; } },
+    { name: 'lineTrimmed', fn: lineTrimmedMatch },
+    { name: 'blockAnchor', fn: blockAnchorMatch },
+    { name: 'whitespaceNormalized', fn: whitespaceNormalizedMatch },
+    { name: 'indentationFlexible', fn: indentationFlexibleMatch },
+  ];
+  for (const strategy of strategies) {
+    const result = strategy.fn(content, oldString);
+    if (result) {
+      if (strategy.name !== 'exact') {
+        console.log(`[Edit] Matched via ${strategy.name} strategy (index ${result.index}, length ${result.length})`);
+      }
+      return result;
+    }
+  }
+  return null;
+}
+
 function withTimeout(promise, ms, label) {
   let timer;
   return Promise.race([
@@ -502,12 +624,12 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'edit',
-      description: 'Make a targeted edit to a file by replacing an exact string match. Use this for modifications — it is more precise than regenerating the whole file. You MUST call read_file first to get the current content, then use the exact text as oldString.',
+      description: 'Make a targeted edit to a file by replacing a string match. The match is flexible — it handles whitespace differences, indentation changes, and uses fuzzy matching for larger blocks (first/last line anchors with similarity scoring). For exact control, provide the exact text from read_file output. You MUST call read_file first before editing.',
       parameters: {
         type: 'object',
         properties: {
           filePath: { type: 'string', description: 'File path relative to repo root' },
-          oldString: { type: 'string', description: 'The exact string to find and replace (must match file content exactly)' },
+          oldString: { type: 'string', description: 'The text to find and replace. Should match reasonably closely — exact match is preferred but whitespace/indentation differences are tolerated.' },
           newString: { type: 'string', description: 'The replacement string' },
         },
         required: ['filePath', 'oldString', 'newString'],
@@ -916,27 +1038,30 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
       const fullContent = chunks.map(c => c.text).join('');
-      const idx = fullContent.indexOf(oldString);
-      if (idx === -1) {
+      const match = findMatch(fullContent, oldString);
+      if (!match) {
         const firstLine = oldString.split('\n')[0].slice(0, 80);
         const contentLines = fullContent.split('\n');
         let closestLine = -1;
+        let closestContent = '';
         for (let i = 0; i < contentLines.length; i++) {
-          if (contentLines[i].includes(firstLine)) { closestLine = i + 1; break; }
+          if (contentLines[i].includes(firstLine)) { closestLine = i + 1; closestContent = contentLines[i].slice(0, 120); break; }
         }
         const hint = closestLine !== -1
-          ? ` The first line of oldString was found near line ${closestLine}. Re-read the file and use the exact text with correct whitespace/indentation.`
+          ? ` The first line of oldString was found near line ${closestLine}. Re-read the file and use the exact text with correct whitespace/indentation.\n  Expected near line ${closestLine}: "${firstLine}"\n  Found at line ${closestLine}: "${closestContent}"`
           : ' The oldString was not found. Re-read the file with read_file and copy the exact text including all indentation.';
         return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}` };
       }
-      const endIdx = idx + oldString.length;
-      const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
+      if (match.length > oldString.length * 4 && oldString.split('\n').length > 1) {
+        return { success: false, content: `edit failed: matched span (${match.length} chars) is much larger than oldString (${oldString.length} chars). Re-read the file and provide the full exact oldString for the intended replacement.` };
+      }
+      const updated = fullContent.slice(0, match.index) + newString + fullContent.slice(match.index + match.length);
       appliedEdits.set(editKey, (appliedEdits.get(editKey) || 0) + 1);
       await persistFileContent(storeId, filePath, updated);
 
       const oldLines = oldString.split('\n');
       const newLines = newString.split('\n');
-      const startLine = fullContent.slice(0, idx).split('\n').length;
+      const startLine = fullContent.slice(0, match.index).split('\n').length;
       const updatedLines = updated.split('\n');
       const contextBefore = 5;
       const contextAfter = 5;

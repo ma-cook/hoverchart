@@ -13,6 +13,20 @@ const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
 const MAX_CONTEXT_CHARS = 120000;
 const MAX_TOOL_RESULT_CHARS = 30000;
+const TRUNCATION_WARNING = `\n\n[Output truncated at ${(MAX_TOOL_RESULT_CHARS).toLocaleString()} chars. Use read_file with offset/limit or refine your search to narrow results.]`;
+const RETRYABLE_TOOLS = new Set(['read_file', 'edit', 'write', 'search_code']);
+const MAX_TOOL_RETRIES = 2;
+const COMPRESSION_INTERVAL = 12;
+
+function isTransientError(error) {
+  const msg = typeof error === 'string' ? error : (error?.message || error?.content || '');
+  if (msg.includes('timeout') || msg.includes('timed out')) return true;
+  if (msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET')) return true;
+  if (msg.includes('ETIMEDOUT') || msg.includes('ENOTFOUND')) return true;
+  if (msg.includes('500') || msg.includes('502') || msg.includes('503')) return true;
+  if (msg.includes('rate limit') || msg.includes('too many requests')) return true;
+  return false;
+}
 
 function estimateMessagesSize(msgs) {
   let total = 0;
@@ -27,7 +41,7 @@ function estimateMessagesSize(msgs) {
   return total;
 }
 
-async function compressMessages(msgs) {
+async function compressMessages(msgs, { summarizerFn } = {}) {
   if (msgs.length <= 2) return msgs;
 
   const systemMsg = msgs[0];
@@ -101,8 +115,9 @@ async function compressMessages(msgs) {
     console.log(`[Compression] Compressed ${compressedCount} stale tool results`);
   }
 
-  const totalSize = estimateMessagesSize([systemMsg, userMsg, ...rest]);
-  if (totalSize > MAX_CONTEXT_CHARS * 0.8 && rest.length > 10) {
+  let result = [systemMsg, userMsg, ...rest];
+  const totalSize = estimateMessagesSize(result);
+  if (totalSize > MAX_CONTEXT_CHARS * 0.6 && rest.length > 10) {
     const pairs = [];
     for (let i = 0; i < rest.length; i++) {
       const msg = rest[i];
@@ -118,8 +133,9 @@ async function compressMessages(msgs) {
       }
     }
     let dropped = 0;
+    let summarized = 0;
     const keepIndices = new Set(rest.map((_, i) => i));
-    const keepLast = Math.max(3, Math.floor(pairs.length * 0.3));
+    const keepLast = Math.max(5, Math.floor(pairs.length * 0.5));
     for (let p = 0; p < pairs.length - keepLast; p++) {
       const pair = pairs[p];
       const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.function?.name === 'edit' || tc.function?.name === 'write' || tc.function?.name === 'read_file' || tc.function?.name === 'search_code');
@@ -133,14 +149,34 @@ async function compressMessages(msgs) {
         dropped++;
       }
     }
-    if (dropped > 0) {
+    if (summarizerFn) {
+      for (let p = 0; p < pairs.length - keepLast; p++) {
+        const pair = pairs[p];
+        const asstIdx = rest.indexOf(pair.assistant);
+        if (!keepIndices.has(asstIdx)) continue;
+        const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.function?.name === 'edit' || tc.function?.name === 'write' || tc.function?.name === 'read_file' || tc.function?.name === 'search_code');
+        if (hasToolCalls && pair.tools.length > 0 && pair.assistant.content?.length < 100) {
+          const summary = await summarizerFn(pair.assistant, pair.tools);
+          if (summary) {
+            pair.assistant.content = `[Previously: ${summary}]`;
+            pair.assistant.tool_calls = undefined;
+            for (const tool of pair.tools) {
+              const tIdx = rest.indexOf(tool);
+              if (tIdx >= 0) keepIndices.delete(tIdx);
+            }
+            summarized++;
+          }
+        }
+      }
+    }
+    if (dropped > 0 || summarized > 0) {
       const filtered = rest.filter((_, i) => keepIndices.has(i));
-      console.log(`[Compression] Dropped ${dropped} silent assistant+tool pairs to free context`);
-      return [systemMsg, userMsg, ...filtered];
+      console.log(`[Compression] Dropped ${dropped} silent pairs, summarized ${summarized} old pairs`);
+      result = [systemMsg, userMsg, ...filtered];
     }
   }
 
-  return [systemMsg, userMsg, ...rest];
+  return result;
 }
 
 function generateSearchReplacePatch(original, modified, filePath) {
@@ -264,6 +300,29 @@ export function buildCodeGenPipeline({ sendToLLM, executeToolCall, compressMessa
   return pipeline;
 }
 
+async function executeWithRetry(tc, execFn) {
+  for (let attempt = 0; attempt <= MAX_TOOL_RETRIES; attempt++) {
+    try {
+      const result = await execFn();
+      if (!result.success && isTransientError(result.content) && attempt < MAX_TOOL_RETRIES && RETRYABLE_TOOLS.has(tc.name)) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 4000);
+        console.warn(`[Retry] ${tc.name} attempt ${attempt + 1}/${MAX_TOOL_RETRIES + 1}: ${result.content?.slice(0, 80)}... Retrying in ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      return result;
+    } catch (error) {
+      if (attempt < MAX_TOOL_RETRIES && RETRYABLE_TOOLS.has(tc.name) && isTransientError(error)) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 4000);
+        console.warn(`[Retry] ${tc.name} attempt ${attempt + 1}/${MAX_TOOL_RETRIES + 1} threw: ${error.message}. Retrying in ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 export async function sendWithRetrieval({
   messages,
   onChunk,
@@ -283,6 +342,7 @@ export async function sendWithRetrieval({
   let duplicateReadRounds = 0;
   const editedFilePaths = new Set();
   const originalFileContents = new Map();
+  let lastCompressionRound = -COMPRESSION_INTERVAL;
 
   resetEditTracker();
   initializeDefaultSkills({
@@ -300,9 +360,28 @@ export async function sendWithRetrieval({
     inputs: { messageCount: messages.length, fileTreeSize: fileTree?.length },
   });
 
+  const summarizeOldRound = async (assistantMsg, toolMsgs) => {
+    const toolSnippets = toolMsgs.map(t => (t.content || '').slice(0, 800)).join('\n---\n');
+    const prompt = `Summarize what the assistant learned or accomplished in 1 sentence (max 50 words):\n\nAssistant: ${(assistantMsg.content || '(no text)').slice(0, 300)}\n\nTool results:\n${toolSnippets.slice(0, 2500)}`;
+    try {
+      const result = await sendToZen({
+        messages: [
+          { role: 'system', content: 'You summarize concisely. Return only the summary, no prefixes.' },
+          { role: 'user', content: prompt },
+        ],
+        tools: [],
+        signal: null,
+      });
+      const summary = (typeof result === 'string' ? result : result?.text || '').trim().slice(0, 400);
+      return summary || null;
+    } catch { return null; }
+  };
+
   while (true) {
-    if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS) {
-      currentMessages = await compressMessages(currentMessages);
+    const currentSize = estimateMessagesSize(currentMessages);
+    if (currentSize > MAX_CONTEXT_CHARS || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
+      lastCompressionRound = rounds;
+      currentMessages = await compressMessages(currentMessages, { summarizerFn: summarizeOldRound });
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
     }
 
@@ -432,14 +511,15 @@ export async function sendWithRetrieval({
             }
             subReadFiles.add(rKey);
           }
-          return executeTool(tc.name, tc.arguments, ghCtx, ft, { runSubAgent, depth: subDepth })
+          return executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, ghCtx, ft, { runSubAgent, depth: subDepth }))
             .then(r => ({ tc, result: r }))
             .catch(e => ({ tc, result: { success: false, content: `Error: ${e.message}` } }));
         }));
         for (const { tc, result: subResult } of subResults) {
           let content = subResult.content || '';
           if (content.length > SUB_MAX_TOOL_CONTENT) {
-            content = content.slice(0, SUB_MAX_TOOL_CONTENT) + `\n... [truncated at ${SUB_MAX_TOOL_CONTENT} chars]`;
+            const subWarning = `\n[Sub-agent output truncated at ${SUB_MAX_TOOL_CONTENT.toLocaleString()} chars. Use more specific queries to narrow results.]`;
+            content = content.slice(0, SUB_MAX_TOOL_CONTENT) + subWarning;
           }
           subMessages.push({ role: 'tool', tool_call_id: tc.id, content });
         }
@@ -520,7 +600,7 @@ export async function sendWithRetrieval({
       }
       console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
       onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
-      return executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 })
+      return executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 }))
         .then(result => {
           if (tc.name === 'read_file' && result._fullContent) {
             const fp = tc.arguments?.path;
@@ -597,7 +677,7 @@ export async function sendWithRetrieval({
       }
       let content = toolResult.content;
       if (content && content.length > MAX_TOOL_RESULT_CHARS) {
-        content = content.slice(0, MAX_TOOL_RESULT_CHARS) + `\n\n... (truncated at ${MAX_TOOL_RESULT_CHARS} chars)`;
+        content = content.slice(0, MAX_TOOL_RESULT_CHARS) + TRUNCATION_WARNING;
       }
       currentMessages.push({
         role: 'tool',
