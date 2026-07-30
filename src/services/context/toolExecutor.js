@@ -12,6 +12,8 @@ const TOOL_TIMEOUT_MS = 20_000;
 const DEFAULT_READ_LINES = 8000;
 const MAX_READ_LINES = 10000;
 
+const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
+
 const appliedEdits = new Map();
 
 async function persistFileContent(storeId, filePath, content) {
@@ -171,11 +173,14 @@ function blockAnchorMatch(content, oldString) {
 function whitespaceNormalizedMatch(content, oldString) {
   const normalize = (s) => s.replace(/\s+/g, ' ').trim();
   const normOld = normalize(oldString);
-  const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    if (normalize(lines[i]) === normOld) {
-      const start = content.indexOf(lines[i]);
-      return { index: start, length: lines[i].length };
+  const contentLines = content.split('\n');
+  const oldLines = oldString.split('\n');
+  for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
+    const block = contentLines.slice(i, i + oldLines.length).join('\n');
+    if (normalize(block) === normOld) {
+      const start = contentLines.slice(0, i).join('\n').length + (i > 0 ? 1 : 0);
+      const end = contentLines.slice(0, i + oldLines.length).join('\n').length;
+      return { index: start, length: end - start };
     }
   }
   return null;
@@ -699,7 +704,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
 
   switch (name) {
     case 'quick_look': {
-      const path = args.path;
+      const path = normalizePath(args.path);
       const headLines = Math.min(parseInt(args.head, 10) || 40, 100);
       const tailArg = args.tail;
       const tailLines = tailArg != null ? Math.min(parseInt(tailArg, 10), 50) : 20;
@@ -742,7 +747,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     }
 
     case 'file_outline': {
-      const path = args.path;
+      const path = normalizePath(args.path);
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
       let fullContent = null;
@@ -772,7 +777,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     }
 
     case 'read_file': {
-      const path = args.path;
+      const path = normalizePath(args.path);
       const startLine = Math.max(1, parseInt(args.offset, 10) || 1);
       let requestedLines = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
       if (requestedLines > 0 && requestedLines < 200) {
@@ -1019,7 +1024,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     }
 
     case 'edit': {
-      const filePath = args.filePath;
+      const filePath = normalizePath(args.filePath);
       const oldString = args.oldString;
       const newString = args.newString;
       if (!filePath || oldString == null || newString == null) {
@@ -1087,7 +1092,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     }
 
     case 'write': {
-      const filePath = args.filePath;
+      const filePath = normalizePath(args.filePath);
       const content = args.content;
       if (!filePath || content == null) {
         return { success: false, content: 'write requires "filePath" and "content" parameters' };

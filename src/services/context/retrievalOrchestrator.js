@@ -17,6 +17,7 @@ const TRUNCATION_WARNING = `\n\n[Output truncated at ${(MAX_TOOL_RESULT_CHARS).t
 const RETRYABLE_TOOLS = new Set(['read_file', 'edit', 'write', 'search_code']);
 const MAX_TOOL_RETRIES = 2;
 const COMPRESSION_INTERVAL = 12;
+const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 function isTransientError(error) {
   const msg = typeof error === 'string' ? error : (error?.message || error?.content || '');
@@ -550,7 +551,7 @@ export async function sendWithRetrieval({
       const toolStart = performance.now();
       if (tc.name === 'read_file' && tc.arguments?.path) {
         const key = readKey(tc);
-        const filePath = tc.arguments.path;
+        const filePath = normalizePath(tc.arguments.path);
         if (readFilesBefore.has(key)) {
           const off = tc.arguments.offset || 1;
           const lim = tc.arguments.limit || 2000;
@@ -603,7 +604,7 @@ export async function sendWithRetrieval({
       return executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 }))
         .then(result => {
           if (tc.name === 'read_file' && result._fullContent) {
-            const fp = tc.arguments?.path;
+            const fp = normalizePath(tc.arguments?.path);
             if (fp && !originalFileContents.has(fp)) {
               originalFileContents.set(fp, result._fullContent);
             }
@@ -635,6 +636,12 @@ export async function sendWithRetrieval({
     });
 
     const toolResults = await Promise.all(toolPromises);
+
+    for (const { tc, result } of toolResults) {
+      if ((tc.name === 'edit' || tc.name === 'write') && result.success && tc.arguments?.filePath) {
+        originalFileContents.delete(normalizePath(tc.arguments.filePath));
+      }
+    }
 
     const usefulCount = toolResults.filter(({ tc, result }) => isUsefulToolResult(result.content, tc.name)).length;
     const uselessCount = toolResults.length - usefulCount;
