@@ -19,6 +19,98 @@ const MAX_TOOL_RETRIES = 2;
 const COMPRESSION_INTERVAL = 12;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
+// ── Harness hard limits — prevent explore-forever / doom loops ───────────────
+// Fix 4: hard cap on total rounds; if we hit this without an edit, force a
+//        "stop exploring, produce code now" system message (Fix 1).
+const MAX_EXPLORATION_ROUNDS = 12;
+const FORCE_GENERATION_AFTER_ROUND = 14;
+// Fix 2: only one sub-agent spawn per task; deduplicate identical prompts.
+const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
+// Fix 3: raise sub-agent char budget so a single ~80KB file fits in context.
+const SUB_MAX_ROUNDS = 8;
+const SUB_MAX_CHARS = 60000;
+const SUB_MAX_TOOL_CONTENT = 12000;
+// Fix 1: threshold to consider the agent "stuck exploring" (no edits yet).
+const STUCK_EXPLORING_THRESHOLD = 8;
+
+/**
+ * Fix 1 + Fix 4: Build a "stop exploring, generate now" nudge that gets
+ * appended to the messages when the agent has been exploring past
+ * MAX_EXPLORATION_ROUNDS without producing any edit/write tool call.
+ */
+function buildForceGenerationMessage(rounds, exploredCount) {
+  return {
+    role: 'user',
+    content: `⚠️ EXPLORATION LIMIT REACHED (round ${rounds + 1}, ${exploredCount} files read, no edits yet).
+
+You have enough context to act. STOP calling search_code / read_file / task.
+Switch to PRODUCING CODE NOW:
+  1. Use the "edit" tool with exact oldString/newString for the file you already located.
+  2. If you genuinely cannot proceed, return a final text answer summarizing the blocker.
+
+Do not call any more exploration tools this round.`,
+  };
+}
+
+/**
+ * Fix 5: Synthesize a compact digest of the accumulated tool results so the
+ * model receives digested context (not re-compressed noise) before being asked
+ * to generate. Returns the synthesized summary text, or null on failure.
+ */
+async function synthesizeFindingsDigest(currentMessages, sendToZen) {
+  const toolResults = [];
+  const seenPaths = new Set();
+  for (const m of currentMessages) {
+    if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > 50) {
+      toolResults.push(m.content.slice(0, 1200));
+    }
+    if (m.tool_calls) {
+      for (const tc of m.tool_calls) {
+        try {
+          const args = typeof tc.function?.arguments === 'string'
+            ? JSON.parse(tc.function.arguments)
+            : tc.function?.arguments;
+          if (tc.function?.name === 'read_file' && args?.path) seenPaths.add(args.path);
+          if (tc.function?.name === 'search_code' && args?.pattern) {
+            toolResults.push(`[searched for: ${args.pattern}]`);
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  }
+  if (toolResults.length === 0) return null;
+
+  const fileList = Array.from(seenPaths).slice(0, 30).join('\n');
+  const prompt = `You are preparing a handoff digest for a code-generation agent.
+Below are the key files read and search results gathered so far.
+Produce a CONCISE digest (max 400 words):
+- "Files Located": bullet list of the most relevant file paths (max 15)
+- "Key Findings": 1-3 lines per finding — where the relevant code lives (file:line), what it does
+- "Suggested Edit Targets": the file(s) and approximate line ranges to edit
+Do NOT repeat full file contents. Be terse.
+
+Files seen:
+${fileList}
+
+Tool results (truncated):
+${toolResults.slice(-12).join('\n---\n').slice(0, 6000)}`;
+
+  try {
+    const result = await sendToZen({
+      messages: [
+        { role: 'system', content: 'You produce terse codebase digests. Return only the digest.' },
+        { role: 'user', content: prompt },
+      ],
+      tools: [],
+      signal: null,
+    });
+    const text = (typeof result === 'string' ? result : result?.text || '').trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
 function isTransientError(error) {
   const msg = typeof error === 'string' ? error : (error?.message || error?.content || '');
   if (msg.includes('timeout') || msg.includes('timed out')) return true;
@@ -345,6 +437,15 @@ export async function sendWithRetrieval({
   const originalFileContents = new Map();
   let lastCompressionRound = -COMPRESSION_INTERVAL;
 
+  // Fix 2: track sub-agent spawns per task to enforce hard cap and dedupe prompts.
+  const subAgentSpawnCount = { value: 0 };
+  const subAgentPrompts = new Set();
+
+  // Fix 1 / Fix 4: track whether the agent has produced any edit/write this run.
+  let producedEdit = false;
+  let forceGenerationInjected = false;
+  let digestInjected = false;
+
   resetEditTracker();
   initializeDefaultSkills({
     fileTree,
@@ -384,6 +485,67 @@ export async function sendWithRetrieval({
       lastCompressionRound = rounds;
       currentMessages = await compressMessages(currentMessages, { summarizerFn: summarizeOldRound });
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
+    }
+
+    // ── Fix 1: force transition from exploration → generation ──────────────
+    // If the agent has been exploring past the exploration cap and has not
+    // produced a single edit, inject a hard "stop exploring, write code now"
+    // nudge. Injected once.
+    if (
+      !producedEdit &&
+      !forceGenerationInjected &&
+      rounds >= MAX_EXPLORATION_ROUNDS &&
+      rounds < FORCE_GENERATION_AFTER_ROUND
+    ) {
+      forceGenerationInjected = true;
+      const forceMsg = buildForceGenerationMessage(rounds, readFiles.size);
+      currentMessages = [...currentMessages, forceMsg];
+      console.warn(`[ToolRound] Fix 1: injected force-generation nudge at round ${rounds + 1} (read ${readFiles.size} files, 0 edits)`);
+    }
+
+    // ── Fix 5: synthesize a digest so the model gets digested context ─────
+    // Once before the force-generation round, hand the model a terse digest
+    // of what exploration found (file:line targets to edit), so it has the
+    // synthesis it needs rather than re-reading compressed noise.
+    if (
+      !producedEdit &&
+      !digestInjected &&
+      rounds >= STUCK_EXPLORING_THRESHOLD &&
+      rounds < MAX_EXPLORATION_ROUNDS
+    ) {
+      digestInjected = true;
+      try {
+        const digest = await synthesizeFindingsDigest(currentMessages, sendToZen);
+        if (digest) {
+          currentMessages = [...currentMessages, {
+            role: 'user',
+            content: `📋 EXPLORATION DIGEST (synthesized from prior tool calls):\n\n${digest}\n\nUse this digest to locate your edit targets. Do NOT re-read these files.`,
+          }];
+          console.warn(`[ToolRound] Fix 5: injected findings digest at round ${rounds + 1} (${digest.length} chars)`);
+        }
+      } catch (e) {
+        console.warn(`[ToolRound] Fix 5: digest synthesis failed: ${e.message}`);
+      }
+    }
+
+    // ── Fix 4: hard stop past FORCE_GENERATION_AFTER_ROUND with no edits ──
+    if (!producedEdit && rounds >= FORCE_GENERATION_AFTER_ROUND) {
+      console.warn(`[ToolRound] Fix 4: hard stop at round ${rounds + 1} (>= ${FORCE_GENERATION_AFTER_ROUND}) with 0 edits — forcing generation exit`);
+      const forceExit = buildForceGenerationMessage(rounds, readFiles.size);
+      currentMessages = [...currentMessages, forceExit];
+      // Allow one final LLM call below with the nudge, then break regardless
+      // of whether it produces tool calls (handled by the rounds cap below).
+      let finalRaw = null;
+      try {
+        finalRaw = await sendToZen({ messages: currentMessages, tools: computeTools(), signal });
+      } catch (e) {
+        console.warn(`[ToolRound] Fix 4: final send failed: ${e.message}`);
+      }
+      const finalRes = typeof finalRaw === 'string' ? { text: finalRaw, toolCalls: [] } : (finalRaw || { text: '', toolCalls: [] });
+      if (finalRes.text) {
+        finalText = finalText ? finalText + '\n\n' + finalRes.text : finalRes.text;
+      }
+      break;
     }
 
     const roundInvocation = globalMonitor.startInvocation({
@@ -468,6 +630,20 @@ export async function sendWithRetrieval({
     const readFilesBefore = new Set(readFiles.keys());
 
     const runSubAgent = async ({ prompt, tools, systemPrompt, githubContext: ghCtx, fileTree: ft, depth: subDepth }) => {
+      // Fix 2: enforce a hard cap on sub-agent spawns per task.
+      if (subAgentSpawnCount.value >= MAX_SUBAGENT_SPAWNS_PER_TASK) {
+        console.warn(`[SubAgent] Spawn rejected: cap reached (${MAX_SUBAGENT_SPAWNS_PER_TASK} per task). Returning short refusal.`);
+        return `[Sub-agent unavailable: spawn cap of ${MAX_SUBAGENT_SPAWNS_PER_TASK} reached for this task. Use the main thread's existing tools/edit instead.]`;
+      }
+      // Fix 2: deduplicate near-identical prompts (ignore whitespace differences).
+      const promptKey = (prompt || '').trim().replace(/\s+/g, ' ').toLowerCase().slice(0, 200);
+      if (subAgentPrompts.has(promptKey)) {
+        console.warn(`[SubAgent] Spawn rejected: duplicate prompt ("${promptKey.slice(0, 60)}..."). Returning refusal.`);
+        return `[Sub-agent not spawned: an identical sub-agent was already used this task. Re-use its results or do the research directly with read_file/search_code.]`;
+      }
+      subAgentPrompts.add(promptKey);
+      subAgentSpawnCount.value++;
+
       const subInvocation = globalMonitor.startInvocation({
         agentName: 'sub-agent',
         inputs: { prompt: prompt.slice(0, 200), depth: subDepth },
@@ -477,9 +653,8 @@ export async function sendWithRetrieval({
         { role: 'user', content: prompt },
       ];
       let subText = '';
-      const SUB_MAX_ROUNDS = 5;
-      const SUB_MAX_CHARS = 25000;
-      const SUB_MAX_TOOL_CONTENT = 6000;
+      // Fix 3: constants now declared at module scope (SUB_MAX_ROUNDS, SUB_MAX_CHARS,
+      //        SUB_MAX_TOOL_CONTENT) with budgets large enough for an 80KB file.
       const subReadFiles = new Set();
       for (let subRound = 0; subRound < SUB_MAX_ROUNDS; subRound++) {
         let raw;
@@ -681,6 +856,8 @@ export async function sendWithRetrieval({
     for (const { tc, result: toolResult } of toolResults) {
       if ((tc.name === 'edit' || tc.name === 'write') && tc.arguments?.filePath) {
         editedFilePaths.add(tc.arguments.filePath);
+        // Fix 1: mark that the agent has transitioned from exploration → generation.
+        if (toolResult.success) producedEdit = true;
       }
       let content = toolResult.content;
       if (content && content.length > MAX_TOOL_RESULT_CHARS) {
