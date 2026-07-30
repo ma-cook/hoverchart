@@ -932,18 +932,6 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       appliedEdits.set(editKey, (appliedEdits.get(editKey) || 0) + 1);
       await persistFileContent(storeId, filePath, updated);
 
-      for (let ci = 0; ci < entry.chunks.length; ci++) {
-        const chunk = entry.chunks[ci];
-        const existing = base64Store.encodedChunks.get(chunk.id);
-        if (existing) {
-          const isFirst = ci === 0;
-          base64Store.encodedChunks.set(chunk.id, {
-            text: isFirst ? updated : '',
-            meta: { ...existing.meta, charCount: isFirst ? updated.length : 0, byteSize: isFirst ? updated.length : 0 },
-          });
-        }
-      }
-
       const oldLines = oldString.split('\n');
       const newLines = newString.split('\n');
       const startLine = fullContent.slice(0, idx).split('\n').length;

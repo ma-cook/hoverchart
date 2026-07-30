@@ -857,7 +857,7 @@ export function buildContentIndexSection() {
   try {
     const contentIndex = useCodeStore.getState().contentIndex;
     if (!contentIndex) return '(no content index available — run a scan first)';
-    const BUDGET = 4000;
+    const BUDGET = 8000;
     if (contentIndex.length <= BUDGET) return contentIndex;
     return contentIndex.slice(0, BUDGET) + '\n... (truncated)';
   } catch {

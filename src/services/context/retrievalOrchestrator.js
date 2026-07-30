@@ -116,8 +116,8 @@ async function compressMessages(msgs) {
     const keepIndices = new Set(rest.map((_, i) => i));
     for (let p = 0; p < pairs.length - 3; p++) {
       const pair = pairs[p];
-      const hasCodeEdit = pair.assistant.tool_calls?.some(tc => tc.name === 'edit' || tc.name === 'write');
-      if (!pair.assistant.content || (!hasCodeEdit && pair.assistant.content.length < 50)) {
+      const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.name === 'edit' || tc.name === 'write' || tc.name === 'read_file');
+      if (!pair.assistant.content || (!hasToolCalls && pair.assistant.content.length < 50)) {
         keepIndices.delete(pair.endIdx);
         for (let k = pair.endIdx - 1; k >= 0 && rest[k] !== pair.assistant; k--) {
           keepIndices.delete(k);
@@ -385,21 +385,40 @@ export async function sendWithRetrieval({
     };
 
     const toolPromises = toolCalls.map((tc, idx) => {
-      if (tc.name === 'read_file') {
+      if (tc.name === 'read_file' && tc.arguments?.path) {
         const key = readKey(tc);
+        const filePath = tc.arguments.path;
         if (readFilesBefore.has(key)) {
           const off = tc.arguments.offset || 1;
           const lim = tc.arguments.limit || 2000;
-          console.warn(`[ToolRound] Round ${rounds + 1}: ${tc.arguments.path} (offset=${off}) already read, skipping fetch`);
+          console.warn(`[ToolRound] Round ${rounds + 1}: ${filePath} (offset=${off}) already read, skipping fetch`);
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
           return Promise.resolve({
             tc,
-            result: { success: true, content: `[Already loaded: ${tc.arguments.path} lines ${off}-${off + lim - 1} — see prior tool response above. Do NOT re-read this section.]` },
+            result: { success: true, content: `[Already loaded: ${filePath} lines ${off}-${off + lim - 1} — see prior tool response above. Do NOT re-read this section.]` },
             error: null,
           });
         }
+
+        const fullCached = originalFileContents.get(filePath);
+        if (fullCached) {
+          const off = Math.max(1, parseInt(tc.arguments.offset, 10) || 1);
+          const lim = Math.min(parseInt(tc.arguments.limit, 10) || 8000, 10000);
+          const lines = fullCached.split('\n');
+          if (off <= lines.length) {
+            const endLine = Math.min(off + lim - 1, lines.length);
+            const sliced = lines.slice(off - 1, off - 1 + lim).map((l, i) => `${off + i}: ${l}`).join('\n');
+            console.log(`[ToolRound] Serving ${filePath} lines ${off}-${endLine} from cache (${fullCached.length} chars total)`);
+            onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+            return Promise.resolve({
+              tc,
+              result: { success: true, content: `[Read ${filePath}: lines ${off}-${endLine} of ${lines.length}]\n${sliced}` },
+              error: null,
+            });
+          }
+        }
+
         readFiles.set(key, true);
-        const filePath = tc.arguments?.path;
         if (filePath && !originalFileContents.has(filePath)) {
           const store = getContentStore();
           const b64Store = getBase64Store();
