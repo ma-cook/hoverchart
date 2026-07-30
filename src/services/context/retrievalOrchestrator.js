@@ -119,9 +119,10 @@ async function compressMessages(msgs) {
     }
     let dropped = 0;
     const keepIndices = new Set(rest.map((_, i) => i));
-    for (let p = 0; p < pairs.length - 3; p++) {
+    const keepLast = Math.max(3, Math.floor(pairs.length * 0.3));
+    for (let p = 0; p < pairs.length - keepLast; p++) {
       const pair = pairs[p];
-      const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.name === 'edit' || tc.name === 'write' || tc.name === 'read_file' || tc.name === 'search_code');
+      const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.function?.name === 'edit' || tc.function?.name === 'write' || tc.function?.name === 'read_file' || tc.function?.name === 'search_code');
       if (!hasToolCalls && (!pair.assistant.content || pair.assistant.content.length < 50)) {
         keepIndices.delete(pair.endIdx);
         for (let k = pair.endIdx - 1; k >= 0 && rest[k] !== pair.assistant; k--) {
