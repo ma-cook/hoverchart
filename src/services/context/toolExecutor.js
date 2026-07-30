@@ -925,6 +925,17 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const updated = fullContent.slice(0, idx) + newString + fullContent.slice(endIdx);
       persistFileContent(storeId, filePath, updated);
 
+      const primaryChunk = entry.chunks[0];
+      if (primaryChunk) {
+        const existing = base64Store.encodedChunks.get(primaryChunk.id);
+        if (existing) {
+          base64Store.encodedChunks.set(primaryChunk.id, {
+            text: updated,
+            meta: { ...existing.meta, charCount: updated.length, byteSize: updated.length },
+          });
+        }
+      }
+
       const oldLines = oldString.split('\n');
       const newLines = newString.split('\n');
       const startLine = fullContent.slice(0, idx).split('\n').length;
@@ -958,6 +969,24 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const storeId = `repo:${filePath}`;
       persistFileContent(storeId, filePath, content);
+
+      const kw = extractKeywords(content);
+      const chunkId = `chunk-write-${Date.now()}`;
+      const newEntry = {
+        id: storeId,
+        category: ContentCategory.REPO_FILE,
+        chunks: [{ id: chunkId, text: content, startIndex: 0, endIndex: content.length, keywords: kw, charCount: content.length }],
+        sourcePath: filePath,
+        tags: [],
+        lastUpdated: Date.now(),
+        totalChars: content.length,
+      };
+      store.entries.set(storeId, newEntry);
+      base64Store.encodedChunks.set(chunkId, {
+        text: content,
+        meta: { entryId: storeId, sourcePath: filePath, category: ContentCategory.REPO_FILE, keywords: kw, charCount: content.length, byteSize: content.length, startIndex: 0, endIndex: content.length },
+      });
+
       console.log(`[Write] ${filePath}: wrote ${content.length} chars (persisted to store)`);
       return { success: true, content: `Successfully wrote ${content.length} chars to ${filePath}` };
     }
