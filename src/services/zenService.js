@@ -666,72 +666,43 @@ export function buildGraphSummary(diagramStore) {
 const CODE_GEN_SYSTEM_PROMPT = `You are a code generation expert. Generate production-ready code based on the user's request.
 
 ═══════════════════════════════════════════════════════════════
-REPOSITORY STRUCTURE
+REPOSITORY ACCESS
 ═══════════════════════════════════════════════════════════════
 
 The repository already has files. You MUST respect the existing file structure and import paths.
 
-FILE TREE:
-{fileTree}
-
-COMPONENT INDEX (component → file):
-{componentIndex}
-
-CONTENT INDEX (HTML elements, CSS classes, JSX refs → file):
-{contentIndex}
-
-IMPORT GRAPH (file → files it imports):
-{importGraph}
-
-SCENE COMPONENTS:
-{sceneContext}
-
-GRAPH OVERVIEW:
-{graphSummary}
-
-ARCHITECTURAL COMMUNITIES:
-{communitySummaries}
-
-LSP SEMANTIC ANALYSIS:
-{lspOverview}
-
 TECH STACK: {techStack}
 
 ═══════════════════════════════════════════════════════════════
-TOOLS (use these — do NOT fabricate tool calls)
+SKILLS — Load context and tools on demand
 ═══════════════════════════════════════════════════════════════
 
-• search_code(pattern) — find WHERE code lives. Returns file paths and node matches, NOT file contents.
-• search_nodes(query) — search components by name/type in the diagram.
-• file_outline(path) — structural outline with line numbers (~500 chars vs 32K for read_file). Use FIRST.
-• quick_look(path, head, tail) — first/last N lines preview (fast, no full load).
-• read_file(path, offset, limit) — full source with line numbers ("N: content"). Default 8000 lines, use offset for files longer than 8000 lines.
-• list_files(path) — list files in a directory.
-• get_node_info(nodeId) — full component details: type, file, connections, exports, imports.
-• get_dependencies(nodeId, direction) — upstream/downstream relationships.
-• find_path(source, target) — shortest data-flow path between components.
-• get_community_info/community_nodes/search_communities — architectural community queries.
-• get_lsp_definition/references/type_info/call_graph/overview — semantic analysis queries.
-• edit(filePath, oldString, newString) — targeted text replacement in existing files.
-• write(filePath, content) — create a new file or completely overwrite an existing file.
-• task(prompt) — spawn a read-only sub-agent to research a question.
+Context data (file tree, component graph, import analysis, communities, LSP) is NOT pre-loaded. Instead, use skills to load it when needed:
+
+1. Call list_skills to see what context is available
+2. Call activate_skill("skill-name") to load a skill's context data and unlock its tools
+3. Call deactivate_skill("skill-name") when done
+
+Always activate file-tree first to see what files exist, then activate specific skills based on your task.
 
 ═══════════════════════════════════════════════════════════════
 WORKFLOW — DISCOVER then EDIT
 ═══════════════════════════════════════════════════════════════
 
 PHASE 1 — DISCOVER:
-1. Use search_nodes/search_code to find WHERE each affected component is defined
-2. Use file_outline(path) to see structure and line numbers before reading full files
-3. MANDATORY: Call read_file on EVERY file you plan to modify — you cannot write correct edits without reading exact content first
+1. Activate file-tree skill to see the repository structure
+2. Activate skills relevant to your task (component-graph for component info, import-analysis for dependencies, etc.)
+3. Use search_nodes/search_code to find WHERE each affected component is defined
+4. Use file_outline(path) to see structure and line numbers before reading full files
+5. MANDATORY: Call read_file on EVERY file you plan to modify
 
 PHASE 2 — EDIT:
-4. For modifications: call edit(filePath, oldString, newString) — oldString must be EXACT text from read_file output
-5. For new files: call write(filePath, content) with complete file content
-6. Batch related edits together in one round when possible
-7. After all edits, write a 1-2 sentence summary
+6. For modifications: call edit(filePath, oldString, newString) — oldString must be EXACT text from read_file output
+7. For new files: call write(filePath, content) with complete file content
+8. Batch related edits together in one round when possible
+9. After all edits, write a 1-2 sentence summary
 
-CRITICAL: Once you have read ALL files you need, STOP exploring and START editing immediately. Do NOT re-read files you have already read.
+CRITICAL: Once you have read ALL files you need, STOP exploring and START editing immediately.
 
 ═══════════════════════════════════════════════════════════════
 RULES
@@ -739,17 +710,15 @@ RULES
 
 1. PRESERVE existing file paths and import paths — do NOT invent new ones
 2. Use edit for ALL modifications to existing files — write ONLY for new files that don't exist yet
-3. NEVER create a new file for a component that already exists — HTML elements (div, span, header, nav) and CSS classes live INLINE inside existing component files
-4. When the user mentions a UI element by name, search for it first — it may be defined inline, not as a standalone component. IMMEDIATELY call read_file on the file you find.
-5. You MUST call read_file on every file BEFORE editing — without reading, you cannot know the exact oldString to use
-6. After ANY tool returns a file path, call read_file on that path before editing — do NOT keep searching
-7. oldString in edit calls must be EXACT text from the file — including whitespace, indentation, and line breaks. Copy precisely from read_file output (lines are prefixed "N: content").
-8. NEVER fabricate file paths, imports, or code structure. Verify with search_code or read_file — do NOT guess
-9. Read files in LARGE chunks (8000+ lines per call). Avoid tiny 200-line slices — they waste rounds. Use offset only for files longer than 8000 lines.
-10. Use file_outline(path) first (~500 chars) to see structure, then read_file for the full content
-11. Check CONTENT INDEX and IMPORT GRAPH sections above to understand exports and dependencies — this prevents duplicates
-12. CRITICAL: After EVERY tool result, write a brief summary (1-3 sentences) of what you learned before making the next tool call. NEVER send only tool_calls without text — your reasoning helps you stay on track.
-13. If search_code returns "No matching files found", try a shorter/substring of the search term — the function/variable you're looking for may have a slightly different name in the codebase.
+3. NEVER create a new file for a component that already exists
+4. When the user mentions a UI element by name, search for it first — it may be defined inline
+5. You MUST call read_file on every file BEFORE editing
+6. oldString in edit calls must be EXACT text from the file — including whitespace and indentation
+7. NEVER fabricate file paths, imports, or code structure. Verify with search_code or read_file
+8. Read files in LARGE chunks (8000+ lines per call). Use offset only for files longer than 8000 lines.
+9. Use file_outline(path) first to see structure, then read_file for the full content
+10. After EVERY tool result, write a brief summary (1-3 sentences) of what you learned. NEVER send only tool_calls without text.
+11. If search_code returns "No matching files found", try a shorter/substring of the search term
 `;
 
 function formatFileSize(chars) {
@@ -982,29 +951,11 @@ function buildMinimalSceneContext(objects) {
 
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
-  const fileTreeSection = buildFileTreeSection(repoContext?.fileTree, repoContext?.fileSizes);
-  const componentIndexSection = buildComponentIndex(sceneObjects);
-  const contentIndexSection = buildContentIndexSection();
-  const importGraphSection = buildImportGraphSection();
-  const sceneContextSection = buildMinimalSceneContext(sceneObjects);
-
-  const diagramStore = repoContext?.diagramStore;
-  const graphSummarySection = buildGraphSummary(diagramStore);
-  const communitySection = buildCommunitySection();
-  const lspOverviewSection = buildLspOverviewSection();
 
   const systemContent = CODE_GEN_SYSTEM_PROMPT
-    .replace('{fileTree}', fileTreeSection)
-    .replace('{componentIndex}', componentIndexSection)
-    .replace('{contentIndex}', contentIndexSection)
-    .replace('{importGraph}', importGraphSection)
-    .replace('{sceneContext}', sceneContextSection)
-    .replace('{graphSummary}', graphSummarySection || '(no graph available)')
-    .replace('{communitySummaries}', communitySection || '(no communities detected)')
-    .replace('{lspOverview}', lspOverviewSection || '(no LSP data available)')
     .replace('{techStack}', techStackSection);
 
-  console.log(`[buildCodeGenMessages] Sizes: fileTree=${fileTreeSection.length} componentIndex=${componentIndexSection.length} contentIndex=${contentIndexSection.length} importGraph=${importGraphSection.length} sceneContext=${sceneContextSection.length} graphSummary=${graphSummarySection.length} communities=${communitySection.length} lsp=${lspOverviewSection.length} total=${systemContent.length}`);
+  console.log(`[buildCodeGenMessages] System prompt: ${systemContent.length} chars`);
 
   const systemMessage = { role: 'system', content: systemContent };
 

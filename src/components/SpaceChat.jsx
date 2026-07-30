@@ -508,6 +508,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         githubContext,
         fileTree: useCodeStore.getState().repoFileTree || [],
         fileSizes: useCodeStore.getState().fileSizes,
+        sceneObjects,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           if (!rafPendingRef.current) {
@@ -679,6 +680,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         githubContext,
         fileTree: repoContext?.fileTree || [],
         fileSizes: useCodeStore.getState().fileSizes,
+        sceneObjects,
         onChunk: (delta, fullText) => {
           streamingRef.current = fullText;
           if (!rafPendingRef.current) {

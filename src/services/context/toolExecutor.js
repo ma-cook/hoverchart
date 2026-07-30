@@ -5,6 +5,8 @@ import { extractKeywords } from './chunkIndex';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
+import { computeSubAgentTools } from './toolProvider';
+import { SKILL_MANAGEMENT_TOOL_DEFS } from './skillManager';
 
 const TOOL_TIMEOUT_MS = 20_000;
 const DEFAULT_READ_LINES = 8000;
@@ -701,7 +703,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const suffix = endLine < totalLines
         ? `\n\n(Use offset=${endLine + 1} to continue reading.)`
         : '\n\n(End of file)';
-      return { success: true, content: `${sectionLabel}\n${numbered}${suffix}` };
+      return { success: true, content: `${sectionLabel}\n${numbered}${suffix}`, _fullContent: fullContent };
     }
 
     case 'list_files': {
@@ -1000,7 +1002,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         console.log(`[SubAgent] Spawning sub-agent (depth=${depth + 1}): "${prompt.slice(0, 100)}..."`);
         const subResult = await runSubAgent({
           prompt,
-          tools: SUB_AGENT_TOOLS,
+          tools: computeSubAgentTools(),
           systemPrompt: SUB_AGENT_SYSTEM_PROMPT,
           githubContext,
           fileTree,
@@ -1012,6 +1014,14 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         console.warn(`[SubAgent] Sub-agent failed:`, err.message);
         return { success: false, content: `Sub-agent error: ${err.message}` };
       }
+    }
+
+    case 'list_skills':
+    case 'activate_skill':
+    case 'deactivate_skill': {
+      const toolDef = SKILL_MANAGEMENT_TOOL_DEFS.find(t => t.name === name);
+      if (!toolDef) return { success: false, content: `Unknown skill tool: ${name}` };
+      return toolDef.execute(args);
     }
 
     default:

@@ -1,8 +1,13 @@
 import { sendToZen } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
-import { CODE_GEN_TOOLS, executeTool, resetEditTracker } from './toolExecutor';
+import { executeTool, resetEditTracker } from './toolExecutor';
+import { computeTools, computeSubAgentTools } from './toolProvider';
+import { initializeDefaultSkills, REGISTRY } from './skillManager';
 import { getContentStore } from './contentStore';
 import { getBase64Store } from './base64Store';
+import { globalMonitor } from './agentMonitor';
+import { globalRouter } from './modelRouter';
+import { RagPipeline } from './ragPipeline';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
@@ -116,7 +121,7 @@ async function compressMessages(msgs) {
     const keepIndices = new Set(rest.map((_, i) => i));
     for (let p = 0; p < pairs.length - 3; p++) {
       const pair = pairs[p];
-      const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.name === 'edit' || tc.name === 'write' || tc.name === 'read_file');
+      const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.name === 'edit' || tc.name === 'write' || tc.name === 'read_file' || tc.name === 'search_code');
       if (!pair.assistant.content || (!hasToolCalls && pair.assistant.content.length < 50)) {
         keepIndices.delete(pair.endIdx);
         for (let k = pair.endIdx - 1; k >= 0 && rest[k] !== pair.assistant; k--) {
@@ -209,6 +214,55 @@ function readKey(tc) {
   return `${tc.name}:${JSON.stringify(tc.arguments)}`;
 }
 
+export function buildCodeGenPipeline({ sendToLLM, executeToolCall, compressMessages, estimateSize }) {
+  const pipeline = new RagPipeline();
+
+  pipeline.use(RagPipeline.createRouterStage(async (ctx) => {
+    const taskType = globalRouter.classifyTaskType(ctx.messages, ctx.tools);
+    const route = await globalRouter.route(taskType, {
+      providerId: ctx.providerId,
+      model: ctx.model,
+      messages: ctx.messages,
+    });
+    return { taskType, route };
+  }));
+
+  pipeline.use({
+    name: 'send',
+    execute: async (ctx) => {
+      const raw = await sendToLLM(ctx.messages, ctx.tools, ctx.signal);
+      const result = typeof raw === 'string' ? { text: raw, toolCalls: [] } : raw;
+      return { rawResult: result, text: result.text, toolCalls: result.toolCalls || [] };
+    },
+  });
+
+  pipeline.use(RagPipeline.createStopIf(async (ctx) => {
+    return !ctx.toolCalls || ctx.toolCalls.length === 0;
+  }));
+
+  pipeline.use({
+    name: 'compress-check',
+    execute: async (ctx) => {
+      if (estimateSize(ctx.messages) > MAX_CONTEXT_CHARS) {
+        ctx.messages = await compressMessages(ctx.messages);
+      }
+      return { messages: ctx.messages };
+    },
+  });
+
+  pipeline.use({
+    name: 'execute-tools',
+    execute: async (ctx) => {
+      const promises = ctx.toolCalls.map(tc => executeToolCall(tc));
+      const results = await Promise.all(promises);
+      const usefulCount = results.filter(r => isUsefulToolResult(r.result.content, r.tc.name)).length;
+      return { toolResults: results, usefulCount, uselessCount: results.length - usefulCount };
+    },
+  });
+
+  return pipeline;
+}
+
 export async function sendWithRetrieval({
   messages,
   onChunk,
@@ -218,6 +272,7 @@ export async function sendWithRetrieval({
   githubContext,
   fileTree,
   _fileSizes,
+  sceneObjects,
 }) {
   let currentMessages = [...messages];
   let finalText = '';
@@ -229,12 +284,32 @@ export async function sendWithRetrieval({
   const originalFileContents = new Map();
 
   resetEditTracker();
+  initializeDefaultSkills({
+    fileTree,
+    fileSizes: _fileSizes,
+    sceneObjects,
+  });
+
+  const userMessages = messages.filter(m => m.role === 'user');
+  const taskType = globalRouter.classifyTaskType(messages, computeTools());
+  console.log(`[sendWithRetrieval] Classified task type: ${taskType}`);
+
+  const mainInvocation = globalMonitor.startInvocation({
+    agentName: 'sendWithRetrieval',
+    inputs: { messageCount: messages.length, fileTreeSize: fileTree?.length },
+  });
 
   while (true) {
     if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS) {
       currentMessages = await compressMessages(currentMessages);
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
     }
+
+    const roundInvocation = globalMonitor.startInvocation({
+      agentName: `round-${rounds + 1}`,
+      inputs: { messageCount: currentMessages.length, charSize: estimateMessagesSize(currentMessages) },
+      iteration: rounds,
+    });
 
     console.log(`[ToolRound] Round ${rounds + 1} - sending ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
 
@@ -243,9 +318,10 @@ export async function sendWithRetrieval({
     let sendFailed = false;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
+        const availableTools = computeTools();
         rawResult = await sendToZen({
           messages: currentMessages,
-          tools: CODE_GEN_TOOLS,
+          tools: availableTools,
           signal,
           onChunk: (delta, fullText) => {
             const displayedText = finalText ? finalText + '\n\n' + fullText : fullText;
@@ -311,6 +387,10 @@ export async function sendWithRetrieval({
     const readFilesBefore = new Set(readFiles.keys());
 
     const runSubAgent = async ({ prompt, tools, systemPrompt, githubContext: ghCtx, fileTree: ft, depth: subDepth }) => {
+      const subInvocation = globalMonitor.startInvocation({
+        agentName: 'sub-agent',
+        inputs: { prompt: prompt.slice(0, 200), depth: subDepth },
+      });
       const subMessages = [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: prompt },
@@ -381,10 +461,12 @@ export async function sendWithRetrieval({
           subText = toolResults.join('\n\n').slice(0, 8000);
         }
       }
+      globalMonitor.endInvocation({ output: subText });
       return subText;
     };
 
-    const toolPromises = toolCalls.map((tc, idx) => {
+      const toolPromises = toolCalls.map((tc, idx) => {
+      const toolStart = performance.now();
       if (tc.name === 'read_file' && tc.arguments?.path) {
         const key = readKey(tc);
         const filePath = tc.arguments.path;
@@ -393,6 +475,7 @@ export async function sendWithRetrieval({
           const lim = tc.arguments.limit || 2000;
           console.warn(`[ToolRound] Round ${rounds + 1}: ${filePath} (offset=${off}) already read, skipping fetch`);
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+          globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cached]', duration: 0 });
           return Promise.resolve({
             tc,
             result: { success: true, content: `[Already loaded: ${filePath} lines ${off}-${off + lim - 1} — see prior tool response above. Do NOT re-read this section.]` },
@@ -410,6 +493,7 @@ export async function sendWithRetrieval({
             const sliced = lines.slice(off - 1, off - 1 + lim).map((l, i) => `${off + i}: ${l}`).join('\n');
             console.log(`[ToolRound] Serving ${filePath} lines ${off}-${endLine} from cache (${fullCached.length} chars total)`);
             onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+            globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cache-hit]', duration: 0 });
             return Promise.resolve({
               tc,
               result: { success: true, content: `[Read ${filePath}: lines ${off}-${endLine} of ${lines.length}]\n${sliced}` },
@@ -437,10 +521,32 @@ export async function sendWithRetrieval({
       onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
       return executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 })
         .then(result => {
+          if (tc.name === 'read_file' && result._fullContent) {
+            const fp = tc.arguments?.path;
+            if (fp && !originalFileContents.has(fp)) {
+              originalFileContents.set(fp, result._fullContent);
+            }
+          }
+          const toolDuration = Math.round(performance.now() - toolStart);
+          globalMonitor.recordTool({
+            toolName: tc.name,
+            args: tc.arguments,
+            result: result.content,
+            duration: toolDuration,
+            error: result.success ? null : new Error(result.content?.slice(0, 100)),
+          });
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-          return { tc, result, error: null };
+          return { tc, result: { success: result.success, content: result.content }, error: null };
         })
         .catch(error => {
+          const toolDuration = Math.round(performance.now() - toolStart);
+          globalMonitor.recordTool({
+            toolName: tc.name,
+            args: tc.arguments,
+            result: null,
+            duration: toolDuration,
+            error,
+          });
           console.warn(`[ToolRound] Tool ${tc.name} failed:`, error.message);
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'error' });
           return { tc, result: { success: false, content: `Error: ${error.message}` }, error };
@@ -500,6 +606,7 @@ export async function sendWithRetrieval({
     }
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });
+    globalMonitor.endInvocation({ output: finalText, tokens: toolResults.length });
     rounds++;
   }
 
@@ -532,6 +639,14 @@ export async function sendWithRetrieval({
       console.log(`[ToolRound] Generated ${syntheticBlocks.length} synthetic code block(s) from edit/write tools`);
     }
   }
+
+  const usageReport = globalRouter.getUsageReport();
+  console.log(`[sendWithRetrieval] Model usage:`, JSON.stringify(usageReport));
+
+  globalMonitor.endInvocation({
+    output: finalText,
+    tokens: rounds,
+  });
 
   return stripRetrievalMarkers(finalText);
 }
