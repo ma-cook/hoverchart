@@ -122,7 +122,7 @@ async function compressMessages(msgs) {
     for (let p = 0; p < pairs.length - 3; p++) {
       const pair = pairs[p];
       const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.name === 'edit' || tc.name === 'write' || tc.name === 'read_file' || tc.name === 'search_code');
-      if (!pair.assistant.content || (!hasToolCalls && pair.assistant.content.length < 50)) {
+      if (!hasToolCalls && (!pair.assistant.content || pair.assistant.content.length < 50)) {
         keepIndices.delete(pair.endIdx);
         for (let k = pair.endIdx - 1; k >= 0 && rest[k] !== pair.assistant; k--) {
           keepIndices.delete(k);
