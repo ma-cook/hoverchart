@@ -247,7 +247,8 @@ export async function sendWithRetrieval({
           tools: CODE_GEN_TOOLS,
           signal,
           onChunk: (delta, fullText) => {
-            onChunk?.(delta, stripRetrievalMarkers(fullText));
+            const displayedText = finalText ? finalText + '\n\n' + fullText : fullText;
+            onChunk?.(delta, stripRetrievalMarkers(displayedText));
           },
         });
         break;

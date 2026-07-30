@@ -502,7 +502,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         token: getGithubToken(),
       } : null;
 
-      await sendWithRetrieval({
+      const planResponse = await sendWithRetrieval({
         messages: zenMessages,
         signal: abortController.signal,
         githubContext,
@@ -532,6 +532,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           console.log(`[ToolRound] Plan tool round ${round}: ${chunkIds.join(', ')}`);
         },
         onToolProgress: ({ tool, index, total, status }) => {
+          const currentText = streamingRef.current || '';
           let label;
           if (status === 'complete') {
             label = 'Processing results...';
@@ -540,7 +541,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           } else {
             label = `Executing ${tool} (${index}/${total})...`;
           }
-          streamingRef.current = label;
+          streamingRef.current = currentText + '\n' + label;
           if (!rafPendingRef.current) {
             rafPendingRef.current = true;
             requestAnimationFrame(() => {
@@ -561,7 +562,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         },
       });
 
-      const finalText = streamingRef.current;
+      const finalText = planResponse;
 
       if (activePlanTextId) {
         const textObj = useObjectsStore.getState().objects.find(o => o.id === activePlanTextId);
@@ -702,6 +703,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           console.log(`[ToolRound] Tool execution round ${round}: ${chunkIds.join(', ')}`);
         },
         onToolProgress: ({ tool, index, total, status }) => {
+          const currentText = streamingRef.current || '';
           let label;
           if (status === 'complete') {
             label = 'Processing results...';
@@ -710,7 +712,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
           } else {
             label = `Executing ${tool} (${index}/${total})...`;
           }
-          streamingRef.current = label;
+          streamingRef.current = currentText + '\n' + label;
           if (!rafPendingRef.current) {
             rafPendingRef.current = true;
             requestAnimationFrame(() => {
