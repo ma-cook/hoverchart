@@ -624,7 +624,7 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'edit',
-      description: 'Make a targeted edit to a file by replacing a string match. The match is flexible — it handles whitespace differences, indentation changes, and uses fuzzy matching for larger blocks (first/last line anchors with similarity scoring). For exact control, provide the exact text from read_file output. You MUST call read_file first before editing.',
+      description: 'Make a targeted edit to a file by replacing a string match. Line number prefixes (e.g. "10: code") from read_file output are automatically stripped before matching. The match is flexible — it handles whitespace differences, indentation changes, and uses fuzzy matching for larger blocks (first/last line anchors with similarity scoring). You MUST call read_file first before editing.',
       parameters: {
         type: 'object',
         properties: {
@@ -640,7 +640,7 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'write',
-      description: 'Create a new file or completely overwrite an existing file. Use this for NEW files only. For modifying existing files, use the edit tool instead.',
+      description: 'Create a new file or completely overwrite an existing file. Use for NEW files only. For modifying existing files, use the edit tool — it handles whitespace differences, line number prefixes from read_file output, and fuzzy matching so you never need to rewrite the whole file.',
       parameters: {
         type: 'object',
         properties: {
@@ -1025,41 +1025,51 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!filePath || oldString == null || newString == null) {
         return { success: false, content: 'edit requires "filePath", "oldString", and "newString" parameters' };
       }
-      const editKey = `${filePath}\0${oldString}`;
-      const prevCount = appliedEdits.get(editKey) || 0;
-      if (prevCount >= 1) {
-        return { success: false, content: `This edit was already applied ${prevCount} time(s) to ${filePath}. The oldString still exists in the file, which means your newString must also contain the oldString text — this creates duplicates. Re-read the file with read_file to see the current state, then make a DIFFERENT edit that doesn't re-insert the same code.` };
-      }
       const storeId = `repo:${filePath}`;
       const altId = `github:${filePath}`;
       const entry = store.getEntry(storeId) || store.getEntry(altId);
       if (!entry) {
-        return { success: false, content: `File not found in cache: ${filePath}. Call read_file("${filePath}") first to load it.` };
+        return { success: false, content: `File not loaded: ${filePath}. Use read_file("${filePath}") first to load it into memory.` };
       }
       const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
       const fullContent = chunks.map(c => c.text).join('');
-      const match = findMatch(fullContent, oldString);
+      const stripLineNumbers = (s) => s.split('\n').map(l => l.replace(/^\d+:\s*/, '')).join('\n');
+      const cleanedOldString = stripLineNumbers(oldString);
+      const hadLineNumbers = cleanedOldString !== oldString;
+      const editKey = `${filePath}\0${cleanedOldString}`;
+      const prevCount = appliedEdits.get(editKey) || 0;
+      if (prevCount >= 2) {
+        return { success: false, content: `This edit was already applied ${prevCount} time(s) to ${filePath}. The oldString still matches the current file — the edit likely succeeded already. Re-read the file with read_file to see the current state, then make a DIFFERENT edit.` };
+      }
+      const match = findMatch(fullContent, cleanedOldString);
       if (!match) {
         const firstLine = oldString.split('\n')[0].slice(0, 80);
+        const cleanedFirstLine = cleanedOldString.split('\n')[0].slice(0, 80);
         const contentLines = fullContent.split('\n');
         let closestLine = -1;
         let closestContent = '';
         for (let i = 0; i < contentLines.length; i++) {
-          if (contentLines[i].includes(firstLine)) { closestLine = i + 1; closestContent = contentLines[i].slice(0, 120); break; }
+          if (contentLines[i].includes(cleanedFirstLine)) { closestLine = i + 1; closestContent = contentLines[i].slice(0, 120); break; }
         }
-        const hint = closestLine !== -1
-          ? ` The first line of oldString was found near line ${closestLine}. Re-read the file and use the exact text with correct whitespace/indentation.\n  Expected near line ${closestLine}: "${firstLine}"\n  Found at line ${closestLine}: "${closestContent}"`
-          : ' The oldString was not found. Re-read the file with read_file and copy the exact text including all indentation.';
+        let hint = '';
+        if (hadLineNumbers) {
+          hint = ` Line number prefixes (e.g. "10: code") were stripped from oldString but still no match.`;
+        }
+        if (closestLine !== -1) {
+          hint += ` The first line was found near line ${closestLine}:\n  Provided:   "${firstLine}"\n  File near ${closestLine}: "${closestContent}"\n  Match the indentation and content exactly — line numbers are automatically stripped.`;
+        } else {
+          hint += ` The oldString was not found in the file's current content. Re-read the file with read_file and provide the exact text from its output (line numbers are stripped automatically).`;
+        }
         return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}` };
       }
-      if (match.length > oldString.length * 4 && oldString.split('\n').length > 1) {
-        return { success: false, content: `edit failed: matched span (${match.length} chars) is much larger than oldString (${oldString.length} chars). Re-read the file and provide the full exact oldString for the intended replacement.` };
+      if (match.length > cleanedOldString.length * 4 && cleanedOldString.split('\n').length > 1) {
+        return { success: false, content: `edit failed: matched span (${match.length} chars) is much larger than oldString (${cleanedOldString.length} chars). Re-read the file and provide more of the surrounding context in oldString.` };
       }
       const updated = fullContent.slice(0, match.index) + newString + fullContent.slice(match.index + match.length);
       appliedEdits.set(editKey, (appliedEdits.get(editKey) || 0) + 1);
       await persistFileContent(storeId, filePath, updated);
 
-      const oldLines = oldString.split('\n');
+      const oldLines = cleanedOldString.split('\n');
       const newLines = newString.split('\n');
       const startLine = fullContent.slice(0, match.index).split('\n').length;
       const updatedLines = updated.split('\n');
@@ -1072,7 +1082,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         .join('\n');
       const summary = `Successfully edited ${filePath} at line ${startLine} (${fullContent.length} → ${updated.length} chars, ${newLines.length - oldLines.length >= 0 ? '+' : ''}${newLines.length - oldLines.length} lines). File now has ${updatedLines.length} lines.`;
       const importLines = updatedLines.slice(0, 30).map((line, i) => `${i + 1}: ${line}`).join('\n');
-      console.log(`[Edit] ${filePath}: replaced ${oldString.length} chars at line ${startLine} → ${newString.length} chars (persisted to store)`);
+      console.log(`[Edit] ${filePath}: replaced ${cleanedOldString.length} chars at line ${startLine} → ${newString.length} chars${hadLineNumbers ? ' (line numbers stripped)' : ''}`);
       return { success: true, content: `${summary}\n\nImports at top of file (lines 1-${Math.min(30, updatedLines.length)}):\n${importLines}\n\nContext around edit (${showStart + 1}-${showEnd}):\n${contextBlock}` };
     }
 
