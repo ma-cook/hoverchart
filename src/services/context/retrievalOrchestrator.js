@@ -741,6 +741,17 @@ ${originalSystem.slice(0, 3000)}`,
 
       const toolPromises = toolCalls.map((tc, idx) => {
       const toolStart = performance.now();
+
+      if (forceGenerationInjected && tc.name !== 'edit' && tc.name !== 'write') {
+        console.warn(`[ToolRound] Blocked banned tool "${tc.name}" in force-generation mode`);
+        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+        return Promise.resolve({
+          tc,
+          result: { success: false, content: `[ERROR: Tool "${tc.name}" is banned. You are in force-generation mode and may only use "edit" or "write".]` },
+          error: null,
+        });
+      }
+
       if (tc.name === 'read_file' && tc.arguments?.path) {
         const key = readKey(tc);
         const filePath = normalizePath(tc.arguments.path);
