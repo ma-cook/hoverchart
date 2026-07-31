@@ -459,7 +459,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
               opacity: 0.95,
               backdropFilter: 'blur(8px)',
               WebkitBackdropFilter: 'blur(8px)',
-              border: '1px solid rgba(22, 22, 26, 0.92)',
+              border: '1px solid rgba(0, 0, 0, 0.92)',
               borderRadius: '10px',
               boxShadow: '0 4px 18px rgba(0, 0, 0, 0.35)',
               zIndex: 10,
