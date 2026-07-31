@@ -290,7 +290,14 @@ const ALL_TOOL_GROUPS = [
   { group: 'conditional', tools: [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL] },
 ];
 
-export function computeTools() {
+const EXPLORATION_TOOL_NAMES = new Set([
+  'read_file', 'search_code', 'list_files', 'file_outline', 'quick_look',
+  'glob', 'search_nodes', 'get_node_info', 'get_dependencies', 'find_path',
+  'task',
+]);
+
+export function computeTools(opts = {}) {
+  const { excludeExplorationTools = false } = opts;
   const always = [...SKILL_MANAGEMENT_TOOLS, ...NAVIGATION_TOOLS];
   const conditional = [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL];
   const available = [];
@@ -310,6 +317,10 @@ export function computeTools() {
       available.push(tool.toToolSpec());
       seenNames.add(tool.name);
     }
+  }
+
+  if (excludeExplorationTools) {
+    return available.filter(t => !EXPLORATION_TOOL_NAMES.has(t.function.name));
   }
 
   return available;

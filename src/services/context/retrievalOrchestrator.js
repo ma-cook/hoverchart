@@ -20,18 +20,13 @@ const COMPRESSION_INTERVAL = 12;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
-// Fix 4: hard cap on total rounds; if we hit this without an edit, force a
-//        "stop exploring, produce code now" system message (Fix 1).
-const MAX_EXPLORATION_ROUNDS = 12;
-const FORCE_GENERATION_AFTER_ROUND = 14;
-// Fix 2: only one sub-agent spawn per task; deduplicate identical prompts.
+const MAX_EXPLORATION_ROUNDS = 7;
+const FORCE_GENERATION_AFTER_ROUND = 9;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
-// Fix 3: raise sub-agent char budget so a single ~80KB file fits in context.
 const SUB_MAX_ROUNDS = 8;
 const SUB_MAX_CHARS = 60000;
 const SUB_MAX_TOOL_CONTENT = 12000;
-// Fix 1: threshold to consider the agent "stuck exploring" (no edits yet).
-const STUCK_EXPLORING_THRESHOLD = 8;
+const STUCK_EXPLORING_THRESHOLD = 5;
 
 /**
  * Fix 1 + Fix 4: Build a "stop exploring, generate now" nudge that gets
@@ -488,9 +483,9 @@ export async function sendWithRetrieval({
     }
 
     // ── Fix 1: force transition from exploration → generation ──────────────
-    // If the agent has been exploring past the exploration cap and has not
-    // produced a single edit, inject a hard "stop exploring, write code now"
-    // nudge. Injected once.
+    // When the agent has been exploring past the cap without edits, replace
+    // the system prompt with a generation-mode directive AND strip exploration
+    // tools from the available tool list so the LLM *cannot* call them.
     if (
       !producedEdit &&
       !forceGenerationInjected &&
@@ -498,9 +493,31 @@ export async function sendWithRetrieval({
       rounds < FORCE_GENERATION_AFTER_ROUND
     ) {
       forceGenerationInjected = true;
+      // Replace the system prompt with a strict generation-mode directive.
+      const originalSystem = currentMessages[0]?.content || '';
+      currentMessages[0] = {
+        ...currentMessages[0],
+        content: `GENERATION MODE — EXPLORATION IS OVER
+
+You have completed ${rounds + 1} rounds of exploration. You have read the key files.
+From this point forward you may ONLY use "edit" or "write" tools.
+The tools "read_file", "search_code", "task", "quick_look", "file_outline", "list_files",
+and all graph/LSP query tools have been removed from your available tools.
+
+Do ONE of the following:
+  1. Call "edit" with exact oldString/newString to modify the file you located.
+  2. Call "write" to create a new file if needed.
+  3. If you genuinely cannot proceed, return a final text answer describing what blocks you.
+
+Do NOT ask for more information. Do NOT re-read files.
+
+Here is the original system prompt for context:
+---
+${originalSystem.slice(0, 3000)}`,
+      };
       const forceMsg = buildForceGenerationMessage(rounds, readFiles.size);
       currentMessages = [...currentMessages, forceMsg];
-      console.warn(`[ToolRound] Fix 1: injected force-generation nudge at round ${rounds + 1} (read ${readFiles.size} files, 0 edits)`);
+      console.warn(`[ToolRound] Fix 1: force-generation mode at round ${rounds + 1} — system prompt replaced, exploration tools removed`);
     }
 
     // ── Fix 5: synthesize a digest so the model gets digested context ─────
@@ -537,7 +554,7 @@ export async function sendWithRetrieval({
       // of whether it produces tool calls (handled by the rounds cap below).
       let finalRaw = null;
       try {
-        finalRaw = await sendToZen({ messages: currentMessages, tools: computeTools(), signal });
+        finalRaw = await sendToZen({ messages: currentMessages, tools: computeTools({ excludeExplorationTools: true }), signal });
       } catch (e) {
         console.warn(`[ToolRound] Fix 4: final send failed: ${e.message}`);
       }
@@ -561,7 +578,7 @@ export async function sendWithRetrieval({
     let sendFailed = false;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools();
+        const availableTools = computeTools({ excludeExplorationTools: forceGenerationInjected });
         rawResult = await sendToZen({
           messages: currentMessages,
           tools: availableTools,
