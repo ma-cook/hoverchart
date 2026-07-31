@@ -20,13 +20,13 @@ const COMPRESSION_INTERVAL = 12;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
-const MAX_EXPLORATION_ROUNDS = 14;
-const FORCE_GENERATION_AFTER_ROUND = 16;
+const MAX_EXPLORATION_ROUNDS = 18;
+const FORCE_GENERATION_AFTER_ROUND = 20;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
 const SUB_MAX_ROUNDS = 8;
 const SUB_MAX_CHARS = 60000;
 const SUB_MAX_TOOL_CONTENT = 12000;
-const STUCK_EXPLORING_THRESHOLD = 8;
+const STUCK_EXPLORING_THRESHOLD = 10;
 
 /**
  * Fix 1 + Fix 4: Build a "stop exploring, generate now" nudge that gets
@@ -38,12 +38,11 @@ function buildForceGenerationMessage(rounds, exploredCount) {
     role: 'user',
     content: `⚠️ EXPLORATION LIMIT REACHED (round ${rounds + 1}, ${exploredCount} files read, no edits yet).
 
-You have enough context to act. STOP calling search_code / read_file / task.
+You have explored enough. Now produce the code changes. If you need to read a file to get the exact oldString for an edit, you may — but prioritize calling "edit" over further exploration.
+
 Switch to PRODUCING CODE NOW:
   1. Use the "edit" tool with exact oldString/newString for the file you already located.
-  2. If you genuinely cannot proceed, return a final text answer summarizing the blocker.
-
-Do not call any more exploration tools this round.`,
+  2. If you genuinely cannot proceed, return a final text answer summarizing the blocker.`,
   };
 }
 
@@ -501,9 +500,11 @@ export async function sendWithRetrieval({
     }
 
     // ── Fix 1: force transition from exploration → generation ──────────────
-    // When the agent has been exploring past the cap without edits, replace
-    // the system prompt with a generation-mode directive AND strip exploration
-    // tools from the available tool list so the LLM *cannot* call them.
+    // When the agent has been exploring past the cap without edits, inject a
+    // nudge message asking it to produce code. Crucially we do NOT replace the
+    // system prompt or strip exploration tools — the LLM needs read_file to
+    // get exact oldString for the edit tool, and a replaced system prompt
+    // makes it fall back to text analysis instead of tool calls.
     if (
       !producedEdit &&
       !forceGenerationInjected &&
@@ -511,51 +512,9 @@ export async function sendWithRetrieval({
       rounds < FORCE_GENERATION_AFTER_ROUND
     ) {
       forceGenerationInjected = true;
-      // Collect full file contents that the LLM already read (from cache)
-      // and embed them directly in the system prompt so the LLM doesn't need
-      // to call read_file again to see the code it must edit.
-      const FILE_CONTENT_BUDGET = 35000;
-      let fileContentsSection = '';
-      let fileBudgetRemaining = FILE_CONTENT_BUDGET;
-      for (const [filePath, content] of originalFileContents) {
-        if (fileBudgetRemaining <= 0) break;
-        const label = `\n\n=== ${filePath} ===`;
-        const available = fileBudgetRemaining - label.length - 50;
-        if (available <= 100) break;
-        const snippet = content.length > available
-          ? content.slice(0, available) + `\n... [truncated at ${available} chars]`
-          : content;
-        fileContentsSection += label + '\n' + snippet;
-        fileBudgetRemaining -= label.length + snippet.length + 1;
-      }
-      const originalSystem = currentMessages[0]?.content || '';
-      currentMessages[0] = {
-        ...currentMessages[0],
-        content: `GENERATION MODE — EXPLORATION IS OVER
-
-You have completed ${rounds + 1} rounds of exploration.
-From this point forward you may ONLY use "edit" or "write" tools.
-All exploration tools have been removed from your available tools.
-
-Below are the FULL contents of the files you explored during earlier rounds.
-Use these to identify the exact text for oldString/newString in your edit calls.
-Do NOT call read_file — the file contents are right here.
-${fileContentsSection || '\n(No file contents cached — use the conversation history above.)'}
-
-Do ONE of the following:
-  1. Call "edit" with exact oldString/newString to modify a file.
-  2. Call "write" to create a new file if needed.
-  3. If you genuinely cannot proceed, return a final text answer describing what blocks you.
-
-Do NOT ask for more information. Do NOT re-read files.
-
-Original system prompt (abbreviated):
----
-${originalSystem.slice(0, 1500)}`,
-      };
       const forceMsg = buildForceGenerationMessage(rounds, readFiles.size);
       currentMessages = [...currentMessages, forceMsg];
-      console.warn(`[ToolRound] Fix 1: force-generation mode at round ${rounds + 1} — system prompt replaced, ${fileContentsSection.length} chars of file contents injected, exploration tools removed`);
+      console.warn(`[ToolRound] Fix 1: force-generation nudge at round ${rounds + 1}`);
     }
 
     // ── Fix 5: synthesize a digest so the model gets digested context ─────
@@ -616,7 +575,7 @@ ${originalSystem.slice(0, 1500)}`,
     let sendFailed = false;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools({ excludeExplorationTools: forceGenerationInjected });
+        const availableTools = computeTools();
         rawResult = await sendToZen({
           messages: currentMessages,
           tools: availableTools,
@@ -779,17 +738,6 @@ ${originalSystem.slice(0, 1500)}`,
 
       const toolPromises = toolCalls.map((tc, idx) => {
       const toolStart = performance.now();
-
-      if (forceGenerationInjected && tc.name !== 'edit' && tc.name !== 'write') {
-        console.warn(`[ToolRound] Blocked banned tool "${tc.name}" in force-generation mode`);
-        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-        return Promise.resolve({
-          tc,
-          result: { success: false, content: `[ERROR: Tool "${tc.name}" is banned. You are in force-generation mode and may only use "edit" or "write".]` },
-          error: null,
-        });
-      }
-
       if (tc.name === 'read_file' && tc.arguments?.path) {
         const key = readKey(tc);
         const filePath = normalizePath(tc.arguments.path);
