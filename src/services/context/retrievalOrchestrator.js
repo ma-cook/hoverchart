@@ -20,13 +20,13 @@ const COMPRESSION_INTERVAL = 12;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
-const MAX_EXPLORATION_ROUNDS = 7;
-const FORCE_GENERATION_AFTER_ROUND = 9;
+const MAX_EXPLORATION_ROUNDS = 14;
+const FORCE_GENERATION_AFTER_ROUND = 16;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
 const SUB_MAX_ROUNDS = 8;
 const SUB_MAX_CHARS = 60000;
 const SUB_MAX_TOOL_CONTENT = 12000;
-const STUCK_EXPLORING_THRESHOLD = 5;
+const STUCK_EXPLORING_THRESHOLD = 8;
 
 /**
  * Fix 1 + Fix 4: Build a "stop exploring, generate now" nudge that gets
@@ -52,58 +52,76 @@ Do not call any more exploration tools this round.`,
  * model receives digested context (not re-compressed noise) before being asked
  * to generate. Returns the synthesized summary text, or null on failure.
  */
-async function synthesizeFindingsDigest(currentMessages, sendToZen) {
-  const toolResults = [];
-  const seenPaths = new Set();
+async function synthesizeFindingsDigest(currentMessages, originalFileContents, getContentStore, getBase64Store) {
+  // Step 1: extract the file paths the LLM has been looking at
+  const searchedPaths = [];
+  const readPaths = new Set();
   for (const m of currentMessages) {
-    if (m.role === 'tool' && typeof m.content === 'string' && m.content.length > 50) {
-      toolResults.push(m.content.slice(0, 1200));
-    }
     if (m.tool_calls) {
       for (const tc of m.tool_calls) {
         try {
           const args = typeof tc.function?.arguments === 'string'
             ? JSON.parse(tc.function.arguments)
             : tc.function?.arguments;
-          if (tc.function?.name === 'read_file' && args?.path) seenPaths.add(args.path);
-          if (tc.function?.name === 'search_code' && args?.pattern) {
-            toolResults.push(`[searched for: ${args.pattern}]`);
-          }
+          if (tc.function?.name === 'read_file' && args?.path) readPaths.add(args.path);
+          if (tc.function?.name === 'search_code' && args?.pattern) searchedPaths.push(args.pattern);
+          if (tc.function?.name === 'file_outline' && args?.path) readPaths.add(args.path);
         } catch { /* ignore */ }
       }
     }
   }
-  if (toolResults.length === 0) return null;
 
-  const fileList = Array.from(seenPaths).slice(0, 30).join('\n');
-  const prompt = `You are preparing a handoff digest for a code-generation agent.
-Below are the key files read and search results gathered so far.
-Produce a CONCISE digest (max 400 words):
-- "Files Located": bullet list of the most relevant file paths (max 15)
-- "Key Findings": 1-3 lines per finding — where the relevant code lives (file:line), what it does
-- "Suggested Edit Targets": the file(s) and approximate line ranges to edit
-Do NOT repeat full file contents. Be terse.
+  // Step 2: read the key files' FULL content from the content store
+  const DIGEST_FILE_BUDGET = 25000;
+  let budgetRemaining = DIGEST_FILE_BUDGET;
+  const fileContents = [];
 
-Files seen:
-${fileList}
+  // Prefer files the LLM explicitly read via read_file or file_outline
+  const candidates = Array.from(new Set([...readPaths, ...searchedPaths.flatMap(s =>
+    typeof s === 'string' && s.length > 2 ? [s] : []
+  )]));
 
-Tool results (truncated):
-${toolResults.slice(-12).join('\n---\n').slice(0, 6000)}`;
-
-  try {
-    const result = await sendToZen({
-      messages: [
-        { role: 'system', content: 'You produce terse codebase digests. Return only the digest.' },
-        { role: 'user', content: prompt },
-      ],
-      tools: [],
-      signal: null,
-    });
-    const text = (typeof result === 'string' ? result : result?.text || '').trim();
-    return text || null;
-  } catch {
-    return null;
+  for (const path of candidates) {
+    if (budgetRemaining <= 500) break;
+    // Check if already cached
+    if (originalFileContents?.has(path)) {
+      const content = originalFileContents.get(path);
+      const label = `\n=== ${path} ===\n`;
+      const available = budgetRemaining - label.length;
+      const snippet = content.length > available
+        ? content.slice(0, available) + `\n...[truncated]`
+        : content;
+      fileContents.push(label + snippet);
+      budgetRemaining -= label.length + snippet.length;
+      continue;
+    }
+    // Try to load from content store
+    try {
+      const store = getContentStore?.();
+      const b64Store = getBase64Store?.();
+      if (store?._hydrated && b64Store?._hydrated) {
+        const entry = store.getEntry(`repo:${path}`) || store.getEntry(`github:${path}`);
+        if (entry) {
+          const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
+          if (chunks.length > 0) {
+            const content = chunks.map(c => c.text).join('');
+            originalFileContents?.set(path, content);
+            const label = `\n=== ${path} ===\n`;
+            const available = budgetRemaining - label.length;
+            const snippet = content.length > available
+              ? content.slice(0, available) + `\n...[truncated]`
+              : content;
+            fileContents.push(label + snippet);
+            budgetRemaining -= label.length + snippet.length;
+          }
+        }
+      }
+    } catch { /* ignore */ }
   }
+
+  if (fileContents.length === 0) return null;
+
+  return fileContents.join('\n');
 }
 
 function isTransientError(error) {
@@ -493,31 +511,51 @@ export async function sendWithRetrieval({
       rounds < FORCE_GENERATION_AFTER_ROUND
     ) {
       forceGenerationInjected = true;
-      // Replace the system prompt with a strict generation-mode directive.
+      // Collect full file contents that the LLM already read (from cache)
+      // and embed them directly in the system prompt so the LLM doesn't need
+      // to call read_file again to see the code it must edit.
+      const FILE_CONTENT_BUDGET = 35000;
+      let fileContentsSection = '';
+      let fileBudgetRemaining = FILE_CONTENT_BUDGET;
+      for (const [filePath, content] of originalFileContents) {
+        if (fileBudgetRemaining <= 0) break;
+        const label = `\n\n=== ${filePath} ===`;
+        const available = fileBudgetRemaining - label.length - 50;
+        if (available <= 100) break;
+        const snippet = content.length > available
+          ? content.slice(0, available) + `\n... [truncated at ${available} chars]`
+          : content;
+        fileContentsSection += label + '\n' + snippet;
+        fileBudgetRemaining -= label.length + snippet.length + 1;
+      }
       const originalSystem = currentMessages[0]?.content || '';
       currentMessages[0] = {
         ...currentMessages[0],
         content: `GENERATION MODE — EXPLORATION IS OVER
 
-You have completed ${rounds + 1} rounds of exploration. You have read the key files.
+You have completed ${rounds + 1} rounds of exploration.
 From this point forward you may ONLY use "edit" or "write" tools.
-The tools "read_file", "search_code", "task", "quick_look", "file_outline", "list_files",
-and all graph/LSP query tools have been removed from your available tools.
+All exploration tools have been removed from your available tools.
+
+Below are the FULL contents of the files you explored during earlier rounds.
+Use these to identify the exact text for oldString/newString in your edit calls.
+Do NOT call read_file — the file contents are right here.
+${fileContentsSection || '\n(No file contents cached — use the conversation history above.)'}
 
 Do ONE of the following:
-  1. Call "edit" with exact oldString/newString to modify the file you located.
+  1. Call "edit" with exact oldString/newString to modify a file.
   2. Call "write" to create a new file if needed.
   3. If you genuinely cannot proceed, return a final text answer describing what blocks you.
 
 Do NOT ask for more information. Do NOT re-read files.
 
-Here is the original system prompt for context:
+Original system prompt (abbreviated):
 ---
-${originalSystem.slice(0, 3000)}`,
+${originalSystem.slice(0, 1500)}`,
       };
       const forceMsg = buildForceGenerationMessage(rounds, readFiles.size);
       currentMessages = [...currentMessages, forceMsg];
-      console.warn(`[ToolRound] Fix 1: force-generation mode at round ${rounds + 1} — system prompt replaced, exploration tools removed`);
+      console.warn(`[ToolRound] Fix 1: force-generation mode at round ${rounds + 1} — system prompt replaced, ${fileContentsSection.length} chars of file contents injected, exploration tools removed`);
     }
 
     // ── Fix 5: synthesize a digest so the model gets digested context ─────
@@ -532,7 +570,7 @@ ${originalSystem.slice(0, 3000)}`,
     ) {
       digestInjected = true;
       try {
-        const digest = await synthesizeFindingsDigest(currentMessages, sendToZen);
+        const digest = await synthesizeFindingsDigest(currentMessages, originalFileContents, getContentStore, getBase64Store);
         if (digest) {
           currentMessages = [...currentMessages, {
             role: 'user',
