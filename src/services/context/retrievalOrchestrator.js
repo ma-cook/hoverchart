@@ -20,7 +20,7 @@ const COMPRESSION_INTERVAL = 12;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
-const MAX_EXPLORATION_ROUNDS = 18;
+const MAX_EXPLORATION_ROUNDS = 16;
 const FORCE_GENERATION_AFTER_ROUND = 20;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
 const SUB_MAX_ROUNDS = 8;
@@ -41,8 +41,9 @@ function buildForceGenerationMessage(rounds, exploredCount) {
 You have explored enough. Now produce the code changes. If you need to read a file to get the exact oldString for an edit, you may — but prioritize calling "edit" over further exploration.
 
 Switch to PRODUCING CODE NOW:
-  1. Use the "edit" tool with exact oldString/newString for the file you already located.
-  2. If you genuinely cannot proceed, return a final text answer summarizing the blocker.`,
+  1. Prefer calling the "edit" tool with exact oldString/newString for the file you already located.
+  2. If an edit fails, correct the oldString and retry — or switch to outputting each changed file as a full markdown code block labeled \`\`\`<ext>:<filePath> so the system can capture it.
+  3. Output the final response as text containing the code blocks so your changes are recorded.`,
   };
 }
 
@@ -500,11 +501,11 @@ export async function sendWithRetrieval({
     }
 
     // ── Fix 1: force transition from exploration → generation ──────────────
-    // When the agent has been exploring past the cap without edits, inject a
-    // nudge message asking it to produce code. Crucially we do NOT replace the
-    // system prompt or strip exploration tools — the LLM needs read_file to
-    // get exact oldString for the edit tool, and a replaced system prompt
-    // makes it fall back to text analysis instead of tool calls.
+    // When the agent has been exploring past the cap without edits, replace
+    // the system prompt with a generation-mode directive AND strip the broad
+    // search/list/graph tools so the LLM has no choice but to produce edits.
+    // read_file is deliberately kept available — the LLM needs it to get exact
+    // oldString for the edit tool and to verify its changes.
     if (
       !producedEdit &&
       !forceGenerationInjected &&
@@ -512,9 +513,31 @@ export async function sendWithRetrieval({
       rounds < FORCE_GENERATION_AFTER_ROUND
     ) {
       forceGenerationInjected = true;
+      const originalSystem = currentMessages[0]?.content || '';
+      currentMessages[0] = {
+        ...currentMessages[0],
+        content: `GENERATION MODE — EXPLORATION IS OVER
+
+You have completed ${rounds + 1} rounds of exploration. You have located the relevant files.
+From this point forward search/list/graph tools have been REMOVED from your available tools.
+You MAY still use "read_file" to view file content, but the only modification tools
+available are "edit" and "write".
+
+Do ONE of the following:
+  1. Call "edit" with exact oldString/newString to modify the file you located.
+     You may call read_file first if you need the exact current text.
+  2. Call "write" to create a new file if needed.
+  3. If you genuinely cannot proceed, return a final text answer describing what blocks you.
+
+Do NOT call search_code / list_files / file_outline / task / graph tools.
+
+Here is the original system prompt for context:
+---
+${originalSystem.slice(0, 3000)}`,
+      };
       const forceMsg = buildForceGenerationMessage(rounds, readFiles.size);
       currentMessages = [...currentMessages, forceMsg];
-      console.warn(`[ToolRound] Fix 1: force-generation nudge at round ${rounds + 1}`);
+      console.warn(`[ToolRound] Fix 1: force-generation mode at round ${rounds + 1} — system prompt replaced, search tools removed, read_file/edit/write kept`);
     }
 
     // ── Fix 5: synthesize a digest so the model gets digested context ─────
@@ -545,13 +568,43 @@ export async function sendWithRetrieval({
     // ── Fix 4: hard stop past FORCE_GENERATION_AFTER_ROUND with no edits ──
     if (!producedEdit && rounds >= FORCE_GENERATION_AFTER_ROUND) {
       console.warn(`[ToolRound] Fix 4: hard stop at round ${rounds + 1} (>= ${FORCE_GENERATION_AFTER_ROUND}) with 0 edits — forcing generation exit`);
-      const forceExit = buildForceGenerationMessage(rounds, readFiles.size);
+      // Strip ALL tools and demand the LLM emit its proposed changes as
+      // markdown code blocks in plain text. The chat frontend parses these
+      // blocks into pending file changes, so this does not depend on the
+      // edit tool's exact oldString matching succeeding.
+      const originalSystem = currentMessages[0]?.content || '';
+      currentMessages[0] = {
+        ...currentMessages[0],
+        content: `FINAL RESPONSE REQUIRED — OUTPUT CODE BLOCKS ONLY
+
+You have explored enough. No tools are available now. Respond with ONLY your proposed code changes.
+
+Output EACH changed file as a markdown code block whose language label contains the repo-relative path:
+
+\`\`\`jsx:src/components/UIOverlay.jsx
+<the FULL updated file content for that file>
+\`\`\`
+
+Rules:
+- One code block per file. Label format: \`\`\`<extension>:<filePath>
+- Include the COMPLETE updated file content (not a diff, not snippets).
+- Use the exact repo-relative path (e.g. src/components/UIOverlay.jsx).
+- Output nothing except the code blocks and a short intro line.
+
+If no file changes are needed, output exactly: "No changes required."
+
+Original system prompt (abbreviated):
+---
+${originalSystem.slice(0, 1500)}`,
+      };
+      const forceExit = {
+        role: 'user',
+        content: `⚠️ FINAL REQUEST (round ${rounds + 1}): You MUST now produce the code changes. Output each changed file as a markdown code block labeled \`\`\`<ext>:<filePath>. Use the full file content. This is the last message you will receive — do not explain, just output the code blocks.`,
+      };
       currentMessages = [...currentMessages, forceExit];
-      // Allow one final LLM call below with the nudge, then break regardless
-      // of whether it produces tool calls (handled by the rounds cap below).
       let finalRaw = null;
       try {
-        finalRaw = await sendToZen({ messages: currentMessages, tools: computeTools({ excludeExplorationTools: true }), signal });
+        finalRaw = await sendToZen({ messages: currentMessages, tools: [], signal });
       } catch (e) {
         console.warn(`[ToolRound] Fix 4: final send failed: ${e.message}`);
       }
@@ -575,7 +628,7 @@ export async function sendWithRetrieval({
     let sendFailed = false;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools();
+        const availableTools = computeTools({ excludeExplorationTools: forceGenerationInjected });
         rawResult = await sendToZen({
           messages: currentMessages,
           tools: availableTools,

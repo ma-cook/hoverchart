@@ -290,8 +290,11 @@ const ALL_TOOL_GROUPS = [
   { group: 'conditional', tools: [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL] },
 ];
 
+// read_file is intentionally NOT in this list — in force-generation mode the
+// LLM still needs read_file to get exact oldString for the edit tool and to
+// verify its edits. Only broad search/list/graph tools are stripped.
 const EXPLORATION_TOOL_NAMES = new Set([
-  'read_file', 'search_code', 'list_files', 'file_outline', 'quick_look',
+  'search_code', 'list_files', 'file_outline', 'quick_look',
   'glob', 'search_nodes', 'get_node_info', 'get_dependencies', 'find_path',
   'task',
 ]);
