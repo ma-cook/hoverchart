@@ -300,7 +300,7 @@ const EXPLORATION_TOOL_NAMES = new Set([
 ]);
 
 export function computeTools(opts = {}) {
-  const { excludeExplorationTools = false } = opts;
+  const { excludeExplorationTools = false, excludeReadTool = false } = opts;
   const always = [...SKILL_MANAGEMENT_TOOLS, ...NAVIGATION_TOOLS];
   const conditional = [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL];
   const available = [];
@@ -322,11 +322,17 @@ export function computeTools(opts = {}) {
     }
   }
 
+  let result = available;
+
   if (excludeExplorationTools) {
-    return available.filter(t => !EXPLORATION_TOOL_NAMES.has(t.function.name));
+    result = result.filter(t => !EXPLORATION_TOOL_NAMES.has(t.function.name));
   }
 
-  return available;
+  if (excludeReadTool) {
+    result = result.filter(t => t.function.name !== 'read_file');
+  }
+
+  return result;
 }
 
 export function computeSubAgentTools() {

@@ -458,6 +458,15 @@ export async function sendWithRetrieval({
   let producedEdit = false;
   let forceGenerationInjected = false;
   let digestInjected = false;
+  // Names of tools actually sent to the model this round. Used by the
+  // execution-time gate to block hallucinated calls to tools that were
+  // stripped (e.g. search_code in force-generation mode).
+  let currentToolNames = new Set();
+  // Escalation in force-generation mode: after 2 rounds of pure read_file
+  // exploration (no edit/write attempted), strip read_file too so the model
+  // has nothing left but edit/write.
+  let forceReadOnlyRounds = 0;
+  let forceReadToolStripped = false;
 
   resetEditTracker();
   initializeDefaultSkills({
@@ -521,11 +530,12 @@ export async function sendWithRetrieval({
 You have completed ${rounds + 1} rounds of exploration. You have located the relevant files.
 From this point forward search/list/graph tools have been REMOVED from your available tools.
 You MAY still use "read_file" to view file content, but the only modification tools
-available are "edit" and "write".
+available are "edit" and "write". If you keep calling read_file instead of edit/write,
+read_file will be removed too.
 
 Do ONE of the following:
   1. Call "edit" with exact oldString/newString to modify the file you located.
-     You may call read_file first if you need the exact current text.
+     You may call read_file once first if you need the exact current text.
   2. Call "write" to create a new file if needed.
   3. If you genuinely cannot proceed, return a final text answer describing what blocks you.
 
@@ -579,17 +589,20 @@ ${originalSystem.slice(0, 3000)}`,
 
 You have explored enough. No tools are available now. Respond with ONLY your proposed code changes.
 
-Output EACH changed file as a markdown code block whose language label contains the repo-relative path:
+Output EACH changed file as a markdown code block whose language label contains the repo-relative path.
+
+EXACT format (the label must be \`\`\`<extension>:<repo-relative-path>):
 
 \`\`\`jsx:src/components/UIOverlay.jsx
-<the FULL updated file content for that file>
+// the COMPLETE updated file content goes here
+export default function UIOverlay() { ... }
 \`\`\`
 
 Rules:
-- One code block per file. Label format: \`\`\`<extension>:<filePath>
-- Include the COMPLETE updated file content (not a diff, not snippets).
+- One code block per changed file. Label format: \`\`\`<extension>:<filePath> (colon, no spaces, no "path=").
+- Include the COMPLETE updated file content (not a diff, not snippets, not a description).
 - Use the exact repo-relative path (e.g. src/components/UIOverlay.jsx).
-- Output nothing except the code blocks and a short intro line.
+- Output nothing except a one-line intro and the code blocks.
 
 If no file changes are needed, output exactly: "No changes required."
 
@@ -628,7 +641,11 @@ ${originalSystem.slice(0, 1500)}`,
     let sendFailed = false;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools({ excludeExplorationTools: forceGenerationInjected });
+        const availableTools = computeTools({
+          excludeExplorationTools: forceGenerationInjected,
+          excludeReadTool: forceGenerationInjected && forceReadToolStripped,
+        });
+        currentToolNames = new Set(availableTools.map(t => t.function.name));
         rawResult = await sendToZen({
           messages: currentMessages,
           tools: availableTools,
@@ -791,6 +808,28 @@ ${originalSystem.slice(0, 1500)}`,
 
       const toolPromises = toolCalls.map((tc, idx) => {
       const toolStart = performance.now();
+      // Execution-time gate: never execute a tool that wasn't sent to the
+      // model this round. The model sometimes keeps calling tools that were
+      // stripped (search_code / list_files / etc.) because it saw them in
+      // earlier context; executing them would silently keep it in exploration
+      // mode. Return a synthetic "unavailable" result instead so it pivots.
+      if (!currentToolNames.has(tc.name)) {
+        console.warn(`[ToolRound] Blocking ${tc.name} — not in this round's available tools`);
+        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+        const generationHint = forceGenerationInjected
+          ? (forceReadToolStripped
+            ? ' You are in GENERATION MODE: read_file has been disabled. You have already seen the relevant files. Call "edit" with oldString/newString now, or output code blocks as text.'
+            : ' You are in GENERATION MODE: exploration tools are disabled. Call "edit" (or "write" for a new file) to produce changes, or output code blocks as text.')
+          : '';
+        return Promise.resolve({
+          tc,
+          result: {
+            success: false,
+            content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}]`,
+          },
+          error: null,
+        });
+      }
       if (tc.name === 'read_file' && tc.arguments?.path) {
         const key = readKey(tc);
         const filePath = normalizePath(tc.arguments.path);
@@ -802,7 +841,7 @@ ${originalSystem.slice(0, 1500)}`,
           globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cached]', duration: 0 });
           return Promise.resolve({
             tc,
-            result: { success: true, content: `[Already loaded: ${filePath} lines ${off}-${off + lim - 1} — see prior tool response above. Do NOT re-read this section.]` },
+            result: { success: true, content: `[Already loaded: ${filePath} lines ${off}-${off + lim - 1} — see prior tool response above.${forceGenerationInjected ? ' You are in GENERATION MODE: do NOT re-read files. Call "edit" now with the oldString/newString for your change.' : ' Do NOT re-read this section.'}]` },
             error: null,
           });
         }
@@ -935,6 +974,19 @@ ${originalSystem.slice(0, 1500)}`,
         tool_call_id: tc.id,
         content,
       });
+    }
+
+    // Escalate force-generation: if the model keeps only reading (no
+    // edit/write attempted) for 2 rounds, strip read_file entirely.
+    if (forceGenerationInjected && !producedEdit && !toolCalls.some(tc => tc.name === 'edit' || tc.name === 'write')) {
+      forceReadOnlyRounds++;
+      console.warn(`[ToolRound] Force-generation round ${rounds + 1}: no edit/write attempted (${forceReadOnlyRounds}/2)`);
+      if (forceReadOnlyRounds >= 2) {
+        forceReadToolStripped = true;
+        console.warn('[ToolRound] Escalating: read_file stripped — only edit/write remain in generation mode');
+      }
+    } else {
+      forceReadOnlyRounds = 0;
     }
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });
