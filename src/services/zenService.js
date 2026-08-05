@@ -498,6 +498,7 @@ import useLlmStore from '../stores/llmStore';
 import useCodeStore from '../stores/codeStore';
 import { getAllPlanContext } from './planService';
 import { getRepoTree } from './githubIssuesService';
+import { fetchFileContent } from './githubRepoService';
 import { getContentStore } from './context/contentStore';
 import { getBase64Store } from './context/base64Store';
 import { buildContext } from './context/contextBuilder';
@@ -509,7 +510,7 @@ export async function fetchRepoContext(token, owner, repo, branch) {
   try {
     const treeResult = await getRepoTree(token, owner, repo, branch);
     if (!treeResult.ok || !treeResult.data?.tree) {
-      return { fileTree: [], fileContents: {}, error: treeResult.error };
+      return { fileTree: [], fileContents: {}, owner, repo, branch, token, error: treeResult.error };
     }
 
     await new Promise(r => setTimeout(r, 0));
@@ -520,11 +521,46 @@ export async function fetchRepoContext(token, owner, repo, branch) {
 
     console.log(`[fetchRepoContext] Loaded file tree: ${filePaths.length} files`);
 
-    return { fileTree: filePaths, fileContents: {}, error: null };
+    return { fileTree: filePaths, fileContents: {}, owner, repo, branch, token, error: null };
   } catch (err) {
     console.error('[fetchRepoContext] step failed:', err.message, err.stack);
     throw err;
   }
+}
+
+const PROJECT_NOTES_BUDGET = 2500;
+const PROJECT_NOTES_CANDIDATES = ['AGENTS.md', '.github/copilot-instructions.md', 'README.md'];
+
+function fetchProjectDoc(repoContext, path, timeoutMs = 15000) {
+  const { owner, repo, token } = repoContext || {};
+  if (!owner || !repo || !token) return Promise.resolve(null);
+  return Promise.race([
+    fetchFileContent(owner, repo, path, token),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+  ]).catch(() => null);
+}
+
+/**
+ * Load the repository's own conventions docs (AGENTS.md, Copilot
+ * instructions, README) and condense them for injection into the code-gen
+ * system prompt. Returns a formatted section, or null if none loaded.
+ */
+export async function loadProjectNotes(repoContext) {
+  const parts = [];
+  let budget = PROJECT_NOTES_BUDGET;
+  for (const doc of PROJECT_NOTES_CANDIDATES) {
+    if (budget <= 300) break;
+    const content = await fetchProjectDoc(repoContext, doc);
+    if (!content) continue;
+    const trimmed = content.trim();
+    if (!trimmed) continue;
+    const label = `## ${doc}\n`;
+    const available = budget - label.length;
+    const snippet = trimmed.length > available ? `${trimmed.slice(0, available)}\n...(truncated)` : trimmed;
+    parts.push(label + snippet);
+    budget -= label.length + snippet.length;
+  }
+  return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
 export async function finalizeContentStore() {
@@ -674,6 +710,12 @@ The repository already has files. You MUST respect the existing file structure a
 TECH STACK: {techStack}
 
 ═══════════════════════════════════════════════════════════════
+PROJECT CONVENTIONS (loaded from the repository's own docs)
+═══════════════════════════════════════════════════════════════
+
+{projectNotes}
+
+═══════════════════════════════════════════════════════════════
 SKILLS — Load context and tools on demand
 ═══════════════════════════════════════════════════════════════
 
@@ -713,12 +755,17 @@ RULES
 3. NEVER create a new file for a component that already exists
 4. When the user mentions a UI element by name, search for it first — it may be defined inline
 5. You MUST call read_file on every file BEFORE editing
-6. oldString in edit calls must be EXACT text from the file — including whitespace and indentation
+6. oldString in edit calls must be EXACT text from the file — including whitespace and indentation. If an edit fails to match, re-read the file and copy the exact current text; never guess or approximate.
 7. NEVER fabricate file paths, imports, or code structure. Verify with search_code or read_file
-8. Read files in LARGE chunks (8000+ lines per call). Use offset only for files longer than 8000 lines.
+8. Read files in LARGE chunks (8000+ lines per call). Use offset only for files longer than 8000 lines. You may re-read any section as often as needed — re-reads return the exact current content.
 9. Use file_outline(path) first to see structure, then read_file for the full content
 10. After EVERY tool result, write a brief summary (1-3 sentences) of what you learned. NEVER send only tool_calls without text.
 11. If search_code returns "No matching files found", try a shorter/substring of the search term
+12. Make the SMALLEST change that fixes the root cause. NEVER rewrite a whole file — use targeted edits. A diff that changes 5 lines is far better than one that changes 500.
+13. After an edit succeeds, re-read the edited lines to verify they are correct and consistent with the rest of the file.
+14. If a UI element is missing or a button does not appear (especially after a page refresh), find the condition that gates its rendering — search for the gate variable by name with search_code (e.g. is2DReady) — then trace how that variable is set: in-memory store state vs state restored on hydration. Fix the state/data flow, not the UI. The "is2DReady"/"graphs" fields live in diagramStore and are in-memory only; "latestMarkdownUrl" is restored on refresh and the hydration effect is what re-renders the buttons — verify that path before editing.
+15. search_code returns line-level matches in the format file:line: code — use the line numbers to target read_file offsets.
+16. Check for AGENTS.md, .github/copilot-instructions.md, or README.md conventions before writing code that touches project structure.
 `;
 
 function formatFileSize(chars) {
@@ -952,8 +999,16 @@ function buildMinimalSceneContext(objects) {
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
 
+  let projectNotes = '';
+  try {
+    projectNotes = (await loadProjectNotes(repoContext)) || '';
+  } catch (e) {
+    console.warn('[buildCodeGenMessages] project notes load failed:', e.message);
+  }
+
   const systemContent = CODE_GEN_SYSTEM_PROMPT
-    .replace('{techStack}', techStackSection);
+    .replace('{techStack}', techStackSection)
+    .replace('{projectNotes}', projectNotes || '(none loaded — if the repo has AGENTS.md or README conventions, read them yourself)');
 
   console.log(`[buildCodeGenMessages] System prompt: ${systemContent.length} chars`);
 

@@ -20,8 +20,8 @@ const COMPRESSION_INTERVAL = 12;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
-const MAX_EXPLORATION_ROUNDS = 16;
-const FORCE_GENERATION_AFTER_ROUND = 20;
+const MAX_EXPLORATION_ROUNDS = 24;
+const FORCE_GENERATION_AFTER_ROUND = 32;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
 const SUB_MAX_ROUNDS = 8;
 const SUB_MAX_CHARS = 60000;
@@ -155,6 +155,9 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
   const rest = [...msgs.slice(2)];
 
   const lastReadByPath = new Map();
+  // Files the model has attempted to edit/write — their reads must stay exact
+  // so the edit tool can land oldString without lossy compression.
+  const editTargetPaths = new Set();
   for (let i = 0; i < rest.length; i++) {
     const msg = rest[i];
     if (msg.role === 'assistant' && msg.tool_calls) {
@@ -163,6 +166,12 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
           try {
             const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
             if (args.path) lastReadByPath.set(args.path, i);
+          } catch { /* ignore */ }
+        }
+        if (tc.function?.name === 'edit' || tc.function?.name === 'write') {
+          try {
+            const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+            if (args?.filePath) editTargetPaths.add(normalizePath(args.filePath));
           } catch { /* ignore */ }
         }
       }
@@ -186,7 +195,7 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
     if (tc.function?.name === 'read_file') {
       try {
         const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
-        if (args.path && lastReadByPath.get(args.path) > i) {
+        if (args.path && lastReadByPath.get(args.path) > i && !editTargetPaths.has(normalizePath(args.path))) {
           msg.content = `[Previously read: ${args.path} — ${msg.content.length} chars — see the later read_file above]`;
           compressedCount++;
         }
@@ -261,7 +270,17 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
         const asstIdx = rest.indexOf(pair.assistant);
         if (!keepIndices.has(asstIdx)) continue;
         const hasToolCalls = pair.assistant.tool_calls?.some(tc => tc.function?.name === 'edit' || tc.function?.name === 'write' || tc.function?.name === 'read_file' || tc.function?.name === 'search_code');
-        if (hasToolCalls && pair.tools.length > 0 && pair.assistant.content?.length < 100) {
+        // Never summarize pairs that touched a file the model intends to edit —
+        // the exact read content and edit result are needed for subsequent edits.
+        const pairHitsEditTarget = (pair.assistant.tool_calls || []).some(tc => {
+          if (tc.function?.name !== 'read_file' && tc.function?.name !== 'edit' && tc.function?.name !== 'write') return false;
+          try {
+            const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+            const path = args?.path || args?.filePath;
+            return !!path && editTargetPaths.has(normalizePath(path));
+          } catch { return false; }
+        });
+        if (hasToolCalls && !pairHitsEditTarget && pair.tools.length > 0 && pair.assistant.content?.length < 100) {
           const summary = await summarizerFn(pair.assistant, pair.tools);
           if (summary) {
             pair.assistant.content = `[Previously: ${summary}]`;
@@ -339,6 +358,42 @@ function generateSearchReplacePatch(original, modified, filePath) {
     return lines.join('\n');
   });
   return `\`\`\`${ext}:${filePath}\n${patchParts.join('\n\n')}\n\`\`\``;
+}
+
+const CODE_BLOCK_LABEL_REGEX = /```([a-zA-Z0-9+_-]+):([^\n`]*?)\n([\s\S]*?)```/g;
+
+/**
+ * Fix 4 post-processor: any markdown code block (```<ext>:<path>) whose path
+ * corresponds to a file we have the original content for is converted into a
+ * SEARCH/REPLACE patch (or dropped if unchanged). Blocks for NEW files are left
+ * as complete-content blocks. This guarantees the push pipeline never receives
+ * a full-file dump of an existing file, which it refuses to apply.
+ */
+function normalizeFinalCodeBlocks(text, originalFileContents) {
+  if (!text || !originalFileContents || originalFileContents.size === 0) return text;
+  const matches = [...text.matchAll(CODE_BLOCK_LABEL_REGEX)];
+  if (matches.length === 0) return text;
+  const replacements = [];
+  for (const m of matches) {
+    const [full, , filePathRaw, content] = m;
+    const filePath = normalizePath(filePathRaw.trim());
+    if (!filePath || filePath.includes(' ')) continue;
+    const original = originalFileContents.get(filePath);
+    if (original == null) continue;
+    if (original === content) {
+      replacements.push({ full, next: '' });
+      continue;
+    }
+    const patch = generateSearchReplacePatch(original, content, filePath);
+    if (patch) {
+      replacements.push({ full, next: patch });
+    }
+  }
+  let updated = text;
+  for (const { full, next } of replacements) {
+    updated = updated.replace(full, next);
+  }
+  return updated;
 }
 
 const FAILURE_PATTERNS = /^Error:|^File not found:|^No (matching|files) found|^Unknown tool|^search_code requires/i;
@@ -459,14 +514,9 @@ export async function sendWithRetrieval({
   let forceGenerationInjected = false;
   let digestInjected = false;
   // Names of tools actually sent to the model this round. Used by the
-  // execution-time gate to block hallucinated calls to tools that were
-  // stripped (e.g. search_code in force-generation mode).
+  // execution-time gate to block hallucinated calls to tools that are not in
+  // the round's tool list.
   let currentToolNames = new Set();
-  // Escalation in force-generation mode: after 2 rounds of pure read_file
-  // exploration (no edit/write attempted), strip read_file too so the model
-  // has nothing left but edit/write.
-  let forceReadOnlyRounds = 0;
-  let forceReadToolStripped = false;
 
   resetEditTracker();
   initializeDefaultSkills({
@@ -509,12 +559,12 @@ export async function sendWithRetrieval({
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
     }
 
-    // ── Fix 1: force transition from exploration → generation ──────────────
-    // When the agent has been exploring past the cap without edits, replace
-    // the system prompt with a generation-mode directive AND strip the broad
-    // search/list/graph tools so the LLM has no choice but to produce edits.
-    // read_file is deliberately kept available — the LLM needs it to get exact
-    // oldString for the edit tool and to verify its changes.
+    // ── Fix 1: gentle nudge from exploration → generation ───────────────────
+    // When the agent has been exploring past the cap without edits, append a
+    // nudge message asking it to switch to producing changes. Unlike the old
+    // behavior, the system prompt is NOT replaced and NO tools are stripped —
+    // the model keeps read_file/search_code so it can still pull exact text
+    // for edit oldString and verify its changes. The nudge is advisory only.
     if (
       !producedEdit &&
       !forceGenerationInjected &&
@@ -522,32 +572,9 @@ export async function sendWithRetrieval({
       rounds < FORCE_GENERATION_AFTER_ROUND
     ) {
       forceGenerationInjected = true;
-      const originalSystem = currentMessages[0]?.content || '';
-      currentMessages[0] = {
-        ...currentMessages[0],
-        content: `GENERATION MODE — EXPLORATION IS OVER
-
-You have completed ${rounds + 1} rounds of exploration. You have located the relevant files.
-From this point forward search/list/graph tools have been REMOVED from your available tools.
-You MAY still use "read_file" to view file content, but the only modification tools
-available are "edit" and "write". If you keep calling read_file instead of edit/write,
-read_file will be removed too.
-
-Do ONE of the following:
-  1. Call "edit" with exact oldString/newString to modify the file you located.
-     You may call read_file once first if you need the exact current text.
-  2. Call "write" to create a new file if needed.
-  3. If you genuinely cannot proceed, return a final text answer describing what blocks you.
-
-Do NOT call search_code / list_files / file_outline / task / graph tools.
-
-Here is the original system prompt for context:
----
-${originalSystem.slice(0, 3000)}`,
-      };
       const forceMsg = buildForceGenerationMessage(rounds, readFiles.size);
       currentMessages = [...currentMessages, forceMsg];
-      console.warn(`[ToolRound] Fix 1: force-generation mode at round ${rounds + 1} — system prompt replaced, search tools removed, read_file/edit/write kept`);
+      console.warn(`[ToolRound] Fix 1: nudged into generation at round ${rounds + 1} — all tools remain available`);
     }
 
     // ── Fix 5: synthesize a digest so the model gets digested context ─────
@@ -575,33 +602,37 @@ ${originalSystem.slice(0, 3000)}`,
       }
     }
 
-    // ── Fix 4: hard stop past FORCE_GENERATION_AFTER_ROUND with no edits ──
+    // ── Fix 4: last-resort hard stop past FORCE_GENERATION_AFTER_ROUND ──────
     if (!producedEdit && rounds >= FORCE_GENERATION_AFTER_ROUND) {
       console.warn(`[ToolRound] Fix 4: hard stop at round ${rounds + 1} (>= ${FORCE_GENERATION_AFTER_ROUND}) with 0 edits — forcing generation exit`);
       // Strip ALL tools and demand the LLM emit its proposed changes as
-      // markdown code blocks in plain text. The chat frontend parses these
-      // blocks into pending file changes, so this does not depend on the
-      // edit tool's exact oldString matching succeeding.
+      // SEARCH/REPLACE blocks (for existing files) or full-content blocks
+      // (for new files) inside markdown code blocks. The push pipeline applies
+      // SEARCH/REPLACE against the current repo content, so this does not
+      // depend on the edit tool's oldString matching succeeding and never
+      // dumps a whole existing file (which the pusher would refuse).
       const originalSystem = currentMessages[0]?.content || '';
       currentMessages[0] = {
         ...currentMessages[0],
-        content: `FINAL RESPONSE REQUIRED — OUTPUT CODE BLOCKS ONLY
+        content: `FINAL RESPONSE REQUIRED — OUTPUT CODE CHANGES ONLY
 
-You have explored enough. No tools are available now. Respond with ONLY your proposed code changes.
+You have explored enough. No tools are available now. Respond with ONLY your proposed code changes as markdown code blocks.
 
-Output EACH changed file as a markdown code block whose language label contains the repo-relative path.
-
-EXACT format (the label must be \`\`\`<extension>:<repo-relative-path>):
+For an EXISTING file, output ONE code block labeled \`\`\`<ext>:<repo-relative-path> whose content is one or more SEARCH/REPLACE pairs:
 
 \`\`\`jsx:src/components/UIOverlay.jsx
-// the COMPLETE updated file content goes here
-export default function UIOverlay() { ... }
+<<<<<<< SEARCH
+<exact current code that must match the file — copy it from the read_file output>
+=======
+<replacement code>
+>>>>>>> REPLACE
 \`\`\`
 
 Rules:
-- One code block per changed file. Label format: \`\`\`<extension>:<filePath> (colon, no spaces, no "path=").
-- Include the COMPLETE updated file content (not a diff, not snippets, not a description).
-- Use the exact repo-relative path (e.g. src/components/UIOverlay.jsx).
+- The SEARCH text MUST match the current file content EXACTLY (including whitespace/indentation). Copy it from the read_file output you already received.
+- Keep each SEARCH/REPLACE pair as small as possible while uniquely identifying the location.
+- For a NEW file that does not exist yet, output \`\`\`<ext>:<repo-relative-path> containing the COMPLETE new file content (no SEARCH/REPLACE markers).
+- One code block per file. Label format: \`\`\`<extension>:<filePath> (colon, no spaces, no "path=").
 - Output nothing except a one-line intro and the code blocks.
 
 If no file changes are needed, output exactly: "No changes required."
@@ -612,7 +643,7 @@ ${originalSystem.slice(0, 1500)}`,
       };
       const forceExit = {
         role: 'user',
-        content: `⚠️ FINAL REQUEST (round ${rounds + 1}): You MUST now produce the code changes. Output each changed file as a markdown code block labeled \`\`\`<ext>:<filePath>. Use the full file content. This is the last message you will receive — do not explain, just output the code blocks.`,
+        content: `⚠️ FINAL REQUEST (round ${rounds + 1}): You MUST now produce the code changes. Existing files: use SEARCH/REPLACE blocks (<<<<<<< SEARCH / ======= / >>>>>>> REPLACE) whose SEARCH text matches the current file exactly, inside a single \`\`\`<ext>:<filePath> block. New files: output the complete content. This is the last message you will receive — do not explain, just output the code blocks.`,
       };
       currentMessages = [...currentMessages, forceExit];
       let finalRaw = null;
@@ -623,7 +654,11 @@ ${originalSystem.slice(0, 1500)}`,
       }
       const finalRes = typeof finalRaw === 'string' ? { text: finalRaw, toolCalls: [] } : (finalRaw || { text: '', toolCalls: [] });
       if (finalRes.text) {
-        finalText = finalText ? finalText + '\n\n' + finalRes.text : finalRes.text;
+        // If the model still emitted full-file blocks for files we have the
+        // original content for, convert them to SEARCH/REPLACE patches so the
+        // push pipeline can apply them without losing code.
+        const normalized = normalizeFinalCodeBlocks(finalRes.text, originalFileContents);
+        finalText = finalText ? finalText + '\n\n' + normalized : normalized;
       }
       break;
     }
@@ -641,10 +676,7 @@ ${originalSystem.slice(0, 1500)}`,
     let sendFailed = false;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools({
-          excludeExplorationTools: forceGenerationInjected,
-          excludeReadTool: forceGenerationInjected && forceReadToolStripped,
-        });
+        const availableTools = computeTools({});
         currentToolNames = new Set(availableTools.map(t => t.function.name));
         rawResult = await sendToZen({
           messages: currentMessages,
@@ -817,9 +849,7 @@ ${originalSystem.slice(0, 1500)}`,
         console.warn(`[ToolRound] Blocking ${tc.name} — not in this round's available tools`);
         onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
         const generationHint = forceGenerationInjected
-          ? (forceReadToolStripped
-            ? ' You are in GENERATION MODE: read_file has been disabled. You have already seen the relevant files. Call "edit" with oldString/newString now, or output code blocks as text.'
-            : ' You are in GENERATION MODE: exploration tools are disabled. Call "edit" (or "write" for a new file) to produce changes, or output code blocks as text.')
+          ? ' You are in GENERATION MODE: produce code changes now. Call "edit" (or "write" for a new file), or output code blocks as text.'
           : '';
         return Promise.resolve({
           tc,
@@ -833,19 +863,9 @@ ${originalSystem.slice(0, 1500)}`,
       if (tc.name === 'read_file' && tc.arguments?.path) {
         const key = readKey(tc);
         const filePath = normalizePath(tc.arguments.path);
-        if (readFilesBefore.has(key)) {
-          const off = tc.arguments.offset || 1;
-          const lim = tc.arguments.limit || 2000;
-          console.warn(`[ToolRound] Round ${rounds + 1}: ${filePath} (offset=${off}) already read, skipping fetch`);
-          onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-          globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cached]', duration: 0 });
-          return Promise.resolve({
-            tc,
-            result: { success: true, content: `[Already loaded: ${filePath} lines ${off}-${off + lim - 1} — see prior tool response above.${forceGenerationInjected ? ' You are in GENERATION MODE: do NOT re-read files. Call "edit" now with the oldString/newString for your change.' : ' Do NOT re-read this section.'}]` },
-            error: null,
-          });
-        }
-
+        // Serve the requested range from the exact cached content FIRST so
+        // re-reads return real text (needed for precise edit oldString), and
+        // never a "do not re-read" stub.
         const fullCached = originalFileContents.get(filePath);
         if (fullCached) {
           const off = Math.max(1, parseInt(tc.arguments.offset, 10) || 1);
@@ -863,6 +883,19 @@ ${originalSystem.slice(0, 1500)}`,
               error: null,
             });
           }
+        }
+
+        if (readFilesBefore.has(key)) {
+          const off = tc.arguments.offset || 1;
+          const lim = tc.arguments.limit || 2000;
+          console.warn(`[ToolRound] Round ${rounds + 1}: ${filePath} (offset=${off}) already read and not cached, skipping fetch`);
+          onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+          globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cached]', duration: 0 });
+          return Promise.resolve({
+            tc,
+            result: { success: true, content: `[Already loaded: ${filePath} lines ${off}-${off + lim - 1} — see prior tool response above.]` },
+            error: null,
+          });
         }
 
         readFiles.set(key, true);
@@ -974,19 +1007,6 @@ ${originalSystem.slice(0, 1500)}`,
         tool_call_id: tc.id,
         content,
       });
-    }
-
-    // Escalate force-generation: if the model keeps only reading (no
-    // edit/write attempted) for 2 rounds, strip read_file entirely.
-    if (forceGenerationInjected && !producedEdit && !toolCalls.some(tc => tc.name === 'edit' || tc.name === 'write')) {
-      forceReadOnlyRounds++;
-      console.warn(`[ToolRound] Force-generation round ${rounds + 1}: no edit/write attempted (${forceReadOnlyRounds}/2)`);
-      if (forceReadOnlyRounds >= 2) {
-        forceReadToolStripped = true;
-        console.warn('[ToolRound] Escalating: read_file stripped — only edit/write remain in generation mode');
-      }
-    } else {
-      forceReadOnlyRounds = 0;
     }
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });

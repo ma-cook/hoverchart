@@ -846,7 +846,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const normalize = (s) => (s || '').toLowerCase().replace(/[-_]/g, '');
       const pattern = normalize(args.pattern);
       if (!pattern) return { success: false, content: 'search_code requires a "pattern" parameter' };
-      const READ_FILE_HINT = '\n\n→ Use quick_look("path") for a preview, or read_file("path") for full content.';
+      const READ_FILE_HINT = '\n\n→ Use read_file("path", offset=LINE, limit=N) to jump to an exact line, or quick_look("path") for a preview.';
       const MAX_RESULTS = 15;
 
       const results = [];
@@ -899,26 +899,30 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         results.push({ rank: 2, text: `${f}${sizeHint(f)}` });
       }
 
-      // 4. ContentStore — full-text search in loaded file contents
+      // 4. ContentStore — full-text search with line numbers
       await new Promise(r => setTimeout(r, 0));
       const entries = Array.from(store.entries.entries());
+      const MAX_HITS_PER_FILE = 5;
       let scanCount = 0;
       for (const [id, entry] of entries) {
         if (results.length >= MAX_RESULTS) break;
         if (!id.startsWith('repo:')) continue;
         const filePath = id.slice(5);
-        for (const chunk of entry.chunks) {
-          const text = (chunk.text || '').toLowerCase();
-          const idx = text.indexOf(pattern);
-          if (idx >= 0) {
-            const start = Math.max(0, idx - 50);
-            const end = Math.min(text.length, idx + pattern.length + 80);
-            const snippet = chunk.text.slice(start, end).replace(/\n/g, ' ').trim();
-            const prefix = start > 0 ? '...' : '';
-            const suffix = end < chunk.text.length ? '...' : '';
-            results.push({ rank: 3, text: `${filePath}${sizeHint(filePath)}: ${prefix}${snippet}${suffix}` });
-            break;
-          }
+        if (results.some(r => r.text.startsWith(filePath))) continue;
+        const fullText = entry.chunks.map(c => c.text).join('');
+        const lowerFull = fullText.toLowerCase();
+        let from = 0;
+        let fileHits = 0;
+        while (fileHits < MAX_HITS_PER_FILE) {
+          const hitIdx = lowerFull.indexOf(pattern, from);
+          if (hitIdx < 0) break;
+          const lineStart = fullText.lastIndexOf('\n', hitIdx - 1) + 1;
+          const lineEnd = fullText.indexOf('\n', hitIdx);
+          const lineText = fullText.slice(lineStart, lineEnd === -1 ? fullText.length : lineEnd);
+          const lineNum = (fullText.slice(0, lineStart).match(/\n/g) || []).length + 1;
+          results.push({ rank: 3, text: `${filePath}${sizeHint(filePath)}:${lineNum}: ${lineText.trim().slice(0, 200)}` });
+          fileHits++;
+          from = lineEnd === -1 ? fullText.length : lineEnd + 1;
         }
         scanCount++;
         if (scanCount % 50 === 0) await new Promise(r => setTimeout(r, 0));
@@ -1032,12 +1036,27 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const storeId = `repo:${filePath}`;
       const altId = `github:${filePath}`;
-      const entry = store.getEntry(storeId) || store.getEntry(altId);
+
+      let entry = store.getEntry(storeId) || store.getEntry(altId);
+      if (!entry && githubContext) {
+        try {
+          const fresh = await withTimeout(
+            fetchFileContent(githubContext.owner, githubContext.repo, filePath, githubContext.token),
+            TOOL_TIMEOUT_MS,
+            `edit-load(${filePath})`,
+          );
+          if (fresh) {
+            await persistFileContent(storeId, filePath, fresh);
+            entry = store.getEntry(storeId);
+          }
+        } catch (err) {
+          return { success: false, content: `edit failed: could not load ${filePath}: ${err.message}` };
+        }
+      }
       if (!entry) {
         return { success: false, content: `File not loaded: ${filePath}. Use read_file("${filePath}") first to load it into memory.` };
       }
-      const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
-      const fullContent = chunks.map(c => c.text).join('');
+
       const stripLineNumbers = (s) => s.split('\n').map(l => l.replace(/^\d+:\s*/, '')).join('\n');
       const cleanedOldString = stripLineNumbers(oldString);
       const hadLineNumbers = cleanedOldString !== oldString;
@@ -1046,11 +1065,56 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (prevCount >= 2) {
         return { success: false, content: `This edit was already applied ${prevCount} time(s) to ${filePath}. The oldString still matches the current file — the edit likely succeeded already. Re-read the file with read_file to see the current state, then make a DIFFERENT edit.` };
       }
-      const match = findMatch(fullContent, cleanedOldString);
-      if (!match) {
+
+      const loadContent = () => {
+        const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
+        let content = chunks.map(c => c.text).join('');
+        // Reconcile CRLF files (from local/vcs sources) against LF oldStrings.
+        if (content.includes('\r\n') && !cleanedOldString.includes('\r\n')) {
+          content = content.replace(/\r\n/g, '\n');
+        }
+        return content;
+      };
+      let matchContent = loadContent();
+
+      const attemptEdit = (content) => {
+        const match = findMatch(content, cleanedOldString);
+        if (!match) return { match: null };
+        if (match.length > cleanedOldString.length * 4 && cleanedOldString.split('\n').length > 1) {
+          return { oversized: true, match };
+        }
+        const updated = content.slice(0, match.index) + newString + content.slice(match.index + match.length);
+        return { match, updated };
+      };
+
+      let attempt = attemptEdit(matchContent);
+      if (!attempt.match && !attempt.oversized && githubContext) {
+        // The content store may hold a stale copy (persisted from an earlier
+        // session). Re-fetch the current file from GitHub and retry once.
+        try {
+          const fresh = await withTimeout(
+            fetchFileContent(githubContext.owner, githubContext.repo, filePath, githubContext.token),
+            TOOL_TIMEOUT_MS,
+            `edit-refresh(${filePath})`,
+          );
+          if (fresh) {
+            await persistFileContent(storeId, filePath, fresh);
+            entry = store.getEntry(storeId);
+            matchContent = loadContent();
+            attempt = attemptEdit(matchContent);
+            if (attempt.match) {
+              console.log(`[Edit] ${filePath}: store was stale — re-fetched from GitHub and matched`);
+            }
+          }
+        } catch (err) {
+          console.warn(`[Edit] refresh failed for ${filePath}: ${err.message}`);
+        }
+      }
+
+      if (!attempt.match) {
         const firstLine = oldString.split('\n')[0].slice(0, 80);
         const cleanedFirstLine = cleanedOldString.split('\n')[0].slice(0, 80);
-        const contentLines = fullContent.split('\n');
+        const contentLines = matchContent.split('\n');
         let closestLine = -1;
         let closestContent = '';
         for (let i = 0; i < contentLines.length; i++) {
@@ -1067,16 +1131,17 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
         return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}` };
       }
-      if (match.length > cleanedOldString.length * 4 && cleanedOldString.split('\n').length > 1) {
-        return { success: false, content: `edit failed: matched span (${match.length} chars) is much larger than oldString (${cleanedOldString.length} chars). Re-read the file and provide more of the surrounding context in oldString.` };
+      if (attempt.oversized) {
+        return { success: false, content: `edit failed: matched span (${attempt.match.length} chars) is much larger than oldString (${cleanedOldString.length} chars). Re-read the file and provide more of the surrounding context in oldString.` };
       }
-      const updated = fullContent.slice(0, match.index) + newString + fullContent.slice(match.index + match.length);
+
+      const updated = attempt.updated;
       appliedEdits.set(editKey, (appliedEdits.get(editKey) || 0) + 1);
       await persistFileContent(storeId, filePath, updated);
 
       const oldLines = cleanedOldString.split('\n');
       const newLines = newString.split('\n');
-      const startLine = fullContent.slice(0, match.index).split('\n').length;
+      const startLine = matchContent.slice(0, attempt.match.index).split('\n').length;
       const updatedLines = updated.split('\n');
       const contextBefore = 5;
       const contextAfter = 5;
@@ -1085,7 +1150,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const contextBlock = updatedLines.slice(showStart, showEnd)
         .map((line, i) => `${showStart + i + 1}: ${line}`)
         .join('\n');
-      const summary = `Successfully edited ${filePath} at line ${startLine} (${fullContent.length} → ${updated.length} chars, ${newLines.length - oldLines.length >= 0 ? '+' : ''}${newLines.length - oldLines.length} lines). File now has ${updatedLines.length} lines.`;
+      const summary = `Successfully edited ${filePath} at line ${startLine} (${matchContent.length} → ${updated.length} chars, ${newLines.length - oldLines.length >= 0 ? '+' : ''}${newLines.length - oldLines.length} lines). File now has ${updatedLines.length} lines.`;
       const importLines = updatedLines.slice(0, 30).map((line, i) => `${i + 1}: ${line}`).join('\n');
       console.log(`[Edit] ${filePath}: replaced ${cleanedOldString.length} chars at line ${startLine} → ${newString.length} chars${hadLineNumbers ? ' (line numbers stripped)' : ''}`);
       return { success: true, content: `${summary}\n\nImports at top of file (lines 1-${Math.min(30, updatedLines.length)}):\n${importLines}\n\nContext around edit (${showStart + 1}-${showEnd}):\n${contextBlock}` };
