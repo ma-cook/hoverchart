@@ -4,7 +4,7 @@ import {
   createBranchRef,
   multiFileCommit,
 } from './githubIssuesService';
-import { fetchFileContent } from './githubRepoService';
+import { fetchFileContent, getGithubToken } from './githubRepoService';
 import { hasSearchReplaceMarkers } from './codeExtractor';
 
 const SEARCH_BLOCK_REGEX = /<<<<<<<\s*SEARCH\n([\s\S]*?)=======\n([\s\S]*?)>>>>>>>\s*REPLACE/g;
@@ -30,13 +30,13 @@ export function applySearchReplace(existingContent, llmOutput) {
   return result;
 }
 
-export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token) {
+export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token, commitMessage) {
   const { selectedRepo, selectedBranch } = useCodeStore.getState();
 
   const finalOwner = owner || useCodeStore.getState().repoOwner || selectedRepo?.owner?.login;
   const finalRepo = repoName || useCodeStore.getState().repoName || selectedRepo?.name;
   const finalBranch = branchName || selectedBranch || 'main';
-  const finalToken = token || useCodeStore.getState().githubToken;
+  const finalToken = token || useCodeStore.getState().githubToken || getGithubToken();
 
   if (!finalToken || !finalOwner || !finalRepo) {
     return { success: false, pushed: 0, errors: [{ error: 'GitHub not connected or no repo selected' }], merged: {} };
@@ -101,7 +101,9 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
     }
 
     const fileList = files.map(f => f.path).join(', ');
-    const message = `Code update: ${fileList}\n\nUpdated via Hoverchart`;
+    const message = commitMessage
+      ? `${commitMessage}\n\n${fileList}\nGenerated via Hoverchart`
+      : `Code update: ${fileList}\n\nUpdated via Hoverchart`;
 
     const result = await multiFileCommit(finalToken, finalOwner, finalRepo, finalBranch, files, message);
 

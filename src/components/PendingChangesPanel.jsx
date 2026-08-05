@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { pushCodeToGitHub } from '../services/githubPushService';
+import { getGithubToken } from '../services/githubRepoService';
 import './PendingChangesPanel.css';
 
 function computeDiffLines(original, proposed) {
@@ -74,6 +75,8 @@ export default function PendingChangesPanel() {
 
   const [expandedFile, setExpandedFile] = useState(null);
   const [pushing, setPushing] = useState(false);
+  const [pushError, setPushError] = useState(null);
+  const [pushResult, setPushResult] = useState(null);
 
   const pending = pendingChanges.filter(c => c.status === 'pending');
   const accepted = pendingChanges.filter(c => c.status === 'accepted');
@@ -82,15 +85,20 @@ export default function PendingChangesPanel() {
     if (accepted.length === 0) return;
 
     const state = useCodeStore.getState();
-    const token = state.githubToken;
+    const token = state.githubToken || getGithubToken();
     const owner = state.repoOwner || state.selectedRepo?.owner?.login;
     const repoName = state.repoName || state.selectedRepo?.name;
     const branch = state.selectedBranch || 'main';
 
-    if (!token || !owner || !repoName) return;
+    if (!token || !owner || !repoName) {
+      setPushError('GitHub token missing — reconnect your repo to enable push.');
+      return;
+    }
 
     setPushing(true);
     setPushStatus('pushing');
+    setPushError(null);
+    setPushResult(null);
 
     try {
       const codeBlocks = accepted.map(c => ({
@@ -98,7 +106,9 @@ export default function PendingChangesPanel() {
         code: c.proposed,
       }));
 
-      const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branch, token);
+      const requestSummary = (accepted.map(c => c.request).find(Boolean) || 'Code update').split('\n')[0].slice(0, 120);
+
+      const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branch, token, requestSummary);
 
       if (result.success) {
         const updatedContents = { ...(state.repoFileContents || {}) };
@@ -110,11 +120,15 @@ export default function PendingChangesPanel() {
         setRepoContext(state.repoFileTree, updatedContents);
         clearPendingChanges();
         setPushStatus('success');
+        setPushResult(`Pushed ${result.pushed} file(s) to ${owner}/${repoName}:${branch}`);
       } else {
         setPushStatus('error');
+        const errText = result.errors?.map(e => e.error).join('; ') || 'Push failed.';
+        setPushError(errText);
       }
-    } catch {
+    } catch (err) {
       setPushStatus('error');
+      setPushError(err.message || 'Push failed.');
     } finally {
       setPushing(false);
     }
@@ -188,6 +202,16 @@ export default function PendingChangesPanel() {
           {pushing ? 'Pushing...' : `Push ${accepted.length} file(s)`}
         </button>
       </div>
+      {pushError && (
+        <div style={{ fontSize: '11px', color: '#ff6b6b', padding: '6px 10px', borderTop: '1px solid rgba(255,255,255,0.1)', wordBreak: 'break-word' }}>
+          {pushError}
+        </div>
+      )}
+      {pushResult && !pushError && (
+        <div style={{ fontSize: '11px', color: '#69db7c', padding: '6px 10px', borderTop: '1px solid rgba(255,255,255,0.1)', wordBreak: 'break-word' }}>
+          {pushResult}
+        </div>
+      )}
       </div>
     </div>
   );

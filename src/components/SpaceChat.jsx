@@ -761,6 +761,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
               original: csState.repoFileContents?.[block.filePath] || null,
               proposed: block.code,
               action: (existsInContents || existsInTree) ? 'modify' : 'create',
+              request: text,
             };
           });
         csState.addPendingChanges(newChanges);
@@ -982,8 +983,16 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
     } catch { /* ignore */ }
   };
 
+  const applyGithubSelection = (repo) => {
+    const cs = useCodeStore.getState();
+    cs.setGithubToken(getGithubToken());
+    cs.setRepoOwner(repo.owner?.login || repo.owner);
+    cs.setRepoName(repo.name);
+  };
+
   const handleSelectRepo = async (repo) => {
     useCodeStore.getState().setSelectedRepo(repo);
+    applyGithubSelection(repo);
     setShowRepos(false);
     setShowBranchPrompt(true);
     await scanRepoForDiagram(repo);
@@ -1092,6 +1101,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
       if (!res.ok) throw new Error(`Failed to create repo: ${res.status}`);
       const repo = await res.json();
       useCodeStore.getState().setSelectedRepo(repo);
+      applyGithubSelection(repo);
       setShowNewRepoInput(false);
       setNewRepoName('');
       setShowBranchPrompt(true);
