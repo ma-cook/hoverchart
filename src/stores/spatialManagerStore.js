@@ -420,6 +420,33 @@ const useSpatialManagerStore = create((set, get) => ({
             currentCellCoords: { x: 0, y: 0, z: 0 },
             isInitialized: true,
           });
+
+          // Hydrate cached objects for the just-loaded initial cells.  The
+          // scan path caches every created object (loaded or not) in
+          // allCellObjects and only pushes objects whose cell is already
+          // loaded.  If the scan's first flushes ran while loadedCells was
+          // still empty (spatial init still in-flight), those objects were
+          // cached but never pushed, and — unlike loadCellsBatch — marking
+          // cells loaded here would NOT hydrate them.  Without this, groups
+          // outside the origin cell never render, and navigating to them
+          // doesn't help because their cells are already "loaded" (so
+          // getCellsNeedingLoad skips them and loadCellsBatch never runs).
+          const cachedObjects = getAllCellObjectsForCells(
+            Array.from(cellsToLoad)
+          );
+          if (cachedObjects.length > 0) {
+            useObjectsStore.getState().setObjects((prev) => {
+              const existingIds = new Set(prev.map((o) => o.id));
+              const fresh = cachedObjects.filter((o) => !existingIds.has(o.id));
+              if (fresh.length === 0) return prev;
+              return [...prev, ...fresh];
+            });
+            for (const obj of cachedObjects) {
+              if (obj.cellId && cellsToLoad.has(obj.cellId)) {
+                get().trackObjectInCell(obj.id, obj.cellId);
+              }
+            }
+          }
         }
       } catch (error) {
         console.error('❌ Error during spatial initialization:', error);
