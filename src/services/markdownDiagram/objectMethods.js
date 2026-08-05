@@ -401,38 +401,23 @@ export const objectMethods = {
 
       // ── Flush accumulated objects to the store incrementally ────────
       //     This lets React / ObjectsRenderer start progressive mounting
-      //     while more objects are still being built.
+      //     while more objects are still being built.  Every created object
+      //     is pushed to the store (no loaded-cell cap) so all groups render
+      //     during the scan; the earlier cap that only pushed objects whose
+      //     cell was already loaded left services/utils/hooks etc. invisible.
       if (storeBatch.length >= STORE_FLUSH_SIZE ||
           i + OBJECT_BATCH_SIZE >= nodeEntries.length) {
         if (storeBatch.length > 0) {
-          // Only hydrate objects whose cell is currently loaded. Distant
-          // objects are still persisted (allObjectsToSave) and cached in
-          // allCellObjects, so they hydrate through loadCellsBatch when the
-          // user navigates to their cell — matching the refresh path, which
-          // never materialises the whole diagram in memory at once.
-          //
-          // NOTE: No "loadedCells is empty → push everything" fallback.  With
-          // one, a fresh scan that starts before cells finish loading would
-          // push ALL objects into the store (mounting every one of them, since
-          // isMountable also treats empty loadedCells as "mount all") and then
-          // re-push them again via cell-load hydration once cells arrive.
-          const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
-          const storeObjects = storeBatch.filter(
-            (obj) => obj.cellId && loadedCellIds?.has(obj.cellId)
-          );
+          const currentObjects = useObjectsStore.getState().objects;
+          const updated = currentObjects.length === prevObjectCount
+            ? [...currentObjects, ...storeBatch]
+            : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
+          useObjectsStore.getState().setObjects(updated);
+          prevObjectCount = updated.length;
 
-          if (storeObjects.length > 0) {
-            const currentObjects = useObjectsStore.getState().objects;
-            const updated = currentObjects.length === prevObjectCount
-              ? [...currentObjects, ...storeObjects]
-              : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeObjects];
-            useObjectsStore.getState().setObjects(updated);
-            prevObjectCount = updated.length;
-          }
-
-          // Cache ALL created objects (loaded + unloaded) in allCellObjects
-          // so unload/reload and cell-load hydration work even before the
-          // Cloud Function finishes persisting them.
+          // Cache ALL created objects in allCellObjects so unload/reload and
+          // cell-load hydration work even before the Cloud Function finishes
+          // persisting them.
           const byCell = new Map();
           for (const obj of storeBatch) {
             if (obj.cellId) {
@@ -452,21 +437,12 @@ export const objectMethods = {
 
     // Flush any remaining batch
     if (storeBatch.length > 0) {
-      // Same loaded-cell cap as the main flush block (no empty-set fallback —
-      // see the note there).
-      const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
-      const storeObjects = storeBatch.filter(
-        (obj) => obj.cellId && loadedCellIds?.has(obj.cellId)
-      );
-
-      if (storeObjects.length > 0) {
-        const currentObjects = useObjectsStore.getState().objects;
-        const updated = currentObjects.length === prevObjectCount
-          ? [...currentObjects, ...storeObjects]
-          : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeObjects];
-        useObjectsStore.getState().setObjects(updated);
-        prevObjectCount = updated.length;
-      }
+      const currentObjects = useObjectsStore.getState().objects;
+      const updated = currentObjects.length === prevObjectCount
+        ? [...currentObjects, ...storeBatch]
+        : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
+      useObjectsStore.getState().setObjects(updated);
+      prevObjectCount = updated.length;
 
       // Cache the final partial batch too (previously this was never added
       // to allCellObjects, so those objects could not survive unload/reload).

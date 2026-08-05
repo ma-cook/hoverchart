@@ -113,32 +113,20 @@ const ObjectsRenderer = React.memo(({
     objectsRef.current = objects;
   }, [objects]);
 
-  // Only mount objects whose cell is currently loaded by the spatial system.
-  // Mirror of the store-hydration cap in objectMethods.js: on the scan path
-  // the objects store may (temporarily) hold objects from unloaded cells
-  // (fallback when loadedCells is empty).  Mounting every one of them is what
-  // drove the OOM crash — each mounted object builds React components, Three.js
-  // meshes and atlas text.  Objects in unloaded cells stay unmounted until
-  // their cell loads, at which point this effect re-runs and queues them.
-  const isMountable = (obj) => {
-    if (!obj) return false;
-    const loadedCells = useSpatialManagerStore.getState().loadedCells;
-    if (!loadedCells || loadedCells.size === 0) return true;
-    if (!obj.cellId) return true;
-    return loadedCells.has(obj.cellId);
-  };
+  // All store objects are mounted.  The earlier cap that only mounted objects
+  // whose cell was already loaded (and the mirror store cap in objectMethods.js)
+  // left the services/utils/hooks/etc. groups invisible after a scan — the OOM
+  // it was meant to stop still occurred, so it was reverted.  Progressive
+  // mounting below spreads the mount cost across frames.
 
-  // Count of store objects that are currently allowed to mount.  Objects whose
-  // cell is not loaded are intentionally deferred until the user navigates to
-  // them, so they must not count toward the render-progress total — otherwise
-  // the progress bar never reaches 100% while the scan holds distant objects.
-  // Counts unique IDs: mountedIdsRef is a Set, so if the store ever held a
-  // duplicate ID the old length-based total could never be reached and the
-  // progress toast stayed stuck below 100%.
+  // Total store objects that the renderer will mount (all of them).  Counts
+  // unique IDs: mountedIdsRef is a Set, so if the store ever held a duplicate
+  // ID the old length-based total could never be reached and the progress
+  // toast stayed stuck below 100%.
   const getMountableTotal = () => {
     const seen = new Set();
     for (const obj of objectsRef.current) {
-      if (obj && isMountable(obj)) seen.add(obj.id);
+      if (obj) seen.add(obj.id);
     }
     return seen.size;
   };
@@ -186,7 +174,6 @@ const ObjectsRenderer = React.memo(({
     const toAdd = [];
     for (const obj of objectsRef.current) {
       if (!currentMounted.has(obj.id) && !pendingSet.has(obj.id)) {
-        if (!isMountable(obj)) continue;
         toAdd.push(obj.id);
       }
     }
@@ -274,7 +261,7 @@ const ObjectsRenderer = React.memo(({
           const allObjs = objectsRef.current;
           const unmounted = [];
           for (const obj of allObjs) {
-            if (!mountedIdsRef.current.has(obj.id) && isMountable(obj)) {
+            if (!mountedIdsRef.current.has(obj.id)) {
               unmounted.push(obj.id);
             }
           }
@@ -317,7 +304,7 @@ const ObjectsRenderer = React.memo(({
           // mesh or edges rendered. Once mounted, objects stay mounted until
           // truly unloaded (removed from the objects array), matching the
           // behavior documented on progressiveVisibleObjects.
-          if (objectById.has(id) && isMountable(objectById.get(id))) {
+          if (objectById.has(id)) {
             mountedIdsRef.current.add(id);
             added++;
           }
@@ -343,7 +330,7 @@ const ObjectsRenderer = React.memo(({
           const allObjs = objectsRef.current;
           let hasUnmounted = false;
           for (const obj of allObjs) {
-            if (!mountedIdsRef.current.has(obj.id) && isMountable(obj)) {
+            if (!mountedIdsRef.current.has(obj.id)) {
               hasUnmounted = true;
               break;
             }
@@ -392,7 +379,7 @@ const ObjectsRenderer = React.memo(({
         let added = 0;
         while (pending.length > 0 && added < budget) {
           const id = pending.shift();
-          if (objectById.has(id) && isMountable(objectById.get(id))) { mountedIdsRef.current.add(id); added++; }
+          if (objectById.has(id)) { mountedIdsRef.current.add(id); added++; }
         }
         if (added > 0) setMountedVersion(v => v + 1);
         if (pending.length > 0) {

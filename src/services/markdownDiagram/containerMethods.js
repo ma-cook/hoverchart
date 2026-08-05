@@ -257,9 +257,12 @@ export const containerMethods = {
   },
 
   /**
-   * Push created container cubes into the store — capped to loaded cells, and
-   * cached in allCellObjects so navigation hydrates them before the bulk
-   * import finishes persisting them.  Mirrors the objectMethods store cap.
+   * Push created container cubes into the store.  Every container is pushed
+   * (no loaded-cell cap) so all group containers render during the scan; the
+   * earlier cap that only pushed containers whose cell was already loaded left
+   * the services/utils/hooks/etc. containers invisible.  They are also cached
+   * in allCellObjects so unload/reload and cell-load hydration work before the
+   * bulk import finishes persisting them.
    */
   hydrateContainerCubes(containerCubes) {
     if (!containerCubes || containerCubes.length === 0) return;
@@ -277,20 +280,11 @@ export const containerMethods = {
       addToAllCellObjects(cellId, objects);
     }
 
-    // Only hydrate containers whose cell is currently loaded.  Distant
-    // containers stay in the cache + allObjectsToSave and hydrate when the
-    // user navigates to their cell.  Mounting every container during a scan
-    // is what left the render-progress bar stuck below 100%.
-    const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
-    const storeCubes =
-      loadedCellIds && loadedCellIds.size > 0
-        ? containerCubes.filter((cube) => cube.cellId && loadedCellIds.has(cube.cellId))
-        : containerCubes;
-    if (storeCubes.length === 0) return;
-
+    // Push every container into the store, deduping against existing objects
+    // so a re-created container can't add a duplicate ID.
     const currentObjects = useObjectsStore.getState().objects;
     const knownIds = new Set(currentObjects.map((o) => o.id));
-    const newCubes = storeCubes.filter((c) => !knownIds.has(c.id));
+    const newCubes = containerCubes.filter((c) => !knownIds.has(c.id));
     if (newCubes.length === 0) return;
 
     useObjectsStore.getState().setObjects([...currentObjects, ...newCubes]);
