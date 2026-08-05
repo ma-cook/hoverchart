@@ -7,8 +7,9 @@ import {
   getGroupDisplayName,
   getGroupColor,
 } from './constants.js';
-import { useObjectsStore } from '../../stores';
+import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import { getCellCoordinates, getCellId } from '../spatialPartitioning';
+import { addToAllCellObjects } from '../cellObjectCache';
 
 export const containerMethods = {
   /**
@@ -251,9 +252,48 @@ export const containerMethods = {
     }
 
     if (containerCubes.length > 0) {
-      const currentObjects = existingObjectsSnapshot;
-      useObjectsStore.getState().setObjects([...currentObjects, ...containerCubes]);
+      this.hydrateContainerCubes(containerCubes);
     }
+  },
+
+  /**
+   * Push created container cubes into the store — capped to loaded cells, and
+   * cached in allCellObjects so navigation hydrates them before the bulk
+   * import finishes persisting them.  Mirrors the objectMethods store cap.
+   */
+  hydrateContainerCubes(containerCubes) {
+    if (!containerCubes || containerCubes.length === 0) return;
+
+    // Cache ALL created containers (loaded + unloaded) in allCellObjects.
+    const byCell = new Map();
+    for (const cube of containerCubes) {
+      if (cube.cellId) {
+        let cellObjs = byCell.get(cube.cellId);
+        if (!cellObjs) { cellObjs = []; byCell.set(cube.cellId, cellObjs); }
+        cellObjs.push(cube);
+      }
+    }
+    for (const [cellId, objects] of byCell) {
+      addToAllCellObjects(cellId, objects);
+    }
+
+    // Only hydrate containers whose cell is currently loaded.  Distant
+    // containers stay in the cache + allObjectsToSave and hydrate when the
+    // user navigates to their cell.  Mounting every container during a scan
+    // is what left the render-progress bar stuck below 100%.
+    const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
+    const storeCubes =
+      loadedCellIds && loadedCellIds.size > 0
+        ? containerCubes.filter((cube) => cube.cellId && loadedCellIds.has(cube.cellId))
+        : containerCubes;
+    if (storeCubes.length === 0) return;
+
+    const currentObjects = useObjectsStore.getState().objects;
+    const knownIds = new Set(currentObjects.map((o) => o.id));
+    const newCubes = storeCubes.filter((c) => !knownIds.has(c.id));
+    if (newCubes.length === 0) return;
+
+    useObjectsStore.getState().setObjects([...currentObjects, ...newCubes]);
   },
 
   /**
@@ -414,8 +454,7 @@ export const containerMethods = {
 
     allObjectsToSave.push(containerForSave);
 
-    const currentObjects = existingObjectsForHierarchy;
-    useObjectsStore.getState().setObjects([...currentObjects, containerCube]);
+    this.hydrateContainerCubes([containerCube]);
   },
 
   /**
@@ -775,8 +814,7 @@ export const containerMethods = {
     }
 
     if (containerCubes.length > 0) {
-      const currentObjects = existingObjectsForContainers;
-      useObjectsStore.getState().setObjects([...currentObjects, ...containerCubes]);
+      this.hydrateContainerCubes(containerCubes);
     }
   },
 };

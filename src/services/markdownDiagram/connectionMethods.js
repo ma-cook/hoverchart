@@ -482,65 +482,130 @@ export const connectionMethods = {
         });
       });
 
-      const payload = {
-        spaceId: currentSpaceId,
-        objects,
-        connections: [],
-      };
-
       const MAX_PAYLOAD_SIZE = 9 * 1024 * 1024;
-      const basePayloadSize = JSON.stringify(payload).length;
 
-      if (basePayloadSize > MAX_PAYLOAD_SIZE) {
-        console.error('Base payload exceeds limit even without connections');
-        return this._backgroundSaveConnections(
-          allConnectionsToSave,
-          currentSpaceId,
-          user
-        );
-      }
+      // Serialize once per item so chunk sizing is exact (no re-serialization).
+      const serializedObjects = objects.map((o) => JSON.stringify(o));
+      const serializedConnections = connections.map((c) => JSON.stringify(c));
+      const spaceIdOverhead = JSON.stringify({
+        spaceId: currentSpaceId,
+        objects: [],
+        connections: [],
+      }).length;
 
-      const remainingSpace = MAX_PAYLOAD_SIZE - basePayloadSize - 500;
-      const sampleSize = Math.min(5, connections.length);
-      const avgConnSize =
-        sampleSize > 0
-          ? connections
-              .slice(0, sampleSize)
-              .reduce((s, c) => s + JSON.stringify(c).length, 0) / sampleSize
-          : 0;
-      const chunkSize =
-        avgConnSize > 0
-          ? Math.max(1, Math.floor(remainingSpace / avgConnSize))
-          : connections.length;
+      const objectsTotal = serializedObjects.reduce(
+        (s, j) => s + j.length,
+        0
+      );
+      const connectionsTotal = serializedConnections.reduce(
+        (s, j) => s + j.length,
+        0
+      );
 
-      async function sendChunk(chunk, index, total) {
-        const chunkPayload = { ...payload, connections: chunk };
+      async function postChunk(objSlice, connSlice, index, total) {
+        const chunkPayload = {
+          spaceId: currentSpaceId,
+          objects: objSlice,
+          connections: connSlice,
+        };
         if (total > 1) {
           console.log(
-            `📡 [BulkImport] Sending chunk ${index}/${total} (${chunk.length} connections)`
+            `📡 [BulkImport] Sending chunk ${index}/${total} (${objSlice.length} objects, ${connSlice.length} connections)`
           );
         }
         return api.post('/api/bulk/import', chunkPayload);
       }
 
-      if (chunkSize >= connections.length) {
-        return sendChunk(connections, 1, 1);
+      // Fast path: everything fits in a single request.
+      // (Add one byte per item for the JSON array separators so a payload at
+      // the limit can't overshoot the cloud-function boundary.)
+      if (
+        spaceIdOverhead + objectsTotal + connectionsTotal +
+          serializedObjects.length + serializedConnections.length <=
+        MAX_PAYLOAD_SIZE
+      ) {
+        return postChunk(objects, connections, 1, 1);
+      }
+
+      // Large scan: the full objects payload would exceed the API limit.
+      // Previously this fell back to a connections-only save, silently dropping
+      // every object — after a refresh the diagram was empty.  Instead, pack
+      // objects into size-bounded chunks (leaving headroom for connections)
+      // and distribute connections across them.
+      const MAX_OBJECTS_PER_CHUNK = Math.floor(MAX_PAYLOAD_SIZE * 0.75);
+      const chunks = [];
+      let objChunk = [];
+      let objChunkSize = 0;
+      for (let i = 0; i < objects.length; i++) {
+        const size = serializedObjects[i].length;
+        if (objChunk.length > 0 && objChunkSize + size > MAX_OBJECTS_PER_CHUNK) {
+          chunks.push({ objects: objChunk, connections: [] });
+          objChunk = [];
+          objChunkSize = 0;
+        }
+        objChunk.push(objects[i]);
+        objChunkSize += size;
+      }
+      if (objChunk.length > 0) {
+        chunks.push({ objects: objChunk, connections: [] });
+      }
+
+      // Greedily fill each object chunk with as many connections as fit.
+      let connIdx = 0;
+      for (const chunk of chunks) {
+        if (connIdx >= connections.length) break;
+        let used =
+          spaceIdOverhead +
+          chunk.objects.reduce((s, o) => s + JSON.stringify(o).length, 0);
+        while (
+          connIdx < connections.length &&
+          used + serializedConnections[connIdx].length <= MAX_PAYLOAD_SIZE
+        ) {
+          used += serializedConnections[connIdx].length;
+          chunk.connections.push(connections[connIdx]);
+          connIdx++;
+        }
+      }
+
+      // Any connections left over (e.g. a very wide connection set) go into
+      // their own connection-only chunks.
+      while (connIdx < connections.length) {
+        const chunk = { objects: [], connections: [] };
+        let used = spaceIdOverhead;
+        while (
+          connIdx < connections.length &&
+          used + serializedConnections[connIdx].length <= MAX_PAYLOAD_SIZE
+        ) {
+          used += serializedConnections[connIdx].length;
+          chunk.connections.push(connections[connIdx]);
+          connIdx++;
+        }
+        if (chunk.connections.length === 0) {
+          chunk.connections.push(connections[connIdx]);
+          connIdx++;
+        }
+        chunks.push(chunk);
       }
 
       let allResults = [];
-      for (let i = 0; i < connections.length; i += chunkSize) {
-        const chunk = connections.slice(i, i + chunkSize);
-        const chunkIndex = Math.floor(i / chunkSize) + 1;
-        const totalChunks = Math.ceil(connections.length / chunkSize);
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
         try {
-          const result = await sendChunk(chunk, chunkIndex, totalChunks);
+          const result = await postChunk(
+            chunk.objects,
+            chunk.connections,
+            i + 1,
+            chunks.length
+          );
           allResults.push(result);
         } catch (error) {
           console.warn(
-            `⚠️ [BulkImport] Chunk ${chunkIndex}/${totalChunks} failed, falling back to client for remaining connections:`,
+            `⚠️ [BulkImport] Chunk ${i + 1}/${chunks.length} failed, falling back to client for remaining connections:`,
             error
           );
-          const remainingConnections = allConnectionsToSave.slice(i);
+          const remainingConnections = chunk.connections.concat(
+            chunks.slice(i + 1).flatMap((c) => c.connections)
+          );
           return this._backgroundSaveConnections(
             remainingConnections,
             currentSpaceId,

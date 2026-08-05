@@ -303,31 +303,30 @@ const createCellsBatchOptimized = async (userId, spaceId, cellCoordsList) => {
   );
   const uncachedCells = cacheChecks.filter((item) => !item.cached);
 
-  // Step 3: Batch check existence for uncached cells only
+  // Step 3: Batch check existence for uncached cells only.
+  // getCell fetches the ENTIRE cells list per call, so N cells would mean N
+  // full-list round trips (slow on a space with many cells).  Fetch the list
+  // once and check membership in memory.
   let existenceResults = [];
   if (uncachedCells.length > 0) {
-    // Use Promise.all for parallel existence checks
-    const existencePromises = uncachedCells.map(
-      async ({ coords, cellId, cacheKey }) => {
-        try {
-          const cell = await getCell(userId, spaceId, coords.x, coords.y, coords.z);
-          const exists = cell !== null;
-
-          // Cache the result
-          cellExistenceCache.set(cacheKey, {
-            exists,
-            timestamp: Date.now(),
-          });
-
-          return { coords, cellId, exists };
-        } catch (error) {
-          console.warn(`Failed to check cell existence for ${cellId}:`, error);
-          return { coords, cellId, exists: false };
-        }
+    let existingCellIds = new Set();
+    try {
+      const cells = await api.get(`/api/spaces/${spaceId}/cells`);
+      if (Array.isArray(cells)) {
+        existingCellIds = new Set(cells.map((c) => c.id));
       }
-    );
+    } catch (error) {
+      console.warn('Failed to fetch cell list for existence check:', error);
+    }
 
-    existenceResults = await Promise.all(existencePromises);
+    existenceResults = uncachedCells.map(({ coords, cellId, cacheKey }) => {
+      const exists = existingCellIds.has(cellId);
+      cellExistenceCache.set(cacheKey, {
+        exists,
+        timestamp: Date.now(),
+      });
+      return { coords, cellId, exists };
+    });
   }
 
   // Step 4: Combine all results

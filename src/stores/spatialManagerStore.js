@@ -237,12 +237,28 @@ const useSpatialManagerStore = create((set, get) => ({
     let results;
     let hasError = false;
     try {
-      // Use optimized batch creation for better performance
-      results = await createCellsBatch(
-        ownerUserId,
-        currentSpaceId,
-        cellsToLoadNow
-      );
+      // Use optimized batch creation for better performance.
+      // Guard against a slow/hung backend: api() has no timeout, so a stalled
+      // cell-existence check or cell-creation request would otherwise leave
+      // `loadingCells` pinned at MAX_CONCURRENT_LOADS forever, blocking ALL
+      // future cell loads (canLoadMoreCells() stays false) — the loader hangs
+      // on "Loading objects…" and moving the camera never loads anything.
+      const CELL_LOAD_TIMEOUT_MS = 30000;
+      const TIMED_OUT = Symbol('cell-load-timeout');
+      results = await Promise.race([
+        createCellsBatch(ownerUserId, currentSpaceId, cellsToLoadNow),
+        new Promise((resolve) =>
+          setTimeout(() => resolve(TIMED_OUT), CELL_LOAD_TIMEOUT_MS)
+        ),
+      ]);
+
+      if (results === TIMED_OUT) {
+        console.warn(
+          `⏱️ Cell batch load timed out after ${CELL_LOAD_TIMEOUT_MS}ms — skipping ${cellsToLoadNow.length} cell(s) this pass; they will retry on the next camera move.`
+        );
+        results = [];
+        hasError = true;
+      }
 
       // Process successful loads in batch
       const loadedCellIds = [];

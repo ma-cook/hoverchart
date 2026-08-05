@@ -128,6 +128,26 @@ const ObjectsRenderer = React.memo(({
     return loadedCells.has(obj.cellId);
   };
 
+  // Count of store objects that are currently allowed to mount.  Objects whose
+  // cell is not loaded are intentionally deferred until the user navigates to
+  // them, so they must not count toward the render-progress total — otherwise
+  // the progress bar never reaches 100% while the scan holds distant objects.
+  const getMountableTotal = () => {
+    let count = 0;
+    for (const obj of objectsRef.current) {
+      if (isMountable(obj)) count++;
+    }
+    return count;
+  };
+
+  // Stable key for the loaded-cell set.  Subscribing via the selector lets the
+  // mount effect below re-run the moment a cell loads (or unloads) so objects
+  // that were skipped while their cell was unloaded get re-queued — even when
+  // objects.length and visibleObjectIds haven't changed.
+  const loadedCellsKey = useSpatialManagerStore((s) =>
+    Array.from(s.loadedCells).sort().join(',')
+  );
+
   useEffect(() => {
     // PERF FIX: Don't cancel in-progress progressive mounting when new objects
     // arrive. Instead, merge new IDs into the pending queue. Canceling and
@@ -198,7 +218,7 @@ const ObjectsRenderer = React.memo(({
       if (removed || toAdd.length > 0) {
         setMountedVersion(v => v + 1);
         // Clear any in-progress render progress (all mounted instantly)
-        useDiagramStore.getState().setRenderProgress(objectsRef.current.length, currentMounted.size);
+        useDiagramStore.getState().setRenderProgress(getMountableTotal(), currentMounted.size);
       }
       return;
     }
@@ -215,7 +235,7 @@ const ObjectsRenderer = React.memo(({
       firstBatch.forEach(id => currentMounted.add(id));
       setMountedVersion(v => v + 1);
       // Immediately report that progressive mounting has started
-      const total = objectsRef.current.length;
+      const total = getMountableTotal();
       useDiagramStore.getState().setRenderProgress(total, currentMounted.size);
       lastProgressReportRef.current = Date.now();
     } else if (removed) {
@@ -289,7 +309,7 @@ const ObjectsRenderer = React.memo(({
           setMountedVersion(v => v + 1);
           // Report progress to the store (throttled)
           const now = Date.now();
-          const total = objectsRef.current.length;
+          const total = getMountableTotal();
           const mounted = mountedIdsRef.current.size;
           if (now - lastProgressReportRef.current > 500 || mounted >= total) {
             lastProgressReportRef.current = now;
@@ -327,7 +347,7 @@ const ObjectsRenderer = React.memo(({
     // to survive across visibleObjectIds changes. Only the unmount effect below
     // cancels it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleObjectIds, objects.length]);
+  }, [visibleObjectIds, objects.length, loadedCellsKey]);
 
   // PERF: When switching back from 2D → 3D, restart the progressive mount
   // loop if it was suspended with pending items.
