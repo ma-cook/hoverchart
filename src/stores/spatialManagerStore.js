@@ -307,9 +307,17 @@ const useSpatialManagerStore = create((set, get) => ({
         // (e.g. during diagram creation before the Cloud Function completes).
         const cachedObjects = getAllCellObjectsForCells(newCellIds);
         if (cachedObjects.length > 0) {
-          useObjectsStore.getState().setObjects(
-            (prev) => [...prev, ...cachedObjects]
-          );
+          useObjectsStore.getState().setObjects((prev) => {
+            // Dedup against the store: a cached object can already be present
+            // (pushed by the scan flush, or by a previous reload that wasn't
+            // cleaned on unload).  Without this, duplicate IDs inflate
+            // renderProgress.total forever — mounted (a unique-id Set) can
+            // never reach total, so the progress toast sticks below 100%.
+            const existingIds = new Set(prev.map((o) => o.id));
+            const fresh = cachedObjects.filter((o) => !existingIds.has(o.id));
+            if (fresh.length === 0) return prev;
+            return [...prev, ...fresh];
+          });
           // Track in objectsByCell so unload can remove them
           for (const obj of cachedObjects) {
             if (obj.cellId && newCellIds.includes(obj.cellId)) {

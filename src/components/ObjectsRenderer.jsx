@@ -132,12 +132,15 @@ const ObjectsRenderer = React.memo(({
   // cell is not loaded are intentionally deferred until the user navigates to
   // them, so they must not count toward the render-progress total — otherwise
   // the progress bar never reaches 100% while the scan holds distant objects.
+  // Counts unique IDs: mountedIdsRef is a Set, so if the store ever held a
+  // duplicate ID the old length-based total could never be reached and the
+  // progress toast stayed stuck below 100%.
   const getMountableTotal = () => {
-    let count = 0;
+    const seen = new Set();
     for (const obj of objectsRef.current) {
-      if (isMountable(obj)) count++;
+      if (obj && isMountable(obj)) seen.add(obj.id);
     }
-    return count;
+    return seen.size;
   };
 
   // Stable key for the loaded-cell set.  Subscribing via the selector lets the
@@ -188,8 +191,17 @@ const ObjectsRenderer = React.memo(({
       }
     }
 
-    // Nothing new to add and nothing removed — skip
-    if (toAdd.length === 0 && !removed) return;
+    // Nothing new to add and nothing removed — skip.  Before bailing, reconcile
+    // the progress toast: if every mountable object is already mounted, push the
+    // final state so the toast clears instead of freezing on a stale ratio.
+    if (toAdd.length === 0 && !removed) {
+      const total = getMountableTotal();
+      const mounted = currentMounted.size;
+      if (mounted >= total && total > 0) {
+        useDiagramStore.getState().setRenderProgress(total, mounted);
+      }
+      return;
+    }
 
     // 3. Sort new objects by distance to camera (closest first)
     if (toAdd.length > 1 && camera) {
@@ -271,6 +283,12 @@ const ObjectsRenderer = React.memo(({
             rafIdRef.current = requestAnimationFrame(mountNextBatch);
             return;
           }
+          // Report the final progress state so the toast reflects reality and
+          // clears once everything mountable is mounted.  Previously the loop
+          // only reported inside `added > 0` branches, so a queue that drained
+          // on an idle frame left renderProgress frozen at its last value.
+          const termTotal = getMountableTotal();
+          useDiagramStore.getState().setRenderProgress(termTotal, mountedIdsRef.current.size);
           rafIdRef.current = null;
           return;
         }
@@ -335,6 +353,10 @@ const ObjectsRenderer = React.memo(({
             // populate pendingRef.current with the unmounted IDs.
             rafIdRef.current = requestAnimationFrame(mountNextBatch);
           } else {
+            // Final state — report so the toast reflects reality and clears
+            // when everything mountable has mounted (see note at the top).
+            const termTotal = getMountableTotal();
+            useDiagramStore.getState().setRenderProgress(termTotal, mountedIdsRef.current.size);
             rafIdRef.current = null;
           }
         }

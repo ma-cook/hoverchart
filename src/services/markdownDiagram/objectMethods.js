@@ -410,11 +410,16 @@ export const objectMethods = {
           // allCellObjects, so they hydrate through loadCellsBatch when the
           // user navigates to their cell — matching the refresh path, which
           // never materialises the whole diagram in memory at once.
+          //
+          // NOTE: No "loadedCells is empty → push everything" fallback.  With
+          // one, a fresh scan that starts before cells finish loading would
+          // push ALL objects into the store (mounting every one of them, since
+          // isMountable also treats empty loadedCells as "mount all") and then
+          // re-push them again via cell-load hydration once cells arrive.
           const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
-          const storeObjects =
-            loadedCellIds && loadedCellIds.size > 0
-              ? storeBatch.filter((obj) => obj.cellId && loadedCellIds.has(obj.cellId))
-              : storeBatch;
+          const storeObjects = storeBatch.filter(
+            (obj) => obj.cellId && loadedCellIds?.has(obj.cellId)
+          );
 
           if (storeObjects.length > 0) {
             const currentObjects = useObjectsStore.getState().objects;
@@ -447,12 +452,12 @@ export const objectMethods = {
 
     // Flush any remaining batch
     if (storeBatch.length > 0) {
-      // Same loaded-cell cap as the main flush block.
+      // Same loaded-cell cap as the main flush block (no empty-set fallback —
+      // see the note there).
       const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
-      const storeObjects =
-        loadedCellIds && loadedCellIds.size > 0
-          ? storeBatch.filter((obj) => obj.cellId && loadedCellIds.has(obj.cellId))
-          : storeBatch;
+      const storeObjects = storeBatch.filter(
+        (obj) => obj.cellId && loadedCellIds?.has(obj.cellId)
+      );
 
       if (storeObjects.length > 0) {
         const currentObjects = useObjectsStore.getState().objects;

@@ -13,6 +13,21 @@
 const pendingCellObjects = new Map();
 const allCellObjects = new Map();
 
+// Append only objects whose id isn't already cached — repeated creation or
+// hydration of the same object (e.g. rescan, or a container created again
+// after an unload) must not pile up duplicates.  Duplicate cached objects
+// re-hydrate into the store on every reload, inflating renderProgress.total.
+function mergeUnique(target, objects) {
+  if (!objects || objects.length === 0) return;
+  const known = new Set(target.map((o) => o.id));
+  for (const obj of objects) {
+    if (!known.has(obj.id)) {
+      target.push(obj);
+      known.add(obj.id);
+    }
+  }
+}
+
 export function addPendingCellObjects(cellId, objects) {
   if (!objects || objects.length === 0) return;
 
@@ -22,7 +37,7 @@ export function addPendingCellObjects(cellId, objects) {
     pending = [];
     pendingCellObjects.set(cellId, pending);
   }
-  pending.push(...objects);
+  mergeUnique(pending, objects);
 
   // all – persistent fallback
   let all = allCellObjects.get(cellId);
@@ -30,7 +45,7 @@ export function addPendingCellObjects(cellId, objects) {
     all = [];
     allCellObjects.set(cellId, all);
   }
-  all.push(...objects);
+  mergeUnique(all, objects);
 }
 
 export function consumePendingCellObjects(cellId) {
@@ -57,7 +72,7 @@ export function addToAllCellObjects(cellId, objects) {
     all = [];
     allCellObjects.set(cellId, all);
   }
-  all.push(...objects);
+  mergeUnique(all, objects);
 }
 
 export function getAllCellObjectsForCells(cellIds) {
