@@ -263,8 +263,11 @@ export const processMethods = {
       );
     }
 
-    // Persist the node-to-object ID mapping so the 2D view can cross-reference
-    useDiagramStore.getState().setNodeToObjectIdMap(new Map(nodeToObjectIdMap));
+    // Persist the node-to-object mapping so the 2D view can cross-reference.
+    // Pass the map directly (no defensive copy) — copying a Map with tens of
+    // thousands of entries doubles the transient memory during the scan for
+    // no benefit, since nothing mutates it after this point.
+    useDiagramStore.getState().setNodeToObjectIdMap(nodeToObjectIdMap);
 
     // ── Clean up orphaned objects ──────────────────────────────────
     // Objects that have a merfolkData.nodeId that no longer exists in

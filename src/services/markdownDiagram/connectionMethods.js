@@ -1,6 +1,6 @@
 import { api } from '../../api-client';
 import useConnectionStore from '../../stores/connectionStore';
-import { useObjectsStore } from '../../stores';
+import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import {
   pauseConnectionListeners,
   resumeConnectionListeners,
@@ -372,7 +372,19 @@ export const connectionMethods = {
     const connectionStore = useConnectionStore.getState();
 
     try {
-      connectionStore.bulkAddConnections(allConnectionsToSave);
+      // Only hydrate connections whose cell is currently loaded.  Connections
+      // in distant cells are still persisted to the DB (allConnectionsToSave)
+      // and are fetched + added by the per-cell subscription when the user
+      // navigates to them — matching the refresh path and avoiding mounting
+      // the whole connection set in one go.
+      const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
+      const storeConnections =
+        loadedCellIds && loadedCellIds.size > 0
+          ? allConnectionsToSave.filter((conn) => conn.cellId && loadedCellIds.has(conn.cellId))
+          : allConnectionsToSave;
+      if (storeConnections.length > 0) {
+        connectionStore.bulkAddConnections(storeConnections);
+      }
     } catch (error) {
       console.error('Failed to bulk add connections to store:', error);
     }

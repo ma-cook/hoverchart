@@ -16,7 +16,7 @@ import GlobalDodecahedronLowLODRenderer from './GlobalDodecahedronLowLODRenderer
 import GlobalTetrahedronLowLODRenderer from './GlobalTetrahedronLowLODRenderer';
 import GlobalOctahedronLowLODRenderer from './GlobalOctahedronLowLODRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
-import { useCubeStore } from '../stores';
+import { useCubeStore, useSpatialManagerStore } from '../stores';
 import { acquireBudget, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
@@ -113,6 +113,21 @@ const ObjectsRenderer = React.memo(({
     objectsRef.current = objects;
   }, [objects]);
 
+  // Only mount objects whose cell is currently loaded by the spatial system.
+  // Mirror of the store-hydration cap in objectMethods.js: on the scan path
+  // the objects store may (temporarily) hold objects from unloaded cells
+  // (fallback when loadedCells is empty).  Mounting every one of them is what
+  // drove the OOM crash — each mounted object builds React components, Three.js
+  // meshes and atlas text.  Objects in unloaded cells stay unmounted until
+  // their cell loads, at which point this effect re-runs and queues them.
+  const isMountable = (obj) => {
+    if (!obj) return false;
+    const loadedCells = useSpatialManagerStore.getState().loadedCells;
+    if (!loadedCells || loadedCells.size === 0) return true;
+    if (!obj.cellId) return true;
+    return loadedCells.has(obj.cellId);
+  };
+
   useEffect(() => {
     // PERF FIX: Don't cancel in-progress progressive mounting when new objects
     // arrive. Instead, merge new IDs into the pending queue. Canceling and
@@ -148,6 +163,7 @@ const ObjectsRenderer = React.memo(({
     const toAdd = [];
     for (const obj of objectsRef.current) {
       if (!currentMounted.has(obj.id) && !pendingSet.has(obj.id)) {
+        if (!isMountable(obj)) continue;
         toAdd.push(obj.id);
       }
     }
@@ -226,7 +242,7 @@ const ObjectsRenderer = React.memo(({
           const allObjs = objectsRef.current;
           const unmounted = [];
           for (const obj of allObjs) {
-            if (!mountedIdsRef.current.has(obj.id)) {
+            if (!mountedIdsRef.current.has(obj.id) && isMountable(obj)) {
               unmounted.push(obj.id);
             }
           }
@@ -250,8 +266,8 @@ const ObjectsRenderer = React.memo(({
           return;
         }
         let added = 0;
-        // Build object existence set once per batch (not per item)
-        const allObjectIds = new Set(objectsRef.current.map(o => o.id));
+        // Build object lookup map once per batch (not per item)
+        const objectById = new Map(objectsRef.current.map(o => [o.id, o]));
         while (pending.length > 0 && added < budget) {
           const id = pending.shift();
           // BUGFIX: Check if the object still exists in the objects array, NOT
@@ -263,7 +279,7 @@ const ObjectsRenderer = React.memo(({
           // mesh or edges rendered. Once mounted, objects stay mounted until
           // truly unloaded (removed from the objects array), matching the
           // behavior documented on progressiveVisibleObjects.
-          if (allObjectIds.has(id)) {
+          if (objectById.has(id) && isMountable(objectById.get(id))) {
             mountedIdsRef.current.add(id);
             added++;
           }
@@ -289,7 +305,7 @@ const ObjectsRenderer = React.memo(({
           const allObjs = objectsRef.current;
           let hasUnmounted = false;
           for (const obj of allObjs) {
-            if (!mountedIdsRef.current.has(obj.id)) {
+            if (!mountedIdsRef.current.has(obj.id) && isMountable(obj)) {
               hasUnmounted = true;
               break;
             }
@@ -330,11 +346,11 @@ const ObjectsRenderer = React.memo(({
         if (pending.length === 0) { rafIdRef.current = null; return; }
         const budget = acquireBudget(getProgressiveBudget());
         if (budget === 0) { rafIdRef.current = requestAnimationFrame(mountResume); return; }
-        const allObjectIds = new Set(objectsRef.current.map(o => o.id));
+        const objectById = new Map(objectsRef.current.map(o => [o.id, o]));
         let added = 0;
         while (pending.length > 0 && added < budget) {
           const id = pending.shift();
-          if (allObjectIds.has(id)) { mountedIdsRef.current.add(id); added++; }
+          if (objectById.has(id) && isMountable(objectById.get(id))) { mountedIdsRef.current.add(id); added++; }
         }
         if (added > 0) setMountedVersion(v => v + 1);
         if (pending.length > 0) {

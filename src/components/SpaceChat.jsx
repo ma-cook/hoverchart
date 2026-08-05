@@ -1018,11 +1018,16 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
         if (result.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(result.fileIndexByPath);
         if (result.importIndexByFile) useCodeStore.getState().setImportIndexByFile(result.importIndexByFile);
+        // If the scan pushed the tab close to its heap limit, surface a
+        // non-blocking warning instead of silently heading toward an OOM crash.
+        const highMemory = window._memoryPressureHigh;
         setPushNotification({
-          type: 'success',
-          message: `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,
+          type: highMemory ? 'warning' : 'success',
+          message: highMemory
+            ? `Diagram created (${result.objectsCreated} objects, ${result.connectionsCreated} connections) — memory usage is high. Consider a smaller repo or closing other tabs.`
+            : `Diagram created: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,
         });
-        setTimeout(() => setPushNotification(null), 5000);
+        setTimeout(() => setPushNotification(null), highMemory ? 10000 : 5000);
 
         const token = getGithubToken();
         if (token) {

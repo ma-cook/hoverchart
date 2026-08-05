@@ -19,7 +19,12 @@ import { expose, transfer } from 'comlink';
 // Constants
 // ---------------------------------------------------------------------------
 const PADDING = 4;
-const PAGE_MAX_SIZE = 4096;
+// Cap page size at 2048 instead of 4096.  A 4096x4096 RGBA page is ~67MB; 32
+// pages at that size is ~2GB of backing memory in the worst case — the single
+// largest contributor to the OOM crash after scanning a large repo.  2048x2048
+// (~16MB/page, ~537MB total) keeps the atlas within bounds while the page
+// count naturally absorbs additional entries.
+const PAGE_MAX_SIZE = 2048;
 const MAX_PAGES = 32;
 
 let maxGPUTextureSize = 8192;
@@ -63,6 +68,12 @@ class AtlasPage {
     this.canvas = new OffscreenCanvas(newW, newH);
     this.ctx = this.canvas.getContext('2d');
     this.ctx.drawImage(oldCanvas, 0, 0);
+
+    // Release the old canvas backing store (zeroing its dimensions forces the
+    // implementation to free the previous allocation instead of keeping it
+    // alive until GC).
+    oldCanvas.width = 0;
+    oldCanvas.height = 0;
 
     // Recalculate UVs for all existing entries
     for (const [, entry] of this.entries) {

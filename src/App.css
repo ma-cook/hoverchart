@@ -1958,6 +1958,15 @@ body {
   gap: 6px;
 }
 
+.space-chat-notification.warning {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeeba;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .space-chat-spinner {
   display: inline-block;
   width: 12px;

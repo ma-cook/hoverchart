@@ -2,6 +2,7 @@ import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import useDiagramStore from '../../stores/diagramStore.js';
 import { getCellCoordinates, getCellId } from '../spatialPartitioning';
 import { addToAllCellObjects } from '../cellObjectCache';
+import { reportMemoryPressureOnce } from '../../utils/memoryMonitor';
 
 export const objectMethods = {
   /**
@@ -393,22 +394,40 @@ export const objectMethods = {
         await new Promise(r => setTimeout(r, 0));
       }
 
+      // ── Early-warning if the heap is running out during creation ────
+      if (i % (OBJECT_BATCH_SIZE * 5) === 0) {
+        reportMemoryPressureOnce('object creation');
+      }
+
       // ── Flush accumulated objects to the store incrementally ────────
       //     This lets React / ObjectsRenderer start progressive mounting
       //     while more objects are still being built.
       if (storeBatch.length >= STORE_FLUSH_SIZE ||
           i + OBJECT_BATCH_SIZE >= nodeEntries.length) {
         if (storeBatch.length > 0) {
-          const currentObjects = useObjectsStore.getState().objects;
-          if (storeBatch.length > 0) {
+          // Only hydrate objects whose cell is currently loaded. Distant
+          // objects are still persisted (allObjectsToSave) and cached in
+          // allCellObjects, so they hydrate through loadCellsBatch when the
+          // user navigates to their cell — matching the refresh path, which
+          // never materialises the whole diagram in memory at once.
+          const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
+          const storeObjects =
+            loadedCellIds && loadedCellIds.size > 0
+              ? storeBatch.filter((obj) => obj.cellId && loadedCellIds.has(obj.cellId))
+              : storeBatch;
+
+          if (storeObjects.length > 0) {
+            const currentObjects = useObjectsStore.getState().objects;
             const updated = currentObjects.length === prevObjectCount
-              ? [...currentObjects, ...storeBatch]
-              : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
+              ? [...currentObjects, ...storeObjects]
+              : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeObjects];
             useObjectsStore.getState().setObjects(updated);
             prevObjectCount = updated.length;
           }
 
-          // Cache in allCellObjects so objects survive unload/reload
+          // Cache ALL created objects (loaded + unloaded) in allCellObjects
+          // so unload/reload and cell-load hydration work even before the
+          // Cloud Function finishes persisting them.
           const byCell = new Map();
           for (const obj of storeBatch) {
             if (obj.cellId) {
@@ -428,12 +447,36 @@ export const objectMethods = {
 
     // Flush any remaining batch
     if (storeBatch.length > 0) {
-      const currentObjects = useObjectsStore.getState().objects;
-      const updated = currentObjects.length === prevObjectCount
-        ? [...currentObjects, ...storeBatch]
-        : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
-      useObjectsStore.getState().setObjects(updated);
-      prevObjectCount = updated.length;
+      // Same loaded-cell cap as the main flush block.
+      const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
+      const storeObjects =
+        loadedCellIds && loadedCellIds.size > 0
+          ? storeBatch.filter((obj) => obj.cellId && loadedCellIds.has(obj.cellId))
+          : storeBatch;
+
+      if (storeObjects.length > 0) {
+        const currentObjects = useObjectsStore.getState().objects;
+        const updated = currentObjects.length === prevObjectCount
+          ? [...currentObjects, ...storeObjects]
+          : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeObjects];
+        useObjectsStore.getState().setObjects(updated);
+        prevObjectCount = updated.length;
+      }
+
+      // Cache the final partial batch too (previously this was never added
+      // to allCellObjects, so those objects could not survive unload/reload).
+      const byCell = new Map();
+      for (const obj of storeBatch) {
+        if (obj.cellId) {
+          let cellObjs = byCell.get(obj.cellId);
+          if (!cellObjs) { cellObjs = []; byCell.set(obj.cellId, cellObjs); }
+          cellObjs.push(obj);
+        }
+      }
+      for (const [cellId, objects] of byCell) {
+        addToAllCellObjects(cellId, objects);
+      }
+
       storeBatch = [];
     }
 

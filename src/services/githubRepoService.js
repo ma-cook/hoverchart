@@ -7,6 +7,8 @@ import { api } from '../api-client';
 import { scanPythonWithTreeSitter, scanWithTreeSitter } from './treeSitterScanner';
 import { createModuleResolver, resolveBarrelChains } from './moduleResolver';
 import { runTypeScriptAnalysis } from './typescriptAnalyzer';
+import { clearAllCellCaches } from './cellObjectCache';
+import { reportMemoryPressureOnce } from '../utils/memoryMonitor';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -3485,6 +3487,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       if (idx % PROCESS_YIELD_EVERY === 0) {
         await new Promise(r => setTimeout(r, 0));
       }
+      if (idx % 50 === 0) {
+        reportMemoryPressureOnce('repo scan');
+      }
     }
 
     // ── L1 Post-scan: Resolve path aliases and barrel chains ───────────────
@@ -5325,6 +5330,16 @@ export const scanRepositoryAndGenerateDiagram = async (
   }
 
   try {
+    // Reset the per-scan flag that tracks whether the memory-pressure warning fired
+    window._memoryPressureHigh = false;
+
+    // Drop cached objects from any previous scan. `allCellObjects` is the
+    // persistent fallback used to hydrate cells on load; without clearing it
+    // every scan would accumulate the full object set of every previous
+    // repository, growing unboundedly across rescans.  It gets repopulated
+    // with the current scan's objects as they are created.
+    clearAllCellCaches();
+
     // Capture the commit SHA before scanning so rescans can compare later
     if (onProgress) onProgress(5, 'Recording commit...');
     const commitSha = await fetchLatestCommitSha(repo.owner.login, repo.name, token);
