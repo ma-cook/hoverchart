@@ -11,8 +11,42 @@ import { SKILL_MANAGEMENT_TOOL_DEFS } from './skillManager';
 const TOOL_TIMEOUT_MS = 20_000;
 const DEFAULT_READ_LINES = 8000;
 const MAX_READ_LINES = 10000;
+const MAX_HITS_PER_FILE = 5;
 
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
+
+/**
+ * Build the full-text search corpus (filePath → text) for search_code/grep.
+ * Prefers the worker-backed content store (the source of truth). If it holds
+ * no "repo:" entries — e.g. right after a reload before the worker finishes,
+ * or when the cached repo context was saved without contents (the old
+ * "407 files, 0 contents" bug) — it falls back to the in-memory
+ * repoFileContents map so searches don't silently report "no matches" for
+ * symbols that actually exist.
+ */
+function buildRepoCorpus(store, codeStoreState) {
+  const corpus = new Map();
+  let repoEntries = 0;
+  for (const [id, entry] of store.entries) {
+    if (id.startsWith('repo:')) {
+      const text = entry.chunks.map(c => c.text).join('');
+      if (text) corpus.set(id.slice(5), text);
+      repoEntries++;
+    }
+  }
+  if (repoEntries === 0) {
+    const contents = codeStoreState?.repoFileContents;
+    if (contents) {
+      for (const [filePath, content] of Object.entries(contents)) {
+        if (content) corpus.set(filePath, content);
+      }
+    }
+    if (corpus.size > 0) {
+      console.warn(`[search] Content store empty — fell back to in-memory repoFileContents (${corpus.size} files)`);
+    }
+  }
+  return corpus;
+}
 
 const appliedEdits = new Map();
 
@@ -50,7 +84,9 @@ async function persistFileContent(storeId, filePath, content) {
       }
       const slice = content.slice(start, end);
       chunks.push({
-        id: `chunk-${chunkIndex}`,
+        // Unique per entry (storeId) so Base64Store's flat chunk map can't
+        // confuse this file's chunk-N with another file's chunk-N.
+        id: `${storeId}:chunk-${chunkIndex}`,
         text: slice,
         startIndex: start,
         endIndex: end,
@@ -704,10 +740,15 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
 
   // Wait for IndexedDB hydration before tools read the store — otherwise
   // search_code/grep/read_file can see an empty corpus right after a reload
-  // and report "no matches" for symbols that actually exist.
+  // and report "no matches" for symbols that actually exist. Bounded like the
+  // first race: a stuck hydration promise must never leave a tool hanging
+  // (which the orchestrator's hard timeout would otherwise abort as a
+  // "timed out" failure).
   try {
-    await waitForContentStoreHydration();
-    await waitForBase64StoreHydration();
+    await Promise.race([
+      Promise.all([waitForContentStoreHydration(), waitForBase64StoreHydration()]),
+      new Promise(r => setTimeout(r, 5000)),
+    ]);
   } catch { /* hydration failure is non-fatal */ }
 
   switch (name) {
@@ -851,11 +892,21 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     }
 
     case 'search_code': {
-      const normalize = (s) => (s || '').toLowerCase().replace(/[-_]/g, '');
-      const pattern = normalize(args.pattern);
+      // Normalize BOTH the query and the searched text the same way (lowercase,
+      // strip - _ .). The old code normalized the query but not the corpus, so
+      // searches for snake_case / kebab-case identifiers or filenames with an
+      // extension failed to match text that clearly contained them.
+      const normalize = (s) => (s || '').toLowerCase().replace(/[-_.]/g, '');
+      const rawPattern = (args.pattern || '');
+      const pattern = normalize(rawPattern);
       if (!pattern) return { success: false, content: 'search_code requires a "pattern" parameter' };
+      // Fall back to the pattern without a trailing extension ("SpaceChat.jsx"
+      // → "spacechat") so content lines like `import SpaceChat ...` still hit.
+      const basePattern = normalize(rawPattern.replace(/\.[a-z0-9]+$/, ''));
+      const matchesPattern = (normLine) => normLine.includes(pattern) ||
+        (basePattern.length >= 3 && normLine.includes(basePattern));
       const READ_FILE_HINT = '\n\n→ Use read_file("path", offset=LINE, limit=N) to jump to an exact line, or quick_look("path") for a preview.';
-      const MAX_RESULTS = 15;
+      const MAX_RESULTS = 20;
 
       const results = [];
       const codeStoreState = useCodeStore.getState();
@@ -907,33 +958,45 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         results.push({ rank: 2, text: `${f}${sizeHint(f)}` });
       }
 
-      // 4. ContentStore — full-text search with line numbers
+      // 4. Full-text search with line numbers, ranked by per-file hit count.
+      //    The most-referenced files (definition + heaviest usage) surface
+      //    first. Uses the content store, falling back to the in-memory
+      //    repoFileContents map when the store corpus is empty.
       await new Promise(r => setTimeout(r, 0));
-      const entries = Array.from(store.entries.entries());
-      const MAX_HITS_PER_FILE = 5;
+      const normLine = (line) => line.toLowerCase().replace(/[-_.]/g, '');
+      const corpus = buildRepoCorpus(store, codeStoreState);
+      const fileHitCounts = new Map();
+      const fileHitSamples = new Map();
       let scanCount = 0;
-      for (const [id, entry] of entries) {
-        if (results.length >= MAX_RESULTS) break;
-        if (!id.startsWith('repo:')) continue;
-        const filePath = id.slice(5);
-        if (results.some(r => r.text.startsWith(filePath))) continue;
-        const fullText = entry.chunks.map(c => c.text).join('');
-        const lowerFull = fullText.toLowerCase();
-        let from = 0;
-        let fileHits = 0;
-        while (fileHits < MAX_HITS_PER_FILE) {
-          const hitIdx = lowerFull.indexOf(pattern, from);
-          if (hitIdx < 0) break;
-          const lineStart = fullText.lastIndexOf('\n', hitIdx - 1) + 1;
-          const lineEnd = fullText.indexOf('\n', hitIdx);
-          const lineText = fullText.slice(lineStart, lineEnd === -1 ? fullText.length : lineEnd);
-          const lineNum = (fullText.slice(0, lineStart).match(/\n/g) || []).length + 1;
-          results.push({ rank: 3, text: `${filePath}${sizeHint(filePath)}:${lineNum}: ${lineText.trim().slice(0, 200)}` });
-          fileHits++;
-          from = lineEnd === -1 ? fullText.length : lineEnd + 1;
+      for (const [filePath, fullText] of corpus) {
+        if (fullText == null || fullText.length === 0) continue;
+        const lines = fullText.split('\n');
+        let count = 0;
+        const samples = [];
+        for (let li = 0; li < lines.length && count < MAX_HITS_PER_FILE; li++) {
+          if (matchesPattern(normLine(lines[li]))) {
+            count++;
+            if (samples.length < 3) {
+              samples.push({ lineNum: li + 1, text: lines[li].trim().slice(0, 200) });
+            }
+          }
+        }
+        if (count > 0) {
+          fileHitCounts.set(filePath, count);
+          fileHitSamples.set(filePath, samples);
         }
         scanCount++;
         if (scanCount % 50 === 0) await new Promise(r => setTimeout(r, 0));
+      }
+
+      const topFiles = [...fileHitCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+      for (const [filePath] of topFiles) {
+        if (results.length >= MAX_RESULTS) break;
+        for (const s of fileHitSamples.get(filePath)) {
+          results.push({ rank: 3, text: `${filePath}${sizeHint(filePath)}:${s.lineNum}: ${s.text}` });
+        }
       }
 
       if (results.length === 0) {
@@ -964,16 +1027,15 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const MAX_GREP_RESULTS = 25;
       const MAX_PER_FILE = 8;
       const results = [];
-      const fileSizeMap = new Map(useCodeStore.getState().fileSizes || []);
+      const grepCodeStoreState = useCodeStore.getState();
+      const fileSizeMap = new Map(grepCodeStoreState.fileSizes || []);
       const sizeHint = (filePath) => {
         const sz = fileSizeMap.get(filePath);
         return sz ? ` (${sz} chars)` : '';
       };
-      for (const [id, entry] of Array.from(store.entries.entries())) {
-        if (!id.startsWith('repo:')) continue;
-        const filePath = id.slice(5);
+      const corpus = buildRepoCorpus(store, grepCodeStoreState);
+      for (const [filePath, fullText] of corpus) {
         if (prefix && !filePath.startsWith(prefix)) continue;
-        const fullText = entry.chunks.map(c => c.text).join('');
         const lines = fullText.split('\n');
         let fileHits = 0;
         for (let li = 0; li < lines.length && fileHits < MAX_PER_FILE; li++) {
@@ -1225,7 +1287,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       await persistFileContent(storeId, filePath, content);
 
       const kw = extractKeywords(content);
-      const chunkId = `chunk-write-${Date.now()}`;
+      const chunkId = `${storeId}:chunk-write-${Date.now()}`;
       const newEntry = {
         id: storeId,
         category: ContentCategory.REPO_FILE,

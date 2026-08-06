@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'hoverchart-content-store';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_ENTRIES = 'contentEntries';
 const STORE_BASE64 = 'base64Chunks';
 const STORE_META = 'meta';
@@ -26,6 +26,18 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE_ENTRIES)) db.createObjectStore(STORE_ENTRIES);
       if (!db.objectStoreNames.contains(STORE_BASE64)) db.createObjectStore(STORE_BASE64);
       if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
+      if (e.oldVersion < 2) {
+        // v1 stored chunks under colliding bare "chunk-N" ids, which let
+        // Base64Store return the WRONG file's text. Discard the stale cache;
+        // the next scan/population rebuilds it with globally unique chunk ids.
+        try {
+          db.transaction(STORE_ENTRIES, 'readwrite').objectStore(STORE_ENTRIES).clear();
+          db.transaction(STORE_BASE64, 'readwrite').objectStore(STORE_BASE64).clear();
+          db.transaction(STORE_META, 'readwrite').objectStore(STORE_META).clear();
+        } catch (clearErr) {
+          console.warn('[contentStorePersistence] v1 cache clear failed:', clearErr.message);
+        }
+      }
     };
     req.onsuccess = (e) => {
       dbInstance = e.target.result;

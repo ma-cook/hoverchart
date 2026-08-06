@@ -46,7 +46,7 @@ export class ContentStore {
     }
 
     const config = CHUNK_CONFIGS[category] || { chunkSize: 2000, overlap: 200 };
-    const chunks = chunkText(content, config);
+    const chunks = chunkText(content, { ...config, idPrefix: id });
 
     const entry = {
       id,

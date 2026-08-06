@@ -34,7 +34,7 @@ export function extractKeywords(text, maxKeywords = 10) {
     .map(([word]) => word);
 }
 
-export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '\n\n' } = {}) {
+export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '\n\n', idPrefix = '' } = {}) {
   if (!text) return [];
   const chunks = [];
   let start = 0;
@@ -52,7 +52,13 @@ export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '
 
     const chunkContent = text.slice(start, end);
     chunks.push({
-      id: `chunk-${chunkIndex}`,
+      // Chunk IDs must be globally unique across ALL entries. A bare
+      // "chunk-N" (as before) collides between files, so Base64Store's
+      // flat encodedChunks map (and its linear fallback) could return ANOTHER
+      // file's chunk text — corrupting read_file/quick_look/edit content and
+      // forcing spurious "oldString not found" → GitHub re-fetch churn that
+      // looked like the edit tool hanging. idPrefix is the entry id.
+      id: idPrefix ? `${idPrefix}:chunk-${chunkIndex}` : `chunk-${chunkIndex}`,
       text: chunkContent,
       startIndex: start,
       endIndex: end,
