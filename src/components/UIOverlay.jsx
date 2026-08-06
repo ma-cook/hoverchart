@@ -507,6 +507,16 @@ const UIOverlay = ({
   const objectCount = useObjectsStore((state) => state.objects?.length ?? 0);
   const isCellsLoading = useSpatialManagerStore((state) => state.loadingCells.size > 0);
 
+  // Save a diagram digest whenever the diagram graph becomes available.
+  // This covers the Space Chat scan path, which may not persist a storageUrl
+  // (only the in-canvas scan handler uploads markdown to storage) and
+  // therefore cannot rely on the latestMarkdownUrl hydration to restore
+  // the 2D/analysis buttons after a page refresh.
+  useEffect(() => {
+    if (!currentSpaceId || !is2DReady) return;
+    saveDiagramDigest(currentSpaceId);
+  }, [currentSpaceId, is2DReady]);
+
   // Hydrate diagramStore from stored markdown URL when loading an existing space
   useEffect(() => {
     if (!currentSpaceId || !latestMarkdownUrl || is2DReady) return;
