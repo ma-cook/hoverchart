@@ -70,6 +70,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
 
   const scheduleScrollUpdate = useCallback((value) => {
     scrollProgressRef.current = value;
+    useSceneStore.getState().notifyLandingScroll();
     if (!rafPendingRef.current) {
       rafPendingRef.current = requestAnimationFrame(() => {
         setScrollProgress(scrollProgressRef.current);

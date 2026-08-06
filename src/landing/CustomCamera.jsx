@@ -6,13 +6,20 @@ const CustomCamera = ({ scrollProgressRef = null }) => {
   const cameraRef = useRef();
   const { camera } = useThree();
 
-  useFrame(() => {
+  useFrame(({ invalidate }) => {
     // Read the ref directly — bypasses React re-renders so camera lerp is always smooth
     const progress = scrollProgressRef ? scrollProgressRef.current : 0;
     const targetY = -progress * 80;
     const targetZ = 600 - progress * 60;
-    camera.position.y += (targetY - camera.position.y) * 0.08;
-    camera.position.z += (targetZ - camera.position.z) * 0.08;
+    const deltaY = targetY - camera.position.y;
+    const deltaZ = targetZ - camera.position.z;
+    camera.position.y += deltaY * 0.08;
+    camera.position.z += deltaZ * 0.08;
+    // Keep scheduling frames only while the lerp is still converging; the
+    // landing page runs frameloop "never", so an idle scene renders nothing.
+    if (Math.abs(deltaY) > 0.01 || Math.abs(deltaZ) > 0.01) {
+      invalidate();
+    }
   });
 
   return (
