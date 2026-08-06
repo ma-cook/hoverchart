@@ -2,6 +2,7 @@ import { getContentStore, ContentCategory, waitForContentStoreHydration } from '
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
 import { extractKeywords } from './chunkIndex';
+import { getContentStoreWorker } from '../../workers/contentStoreWorkerClient';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
@@ -56,6 +57,39 @@ let _seededRepoCorpus = false;
 const HYDRATION_WAIT_MS = 8000;
 
 /**
+ * Reference to the repoFileContents map already handed to the worker. Sending
+ * it again on every search would re-structured-clone the whole corpus on the
+ * main thread for nothing; the reference only changes when the repo contents
+ * actually change (repo switch / refetch).
+ */
+let _sentRepoContentsRef = null;
+
+/**
+ * Run a full-text search in the content-store worker so a large repo corpus
+ * is scanned off the main thread. The worker indexes the in-memory
+ * repoFileContents on demand if its store is missing them (e.g. the code-gen
+ * flow fetched contents while population was still in flight). Returns null
+ * only when the worker itself is unavailable, which signals the caller to fall
+ * back to the main-thread scan.
+ */
+async function searchInWorker(rawPattern, codeStoreState, extra = {}) {
+  try {
+    const worker = getContentStoreWorker();
+    const payload = { pattern: rawPattern, ...extra };
+    const repoFileContents = codeStoreState?.repoFileContents;
+    if (repoFileContents && repoFileContents !== _sentRepoContentsRef) {
+      _sentRepoContentsRef = repoFileContents;
+      payload.repoFileContents = repoFileContents;
+    }
+    const hits = await worker.search(payload);
+    return hits || [];
+  } catch (err) {
+    console.warn('[search] Worker search unavailable, scanning on main thread:', err.message);
+    return null;
+  }
+}
+
+/**
  * Last-resort direct seeding of the content store from the in-memory
  * repoFileContents map, used when the worker-backed population is slow or
  * failed. Fires async so search itself isn't blocked; re-checks that the
@@ -70,12 +104,14 @@ async function seedRepoCorpusFromFileContents(contents) {
     ]);
     const hasRepoEntries = Array.from(store.entries.keys()).some(id => id.startsWith('repo:'));
     if (hasRepoEntries) return;
+    let seededCount = 0;
     for (const [filePath, content] of Object.entries(contents)) {
       if (!content) continue;
       store.upsert(`repo:${filePath}`, ContentCategory.REPO_FILE, content, {
         sourcePath: filePath,
         tags: ['repo', 'code'],
       });
+      if (++seededCount % 25 === 0) await new Promise(r => setTimeout(r, 0));
     }
     console.log(`[search] Seeded content store with ${Object.keys(contents).length} repo files`);
   } catch (err) {
@@ -995,42 +1031,53 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
 
       // 4. Full-text search with line numbers, ranked by per-file hit count.
       //    The most-referenced files (definition + heaviest usage) surface
-      //    first. Uses the content store, falling back to the in-memory
-      //    repoFileContents map when the store corpus is empty.
-      await new Promise(r => setTimeout(r, 0));
-      const normLine = (line) => line.toLowerCase().replace(/[-_.]/g, '');
-      const corpus = buildRepoCorpus(store, codeStoreState);
-      const fileHitCounts = new Map();
-      const fileHitSamples = new Map();
-      let scanCount = 0;
-      for (const [filePath, fullText] of corpus) {
-        if (fullText == null || fullText.length === 0) continue;
-        const lines = fullText.split('\n');
-        let count = 0;
-        const samples = [];
-        for (let li = 0; li < lines.length && count < MAX_HITS_PER_FILE; li++) {
-          if (matchesPattern(normLine(lines[li]))) {
-            count++;
-            if (samples.length < 3) {
-              samples.push({ lineNum: li + 1, text: lines[li].trim().slice(0, 200) });
-            }
+      //    first. Runs in the content-store worker so a large repo can't
+      //    freeze the UI while searching; falls back to an in-memory main-thread
+      //    scan only if the worker is unavailable.
+      const workerHits = await searchInWorker(args.pattern, codeStoreState);
+      if (workerHits) {
+        for (const hit of workerHits.slice(0, 8)) {
+          if (results.length >= MAX_RESULTS) break;
+          for (const s of hit.samples) {
+            results.push({ rank: 3, text: `${hit.filePath}${sizeHint(hit.filePath)}:${s.lineNum}: ${s.text}` });
           }
         }
-        if (count > 0) {
-          fileHitCounts.set(filePath, count);
-          fileHitSamples.set(filePath, samples);
+      } else {
+        await new Promise(r => setTimeout(r, 0));
+        const normLine = (line) => line.toLowerCase().replace(/[-_.]/g, '');
+        const corpus = buildRepoCorpus(store, codeStoreState);
+        const fileHitCounts = new Map();
+        const fileHitSamples = new Map();
+        let scanCount = 0;
+        for (const [filePath, fullText] of corpus) {
+          if (fullText == null || fullText.length === 0) continue;
+          const lines = fullText.split('\n');
+          let count = 0;
+          const samples = [];
+          for (let li = 0; li < lines.length && count < MAX_HITS_PER_FILE; li++) {
+            if (matchesPattern(normLine(lines[li]))) {
+              count++;
+              if (samples.length < 3) {
+                samples.push({ lineNum: li + 1, text: lines[li].trim().slice(0, 200) });
+              }
+            }
+          }
+          if (count > 0) {
+            fileHitCounts.set(filePath, count);
+            fileHitSamples.set(filePath, samples);
+          }
+          scanCount++;
+          if (scanCount % 50 === 0) await new Promise(r => setTimeout(r, 0));
         }
-        scanCount++;
-        if (scanCount % 50 === 0) await new Promise(r => setTimeout(r, 0));
-      }
 
-      const topFiles = [...fileHitCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 8);
-      for (const [filePath] of topFiles) {
-        if (results.length >= MAX_RESULTS) break;
-        for (const s of fileHitSamples.get(filePath)) {
-          results.push({ rank: 3, text: `${filePath}${sizeHint(filePath)}:${s.lineNum}: ${s.text}` });
+        const topFiles = [...fileHitCounts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8);
+        for (const [filePath] of topFiles) {
+          if (results.length >= MAX_RESULTS) break;
+          for (const s of fileHitSamples.get(filePath)) {
+            results.push({ rank: 3, text: `${filePath}${sizeHint(filePath)}:${s.lineNum}: ${s.text}` });
+          }
         }
       }
 
@@ -1068,18 +1115,36 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         const sz = fileSizeMap.get(filePath);
         return sz ? ` (${sz} chars)` : '';
       };
-      const corpus = buildRepoCorpus(store, grepCodeStoreState);
-      for (const [filePath, fullText] of corpus) {
-        if (prefix && !filePath.startsWith(prefix)) continue;
-        const lines = fullText.split('\n');
-        let fileHits = 0;
-        for (let li = 0; li < lines.length && fileHits < MAX_PER_FILE; li++) {
-          if (re.test(lines[li])) {
-            results.push(`${filePath}${sizeHint(filePath)}:${li + 1}: ${lines[li].trim().slice(0, 200)}`);
-            fileHits++;
+      // Run the scan in the content-store worker to keep a large corpus off the
+      // main thread; fall back to an in-memory scan only if the worker is gone.
+      const grepHits = await searchInWorker(null, grepCodeStoreState, {
+        regex: patternSrc,
+        caseSensitive: !!args.caseSensitive,
+        pathPrefix: prefix,
+        maxSamplesPerFile: MAX_PER_FILE,
+      });
+      if (grepHits) {
+        for (const hit of grepHits) {
+          for (const s of hit.samples) {
+            results.push(`${hit.filePath}${sizeHint(hit.filePath)}:${s.lineNum}: ${s.text}`);
+            if (results.length >= MAX_GREP_RESULTS) break;
           }
+          if (results.length >= MAX_GREP_RESULTS) break;
         }
-        if (results.length >= MAX_GREP_RESULTS) break;
+      } else {
+        const corpus = buildRepoCorpus(store, grepCodeStoreState);
+        for (const [filePath, fullText] of corpus) {
+          if (prefix && !filePath.startsWith(prefix)) continue;
+          const lines = fullText.split('\n');
+          let fileHits = 0;
+          for (let li = 0; li < lines.length && fileHits < MAX_PER_FILE; li++) {
+            if (re.test(lines[li])) {
+              results.push(`${filePath}${sizeHint(filePath)}:${li + 1}: ${lines[li].trim().slice(0, 200)}`);
+              fileHits++;
+            }
+          }
+          if (results.length >= MAX_GREP_RESULTS) break;
+        }
       }
       if (results.length === 0) {
         const scope = prefix ? ` under "${prefix}"` : '';

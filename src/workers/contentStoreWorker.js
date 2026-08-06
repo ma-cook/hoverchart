@@ -20,6 +20,7 @@ import { ContentStore, ContentCategory } from '../services/context/contentStore'
 
 const YIELD_EVERY = 50;
 const BATCH_YIELD_MS = 0;
+const MAX_HITS_PER_FILE = 5;
 
 let _batchStore = null;
 let _processedRepoPaths = new Set();
@@ -134,6 +135,92 @@ const workerApi = {
     }
 
     return captureDelta(store, newEntryIds);
+  },
+
+  /**
+   * Full-text scan over the repo corpus, executed off the main thread so a
+   * large repo can't freeze the UI while search_code/grep run. If this worker
+   * has no "repo:" entries yet (e.g. a population pass is still in flight, or
+   * the code-gen flow fetched contents after population was skipped), indexes
+   * the provided repoFileContents on demand (bounded, yielding) before scanning.
+   *
+   * Supports literal `pattern` matching (normalized like search_code) or a
+   * `regex` (case-insensitive unless caseSensitive), plus an optional
+   * `pathPrefix` filter for grep's directory scoping.
+   *
+   * Returns [{ filePath, hitCount, samples: [{ lineNum, text }] }] sorted by
+   * hit count, capped at maxResults.
+   */
+  async search({ pattern, regex = null, caseSensitive = false, pathPrefix = '', repoFileContents = null, maxResults = 20, maxSamplesPerFile = 3 } = {}) {
+    const store = ensureStore();
+    const hasRepoEntries = Array.from(store.entries.keys()).some((id) => id.startsWith('repo:'));
+
+    if (!hasRepoEntries && repoFileContents && Object.keys(repoFileContents).length > 0) {
+      let fallbackCount = 0;
+      for (const [filePath, content] of Object.entries(repoFileContents)) {
+        if (!content) continue;
+        if (store.entries.has(`repo:${filePath}`)) continue;
+        store.upsert(
+          `repo:${filePath}`,
+          ContentCategory.REPO_FILE,
+          content,
+          { sourcePath: filePath, tags: ['repo', 'code'] }
+        );
+        fallbackCount++;
+        if (fallbackCount % YIELD_EVERY === 0) {
+          await yieldToMain();
+        }
+      }
+    }
+
+    let re = null;
+    if (regex) {
+      try {
+        re = new RegExp(regex, caseSensitive ? '' : 'i');
+      } catch { /* invalid regex — scan will simply match nothing */ }
+    }
+
+    const rawPattern = pattern || '';
+    const normalize = (s) => (s || '').toLowerCase().replace(/[-_.]/g, '');
+    const pat = normalize(rawPattern);
+    if (!pat && !re) return [];
+    const basePattern = normalize(rawPattern.replace(/\.[a-z0-9]+$/, ''));
+    const matches = (line) => {
+      if (re) return re.test(line);
+      const normLine = normalize(line);
+      return normLine.includes(pat) ||
+        (basePattern.length >= 3 && normLine.includes(basePattern));
+    };
+
+    const hits = [];
+    let scanned = 0;
+    for (const [id, entry] of store.entries) {
+      if (!id.startsWith('repo:')) continue;
+      const filePath = id.slice(5);
+      if (pathPrefix && !filePath.startsWith(pathPrefix)) continue;
+      const fullText = entry.chunks.map((c) => c.text).join('');
+      if (!fullText) continue;
+      const lines = fullText.split('\n');
+      let count = 0;
+      const samples = [];
+      for (let li = 0; li < lines.length && count < MAX_HITS_PER_FILE; li++) {
+        if (matches(lines[li])) {
+          count++;
+          if (samples.length < maxSamplesPerFile) {
+            samples.push({ lineNum: li + 1, text: lines[li].trim().slice(0, 200) });
+          }
+        }
+      }
+      if (count > 0) {
+        hits.push({ filePath, hitCount: count, samples });
+      }
+      scanned++;
+      if (scanned % YIELD_EVERY === 0) {
+        await yieldToMain();
+      }
+    }
+
+    return hits.sort((a, b) => b.hitCount - a.hitCount).slice(0, maxResults);
   },
 };
 
