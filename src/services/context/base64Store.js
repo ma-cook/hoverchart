@@ -42,6 +42,10 @@ export class Base64Store {
 
   async encodeAll() {
     this.encodedChunks.clear();
+    // Invalidate the memoized chunk index so it is rebuilt from the CURRENT
+    // content store. Otherwise a population that runs while edits are being
+    // applied would restore stale chunk text over freshly edited content.
+    this._chunkIndex = null;
     this._buildChunkIndex();
     let i = 0;
     for (const [chunkId, data] of this._chunkIndex) {
@@ -63,10 +67,27 @@ export class Base64Store {
   getChunk(chunkId) {
     let encoded = this.encodedChunks.get(chunkId);
     if (!encoded) {
-      this._buildChunkIndex();
-      encoded = this._chunkIndex?.get(chunkId) || null;
-      if (encoded) {
-        this.encodedChunks.set(chunkId, encoded);
+      // Look the chunk up directly in the live content store — the memoized
+      // _chunkIndex can be stale if an entry was replaced after it was built.
+      for (const [, entry] of this.contentStore.entries) {
+        const chunk = entry.chunks.find(c => c.id === chunkId);
+        if (chunk) {
+          encoded = {
+            text: chunk.text,
+            meta: {
+              entryId: entry.id,
+              sourcePath: entry.sourcePath,
+              category: entry.category,
+              keywords: chunk.keywords,
+              charCount: chunk.charCount,
+              byteSize: chunk.text.length,
+              startIndex: chunk.startIndex,
+              endIndex: chunk.endIndex,
+            },
+          };
+          this.encodedChunks.set(chunkId, encoded);
+          break;
+        }
       }
     }
     if (!encoded) return null;

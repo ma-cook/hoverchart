@@ -16,6 +16,12 @@ const MAX_TOOL_RESULT_CHARS = 30000;
 const TRUNCATION_WARNING = `\n\n[Output truncated at ${(MAX_TOOL_RESULT_CHARS).toLocaleString()} chars. Use read_file with offset/limit or refine your search to narrow results.]`;
 const RETRYABLE_TOOLS = new Set(['read_file', 'edit', 'write', 'search_code']);
 const MAX_TOOL_RETRIES = 2;
+// Hard cap on a single tool attempt. Tools normally resolve in well under a
+// second; a multi-minute stall (IndexedDB contention, Comlink hiccup, event-loop
+// starvation) must never leave the whole conversation hanging with no recovery.
+// Sub-agents (task) are exempt because they legitimately run long.
+const TOOL_HARD_TIMEOUT_MS = 45_000;
+const NO_HARD_TIMEOUT_TOOLS = new Set(['task']);
 const COMPRESSION_INTERVAL = 12;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
@@ -461,10 +467,21 @@ export function buildCodeGenPipeline({ sendToLLM, executeToolCall, compressMessa
   return pipeline;
 }
 
+function withToolTimeout(tc, execFn) {
+  if (NO_HARD_TIMEOUT_TOOLS.has(tc.name)) return execFn();
+  let timer;
+  return Promise.race([
+    execFn(),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${tc.name} tool timed out after ${TOOL_HARD_TIMEOUT_MS / 1000}s — the tool execution hung and was aborted`)), TOOL_HARD_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function executeWithRetry(tc, execFn) {
   for (let attempt = 0; attempt <= MAX_TOOL_RETRIES; attempt++) {
     try {
-      const result = await execFn();
+      const result = await withToolTimeout(tc, execFn);
       if (!result.success && isTransientError(result.content) && attempt < MAX_TOOL_RETRIES && RETRYABLE_TOOLS.has(tc.name)) {
         const delay = Math.min(1000 * Math.pow(2, attempt), 4000);
         console.warn(`[Retry] ${tc.name} attempt ${attempt + 1}/${MAX_TOOL_RETRIES + 1}: ${result.content?.slice(0, 80)}... Retrying in ${delay}ms`);
@@ -545,14 +562,23 @@ export async function sendWithRetrieval({
     const toolSnippets = toolMsgs.map(t => (t.content || '').slice(0, 800)).join('\n---\n');
     const prompt = `Summarize what the assistant learned or accomplished in 1 sentence (max 50 words):\n\nAssistant: ${(assistantMsg.content || '(no text)').slice(0, 300)}\n\nTool results:\n${toolSnippets.slice(0, 2500)}`;
     try {
-      const result = await sendToZen({
-        messages: [
-          { role: 'system', content: 'You summarize concisely. Return only the summary, no prefixes.' },
-          { role: 'user', content: prompt },
-        ],
-        tools: [],
-        signal: null,
-      });
+      // Bound the hidden summarizer call so a stalled provider can't freeze the
+      // whole tool round — compression should degrade gracefully, not hang.
+      const SUMMARIZER_TIMEOUT_MS = 25_000;
+      let timer;
+      const result = await Promise.race([
+        sendToZen({
+          messages: [
+            { role: 'system', content: 'You summarize concisely. Return only the summary, no prefixes.' },
+            { role: 'user', content: prompt },
+          ],
+          tools: [],
+          signal: null,
+        }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('summary timed out after 25s')), SUMMARIZER_TIMEOUT_MS);
+        }),
+      ]).finally(() => clearTimeout(timer));
       const summary = (typeof result === 'string' ? result : result?.text || '').trim().slice(0, 400);
       return summary || null;
     } catch { return null; }
