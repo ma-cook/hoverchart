@@ -105,10 +105,23 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       contentIndex: loadPersisted(spaceId, 'contentIndex'),
       importGraph: loadPersisted(spaceId, 'importGraph'),
       repoFileTree: loadPersisted(spaceId, 'repoFileTree'),
+      repoFileContents: null,
       fileSizes: loadPersisted(spaceId, 'fileSizes'),
       fileIndexByPath: restoreFileIndexByPath(loadPersisted(spaceId, 'fileIndexByPath')),
       importIndexByFile: restoreImportIndexByFile(loadPersisted(spaceId, 'importIndexByFile')),
     });
+    // repoFileContents is too large for localStorage, so it lives in IndexedDB.
+    // Restore it asynchronously; the gate falls back to a GitHub refetch until
+    // it arrives (or if nothing was ever saved for this space).
+    import('../services/context/contentStorePersistence.js')
+      .then((m) => m.loadRepoFileContents(spaceId))
+      .then((contents) => {
+        if (contents && get()._spaceId === spaceId) {
+          set({ repoFileContents: contents });
+          console.log(`[codeStore] Restored repoFileContents (${Object.keys(contents).length} files) from IndexedDB`);
+        }
+      })
+      .catch(() => {});
   },
 
   setGithubConnected: (connected) => set({ githubConnected: connected }),
@@ -160,7 +173,17 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
     const spaceId = get()._spaceId;
     persist(spaceId, 'repoFileTree', fileTree);
     set({ repoFileTree: fileTree, repoFileContents: fileContents });
+    // Persist the contents to IndexedDB (too large for localStorage) so the
+    // next page load can reuse the cached context instead of refetching every
+    // file from GitHub. Fire-and-forget.
+    if (fileContents && Object.keys(fileContents).length > 0) {
+      import('../services/context/contentStorePersistence.js')
+        .then((m) => m.saveRepoFileContents(spaceId, fileContents))
+        .catch(() => {});
+    }
   },
+
+  setRepoFileContents: (fileContents) => set({ repoFileContents: fileContents }),
 
   setContentIndex: (contentIndex) => {
     const spaceId = get()._spaceId;

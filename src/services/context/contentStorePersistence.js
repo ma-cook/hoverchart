@@ -218,3 +218,30 @@ export async function hasPersistedData() {
     return false;
   }
 }
+
+/**
+ * Persist the raw repoFileContents map (filePath -> text) for a space so a
+ * page reload can reuse the cached repo context without re-fetching every
+ * file from GitHub. Stored in IndexedDB (not localStorage) because the corpus
+ * can be several MB. Fire-and-forget safe — degrades to a refetch on failure.
+ */
+export async function saveRepoFileContents(spaceId, contents) {
+  if (!contents || typeof contents !== 'object') return;
+  try {
+    const key = `repoFileContents:${spaceId || ''}`;
+    await txPut(STORE_META, key, contents);
+    console.log(`[contentStorePersistence] Saved repoFileContents (${Object.keys(contents).length} files)`);
+  } catch (err) {
+    console.warn('[contentStorePersistence] save repoFileContents failed:', err.message);
+  }
+}
+
+export async function loadRepoFileContents(spaceId) {
+  try {
+    const key = `repoFileContents:${spaceId || ''}`;
+    return (await txGet(STORE_META, key)) || null;
+  } catch (err) {
+    console.warn('[contentStorePersistence] load repoFileContents failed:', err.message);
+    return null;
+  }
+}
