@@ -33,6 +33,21 @@ const SUB_MAX_ROUNDS = 8;
 const SUB_MAX_CHARS = 60000;
 const SUB_MAX_TOOL_CONTENT = 12000;
 const STUCK_EXPLORING_THRESHOLD = 10;
+// After the first round-32 nudge, keep re-nudging the model toward generation
+// at this cadence instead of ever stripping tools / force-stopping the run.
+const GENERATION_NUDGE_INTERVAL = 5;
+// Re-synthesize and re-inject the findings digest at this cadence so long plans
+// keep receiving digested (not re-compressed noise) context as rounds advance.
+const DIGEST_REFRESH_INTERVAL = 8;
+// ── Self-redirect (replaces the old absolute round cap) ─────────────────────
+// A user's plan can be arbitrarily large, so the run must never force-exit.
+// Instead, when the agent is locked in a research loop or visibly confused we
+// inject a re-orienting nudge — keeping EVERY tool available — that escalates
+// each time, so a genuinely stuck run converges to a best-effort partial result
+// (via the model ending its own tool calls) rather than looping forever.
+const CONFUSION_SIGNAL_THRESHOLD = 3;
+const REDIRECT_ESCALATION_AFTER = 2;
+const CONFUSION_PATTERNS = /(\bnot sure\b|\bunsure\b|\bunclear\b|\bconfus\w*|\bdo not know\b|don['’]?t know\b|\bcan not find\b|can['’]?t find\b|could not find\b|couldn['’]?t find\b|\bneed more (information|context)\b|\bnot available\b|\bunable to (locate|find|determine)\b|i am (stuck|confused)|i['’]?m (stuck|confused)|\bdo not understand\b|\bdoes not know\b|doesn['’]?t know\b)/i;
 
 /**
  * Fix 1 + Fix 4: Build a "stop exploring, generate now" nudge that gets
@@ -50,6 +65,43 @@ Switch to PRODUCING CODE NOW:
   1. Prefer calling the "edit" tool with exact oldString/newString for the file you already located.
   2. If an edit fails, correct the oldString and retry — or switch to outputting each changed file as a full markdown code block labeled \`\`\`<ext>:<filePath> so the system can capture it.
   3. Output the final response as text containing the code blocks so your changes are recorded.`,
+  };
+}
+
+/**
+ * Self-redirect: when the agent is locked in a research loop or visibly
+ * confused, re-orient it toward its plan WITHOUT removing any tools. There is
+ * no absolute round cap — a user's plan can be arbitrarily large — so each
+ * redirect re-focuses the model and escalates: past REDIRECT_ESCALATION_AFTER
+ * redirects, it instructs the agent to converge (apply best-effort changes,
+ * state what it cannot resolve, and finish by ending its own tool calls) so a
+ * genuinely stuck run still ends with a partial result instead of looping.
+ */
+function buildSelfRedirectMessage({ round, redirectCount, phase, editsSoFar }) {
+  const escalated = redirectCount >= REDIRECT_ESCALATION_AFTER;
+  const phaseLine = phase === 'confusion'
+    ? '⚠️ SIGNAL: Your recent reasoning shows confusion (uncertainty in your text and/or repeated tool failures).'
+    : '⚠️ SIGNAL: You appear to be in a research loop — re-reading or re-searching the same material without producing changes.';
+  const guidance = escalated
+    ? `This is redirect #${redirectCount} with no progress since the last one. STOP re-researching.
+
+1. For any remaining ambiguity, pick the most likely interpretation, note your assumption, and APPLY the change with edit/write.
+2. For anything you truly cannot resolve, state it explicitly (file, why, what you tried) and move on to the next change.
+3. When everything you can apply has been applied, produce your final response as text with NO further tool calls: summarize what you changed and what remains.`
+    : `You still have all your tools — keep using them.
+
+1. Identify your next single concrete step from the user's original request.
+2. Do that step NOW with edit/write (read_file is only needed to capture an exact oldString).
+3. If intent is ambiguous, make a best-effort assumption, state it, and proceed. Ask at most one clarifying question — only after attempting the change.`;
+  return {
+    role: 'user',
+    content: `${phaseLine}
+
+[Round ${round + 1}, redirect #${redirectCount}] Re-focus on the user's original request and continue the plan to completion.
+
+${guidance}
+
+${editsSoFar && editsSoFar.length > 0 ? `Changes already applied this run: ${editsSoFar.join(', ')}. Do not redo or re-read them.` : 'No changes have been applied yet this run.'}`,
   };
 }
 
@@ -366,42 +418,6 @@ function generateSearchReplacePatch(original, modified, filePath) {
   return `\`\`\`${ext}:${filePath}\n${patchParts.join('\n\n')}\n\`\`\``;
 }
 
-const CODE_BLOCK_LABEL_REGEX = /```([a-zA-Z0-9+_-]+):([^\n`]*?)\n([\s\S]*?)```/g;
-
-/**
- * Fix 4 post-processor: any markdown code block (```<ext>:<path>) whose path
- * corresponds to a file we have the original content for is converted into a
- * SEARCH/REPLACE patch (or dropped if unchanged). Blocks for NEW files are left
- * as complete-content blocks. This guarantees the push pipeline never receives
- * a full-file dump of an existing file, which it refuses to apply.
- */
-function normalizeFinalCodeBlocks(text, originalFileContents) {
-  if (!text || !originalFileContents || originalFileContents.size === 0) return text;
-  const matches = [...text.matchAll(CODE_BLOCK_LABEL_REGEX)];
-  if (matches.length === 0) return text;
-  const replacements = [];
-  for (const m of matches) {
-    const [full, , filePathRaw, content] = m;
-    const filePath = normalizePath(filePathRaw.trim());
-    if (!filePath || filePath.includes(' ')) continue;
-    const original = originalFileContents.get(filePath);
-    if (original == null) continue;
-    if (original === content) {
-      replacements.push({ full, next: '' });
-      continue;
-    }
-    const patch = generateSearchReplacePatch(original, content, filePath);
-    if (patch) {
-      replacements.push({ full, next: patch });
-    }
-  }
-  let updated = text;
-  for (const { full, next } of replacements) {
-    updated = updated.replace(full, next);
-  }
-  return updated;
-}
-
 const FAILURE_PATTERNS = /^Error:|^File not found:|^No (matching|files) found|^Unknown tool|^search_code requires/i;
 
 function isUsefulToolResult(content, toolName) {
@@ -529,7 +545,14 @@ export async function sendWithRetrieval({
   // Fix 1 / Fix 4: track whether the agent has produced any edit/write this run.
   let producedEdit = false;
   let forceGenerationInjected = false;
-  let digestInjected = false;
+  let lastDigestRound = -1;
+  let lastGenerationNudgeRound = -1;
+  // Self-redirect tracking: how many re-orienting nudges have been issued, when
+  // the last one was, and a running count of confusion signals (uncertainty
+  // phrasing in the model's text, or retryable tool failures).
+  let redirectCount = 0;
+  let lastRedirectRound = -1;
+  let consecutiveConfusionSignals = 0;
   // Names of tools actually sent to the model this round. Used by the
   // execution-time gate to block hallucinated calls to tools that are not in
   // the round's tool list.
@@ -611,16 +634,17 @@ export async function sendWithRetrieval({
     }
 
     // ── Fix 5: synthesize a digest so the model gets digested context ─────
-    // Once before the force-generation round, hand the model a terse digest
-    // of what exploration found (file:line targets to edit), so it has the
-    // synthesis it needs rather than re-reading compressed noise.
+    // Hand the model a terse digest of what exploration found (file:line targets
+    // to edit) so it has the synthesis it needs rather than re-reading compressed
+    // noise. Re-injected every DIGEST_REFRESH_INTERVAL rounds (not just once) so
+    // long plans keep receiving fresh digested context.
     if (
       !producedEdit &&
-      !digestInjected &&
       rounds >= STUCK_EXPLORING_THRESHOLD &&
-      rounds < MAX_EXPLORATION_ROUNDS
+      rounds < FORCE_GENERATION_AFTER_ROUND &&
+      rounds - lastDigestRound >= DIGEST_REFRESH_INTERVAL
     ) {
-      digestInjected = true;
+      lastDigestRound = rounds;
       try {
         const digest = await synthesizeFindingsDigest(currentMessages, originalFileContents, getContentStore, getBase64Store);
         if (digest) {
@@ -635,65 +659,39 @@ export async function sendWithRetrieval({
       }
     }
 
-    // ── Fix 4: last-resort hard stop past FORCE_GENERATION_AFTER_ROUND ──────
-    if (!producedEdit && rounds >= FORCE_GENERATION_AFTER_ROUND) {
-      console.warn(`[ToolRound] Fix 4: hard stop at round ${rounds + 1} (>= ${FORCE_GENERATION_AFTER_ROUND}) with 0 edits — forcing generation exit`);
-      // Strip ALL tools and demand the LLM emit its proposed changes as
-      // SEARCH/REPLACE blocks (for existing files) or full-content blocks
-      // (for new files) inside markdown code blocks. The push pipeline applies
-      // SEARCH/REPLACE against the current repo content, so this does not
-      // depend on the edit tool's oldString matching succeeding and never
-      // dumps a whole existing file (which the pusher would refuse).
-      const originalSystem = currentMessages[0]?.content || '';
-      currentMessages[0] = {
-        ...currentMessages[0],
-        content: `FINAL RESPONSE REQUIRED — OUTPUT CODE CHANGES ONLY
-
-You have explored enough. No tools are available now. Respond with ONLY your proposed code changes as markdown code blocks.
-
-For an EXISTING file, output ONE code block labeled \`\`\`<ext>:<repo-relative-path> whose content is one or more SEARCH/REPLACE pairs:
-
-\`\`\`jsx:src/components/UIOverlay.jsx
-<<<<<<< SEARCH
-<exact current code that must match the file — copy it from the read_file output>
-=======
-<replacement code>
->>>>>>> REPLACE
-\`\`\`
-
-Rules:
-- The SEARCH text MUST match the current file content EXACTLY (including whitespace/indentation). Copy it from the read_file output you already received.
-- Keep each SEARCH/REPLACE pair as small as possible while uniquely identifying the location.
-- For a NEW file that does not exist yet, output \`\`\`<ext>:<repo-relative-path> containing the COMPLETE new file content (no SEARCH/REPLACE markers).
-- One code block per file. Label format: \`\`\`<extension>:<filePath> (colon, no spaces, no "path=").
-- Output nothing except a one-line intro and the code blocks.
-
-If no file changes are needed, output exactly: "No changes required."
-
-Original system prompt (abbreviated):
----
-${originalSystem.slice(0, 1500)}`,
-      };
-      const forceExit = {
-        role: 'user',
-        content: `⚠️ FINAL REQUEST (round ${rounds + 1}): You MUST now produce the code changes. Existing files: use SEARCH/REPLACE blocks (<<<<<<< SEARCH / ======= / >>>>>>> REPLACE) whose SEARCH text matches the current file exactly, inside a single \`\`\`<ext>:<filePath> block. New files: output the complete content. This is the last message you will receive — do not explain, just output the code blocks.`,
-      };
-      currentMessages = [...currentMessages, forceExit];
-      let finalRaw = null;
-      try {
-        finalRaw = await sendToZen({ messages: currentMessages, tools: [], signal });
-      } catch (e) {
-        console.warn(`[ToolRound] Fix 4: final send failed: ${e.message}`);
+    // ── Fix 4 (reworked): sustained generation nudge, no hard stop ──────────
+    // The original Fix 4 stripped ALL tools at FORCE_GENERATION_AFTER_ROUND and
+    // demanded a forced final narrative response. That cut off legitimate long
+    // plans mid-execution and frequently produced narrative text instead of code
+    // blocks. Now the run never force-exits: past round 32 we keep every tool
+    // available and re-nudge at GENERATION_NUDGE_INTERVAL, re-injecting a
+    // refreshed findings digest so the model keeps working the plan to
+    // completion. Research loops and confusion are handled separately by the
+    // self-redirect block at the end of each round (never by breaking).
+    if (
+      !producedEdit &&
+      rounds >= FORCE_GENERATION_AFTER_ROUND &&
+      rounds - lastGenerationNudgeRound >= GENERATION_NUDGE_INTERVAL
+    ) {
+      lastGenerationNudgeRound = rounds;
+      console.warn(`[ToolRound] Fix 4: sustained nudge at round ${rounds + 1} (>= ${FORCE_GENERATION_AFTER_ROUND}, 0 edits) — all tools remain available`);
+      const forceMsg = buildForceGenerationMessage(rounds, readFiles.size);
+      currentMessages = [...currentMessages, forceMsg];
+      if (rounds - lastDigestRound >= DIGEST_REFRESH_INTERVAL) {
+        lastDigestRound = rounds;
+        try {
+          const digest = await synthesizeFindingsDigest(currentMessages, originalFileContents, getContentStore, getBase64Store);
+          if (digest) {
+            currentMessages = [...currentMessages, {
+              role: 'user',
+              content: `📋 REFRESHED EXPLORATION DIGEST (round ${rounds + 1}):\n\n${digest}\n\nYou still have the edit/write tools — apply the changes now. Do NOT re-read these files.`,
+            }];
+            console.warn(`[ToolRound] Fix 4: injected refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
+          }
+        } catch (e) {
+          console.warn(`[ToolRound] Fix 4: digest refresh failed: ${e.message}`);
+        }
       }
-      const finalRes = typeof finalRaw === 'string' ? { text: finalRaw, toolCalls: [] } : (finalRaw || { text: '', toolCalls: [] });
-      if (finalRes.text) {
-        // If the model still emitted full-file blocks for files we have the
-        // original content for, convert them to SEARCH/REPLACE patches so the
-        // push pipeline can apply them without losing code.
-        const normalized = normalizeFinalCodeBlocks(finalRes.text, originalFileContents);
-        finalText = finalText ? finalText + '\n\n' + normalized : normalized;
-      }
-      break;
     }
 
     const roundInvocation = globalMonitor.startInvocation({
@@ -759,8 +757,9 @@ ${originalSystem.slice(0, 1500)}`,
       }
     }
     if (doomLoopDetected) {
-      console.warn(`[ToolRound] Breaking: same tool called 4+ times in a single round`);
-      break;
+      // Not a break: mark it so the self-redirect block re-orients the agent
+      // this round while keeping every tool available.
+      console.warn(`[ToolRound] Doom loop flagged — will self-redirect at end of round`);
     }
 
     onRetrieval?.({ chunkIds: toolCalls.map(tc => tc.name + ':' + JSON.stringify(tc.arguments)), round: rounds + 1 });
@@ -1015,15 +1014,9 @@ ${originalSystem.slice(0, 1500)}`,
       duplicateReadRounds = 0;
     }
 
-    if (consecutiveUnhelpfulRounds >= MAX_UNHELPFUL_ROUNDS) {
-      console.warn(`[ToolRound] Breaking: ${consecutiveUnhelpfulRounds} consecutive rounds with no useful tool results`);
-      break;
-    }
-
-    if (duplicateReadRounds >= MAX_SAME_FILE_READS) {
-      console.warn(`[ToolRound] Breaking: ${duplicateReadRounds} consecutive rounds of re-reading same files`);
-      break;
-    }
+    // NOTE: no hard break on unhelpful streaks / duplicate reads. Those are
+    // signals that feed the self-redirect block below, which re-orients the
+    // agent (keeping all tools) instead of cutting the plan short.
 
     for (const { tc, result: toolResult } of toolResults) {
       if ((tc.name === 'edit' || tc.name === 'write') && tc.arguments?.filePath) {
@@ -1040,6 +1033,62 @@ ${originalSystem.slice(0, 1500)}`,
         tool_call_id: tc.id,
         content,
       });
+    }
+
+    // ── Self-redirect: research loops & confusion ──────────────────────────
+    // No absolute round cap — a user's plan can be arbitrarily large, so the
+    // run keeps working through it. When the agent is stuck (research loop:
+    // unhelpful rounds, duplicate reads, doom-loop tool spam) or visibly
+    // confused (uncertainty phrasing / retryable tool failures), inject a
+    // re-orienting nudge with ALL tools intact. The nudge escalates each time,
+    // so a genuinely stuck run converges to a best-effort partial result (the
+    // model ends its own tool calls) instead of looping forever.
+    const researchLoopDetected = doomLoopDetected ||
+      consecutiveUnhelpfulRounds >= MAX_UNHELPFUL_ROUNDS ||
+      duplicateReadRounds >= MAX_SAME_FILE_READS;
+
+    if (CONFUSION_PATTERNS.test(text || '')) {
+      consecutiveConfusionSignals++;
+      console.warn(`[ToolRound] Confusion signal in round ${rounds + 1} text (${consecutiveConfusionSignals}/${CONFUSION_SIGNAL_THRESHOLD})`);
+    } else if (toolResults.some(({ tc, result: r }) => !r.success && RETRYABLE_TOOLS.has(tc.name))) {
+      consecutiveConfusionSignals++;
+      console.warn(`[ToolRound] Confusion signal: retryable tool failure in round ${rounds + 1} (${consecutiveConfusionSignals}/${CONFUSION_SIGNAL_THRESHOLD})`);
+    } else {
+      consecutiveConfusionSignals = Math.max(0, consecutiveConfusionSignals - 1);
+    }
+    const confusionDetected = consecutiveConfusionSignals >= CONFUSION_SIGNAL_THRESHOLD;
+
+    // Fires regardless of producedEdit: a multi-step plan can hit a research
+    // loop or confusion at any point, not just before the first edit.
+    if ((researchLoopDetected || confusionDetected) && rounds !== lastRedirectRound) {
+      redirectCount++;
+      lastRedirectRound = rounds;
+      consecutiveUnhelpfulRounds = 0;
+      duplicateReadRounds = 0;
+      consecutiveConfusionSignals = 0;
+      const phase = confusionDetected ? 'confusion' : 'research-loop';
+      console.warn(`[ToolRound] Self-redirect #${redirectCount} (${phase}) at round ${rounds + 1} — all tools remain available`);
+      currentMessages = [...currentMessages, buildSelfRedirectMessage({
+        round: rounds + 1,
+        redirectCount,
+        phase,
+        editsSoFar: [...editedFilePaths],
+      })];
+      if (rounds - lastDigestRound >= DIGEST_REFRESH_INTERVAL) {
+        lastDigestRound = rounds;
+        try {
+          const digest = await synthesizeFindingsDigest(currentMessages, originalFileContents, getContentStore, getBase64Store);
+          if (digest) {
+            currentMessages = [...currentMessages, {
+              role: 'user',
+              content: `📋 REFRESHED FINDINGS DIGEST (round ${rounds + 1}):\n\n${digest}\n\nUse this to identify what remains. Do NOT re-read these files.`,
+            }];
+            console.warn(`[ToolRound] Self-redirect: refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
+          }
+        } catch (e) {
+          console.warn(`[ToolRound] Self-redirect: digest refresh failed: ${e.message}`);
+        }
+      }
     }
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });

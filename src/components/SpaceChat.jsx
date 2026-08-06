@@ -640,8 +640,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       let repoContext = null;
       if (selectedRepo && selectedBranch) {
         const _cs = useCodeStore.getState();
-        if (_cs.repoFileTree) {
-          repoContext = { fileTree: _cs.repoFileTree, fileContents: _cs.repoFileContents || {}, fileSizes: _cs.fileSizes || null };
+        if (_cs.repoFileTree && Object.keys(_cs.repoFileContents || {}).length > 0) {
+          repoContext = { fileTree: _cs.repoFileTree, fileContents: _cs.repoFileContents, fileSizes: _cs.fileSizes || null };
           console.log(`[CodeSend] Using cached repo context: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
         } else {
           const token = getGithubToken();
@@ -649,7 +649,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             const owner = selectedRepo.owner?.login || selectedRepo.owner;
             const repoName = selectedRepo.name;
             const branchName = selectedBranch;
-            console.log('[CodeSend] Fetching repo context from GitHub...');
+            console.log(_cs.repoFileTree
+              ? '[CodeSend] Cached tree present but contents empty — refetching repo context from GitHub...'
+              : '[CodeSend] Fetching repo context from GitHub...');
             repoContext = await fetchRepoContext(token, owner, repoName, branchName);
             useCodeStore.getState().setRepoContext(repoContext.fileTree, repoContext.fileContents);
             console.log(`[CodeSend] Fetched: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);

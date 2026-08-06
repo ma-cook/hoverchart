@@ -528,11 +528,26 @@ const UIOverlay = ({
 
       try {
         const resp = await fetch(latestMarkdownUrl);
-        if (!resp.ok) return;
+        if (!resp.ok) throw new Error(`markdown fetch failed: ${resp.status}`);
         const content = await resp.text();
         await markdownDiagramService.hydrateStoreFromMarkdown(content);
       } catch (err) {
         console.warn('[UIOverlay] Could not hydrate 2D diagram from stored markdown:', err);
+        // Fall back to the persisted digest so the 2D/analysis buttons and
+        // graph/community tools still restore even when the stored markdown
+        // cannot be fetched or parsed (e.g. expired signed URL). The standalone
+        // digest effect below is gated on !latestMarkdownUrl, so it never fires
+        // in this case — this fallback covers it.
+        try {
+          if (!useDiagramStore.getState().is2DReady) {
+            const restored = await rehydrateFromDigest(currentSpaceId);
+            if (restored) {
+              console.log(`[UIOverlay] Restored diagram graph from digest after markdown hydration failure: ${err.message}`);
+            }
+          }
+        } catch (e) {
+          console.warn('[UIOverlay] Digest fallback after markdown hydration failure also failed:', e);
+        }
       }
     }, 2000);
 
