@@ -1,6 +1,7 @@
 import { buildFileTreeSection, buildComponentIndex, buildContentIndexSection, buildImportGraphSection, buildCommunitySection, buildLspOverviewSection, buildGraphSummary } from '../zenService';
 import useDiagramStore from '../../stores/diagramStore';
 import useObjectsStore from '../../stores/objectsStore';
+import { getContentStore } from './contentStore';
 
 class Skill {
   constructor({ name, description, instructions, tools, buildInstructions }) {
@@ -150,6 +151,30 @@ export function initializeDefaultSkills(repoContext) {
         parts.push(`COMPONENT INDEX (component → file):\n${compIdx}`);
         const graphSummary = buildGraphSummarySection();
         if (graphSummary) parts.push(graphSummary);
+        return parts.join('\n\n');
+      },
+    }),
+    new Skill({
+      name: 'architecture-map',
+      description: 'Get the full architecture map of the scanned repository: component → file index, dependency graph summary, the raw Merfolk diagram, and detected architectural communities',
+      buildInstructions: () => {
+        const parts = [];
+        const compIdx = buildComponentIndex(useObjectsStore.getState().objects);
+        parts.push(`COMPONENT INDEX (component → file):\n${compIdx}`);
+        const graphSummary = buildGraphSummarySection();
+        if (graphSummary) parts.push(graphSummary);
+        const communities = buildCommunitySection();
+        parts.push(`ARCHITECTURAL COMMUNITIES:\n${communities}`);
+        try {
+          const entry = getContentStore().getEntry('merfolk:diagram');
+          if (entry) {
+            const fullText = entry.chunks.map(c => c.text).join('');
+            const excerpt = fullText.length > 3000 ? fullText.slice(0, 3000) + '\n... (diagram truncated)' : fullText;
+            parts.push(`MERFOLK DIAGRAM (excerpt):\n${excerpt}`);
+          }
+        } catch {
+          /* ignore */
+        }
         return parts.join('\n\n');
       },
     }),

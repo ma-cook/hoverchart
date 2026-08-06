@@ -1,7 +1,7 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 
-const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex', 'importGraph', 'repoFileTree', 'fileSizes'];
+const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex', 'importGraph', 'repoFileTree', 'fileSizes', 'fileIndexByPath', 'importIndexByFile'];
 
 function loadPersisted(spaceId, key) {
   try {
@@ -21,6 +21,51 @@ function persist(spaceId, key, value) {
       localStorage.setItem(storageKey, JSON.stringify(value));
     }
   } catch { /* ignore */ }
+}
+
+// fileIndexByPath values are objects holding Set fields (exports, functions,
+// cssClasses, htmlElements) — JSON cannot persist Sets, so flatten on save and
+// rebuild on load.
+function serializeFileIndexByPath(map) {
+  if (!(map instanceof Map)) return map;
+  return [...map.entries()].map(([filePath, entry]) => [
+    filePath,
+    {
+      ...entry,
+      exports: entry.exports instanceof Set ? [...entry.exports] : entry.exports,
+      functions: entry.functions instanceof Set ? [...entry.functions] : entry.functions,
+      cssClasses: entry.cssClasses instanceof Set ? [...entry.cssClasses] : entry.cssClasses,
+      htmlElements: entry.htmlElements instanceof Set ? [...entry.htmlElements] : entry.htmlElements,
+    },
+  ]);
+}
+
+function restoreFileIndexByPath(value) {
+  if (!value) return null;
+  if (value instanceof Map) return value;
+  if (!Array.isArray(value)) return null;
+  return new Map(value.map(([filePath, entry]) => [
+    filePath,
+    {
+      ...entry,
+      exports: Array.isArray(entry.exports) ? new Set(entry.exports) : entry.exports,
+      functions: Array.isArray(entry.functions) ? new Set(entry.functions) : entry.functions,
+      cssClasses: Array.isArray(entry.cssClasses) ? new Set(entry.cssClasses) : entry.cssClasses,
+      htmlElements: Array.isArray(entry.htmlElements) ? new Set(entry.htmlElements) : entry.htmlElements,
+    },
+  ]));
+}
+
+function serializeImportIndexByFile(map) {
+  if (!(map instanceof Map)) return map;
+  return [...map.entries()].map(([file, set]) => [file, set instanceof Set ? [...set] : set]);
+}
+
+function restoreImportIndexByFile(value) {
+  if (!value) return null;
+  if (value instanceof Map) return value;
+  if (!Array.isArray(value)) return null;
+  return new Map(value.map(([file, arr]) => [file, Array.isArray(arr) ? new Set(arr) : arr]));
 }
 
 const useCodeStore = createWithEqualityFn((set, get) => ({
@@ -61,6 +106,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       importGraph: loadPersisted(spaceId, 'importGraph'),
       repoFileTree: loadPersisted(spaceId, 'repoFileTree'),
       fileSizes: loadPersisted(spaceId, 'fileSizes'),
+      fileIndexByPath: restoreFileIndexByPath(loadPersisted(spaceId, 'fileIndexByPath')),
+      importIndexByFile: restoreImportIndexByFile(loadPersisted(spaceId, 'importIndexByFile')),
     });
   },
 
@@ -133,10 +180,14 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   },
 
   setFileIndexByPath: (fileIndexByPath) => {
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'fileIndexByPath', serializeFileIndexByPath(fileIndexByPath));
     set({ fileIndexByPath });
   },
 
   setImportIndexByFile: (importIndexByFile) => {
+    const spaceId = get()._spaceId;
+    persist(spaceId, 'importIndexByFile', serializeImportIndexByFile(importIndexByFile));
     set({ importIndexByFile });
   },
 

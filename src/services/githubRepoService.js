@@ -136,7 +136,7 @@ export const fetchRepositories = async (token) => {
  * @param {string} token - GitHub access token
  * @returns {Promise<string|null>} - File content or null if failed
  */
-export const fetchFileContent = async (owner, repoName, filePath, token) => {
+export const fetchFileContent = async (owner, repoName, filePath, token, ref) => {
   const fetchTimeout = (ms) => {
     const c = new AbortController();
     const id = setTimeout(() => c.abort(), ms);
@@ -145,8 +145,9 @@ export const fetchFileContent = async (owner, repoName, filePath, token) => {
 
   // When a ref SHA is pinned, fetch from the raw CDN (0 rate-limit cost).
   // Falls back to the Contents API if the CDN fails.
-  if (repoRefSha) {
-    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${repoRefSha}/${filePath}`;
+  const targetRef = ref || repoRefSha;
+  if (targetRef) {
+    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${targetRef}/${filePath}`;
     const rawT = fetchTimeout(30_000);
     try {
       const res = await fetch(rawUrl, { signal: rawT.signal });
@@ -3887,14 +3888,23 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     const importGraph = importGraphLines.join('\n');
     console.log(`🔗 Import graph: ${importGraphLines.length} files with imports, ${importGraph.length} chars`);
 
+    // Capture raw file contents so the ContentStore can be populated with the
+    // full repo corpus — this gives search_code / grep a real full-text index.
+    const repoFileContents = {};
+    for (const entry of fetched) {
+      if (entry && entry.file && entry.fileContent && !repoFileContents[entry.file.path]) {
+        repoFileContents[entry.file.path] = entry.fileContent;
+      }
+    }
+
     // Release the massive fetched array (all file contents) so GC can reclaim it.
     // It's no longer needed after TS analysis and markdown generation.
     fetched.length = 0;
 
-    return { markdown: merfolkResult, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile };
+    return { markdown: merfolkResult, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile, repoFileContents };
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
-    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '', fileSizes: new Map(), fileIndexByPath: new Map(), importIndexByFile: new Map() };
+    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '', fileSizes: new Map(), fileIndexByPath: new Map(), importIndexByFile: new Map(), repoFileContents: {} };
   }
 };
 
@@ -5352,7 +5362,7 @@ export const scanRepositoryAndGenerateDiagram = async (
     if (onProgress) onProgress(10, 'Fetching repository structure...');
     
     // Generate Merfolk markdown from entire repository
-    const { markdown: merfolkMarkdown, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile } = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
+    const { markdown: merfolkMarkdown, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile, repoFileContents } = await generateMerfolkFromRepository(repo.owner.login, repo.name, { onProgress });
     
     if (onProgress) onProgress(40, 'Analyzing code and generating diagram...');
 
@@ -5462,6 +5472,7 @@ export const scanRepositoryAndGenerateDiagram = async (
       importGraph,
       fileIndexByPath,
       importIndexByFile,
+      repoFileContents,
       commitSha,
     };
   } catch (error) {

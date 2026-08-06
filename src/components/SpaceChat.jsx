@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, parseSectionedResponse } from '../services/zenService';
+import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, parseSectionedResponse, persistMerfolkDiagram } from '../services/zenService';
 import { sendWithRetrieval } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks } from '../services/codeExtractor';
@@ -24,6 +24,7 @@ import {
 import { listBranches } from '../services/githubPushService';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
+import { saveDiagramDigest } from '../services/graphPersistence';
 import {
   findPlanContainer,
   findPlanTextObjects,
@@ -238,7 +239,7 @@ function persistMode(spaceId, mode) {
   } catch { /* ignore */ }
 }
 
-const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
+const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGenerated }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [chatSize, setChatSize] = useState({ width: SPACE_CHAT_DEFAULT_WIDTH, height: SPACE_CHAT_DEFAULT_HEIGHT });
   const [userResized, setUserResized] = useState(false);
@@ -1027,6 +1028,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
         if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
         if (result.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(result.fileIndexByPath);
         if (result.importIndexByFile) useCodeStore.getState().setImportIndexByFile(result.importIndexByFile);
+        if (result.markdown) persistMerfolkDiagram(result.markdown);
+        saveDiagramDigest(spaceId);
+        onDiagramGenerated?.({
+          markdown: result.markdown,
+          storageUrl: result.storageUrl,
+          commitSha: result.commitSha,
+          repo,
+        });
         // If the scan pushed the tab close to its heap limit, surface a
         // non-blocking warning instead of silently heading toward an OOM crash.
         const highMemory = window._memoryPressureHigh;
@@ -1049,7 +1058,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject }) => {
                 useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
                 window._connectionUpdateSkip = false;
                 // Fire-and-forget: populate content store in background via worker
-      await populateContentStoreWorker();
+      await populateContentStoreWorker(result.repoFileContents);
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;

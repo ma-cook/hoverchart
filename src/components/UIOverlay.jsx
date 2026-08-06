@@ -9,6 +9,8 @@ import {
 } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
+import { persistMerfolkDiagram } from '../services/zenService';
+import { saveDiagramDigest, rehydrateFromDigest } from '../services/graphPersistence';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions, deleteAllCellsInSpace } from '../services/spatialObjectsService';
@@ -384,6 +386,23 @@ const UIOverlay = ({
     }
   }, [currentSpaceId, user, storeGeneratedMarkdown]);
 
+  // Chat scans run inside SpaceChat which has no access to latestMarkdownUrl
+  // persistence. Mirror the in-canvas scan's success handling so the markdown
+  // storage URL is persisted and the hydration effect re-renders the 2D /
+  // analysis buttons after a page refresh.
+  const handleChatDiagramGenerated = useCallback(({ markdown, storageUrl, commitSha, repo }) => {
+    if (markdown) storeGeneratedMarkdown(markdown);
+    if (repo) setCurrentDiagramRepo(repo);
+    if (storageUrl) setLatestMarkdownUrl(storageUrl);
+    if (commitSha) setLastCommitSha(commitSha);
+    if (currentSpaceId) {
+      const payload = { diagramRepo: repo };
+      if (storageUrl) payload.markdownStorageUrl = storageUrl;
+      if (commitSha) payload.diagramCommitSha = commitSha;
+      api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
+    }
+  }, [currentSpaceId, storeGeneratedMarkdown]);
+
   // Persist whenever the active repo changes
   useEffect(() => {
     if (!currentSpaceId) return;
@@ -510,6 +529,28 @@ const UIOverlay = ({
     return () => clearTimeout(timer);
   }, [currentSpaceId, latestMarkdownUrl, is2DReady]);
 
+  // Fallback: if no stored markdown URL exists (upload failed, or the space was
+  // scanned before the storageUrl fix), restore the diagram graph context from
+  // the persisted digest so the 2D/analysis buttons and graph/community tools
+  // still work after a page refresh.
+  useEffect(() => {
+    if (!currentSpaceId || latestMarkdownUrl || useDiagramStore.getState().is2DReady) return;
+
+    const timer = setTimeout(async () => {
+      if (useDiagramStore.getState().is2DReady) return;
+      try {
+        const restored = await rehydrateFromDigest(currentSpaceId);
+        if (restored) {
+          console.log(`[UIOverlay] Restored diagram graph from digest for space ${currentSpaceId}`);
+        }
+      } catch (err) {
+        console.warn('[UIOverlay] Could not restore diagram graph from digest:', err);
+      }
+    }, 2500);
+
+    return () => clearTimeout(timer);
+  }, [currentSpaceId, latestMarkdownUrl]);
+
   // Add this handler function
   const handleCellBoundariesToggle = useCallback(() => {
     setCellBoundariesVisible('main', !cellBoundariesVisible);
@@ -555,6 +596,8 @@ const UIOverlay = ({
       if (result.success) {
         setCurrentDiagramRepo(repo);
         if (result.markdown) storeGeneratedMarkdown(result.markdown);
+        persistMerfolkDiagram(result.markdown);
+        saveDiagramDigest(currentSpaceId);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
         }
@@ -685,6 +728,8 @@ const UIOverlay = ({
       // Update stored state
       setLastCommitSha(rescanResult.commitSha);
       storeGeneratedMarkdown(rescanResult.mergedMarkdown);
+      persistMerfolkDiagram(rescanResult.mergedMarkdown);
+      saveDiagramDigest(currentSpaceId);
       if (rescanResult.contentIndex) useCodeStore.getState().setContentIndex(rescanResult.contentIndex);
       if (rescanResult.fileSizes) useCodeStore.getState().setFileSizes(rescanResult.fileSizes);
       if (rescanResult.importGraph) useCodeStore.getState().setImportGraph(rescanResult.importGraph);
@@ -793,6 +838,8 @@ const UIOverlay = ({
       if (result.success) {
         setLastScannedUrl(url);
         if (result.markdown) storeGeneratedMarkdown(result.markdown);
+        persistMerfolkDiagram(result.markdown);
+        saveDiagramDigest(currentSpaceId);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
           if (currentSpaceId) {
@@ -2105,7 +2152,7 @@ const UIOverlay = ({
       </div>
 
       {/* Group chat window - pops out to the left of the right panel */}
-      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} onCreateObject={onCreateObject} />}
+      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} />}
 
       
       {/* Unified progress toast — bottom-right, handles scan, render, and data loading */}

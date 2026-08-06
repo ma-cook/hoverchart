@@ -499,7 +499,7 @@ import useCodeStore from '../stores/codeStore';
 import { getAllPlanContext } from './planService';
 import { getRepoTree } from './githubIssuesService';
 import { fetchFileContent } from './githubRepoService';
-import { getContentStore } from './context/contentStore';
+import { getContentStore, ContentCategory, waitForContentStoreHydration } from './context/contentStore';
 import { getBase64Store } from './context/base64Store';
 import { buildContext } from './context/contextBuilder';
 import useObjectsStore from '../stores/objectsStore';
@@ -534,8 +534,12 @@ const PROJECT_NOTES_CANDIDATES = ['AGENTS.md', '.github/copilot-instructions.md'
 function fetchProjectDoc(repoContext, path, timeoutMs = 15000) {
   const { owner, repo, token } = repoContext || {};
   if (!owner || !repo || !token) return Promise.resolve(null);
+  // Fetch conventions docs from the repo's DEFAULT branch (not the scan-pinned
+  // commit SHA) so AGENTS.md/README present on the default branch are found even
+  // if they don't exist at the pinned commit. Falls back to the Contents API.
+  const defaultBranch = useCodeStore.getState().selectedRepo?.default_branch || undefined;
   return Promise.race([
-    fetchFileContent(owner, repo, path, token),
+    fetchFileContent(owner, repo, path, token, defaultBranch),
     new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
   ]).catch(() => null);
 }
@@ -574,13 +578,32 @@ export async function finalizeContentStore() {
   indexState.setPopulated(Date.now());
 }
 
-export async function populateContentStoreWorker() {
+/**
+ * Persist the generated Merfolk diagram markdown into the ContentStore so it
+ * survives a page refresh (IndexedDB) and can be re-read on demand by the
+ * architecture-map skill. The entry id uses the "merfolk:" prefix so search_code
+ * (which only scans "repo:" ids) never surfaces raw markdown in results.
+ */
+export function persistMerfolkDiagram(markdown) {
+  if (!markdown) return;
+  try {
+    const store = getContentStore();
+    store.upsert('merfolk:diagram', ContentCategory.REPO_FILE, markdown, {
+      sourcePath: 'merfolk:diagram',
+      tags: ['architecture', 'merfolk', 'diagram'],
+    });
+  } catch (e) {
+    console.warn('[persistMerfolkDiagram] failed:', e.message);
+  }
+}
+
+export async function populateContentStoreWorker(repoFileContents = null) {
   const objects = useObjectsStore.getState().objects;
   const planContext = getAllPlanContext();
 
   const worker = getContentStoreWorker();
   const result = await worker.processContent({
-    repoFileContents: null,
+    repoFileContents,
     objects: (objects || []).map(o => ({
       nodeId: o.merfolkData?.nodeId,
       nodeType: o.merfolkData?.nodeType || o.type,
@@ -598,6 +621,45 @@ export async function populateContentStoreWorker() {
   indexState.setManifest(result.manifest);
   indexState.setTotalChunks(result.totalChunks);
   indexState.setPopulated(Date.now());
+}
+
+/**
+ * Ensure the ContentStore holds the raw file contents for the selected repo so
+ * search_code / grep have a full-text corpus even when no scan has run (e.g.
+ * repo selected but diagram not scanned). Fetches contents with a concurrency
+ * pool and indexes them as repo: entries. No-op if the store already has repo
+ * content. Safe to run in the background.
+ */
+export async function ensureRepoContentIndexed({ owner, repo, branch, token, fileTree }) {
+  try {
+    const store = getContentStore();
+    await waitForContentStoreHydration();
+    const hasRepoEntries = Array.from(store.entries.keys()).some(id => id.startsWith('repo:'));
+    if (hasRepoEntries || !fileTree || fileTree.length === 0) return;
+
+    const MAX_CONCURRENCY = 12;
+    let idx = 0;
+    const fetchWorker = async () => {
+      while (idx < fileTree.length) {
+        const path = fileTree[idx++];
+        if (!path) continue;
+        try {
+          const content = await fetchFileContent(owner, repo, path, token);
+          if (content) {
+            store.upsert(`repo:${path}`, ContentCategory.REPO_FILE, content, {
+              sourcePath: path,
+              tags: ['repo', 'code'],
+            });
+          }
+        } catch { /* individual file failures are non-fatal */ }
+      }
+    };
+    const poolSize = Math.min(MAX_CONCURRENCY, fileTree.length);
+    await Promise.all(Array.from({ length: poolSize }, fetchWorker));
+    console.log(`[ContentStore] Indexed ${fileTree.length} repo files for search`);
+  } catch (err) {
+    console.warn('[ContentStore] ensureRepoContentIndexed failed:', err.message);
+  }
 }
 
 export async function sendToZen({ messages, tools, onChunk, signal }) {
@@ -710,6 +772,12 @@ The repository already has files. You MUST respect the existing file structure a
 TECH STACK: {techStack}
 
 ═══════════════════════════════════════════════════════════════
+REPOSITORY MAP (pre-loaded — do NOT re-discover the layout)
+═══════════════════════════════════════════════════════════════
+
+{repoMap}
+
+═══════════════════════════════════════════════════════════════
 PROJECT CONVENTIONS (loaded from the repository's own docs)
 ═══════════════════════════════════════════════════════════════
 
@@ -719,22 +787,22 @@ PROJECT CONVENTIONS (loaded from the repository's own docs)
 SKILLS — Load context and tools on demand
 ═══════════════════════════════════════════════════════════════
 
-Context data (file tree, component graph, import analysis, communities, LSP) is NOT pre-loaded. Instead, use skills to load it when needed:
+The file tree and symbol index are already pre-loaded above. Activate skills only when you need their specific data:
 
 1. Call list_skills to see what context is available
 2. Call activate_skill("skill-name") to load a skill's context data and unlock its tools
 3. Call deactivate_skill("skill-name") when done
 
-Always activate file-tree first to see what files exist, then activate specific skills based on your task.
+You normally do NOT need activate_skill("file-tree") — the tree is above.
 
 ═══════════════════════════════════════════════════════════════
 WORKFLOW — DISCOVER then EDIT
 ═══════════════════════════════════════════════════════════════
 
 PHASE 1 — DISCOVER:
-1. Activate file-tree skill to see the repository structure
+1. Use the pre-loaded REPOSITORY MAP above to locate relevant files (no need to activate file-tree)
 2. Activate skills relevant to your task (component-graph for component info, import-analysis for dependencies, etc.)
-3. Use search_nodes/search_code to find WHERE each affected component is defined
+3. Use grep/search_code to find WHERE each affected component is defined
 4. Use file_outline(path) to see structure and line numbers before reading full files
 5. MANDATORY: Call read_file on EVERY file you plan to modify
 
@@ -996,6 +1064,50 @@ function buildMinimalSceneContext(objects) {
   return lines.length > 0 ? lines.join('\n') : '(no scene components)';
 }
 
+/**
+ * Build a compact pre-loaded repo map for the code-gen system prompt: the
+ * component → file index, graph overview, sized file tree, then symbol index
+ * and import graph — in priority order within a shared budget. This lets the
+ * model skip layout discovery and jump straight to targeted reads.
+ */
+function buildRepoMap(repoContext, sceneObjects) {
+  const cs = useCodeStore.getState();
+  const fileTree = (repoContext?.fileTree?.length ? repoContext.fileTree : (cs.repoFileTree || []));
+  if (fileTree.length === 0) return '(repo context not loaded — use list_files("") to browse)';
+
+  const REPO_MAP_BUDGET = 14000;
+  const parts = [];
+  let used = 0;
+
+  const push = (label, text) => {
+    if (!text || text.startsWith('(no ')) return;
+    const block = `\n${label}\n${text}`;
+    const avail = REPO_MAP_BUDGET - used;
+    if (avail <= 0) return;
+    if (block.length > avail) {
+      parts.push(block.slice(0, avail) + '\n... (truncated)');
+      used = REPO_MAP_BUDGET;
+    } else {
+      parts.push(block);
+      used += block.length;
+    }
+  };
+
+  // Highest-value context first so the model never needs to rediscover layout:
+  // component → file mapping, then the structural graph overview.
+  push('COMPONENT INDEX (component → file):', buildComponentIndex(sceneObjects));
+  push('GRAPH SUMMARY (structure overview):', buildGraphSummary(useDiagramStore.getState()));
+
+  // Sized file tree (capped internally at ~8000 chars).
+  push(`FILE TREE (${fileTree.length} files, with sizes):`, buildFileTreeSection(fileTree, cs.fileSizes));
+
+  // Symbol index and import graph — only what fits in the remaining budget.
+  push('SYMBOL INDEX (path: exports | functions | css classes):', buildContentIndexSection());
+  push('IMPORT GRAPH (file → files it imports):', buildImportGraphSection());
+
+  return parts.join('\n') || '(repo context not loaded — use list_files("") to browse)';
+}
+
 export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
 
@@ -1006,9 +1118,12 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
     console.warn('[buildCodeGenMessages] project notes load failed:', e.message);
   }
 
+  const repoMap = buildRepoMap(repoContext, sceneObjects);
+
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{techStack}', techStackSection)
-    .replace('{projectNotes}', projectNotes || '(none loaded — if the repo has AGENTS.md or README conventions, read them yourself)');
+    .replace('{projectNotes}', projectNotes || '(none loaded — if the repo has AGENTS.md or README conventions, read them yourself)')
+    .replace('{repoMap}', repoMap);
 
   console.log(`[buildCodeGenMessages] System prompt: ${systemContent.length} chars`);
 

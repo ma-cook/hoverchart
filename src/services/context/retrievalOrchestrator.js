@@ -525,6 +525,13 @@ export async function sendWithRetrieval({
     sceneObjects,
   });
 
+  // Pre-activate architecture context so the model has the graph/community
+  // tools and their instructions ready from round 1 — no list_skills /
+  // activate_skill discovery rounds needed.
+  for (const skillName of ['architecture-map', 'import-analysis', 'community-architecture']) {
+    REGISTRY.activate(skillName);
+  }
+
   const userMessages = messages.filter(m => m.role === 'user');
   const taskType = globalRouter.classifyTaskType(messages, computeTools());
   console.log(`[sendWithRetrieval] Classified task type: ${taskType}`);

@@ -702,6 +702,14 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
   const store = getContentStore();
   const base64Store = getBase64Store();
 
+  // Wait for IndexedDB hydration before tools read the store — otherwise
+  // search_code/grep/read_file can see an empty corpus right after a reload
+  // and report "no matches" for symbols that actually exist.
+  try {
+    await waitForContentStoreHydration();
+    await waitForBase64StoreHydration();
+  } catch { /* hydration failure is non-fatal */ }
+
   switch (name) {
     case 'quick_look': {
       const path = normalizePath(args.path);
@@ -941,6 +949,49 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       results.sort((a, b) => a.rank - b.rank);
       const output = results.slice(0, MAX_RESULTS).map(r => r.text).join('\n');
       return { success: true, content: output + READ_FILE_HINT };
+    }
+
+    case 'grep': {
+      const patternSrc = args.pattern || '';
+      if (!patternSrc) return { success: false, content: 'grep requires a "pattern" parameter' };
+      let re;
+      try {
+        re = new RegExp(patternSrc, args.caseSensitive ? '' : 'i');
+      } catch (e) {
+        return { success: false, content: `Invalid regex pattern: ${e.message}` };
+      }
+      const prefix = normalizePath(args.path || '').replace(/\/+$/, '');
+      const MAX_GREP_RESULTS = 25;
+      const MAX_PER_FILE = 8;
+      const results = [];
+      const fileSizeMap = new Map(useCodeStore.getState().fileSizes || []);
+      const sizeHint = (filePath) => {
+        const sz = fileSizeMap.get(filePath);
+        return sz ? ` (${sz} chars)` : '';
+      };
+      for (const [id, entry] of Array.from(store.entries.entries())) {
+        if (!id.startsWith('repo:')) continue;
+        const filePath = id.slice(5);
+        if (prefix && !filePath.startsWith(prefix)) continue;
+        const fullText = entry.chunks.map(c => c.text).join('');
+        const lines = fullText.split('\n');
+        let fileHits = 0;
+        for (let li = 0; li < lines.length && fileHits < MAX_PER_FILE; li++) {
+          if (re.test(lines[li])) {
+            results.push(`${filePath}${sizeHint(filePath)}:${li + 1}: ${lines[li].trim().slice(0, 200)}`);
+            fileHits++;
+          }
+        }
+        if (results.length >= MAX_GREP_RESULTS) break;
+      }
+      if (results.length === 0) {
+        const scope = prefix ? ` under "${prefix}"` : '';
+        return {
+          success: true,
+          content: `No matches for /${patternSrc}/${scope}. The content index may be empty for this repo — try search_code for filename/symbol matches, or quick_look/read_file on candidate files.`,
+        };
+      }
+      return { success: true, content: results.join('\n') };
     }
 
     case 'get_node_info': {
