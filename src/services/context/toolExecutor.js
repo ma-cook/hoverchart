@@ -111,7 +111,7 @@ async function seedRepoCorpusFromFileContents(contents) {
         sourcePath: filePath,
         tags: ['repo', 'code'],
       });
-      if (++seededCount % 25 === 0) await new Promise(r => setTimeout(r, 0));
+      if (++seededCount % 10 === 0) await new Promise(r => setTimeout(r, 0));
     }
     console.log(`[search] Seeded content store with ${Object.keys(contents).length} repo files`);
   } catch (err) {
@@ -1067,7 +1067,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             fileHitSamples.set(filePath, samples);
           }
           scanCount++;
-          if (scanCount % 50 === 0) await new Promise(r => setTimeout(r, 0));
+          if (scanCount % 10 === 0) await new Promise(r => setTimeout(r, 0));
         }
 
         const topFiles = [...fileHitCounts.entries()]
@@ -1133,6 +1133,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       } else {
         const corpus = buildRepoCorpus(store, grepCodeStoreState);
+        let scanCount = 0;
         for (const [filePath, fullText] of corpus) {
           if (prefix && !filePath.startsWith(prefix)) continue;
           const lines = fullText.split('\n');
@@ -1144,6 +1145,8 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             }
           }
           if (results.length >= MAX_GREP_RESULTS) break;
+          scanCount++;
+          if (scanCount % 10 === 0) await new Promise(r => setTimeout(r, 0));
         }
       }
       if (results.length === 0) {
