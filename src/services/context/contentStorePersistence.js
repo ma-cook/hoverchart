@@ -15,12 +15,26 @@ const STORE_META = 'meta';
 let dbInstance = null;
 let dbPromise = null;
 
+const OPEN_TIMEOUT_MS = 6000;
+
 function openDB() {
   if (dbInstance) return Promise.resolve(dbInstance);
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+    let settled = false;
+    const openTimer = setTimeout(() => {
+      // The open can be blocked indefinitely when another tab holds an older
+      // schema version (the versionchange never proceeds). Never hang the
+      // store on that — reject so callers degrade to the in-memory store, and
+      // reset dbPromise so a later call can retry once the blocker is gone.
+      dbPromise = null;
+      if (settled) return;
+      settled = true;
+      console.warn('[contentStorePersistence] IndexedDB open timed out — degrading to in-memory store');
+      reject(new Error('IndexedDB open timed out (blocked by another connection?)'));
+    }, OPEN_TIMEOUT_MS);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains(STORE_ENTRIES)) db.createObjectStore(STORE_ENTRIES);
@@ -46,12 +60,21 @@ function openDB() {
       }
     };
     req.onsuccess = (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(openTimer);
       dbInstance = e.target.result;
       resolve(dbInstance);
     };
     req.onerror = (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(openTimer);
       console.warn('[contentStorePersistence] IndexedDB open failed:', e.target.error);
       reject(e.target.error);
+    };
+    req.onblocked = () => {
+      console.warn('[contentStorePersistence] IndexedDB open blocked by an existing connection with an older schema version');
     };
   });
   return dbPromise;

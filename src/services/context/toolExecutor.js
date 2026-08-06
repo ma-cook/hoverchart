@@ -53,6 +53,7 @@ function buildRepoCorpus(store, codeStoreState) {
 }
 
 let _seededRepoCorpus = false;
+const HYDRATION_WAIT_MS = 8000;
 
 /**
  * Last-resort direct seeding of the content store from the in-memory
@@ -63,7 +64,10 @@ let _seededRepoCorpus = false;
 async function seedRepoCorpusFromFileContents(contents) {
   try {
     const store = getContentStore();
-    await waitForContentStoreHydration();
+    await Promise.race([
+      waitForContentStoreHydration(),
+      new Promise((r) => setTimeout(r, HYDRATION_WAIT_MS)),
+    ]);
     const hasRepoEntries = Array.from(store.entries.keys()).some(id => id.startsWith('repo:'));
     if (hasRepoEntries) return;
     for (const [filePath, content] of Object.entries(contents)) {

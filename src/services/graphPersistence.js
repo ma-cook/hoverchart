@@ -15,6 +15,32 @@ import useDiagramStore from '../stores/diagramStore';
 const STORAGE_PREFIX = 'diagramDigest_';
 const MAX_DIGEST_CHARS = 1000000;
 
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function gzipString(str) {
+  const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function gunzipString(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new TextDecoder().decode(await new Response(stream).arrayBuffer());
+}
+
 function serializeGraphs(graphs) {
   if (!graphs) return null;
   return graphs.map((g) => ({
@@ -33,7 +59,7 @@ function serializeHierarchy(hierarchy) {
   };
 }
 
-export function saveDiagramDigest(spaceId) {
+export async function saveDiagramDigest(spaceId) {
   if (!spaceId) return;
   try {
     const state = useDiagramStore.getState();
@@ -52,7 +78,18 @@ export function saveDiagramDigest(spaceId) {
 
     const serialized = JSON.stringify(digest);
     if (serialized.length > MAX_DIGEST_CHARS) {
-      console.warn(`[graphPersistence] Digest too large (${serialized.length} chars) — skipping persistence`);
+      if (typeof CompressionStream === 'undefined' || typeof DecompressionStream === 'undefined') {
+        console.warn(`[graphPersistence] Digest too large (${serialized.length} chars) — skipping persistence (compression unavailable)`);
+        return;
+      }
+      const compressed = bytesToBase64(await gzipString(serialized));
+      const stored = JSON.stringify({ c: 1, s: compressed });
+      if (stored.length > MAX_DIGEST_CHARS) {
+        console.warn(`[graphPersistence] Digest too large (${serialized.length} chars, ${stored.length} chars compressed) — skipping persistence`);
+        return;
+      }
+      localStorage.setItem(`${STORAGE_PREFIX}${spaceId}`, stored);
+      console.log(`[graphPersistence] Saved compressed digest: ${serialized.length} chars -> ${stored.length} chars`);
       return;
     }
 
@@ -62,12 +99,18 @@ export function saveDiagramDigest(spaceId) {
   }
 }
 
-export function loadDiagramDigest(spaceId) {
+export async function loadDiagramDigest(spaceId) {
   if (!spaceId) return null;
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}${spaceId}`);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.c === 1) {
+      return JSON.parse(await gunzipString(base64ToBytes(parsed.s)));
+    }
+    return parsed;
+  } catch (e) {
+    console.warn('[graphPersistence] load failed:', e.message);
     return null;
   }
 }
@@ -85,7 +128,7 @@ export function clearDiagramDigest(spaceId) {
  * summaries and raw assignments are consistent with the restored graph.
  */
 export async function rehydrateFromDigest(spaceId) {
-  const digest = loadDiagramDigest(spaceId);
+  const digest = await loadDiagramDigest(spaceId);
   if (!digest?.graphs) return false;
 
   try {
