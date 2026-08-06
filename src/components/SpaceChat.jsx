@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
 import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, parseSectionedResponse } from '../services/zenService';
-import { sendWithRetrieval } from '../services/context';
+import { sendWithRetrieval, getContentStore, waitForContentStoreHydration } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
@@ -640,9 +640,24 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       let repoContext = null;
       if (selectedRepo && selectedBranch) {
         const _cs = useCodeStore.getState();
-        if (_cs.repoFileTree && Object.keys(_cs.repoFileContents || {}).length > 0) {
-          repoContext = { fileTree: _cs.repoFileTree, fileContents: _cs.repoFileContents, fileSizes: _cs.fileSizes || null };
-          console.log(`[CodeSend] Using cached repo context: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
+        // The search corpus lives in the content store (persisted to IndexedDB).
+        // If it already holds repo: entries, we don't need to re-fetch the
+        // contents from GitHub just to search — reuse the cached tree.
+        let storeHasRepoContents = false;
+        try {
+          await waitForContentStoreHydration();
+          const store = getContentStore();
+          for (const id of store.entries.keys()) {
+            if (id.startsWith('repo:')) { storeHasRepoContents = true; break; }
+          }
+        } catch { /* treat store as empty */ }
+        if (_cs.repoFileTree && (Object.keys(_cs.repoFileContents || {}).length > 0 || storeHasRepoContents)) {
+          repoContext = {
+            fileTree: _cs.repoFileTree,
+            fileContents: _cs.repoFileContents || {},
+            fileSizes: _cs.fileSizes || null,
+          };
+          console.log(`[CodeSend] Using cached repo context: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents${storeHasRepoContents && !_cs.repoFileContents ? ' (corpus from content store)' : ''}`);
         } else {
           const token = getGithubToken();
           if (token) {
@@ -655,6 +670,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             repoContext = await fetchRepoContext(token, owner, repoName, branchName);
             useCodeStore.getState().setRepoContext(repoContext.fileTree, repoContext.fileContents);
             console.log(`[CodeSend] Fetched: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
+            // Rebuild + persist the search corpus (IndexedDB) so search_code has
+            // full-text to scan even when no scan has run yet. Fire-and-forget.
+            if (Object.keys(repoContext.fileContents).length > 0) {
+              populateContentStoreWorker(repoContext.fileContents, null);
+            }
           }
         }
       }

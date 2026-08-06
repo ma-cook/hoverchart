@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'hoverchart-content-store';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_ENTRIES = 'contentEntries';
 const STORE_BASE64 = 'base64Chunks';
 const STORE_META = 'meta';
@@ -26,16 +26,22 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE_ENTRIES)) db.createObjectStore(STORE_ENTRIES);
       if (!db.objectStoreNames.contains(STORE_BASE64)) db.createObjectStore(STORE_BASE64);
       if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
-      if (e.oldVersion < 2) {
-        // v1 stored chunks under colliding bare "chunk-N" ids, which let
+      if (e.oldVersion < 3) {
+        // v1/v2 stored chunks under colliding bare "chunk-N" ids, which let
         // Base64Store return the WRONG file's text. Discard the stale cache;
         // the next scan/population rebuilds it with globally unique chunk ids.
+        // v2's attempt to clear here used db.transaction() inside the upgrade
+        // and threw "A version change transaction is running", so the stale
+        // data survived — v3 re-runs the clear on the upgrade transaction.
         try {
-          db.transaction(STORE_ENTRIES, 'readwrite').objectStore(STORE_ENTRIES).clear();
-          db.transaction(STORE_BASE64, 'readwrite').objectStore(STORE_BASE64).clear();
-          db.transaction(STORE_META, 'readwrite').objectStore(STORE_META).clear();
+          const tx = e.target.transaction;
+          if (tx) {
+            tx.objectStore(STORE_ENTRIES).clear();
+            tx.objectStore(STORE_BASE64).clear();
+            tx.objectStore(STORE_META).clear();
+          }
         } catch (clearErr) {
-          console.warn('[contentStorePersistence] v1 cache clear failed:', clearErr.message);
+          console.warn('[contentStorePersistence] stale cache clear failed:', clearErr.message);
         }
       }
     };

@@ -519,9 +519,34 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     const entries = treeEntries.filter(e => e.type === 'blob');
     const filePaths = entries.map(e => e.path).filter(p => typeof p === 'string').slice(0, 5000);
 
-    console.log(`[fetchRepoContext] Loaded file tree: ${filePaths.length} files`);
+    console.log(`[fetchRepoContext] Loaded file tree: ${filePaths.length} files — fetching contents...`);
 
-    return { fileTree: filePaths, fileContents: {}, owner, repo, branch, token, error: null };
+    // Fetch file bodies with a bounded concurrency pool so the returned
+    // fileContents actually feed the search corpus / codegen context. Without
+    // this, a refresh restored the tree but left contents empty, so search_code
+    // had nothing to scan and reported "no matches" for real symbols.
+    const fileContents = {};
+    const MAX_CONCURRENCY = 20;
+    let idx = 0;
+    let fetched = 0;
+    const fetchWorker = async () => {
+      while (idx < filePaths.length) {
+        const path = filePaths[idx++];
+        if (!path) continue;
+        try {
+          const content = await fetchFileContent(owner, repo, path, token);
+          if (content) {
+            fileContents[path] = content;
+            fetched++;
+          }
+        } catch { /* individual file failures are non-fatal */ }
+      }
+    };
+    const poolSize = Math.min(MAX_CONCURRENCY, filePaths.length);
+    await Promise.all(Array.from({ length: poolSize }, fetchWorker));
+
+    console.log(`[fetchRepoContext] Fetched: ${filePaths.length} files, ${fetched} contents`);
+    return { fileTree: filePaths, fileContents, owner, repo, branch, token, error: null };
   } catch (err) {
     console.error('[fetchRepoContext] step failed:', err.message, err.stack);
     throw err;
