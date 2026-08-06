@@ -673,7 +673,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             // Rebuild + persist the search corpus (IndexedDB) so search_code has
             // full-text to scan even when no scan has run yet. Fire-and-forget.
             if (Object.keys(repoContext.fileContents).length > 0) {
-              populateContentStoreWorker(repoContext.fileContents, null);
+              populateContentStoreWorker(repoContext.fileContents, null)
+                .catch((err) => console.warn('[CodeSend] populateContentStoreWorker failed:', err));
             }
           }
         }

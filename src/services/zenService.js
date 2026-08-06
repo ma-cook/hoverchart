@@ -616,6 +616,16 @@ export async function finalizeContentStore() {
  * from surfacing raw markdown in results.
  */
 export async function populateContentStoreWorker(repoFileContents = null, diagramMarkdown = null) {
+  try {
+    await populateContentStoreWorkerInner(repoFileContents, diagramMarkdown);
+  } catch (err) {
+    console.warn('[ContentStore] populateContentStoreWorker failed:', err);
+  }
+}
+
+const HYDRATION_WAIT_MS = 8000;
+
+async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown) {
   const objects = useObjectsStore.getState().objects;
   const planContext = getAllPlanContext();
   const sceneObjects = (objects || []).map(o => ({
@@ -627,8 +637,13 @@ export async function populateContentStoreWorker(repoFileContents = null, diagra
   }));
 
   // Ensure the persisted store (IndexedDB) has finished loading before we merge
-  // into it, so batches don't get overwritten by the hydration promise.
-  await waitForContentStoreHydration();
+  // into it, so batches don't get overwritten by the hydration promise. Bound
+  // the wait so a stuck IndexedDB open can't permanently block the merge — the
+  // in-memory store still serves search even if persistence never comes up.
+  await Promise.race([
+    waitForContentStoreHydration(),
+    new Promise((r) => setTimeout(r, HYDRATION_WAIT_MS)),
+  ]);
 
   const worker = getContentStoreWorker();
   await worker.reset();
@@ -681,6 +696,7 @@ export async function populateContentStoreWorker(repoFileContents = null, diagra
   indexState.setManifest(getContentStore().getManifest());
   indexState.setTotalChunks(getContentStore().totalChunks);
   indexState.setPopulated(Date.now());
+  console.log(`[ContentStore] Populated ${Object.keys(repoFileContents || {}).length} repo files (${getContentStore().entries.size} total entries)`);
 }
 
 /**

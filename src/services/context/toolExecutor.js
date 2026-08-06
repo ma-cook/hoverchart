@@ -37,6 +37,10 @@ function buildRepoCorpus(store, codeStoreState) {
   if (repoEntries === 0) {
     const contents = codeStoreState?.repoFileContents;
     if (contents) {
+      if (!_seededRepoCorpus && Object.keys(contents).length > 0) {
+        _seededRepoCorpus = true;
+        seedRepoCorpusFromFileContents(contents);
+      }
       for (const [filePath, content] of Object.entries(contents)) {
         if (content) corpus.set(filePath, content);
       }
@@ -46,6 +50,33 @@ function buildRepoCorpus(store, codeStoreState) {
     }
   }
   return corpus;
+}
+
+let _seededRepoCorpus = false;
+
+/**
+ * Last-resort direct seeding of the content store from the in-memory
+ * repoFileContents map, used when the worker-backed population is slow or
+ * failed. Fires async so search itself isn't blocked; re-checks that the
+ * worker hasn't already populated the store before upserting.
+ */
+async function seedRepoCorpusFromFileContents(contents) {
+  try {
+    const store = getContentStore();
+    await waitForContentStoreHydration();
+    const hasRepoEntries = Array.from(store.entries.keys()).some(id => id.startsWith('repo:'));
+    if (hasRepoEntries) return;
+    for (const [filePath, content] of Object.entries(contents)) {
+      if (!content) continue;
+      store.upsert(`repo:${filePath}`, ContentCategory.REPO_FILE, content, {
+        sourcePath: filePath,
+        tags: ['repo', 'code'],
+      });
+    }
+    console.log(`[search] Seeded content store with ${Object.keys(contents).length} repo files`);
+  } catch (err) {
+    console.warn('[search] Direct corpus seeding failed:', err.message);
+  }
 }
 
 const appliedEdits = new Map();
