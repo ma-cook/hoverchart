@@ -408,9 +408,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
 
   useEffect(() => {
     if (isOpen && isNearBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      bottomRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth' });
     }
-  }, [messages, planMessages, codeMessages, isOpen]);
+  }, [messages, planMessages, codeMessages, isOpen, streaming]);
 
   const handleScroll = useCallback(async () => {
     const el = scrollContainerRef.current;
@@ -442,7 +442,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   }, [chatMode]);
 
   useEffect(() => {
-    persistMessages(spaceId, 'plan', planMessages);
+    const timer = setTimeout(() => persistMessages(spaceId, 'plan', planMessages), 1000);
+    return () => clearTimeout(timer);
   }, [spaceId, planMessages]);
 
   useEffect(() => {
