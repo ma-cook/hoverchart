@@ -462,7 +462,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
               WebkitBackdropFilter: 'blur(8px)',
               border: '1px solid rgba(0, 0, 0, 0.92)',
               borderRadius: '10px',
-              boxShadow: '0 4px 18px rgba(0, 0, 0, 0.35)',
+              boxShadow: '0 4px 18px rgba(0, 0, 0, 0.47)',
               zIndex: 10,
               display: 'flex',
               padding: windowSize.width <= 480 ? '0.5rem' : '1rem',
