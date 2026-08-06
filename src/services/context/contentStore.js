@@ -102,6 +102,35 @@ export class ContentStore {
     this._persist();
   }
 
+  /**
+   * Merge worker-computed entries into the existing store without clearing it.
+   * Same-id entries replace their old chunks and index rows (mirroring upsert).
+   * Inverted index rows are rebuilt from each entry's chunk keywords, so the
+   * worker only needs to send entries. totalChunks is reconciled incrementally
+   * so overlapping batch payloads stay consistent.
+   */
+  mergeBulk(serializedEntries) {
+    for (const [id, entry] of serializedEntries) {
+      const existing = this.entries.get(id);
+      if (existing) {
+        this._removeFromIndex(existing);
+        this.totalChunks -= existing.chunks.length;
+      }
+      this.entries.set(id, entry);
+      this.totalChunks += entry.chunks.length;
+      for (const chunk of entry.chunks) {
+        for (const keyword of chunk.keywords) {
+          if (!this.invertedIndex.has(keyword)) {
+            this.invertedIndex.set(keyword, new Set());
+          }
+          this.invertedIndex.get(keyword).add(chunk.id);
+        }
+      }
+    }
+    this._hydrated = true;
+    this._persist();
+  }
+
   _persist() {
     saveContentStore(this.entries, this.invertedIndex, this.totalChunks);
   }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, parseSectionedResponse, persistMerfolkDiagram } from '../services/zenService';
+import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, parseSectionedResponse } from '../services/zenService';
 import { sendWithRetrieval } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks } from '../services/codeExtractor';
@@ -1028,8 +1028,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
         if (result.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(result.fileIndexByPath);
         if (result.importIndexByFile) useCodeStore.getState().setImportIndexByFile(result.importIndexByFile);
-        if (result.markdown) persistMerfolkDiagram(result.markdown);
-        saveDiagramDigest(spaceId);
+        // Deferred so the scan-complete state can paint before the digest
+        // snapshot (graphs + hierarchy + communities) is serialized.
+        setTimeout(() => saveDiagramDigest(spaceId), 0);
         onDiagramGenerated?.({
           markdown: result.markdown,
           storageUrl: result.storageUrl,
@@ -1057,8 +1058,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               const applyContext = async () => {
                 useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
                 window._connectionUpdateSkip = false;
-                // Fire-and-forget: populate content store in background via worker
-      await populateContentStoreWorker(result.repoFileContents);
+                // Fire-and-forget: populate content store in background via worker.
+                // repoFileContents is sent in bounded batches so the main thread
+                // is never blocked by a single large structured clone.
+                populateContentStoreWorker(result.repoFileContents, result.markdown);
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;

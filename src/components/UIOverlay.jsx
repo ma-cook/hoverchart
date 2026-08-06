@@ -9,7 +9,7 @@ import {
 } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
-import { persistMerfolkDiagram } from '../services/zenService';
+import { populateContentStoreWorker } from '../services/zenService';
 import { saveDiagramDigest, rehydrateFromDigest } from '../services/graphPersistence';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
@@ -596,8 +596,12 @@ const UIOverlay = ({
       if (result.success) {
         setCurrentDiagramRepo(repo);
         if (result.markdown) storeGeneratedMarkdown(result.markdown);
-        persistMerfolkDiagram(result.markdown);
-        saveDiagramDigest(currentSpaceId);
+        // Deferred so the scan-complete state can paint before the digest
+        // snapshot is serialized.
+        setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
+        // Fire-and-forget: chunk/index the repo corpus + diagram markdown off
+        // the main thread (repoFileContents is sent in bounded batches).
+        populateContentStoreWorker(result.repoFileContents, result.markdown);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
         }
@@ -728,8 +732,11 @@ const UIOverlay = ({
       // Update stored state
       setLastCommitSha(rescanResult.commitSha);
       storeGeneratedMarkdown(rescanResult.mergedMarkdown);
-      persistMerfolkDiagram(rescanResult.mergedMarkdown);
-      saveDiagramDigest(currentSpaceId);
+      // Deferred so the scan-complete state can paint before the digest
+      // snapshot is serialized.
+      setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
+      // Fire-and-forget: re-index the merged markdown off the main thread.
+      populateContentStoreWorker(null, rescanResult.mergedMarkdown);
       if (rescanResult.contentIndex) useCodeStore.getState().setContentIndex(rescanResult.contentIndex);
       if (rescanResult.fileSizes) useCodeStore.getState().setFileSizes(rescanResult.fileSizes);
       if (rescanResult.importGraph) useCodeStore.getState().setImportGraph(rescanResult.importGraph);
@@ -838,8 +845,11 @@ const UIOverlay = ({
       if (result.success) {
         setLastScannedUrl(url);
         if (result.markdown) storeGeneratedMarkdown(result.markdown);
-        persistMerfolkDiagram(result.markdown);
-        saveDiagramDigest(currentSpaceId);
+        // Deferred so the scan-complete state can paint before the digest
+        // snapshot is serialized.
+        setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
+        // Fire-and-forget: index the generated markdown off the main thread.
+        populateContentStoreWorker(null, result.markdown);
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
           if (currentSpaceId) {

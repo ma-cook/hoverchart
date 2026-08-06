@@ -579,47 +579,82 @@ export async function finalizeContentStore() {
 }
 
 /**
- * Persist the generated Merfolk diagram markdown into the ContentStore so it
- * survives a page refresh (IndexedDB) and can be re-read on demand by the
- * architecture-map skill. The entry id uses the "merfolk:" prefix so search_code
- * (which only scans "repo:" ids) never surfaces raw markdown in results.
+ * Populate the ContentStore with the repo corpus, scene objects, plan context
+ * and the Merfolk diagram markdown. All chunking/keyword-indexing happens in
+ * contentStoreWorker; repo files are sent in small batches so no single Comlink
+ * structured clone blocks the main thread, and each batch is merged back
+ * incrementally. Safe to call fire-and-forget after a scan.
+ *
+ * The Merfolk markdown is indexed under "merfolk:diagram" so it survives a page
+ * refresh (IndexedDB) and can be re-read on demand by the architecture-map
+ * skill. The "merfolk:" prefix keeps search_code (which only scans "repo:" ids)
+ * from surfacing raw markdown in results.
  */
-export function persistMerfolkDiagram(markdown) {
-  if (!markdown) return;
-  try {
-    const store = getContentStore();
-    store.upsert('merfolk:diagram', ContentCategory.REPO_FILE, markdown, {
-      sourcePath: 'merfolk:diagram',
-      tags: ['architecture', 'merfolk', 'diagram'],
-    });
-  } catch (e) {
-    console.warn('[persistMerfolkDiagram] failed:', e.message);
-  }
-}
-
-export async function populateContentStoreWorker(repoFileContents = null) {
+export async function populateContentStoreWorker(repoFileContents = null, diagramMarkdown = null) {
   const objects = useObjectsStore.getState().objects;
   const planContext = getAllPlanContext();
+  const sceneObjects = (objects || []).map(o => ({
+    nodeId: o.merfolkData?.nodeId,
+    nodeType: o.merfolkData?.nodeType || o.type,
+    name: o.headerText,
+    code: o.metadata?.code,
+    isContainer: o.merfolkData?.isContainer,
+  }));
+
+  // Ensure the persisted store (IndexedDB) has finished loading before we merge
+  // into it, so batches don't get overwritten by the hydration promise.
+  await waitForContentStoreHydration();
 
   const worker = getContentStoreWorker();
-  const result = await worker.processContent({
-    repoFileContents,
-    objects: (objects || []).map(o => ({
-      nodeId: o.merfolkData?.nodeId,
-      nodeType: o.merfolkData?.nodeType || o.type,
-      name: o.headerText,
-      code: o.metadata?.code,
-      isContainer: o.merfolkData?.isContainer,
-    })),
-    planContext: planContext || '',
-  });
+  await worker.reset();
 
-  getContentStore().hydrate(result.entries, result.invertedIndexEntries, result.totalChunks);
+  const repoEntries = Object.entries(repoFileContents || {});
+
+  // Drop repo entries from a previous scan/space that this population won't
+  // re-add, so switching repos doesn't leave stale search results behind.
+  const store = getContentStore();
+  if (repoEntries.length > 0) {
+    const newRepoIds = new Set(repoEntries.map(([p]) => `repo:${p}`));
+    for (const id of Array.from(store.entries.keys())) {
+      if (id.startsWith('repo:') && !newRepoIds.has(id)) {
+        store.remove(id);
+      }
+    }
+  }
+
+  const BATCH_SIZE = 25;
+  for (let i = 0; i < repoEntries.length; i += BATCH_SIZE) {
+    const slice = Object.fromEntries(repoEntries.slice(i, i + BATCH_SIZE));
+    const batch = { repoFileContents: slice };
+    if (i === 0) {
+      batch.objects = sceneObjects;
+      batch.planContext = planContext || '';
+      batch.diagramMarkdown = diagramMarkdown || null;
+    }
+    const result = await worker.processContentBatch(batch);
+    if (result.entries?.length) {
+      getContentStore().mergeBulk(result.entries);
+    }
+  }
+
+  // No repo files (e.g. plan send, rescan, runtime scan) — still index the
+  // scene objects, plan and diagram markdown.
+  if (repoEntries.length === 0) {
+    const result = await worker.processContentBatch({
+      objects: sceneObjects,
+      planContext: planContext || '',
+      diagramMarkdown: diagramMarkdown || null,
+    });
+    if (result.entries?.length) {
+      getContentStore().mergeBulk(result.entries);
+    }
+  }
+
   getBase64Store().encodeAll();
 
   const indexState = useContentIndexStore.getState();
-  indexState.setManifest(result.manifest);
-  indexState.setTotalChunks(result.totalChunks);
+  indexState.setManifest(getContentStore().getManifest());
+  indexState.setTotalChunks(getContentStore().totalChunks);
   indexState.setPopulated(Date.now());
 }
 
