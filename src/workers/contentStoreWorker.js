@@ -212,6 +212,7 @@ const workerApi = {
       if (!id.startsWith('repo:')) continue;
       const filePath = id.slice(5);
       if (pathPrefix && !filePath.startsWith(pathPrefix)) continue;
+      if (entry.chunks?.some((c) => c.oversized)) continue;
       const fullText = entry.chunks.map((c) => c.text).join('');
       if (!fullText) continue;
       const lines = fullText.split('\n');

@@ -1,7 +1,7 @@
 import { getContentStore, ContentCategory, waitForContentStoreHydration } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
-import { extractKeywords } from './chunkIndex';
+import { extractKeywords, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
 import { getContentStoreWorker } from '../../workers/contentStoreWorkerClient';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
@@ -37,7 +37,11 @@ function buildRepoCorpus(store, codeStoreState) {
   const corpus = new Map();
   let repoEntries = 0;
   for (const [id, entry] of store.entries) {
-    if (id.startsWith('repo:')) {
+    // totalChars guard also covers entries persisted before the oversized flag
+    // existed (a multi-MB file chunked by an older session).
+    if (id.startsWith('repo:')
+      && (entry.totalChars || 0) <= MAX_INDEXED_FILE_CHARS
+      && !entry.chunks?.some((c) => c.oversized)) {
       const text = entry.chunks.map(c => c.text).join('');
       if (text) corpus.set(id.slice(5), text);
       repoEntries++;
@@ -49,7 +53,10 @@ function buildRepoCorpus(store, codeStoreState) {
       _fileContentsRef = contents;
       _fileContentsCorpus = new Map();
       for (const [filePath, content] of Object.entries(contents)) {
-        if (content) _fileContentsCorpus.set(filePath, content);
+        // Skip oversized files — scanning them on the main thread blocks the UI.
+        if (content && content.length <= MAX_INDEXED_FILE_CHARS) {
+          _fileContentsCorpus.set(filePath, content);
+        }
       }
     }
     if (_fileContentsCorpus && _fileContentsCorpus.size > 0) {
@@ -142,31 +149,45 @@ async function persistFileContent(storeId, filePath, content) {
 
     const cfg = { chunkSize: 3000, overlap: 300, delimiter: '\n\n' };
     const chunks = [];
-    let start = 0;
-    let chunkIndex = 0;
-    while (start < content.length) {
-      let end = Math.min(start + cfg.chunkSize, content.length);
-      if (end < content.length) {
-        const lastDelimiter = content.lastIndexOf(cfg.delimiter, end);
-        if (lastDelimiter > start + cfg.chunkSize * 0.5) {
-          end = lastDelimiter;
-        }
-      }
-      const slice = content.slice(start, end);
+    if (content.length > MAX_INDEXED_FILE_CHARS) {
+      // Oversized file: keep one raw chunk (no chunking/keywords) so storing
+      // it never blocks the main thread for seconds; full-text scan skips it.
       chunks.push({
-        // Unique per entry (storeId) so Base64Store's flat chunk map can't
-        // confuse this file's chunk-N with another file's chunk-N.
-        id: `${storeId}:chunk-${chunkIndex}`,
-        text: slice,
-        startIndex: start,
-        endIndex: end,
-        keywords: extractKeywords(slice),
-        charCount: slice.length,
+        id: `${storeId}:chunk-0`,
+        text: content,
+        startIndex: 0,
+        endIndex: content.length,
+        keywords: [],
+        charCount: content.length,
+        oversized: true,
       });
-      start = end - cfg.overlap;
-      if (start >= content.length) break;
-      chunkIndex++;
-      if (chunkIndex % 10 === 0) await new Promise(r => setTimeout(r, 0));
+    } else {
+      let start = 0;
+      let chunkIndex = 0;
+      while (start < content.length) {
+        let end = Math.min(start + cfg.chunkSize, content.length);
+        if (end < content.length) {
+          const lastDelimiter = content.lastIndexOf(cfg.delimiter, end);
+          if (lastDelimiter > start + cfg.chunkSize * 0.5) {
+            end = lastDelimiter;
+          }
+        }
+        const slice = content.slice(start, end);
+        chunks.push({
+          // Unique per entry (storeId) so Base64Store's flat chunk map can't
+          // confuse this file's chunk-N with another file's chunk-N.
+          id: `${storeId}:chunk-${chunkIndex}`,
+          text: slice,
+          startIndex: start,
+          endIndex: end,
+          keywords: extractKeywords(slice),
+          charCount: slice.length,
+        });
+        start = end - cfg.overlap;
+        if (start >= content.length) break;
+        chunkIndex++;
+        if (chunkIndex % 10 === 0) await new Promise(r => setTimeout(r, 0));
+      }
     }
 
     const entry = {
@@ -1392,12 +1413,13 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const storeId = `repo:${filePath}`;
       await persistFileContent(storeId, filePath, content);
 
-      const kw = extractKeywords(content);
+      const oversized = content.length > MAX_INDEXED_FILE_CHARS;
+      const kw = oversized ? [] : extractKeywords(content);
       const chunkId = `${storeId}:chunk-write-${Date.now()}`;
       const newEntry = {
         id: storeId,
         category: ContentCategory.REPO_FILE,
-        chunks: [{ id: chunkId, text: content, startIndex: 0, endIndex: content.length, keywords: kw, charCount: content.length }],
+        chunks: [{ id: chunkId, text: content, startIndex: 0, endIndex: content.length, keywords: kw, charCount: content.length, oversized }],
         sourcePath: filePath,
         tags: [],
         lastUpdated: Date.now(),

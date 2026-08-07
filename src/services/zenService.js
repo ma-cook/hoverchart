@@ -525,6 +525,11 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     // fileContents actually feed the search corpus / codegen context. Without
     // this, a refresh restored the tree but left contents empty, so search_code
     // had nothing to scan and reported "no matches" for real symbols.
+    //
+    // Skip binary/large blobs (weights, images, minified maps...) — raw-fetching
+    // an 8MB ONNX .data file into the corpus bloats every structured clone and
+    // its chunking hangs the content-store worker for seconds. Binary files
+    // aren't useful to search_code, and read_file/quick_look fetch on demand.
     const fileContents = {};
     const MAX_CONCURRENCY = 20;
     let idx = 0;
@@ -533,6 +538,7 @@ export async function fetchRepoContext(token, owner, repo, branch) {
       while (idx < filePaths.length) {
         const path = filePaths[idx++];
         if (!path) continue;
+        if (looksBinaryOrGenerated(path)) continue;
         try {
           const content = await fetchFileContent(owner, repo, path, token);
           if (content) {
@@ -551,6 +557,22 @@ export async function fetchRepoContext(token, owner, repo, branch) {
     console.error('[fetchRepoContext] step failed:', err.message, err.stack);
     throw err;
   }
+}
+
+const GENERATED_BINARY_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tiff',
+  '.pdf', '.wasm', '.data', '.onnx', '.bin', '.zip', '.gz', '.tar',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot', '.mp3', '.mp4', '.webm',
+  '.ogg', '.wav', '.map', '.exe', '.dll', '.so', '.dylib', '.a', '.o',
+  '.pyc', '.class', '.jar', '.lock', '.svgz',
+]);
+
+function looksBinaryOrGenerated(filePath) {
+  const lower = filePath.toLowerCase();
+  const ext = lower.slice(lower.lastIndexOf('.'));
+  if (GENERATED_BINARY_EXTENSIONS.has(ext)) return true;
+  if (lower.includes('package-lock')) return true;
+  return false;
 }
 
 const PROJECT_NOTES_BUDGET = 2500;
@@ -731,6 +753,7 @@ export async function ensureRepoContentIndexed({ owner, repo, branch, token, fil
       while (idx < fileTree.length) {
         const path = fileTree[idx++];
         if (!path) continue;
+        if (looksBinaryOrGenerated(path)) continue;
         try {
           const content = await fetchFileContent(owner, repo, path, token);
           if (content) {

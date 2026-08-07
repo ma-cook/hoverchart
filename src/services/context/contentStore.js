@@ -1,4 +1,4 @@
-import { chunkText, extractKeywords } from './chunkIndex';
+import { chunkText, extractKeywords, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
 import { saveContentStore, loadContentStore, clearContentStorePersistence } from './contentStorePersistence';
 
 export const ContentCategory = {
@@ -46,7 +46,22 @@ export class ContentStore {
     }
 
     const config = CHUNK_CONFIGS[category] || { chunkSize: 2000, overlap: 200 };
-    const chunks = chunkText(content, { ...config, idPrefix: id });
+    // Oversized file (e.g. an MB-scale binary/generated blob): keep one raw
+    // chunk with no keywords instead of chunking. Chunking a multi-MB file is
+    // a multi-second synchronous block — in the worker it hangs the worker's
+    // message loop, on the main thread it freezes the UI. Full-text scans skip
+    // oversized chunks, so search coverage is unaffected.
+    const chunks = content.length > MAX_INDEXED_FILE_CHARS
+      ? [{
+          id: `${id}:chunk-0`,
+          text: content,
+          startIndex: 0,
+          endIndex: content.length,
+          keywords: [],
+          charCount: content.length,
+          oversized: true,
+        }]
+      : chunkText(content, { ...config, idPrefix: id });
 
     const entry = {
       id,

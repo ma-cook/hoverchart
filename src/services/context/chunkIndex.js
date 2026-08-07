@@ -17,6 +17,15 @@ const STOP_WORDS = new Set([
   'true', 'false', 'null', 'undefined', 'void', 'delete', 'yield',
 ]);
 
+/**
+ * Files larger than this are never chunked/keyword-indexed (stored as a single
+ * raw chunk instead, and skipped by full-text scans). Chunking a multi-MB
+ * binary/generated blob (e.g. an 8MB ONNX weight file) is a multi-second
+ * synchronous block — in the worker it hangs the worker's message loop so
+ * ping/search/population time out; on the main thread it freezes the UI.
+ */
+export const MAX_INDEXED_FILE_CHARS = 1_000_000;
+
 export function extractKeywords(text, maxKeywords = 10) {
   if (!text) return [];
   const words = text
