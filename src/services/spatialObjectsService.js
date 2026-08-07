@@ -33,6 +33,9 @@ const deletingObjects = new Set(); // Set of objectId strings being deleted
 export const POLL_INTERVAL_FAST_MS = 2000;
 export const POLL_INTERVAL_MAX_MS = 30000;
 export const POLL_BACKOFF_FACTOR = 1.5;
+// Consecutive no-change polls at the max backoff before we stop polling
+// entirely until a local write, tab refocus, or cell change wakes us.
+export const HARD_IDLE_STREAK = 2;
 
 const spatialPollWakes = new Set();
 export const wakeSpatialPolling = () => {
@@ -141,6 +144,29 @@ export const clearAllObjectCaches = () => {
     window._unloadedObjectsByCell.clear();
   }
   console.log('🧹 Cleared all object caches');
+};
+
+/**
+ * Seed the poll change-detection cache from a bulk fetch so the first poll
+ * cycle doesn't re-flag every object as "new" (which held the poll at its
+ * fastest cadence during the warm-up).
+ * @param {string} spaceId - Space ID (must match the poller's spaceId)
+ * @param {Array} objects - Objects already loaded into the store
+ */
+export const seedObjectsCache = (spaceId, objects) => {
+  if (!spaceId || !Array.isArray(objects)) return;
+  for (const obj of objects) {
+    if (!obj || obj.id == null) continue;
+    const cacheKey = `${spaceId}_${obj.id}`;
+    if (objectsCache.has(cacheKey)) continue;
+    try {
+      const cached = { ...obj };
+      cached._fingerprint = computeNonPositionFingerprint(obj);
+      objectsCache.set(cacheKey, cached);
+    } catch {
+      // Ignore malformed entries
+    }
+  }
 };
 
 // Helper function for position-only comparison
@@ -601,16 +627,22 @@ export const subscribeToSpatialObjects = (
   const previousCellObjectIds = new Map(); // cellKey -> Set<objectId>
 
   // Adaptive polling state: poll fast while changes flow, back off when
-  // idle, and pause entirely while the tab is hidden.
+  // idle, and pause entirely while the tab is hidden. After a couple of
+  // consecutive fully-idle polls at the max backoff we enter a hard idle
+  // (zero requests) and only resume on a local write, tab refocus, or a
+  // cell change.
   let isPolling = false;
   let pollDelay = POLL_INTERVAL_FAST_MS;
   let pollTimer = null;
+  let isHardIdle = false;
+  let idleStreak = 0;
 
   const poll = async () => {
     if (!isSubscribed || isPolling) return;
     if (document.hidden) return;
     isPolling = true;
     let anythingChanged = false;
+    let fetchFailed = false;
     try {
       const ownerIdFromUrl = window.currentSpaceOwner;
 
@@ -633,48 +665,65 @@ export const subscribeToSpatialObjects = (
         return;
       }
 
+      // Fetch ALL loaded cells in a single batched request instead of one
+      // request per cell. The backend matches any of the repeated cell_id
+      // params. A 304 (browser holds the identical cached body) comes back
+      // as null from the api-client and means "nothing changed" — skip the
+      // diff entirely rather than treating the cache as an error.
+      let objects = [];
+      try {
+        objects = await api.get(`/api/spaces/${spaceId}/objects`, {
+          params: { cell_id: safeCells },
+        });
+        if (objects == null) {
+          return;
+        }
+      } catch {
+        fetchFailed = true;
+        return;
+      }
+
+      // Normalize: flatten metadata.* to top level for frontend compatibility
+      for (const obj of objects) {
+        if (obj.metadata) {
+          const meta = typeof obj.metadata === 'string' ? JSON.parse(obj.metadata) : obj.metadata;
+          for (const key of ['merfolkData', 'faceColors', 'faceTexts', 'faceTextStyles', 'textStyle', 'headerStyle', 'size', 'lineColor', 'lineThickness', 'borderColor', 'borderStyle']) {
+            if (meta[key] !== undefined && obj[key] === undefined) {
+              obj[key] = meta[key];
+            }
+          }
+        }
+      }
+
+      // Group the response by cell so the per-cell add/remove diff stays intact
+      const objectsByCell = new Map();
+      for (const obj of objects) {
+        if (!obj.cellId) continue;
+        if (!objectsByCell.has(obj.cellId)) objectsByCell.set(obj.cellId, []);
+        objectsByCell.get(obj.cellId).push(obj);
+      }
+
       for (const cellKey of safeCells) {
         if (!cellKey || typeof cellKey !== 'string') {
           continue;
         }
 
         const [x, y, z] = cellKey.split(',').map(Number);
-        const _cellId = cellKey;
+        const cellObjects = objectsByCell.get(cellKey) || [];
 
         if (!objectSubscriptionsByCell.has(cellKey)) {
           objectSubscriptionsByCell.set(cellKey, new Set());
         }
 
-        let objects;
-        try {
-          objects = await api.get(`/api/spaces/${spaceId}/objects?cell_id=${cellKey}`);
-        } catch {
-          continue;
-        }
-
-        // Normalize: flatten metadata.* to top level for frontend compatibility
-        if (objects) {
-          for (const obj of objects) {
-            if (obj.metadata) {
-              const meta = typeof obj.metadata === 'string' ? JSON.parse(obj.metadata) : obj.metadata;
-              for (const key of ['merfolkData', 'faceColors', 'faceTexts', 'faceTextStyles', 'textStyle', 'headerStyle', 'size', 'lineColor', 'lineThickness', 'borderColor', 'borderStyle']) {
-                if (meta[key] !== undefined && obj[key] === undefined) {
-                  obj[key] = meta[key];
-                }
-              }
-            }
-          }
-        }
-
         // Detect removed objects
-        const currentIds = new Set(objects.map(o => o.id));
+        const currentIds = new Set(cellObjects.map(o => o.id));
         const previousIds = previousCellObjectIds.get(cellKey) || new Set();
 
         const batchedAdds = [];
         const batchedRemoves = [];
 
         // Process added objects
-        for (const objectData of objects) {
+        for (const objectData of cellObjects) {
           const objectId = objectData.id;
 
           // DATA MIGRATION: Sanitize fontSize values from old data
@@ -819,15 +868,30 @@ export const subscribeToSpatialObjects = (
       console.error('Error polling spatial objects:', error);
     } finally {
       isPolling = false;
-      pollDelay = anythingChanged
-        ? POLL_INTERVAL_FAST_MS
-        : Math.min(POLL_INTERVAL_MAX_MS, pollDelay * POLL_BACKOFF_FACTOR);
+      if (anythingChanged) {
+        pollDelay = POLL_INTERVAL_FAST_MS;
+        idleStreak = 0;
+      } else {
+        pollDelay = Math.min(POLL_INTERVAL_MAX_MS, pollDelay * POLL_BACKOFF_FACTOR);
+        if (fetchFailed) {
+          // Errors never count toward hard idle — keep retrying (backing
+          // off) so the poller recovers once the network/backend returns.
+          idleStreak = 0;
+        } else if (pollDelay >= POLL_INTERVAL_MAX_MS) {
+          idleStreak += 1;
+          if (idleStreak >= HARD_IDLE_STREAK) {
+            isHardIdle = true;
+          }
+        } else {
+          idleStreak = 0;
+        }
+      }
       scheduleNextPoll();
     }
   };
 
   const scheduleNextPoll = () => {
-    if (!isSubscribed) return;
+    if (!isSubscribed || isHardIdle) return;
     if (pollTimer) {
       clearTimeout(pollTimer);
       pollTimer = null;
@@ -841,6 +905,10 @@ export const subscribeToSpatialObjects = (
 
   const wake = () => {
     if (!isSubscribed) return;
+    if (isHardIdle) {
+      isHardIdle = false;
+      idleStreak = 0;
+    }
     pollDelay = POLL_INTERVAL_FAST_MS;
     if (pollTimer) {
       clearTimeout(pollTimer);
@@ -856,6 +924,8 @@ export const subscribeToSpatialObjects = (
         pollTimer = null;
       }
     } else {
+      isHardIdle = false;
+      idleStreak = 0;
       pollDelay = POLL_INTERVAL_FAST_MS;
       if (!isPolling) poll();
     }

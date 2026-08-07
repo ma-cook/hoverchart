@@ -57,7 +57,7 @@ import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkSched
 
 import { signInUser } from './services/authService';
 import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
-import { subscribeToSpatialObjects, clearAllObjectCaches } from './services/spatialObjectsService';
+import { subscribeToSpatialObjects, clearAllObjectCaches, seedObjectsCache } from './services/spatialObjectsService';
 import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning';
 import { hasAnyPendingObjects, getAllCellObjectsForCells } from './services/cellObjectCache';
 import { setGuestPresence } from './services/presenceService';
@@ -614,6 +614,10 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
         }
         if (initialObjects.length > 0) {
           currentSetObjects(initialObjects);
+          // Seed the poll change-detection cache so the first poll cycle
+          // doesn't re-flag every loaded object as "new" (which would hold
+          // the poll at its fastest cadence during the warm-up).
+          seedObjectsCache(effectiveSpaceId, initialObjects);
         }
       } catch (error) {
         console.error('Failed to fetch initial objects:', error);

@@ -24,6 +24,9 @@ export async function resumeConnectionListeners() {
 const POLL_INTERVAL_FAST_MS = 2000;
 const POLL_INTERVAL_MAX_MS = 30000;
 const POLL_BACKOFF_FACTOR = 1.5;
+// Consecutive no-change polls at the max backoff before we stop polling
+// entirely until a local write, tab refocus, or cell change wakes us.
+const HARD_IDLE_STREAK = 2;
 
 const connectionPollWakes = new Set();
 export const wakeConnectionPolling = () => {
@@ -202,16 +205,22 @@ export const subscribeToConnections = (
   const pollingCache = new Map();
 
   // Adaptive polling state: poll fast while changes flow, back off when
-  // idle, and pause entirely while the tab is hidden.
+  // idle, and pause entirely while the tab is hidden. After a couple of
+  // consecutive fully-idle polls at the max backoff we enter a hard idle
+  // (zero requests) and only resume on a local write, tab refocus, or a
+  // cell change.
   let isPolling = false;
   let pollDelay = POLL_INTERVAL_FAST_MS;
   let pollTimer = null;
+  let isHardIdle = false;
+  let idleStreak = 0;
 
   const poll = async () => {
     if (!isActive || isPolling) return;
     if (document.hidden || _subscriptionsPaused) return;
     isPolling = true;
     let anythingChanged = false;
+    let fetchFailed = false;
     try {
       const params = {};
       if (effectiveCells.length > 0) {
@@ -219,6 +228,9 @@ export const subscribeToConnections = (
       }
 
       const response = await api.get(`/api/spaces/${spaceId}/connections`, { params });
+      if (response == null) {
+        return; // 304 — nothing changed, skip the diff entirely
+      }
       const connections = Array.isArray(response) ? response : (response.connections || []);
       const seenKeys = new Set();
 
@@ -266,18 +278,33 @@ export const subscribeToConnections = (
         }
       }
     } catch {
-      // Polling error - will retry on next poll
+      fetchFailed = true; // Polling error - will retry on next poll
     } finally {
       isPolling = false;
-      pollDelay = anythingChanged
-        ? POLL_INTERVAL_FAST_MS
-        : Math.min(POLL_INTERVAL_MAX_MS, pollDelay * POLL_BACKOFF_FACTOR);
+      if (anythingChanged) {
+        pollDelay = POLL_INTERVAL_FAST_MS;
+        idleStreak = 0;
+      } else {
+        pollDelay = Math.min(POLL_INTERVAL_MAX_MS, pollDelay * POLL_BACKOFF_FACTOR);
+        if (fetchFailed) {
+          // Errors never count toward hard idle — keep retrying (backing
+          // off) so the poller recovers once the network/backend returns.
+          idleStreak = 0;
+        } else if (pollDelay >= POLL_INTERVAL_MAX_MS) {
+          idleStreak += 1;
+          if (idleStreak >= HARD_IDLE_STREAK) {
+            isHardIdle = true;
+          }
+        } else {
+          idleStreak = 0;
+        }
+      }
       scheduleNextPoll();
     }
   };
 
   const scheduleNextPoll = () => {
-    if (!isActive) return;
+    if (!isActive || isHardIdle) return;
     if (pollTimer) {
       clearTimeout(pollTimer);
       pollTimer = null;
@@ -291,6 +318,10 @@ export const subscribeToConnections = (
 
   const wake = () => {
     if (!isActive) return;
+    if (isHardIdle) {
+      isHardIdle = false;
+      idleStreak = 0;
+    }
     pollDelay = POLL_INTERVAL_FAST_MS;
     if (pollTimer) {
       clearTimeout(pollTimer);
@@ -306,6 +337,8 @@ export const subscribeToConnections = (
         pollTimer = null;
       }
     } else {
+      isHardIdle = false;
+      idleStreak = 0;
       pollDelay = POLL_INTERVAL_FAST_MS;
       if (!isPolling) poll();
     }

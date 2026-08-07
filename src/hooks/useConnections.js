@@ -311,7 +311,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
   // Handle spatial cell changes for connection loading/unloading
   useEffect(() => {
-    const effectiveUserId = user?.uid || null; // Define for this useEffect scope
     const previousCells = previousLoadedCellsRef.current;
     const currentCells = stableLoadedCells;
 
@@ -363,23 +362,13 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       }
     }
 
-    // Handle reloaded cells
+    // Reloaded cells need no extra subscriptions here: the main subscription
+    // effect above re-subscribes with the FULL cell set whenever
+    // stableLoadedCells changes (the cellsChanged check), so reloaded cells
+    // are already covered by that poller. Creating per-reload subscriptions
+    // here stacked duplicate connection pollers (each with its own timer and
+    // request stream) that only got cleaned up on the next cell change.
     if (reloadedCells.length > 0) {
-      // Create a fresh subscription for all reloaded cells
-      const newSubscriptionCleanup = subscribeToConnections(
-        effectiveUserId,
-        currentSpaceId,
-        enhancedConnectionCallback,
-        reloadedCells
-      );
-
-      // Update cleanup to handle both existing and new subscriptions
-      const oldCleanupFn = subscriptionCleanupRef.current;
-      subscriptionCleanupRef.current = () => {
-        if (oldCleanupFn) oldCleanupFn();
-        if (newSubscriptionCleanup) newSubscriptionCleanup();
-      };
-
       // Clear unloaded status for connections in reloaded cells
       reloadedCells.forEach(() => {
         if (
@@ -391,20 +380,6 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
           });
         }
       });
-
-      // Trigger subscription refresh for reloaded cells
-      const cleanup = subscribeToConnections(
-        effectiveUserId,
-        currentSpaceId,
-        enhancedConnectionCallback,
-        reloadedCells
-      );
-
-      const existingCleanup = subscriptionCleanupRef.current;
-      subscriptionCleanupRef.current = () => {
-        if (existingCleanup) existingCleanup();
-        if (cleanup) cleanup();
-      };
     }
 
     // Update previous cells reference

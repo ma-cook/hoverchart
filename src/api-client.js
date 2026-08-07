@@ -41,7 +41,15 @@ async function refreshAccessToken() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
   }).then(async (res) => {
-    if (!res.ok) {
+  // 304 Not Modified: the browser already holds the identical cached body
+  // (conditional GET revalidation), so there is no payload. Returning null
+  // lets pollers treat it as a clean "nothing changed" signal instead of an
+  // error.
+  if (res.status === 304) {
+    return null;
+  }
+
+  if (!res.ok) {
       clearTokens();
       throw new Error('Refresh failed');
     }
