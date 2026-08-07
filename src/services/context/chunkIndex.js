@@ -75,8 +75,15 @@ export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '
       charCount: chunkContent.length,
     });
 
-    start = end - overlap;
-    if (start >= text.length) break;
+    // Termination guarantee: once a chunk ends at the end of the text we are
+    // done. `end - overlap` must never be used to continue — it can go
+    // negative on inputs shorter than `overlap`, and once `end` reaches
+    // `text.length` it makes `start` retreat by `overlap` every iteration,
+    // i.e. an infinite loop that wedges the worker (and freezes the main
+    // thread). Both cases previously hung `processContentBatch` forever.
+    if (end === text.length) break;
+
+    start = Math.max(end - overlap, start + 1);
     chunkIndex++;
   }
 
