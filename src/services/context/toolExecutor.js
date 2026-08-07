@@ -24,7 +24,15 @@ const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
  * "407 files, 0 contents" bug) — it falls back to the in-memory
  * repoFileContents map so searches don't silently report "no matches" for
  * symbols that actually exist.
+ *
+ * The repoFileContents-derived corpus is memoized per reference: it is stable
+ * across calls, so concurrent search_code/grep rounds share the build instead
+ * of re-scanning it. Store-backed entries are always rebuilt (cheap — it just
+ * concatenates each entry's chunks).
  */
+let _fileContentsRef = null;
+let _fileContentsCorpus = null;
+
 function buildRepoCorpus(store, codeStoreState) {
   const corpus = new Map();
   let repoEntries = 0;
@@ -37,24 +45,20 @@ function buildRepoCorpus(store, codeStoreState) {
   }
   if (repoEntries === 0) {
     const contents = codeStoreState?.repoFileContents;
-    if (contents) {
-      if (!_seededRepoCorpus && Object.keys(contents).length > 0) {
-        _seededRepoCorpus = true;
-        seedRepoCorpusFromFileContents(contents);
-      }
+    if (contents && contents !== _fileContentsRef) {
+      _fileContentsRef = contents;
+      _fileContentsCorpus = new Map();
       for (const [filePath, content] of Object.entries(contents)) {
-        if (content) corpus.set(filePath, content);
+        if (content) _fileContentsCorpus.set(filePath, content);
       }
     }
-    if (corpus.size > 0) {
-      console.warn(`[search] Content store empty — fell back to in-memory repoFileContents (${corpus.size} files)`);
+    if (_fileContentsCorpus && _fileContentsCorpus.size > 0) {
+      for (const [filePath, content] of _fileContentsCorpus) corpus.set(filePath, content);
+      console.warn(`[search] Content store empty — fell back to in-memory repoFileContents (${_fileContentsCorpus.size} files)`);
     }
   }
   return corpus;
 }
-
-let _seededRepoCorpus = false;
-const HYDRATION_WAIT_MS = 8000;
 
 /**
  * Reference to the repoFileContents map already handed to the worker. Sending
@@ -63,25 +67,28 @@ const HYDRATION_WAIT_MS = 8000;
  * actually change (repo switch / refetch).
  */
 let _sentRepoContentsRef = null;
-let _workerSearchUnusable = false;
+let _workerCooldownUntil = 0;
 const WORKER_PING_TIMEOUT_MS = 8000;
 const WORKER_SEARCH_TIMEOUT_MS = 25000;
+const WORKER_RETRY_AFTER_MS = 15000;
 
 /**
  * Run a full-text search in the content-store worker so a large repo corpus
  * is scanned off the main thread. The worker indexes the in-memory
  * repoFileContents on demand if its store is missing them (e.g. the code-gen
  * flow fetched contents while population was still in flight). Returns null
- * only when the worker is unavailable, which signals the caller to fall back
- * to the main-thread scan.
+ * when the worker can't serve this search, which signals the caller to fall
+ * back to the main-thread scan.
  *
  * A Comlink call to a dead/unresponsive worker never settles, so every round
- * trip is bounded by a timeout race and the worker is latched off after the
- * first failure — otherwise a broken worker would stall every tool round until
- * the orchestrator's hard timeout aborts it.
+ * trip is bounded by a timeout race. A slow worker (its one-time on-demand
+ * index of a large repo can exceed the timeout) is NOT latched off forever —
+ * that previously turned a single slow round into a permanent main-thread
+ * scan for the whole session. Instead we enter a short cooldown and retry the
+ * worker afterwards, by which time its index is ready and searches are fast.
  */
 async function searchInWorker(rawPattern, codeStoreState, extra = {}) {
-  if (_workerSearchUnusable) return null;
+  if (Date.now() < _workerCooldownUntil) return null;
   try {
     const worker = getContentStoreWorker();
     await Promise.race([
@@ -102,41 +109,12 @@ async function searchInWorker(rawPattern, codeStoreState, extra = {}) {
         setTimeout(() => reject(new Error('worker search timed out')), WORKER_SEARCH_TIMEOUT_MS)
       ),
     ]);
+    if (hits === null) return null; // worker has no corpus → caller scans main thread
     return hits || [];
   } catch (err) {
-    _workerSearchUnusable = true;
+    _workerCooldownUntil = Date.now() + WORKER_RETRY_AFTER_MS;
     console.warn('[search] Content-store worker unavailable, scanning on main thread:', err.message);
     return null;
-  }
-}
-
-/**
- * Last-resort direct seeding of the content store from the in-memory
- * repoFileContents map, used when the worker-backed population is slow or
- * failed. Fires async so search itself isn't blocked; re-checks that the
- * worker hasn't already populated the store before upserting.
- */
-async function seedRepoCorpusFromFileContents(contents) {
-  try {
-    const store = getContentStore();
-    await Promise.race([
-      waitForContentStoreHydration(),
-      new Promise((r) => setTimeout(r, HYDRATION_WAIT_MS)),
-    ]);
-    const hasRepoEntries = Array.from(store.entries.keys()).some(id => id.startsWith('repo:'));
-    if (hasRepoEntries) return;
-    let seededCount = 0;
-    for (const [filePath, content] of Object.entries(contents)) {
-      if (!content) continue;
-      store.upsert(`repo:${filePath}`, ContentCategory.REPO_FILE, content, {
-        sourcePath: filePath,
-        tags: ['repo', 'code'],
-      });
-      if (++seededCount % 10 === 0) await new Promise(r => setTimeout(r, 0));
-    }
-    console.log(`[search] Seeded content store with ${Object.keys(contents).length} repo files`);
-  } catch (err) {
-    console.warn('[search] Direct corpus seeding failed:', err.message);
   }
 }
 
@@ -1070,6 +1048,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         const fileHitCounts = new Map();
         const fileHitSamples = new Map();
         let scanCount = 0;
+        let lineBudget = 0;
         for (const [filePath, fullText] of corpus) {
           if (fullText == null || fullText.length === 0) continue;
           const lines = fullText.split('\n');
@@ -1082,6 +1061,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
                 samples.push({ lineNum: li + 1, text: lines[li].trim().slice(0, 200) });
               }
             }
+            if (++lineBudget % 8000 === 0) await new Promise(r => setTimeout(r, 0));
           }
           if (count > 0) {
             fileHitCounts.set(filePath, count);
@@ -1155,6 +1135,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       } else {
         const corpus = buildRepoCorpus(store, grepCodeStoreState);
         let scanCount = 0;
+        let lineBudget = 0;
         for (const [filePath, fullText] of corpus) {
           if (prefix && !filePath.startsWith(prefix)) continue;
           const lines = fullText.split('\n');
@@ -1164,6 +1145,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
               results.push(`${filePath}${sizeHint(filePath)}:${li + 1}: ${lines[li].trim().slice(0, 200)}`);
               fileHits++;
             }
+            if (++lineBudget % 8000 === 0) await new Promise(r => setTimeout(r, 0));
           }
           if (results.length >= MAX_GREP_RESULTS) break;
           scanCount++;

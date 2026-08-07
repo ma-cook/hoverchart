@@ -188,6 +188,12 @@ const workerApi = {
       } catch { /* invalid regex — scan will simply match nothing */ }
     }
 
+    // If the worker still has no repo corpus after any on-demand indexing,
+    // return null so the caller scans the main thread instead of reporting a
+    // false "no matches" (an empty array is ambiguous with a real empty scan).
+    const hasRepoAfterIndex = Array.from(store.entries.keys()).some((id) => id.startsWith('repo:'));
+    if (!hasRepoAfterIndex) return null;
+
     const rawPattern = pattern || '';
     const normalize = (s) => (s || '').toLowerCase().replace(/[-_.]/g, '');
     const pat = normalize(rawPattern);

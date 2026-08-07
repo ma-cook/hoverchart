@@ -478,7 +478,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     const updatedMessages = [...planMessages, userMessage];
     setPlanMessages(updatedMessages);
 
-    populateContentStoreWorker();
+    // Warm the content-store worker (off the main thread) before tools run.
+    // Include any cached repo contents so search_code/grep can scan the repo.
+    const _csState = useCodeStore.getState();
+    const cachedContents = (_csState.repoFileTree && Object.keys(_csState.repoFileContents || {}).length > 0)
+      ? _csState.repoFileContents
+      : null;
+    populateContentStoreWorker(cachedContents, null);
 
     const sceneObjects = useObjectsStore.getState().objects;
     const zenMessages = await buildZenMessages({
@@ -659,6 +665,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             fileSizes: _cs.fileSizes || null,
           };
           console.log(`[CodeSend] Using cached repo context: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents${storeHasRepoContents && !_cs.repoFileContents ? ' (corpus from content store)' : ''}`);
+          // Warm the content-store worker with the cached contents so
+          // search_code/grep are fast and run off the main thread. The fetch
+          // path below does the same; without it the worker is empty and the
+          // first search pays a full on-demand index inside its timeout race,
+          // then falls back to a freezing main-thread scan.
+          if (Object.keys(_cs.repoFileContents || {}).length > 0) {
+            populateContentStoreWorker(_cs.repoFileContents, null)
+              .catch((err) => console.warn('[CodeSend] populateContentStoreWorker failed:', err));
+          }
         } else {
           const token = getGithubToken();
           if (token) {
