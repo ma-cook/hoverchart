@@ -18,9 +18,25 @@
 import { expose } from 'comlink';
 import { ContentStore, ContentCategory } from '../services/context/contentStore';
 
+console.log('[contentStoreWorker] module evaluated', typeof self !== 'undefined' && self.location ? self.location.href : '?');
+
 const YIELD_EVERY = 50;
 const BATCH_YIELD_MS = 0;
 const MAX_HITS_PER_FILE = 5;
+
+let _callLogCount = 0;
+function logCall(name, detail) {
+  if (_callLogCount < 20) {
+    _callLogCount++;
+    console.log(`[contentStoreWorker] ${name}`, detail, `t=${Date.now()}`);
+  }
+}
+
+setInterval(() => {
+  if (typeof self !== 'undefined') {
+    self.postMessage({ __contentStoreHeartbeat: Date.now() });
+  }
+}, 1000);
 
 let _batchStore = null;
 let _processedRepoPaths = new Set();
@@ -56,6 +72,7 @@ const workerApi = {
    * instead of hanging on a Comlink round-trip that will never settle.
    */
   ping() {
+    logCall('ping', 'ok');
     return true;
   },
 
@@ -64,6 +81,7 @@ const workerApi = {
    * so repo paths indexed by a previous scan don't get skipped.
    */
   reset() {
+    logCall('reset', 'start');
     resetStore();
     return true;
   },
@@ -74,6 +92,8 @@ const workerApi = {
    * everything it already has.
    */
   async processContentBatch({ repoFileContents, objects, diagramMarkdown, planContext }) {
+    const t0 = Date.now();
+    logCall('processContentBatch', `start repoFiles=${repoFileContents ? Object.keys(repoFileContents).length : 0}`);
     const store = ensureStore();
     const newEntryIds = new Set();
     let count = 0;
@@ -142,6 +162,7 @@ const workerApi = {
       newEntryIds.add('plans:all');
     }
 
+    logCall('processContentBatch', `done in ${Date.now() - t0}ms added=${newEntryIds.size}`);
     return captureDelta(store, newEntryIds);
   },
 
@@ -160,6 +181,8 @@ const workerApi = {
    * hit count, capped at maxResults.
    */
   async search({ pattern, regex = null, caseSensitive = false, pathPrefix = '', repoFileContents = null, maxResults = 20, maxSamplesPerFile = 3 } = {}) {
+    const t0 = Date.now();
+    logCall('search', `start pattern="${pattern}" regex=${regex !== null}`);
     const store = ensureStore();
     const hasRepoEntries = Array.from(store.entries.keys()).some((id) => id.startsWith('repo:'));
 
@@ -235,6 +258,7 @@ const workerApi = {
       }
     }
 
+    logCall('search', `done in ${Date.now() - t0}ms hits=${hits.length} scanned=${scanned}`);
     return hits.sort((a, b) => b.hitCount - a.hitCount).slice(0, maxResults);
   },
 };

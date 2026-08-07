@@ -2,7 +2,7 @@ import { getContentStore, ContentCategory, waitForContentStoreHydration } from '
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
 import { extractKeywords, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
-import { getContentStoreWorker } from '../../workers/contentStoreWorkerClient';
+import { getContentStoreWorker, getContentStoreWorkerHealth } from '../../workers/contentStoreWorkerClient';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
@@ -98,29 +98,33 @@ async function searchInWorker(rawPattern, codeStoreState, extra = {}) {
   if (Date.now() < _workerCooldownUntil) return null;
   try {
     const worker = getContentStoreWorker();
+    const pingStartedAt = Date.now();
     await Promise.race([
       worker.ping(),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error('worker health check timed out')), WORKER_PING_TIMEOUT_MS)
       ),
     ]);
+    console.log(`[search] worker ping ok in ${Date.now() - pingStartedAt}ms, heartbeatAgeMs=${getContentStoreWorkerHealth().lastHeartbeatAgeMs}`);
     const payload = { pattern: rawPattern, ...extra };
     const repoFileContents = codeStoreState?.repoFileContents;
     if (repoFileContents && repoFileContents !== _sentRepoContentsRef) {
       _sentRepoContentsRef = repoFileContents;
       payload.repoFileContents = repoFileContents;
     }
+    const searchStartedAt = Date.now();
     const hits = await Promise.race([
       worker.search(payload),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error('worker search timed out')), WORKER_SEARCH_TIMEOUT_MS)
       ),
     ]);
+    console.log(`[search] worker search done in ${Date.now() - searchStartedAt}ms`);
     if (hits === null) return null; // worker has no corpus → caller scans main thread
     return hits || [];
   } catch (err) {
     _workerCooldownUntil = Date.now() + WORKER_RETRY_AFTER_MS;
-    console.warn('[search] Content-store worker unavailable, scanning on main thread:', err.message);
+    console.warn('[search] Content-store worker unavailable, scanning on main thread:', err.message, `heartbeatAgeMs=${getContentStoreWorkerHealth().lastHeartbeatAgeMs}`);
     return null;
   }
 }

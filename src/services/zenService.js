@@ -668,19 +668,32 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
   ]);
 
   const worker = getContentStoreWorker();
+  console.log('[ContentStore] content-store worker created, starting populate');
 
   // A dead/unresponsive worker makes Comlink calls hang forever. Bound every
   // round trip so population degrades to the in-memory store instead of
   // silently never completing (which leaves the content store empty).
   const WORKER_CALL_TIMEOUT_MS = 10000;
-  const workerCall = (promise) => Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('content-store worker unresponsive')), WORKER_CALL_TIMEOUT_MS)
-    ),
-  ]);
+  const workerCall = (label, promise) => {
+    const startedAt = Date.now();
+    return Promise.race([
+      promise.then(
+        (result) => {
+          console.log(`[ContentStore] workerCall "${label}" ok in ${Date.now() - startedAt}ms`);
+          return result;
+        },
+        (err) => {
+          console.warn(`[ContentStore] workerCall "${label}" failed in ${Date.now() - startedAt}ms:`, err.message);
+          throw err;
+        }
+      ),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`content-store worker unresponsive (${label} after ${Date.now() - startedAt}ms)`)), WORKER_CALL_TIMEOUT_MS)
+      ),
+    ]);
+  };
 
-  await workerCall(worker.reset());
+  await workerCall('reset', worker.reset());
 
   const repoEntries = Object.entries(repoFileContents || {});
 
@@ -705,7 +718,7 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
       batch.planContext = planContext || '';
       batch.diagramMarkdown = diagramMarkdown || null;
     }
-    const result = await workerCall(worker.processContentBatch(batch));
+    const result = await workerCall(`processContentBatch[${i / BATCH_SIZE}]`, worker.processContentBatch(batch));
     if (result.entries?.length) {
       getContentStore().mergeBulk(result.entries);
     }
@@ -714,7 +727,7 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
   // No repo files (e.g. plan send, rescan, runtime scan) — still index the
   // scene objects, plan and diagram markdown.
   if (repoEntries.length === 0) {
-    const result = await workerCall(worker.processContentBatch({
+    const result = await workerCall('processContentBatch[empty]', worker.processContentBatch({
       objects: sceneObjects,
       planContext: planContext || '',
       diagramMarkdown: diagramMarkdown || null,
