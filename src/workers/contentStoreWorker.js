@@ -52,6 +52,14 @@ function captureDelta(store, newEntryIds) {
 
 const workerApi = {
   /**
+   * Cheap health check so callers can detect a dead/unresponsive worker quickly
+   * instead of hanging on a Comlink round-trip that will never settle.
+   */
+  ping() {
+    return true;
+  },
+
+  /**
    * Start a fresh population session. Call before the first processContentBatch
    * so repo paths indexed by a previous scan don't get skipped.
    */

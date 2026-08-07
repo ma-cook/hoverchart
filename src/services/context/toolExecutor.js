@@ -63,28 +63,49 @@ const HYDRATION_WAIT_MS = 8000;
  * actually change (repo switch / refetch).
  */
 let _sentRepoContentsRef = null;
+let _workerSearchUnusable = false;
+const WORKER_PING_TIMEOUT_MS = 8000;
+const WORKER_SEARCH_TIMEOUT_MS = 25000;
 
 /**
  * Run a full-text search in the content-store worker so a large repo corpus
  * is scanned off the main thread. The worker indexes the in-memory
  * repoFileContents on demand if its store is missing them (e.g. the code-gen
  * flow fetched contents while population was still in flight). Returns null
- * only when the worker itself is unavailable, which signals the caller to fall
- * back to the main-thread scan.
+ * only when the worker is unavailable, which signals the caller to fall back
+ * to the main-thread scan.
+ *
+ * A Comlink call to a dead/unresponsive worker never settles, so every round
+ * trip is bounded by a timeout race and the worker is latched off after the
+ * first failure — otherwise a broken worker would stall every tool round until
+ * the orchestrator's hard timeout aborts it.
  */
 async function searchInWorker(rawPattern, codeStoreState, extra = {}) {
+  if (_workerSearchUnusable) return null;
   try {
     const worker = getContentStoreWorker();
+    await Promise.race([
+      worker.ping(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('worker health check timed out')), WORKER_PING_TIMEOUT_MS)
+      ),
+    ]);
     const payload = { pattern: rawPattern, ...extra };
     const repoFileContents = codeStoreState?.repoFileContents;
     if (repoFileContents && repoFileContents !== _sentRepoContentsRef) {
       _sentRepoContentsRef = repoFileContents;
       payload.repoFileContents = repoFileContents;
     }
-    const hits = await worker.search(payload);
+    const hits = await Promise.race([
+      worker.search(payload),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('worker search timed out')), WORKER_SEARCH_TIMEOUT_MS)
+      ),
+    ]);
     return hits || [];
   } catch (err) {
-    console.warn('[search] Worker search unavailable, scanning on main thread:', err.message);
+    _workerSearchUnusable = true;
+    console.warn('[search] Content-store worker unavailable, scanning on main thread:', err.message);
     return null;
   }
 }

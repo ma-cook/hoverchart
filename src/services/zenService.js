@@ -646,7 +646,19 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
   ]);
 
   const worker = getContentStoreWorker();
-  await worker.reset();
+
+  // A dead/unresponsive worker makes Comlink calls hang forever. Bound every
+  // round trip so population degrades to the in-memory store instead of
+  // silently never completing (which leaves the content store empty).
+  const WORKER_CALL_TIMEOUT_MS = 10000;
+  const workerCall = (promise) => Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('content-store worker unresponsive')), WORKER_CALL_TIMEOUT_MS)
+    ),
+  ]);
+
+  await workerCall(worker.reset());
 
   const repoEntries = Object.entries(repoFileContents || {});
 
@@ -671,7 +683,7 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
       batch.planContext = planContext || '';
       batch.diagramMarkdown = diagramMarkdown || null;
     }
-    const result = await worker.processContentBatch(batch);
+    const result = await workerCall(worker.processContentBatch(batch));
     if (result.entries?.length) {
       getContentStore().mergeBulk(result.entries);
     }
@@ -680,11 +692,11 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
   // No repo files (e.g. plan send, rescan, runtime scan) — still index the
   // scene objects, plan and diagram markdown.
   if (repoEntries.length === 0) {
-    const result = await worker.processContentBatch({
+    const result = await workerCall(worker.processContentBatch({
       objects: sceneObjects,
       planContext: planContext || '',
       diagramMarkdown: diagramMarkdown || null,
-    });
+    }));
     if (result.entries?.length) {
       getContentStore().mergeBulk(result.entries);
     }
