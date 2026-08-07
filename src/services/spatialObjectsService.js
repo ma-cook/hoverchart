@@ -26,6 +26,21 @@ export const objectCellMap = new Map(); // Track which cell each object belongs 
 // Track objects that are being deleted to prevent re-addition
 const deletingObjects = new Set(); // Set of objectId strings being deleted
 
+// ── Adaptive polling ────────────────────────────────────────────────
+// Poll fast while changes are flowing, back off toward MAX when nothing
+// changes, and stop entirely while the tab is hidden. Local saves wake the
+// poller immediately so collaborative edits stay responsive.
+export const POLL_INTERVAL_FAST_MS = 2000;
+export const POLL_INTERVAL_MAX_MS = 30000;
+export const POLL_BACKOFF_FACTOR = 1.5;
+
+const spatialPollWakes = new Set();
+export const wakeSpatialPolling = () => {
+  spatialPollWakes.forEach((wake) => {
+    try { wake(); } catch { /* ignore */ }
+  });
+};
+
 // ── Batched write queue ──────────────────────────────────────────────
 // Instead of N individual setTimeout→Firestore writes, pending saves
 // accumulate here and flush together in a single batch.
@@ -93,6 +108,10 @@ async function flushSaveBatch() {
       objectsCache.delete(cacheKey);
     }
   }
+
+  // Local writes indicate active editing — wake the poller so remote
+  // state is re-fetched promptly and the backoff resets.
+  wakeSpatialPolling();
 }
 
 /**
@@ -581,8 +600,17 @@ export const subscribeToSpatialObjects = (
   // Track known object IDs per cell for removal detection
   const previousCellObjectIds = new Map(); // cellKey -> Set<objectId>
 
+  // Adaptive polling state: poll fast while changes flow, back off when
+  // idle, and pause entirely while the tab is hidden.
+  let isPolling = false;
+  let pollDelay = POLL_INTERVAL_FAST_MS;
+  let pollTimer = null;
+
   const poll = async () => {
-    if (!isSubscribed) return;
+    if (!isSubscribed || isPolling) return;
+    if (document.hidden) return;
+    isPolling = true;
+    let anythingChanged = false;
     try {
       const ownerIdFromUrl = window.currentSpaceOwner;
 
@@ -773,12 +801,14 @@ export const subscribeToSpatialObjects = (
         previousCellObjectIds.set(cellKey, currentIds);
 
         if (batchedAdds.length > 0) {
+          anythingChanged = true;
           callback({
             type: 'batch-added',
             changes: batchedAdds,
           });
         }
         if (batchedRemoves.length > 0) {
+          anythingChanged = true;
           callback({
             type: 'batch-removed',
             changes: batchedRemoves,
@@ -787,19 +817,64 @@ export const subscribeToSpatialObjects = (
       }
     } catch (error) {
       console.error('Error polling spatial objects:', error);
+    } finally {
+      isPolling = false;
+      pollDelay = anythingChanged
+        ? POLL_INTERVAL_FAST_MS
+        : Math.min(POLL_INTERVAL_MAX_MS, pollDelay * POLL_BACKOFF_FACTOR);
+      scheduleNextPoll();
     }
   };
 
-  // Initial fetch
-  poll();
+  const scheduleNextPoll = () => {
+    if (!isSubscribed) return;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    if (document.hidden) return;
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      poll();
+    }, pollDelay);
+  };
 
-  // Poll every 2 seconds
-  const intervalId = setInterval(poll, 2000);
+  const wake = () => {
+    if (!isSubscribed) return;
+    pollDelay = POLL_INTERVAL_FAST_MS;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    poll();
+  };
+
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    } else {
+      pollDelay = POLL_INTERVAL_FAST_MS;
+      if (!isPolling) poll();
+    }
+  };
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  spatialPollWakes.add(wake);
+
+  // Initial fetch (schedules subsequent polls)
+  poll();
 
   // Return cleanup function
   return () => {
     isSubscribed = false;
-    clearInterval(intervalId);
+    spatialPollWakes.delete(wake);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
     previousCellObjectIds.clear();
   };
 };

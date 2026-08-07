@@ -7,9 +7,31 @@ router.get('/', async (req, res) => {
   const { spaceId } = req.params;
   const { cell_id } = req.query;
   try {
-    const result = cell_id
-      ? await pool.query(`SELECT * FROM connections WHERE space_id = $1 AND cell_id = $2 ORDER BY updated_at DESC`, [spaceId, cell_id])
-      : await pool.query(`SELECT * FROM connections WHERE space_id = $1 ORDER BY updated_at DESC LIMIT 500`, [spaceId]);
+    let result;
+    if (cell_id) {
+      // Support both a single cell and multiple (repeated) cell_id params,
+      // e.g. ?cell_id=-1,0,1&cell_id=1,2,3. Cell IDs contain commas, so a
+      // comma-joined list would be ambiguous — repeated params avoid that.
+      const cellList = (Array.isArray(cell_id) ? cell_id : [cell_id])
+        .map((c) => String(c).trim())
+        .filter(Boolean);
+      if (cellList.length > 0) {
+        result = await pool.query(
+          `SELECT * FROM connections WHERE space_id = $1 AND cell_id = ANY($2) ORDER BY updated_at DESC`,
+          [spaceId, cellList]
+        );
+      } else {
+        result = await pool.query(
+          `SELECT * FROM connections WHERE space_id = $1 ORDER BY updated_at DESC LIMIT 500`,
+          [spaceId]
+        );
+      }
+    } else {
+      result = await pool.query(
+        `SELECT * FROM connections WHERE space_id = $1 ORDER BY updated_at DESC LIMIT 500`,
+        [spaceId]
+      );
+    }
     res.json(result.rows);
   } catch (err) {
     console.error('List connections error:', err);

@@ -14,7 +14,23 @@ export async function resumeConnectionListeners() {
     _pauseResolve();
     _pauseResolve = null;
   }
+  wakeConnectionPolling();
 }
+
+// ── Adaptive polling ────────────────────────────────────────────────
+// Poll fast while changes flow, back off toward MAX when nothing changes,
+// and stop entirely while the tab is hidden. Local saves wake the poller
+// so collaborative edits stay responsive.
+const POLL_INTERVAL_FAST_MS = 2000;
+const POLL_INTERVAL_MAX_MS = 30000;
+const POLL_BACKOFF_FACTOR = 1.5;
+
+const connectionPollWakes = new Set();
+export const wakeConnectionPolling = () => {
+  connectionPollWakes.forEach((wake) => {
+    try { wake(); } catch { /* ignore */ }
+  });
+};
 
 import { api } from '../api-client';
 import useConnectionStore from '../stores/connectionStore';
@@ -145,6 +161,9 @@ export const saveConnection = async (userId, spaceId, connection) => {
 
     // Save connection via API
     await api.post(`/api/spaces/${spaceId}/connections`, serializedConnection);
+    // Local write indicates active editing — wake the poller so remote
+    // state is re-fetched promptly and the backoff resets.
+    wakeConnectionPolling();
     return true;
   } catch (error) {
     // Simple fallback
@@ -180,17 +199,23 @@ export const subscribeToConnections = (
   const effectiveCells = Array.isArray(loadedCells) ? [...loadedCells] : [];
 
   let isActive = true;
-  let intervalId = null;
   const pollingCache = new Map();
 
-  const poll = async () => {
-    if (!isActive) return;
-    if (_subscriptionsPaused) return;
+  // Adaptive polling state: poll fast while changes flow, back off when
+  // idle, and pause entirely while the tab is hidden.
+  let isPolling = false;
+  let pollDelay = POLL_INTERVAL_FAST_MS;
+  let pollTimer = null;
 
+  const poll = async () => {
+    if (!isActive || isPolling) return;
+    if (document.hidden || _subscriptionsPaused) return;
+    isPolling = true;
+    let anythingChanged = false;
     try {
       const params = {};
       if (effectiveCells.length > 0) {
-        params.cells = effectiveCells.join(',');
+        params.cell_id = effectiveCells;
       }
 
       const response = await api.get(`/api/spaces/${spaceId}/connections`, { params });
@@ -208,6 +233,7 @@ export const subscribeToConnections = (
         if (!cachedData) {
           // New connection
           pollingCache.set(cacheKey, { ...connection });
+          anythingChanged = true;
           callback({
             type: 'added',
             id: connection.id,
@@ -216,6 +242,7 @@ export const subscribeToConnections = (
         } else if (connectionDataChanged(cachedData, connection)) {
           // Modified connection
           pollingCache.set(cacheKey, { ...connection });
+          anythingChanged = true;
           callback({
             type: 'modified',
             id: connection.id,
@@ -231,6 +258,7 @@ export const subscribeToConnections = (
         if (!seenKeys.has(key)) {
           pollingCache.delete(key);
           const connId = key.replace(`${spaceId}_`, '');
+          anythingChanged = true;
           callback({
             type: 'removed',
             id: connId,
@@ -238,20 +266,64 @@ export const subscribeToConnections = (
         }
       }
     } catch {
-      // Polling error - will retry on next interval
+      // Polling error - will retry on next poll
+    } finally {
+      isPolling = false;
+      pollDelay = anythingChanged
+        ? POLL_INTERVAL_FAST_MS
+        : Math.min(POLL_INTERVAL_MAX_MS, pollDelay * POLL_BACKOFF_FACTOR);
+      scheduleNextPoll();
     }
   };
 
-  // Start polling
-  intervalId = setInterval(poll, 2000);
-  poll(); // Initial fetch
+  const scheduleNextPoll = () => {
+    if (!isActive) return;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    if (document.hidden || _subscriptionsPaused) return;
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      poll();
+    }, pollDelay);
+  };
+
+  const wake = () => {
+    if (!isActive) return;
+    pollDelay = POLL_INTERVAL_FAST_MS;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    poll();
+  };
+
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    } else {
+      pollDelay = POLL_INTERVAL_FAST_MS;
+      if (!isPolling) poll();
+    }
+  };
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  connectionPollWakes.add(wake);
+
+  // Initial fetch (schedules subsequent polls)
+  poll();
 
   // Return cleanup function
   return () => {
     isActive = false;
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
+    connectionPollWakes.delete(wake);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
     }
     pollingCache.clear();
   };

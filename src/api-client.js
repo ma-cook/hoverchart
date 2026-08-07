@@ -53,10 +53,26 @@ async function refreshAccessToken() {
 }
 
 export async function api(path, options = {}) {
-  const { body, method, headers = {}, retries = 1 } = options;
+  const { body, method, headers = {}, retries = 1, params } = options;
+  let url = path;
+  if (params) {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) search.append(key, item);
+      } else {
+        search.set(key, value);
+      }
+    }
+    const qs = search.toString();
+    if (qs) {
+      url = `${path}${path.includes('?') ? '&' : '?'}${qs}`;
+    }
+  }
   loadTokens();
   const makeRequest = async (token) => {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${API_BASE}${url}`, {
       method: method || (body ? 'POST' : 'GET'),
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
