@@ -4,6 +4,7 @@ import {
   getCellCoordinatesWithHysteresis,
   getCellId,
   getNeighborCells,
+  getCellsInRadius,
   createCellsBatch,
   addObjectToCell,
   moveObjectBetweenCells,
@@ -388,10 +389,17 @@ const useSpatialManagerStore = create((set, get) => ({
             ]
           : [20, 20, 50]; // Default camera position
 
-        const initialCells = getNeighborCells(
+        // Load a 3D block of neighbor cells around the camera (including Y
+        // neighbors). The diagram layout descends in Y from the camera plane
+        // (components sit below their parents, group containers sit at the
+        // hierarchy's vertical center), so a flat horizontal-only grid would
+        // miss most objects until the camera moves. Loading the 3D
+        // neighborhood at startup makes the whole generated diagram render
+        // right after a refresh without panning.
+        const initialCells = getCellsInRadius(
           initialCameraPosition,
           CELL_NEIGHBOR_RADIUS
-        ); // Combine existing occupied cells and initial camera radius cells
+        );
         const cellsToLoad = new Set();
 
         // Only load camera-neighbor cells initially. Distant cells are

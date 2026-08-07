@@ -749,54 +749,52 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
   }
 
   try {
-    const results = await Promise.all(
-      cellCoords.map(async (coords) => {
-        const cellId = getCellId(coords.x, coords.y, coords.z);
-
-        const objects = await api.get(`/api/spaces/${spaceId}/objects?cell_id=${cellId}`);
-
-        // Normalize: flatten metadata.* to top level for frontend compatibility
-        objects.forEach((objectData) => {
-          if (objectData.metadata) {
-            const meta = typeof objectData.metadata === 'string' ? JSON.parse(objectData.metadata) : objectData.metadata;
-            for (const key of ['merfolkData', 'faceColors', 'faceTexts', 'faceTextStyles', 'textStyle', 'headerStyle', 'size', 'lineColor', 'lineThickness', 'borderColor', 'borderStyle']) {
-              if (meta[key] !== undefined && objectData[key] === undefined) {
-                objectData[key] = meta[key];
-              }
-            }
-          }
-
-          // Sanitize fontSize values from old data
-          if (
-            objectData.textStyle?.fontSize &&
-            typeof objectData.textStyle.fontSize === 'string'
-          ) {
-            const parsed = parseFloat(objectData.textStyle.fontSize);
-            objectData.textStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
-          }
-          if (
-            objectData.headerStyle?.fontSize &&
-            typeof objectData.headerStyle.fontSize === 'string'
-          ) {
-            const parsed = parseFloat(objectData.headerStyle.fontSize);
-            objectData.headerStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
-          }
-          if (objectData.faceTextStyles) {
-            Object.keys(objectData.faceTextStyles).forEach((face) => {
-              const style = objectData.faceTextStyles[face];
-              if (style?.fontSize && typeof style.fontSize === 'string') {
-                const parsed = parseFloat(style.fontSize);
-                style.fontSize = isNaN(parsed) ? 0.5 : parsed;
-              }
-            });
-          }
-        });
-
-        return objects;
-      })
+    const cellIds = cellCoords.map((coords) =>
+      getCellId(coords.x, coords.y, coords.z)
     );
 
-    return results.flat();
+    const objects = await api.get(`/api/spaces/${spaceId}/objects`, {
+      params: { cell_id: cellIds },
+    });
+
+    // Normalize: flatten metadata.* to top level for frontend compatibility
+    objects.forEach((objectData) => {
+      if (objectData.metadata) {
+        const meta = typeof objectData.metadata === 'string' ? JSON.parse(objectData.metadata) : objectData.metadata;
+        for (const key of ['merfolkData', 'faceColors', 'faceTexts', 'faceTextStyles', 'textStyle', 'headerStyle', 'size', 'lineColor', 'lineThickness', 'borderColor', 'borderStyle']) {
+          if (meta[key] !== undefined && objectData[key] === undefined) {
+            objectData[key] = meta[key];
+          }
+        }
+      }
+
+      // Sanitize fontSize values from old data
+      if (
+        objectData.textStyle?.fontSize &&
+        typeof objectData.textStyle.fontSize === 'string'
+      ) {
+        const parsed = parseFloat(objectData.textStyle.fontSize);
+        objectData.textStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
+      }
+      if (
+        objectData.headerStyle?.fontSize &&
+        typeof objectData.headerStyle.fontSize === 'string'
+      ) {
+        const parsed = parseFloat(objectData.headerStyle.fontSize);
+        objectData.headerStyle.fontSize = isNaN(parsed) ? 1.5 : parsed;
+      }
+      if (objectData.faceTextStyles) {
+        Object.keys(objectData.faceTextStyles).forEach((face) => {
+          const style = objectData.faceTextStyles[face];
+          if (style?.fontSize && typeof style.fontSize === 'string') {
+            const parsed = parseFloat(style.fontSize);
+            style.fontSize = isNaN(parsed) ? 0.5 : parsed;
+          }
+        });
+      }
+    });
+
+    return objects;
   } catch (error) {
     console.error('Error loading objects from cells:', error);
     return [];

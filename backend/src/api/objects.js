@@ -37,12 +37,21 @@ function normalize(obj) {
 router.get('/', async (req, res) => {
   const { spaceId } = req.params;
   const { cell, cell_id, cellId, x, y, z } = req.query;
-  const effectiveCellId = cell_id || cellId;
+  // Support a single cell_id or repeated cell_id params (array) to batch
+  // multiple cells into one request.
+  const cellIds = [];
+  for (const id of [cell_id, cellId]) {
+    if (Array.isArray(id)) cellIds.push(...id);
+    else if (id) cellIds.push(id);
+  }
   try {
     let query, params;
-    if (effectiveCellId) {
+    if (cellIds.length > 1) {
+      query = `SELECT * FROM objects WHERE space_id = $1 AND cell_id = ANY($2::text[]) ORDER BY updated_at DESC`;
+      params = [spaceId, cellIds];
+    } else if (cellIds.length === 1) {
       query = `SELECT * FROM objects WHERE space_id = $1 AND cell_id = $2 ORDER BY updated_at DESC`;
-      params = [spaceId, effectiveCellId];
+      params = [spaceId, cellIds[0]];
     } else if (x !== undefined && y !== undefined && z !== undefined) {
       query = `SELECT * FROM objects WHERE space_id = $1 AND cell_x = $2 AND cell_y = $3 AND cell_z = $4 ORDER BY updated_at DESC`;
       params = [spaceId, +x, +y, +z];
