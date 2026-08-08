@@ -113,7 +113,12 @@ export async function api(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-api.get = (path, opts) => api(path, { ...opts, method: 'GET' });
+api.get = (path, opts) => {
+  if (window.__POLL_DIAG) {
+    console.log(`[diag][GET] ${path}`, new Error().stack?.split('\n').slice(1, 4).join('\n'));
+  }
+  return api(path, { ...opts, method: 'GET' });
+};
 api.post = (path, body, opts) => api(path, { ...opts, method: 'POST', body });
 api.patch = (path, body, opts) => api(path, { ...opts, method: 'PATCH', body });
 api.delete = (path, opts) => api(path, { ...opts, method: 'DELETE' });

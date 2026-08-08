@@ -46,6 +46,7 @@ export const wakeSpatialPolling = () => {
 
 // DIAG: instance tracking to catch stacked/leaked spatial object pollers
 if (typeof window !== 'undefined' && window.__objPollerSeq == null) window.__objPollerSeq = 0;
+const liveObjPollers = new Set();
 
 // ── Batched write queue ──────────────────────────────────────────────
 // Instead of N individual setTimeout→Firestore writes, pending saves
@@ -607,6 +608,7 @@ export const subscribeToSpatialObjects = (
   // DIAG
   const instanceId = ++window.__objPollerSeq;
   console.log(`[diag][objPoller #${instanceId}] CREATED cells=${safeCells.length}`, new Error().stack?.split('\n').slice(1, 4).join('\n'));
+  liveObjPollers.add(instanceId);
 
   // Clean up tracking for cells that are no longer loaded
   objectSubscriptionsByCell.forEach((subscriptions, cellId) => {
@@ -650,6 +652,8 @@ export const subscribeToSpatialObjects = (
     isPolling = true;
     let anythingChanged = false;
     let fetchFailed = false;
+    let totalAdds = 0;
+    let totalRemoves = 0;
     try {
       const ownerIdFromUrl = window.currentSpaceOwner;
 
@@ -858,6 +862,7 @@ export const subscribeToSpatialObjects = (
 
         if (batchedAdds.length > 0) {
           anythingChanged = true;
+          totalAdds += batchedAdds.length;
           callback({
             type: 'batch-added',
             changes: batchedAdds,
@@ -865,6 +870,7 @@ export const subscribeToSpatialObjects = (
         }
         if (batchedRemoves.length > 0) {
           anythingChanged = true;
+          totalRemoves += batchedRemoves.length;
           callback({
             type: 'batch-removed',
             changes: batchedRemoves,
@@ -876,7 +882,7 @@ export const subscribeToSpatialObjects = (
     } finally {
       isPolling = false;
       if (window.__POLL_DIAG) {
-        console.log(`[diag][objPoller #${instanceId}] poll changed=${anythingChanged} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${safeCells.length} cacheSize=${objectsCache.size}`);
+        console.log(`[diag][objPoller #${instanceId}] poll changed=${anythingChanged} adds=${totalAdds} removes=${totalRemoves} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${safeCells.length} cacheSize=${objectsCache.size} live=${liveObjPollers.size}`);
       }
       if (anythingChanged) {
         pollDelay = POLL_INTERVAL_FAST_MS;
@@ -915,6 +921,9 @@ export const subscribeToSpatialObjects = (
 
   const wake = () => {
     if (!isSubscribed) return;
+    if (window.__POLL_DIAG) {
+      console.log(`[diag][objPoller #${instanceId}] WAKE`, new Error().stack?.split('\n').slice(1, 3).join('\n'));
+    }
     if (isHardIdle) {
       isHardIdle = false;
       idleStreak = 0;
@@ -949,7 +958,8 @@ export const subscribeToSpatialObjects = (
   // Return cleanup function
   return () => {
     // DIAG
-    console.log(`[diag][objPoller #${instanceId}] CLEANUP`);
+    console.log(`[diag][objPoller #${instanceId}] CLEANUP live=${liveObjPollers.size}`);
+    liveObjPollers.delete(instanceId);
     isSubscribed = false;
     spatialPollWakes.delete(wake);
     document.removeEventListener('visibilitychange', handleVisibilityChange);

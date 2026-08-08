@@ -37,6 +37,7 @@ export const wakeConnectionPolling = () => {
 
 // DIAG: instance tracking to catch stacked/leaked connection pollers
 if (typeof window !== 'undefined' && window.__connPollerSeq == null) window.__connPollerSeq = 0;
+const liveConnPollers = new Set();
 
 import { api } from '../api-client';
 import useConnectionStore from '../stores/connectionStore';
@@ -207,6 +208,7 @@ export const subscribeToConnections = (
   // DIAG
   const instanceId = ++window.__connPollerSeq;
   console.log(`[diag][connPoller #${instanceId}] CREATED cells=${effectiveCells.length}`, new Error().stack?.split('\n').slice(1, 4).join('\n'));
+  liveConnPollers.add(instanceId);
 
   let isActive = true;
   const pollingCache = new Map();
@@ -289,7 +291,7 @@ export const subscribeToConnections = (
     } finally {
       isPolling = false;
       if (window.__POLL_DIAG) {
-        console.log(`[diag][connPoller #${instanceId}] poll changed=${anythingChanged} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${effectiveCells.length} cacheSize=${pollingCache.size}`);
+        console.log(`[diag][connPoller #${instanceId}] poll changed=${anythingChanged} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${effectiveCells.length} cacheSize=${pollingCache.size} live=${liveConnPollers.size}`);
       }
       if (anythingChanged) {
         pollDelay = POLL_INTERVAL_FAST_MS;
@@ -328,6 +330,9 @@ export const subscribeToConnections = (
 
   const wake = () => {
     if (!isActive) return;
+    if (window.__POLL_DIAG) {
+      console.log(`[diag][connPoller #${instanceId}] WAKE`, new Error().stack?.split('\n').slice(1, 3).join('\n'));
+    }
     if (isHardIdle) {
       isHardIdle = false;
       idleStreak = 0;
@@ -362,7 +367,8 @@ export const subscribeToConnections = (
   // Return cleanup function
   return () => {
     // DIAG
-    console.log(`[diag][connPoller #${instanceId}] CLEANUP`);
+    console.log(`[diag][connPoller #${instanceId}] CLEANUP live=${liveConnPollers.size}`);
+    liveConnPollers.delete(instanceId);
     isActive = false;
     connectionPollWakes.delete(wake);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
