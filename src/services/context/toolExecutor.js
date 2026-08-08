@@ -187,8 +187,15 @@ async function persistFileContent(storeId, filePath, content) {
           keywords: extractKeywords(slice),
           charCount: slice.length,
         });
-        start = end - cfg.overlap;
-        if (start >= content.length) break;
+        // Termination guarantee (same bug class as chunkIndex.js): once a
+        // chunk ends at the end of the content we are done. `end - overlap`
+        // must never be used to continue — it can go negative on inputs
+        // shorter than `overlap`, and once `end` reaches `content.length` it
+        // makes `start` retreat by `overlap` every iteration. That infinite
+        // loop made every `edit`/`write` tool call hang until the 45s hard
+        // timeout aborted it, so the LLM could never apply any fix.
+        if (end === content.length) break;
+        start = Math.max(end - cfg.overlap, start + 1);
         chunkIndex++;
         if (chunkIndex % 10 === 0) await new Promise(r => setTimeout(r, 0));
       }
