@@ -1,7 +1,7 @@
 import { getContentStore, ContentCategory, waitForContentStoreHydration } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
-import { extractKeywords, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
+import { extractKeywords, chunkTextWithYield, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
 import { getContentStoreWorker, getContentStoreWorkerHealth } from '../../workers/contentStoreWorkerClient';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
@@ -152,54 +152,19 @@ async function persistFileContent(storeId, filePath, content) {
     await new Promise(r => setTimeout(r, 0));
 
     const cfg = { chunkSize: 3000, overlap: 300, delimiter: '\n\n' };
-    const chunks = [];
-    if (content.length > MAX_INDEXED_FILE_CHARS) {
-      // Oversized file: keep one raw chunk (no chunking/keywords) so storing
-      // it never blocks the main thread for seconds; full-text scan skips it.
-      chunks.push({
-        id: `${storeId}:chunk-0`,
-        text: content,
-        startIndex: 0,
-        endIndex: content.length,
-        keywords: [],
-        charCount: content.length,
-        oversized: true,
-      });
-    } else {
-      let start = 0;
-      let chunkIndex = 0;
-      while (start < content.length) {
-        let end = Math.min(start + cfg.chunkSize, content.length);
-        if (end < content.length) {
-          const lastDelimiter = content.lastIndexOf(cfg.delimiter, end);
-          if (lastDelimiter > start + cfg.chunkSize * 0.5) {
-            end = lastDelimiter;
-          }
-        }
-        const slice = content.slice(start, end);
-        chunks.push({
-          // Unique per entry (storeId) so Base64Store's flat chunk map can't
-          // confuse this file's chunk-N with another file's chunk-N.
-          id: `${storeId}:chunk-${chunkIndex}`,
-          text: slice,
-          startIndex: start,
-          endIndex: end,
-          keywords: extractKeywords(slice),
-          charCount: slice.length,
-        });
-        // Termination guarantee (same bug class as chunkIndex.js): once a
-        // chunk ends at the end of the content we are done. `end - overlap`
-        // must never be used to continue — it can go negative on inputs
-        // shorter than `overlap`, and once `end` reaches `content.length` it
-        // makes `start` retreat by `overlap` every iteration. That infinite
-        // loop made every `edit`/`write` tool call hang until the 45s hard
-        // timeout aborted it, so the LLM could never apply any fix.
-        if (end === content.length) break;
-        start = Math.max(end - cfg.overlap, start + 1);
-        chunkIndex++;
-        if (chunkIndex % 10 === 0) await new Promise(r => setTimeout(r, 0));
-      }
-    }
+    const chunks = content.length > MAX_INDEXED_FILE_CHARS
+      ? [{
+          // Oversized file: keep one raw chunk (no chunking/keywords) so storing
+          // it never blocks the main thread for seconds; full-text scan skips it.
+          id: `${storeId}:chunk-0`,
+          text: content,
+          startIndex: 0,
+          endIndex: content.length,
+          keywords: [],
+          charCount: content.length,
+          oversized: true,
+        }]
+      : await chunkTextWithYield(content, { ...cfg, idPrefix: storeId }, 10);
 
     const entry = {
       id: storeId,
@@ -279,21 +244,42 @@ function blockAnchorMatch(content, oldString) {
   const firstLine = searchLines[0].trim();
   const lastLine = searchLines[searchLines.length - 1].trim();
   const contentLines = content.split('\n');
+  const n = contentLines.length;
+  const maxExtra = Math.max(1, Math.floor(searchLines.length * 0.25));
+  // span = j - i + 1 must satisfy |span - searchLines.length| <= maxExtra,
+  // i.e. j in [i + searchLines.length - maxExtra - 1, i + searchLines.length + maxExtra - 1].
+  const jMinBase = searchLines.length - maxExtra - 1;
+  const jMaxBase = searchLines.length + maxExtra - 1;
+
+  // Precompute lastLine positions once, then advance a monotonic pointer per
+  // start anchor. The old nested `for j` scan was O(n²) whenever the lastLine
+  // anchor was absent or rare — a file full of `}` lines (minified bundles)
+  // left the edit tool spinning on the fuzzy fallback. This keeps the original
+  // semantics exactly (first valid end anchor per start anchor, then break)
+  // while running in O(n) for the enumeration.
+  const lastPositions = [];
+  for (let i = 0; i < n; i++) {
+    if (contentLines[i].trim() === lastLine) lastPositions.push(i);
+  }
+  if (lastPositions.length === 0) return null;
+
   const candidates = [];
-  for (let i = 0; i < contentLines.length; i++) {
+  let p = 0;
+  for (let i = 0; i < n; i++) {
     if (contentLines[i].trim() !== firstLine) continue;
-    for (let j = i + 2; j < contentLines.length; j++) {
-      if (contentLines[j].trim() === lastLine &&
-          Math.abs((j - i + 1) - searchLines.length) <= Math.max(1, Math.floor(searchLines.length * 0.25))) {
-        candidates.push({ startLine: i, endLine: j });
-        break;
-      }
+    const jMin = Math.max(i + 2, i + jMinBase);
+    const jMax = i + jMaxBase;
+    while (p < lastPositions.length && lastPositions[p] < jMin) p++;
+    if (p < lastPositions.length && lastPositions[p] <= jMax) {
+      candidates.push({ startLine: i, endLine: lastPositions[p] });
     }
   }
+
   let best = null, bestScore = 0;
   for (const c of candidates) {
     let score = 0, count = 0;
-    for (let k = 1; k < searchLines.length - 1 && k < (c.endLine - c.startLine); k++) {
+    const maxK = Math.min(searchLines.length - 1, c.endLine - c.startLine);
+    for (let k = 1; k < maxK; k++) {
       const a = contentLines[c.startLine + k].trim();
       const b = searchLines[k].trim();
       const maxLen = Math.max(a.length, b.length);

@@ -43,9 +43,8 @@ export function extractKeywords(text, maxKeywords = 10) {
     .map(([word]) => word);
 }
 
-export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '\n\n', idPrefix = '' } = {}) {
-  if (!text) return [];
-  const chunks = [];
+export function* iterateChunks(text, { chunkSize = 2000, overlap = 200, delimiter = '\n\n', idPrefix = '' } = {}) {
+  if (!text) return;
   let start = 0;
   let chunkIndex = 0;
 
@@ -60,7 +59,7 @@ export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '
     }
 
     const chunkContent = text.slice(start, end);
-    chunks.push({
+    yield {
       // Chunk IDs must be globally unique across ALL entries. A bare
       // "chunk-N" (as before) collides between files, so Base64Store's
       // flat encodedChunks map (and its linear fallback) could return ANOTHER
@@ -73,7 +72,7 @@ export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '
       endIndex: end,
       keywords: extractKeywords(chunkContent),
       charCount: chunkContent.length,
-    });
+    };
 
     // Termination guarantee: once a chunk ends at the end of the text we are
     // done. `end - overlap` must never be used to continue — it can go
@@ -86,6 +85,25 @@ export function chunkText(text, { chunkSize = 2000, overlap = 200, delimiter = '
     start = Math.max(end - overlap, start + 1);
     chunkIndex++;
   }
+}
 
+export function chunkText(text, options) {
+  return [...iterateChunks(text, options)];
+}
+
+/**
+ * Same as `chunkText` but yields back to the event loop every `yieldEvery`
+ * chunks, so a large file never blocks the main thread for the whole chunking
+ * pass (used by the main-thread edit/write persistence path).
+ */
+export async function chunkTextWithYield(text, options, yieldEvery = 25) {
+  if (!text) return [];
+  const chunks = [];
+  let count = 0;
+  for (const chunk of iterateChunks(text, options)) {
+    chunks.push(chunk);
+    count++;
+    if (count % yieldEvery === 0) await new Promise(r => setTimeout(r, 0));
+  }
   return chunks;
 }
