@@ -28,6 +28,7 @@ const SharedCanvas = ({ children, style, onPointerMissed }) => (
     gl={GL_SETTINGS}
     dpr={Math.min(window.devicePixelRatio, 2)}
     resize={{ scroll: false }}
+    frameloop="demand"
     onPointerMissed={onPointerMissed}
   >
     {children}

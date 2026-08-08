@@ -637,9 +637,8 @@ export const subscribeToSpatialObjects = (
 
   // Adaptive polling state: poll fast while changes flow, back off when
   // idle, and pause entirely while the tab is hidden. After a couple of
-  // consecutive fully-idle polls at the max backoff we enter a hard idle
-  // (zero requests) and only resume on a local write, tab refocus, or a
-  // cell change.
+  // consecutive fully-idle polls we enter a hard idle (zero requests) and
+  // only resume on a local write, tab refocus, or a cell change.
   let isPolling = false;
   let pollDelay = POLL_INTERVAL_FAST_MS;
   let pollTimer = null;
@@ -905,13 +904,14 @@ export const subscribeToSpatialObjects = (
           // Errors never count toward hard idle — keep retrying (backing
           // off) so the poller recovers once the network/backend returns.
           idleStreak = 0;
-        } else if (pollDelay >= POLL_INTERVAL_MAX_MS) {
+        } else {
+          // Clean polls count toward hard idle regardless of the current
+          // delay, so polling stops within a few seconds of the last
+          // change instead of crawling up the backoff ladder (~2 min).
           idleStreak += 1;
           if (idleStreak >= HARD_IDLE_STREAK) {
             isHardIdle = true;
           }
-        } else {
-          idleStreak = 0;
         }
       }
       scheduleNextPoll();

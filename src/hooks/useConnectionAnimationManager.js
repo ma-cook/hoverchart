@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { create } from 'zustand';
 
 /**
@@ -56,13 +56,25 @@ const useAnimationManagerStore = create((set, get) => ({
  */
 export const ConnectionAnimationManager = () => {
   const offsetsRef = useRef(new Map()); // connectionId -> current offset
-  
+  const invalidate = useThree((s) => s.invalidate);
+  const lastInvalidateRef = useRef(0);
+
   useFrame((state, delta) => {
     const animatedLines = useAnimationManagerStore.getState().animatedLines;
-    
+
     // Skip if no animated lines
     if (animatedLines.size === 0) return;
-    
+
+    // Keep demand-driven frames coming while any line is animated, but cap
+    // the cadence at ~30fps so an otherwise-idle dashed scene doesn't render
+    // at the display's full refresh rate. Camera interaction invalidates at
+    // full rate on its own via OrbitControls' change events.
+    const now = state.clock.elapsedTime * 1000;
+    if (now - lastInvalidateRef.current >= 33) {
+      lastInvalidateRef.current = now;
+      invalidate();
+    }
+
     // Batch update all animated lines in a single frame callback
     animatedLines.forEach((lineData, connectionId) => {
       const { materialRef, speed, direction } = lineData;

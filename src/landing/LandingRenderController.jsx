@@ -13,7 +13,7 @@ import useSceneStore from '../stores/sceneStore';
  *   – one frame when the user scrolls (landingScrollVersion bump)
  *   – one frame on window resize (Camera/OrderHeader re-position)
  *   – subsequent frames while CustomCamera's lerp is still converging
- * It restores "always" on unmount so the diagram app keeps its normal loop.
+ * It restores "demand" on unmount so the diagram app keeps its demand-driven loop.
  */
 function LandingRenderController() {
   const set = useThree((s) => s.set);
@@ -22,7 +22,7 @@ function LandingRenderController() {
 
   useEffect(() => {
     set({ frameloop: 'never' });
-    return () => set({ frameloop: 'always' });
+    return () => set({ frameloop: 'demand' });
   }, [set]);
 
   useEffect(() => {

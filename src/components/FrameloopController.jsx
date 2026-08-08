@@ -18,13 +18,11 @@ function FrameloopController() {
 
   useEffect(() => {
     if (viewMode === '3d') {
-      set({ frameloop: 'always' });
+      set({ frameloop: 'demand' });
 
-      // The rAF chain broke when frameloop was 'never'. A single invalidate()
-      // schedules one frame; inside that frame R3F sees frameloop === 'always'
-      // and re-enters its continuous loop. We pump a few extra frames to
-      // handle edge cases where the first frame runs before React has
-      // flushed the visibility CSS change (so the GL viewport is still 0×0).
+      // Pump a few extra frames to handle edge cases where the first frame
+      // runs before React has flushed the visibility CSS change (so the GL
+      // viewport is still 0×0).
       invalidate();
 
       // Force the WebGL renderer to reclaim the correct viewport size.
