@@ -44,6 +44,9 @@ export const wakeSpatialPolling = () => {
   });
 };
 
+// DIAG: instance tracking to catch stacked/leaked spatial object pollers
+if (typeof window !== 'undefined' && window.__objPollerSeq == null) window.__objPollerSeq = 0;
+
 // ── Batched write queue ──────────────────────────────────────────────
 // Instead of N individual setTimeout→Firestore writes, pending saves
 // accumulate here and flush together in a single batch.
@@ -601,6 +604,10 @@ export const subscribeToSpatialObjects = (
   // Ensure loadedCells is always an array
   const safeCells = Array.isArray(loadedCells) ? loadedCells : [];
 
+  // DIAG
+  const instanceId = ++window.__objPollerSeq;
+  console.log(`[diag][objPoller #${instanceId}] CREATED cells=${safeCells.length}`, new Error().stack?.split('\n').slice(1, 4).join('\n'));
+
   // Clean up tracking for cells that are no longer loaded
   objectSubscriptionsByCell.forEach((subscriptions, cellId) => {
     if (!safeCells.includes(cellId)) {
@@ -868,6 +875,9 @@ export const subscribeToSpatialObjects = (
       console.error('Error polling spatial objects:', error);
     } finally {
       isPolling = false;
+      if (window.__POLL_DIAG) {
+        console.log(`[diag][objPoller #${instanceId}] poll changed=${anythingChanged} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${safeCells.length} cacheSize=${objectsCache.size}`);
+      }
       if (anythingChanged) {
         pollDelay = POLL_INTERVAL_FAST_MS;
         idleStreak = 0;
@@ -938,6 +948,8 @@ export const subscribeToSpatialObjects = (
 
   // Return cleanup function
   return () => {
+    // DIAG
+    console.log(`[diag][objPoller #${instanceId}] CLEANUP`);
     isSubscribed = false;
     spatialPollWakes.delete(wake);
     document.removeEventListener('visibilitychange', handleVisibilityChange);

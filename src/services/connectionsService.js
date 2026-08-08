@@ -35,6 +35,9 @@ export const wakeConnectionPolling = () => {
   });
 };
 
+// DIAG: instance tracking to catch stacked/leaked connection pollers
+if (typeof window !== 'undefined' && window.__connPollerSeq == null) window.__connPollerSeq = 0;
+
 import { api } from '../api-client';
 import useConnectionStore from '../stores/connectionStore';
 import { cleanObject } from '../utils/unifiedValidationUtils';
@@ -201,6 +204,10 @@ export const subscribeToConnections = (
   // Ensure loadedCells is always an array
   const effectiveCells = Array.isArray(loadedCells) ? [...loadedCells] : [];
 
+  // DIAG
+  const instanceId = ++window.__connPollerSeq;
+  console.log(`[diag][connPoller #${instanceId}] CREATED cells=${effectiveCells.length}`, new Error().stack?.split('\n').slice(1, 4).join('\n'));
+
   let isActive = true;
   const pollingCache = new Map();
 
@@ -281,6 +288,9 @@ export const subscribeToConnections = (
       fetchFailed = true; // Polling error - will retry on next poll
     } finally {
       isPolling = false;
+      if (window.__POLL_DIAG) {
+        console.log(`[diag][connPoller #${instanceId}] poll changed=${anythingChanged} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${effectiveCells.length} cacheSize=${pollingCache.size}`);
+      }
       if (anythingChanged) {
         pollDelay = POLL_INTERVAL_FAST_MS;
         idleStreak = 0;
@@ -351,6 +361,8 @@ export const subscribeToConnections = (
 
   // Return cleanup function
   return () => {
+    // DIAG
+    console.log(`[diag][connPoller #${instanceId}] CLEANUP`);
     isActive = false;
     connectionPollWakes.delete(wake);
     document.removeEventListener('visibilitychange', handleVisibilityChange);

@@ -29,6 +29,17 @@ import useConnectionStore from './connectionStore';
 import useLODStore from './lodStore';
 import { getAllCellObjectsForCells } from '../services/cellObjectCache';
 
+// DIAG: log every change to the loadedCells set to catch oscillation
+let __lastDiagLoadedCellsSize = null;
+const diagLoadedCells = (label, loadedCells) => {
+  if (!window.__POLL_DIAG) return;
+  const size = loadedCells ? loadedCells.size : 0;
+  if (size !== __lastDiagLoadedCellsSize) {
+    console.log(`[diag][loadedCells] ${label} -> ${size} cells`, size > 0 && size <= 12 ? [...loadedCells] : '');
+    __lastDiagLoadedCellsSize = size;
+  }
+};
+
 // Version marker
 
 const useSpatialManagerStore = create((set, get) => ({
@@ -303,6 +314,7 @@ const useSpatialManagerStore = create((set, get) => ({
           ...newCellIds,
         ]);
         set({ loadedCells: newLoadedCells });
+        diagLoadedCells('loadCellsBatch', newLoadedCells);
 
         // Check if any objects were cached for these newly loaded cells
         // (e.g. during diagram creation before the Cloud Function completes).
@@ -428,6 +440,7 @@ const useSpatialManagerStore = create((set, get) => ({
             currentCellCoords: { x: 0, y: 0, z: 0 },
             isInitialized: true,
           });
+          diagLoadedCells('initializeSpatialSystem', cellsToLoad);
 
           // Hydrate cached objects for the just-loaded initial cells.  The
           // scan path caches every created object (loaded or not) in
@@ -606,6 +619,7 @@ const useSpatialManagerStore = create((set, get) => ({
       const newLoadedCells = new Set(state.loadedCells);
       cellsToUnloadNow.forEach((cellId) => newLoadedCells.delete(cellId));
       set({ loadedCells: newLoadedCells });
+      diagLoadedCells('unloadCellsBatch', newLoadedCells);
     }
   },
 
