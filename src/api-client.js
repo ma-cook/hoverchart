@@ -104,6 +104,10 @@ export async function api(path, options = {}) {
     }
   }
 
+  if (res.status === 304) {
+    return null; // Not Modified — nothing changed, no payload (see pollers)
+  }
+
   if (!res.ok) {
     const err = await res.text().catch(() => 'Request failed');
     throw new Error(`${res.status}: ${err}`);

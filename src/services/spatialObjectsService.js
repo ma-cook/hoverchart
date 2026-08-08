@@ -645,6 +645,10 @@ export const subscribeToSpatialObjects = (
   let pollTimer = null;
   let isHardIdle = false;
   let idleStreak = 0;
+  // DIAG (always-on): high-frequency polling detector
+  let pollsInWindow = 0;
+  let windowStartMs = 0;
+  let highRateWarnedAt = 0;
 
   const poll = async () => {
     if (!isSubscribed || isPolling) return;
@@ -881,6 +885,14 @@ export const subscribeToSpatialObjects = (
       console.error('Error polling spatial objects:', error);
     } finally {
       isPolling = false;
+      // DIAG (always-on): warn once per 60s if polling at a sustained high rate
+      const nowMs = performance.now();
+      if (nowMs - windowStartMs > 30000) { windowStartMs = nowMs; pollsInWindow = 0; }
+      pollsInWindow += 1;
+      if (pollsInWindow >= 12 && nowMs - highRateWarnedAt > 60000) {
+        highRateWarnedAt = nowMs;
+        console.warn(`[diag][objPoller #${instanceId}] HIGH-RATE: ${pollsInWindow} polls in <30s (changed=${anythingChanged} fetchFailed=${fetchFailed} live=${liveObjPollers.size})`, new Error().stack?.split('\n').slice(1, 3).join('\n'));
+      }
       if (window.__POLL_DIAG) {
         console.log(`[diag][objPoller #${instanceId}] poll changed=${anythingChanged} adds=${totalAdds} removes=${totalRemoves} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${safeCells.length} cacheSize=${objectsCache.size} live=${liveObjPollers.size}`);
       }
@@ -919,10 +931,14 @@ export const subscribeToSpatialObjects = (
     }, pollDelay);
   };
 
+  let lastWakeLogMs = 0;
   const wake = () => {
     if (!isSubscribed) return;
-    if (window.__POLL_DIAG) {
-      console.log(`[diag][objPoller #${instanceId}] WAKE`, new Error().stack?.split('\n').slice(1, 3).join('\n'));
+    // DIAG (always-on, rate-limited): capture WHO wakes the poller
+    const wakeNow = performance.now();
+    if (wakeNow - lastWakeLogMs > 5000) {
+      lastWakeLogMs = wakeNow;
+      console.log(`[diag][objPoller #${instanceId}] WAKE`, new Error().stack?.split('\n').slice(1, 5).join('\n'));
     }
     if (isHardIdle) {
       isHardIdle = false;
