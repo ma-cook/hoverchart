@@ -1,6 +1,6 @@
 import { sendToZen } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
-import { executeTool, resetEditTracker, refreshRepoWorkingCopies } from './toolExecutor';
+import { executeTool, resetEditTracker, refreshRepoWorkingCopies, getAppliedEditRecords } from './toolExecutor';
 import { fetchFileContent } from '../githubRepoService';
 import { computeTools, computeSubAgentTools } from './toolProvider';
 import { initializeDefaultSkills, REGISTRY } from './skillManager';
@@ -15,6 +15,9 @@ const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
 const MAX_CONTEXT_CHARS = 120000;
 const MAX_TOOL_RESULT_CHARS = 30000;
+// A2: cap for a single synthesized SEARCH/REPLACE hunk. Larger divergent
+// regions are refused so the harness never emits a whole-file style block.
+const MAX_PATCH_BLOCK_LINES = 200;
 const TRUNCATION_WARNING = `\n\n[Output truncated at ${(MAX_TOOL_RESULT_CHARS).toLocaleString()} chars. Use read_file with offset/limit or refine your search to narrow results.]`;
 const RETRYABLE_TOOLS = new Set(['read_file', 'edit', 'write', 'search_code']);
 const MAX_TOOL_RETRIES = 2;
@@ -406,6 +409,15 @@ function generateSearchReplacePatch(original, modified, filePath) {
     const searchLines = origLines.slice(searchStart, i);
     const replaceLines = modLines.slice(replaceStart, j);
     if (searchLines.length > 0 || replaceLines.length > 0) {
+      // A2: never emit a whole-file style block. If a single divergent region
+      // spans more than MAX_PATCH_BLOCK_LINES, refuse the patch so the caller
+      // can fall back to the exact hunks recorded by the edit tool. A giant
+      // SEARCH/REPLACE would otherwise read as a full-file rewrite (and often
+      // silently resync on the wrong text).
+      if (searchLines.length > MAX_PATCH_BLOCK_LINES || replaceLines.length > MAX_PATCH_BLOCK_LINES) {
+        console.warn(`[ToolRound] ${filePath}: refusing ${searchLines.length}/${replaceLines.length}-line diff region (cap ${MAX_PATCH_BLOCK_LINES})`);
+        return null;
+      }
       const contextBefore = searchStart > 0 ? origLines[searchStart - 1] : '';
       const contextAfter = i < origLines.length ? origLines[i] : '';
       blocks.push({
@@ -978,7 +990,7 @@ export async function sendWithRetrieval({
               if (entry) {
                 const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
                 if (chunks.length > 0) {
-                  originalFileContents.set(filePath, joinChunks(chunks));
+                  originalFileContents.set(filePath, joinChunks(chunks).replace(/\r\n/g, '\n'));
                 }
               }
             }
@@ -991,7 +1003,7 @@ export async function sendWithRetrieval({
           if (tc.name === 'read_file' && result._fullContent) {
             const fp = normalizePath(tc.arguments?.path);
             if (fp && !originalFileContents.has(fp)) {
-              originalFileContents.set(fp, result._fullContent);
+              originalFileContents.set(fp, result._fullContent.replace(/\r\n/g, '\n'));
             }
           }
           const toolDuration = Math.round(performance.now() - toolStart);
@@ -1194,6 +1206,7 @@ export async function sendWithRetrieval({
   if (editedFilePaths.size > 0) {
     const store = getContentStore();
     const base64Store = getBase64Store();
+    const appliedEditRecords = getAppliedEditRecords();
     const syntheticBlocks = [];
     for (const filePath of editedFilePaths) {
       if (finalText.includes(`:${filePath}\n`)) continue;
@@ -1207,8 +1220,9 @@ export async function sendWithRetrieval({
       // A1: always try to emit a search/replace PATCH (diff), never a full-file
       // rewrite. If the original content wasn't cached (e.g. the file was
       // fetched for the first time during this run), fetch it from GitHub so we
-      // can diff against the true pre-edit state. A full-file block is only a
-      // last resort when no original can be obtained at all.
+      // can diff against the true pre-edit state. A full-file block is NEVER
+      // emitted — if no original can be obtained, fall back to the exact hunks
+      // recorded by the edit tool, and if even those are missing, skip the file.
       let originalContent = originalFileContents.get(filePath);
       if (!originalContent && githubContext) {
         try {
@@ -1218,16 +1232,48 @@ export async function sendWithRetrieval({
             filePath,
             githubContext.token,
           );
-        } catch { /* fall through to full-file block */ }
+        } catch { /* fall through to edit-record hunks */ }
       }
-      if (originalContent && originalContent !== modifiedContent) {
-        const patch = generateSearchReplacePatch(originalContent, modifiedContent, filePath);
+      if (originalContent) originalContent = originalContent.replace(/\r\n/g, '\n');
+      const normalizedModified = modifiedContent.replace(/\r\n/g, '\n');
+      if (originalContent && originalContent !== normalizedModified) {
+        const patch = generateSearchReplacePatch(originalContent, normalizedModified, filePath);
         if (patch) {
           syntheticBlocks.push(patch);
           continue;
         }
+        console.warn(`[ToolRound] ${filePath}: diff was too large to emit safely — falling back to edit-record hunks`);
+      } else if (originalContent && originalContent === normalizedModified) {
+        console.warn(`[ToolRound] ${filePath}: no net change after edits — skipping synthetic block`);
+        continue;
       }
-      syntheticBlocks.push(`\`\`\`${ext}:${filePath}\n${modifiedContent}\n\`\`\``);
+
+      // No trustworthy pre-edit original: reconstruct minimal hunks from the
+      // exact edits that were applied this run. These match the GitHub baseline
+      // by construction (the edit tool applied them to that content).
+      const records = appliedEditRecords.filter(r => r.filePath === filePath);
+      if (records.length > 0) {
+        const hunks = records.map(r => {
+          const lines = [];
+          lines.push(`<<<<<<< SEARCH`);
+          lines.push(r.oldString);
+          lines.push(`=======`);
+          lines.push(r.newString);
+          lines.push(`>>>>>>> REPLACE`);
+          return lines.join('\n');
+        });
+        syntheticBlocks.push(`\`\`\`${ext}:${filePath}\n${hunks.join('\n\n')}\n\`\`\``);
+        continue;
+      }
+      // A write to a path that isn't in the repo's file tree is a NEW file —
+      // a full-file block is the only correct representation (and safe, since
+      // it's a create, not an overwrite). Existing files with no reconstructable
+      // diff are skipped rather than re-emitted wholesale.
+      if (!fileTree.includes(filePath)) {
+        syntheticBlocks.push(`\`\`\`${ext}:${filePath}\n${modifiedContent}\n\`\`\``);
+      } else {
+        console.warn(`[ToolRound] ${filePath}: cannot synthesize a minimal patch (no original and no edit records) — skipped`);
+      }
     }
     if (syntheticBlocks.length > 0) {
       const blockText = syntheticBlocks.join('\n\n');

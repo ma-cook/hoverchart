@@ -7,6 +7,8 @@ import {
 import { fetchFileContent, getGithubToken } from './githubRepoService';
 import { hasSearchReplaceMarkers } from './codeExtractor';
 
+export { hasSearchReplaceMarkers };
+
 const SEARCH_BLOCK_REGEX = /<<<<<<<\s*SEARCH\n([\s\S]*?)=======\n([\s\S]*?)>>>>>>>\s*REPLACE/g;
 
 export function applySearchReplace(existingContent, llmOutput) {
@@ -63,6 +65,18 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
       }
 
       const isKnownFile = existingContent !== null;
+
+      // Full-content blocks arrive with SEARCH/REPLACE already applied by the
+      // code-gen pipeline (SpaceChat), so trust the proposed file as-is.
+      if (block.fullContent) {
+        if (!existingContent) {
+          skipped.push({ path: block.filePath, error: 'File not found in repo — cannot apply full content' });
+          continue;
+        }
+        files.push({ path: block.filePath, content: block.code });
+        merged[block.filePath] = block.code;
+        continue;
+      }
 
       if (isKnownFile && !hasSearchReplaceMarkers(block.code)) {
         skipped.push({

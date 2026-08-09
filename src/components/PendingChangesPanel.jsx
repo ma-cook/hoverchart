@@ -104,6 +104,7 @@ export default function PendingChangesPanel() {
       const codeBlocks = accepted.map(c => ({
         filePath: c.filePath,
         code: c.proposed,
+        fullContent: c.fullContent,
       }));
 
       const requestSummary = (accepted.map(c => c.request).find(Boolean) || 'Code update').split('\n')[0].slice(0, 120);
@@ -158,6 +159,14 @@ export default function PendingChangesPanel() {
               <span className="pending-change-path" title={change.filePath}>
                 {change.filePath.split('/').pop()}
               </span>
+              {change.isWholeFileProposal && (
+                <span
+                  className="pending-change-warning"
+                  title="Proposes the entire file for an existing file. Push will reject it — use SEARCH/REPLACE markers covering only the changed lines."
+                >
+                  full-file
+                </span>
+              )}
               <span className={`pending-change-status ${change.status === 'accepted' ? 'status-accepted' : change.status === 'rejected' ? 'status-rejected' : ''}`}>
                 {change.status === 'accepted' ? '✓' : change.status === 'rejected' ? '✗' : expandedFile === change.filePath ? '▼' : '▶'}
               </span>
@@ -166,6 +175,11 @@ export default function PendingChangesPanel() {
             {expandedFile === change.filePath && (
               <div className="pending-change-detail">
                 <DiffView original={change.original} proposed={change.proposed} />
+                {change.isWholeFileProposal && (
+                  <div style={{ fontSize: '11px', color: '#ffb74d', marginTop: '6px', lineHeight: '1.4' }}>
+                    This change replaces the entire existing file. Push will reject it — it must use SEARCH/REPLACE markers covering only the changed lines.
+                  </div>
+                )}
                 <div className="pending-change-actions">
                   <button
                     className="pending-btn accept-btn"
@@ -197,11 +211,17 @@ export default function PendingChangesPanel() {
         <button
           className="pending-footer-btn push-btn"
           onClick={handlePush}
-          disabled={accepted.length === 0 || pushing}
+          disabled={accepted.length === 0 || pushing || accepted.some(c => c.isWholeFileProposal)}
+          title={accepted.some(c => c.isWholeFileProposal) ? 'Reject or fix the full-file change(s) before pushing' : undefined}
         >
           {pushing ? 'Pushing...' : `Push ${accepted.length} file(s)`}
         </button>
       </div>
+      {accepted.some(c => c.isWholeFileProposal) && (
+        <div style={{ fontSize: '11px', color: '#ffb74d', padding: '6px 10px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+          One or more accepted changes replace an existing file entirely and would be rejected by push. Reject them or fix the underlying change.
+        </div>
+      )}
       {pushError && (
         <div style={{ fontSize: '11px', color: '#ff6b6b', padding: '6px 10px', borderTop: '1px solid rgba(255,255,255,0.1)', wordBreak: 'break-word' }}>
           {pushError}

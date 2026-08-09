@@ -74,6 +74,17 @@
   color: #e6e6e6;
 }
 
+.pending-change-warning {
+  background: rgba(255, 179, 77, 0.15);
+  color: #ffb74d;
+  border: 1px solid rgba(255, 179, 77, 0.4);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .pending-change-status {
   width: 16px;
   text-align: center;

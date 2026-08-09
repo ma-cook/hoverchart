@@ -8,6 +8,7 @@ import useCodeStore from '../../stores/codeStore';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
 import { computeSubAgentTools } from './toolProvider';
 import { SKILL_MANAGEMENT_TOOL_DEFS } from './skillManager';
+import { recordFileRead } from './toolState';
 
 const TOOL_TIMEOUT_MS = 20_000;
 const DEFAULT_READ_LINES = 8000;
@@ -138,6 +139,12 @@ async function searchInWorker(rawPattern, codeStoreState, extra = {}) {
 }
 
 const appliedEdits = new Map();
+
+// Per-edit records of every successfully applied edit, in application order.
+// Used by the orchestrator to synthesize minimal SEARCH/REPLACE patches for
+// files whose pre-edit original content wasn't cached (so the harness never has
+// to fall back to emitting a whole-file block).
+const appliedEditRecords = [];
 
 // Last successful edit's 1-based line, keyed by normalized filePath. Used to
 // disambiguate exact matches that appear more than once: the model is most
@@ -936,7 +943,12 @@ OUTPUT FORMAT:
 
 export function resetEditTracker() {
   appliedEdits.clear();
+  appliedEditRecords.length = 0;
   lastEditLines.clear();
+}
+
+export function getAppliedEditRecords() {
+  return appliedEditRecords;
 }
 
 /**
@@ -977,7 +989,7 @@ export async function refreshRepoWorkingCopies({ githubContext } = {}) {
           );
           if (content) {
             await persistFileContent(`repo:${path}`, path, content);
-            originals.set(path, content);
+            originals.set(path, content.replace(/\r\n/g, '\n'));
           }
         } catch (err) {
           const msg = err?.message || String(err);
@@ -1050,6 +1062,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
 
       if (!content) return { success: false, content: `File not found: ${path}` };
 
+      recordFileRead();
       await new Promise(r => setTimeout(r, 0));
       const lines = content.split('\n');
       const totalLines = lines.length;
@@ -1086,6 +1099,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
       if (!fullContent) return { success: false, content: `File not found: ${path}` };
+      recordFileRead();
       await new Promise(r => setTimeout(r, 0));
       const outline = await generateFileOutline(fullContent, path);
       return { success: true, content: outline };
@@ -1132,6 +1146,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         return { success: false, content: `File not found: ${path}` };
       }
 
+      recordFileRead();
       await new Promise(r => setTimeout(r, 0));
       const allLines = fullContent.split('\n');
       const totalLines = allLines.length;
@@ -1578,6 +1593,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
 
       const updated = attempt.updated;
       appliedEdits.set(editKey, (appliedEdits.get(editKey) || 0) + 1);
+      appliedEditRecords.push({ filePath, oldString: cleanedOldString, newString });
       await persistFileContent(storeId, filePath, updated);
 
       const oldLines = cleanedOldString.split('\n');

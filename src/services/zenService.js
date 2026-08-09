@@ -72,66 +72,6 @@ When asked a general question, answer conversationally and helpfully.
 When asked to create or modify a diagram, output Merfolk inside \`\`\`merfolk blocks.
 You may also suggest code structure, file organization, and implementation approaches.`;
 
-const CODE_SYSTEM_PROMPT = `You are a code generation expert. Your task is to generate production-ready code based on the system architecture provided.
-
-═══════════════════════════════════════════════════════════════
-ARCHITECTURE CONTEXT
-═══════════════════════════════════════════════════════════════
-
-The system architecture is represented as 3D objects in the scene. Each object corresponds to a component, function, service, store, hook, or library in the architecture. The connections between them represent relationships (data flow, control flow, dependencies, etc.).
-
-When generating code:
-- Read the architecture context below to understand the system structure
-- Generate complete, working code files for each component
-- Use the file path conventions appropriate for the project
-- Include proper imports, error handling, and edge cases
-
-═══════════════════════════════════════════════════════════════
-OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════
-
-FIRST: Write a brief 2-4 sentence summary of what you are creating or changing. This summary will be shown to the user.
-
-THEN: Output each file as a code block with the file path as the language identifier label:
-
-\`\`\`javascript:src/components/Button.jsx
-// NODE: Button
-import React from 'react';
-export function Button() { ... }
-\`\`\`
-
-The // NODE: directive MUST match a nodeId from the architecture context.
-This tells the system which architecture component this code belongs to.
-
-If the code has no specific node association, omit the NODE directive.
-
-═══════════════════════════════════════════════════════════════
-TECH STACK
-═══════════════════════════════════════════════════════════════
-
-{techStack}
-
-═══════════════════════════════════════════════════════════════
-RULES
-═══════════════════════════════════════════════════════════════
-
-1. Start with a brief summary (2-4 sentences) of what you are doing
-2. Generate COMPLETE files - every import, export, type, and function needed
-3. Group related files by feature or module
-4. Follow idiomatic patterns for the target language/framework
-5. Include error handling, input validation, and edge cases
-6. Use modern syntax and best practices
-7. For EXISTING files shown in context: output ONLY the specific changes using SEARCH/REPLACE markers. Do NOT output the entire file. Use this format:
-   <<<<<<< SEARCH
-   exact code to find and replace
-   =======
-   replacement code
-   >>>>>>> REPLACE
-   You can use multiple SEARCH/REPLACE blocks per file. Each SEARCH block must match the existing code exactly.
-8. Keep code blocks as short as possible - split large files into smaller modules
-9. Maximum 5 code blocks per response to avoid truncation
-10. Files are read-only to users - you are the only one who writes code`;
-
 const FEW_SHOT_EXAMPLES = [
   {
     role: 'user',
@@ -422,75 +362,6 @@ function buildSceneContext(objects) {
   if (nodes.length === 0) return planContext || '';
 
   return `\nEXISTING OBJECTS IN SCENE:\n${nodes.join('\n')}\n\nWhen asked to modify or extend the diagram, reference existing node IDs to create connections to them. Do NOT redefine existing nodes unless explicitly asked — only add new nodes and connections.${planContext}`;
-}
-
-const SCENE_CONTEXT_BUDGET = 8000;
-const PLAN_CONTEXT_BUDGET = 2000;
-
-function buildCodeSceneContext(objects) {
-  if (!objects || objects.length === 0) return 'No architecture objects found in the scene.\n';
-
-  const lines = [];
-  const merfolkObjects = objects.filter(o => o.merfolkData?.nodeId && !o.merfolkData?.isContainer);
-
-  lines.push('=== SYSTEM ARCHITECTURE ===\n');
-  let charCount = lines[0].length;
-  let truncated = 0;
-
-  for (const obj of merfolkObjects) {
-    const nodeId = obj.merfolkData.nodeId;
-    const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
-    const name = obj.headerText || nodeId;
-    const entry = `[${nodeId}] ${nodeType} — "${name}"`;
-
-    if (obj.metadata?.code) {
-      const preview = obj.metadata.code.slice(0, 200).replace(/\n/g, '\\n');
-      const codeEntry = `  Existing code (${obj.metadata.codeLanguage || 'unknown'}, ${obj.merfolkData?.codeFilePath || obj.metadata.codeFilePath || 'unknown path'}):\n  \`${preview}...\``;
-      const entryLen = entry.length + codeEntry.length + 2;
-      if (charCount + entryLen > SCENE_CONTEXT_BUDGET) { truncated++; continue; }
-      lines.push(entry);
-      lines.push(codeEntry);
-      charCount += entryLen;
-    } else {
-      if (charCount + entry.length + 1 > SCENE_CONTEXT_BUDGET) { truncated++; continue; }
-      lines.push(entry);
-      charCount += entry.length + 1;
-    }
-  }
-
-  if (truncated > 0) {
-    lines.push(`\n... and ${truncated} more objects (truncated for context size)`);
-  }
-
-  const connections = objects.reduce((acc, o) => {
-    if (o.merfolkData?.nodeId) acc.add(o.merfolkData.nodeId);
-    return acc;
-  }, new Set());
-
-  if (connections.size > 0) {
-    const nodeHeader = '\n=== NODES IN SCENE ===';
-    if (charCount + nodeHeader.length < SCENE_CONTEXT_BUDGET) {
-      lines.push(nodeHeader);
-      for (const id of connections) {
-        const nodeLine = `- ${id}`;
-        if (charCount + nodeLine.length + 1 > SCENE_CONTEXT_BUDGET) break;
-        lines.push(nodeLine);
-        charCount += nodeLine.length + 1;
-      }
-    }
-  }
-
-  let planContext = getAllPlanContext();
-  if (planContext) {
-    if (planContext.length > PLAN_CONTEXT_BUDGET) {
-      planContext = planContext.slice(0, PLAN_CONTEXT_BUDGET) + '\n... (plans truncated)';
-    }
-    if (charCount + planContext.length < SCENE_CONTEXT_BUDGET) {
-      lines.push(planContext);
-    }
-  }
-
-  return lines.join('\n');
 }
 
 import { sendToProvider } from './llmProviders';
@@ -827,18 +698,6 @@ export async function buildZenMessages({ llmMessages, sceneObjects, modelId, sig
   return messages;
 }
 
-export function buildCodeMessages({ llmMessages, sceneObjects, techStack = '', maxMessages = 20 }) {
-  const recentMessages = llmMessages.slice(-maxMessages);
-
-  const sceneContext = buildCodeSceneContext(sceneObjects);
-  const techStackSection = techStack ? `The project uses: ${techStack}` : 'The tech stack has not been specified yet. Ask the user what language/framework they want to use, or suggest the best choice for this architecture.';
-  const systemContent = CODE_SYSTEM_PROMPT.replace('{techStack}', techStackSection) + '\n\n' + sceneContext;
-
-  const systemMessage = { role: 'system', content: systemContent };
-
-  return [systemMessage, ...recentMessages];
-}
-
 export function buildGraphSummary(diagramStore) {
   const diagrams = diagramStore?.graphs || [];
   const hierarchy = diagramStore?.hierarchy || {};
@@ -1032,39 +891,6 @@ export function buildComponentIndex(objects) {
 
   if (noFile > 0) lines.push(`(${noFile} components without file path)`);
   return lines.length > 0 ? lines.join('\n') : '(no scene components)';
-}
-
-export function parseSectionedResponse(text, fileContents) {
-  const sectionRegex = /```section-(\d+):([^\n]+)\n([\s\S]*?)```/g;
-  const fileSections = {};
-  let match;
-
-  while ((match = sectionRegex.exec(text)) !== null) {
-    const sectionNum = parseInt(match[1], 10);
-    const filePath = match[2].trim();
-    const content = match[3];
-
-    if (!fileSections[filePath]) fileSections[filePath] = [];
-    fileSections[filePath].push({ index: sectionNum - 1, content });
-  }
-
-  const reassembled = {};
-  for (const [filePath, sections] of Object.entries(fileSections)) {
-    const original = fileContents?.[filePath];
-    if (!original) continue;
-
-    const sorted = [...sections].sort((a, b) => a.index - b.index);
-    const totalExpected = Math.ceil(original.split('\n').length / 200);
-
-    if (sorted.length < totalExpected) continue;
-
-    reassembled[filePath] = sorted.map(s => {
-      const c = s.content;
-      return c.endsWith('\n') ? c.slice(0, -1) : c;
-    }).join('\n');
-  }
-
-  return reassembled;
 }
 
 const SCENE_COMPONENT_BUDGET = 2000;

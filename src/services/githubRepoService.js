@@ -763,7 +763,7 @@ const traverseVanillaAST = (
   // ── Helpers ───────────────────────────────────────────────────────────────
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath });
     }
   };
 
@@ -1018,7 +1018,7 @@ const traversePythonSource = (
 
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath });
     }
   };
 
@@ -1289,7 +1289,7 @@ const traverseVueSource = (
 
   const ensureContainer = () => {
     if (!fileFunctions.has(fileName)) {
-      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath });
+      fileFunctions.set(fileName, { type: containerType, functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath });
     }
   };
 
@@ -1844,7 +1844,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             // Group under a "shaders" file container
             const shaderContainerName = 'shaders';
             if (!fileFunctions.has(shaderContainerName)) {
-              fileFunctions.set(shaderContainerName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+              fileFunctions.set(shaderContainerName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
             }
             fileFunctions.get(shaderContainerName).functions.add(shaderNodeName);
             return; // Skip AST parsing for shader files
@@ -2058,6 +2058,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   if (!fileFunctions.has(fileName)) {
                     fileFunctions.set(fileName, { type: 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
+                  fileFunctions.get(fileName).exports ??= new Set();
                   fileFunctions.get(fileName).exports.add(exportedName);
                   if (fileContext.isComponent) {
                     exportedComponents.set(fileName, exportedName);
@@ -2270,7 +2271,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       }
                       // Track file→function relationship
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
 
@@ -2298,7 +2299,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   // Backend functions - tracked under backend_${fileName} container
                   elements.services.push(funcName);
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isService) {
@@ -2306,7 +2307,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.services.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isStore) {
@@ -2316,7 +2317,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship for nesting inside store file
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isHook) {
@@ -2325,7 +2326,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship for nesting inside hook file
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isUtil) {
@@ -2333,7 +2334,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else if (fileContext.isWorker) {
@@ -2341,7 +2342,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                   elements.utilities.push(funcName);
                   // Track file→function relationship
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).functions.add(funcName);
                 } else {
@@ -2366,7 +2367,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       elements.utilities.push(funcName);
                       // Track file→function relationship so the file container is always created
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
                     }
@@ -2377,7 +2378,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       elements.utilities.push(funcName);
                       // Track file→function relationship
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(funcName);
                     }
@@ -2626,7 +2627,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                             }
                             // Track file→function relationship
                             if (!fileFunctions.has(fileName)) {
-                              fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                              fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                             }
                             fileFunctions.get(fileName).functions.add(varName);
                           }
@@ -2636,7 +2637,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         // Backend functions - tracked under backend_${fileName} container
                         elements.services.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isService) {
@@ -2644,7 +2645,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.services.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isStore) {
@@ -2654,7 +2655,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship for nesting inside store file
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isHook) {
@@ -2663,7 +2664,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship for nesting inside hook file
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'hook', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isUtil) {
@@ -2671,7 +2672,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isWorker) {
@@ -2679,7 +2680,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                         elements.utilities.push(varName);
                         // Track file→function relationship
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'worker', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else {
@@ -2707,6 +2708,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                               fileFunctions.set(fileName, {
                                 type: 'utility',
                                 functions: new Set(),
+                                exports: new Set(),
                                 filePath: file.path,
                               });
                             }
@@ -2722,6 +2724,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                               fileFunctions.set(fileName, {
                                 type: 'worker',
                                 functions: new Set(),
+                                exports: new Set(),
                                 filePath: file.path,
                               });
                             }
@@ -2779,7 +2782,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                       // a "contains" connection (authStore -.-> useAuthStore) is emitted,
                       // preventing the file container node from appearing orphaned.
                       if (!fileFunctions.has(fileName)) {
-                        fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                        fileFunctions.set(fileName, { type: 'store', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                       }
                       fileFunctions.get(fileName).functions.add(varName);
                     }
@@ -2798,19 +2801,19 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                           elements.services.push(varName);
                         }
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'backend', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isService) {
                         elements.services.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'service', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       } else if (fileContext.isUtil) {
                         elements.utilities.push(varName);
                         if (!fileFunctions.has(fileName)) {
-                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), filePath: file.path });
+                          fileFunctions.set(fileName, { type: 'utility', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                         }
                         fileFunctions.get(fileName).functions.add(varName);
                       }
@@ -3105,6 +3108,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                     fileFunctions.set(fileName, { type: 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   const fi = fileFunctions.get(fileName);
+                  fi.exports ??= new Set();
                   exportedNames.forEach(n => fi.exports.add(n));
                 }
 
@@ -3528,6 +3532,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
                 htmlElements: new Set(),
                 cssClasses: new Set(),
                 jsxRefs: new Set(),
+                exports: new Set(),
                 filePath: reclassifiedImports.find(r => r.basename === basename)?.resolved || '',
               });
             }

@@ -1,7 +1,7 @@
 import useCodeStore from '../../stores/codeStore';
 import useDiagramStore from '../../stores/diagramStore';
-import useObjectsStore from '../../stores/objectsStore';
 import { REGISTRY } from './skillManager';
+import { filesReadCount } from './toolState';
 
 class ToolDefinition {
   constructor({ name, description, parameters, availableWhen, required }) {
@@ -60,13 +60,6 @@ function hasImportGraph() {
     const ig = useCodeStore.getState().importGraph;
     return !!ig;
   } catch { return false; }
-}
-
-function filesReadCount() {
-  try {
-    const objects = useObjectsStore.getState().objects || [];
-    return objects.length;
-  } catch { return 0; }
 }
 
 export const NAVIGATION_TOOLS = [

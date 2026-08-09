@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { onSocket, emitSocket } from '../api-client';
-import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, parseSectionedResponse } from '../services/zenService';
+import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
 import { sendWithRetrieval, getContentStore, waitForContentStoreHydration } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { extractCodeBlocks } from '../services/codeExtractor';
@@ -16,12 +16,13 @@ import {
   isGithubAuthenticated,
   getGithubOAuthUrl,
   fetchRepositories,
+  fetchFileContent,
 } from '../services/githubRepoService';
 import {
   getBranchRef,
   createBranchRef,
 } from '../services/githubIssuesService';
-import { listBranches } from '../services/githubPushService';
+import { listBranches, applySearchReplace, hasSearchReplaceMarkers } from '../services/githubPushService';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
 import { saveDiagramDigest } from '../services/graphPersistence';
@@ -792,31 +793,65 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       });
 
       const codeBlocks = extractCodeBlocks(codeResponse);
-
+      const mergedBlocks = codeBlocks;
       const csState = useCodeStore.getState();
-      const reassembled = parseSectionedResponse(codeResponse, csState.repoFileContents);
-      const mergedBlocks = codeBlocks.map(block => {
-        if (reassembled[block.filePath]) {
-          return { ...block, code: reassembled[block.filePath] };
-        }
-        return block;
-      });
 
       if (mergedBlocks.length > 0 && selectedRepo && selectedBranch) {
-        const { count } = await associateCodeWithScene(mergedBlocks, spaceId, user);
+        // The code-gen prompt requires SEARCH/REPLACE markers for existing
+        // files. Apply them against the current file content here so the
+        // pending-change diff shows the real edit (imports preserved) instead
+        // of raw marker text, and so a later push writes the merged file rather
+        // than the markers. Applied blocks are marked fullContent so the push
+        // service can skip its own SEARCH/REPLACE pass.
+        const repoFileTree = repoContext?.fileTree || [];
+        const appliedBlocks = [];
+        for (const block of mergedBlocks) {
+          if (!block.filePath || !block.code) {
+            appliedBlocks.push(block);
+            continue;
+          }
+          const existsInContents = !!csState.repoFileContents?.[block.filePath];
+          const existsInTree = repoFileTree.includes(block.filePath);
+          const isExisting = existsInContents || existsInTree;
+          if (isExisting && hasSearchReplaceMarkers(block.code)) {
+            let existing = csState.repoFileContents?.[block.filePath] || null;
+            if (!existing) {
+              const token = getGithubToken();
+              const owner = selectedRepo.owner?.login || selectedRepo.owner;
+              if (token && owner) {
+                try {
+                  existing = await fetchFileContent(owner, selectedRepo.name, block.filePath, token);
+                } catch {
+                  existing = null;
+                }
+              }
+            }
+            const applied = existing ? applySearchReplace(existing, block.code) : null;
+            if (applied) {
+              appliedBlocks.push({ ...block, code: applied, fullContent: true });
+              continue;
+            }
+            console.warn(`[CodeSend] SEARCH/REPLACE did not match existing content for ${block.filePath} — keeping raw block for review`);
+          }
+          appliedBlocks.push(block);
+        }
+
+        const { count } = await associateCodeWithScene(appliedBlocks, spaceId, user);
         setAssociatedCount(count);
 
-        const repoFileTree = repoContext?.fileTree || [];
-        const newChanges = mergedBlocks
+        const newChanges = appliedBlocks
           .filter(block => block.filePath && block.code)
           .map(block => {
             const existsInContents = !!csState.repoFileContents?.[block.filePath];
             const existsInTree = repoFileTree.includes(block.filePath);
+            const isExisting = existsInContents || existsInTree;
             return {
               filePath: block.filePath,
               original: csState.repoFileContents?.[block.filePath] || null,
               proposed: block.code,
-              action: (existsInContents || existsInTree) ? 'modify' : 'create',
+              fullContent: !!block.fullContent,
+              isWholeFileProposal: isExisting && !block.fullContent && !hasSearchReplaceMarkers(block.code),
+              action: isExisting ? 'modify' : 'create',
               request: text,
             };
           });
