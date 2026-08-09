@@ -12,6 +12,7 @@ import { markdownDiagramService } from '../services/markdownDiagramService';
 import { populateContentStoreWorker } from '../services/zenService';
 import { saveRepoFileContents } from '../services/context/contentStorePersistence';
 import { saveDiagramDigest, rehydrateFromDigest } from '../services/graphPersistence';
+import { safeSetItem, safeRemoveItem } from '../utils/safeLocalStorage';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions, deleteAllCellsInSpace } from '../services/spatialObjectsService';
@@ -374,7 +375,7 @@ const UIOverlay = ({
           if (!space) return;
           if (!localUrl && space.markdownStorageUrl) {
             setLatestMarkdownUrl(space.markdownStorageUrl);
-            localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, space.markdownStorageUrl);
+            safeSetItem(`diagramMarkdownUrl_${currentSpaceId}`, space.markdownStorageUrl);
           }
           if (!localSha && space.diagramCommitSha) {
             setLastCommitSha(space.diagramCommitSha);
@@ -408,9 +409,9 @@ const UIOverlay = ({
   useEffect(() => {
     if (!currentSpaceId) return;
     if (currentDiagramRepo) {
-      localStorage.setItem(`diagramRepo_${currentSpaceId}`, JSON.stringify(currentDiagramRepo));
+      safeSetItem(`diagramRepo_${currentSpaceId}`, JSON.stringify(currentDiagramRepo));
     } else {
-      localStorage.removeItem(`diagramRepo_${currentSpaceId}`);
+      safeRemoveItem(`diagramRepo_${currentSpaceId}`);
     }
   }, [currentDiagramRepo, currentSpaceId]);
 
@@ -418,9 +419,9 @@ const UIOverlay = ({
   useEffect(() => {
     if (!currentSpaceId) return;
     if (latestMarkdownUrl) {
-      localStorage.setItem(`diagramMarkdownUrl_${currentSpaceId}`, latestMarkdownUrl);
+      safeSetItem(`diagramMarkdownUrl_${currentSpaceId}`, latestMarkdownUrl);
     } else {
-      localStorage.removeItem(`diagramMarkdownUrl_${currentSpaceId}`);
+      safeRemoveItem(`diagramMarkdownUrl_${currentSpaceId}`);
     }
   }, [latestMarkdownUrl, currentSpaceId]);
 
@@ -428,9 +429,9 @@ const UIOverlay = ({
   useEffect(() => {
     if (!currentSpaceId) return;
     if (lastCommitSha) {
-      localStorage.setItem(`diagramCommitSha_${currentSpaceId}`, lastCommitSha);
+      safeSetItem(`diagramCommitSha_${currentSpaceId}`, lastCommitSha);
     } else {
-      localStorage.removeItem(`diagramCommitSha_${currentSpaceId}`);
+      safeRemoveItem(`diagramCommitSha_${currentSpaceId}`);
     }
   }, [lastCommitSha, currentSpaceId]);
 

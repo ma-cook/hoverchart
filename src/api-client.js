@@ -1,3 +1,5 @@
+import { safeSetItem, safeGetItem, safeRemoveItem } from './utils/safeLocalStorage';
+
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const WS_URL = import.meta.env.VITE_WS_URL || API_BASE;
 
@@ -9,28 +11,28 @@ export function setTokens(access, refresh) {
   accessToken = access;
   refreshToken = refresh;
   if (access) {
-    localStorage.setItem('accessToken', access);
+    safeSetItem('accessToken', access);
   } else {
-    localStorage.removeItem('accessToken');
+    safeRemoveItem('accessToken');
   }
   if (refresh) {
-    localStorage.setItem('refreshToken', refresh);
+    safeSetItem('refreshToken', refresh);
   } else {
-    localStorage.removeItem('refreshToken');
+    safeRemoveItem('refreshToken');
   }
 }
 
 export function loadTokens() {
-  accessToken = localStorage.getItem('accessToken');
-  refreshToken = localStorage.getItem('refreshToken');
+  accessToken = safeGetItem('accessToken');
+  refreshToken = safeGetItem('refreshToken');
   return { accessToken, refreshToken };
 }
 
 export function clearTokens() {
   accessToken = null;
   refreshToken = null;
-  localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
+  safeRemoveItem('accessToken');
+  safeRemoveItem('refreshToken');
 }
 
 async function refreshAccessToken() {

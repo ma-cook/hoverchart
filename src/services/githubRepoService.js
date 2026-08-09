@@ -10,6 +10,7 @@ import { runTypeScriptAnalysis } from './typescriptAnalyzer';
 import { clearAllCellCaches } from './cellObjectCache';
 import { reportMemoryPressureOnce } from '../utils/memoryMonitor';
 import { joinChunks } from './context/chunkIndex';
+import { safeSetItem } from '../utils/safeLocalStorage';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -5223,7 +5224,7 @@ export const getGithubToken = () => {
  * @param {string} token - GitHub access token
  */
 export const setGithubToken = (token) => {
-  localStorage.setItem('github_token', token);
+  safeSetItem('github_token', token);
 };
 
 /**

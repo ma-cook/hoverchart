@@ -1,5 +1,6 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
+import { safeSetItem, safeRemoveItem } from '../utils/safeLocalStorage';
 
 const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex', 'importGraph', 'repoFileTree', 'fileSizes', 'fileIndexByPath', 'importIndexByFile'];
 
@@ -12,15 +13,13 @@ function loadPersisted(spaceId, key) {
 }
 
 function persist(spaceId, key, value) {
-  try {
-    const ns = spaceId ? `${spaceId}:` : '';
-    const storageKey = `code:${ns}${key}`;
-    if (value === null || value === undefined) {
-      localStorage.removeItem(storageKey);
-    } else {
-      localStorage.setItem(storageKey, JSON.stringify(value));
-    }
-  } catch { /* ignore */ }
+  const ns = spaceId ? `${spaceId}:` : '';
+  const storageKey = `code:${ns}${key}`;
+  if (value === null || value === undefined) {
+    safeRemoveItem(storageKey);
+  } else {
+    safeSetItem(storageKey, JSON.stringify(value));
+  }
 }
 
 // fileIndexByPath values are objects holding Set fields (exports, functions,
@@ -104,10 +103,10 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       techStackSource: loadPersisted(spaceId, 'techStackSource'),
       contentIndex: loadPersisted(spaceId, 'contentIndex'),
       importGraph: loadPersisted(spaceId, 'importGraph'),
-      repoFileTree: loadPersisted(spaceId, 'repoFileTree'),
+      repoFileTree: null,
       repoFileContents: null,
       fileSizes: loadPersisted(spaceId, 'fileSizes'),
-      fileIndexByPath: restoreFileIndexByPath(loadPersisted(spaceId, 'fileIndexByPath')),
+      fileIndexByPath: null,
       importIndexByFile: restoreImportIndexByFile(loadPersisted(spaceId, 'importIndexByFile')),
     });
     // repoFileContents is too large for localStorage, so it lives in IndexedDB.
@@ -119,6 +118,39 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
         if (contents && get()._spaceId === spaceId) {
           set({ repoFileContents: contents });
           console.log(`[codeStore] Restored repoFileContents (${Object.keys(contents).length} files) from IndexedDB`);
+        }
+      })
+      .catch(() => {});
+    // fileIndexByPath and repoFileTree are also too large for localStorage.
+    // Restore both from IndexedDB; if nothing was ever migrated, fall back to
+    // the legacy localStorage keys and migrate them across so future loads
+    // read from IndexedDB.
+    import('../services/context/contentStorePersistence.js')
+      .then(async (m) => {
+        const [tree, fileIndex] = await Promise.all([
+          m.loadRepoFileTree(spaceId),
+          m.loadSpaceFileIndex(spaceId),
+        ]);
+        if (get()._spaceId !== spaceId) return;
+        if (tree) {
+          set({ repoFileTree: tree });
+        } else {
+          const legacyTree = loadPersisted(spaceId, 'repoFileTree');
+          if (legacyTree) {
+            set({ repoFileTree: legacyTree });
+            m.saveRepoFileTree(spaceId, legacyTree).catch(() => {});
+            safeRemoveItem(`code:${spaceId ? `${spaceId}:` : ''}repoFileTree`);
+          }
+        }
+        if (fileIndex) {
+          set({ fileIndexByPath: restoreFileIndexByPath(fileIndex) });
+        } else {
+          const legacyIndex = loadPersisted(spaceId, 'fileIndexByPath');
+          if (legacyIndex) {
+            set({ fileIndexByPath: restoreFileIndexByPath(legacyIndex) });
+            m.saveSpaceFileIndex(spaceId, legacyIndex).catch(() => {});
+            safeRemoveItem(`code:${spaceId ? `${spaceId}:` : ''}fileIndexByPath`);
+          }
         }
       })
       .catch(() => {});
@@ -171,16 +203,20 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setRepoContext: (fileTree, fileContents) => {
     const spaceId = get()._spaceId;
-    persist(spaceId, 'repoFileTree', fileTree);
     set({ repoFileTree: fileTree, repoFileContents: fileContents });
-    // Persist the contents to IndexedDB (too large for localStorage) so the
-    // next page load can reuse the cached context instead of refetching every
-    // file from GitHub. Fire-and-forget.
-    if (fileContents && Object.keys(fileContents).length > 0) {
-      import('../services/context/contentStorePersistence.js')
-        .then((m) => m.saveRepoFileContents(spaceId, fileContents))
-        .catch(() => {});
-    }
+    // Persist the tree and contents to IndexedDB (both too large for
+    // localStorage) so the next page load can reuse the cached context
+    // instead of refetching every file from GitHub. Fire-and-forget.
+    import('../services/context/contentStorePersistence.js')
+      .then((m) => {
+        const writes = [];
+        if (fileTree) writes.push(m.saveRepoFileTree(spaceId, fileTree));
+        if (fileContents && Object.keys(fileContents).length > 0) {
+          writes.push(m.saveRepoFileContents(spaceId, fileContents));
+        }
+        return Promise.all(writes);
+      })
+      .catch(() => {});
   },
 
   setRepoFileContents: (fileContents) => set({ repoFileContents: fileContents }),
@@ -204,8 +240,14 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setFileIndexByPath: (fileIndexByPath) => {
     const spaceId = get()._spaceId;
-    persist(spaceId, 'fileIndexByPath', serializeFileIndexByPath(fileIndexByPath));
     set({ fileIndexByPath });
+    if (fileIndexByPath) {
+      // Too large for localStorage — persist to IndexedDB. Fire-and-forget.
+      const serialized = serializeFileIndexByPath(fileIndexByPath);
+      import('../services/context/contentStorePersistence.js')
+        .then((m) => m.saveSpaceFileIndex(spaceId, serialized))
+        .catch(() => {});
+    }
   },
 
   setImportIndexByFile: (importIndexByFile) => {

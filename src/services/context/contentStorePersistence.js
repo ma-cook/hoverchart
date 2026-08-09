@@ -245,3 +245,52 @@ export async function loadRepoFileContents(spaceId) {
     return null;
   }
 }
+
+/**
+ * Persist the per-file symbol index (serialized Map<filePath, entry>) for a
+ * space. Moved out of localStorage because it is one of the largest per-space
+ * payloads and was a major contributor to localStorage quota exhaustion.
+ */
+export async function saveSpaceFileIndex(spaceId, serializedIndex) {
+  if (!serializedIndex) return;
+  try {
+    const key = `fileIndexByPath:${spaceId || ''}`;
+    await txPut(STORE_META, key, serializedIndex);
+  } catch (err) {
+    console.warn('[contentStorePersistence] save fileIndexByPath failed:', err.message);
+  }
+}
+
+export async function loadSpaceFileIndex(spaceId) {
+  try {
+    const key = `fileIndexByPath:${spaceId || ''}`;
+    return (await txGet(STORE_META, key)) || null;
+  } catch (err) {
+    console.warn('[contentStorePersistence] load fileIndexByPath failed:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Persist the repo file tree for a space. Same rationale as
+ * saveSpaceFileIndex — large enough to help exhaust localStorage quota.
+ */
+export async function saveRepoFileTree(spaceId, tree) {
+  if (!tree) return;
+  try {
+    const key = `repoFileTree:${spaceId || ''}`;
+    await txPut(STORE_META, key, tree);
+  } catch (err) {
+    console.warn('[contentStorePersistence] save repoFileTree failed:', err.message);
+  }
+}
+
+export async function loadRepoFileTree(spaceId) {
+  try {
+    const key = `repoFileTree:${spaceId || ''}`;
+    return (await txGet(STORE_META, key)) || null;
+  } catch (err) {
+    console.warn('[contentStorePersistence] load repoFileTree failed:', err.message);
+    return null;
+  }
+}
