@@ -9,15 +9,13 @@ import { getBase64Store } from './base64Store';
 import { globalMonitor } from './agentMonitor';
 import { globalRouter } from './modelRouter';
 import { RagPipeline } from './ragPipeline';
+import { diffToHunks } from './diffUtils';
 import { joinChunks } from './chunkIndex';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
 const MAX_CONTEXT_CHARS = 120000;
 const MAX_TOOL_RESULT_CHARS = 30000;
-// A2: cap for a single synthesized SEARCH/REPLACE hunk. Larger divergent
-// regions are refused so the harness never emits a whole-file style block.
-const MAX_PATCH_BLOCK_LINES = 200;
 const TRUNCATION_WARNING = `\n\n[Output truncated at ${(MAX_TOOL_RESULT_CHARS).toLocaleString()} chars. Use read_file with offset/limit or refine your search to narrow results.]`;
 const RETRYABLE_TOOLS = new Set(['read_file', 'edit', 'write', 'search_code']);
 const MAX_TOOL_RETRIES = 2;
@@ -381,54 +379,26 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
 
 function generateSearchReplacePatch(original, modified, filePath) {
   if (!original || !modified || original === modified) return null;
+  const hunks = diffToHunks(original, modified);
+  if (hunks.length === 0) return null;
   const origLines = original.split('\n');
-  const modLines = modified.split('\n');
-  const blocks = [];
-  let i = 0;
-  let j = 0;
-  while (i < origLines.length || j < modLines.length) {
-    if (i < origLines.length && j < modLines.length && origLines[i] === modLines[j]) {
-      i++;
-      j++;
-      continue;
+  const blocks = hunks.map(h => {
+    const idx = original.indexOf(h.oldString);
+    let contextBefore = '';
+    let contextAfter = '';
+    if (idx !== -1) {
+      const lineBefore = original.slice(0, idx).split('\n').length;
+      contextBefore = lineBefore > 1 ? origLines[lineBefore - 2] : '';
+      const lineAfter = lineBefore - 1 + h.oldString.split('\n').length;
+      contextAfter = lineAfter < origLines.length ? origLines[lineAfter] : '';
     }
-    const searchStart = i;
-    const replaceStart = j;
-    while (i < origLines.length && j < modLines.length && origLines[i] !== modLines[j]) {
-      i++;
-      j++;
-    }
-    if (i === origLines.length && j < modLines.length) {
-      while (j < modLines.length) j++;
-      break;
-    }
-    if (j === modLines.length && i < origLines.length) {
-      while (i < origLines.length) i++;
-      break;
-    }
-    const searchLines = origLines.slice(searchStart, i);
-    const replaceLines = modLines.slice(replaceStart, j);
-    if (searchLines.length > 0 || replaceLines.length > 0) {
-      // A2: never emit a whole-file style block. If a single divergent region
-      // spans more than MAX_PATCH_BLOCK_LINES, refuse the patch so the caller
-      // can fall back to the exact hunks recorded by the edit tool. A giant
-      // SEARCH/REPLACE would otherwise read as a full-file rewrite (and often
-      // silently resync on the wrong text).
-      if (searchLines.length > MAX_PATCH_BLOCK_LINES || replaceLines.length > MAX_PATCH_BLOCK_LINES) {
-        console.warn(`[ToolRound] ${filePath}: refusing ${searchLines.length}/${replaceLines.length}-line diff region (cap ${MAX_PATCH_BLOCK_LINES})`);
-        return null;
-      }
-      const contextBefore = searchStart > 0 ? origLines[searchStart - 1] : '';
-      const contextAfter = i < origLines.length ? origLines[i] : '';
-      blocks.push({
-        search: searchLines.join('\n'),
-        replace: replaceLines.join('\n'),
-        contextBefore,
-        contextAfter,
-      });
-    }
-  }
-  if (blocks.length === 0) return null;
+    return {
+      search: h.oldString,
+      replace: h.newString,
+      contextBefore,
+      contextAfter,
+    };
+  });
   const ext = filePath.split('.').pop() || 'txt';
   const patchParts = blocks.map(b => {
     const lines = [];
@@ -1242,7 +1212,7 @@ export async function sendWithRetrieval({
           syntheticBlocks.push(patch);
           continue;
         }
-        console.warn(`[ToolRound] ${filePath}: diff was too large to emit safely — falling back to edit-record hunks`);
+        console.warn(`[ToolRound] ${filePath}: could not synthesize a minimal diff — falling back to edit-record hunks`);
       } else if (originalContent && originalContent === normalizedModified) {
         console.warn(`[ToolRound] ${filePath}: no net change after edits — skipping synthetic block`);
         continue;

@@ -1,82 +1,80 @@
-# Stop the LLM from rewriting entire files (edit tool)
+# Fix whole-file rewrites at the source (no edit-size caps)
 
 ## Problem
 
-The app's LLM (tool round in SpaceChat) still performs whole-file rewrites. Evidence from the console:
+The LLM's edits still surface as whole-file rewrites. Root cause found: the *arbitrary
+`MAX_PATCH_BLOCK_LINES = 200` cap in the emission layer is what creates the whole-file output.*
 
-- `[ToolRound] src/components/UIOverlay.jsx: refusing 362/362-line diff region (cap 200)`
-- `[ToolRound] ...: diff was too large to emit safely — falling back to edit-record hunks`
-- `[ToolRound] Generated 2 synthetic code block(s) from edit/write tools`
-- Applied rewrites seen in pending changes: graphPersistence.js +98/-88, UIOverlay.jsx +1757/-1738.
+Flow that produces a whole-file block:
+1. Model passes a whole-file `oldString`/`newString` to `edit`; it matches exactly, so the change
+   is applied (the real diff vs the true original is often small — e.g. UIOverlay showed only a
+   362-line region actually changing).
+2. `generateSearchReplacePatch` diffs original vs modified, finds the 362-line region, and
+   **refuses it** because `> MAX_PATCH_BLOCK_LINES` (`retrievalOrchestrator.js:417`).
+3. It falls back to "edit-record hunks" (`retrievalOrchestrator.js:1245-1266`), which echoes the
+   model's **raw whole-file** `oldString`/`newString` into the final text / pending changes.
 
-Root cause: the `write` tool already rejects existing files (`toolExecutor.js:1626`), but the `edit`
-tool applies a whole-file `oldString`/`newString` with no size guard (exact match at
-`toolExecutor.js:1510-1519`). The post-run synthetic-block stage refuses to echo the rewrite as a
-patch (region cap 200, `retrievalOrchestrator.js:417`) but the edit-record fallback re-emits the raw
-whole-file records uncapped (`retrievalOrchestrator.js:1255-1266`). Prompt guidance already exists
-(`zenService.js:815`, `retrievalOrchestrator.js:72`, `toolProvider.js:226`) but is not enforced.
+User requirement: the pipeline must produce targeted (minimal) edits without the model having to
+rewrite whole files, and must NOT cap legitimate large edits.
 
-## Scope (user-approved)
+## Approach: diff at the source, never cap
 
-**Edit-tool guard only.** No changes to the synthetic-block fallback, prompts, or code-gen text path.
+The harness already has both the original and the modified content, so it can always emit the true
+minimal diff. The cap is removed; the raw-record fallback is only used when the original is
+genuinely unavailable.
 
 ## Changes
 
-### `src/services/context/toolExecutor.js`
+### 0. New `src/services/context/diffUtils.js` — shared minimal-diff engine
 
-1. Add constants near the top (after `MAX_HITS_PER_FILE`):
-   - `MAX_EDIT_OLD_LINES = 200`
-   - `MAX_EDIT_OLD_RATIO = 0.5`
-   - `MIN_EDIT_CAP_FILE_LINES = 40`
+LCS-based line diff (`diffToHunks(before, after)`) returning SEARCH/REPLACE hunks that are:
+- minimal per contiguous divergent region (handles top-of-file inserts, appends, deletes, whole-file
+  rewrites),
+- **never empty oldString**: pure insertions are anchored to a unique neighboring run of lines
+  (above the insert, or below it for top-of-file inserts), because downstream `applySearchReplace`
+  matches via `indexOf` — an empty search would corrupt the file by anchoring at position 0,
+- whole-file rewrites → a single full-content hunk (a real diff, never a model-block echo).
 
-2. Add a pure module-level helper:
+Also fixes a pre-existing structural bug: the old lockstep loop `break`-ed *before* pushing a hunk
+when a divergent region ran to EOF, so whole-file changes silently produced zero hunks and fell
+through to the raw-record echo.
 
-```js
-function refuseWholeFileEdit(content, cleanedOldString, filePath) {
-  const fileLineCount = content.split('\n').length;
-  if (fileLineCount <= MIN_EDIT_CAP_FILE_LINES) return null;
-  const oldLineCount = cleanedOldString.split('\n').length;
-  if (oldLineCount > MAX_EDIT_OLD_LINES || oldLineCount / fileLineCount > MAX_EDIT_OLD_RATIO) {
-    return {
-      success: false,
-      content: `edit refused: oldString spans ${oldLineCount}/${fileLineCount} lines of ${filePath} — this is a whole-file rewrite, not a targeted edit. Make smaller, targeted edits (one function or block per edit call), copying oldString verbatim from read_file output. For changes spanning more than a few blocks, call "edit" multiple times.`,
-    };
-  }
-  return null;
-}
-```
+### 1. `src/services/context/retrievalOrchestrator.js` — emission (primary fix)
 
-3. In the `edit` case, after `let matchContent = loadContent();` (line ~1509), before
-   `const attemptEdit = ...`:
+- `generateSearchReplacePatch` now delegates to `diffToHunks` (no `MAX_PATCH_BLOCK_LINES` refusal,
+  no cap constant). Emits one SEARCH/REPLACE hunk per contiguous divergent region regardless of
+  size, with corrected display context lines. The hunks are derived from the actual original
+  content, so they match by construction (no "resync" risk — that concern applies to hallucinated
+  oldStrings, which are already rejected by the edit tool's exact/fuzzy matching + `oversized` guard).
+- Synthetic-block loop (lines ~1231-1240): when original content is available, ALWAYS use the diff
+  result. Only fall back to `appliedEditRecords` when the original could not be obtained (GitHub
+  fetch failed AND not cached). Log message updated.
 
-```js
-const wholeFileRefusal = refuseWholeFileEdit(matchContent, cleanedOldString, filePath);
-if (wholeFileRefusal) return wholeFileRefusal;
-```
+### 2. `src/services/context/toolExecutor.js` — revert the cap, record minimal diffs
 
-4. In the GitHub-refresh retry path (after `matchContent = loadContent();` at line ~1534, before
-   `attempt = attemptEdit(matchContent);`):
+- **Removed** the `refuseWholeFileEdit` helper, its constants, and both guard calls added earlier
+  (user rejected the cap; it blocks large edits and doesn't fix the source).
+- **Defense-in-depth:** after a successful edit, store a *minimal before/after diff* in
+  `appliedEditRecords` (via the shared `diffToHunks(matchContent, updated)`) instead of the model's
+  raw `oldString`/`newString`. Then even the no-original fallback path emits minimal hunks.
+  (Records are only consumed by the emission loop at `retrievalOrchestrator.js:1246`.)
+- **Reinforcement (no blocking):** in the success response, when the model's `oldString` spanned
+  more than half of a >40-line file, note it was applied as a minimal N-line change so the model
+  learns targeted edits are preferred.
 
-```js
-const refreshRefusal = refuseWholeFileEdit(matchContent, cleanedOldString, filePath);
-if (refreshRefusal) return refreshRefusal;
-```
+## Out of scope (unchanged)
 
-### Rationale for thresholds
-
-- `200` line absolute cap: matches the existing `MAX_PATCH_BLOCK_LINES = 200` cap used to refuse
-  giant diff regions, so enforcement and emission agree.
-- `0.5` ratio: catches near-whole-file rewrites in small/medium files (e.g. 100/100 → refused).
-- `40` line exemption: full rewrites of genuinely tiny files stay legal.
-- Check runs on the cleaned oldString (line-number prefixes stripped) and CRLF-reconciled content,
-  so a model pasting `read_file` output with line numbers is still caught.
-
-Behavior after fix: the rewrite is refused at the tool, the model gets an actionable error, and it
-must retry with smaller targeted edits. No whole-file change can be applied.
+- `write` tool already rejects existing files (`toolExecutor.js:~1626`).
+- The code-gen text path (SpaceChat plain blocks): `isWholeFileProposal` warning + push rejection
+  for existing files stay as-is.
+- No new size limits anywhere.
 
 ## Verify
 
-- ESLint on `src/services/context/toolExecutor.js`.
-- `npm run build` passes.
-- Optional: quick Node smoke test of `refuseWholeFileEdit` logic (pure function) with a stub — the
-  values can be copied into a throwaway script since the module pulls in stores/workers.
+- ESLint on `retrievalOrchestrator.js` + `toolExecutor.js` + `diffUtils.js` (note: 8 pre-existing
+  unused-var errors — 2 in toolExecutor, 6 in retrievalOrchestrator — are unrelated).
+- `npm run build` (passes).
+- Node smoke tests against the real `diffUtils.js` (small replace, 362-line region, whole-file
+  rewrite, append/EOF, top-of-file insert, delete-tail, middle insert, two separated regions, no
+  change, ambiguous-anchor inserts) — all pass; plus a wrapper test of `generateSearchReplacePatch`
+  (context lines, tiny search blocks, 362-line region not refused). Temp tests deleted.
