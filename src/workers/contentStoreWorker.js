@@ -17,6 +17,7 @@
 
 import { expose } from 'comlink';
 import { ContentStore, ContentCategory } from '../services/context/contentStore';
+import { joinChunks } from '../services/context/chunkIndex';
 
 console.log('[contentStoreWorker] module evaluated', typeof self !== 'undefined' && self.location ? self.location.href : '?');
 
@@ -236,7 +237,7 @@ const workerApi = {
       const filePath = id.slice(5);
       if (pathPrefix && !filePath.startsWith(pathPrefix)) continue;
       if (entry.chunks?.some((c) => c.oversized)) continue;
-      const fullText = entry.chunks.map((c) => c.text).join('');
+      const fullText = joinChunks(entry.chunks);
       if (!fullText) continue;
       const lines = fullText.split('\n');
       let count = 0;

@@ -9,6 +9,7 @@ import { createModuleResolver, resolveBarrelChains } from './moduleResolver';
 import { runTypeScriptAnalysis } from './typescriptAnalyzer';
 import { clearAllCellCaches } from './cellObjectCache';
 import { reportMemoryPressureOnce } from '../utils/memoryMonitor';
+import { joinChunks } from './context/chunkIndex';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -5433,7 +5434,7 @@ export const scanRepositoryAndGenerateDiagram = async (
         for (const [_entryId, entry] of cs.entries) {
           if (!entry || !entry.sourcePath) continue;
           const chunks = b64.getChunks(entry.chunks.map(c => c.id));
-          const content = chunks.map(c => c.text).join('');
+          const content = joinChunks(chunks);
           if (content) lspFiles.push({ path: entry.sourcePath, content });
         }
 

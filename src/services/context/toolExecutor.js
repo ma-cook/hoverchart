@@ -1,7 +1,7 @@
 import { getContentStore, ContentCategory, waitForContentStoreHydration } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
-import { extractKeywords, chunkTextWithYield, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
+import { extractKeywords, chunkTextWithYield, MAX_INDEXED_FILE_CHARS, joinChunks } from './chunkIndex';
 import { getContentStoreWorker, getContentStoreWorkerHealth } from '../../workers/contentStoreWorkerClient';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
@@ -50,7 +50,7 @@ function buildRepoCorpus(store, codeStoreState) {
     if (id.startsWith('repo:')
       && (entry.totalChars || 0) <= MAX_INDEXED_FILE_CHARS
       && !entry.chunks?.some((c) => c.oversized)) {
-      const text = entry.chunks.map(c => c.text).join('');
+      const text = joinChunks(entry.chunks);
       if (text) corpus.set(id.slice(5), text);
       repoEntries++;
     }
@@ -1032,7 +1032,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
           await new Promise(r => setTimeout(r, 0));
-          content = chunks.map(c => c.text).join('');
+          content = joinChunks(chunks);
         }
       }
 
@@ -1071,7 +1071,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
           await new Promise(r => setTimeout(r, 0));
-          fullContent = chunks.map(c => c.text).join('');
+          fullContent = joinChunks(chunks);
         }
       }
       if (!fullContent && githubContext) {
@@ -1109,7 +1109,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
           await new Promise(r => setTimeout(r, 0));
-          fullContent = chunks.map(c => c.text).join('');
+          fullContent = joinChunks(chunks);
         }
       }
 
@@ -1483,7 +1483,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
 
       const loadContent = () => {
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
-        let content = chunks.map(c => c.text).join('');
+        let content = joinChunks(chunks);
         // Reconcile CRLF files (from local/vcs sources) against LF oldStrings.
         if (content.includes('\r\n') && !cleanedOldString.includes('\r\n')) {
           content = content.replace(/\r\n/g, '\n');

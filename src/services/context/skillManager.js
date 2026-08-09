@@ -2,6 +2,7 @@ import { buildFileTreeSection, buildComponentIndex, buildContentIndexSection, bu
 import useDiagramStore from '../../stores/diagramStore';
 import useObjectsStore from '../../stores/objectsStore';
 import { getContentStore } from './contentStore';
+import { joinChunks } from './chunkIndex';
 
 class Skill {
   constructor({ name, description, instructions, tools, buildInstructions }) {
@@ -168,7 +169,7 @@ export function initializeDefaultSkills(repoContext) {
         try {
           const entry = getContentStore().getEntry('merfolk:diagram');
           if (entry) {
-            const fullText = entry.chunks.map(c => c.text).join('');
+            const fullText = joinChunks(entry.chunks);
             const excerpt = fullText.length > 3000 ? fullText.slice(0, 3000) + '\n... (diagram truncated)' : fullText;
             parts.push(`MERFOLK DIAGRAM (excerpt):\n${excerpt}`);
           }

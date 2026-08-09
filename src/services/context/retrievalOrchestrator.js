@@ -9,6 +9,7 @@ import { getBase64Store } from './base64Store';
 import { globalMonitor } from './agentMonitor';
 import { globalRouter } from './modelRouter';
 import { RagPipeline } from './ragPipeline';
+import { joinChunks } from './chunkIndex';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
@@ -977,7 +978,7 @@ export async function sendWithRetrieval({
               if (entry) {
                 const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
                 if (chunks.length > 0) {
-                  originalFileContents.set(filePath, chunks.map(c => c.text).join(''));
+                  originalFileContents.set(filePath, joinChunks(chunks));
                 }
               }
             }
@@ -1200,7 +1201,7 @@ export async function sendWithRetrieval({
       const entry = store.getEntry(storeId);
       if (!entry) continue;
       const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
-      const modifiedContent = chunks.map(c => c.text).join('');
+      const modifiedContent = joinChunks(chunks);
       if (!modifiedContent) continue;
       const ext = filePath.split('.').pop() || 'txt';
       // A1: always try to emit a search/replace PATCH (diff), never a full-file

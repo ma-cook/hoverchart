@@ -107,3 +107,38 @@ export async function chunkTextWithYield(text, options, yieldEvery = 25) {
   }
   return chunks;
 }
+
+/**
+ * Reconstruct a file's exact original text from its overlapping chunks.
+ *
+ * Naively concatenating chunk.text duplicates each chunk's overlap region: with
+ * chunkSize=3000/overlap=300 the same ~300 chars appear twice at every chunk
+ * boundary. Every consumer that rebuilt a file this way (read_file, quick_look,
+ * edit, search_code, grep, file_outline, the orchestrator cache, synthetic
+ * diffs, LSP enrichment) therefore saw a file that was LONGER than the real one
+ * — line numbers drifted after the first boundary, blocks repeated and looked
+ * "corrupted", and reads could disagree with each other even though nothing in
+ * the repo changed.
+ *
+ * The chunker records each chunk's startIndex/endIndex in the ORIGINAL text, so
+ * we skip the already-appended overlap region of every chunk after the first
+ * and rebuild the file byte-for-byte. Chunks without indices (very old
+ * persisted entries) fall back to plain concatenation — no worse than before.
+ */
+export function joinChunks(chunks) {
+  if (!chunks || chunks.length === 0) return '';
+  if (chunks.length === 1) return chunks[0]?.text || '';
+  let full = chunks[0]?.text || '';
+  for (let i = 1; i < chunks.length; i++) {
+    const c = chunks[i];
+    if (!c || typeof c.text !== 'string') continue;
+    const prev = chunks[i - 1];
+    const prevEnd = Number.isFinite(prev?.endIndex) ? prev.endIndex : NaN;
+    const start = Number.isFinite(c.startIndex) ? c.startIndex : NaN;
+    const overlapLen = (Number.isFinite(prevEnd) && Number.isFinite(start))
+      ? Math.max(0, prevEnd - start)
+      : 0;
+    full += c.text.slice(overlapLen);
+  }
+  return full;
+}
