@@ -15,6 +15,30 @@ const DEFAULT_READ_LINES = 8000;
 const MAX_READ_LINES = 10000;
 const MAX_HITS_PER_FILE = 5;
 
+// Whole-file rewrite guard for the edit tool. An oldString that covers the
+// bulk of a file (or more than an absolute line budget) means the model is
+// regenerating the file instead of making a targeted edit — refuse it so the
+// rewrite can never be applied. Files at or below MIN_EDIT_CAP_FILE_LINES are
+// exempt (a full rewrite of a tiny file is legitimate and harmless).
+const MAX_EDIT_OLD_LINES = 200;
+const MAX_EDIT_OLD_RATIO = 0.5;
+const MIN_EDIT_CAP_FILE_LINES = 40;
+
+// Returns a refusal result when the oldString would rewrite most of the file,
+// or null when the edit is acceptably targeted.
+function refuseWholeFileEdit(content, cleanedOldString, filePath) {
+  const fileLineCount = content.split('\n').length;
+  if (fileLineCount <= MIN_EDIT_CAP_FILE_LINES) return null;
+  const oldLineCount = cleanedOldString.split('\n').length;
+  if (oldLineCount > MAX_EDIT_OLD_LINES || oldLineCount / fileLineCount > MAX_EDIT_OLD_RATIO) {
+    return {
+      success: false,
+      content: `edit refused: oldString spans ${oldLineCount}/${fileLineCount} lines of ${filePath} — this is a whole-file rewrite, not a targeted edit. Make smaller, targeted edits (one function or block per edit call), copying oldString verbatim from read_file output. For changes spanning more than a few blocks, call "edit" multiple times.`,
+    };
+  }
+  return null;
+}
+
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 // Resolve the Git ref to pin every GitHub fetch to. Callers thread the space's
@@ -1507,6 +1531,9 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       };
       let matchContent = loadContent();
 
+      const wholeFileRefusal = refuseWholeFileEdit(matchContent, cleanedOldString, filePath);
+      if (wholeFileRefusal) return wholeFileRefusal;
+
       const attemptEdit = (content) => {
         const match = findMatch(content, cleanedOldString, { filePath });
         if (!match) return { match: null };
@@ -1532,6 +1559,8 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             await persistFileContent(storeId, filePath, fresh);
             entry = store.getEntry(storeId);
             matchContent = loadContent();
+            const refreshRefusal = refuseWholeFileEdit(matchContent, cleanedOldString, filePath);
+            if (refreshRefusal) return refreshRefusal;
             attempt = attemptEdit(matchContent);
             if (attempt.match) {
               console.log(`[Edit] ${filePath}: store was stale — re-fetched from GitHub and matched`);

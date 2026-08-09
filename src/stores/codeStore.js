@@ -101,13 +101,13 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       branchStrategy: loadPersisted(spaceId, 'branchStrategy'),
       techStack: loadPersisted(spaceId, 'techStack') || '',
       techStackSource: loadPersisted(spaceId, 'techStackSource'),
-      contentIndex: loadPersisted(spaceId, 'contentIndex'),
-      importGraph: loadPersisted(spaceId, 'importGraph'),
+      contentIndex: null,
+      importGraph: null,
       repoFileTree: null,
       repoFileContents: null,
-      fileSizes: loadPersisted(spaceId, 'fileSizes'),
+      fileSizes: null,
       fileIndexByPath: null,
-      importIndexByFile: restoreImportIndexByFile(loadPersisted(spaceId, 'importIndexByFile')),
+      importIndexByFile: null,
     });
     // repoFileContents is too large for localStorage, so it lives in IndexedDB.
     // Restore it asynchronously; the gate falls back to a GitHub refetch until
@@ -121,37 +121,92 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
         }
       })
       .catch(() => {});
-    // fileIndexByPath and repoFileTree are also too large for localStorage.
-    // Restore both from IndexedDB; if nothing was ever migrated, fall back to
-    // the legacy localStorage keys and migrate them across so future loads
-    // read from IndexedDB.
+    // fileIndexByPath, repoFileTree, contentIndex, importGraph, fileSizes and
+    // importIndexByFile are all too large for localStorage. Restore them from
+    // IndexedDB; if nothing was ever migrated, fall back to the legacy
+    // localStorage keys and migrate them across so future loads read from
+    // IndexedDB (this also frees the biggest legacy localStorage users).
     import('../services/context/contentStorePersistence.js')
       .then(async (m) => {
-        const [tree, fileIndex] = await Promise.all([
+        const [
+          tree,
+          fileIndex,
+          contentIndex,
+          importGraph,
+          fileSizes,
+          importIndex,
+        ] = await Promise.all([
           m.loadRepoFileTree(spaceId),
           m.loadSpaceFileIndex(spaceId),
+          m.loadSpaceContentIndex(spaceId),
+          m.loadSpaceImportGraph(spaceId),
+          m.loadSpaceFileSizes(spaceId),
+          m.loadSpaceImportIndex(spaceId),
         ]);
         if (get()._spaceId !== spaceId) return;
+        const ns = spaceId ? `${spaceId}:` : '';
+        const patch = {};
         if (tree) {
-          set({ repoFileTree: tree });
+          patch.repoFileTree = tree;
         } else {
           const legacyTree = loadPersisted(spaceId, 'repoFileTree');
           if (legacyTree) {
-            set({ repoFileTree: legacyTree });
+            patch.repoFileTree = legacyTree;
             m.saveRepoFileTree(spaceId, legacyTree).catch(() => {});
-            safeRemoveItem(`code:${spaceId ? `${spaceId}:` : ''}repoFileTree`);
+            safeRemoveItem(`code:${ns}repoFileTree`);
           }
         }
         if (fileIndex) {
-          set({ fileIndexByPath: restoreFileIndexByPath(fileIndex) });
+          patch.fileIndexByPath = restoreFileIndexByPath(fileIndex);
         } else {
           const legacyIndex = loadPersisted(spaceId, 'fileIndexByPath');
           if (legacyIndex) {
-            set({ fileIndexByPath: restoreFileIndexByPath(legacyIndex) });
+            patch.fileIndexByPath = restoreFileIndexByPath(legacyIndex);
             m.saveSpaceFileIndex(spaceId, legacyIndex).catch(() => {});
-            safeRemoveItem(`code:${spaceId ? `${spaceId}:` : ''}fileIndexByPath`);
+            safeRemoveItem(`code:${ns}fileIndexByPath`);
           }
         }
+        if (contentIndex) {
+          patch.contentIndex = contentIndex;
+        } else {
+          const legacy = loadPersisted(spaceId, 'contentIndex');
+          if (legacy) {
+            patch.contentIndex = legacy;
+            m.saveSpaceContentIndex(spaceId, legacy).catch(() => {});
+            safeRemoveItem(`code:${ns}contentIndex`);
+          }
+        }
+        if (importGraph) {
+          patch.importGraph = importGraph;
+        } else {
+          const legacy = loadPersisted(spaceId, 'importGraph');
+          if (legacy) {
+            patch.importGraph = legacy;
+            m.saveSpaceImportGraph(spaceId, legacy).catch(() => {});
+            safeRemoveItem(`code:${ns}importGraph`);
+          }
+        }
+        if (fileSizes) {
+          patch.fileSizes = fileSizes;
+        } else {
+          const legacy = loadPersisted(spaceId, 'fileSizes');
+          if (legacy) {
+            patch.fileSizes = legacy;
+            m.saveSpaceFileSizes(spaceId, legacy).catch(() => {});
+            safeRemoveItem(`code:${ns}fileSizes`);
+          }
+        }
+        if (importIndex) {
+          patch.importIndexByFile = restoreImportIndexByFile(importIndex);
+        } else {
+          const legacy = loadPersisted(spaceId, 'importIndexByFile');
+          if (legacy) {
+            patch.importIndexByFile = restoreImportIndexByFile(legacy);
+            m.saveSpaceImportIndex(spaceId, legacy).catch(() => {});
+            safeRemoveItem(`code:${ns}importIndexByFile`);
+          }
+        }
+        if (Object.keys(patch).length > 0) set(patch);
       })
       .catch(() => {});
   },
@@ -223,19 +278,36 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setContentIndex: (contentIndex) => {
     const spaceId = get()._spaceId;
-    persist(spaceId, 'contentIndex', contentIndex);
     set({ contentIndex });
+    if (contentIndex) {
+      // Too large for localStorage — persist to IndexedDB. Fire-and-forget.
+      import('../services/context/contentStorePersistence.js')
+        .then((m) => m.saveSpaceContentIndex(spaceId, contentIndex))
+        .catch(() => {});
+    }
   },
 
   setFileSizes: (fileSizes) => {
     const spaceId = get()._spaceId;
     const serialized = fileSizes instanceof Map ? [...fileSizes] : fileSizes;
-    persist(spaceId, 'fileSizes', serialized);
     set({ fileSizes: serialized });
+    if (serialized) {
+      // Too large for localStorage — persist to IndexedDB. Fire-and-forget.
+      import('../services/context/contentStorePersistence.js')
+        .then((m) => m.saveSpaceFileSizes(spaceId, serialized))
+        .catch(() => {});
+    }
   },
 
   setImportGraph: (importGraph) => {
+    const spaceId = get()._spaceId;
     set({ importGraph });
+    if (importGraph) {
+      // Too large for localStorage — persist to IndexedDB. Fire-and-forget.
+      import('../services/context/contentStorePersistence.js')
+        .then((m) => m.saveSpaceImportGraph(spaceId, importGraph))
+        .catch(() => {});
+    }
   },
 
   setFileIndexByPath: (fileIndexByPath) => {
@@ -252,8 +324,14 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setImportIndexByFile: (importIndexByFile) => {
     const spaceId = get()._spaceId;
-    persist(spaceId, 'importIndexByFile', serializeImportIndexByFile(importIndexByFile));
     set({ importIndexByFile });
+    if (importIndexByFile) {
+      // Too large for localStorage — persist to IndexedDB. Fire-and-forget.
+      const serialized = serializeImportIndexByFile(importIndexByFile);
+      import('../services/context/contentStorePersistence.js')
+        .then((m) => m.saveSpaceImportIndex(spaceId, serialized))
+        .catch(() => {});
+    }
   },
 
   setExpandedView: (expanded) => set({ expandedView: expanded }),

@@ -294,3 +294,82 @@ export async function loadRepoFileTree(spaceId) {
     return null;
   }
 }
+
+/**
+ * Persist the remaining scan payloads (contentIndex, importGraph, fileSizes,
+ * importIndexByFile) for a space. Moved out of localStorage with the same
+ * rationale as saveSpaceFileIndex — these can each be tens of KB to MBs and
+ * were contributors to localStorage quota exhaustion. Values are stored as
+ * plain strings / serialized arrays.
+ */
+export async function saveSpaceContentIndex(spaceId, value) {
+  if (!value) return;
+  try {
+    await txPut(STORE_META, `contentIndex:${spaceId || ''}`, value);
+  } catch (err) {
+    console.warn('[contentStorePersistence] save contentIndex failed:', err.message);
+  }
+}
+
+export async function loadSpaceContentIndex(spaceId) {
+  try {
+    return (await txGet(STORE_META, `contentIndex:${spaceId || ''}`)) || null;
+  } catch (err) {
+    console.warn('[contentStorePersistence] load contentIndex failed:', err.message);
+    return null;
+  }
+}
+
+export async function saveSpaceImportGraph(spaceId, value) {
+  if (!value) return;
+  try {
+    await txPut(STORE_META, `importGraph:${spaceId || ''}`, value);
+  } catch (err) {
+    console.warn('[contentStorePersistence] save importGraph failed:', err.message);
+  }
+}
+
+export async function loadSpaceImportGraph(spaceId) {
+  try {
+    return (await txGet(STORE_META, `importGraph:${spaceId || ''}`)) || null;
+  } catch (err) {
+    console.warn('[contentStorePersistence] load importGraph failed:', err.message);
+    return null;
+  }
+}
+
+export async function saveSpaceFileSizes(spaceId, serialized) {
+  if (!serialized) return;
+  try {
+    await txPut(STORE_META, `fileSizes:${spaceId || ''}`, serialized);
+  } catch (err) {
+    console.warn('[contentStorePersistence] save fileSizes failed:', err.message);
+  }
+}
+
+export async function loadSpaceFileSizes(spaceId) {
+  try {
+    return (await txGet(STORE_META, `fileSizes:${spaceId || ''}`)) || null;
+  } catch (err) {
+    console.warn('[contentStorePersistence] load fileSizes failed:', err.message);
+    return null;
+  }
+}
+
+export async function saveSpaceImportIndex(spaceId, serialized) {
+  if (!serialized) return;
+  try {
+    await txPut(STORE_META, `importIndexByFile:${spaceId || ''}`, serialized);
+  } catch (err) {
+    console.warn('[contentStorePersistence] save importIndexByFile failed:', err.message);
+  }
+}
+
+export async function loadSpaceImportIndex(spaceId) {
+  try {
+    return (await txGet(STORE_META, `importIndexByFile:${spaceId || ''}`)) || null;
+  } catch (err) {
+    console.warn('[contentStorePersistence] load importIndexByFile failed:', err.message);
+    return null;
+  }
+}
