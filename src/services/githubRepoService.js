@@ -5614,6 +5614,14 @@ export const rescanRepositoryForChanges = async (
     return { noChanges: true, commitSha: currentSha };
   }
 
+  // Re-pin the module-level commit ref to the NEW commit BEFORE fetching any
+  // file contents. fetchFileContent falls back to this ref when callers don't
+  // pass one explicitly (refreshRepoWorkingCopies, read_file, quick_look, ...),
+  // so leaving it at the pre-rescan SHA made every read/edit re-anchor to the
+  // OLD commit while search (indexed from the rescan's contents) held the new
+  // one — the "line numbers don't match my reads" staleness bug.
+  repoRefSha = currentSha;
+
   // 2. Get the list of changed files via Compare API
   if (onProgress) onProgress(15, 'Fetching changes...');
   const changedFiles = await fetchChangedFiles(owner, repoName, lastCommitSha, currentSha, token);
@@ -5648,7 +5656,7 @@ export const rescanRepositoryForChanges = async (
 
   // 5. Generate merfolk from only the changed files
   if (onProgress) onProgress(25, `Analyzing ${sourceFiles.length} changed file(s)...`);
-  const { markdown: newMerfolkMarkdown, contentIndex: newContentIndex, fileSizes: newFileSizes, importGraph: newImportGraph } = await generateMerfolkFromRepository(owner, repoName, {
+  const { markdown: newMerfolkMarkdown, contentIndex: newContentIndex, fileSizes: newFileSizes, importGraph: newImportGraph, repoFileContents: newRepoFileContents } = await generateMerfolkFromRepository(owner, repoName, {
     preFilteredFiles: sourceFiles,
     repoType: detectedRepoType,
     onProgress,
@@ -5670,6 +5678,7 @@ export const rescanRepositoryForChanges = async (
     contentIndex: newContentIndex,
     fileSizes: newFileSizes,
     importGraph: newImportGraph,
+    repoFileContents: newRepoFileContents || {},
     changedFileCount: sourceFiles.length,
     addedFiles: addedFiles.length,
     modifiedFiles: modifiedFiles.length,

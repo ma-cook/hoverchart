@@ -43,6 +43,20 @@ const getGuestId = () => {
   return guestId;
 };
 
+// The commit SHA the current space's diagram was scanned/rescanned at (persisted
+// by UIOverlay). Threaded into githubContext so every GitHub fetch in the tool
+// loop pins to that commit instead of falling back to the module-global
+// repoRefSha — which can point at a different space's scan and makes search line
+// numbers disagree with reads.
+const getSpaceCommitSha = (spaceId) => {
+  if (!spaceId) return undefined;
+  try {
+    return localStorage.getItem(`diagramCommitSha_${spaceId}`) || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const senderInitials = (name) => {
   if (!name) return '?';
   const parts = name.trim().split(/\s+/);
@@ -508,6 +522,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         repo: selectedRepo.name,
         branch: selectedBranch,
         token: getGithubToken(),
+        commitSha: getSpaceCommitSha(spaceId),
       } : null;
 
       const planResponse = await sendWithRetrieval({
@@ -711,6 +726,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         repo: selectedRepo.name,
         branch: selectedBranch,
         token: getGithubToken(),
+        commitSha: getSpaceCommitSha(spaceId),
       } : null;
 
       console.log('[CodeSend] Sending to LLM...');

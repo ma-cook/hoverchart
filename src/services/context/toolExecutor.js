@@ -16,6 +16,14 @@ const MAX_HITS_PER_FILE = 5;
 
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
+// Resolve the Git ref to pin every GitHub fetch to. Callers thread the space's
+// scanned commit SHA through githubContext.commitSha so reads/edit/write and the
+// pre-run refresh all re-anchor to the SAME commit the search index was built
+// from — otherwise fetchFileContent silently falls back to the module-global
+// repoRefSha (last scan/rescan in the tab), which routinely points at a
+// different commit and makes search line numbers disagree with reads.
+const repoRefOf = (githubContext) => githubContext?.commitSha || undefined;
+
 /**
  * Build the full-text search corpus (filePath → text) for search_code/grep.
  * Prefers the worker-backed content store (the source of truth). If it holds
@@ -963,7 +971,7 @@ export async function refreshRepoWorkingCopies({ githubContext } = {}) {
       await Promise.all(batch.map(async (path) => {
         try {
           const content = await withTimeout(
-            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token, repoRefOf(githubContext)),
             TOOL_TIMEOUT_MS,
             `refresh(${path})`,
           );
@@ -1031,7 +1039,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!content && githubContext) {
         try {
           content = await withTimeout(
-            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token, repoRefOf(githubContext)),
             TOOL_TIMEOUT_MS,
             `quick_look(${path})`,
           );
@@ -1069,7 +1077,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!fullContent && githubContext) {
         try {
           fullContent = await withTimeout(
-            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token, repoRefOf(githubContext)),
             TOOL_TIMEOUT_MS,
             `file_outline(${path})`,
           );
@@ -1108,7 +1116,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!fullContent && githubContext) {
         try {
           fullContent = await withTimeout(
-            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token, repoRefOf(githubContext)),
             TOOL_TIMEOUT_MS,
             `read_file(${path})`,
           );
@@ -1448,7 +1456,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!entry && githubContext) {
         try {
           const fresh = await withTimeout(
-            fetchFileContent(githubContext.owner, githubContext.repo, filePath, githubContext.token),
+            fetchFileContent(githubContext.owner, githubContext.repo, filePath, githubContext.token, repoRefOf(githubContext)),
             TOOL_TIMEOUT_MS,
             `edit-load(${filePath})`,
           );
@@ -1501,7 +1509,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         // session). Re-fetch the current file from GitHub and retry once.
         try {
           const fresh = await withTimeout(
-            fetchFileContent(githubContext.owner, githubContext.repo, filePath, githubContext.token),
+            fetchFileContent(githubContext.owner, githubContext.repo, filePath, githubContext.token, repoRefOf(githubContext)),
             TOOL_TIMEOUT_MS,
             `edit-refresh(${filePath})`,
           );

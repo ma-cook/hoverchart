@@ -10,6 +10,7 @@ import {
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { populateContentStoreWorker } from '../services/zenService';
+import { saveRepoFileContents } from '../services/context/contentStorePersistence';
 import { saveDiagramDigest, rehydrateFromDigest } from '../services/graphPersistence';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
@@ -627,6 +628,15 @@ const UIOverlay = ({
         // Fire-and-forget: chunk/index the repo corpus + diagram markdown off
         // the main thread (repoFileContents is sent in bounded batches).
         populateContentStoreWorker(result.repoFileContents, result.markdown);
+        // Keep the raw repoFileContents map in the code store + IndexedDB so
+        // search fallbacks and future rescans can merge against the full corpus
+        // at the scanned commit instead of dropping/overwriting it.
+        useCodeStore.getState().setRepoFileContents(result.repoFileContents || null);
+        if (currentSpaceId && result.repoFileContents && Object.keys(result.repoFileContents).length > 0) {
+          saveRepoFileContents(currentSpaceId, result.repoFileContents).catch((err) =>
+            console.warn('[UIOverlay] save repoFileContents failed:', err.message)
+          );
+        }
         if (result.storageUrl) {
           setLatestMarkdownUrl(result.storageUrl);
         }
@@ -761,7 +771,27 @@ const UIOverlay = ({
       // snapshot is serialized.
       setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
       // Fire-and-forget: re-index the merged markdown off the main thread.
-      populateContentStoreWorker(null, rescanResult.mergedMarkdown);
+      // Merge the rescan's changed-file contents into the full repo corpus so
+      // search_code and read_file both reflect the NEW commit (rescan previously
+      // passed null, which reset the worker and left search on the stale
+      // pre-rescan contents). The merged map keeps every path, so the purge in
+      // populateContentStoreWorker removes nothing.
+      const codeStoreState = useCodeStore.getState();
+      const baseContents = codeStoreState.repoFileContents;
+      let mergedContents = null;
+      if (baseContents && typeof baseContents === 'object') {
+        mergedContents = { ...baseContents };
+        for (const [p, c] of Object.entries(rescanResult.repoFileContents || {})) {
+          if (c) mergedContents[p] = c;
+        }
+        codeStoreState.setRepoFileContents(mergedContents);
+        if (currentSpaceId && Object.keys(mergedContents).length > 0) {
+          saveRepoFileContents(currentSpaceId, mergedContents).catch((err) =>
+            console.warn('[UIOverlay] save merged repoFileContents failed:', err.message)
+          );
+        }
+      }
+      populateContentStoreWorker(mergedContents, rescanResult.mergedMarkdown);
       if (rescanResult.contentIndex) useCodeStore.getState().setContentIndex(rescanResult.contentIndex);
       if (rescanResult.fileSizes) useCodeStore.getState().setFileSizes(rescanResult.fileSizes);
       if (rescanResult.importGraph) useCodeStore.getState().setImportGraph(rescanResult.importGraph);
