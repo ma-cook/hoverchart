@@ -348,6 +348,55 @@ function offsetToLine(content, index) {
   return content.slice(0, index).split('\n').length;
 }
 
+/**
+ * Numbered, verbatim view of a line range. Used in edit-failure messages so the
+ * model can copy the exact current text instead of guessing from compressed
+ * context. Line numbers are stripped automatically by the edit tool, so they
+ * are safe to include.
+ */
+function regionText(content, fromLine, toLine) {
+  const lines = content.split('\n');
+  const from = Math.max(1, fromLine);
+  const to = Math.min(lines.length, toLine);
+  if (from > to) return '';
+  return lines.slice(from - 1, to).map((l, i) => `${from + i}: ${l}`).join('\n');
+}
+
+/**
+ * F3: Diagnostic-only nearest-region search used when an edit oldString does not
+ * match. Returns the verbatim numbered lines around the content line that shares
+ * the most distinctive tokens with oldString, so the failure message can show
+ * the model the current text to copy. Never applies the edit.
+ */
+function findNearestRegion(content, oldString) {
+  const searchLines = oldString.split('\n').filter(l => l.trim().length > 0);
+  if (searchLines.length === 0) return null;
+  const distinctiveTokens = [];
+  const tokenRe = /[A-Za-z_]\w{5,}|['"`][^'"`\n]{6,}['"`]/g;
+  for (const line of searchLines) {
+    const matches = line.match(tokenRe);
+    if (matches) distinctiveTokens.push(...matches);
+  }
+  if (distinctiveTokens.length === 0) return null;
+
+  const contentLines = content.split('\n');
+  let bestLine = -1;
+  let bestScore = 0;
+  for (let i = 0; i < contentLines.length; i++) {
+    let score = 0;
+    for (const tok of distinctiveTokens) {
+      if (contentLines[i].includes(tok)) score++;
+    }
+    if (score > bestScore) { bestScore = score; bestLine = i; }
+  }
+  if (bestLine === -1 || bestScore === 0) return null;
+  const startLine = bestLine + 1;
+  return {
+    line: startLine,
+    text: regionText(content, startLine - 15, startLine + 15),
+  };
+}
+
 function findAllExactMatches(content, oldString) {
   const matches = [];
   let from = 0;
@@ -882,6 +931,62 @@ export function resetEditTracker() {
   lastEditLines.clear();
 }
 
+/**
+ * F1: Re-anchor every repo file in the content store to GitHub HEAD at the
+ * start of a code-gen run. The store persists in IndexedDB across sessions, so
+ * without a refresh the model can end up editing a stale or previously-corrupted
+ * copy (bad fuzzy edits from older harness versions survive a reload). Fetching
+ * fresh content for each entry makes read/edit/write and the final synthetic
+ * diffs reflect the true GitHub baseline.
+ *
+ * Returns the fresh content per path so callers can seed their "original" map.
+ * Degrades gracefully: a file that fails to fetch keeps its existing entry, and
+ * a GitHub rate limit aborts early with whatever was refreshed so far.
+ */
+export async function refreshRepoWorkingCopies({ githubContext } = {}) {
+  const store = getContentStore();
+  const originals = new Map();
+  if (!githubContext?.owner || !githubContext?.repo) return originals;
+
+  const paths = new Set();
+  for (const id of store.entries.keys()) {
+    if (id.startsWith('repo:')) paths.add(id.slice(5));
+    else if (id.startsWith('github:')) paths.add(id.slice(7));
+  }
+  if (paths.size === 0) return originals;
+
+  const BATCH_SIZE = 8;
+  const list = [...paths];
+  for (let i = 0; i < list.length; i += BATCH_SIZE) {
+    const batch = list.slice(i, i + BATCH_SIZE);
+    try {
+      await Promise.all(batch.map(async (path) => {
+        try {
+          const content = await withTimeout(
+            fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token),
+            TOOL_TIMEOUT_MS,
+            `refresh(${path})`,
+          );
+          if (content) {
+            await persistFileContent(`repo:${path}`, path, content);
+            originals.set(path, content);
+          }
+        } catch (err) {
+          const msg = err?.message || String(err);
+          if (/rate limit|too many requests|403|429/i.test(msg)) throw new Error(msg);
+          console.warn(`[refresh] could not refresh ${path}: ${msg}`);
+        }
+      }));
+    } catch (err) {
+      console.warn(`[refresh] GitHub rate limit hit — keeping existing entries for the remaining ${list.length - i - batch.length} files: ${err.message}`);
+      break;
+    }
+    await new Promise(r => setTimeout(r, 0));
+  }
+  console.log(`[refresh] Re-anchored ${originals.size}/${list.length} repo files to GitHub HEAD`);
+  return originals;
+}
+
 export async function executeTool(name, args, githubContext, fileTree = [], { runSubAgent, depth = 0 } = {}) {
   await Promise.race([
     Promise.all([waitForContentStoreHydration(), waitForBase64StoreHydration()]),
@@ -1414,11 +1519,15 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
 
+      const COMPRESSION_NOTE = `\n\nThe exact text may have been compressed or summarized in context — copy oldString verbatim from the numbered lines above (line numbers are stripped automatically), or call read_file for the exact range.`;
+
       if (attempt.ambiguous) {
         const lines = attempt.ambiguous.ambiguous.join(', ');
+        const firstOccurrence = attempt.ambiguous.ambiguous[0];
+        const region = regionText(matchContent, firstOccurrence - 6, firstOccurrence + 6);
         return {
           success: false,
-          content: `edit failed: oldString appears at ${attempt.ambiguous.ambiguous.length} locations in ${filePath} (lines ${lines}). Include more surrounding context in oldString to disambiguate which block you intend to change, or re-read the file and copy the exact current text.`,
+          content: `edit failed: oldString appears at ${attempt.ambiguous.ambiguous.length} locations in ${filePath} (lines ${lines}). Include more surrounding context in oldString to disambiguate which block you intend to change.\n\nCurrent text near the first occurrence (line ${firstOccurrence}):\n${region}${COMPRESSION_NOTE}`,
         };
       }
 
@@ -1435,15 +1544,28 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         if (hadLineNumbers) {
           hint = ` Line number prefixes (e.g. "10: code") were stripped from oldString but still no match.`;
         }
+        let regionBlock = '';
         if (closestLine !== -1) {
+          regionBlock = `\n\nCurrent text around line ${closestLine}:\n${regionText(matchContent, closestLine - 15, closestLine + 15)}`;
           hint += ` The first line was found near line ${closestLine}:\n  Provided:   "${firstLine}"\n  File near ${closestLine}: "${closestContent}"\n  Match the indentation and content exactly — line numbers are automatically stripped.`;
         } else {
-          hint += ` The oldString was not found in the file's current content. Re-read the file with read_file and provide the exact text from its output (line numbers are stripped automatically).`;
+          const nearest = findNearestRegion(matchContent, cleanedOldString);
+          if (nearest) {
+            regionBlock = `\n\nClosest matching region (near line ${nearest.line}):\n${nearest.text}`;
+            hint += ` The oldString was not found verbatim in the file's current content.`;
+          } else {
+            hint += ` The oldString was not found in the file's current content. Re-read the file with read_file and provide the exact text from its output (line numbers are stripped automatically).`;
+          }
         }
-        return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}` };
+        return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}${regionBlock}${COMPRESSION_NOTE}` };
       }
       if (attempt.oversized) {
-        return { success: false, content: `edit failed: fuzzy match span (${attempt.match.length} chars) is more than 2x the oldString (${cleanedOldString.length} chars). This usually means the oldString matched a larger block than intended. Re-read the file and provide more of the exact surrounding context in oldString.` };
+        const startLine = offsetToLine(matchContent, attempt.match.index);
+        const endLine = offsetToLine(matchContent, attempt.match.index + attempt.match.length);
+        return {
+          success: false,
+          content: `edit failed: fuzzy match span (${attempt.match.length} chars) is more than 2x the oldString (${cleanedOldString.length} chars). This usually means the oldString matched a larger block than intended.\n\nCurrent text the fuzzy matcher latched onto (lines ${startLine}-${endLine}):\n${regionText(matchContent, startLine - 8, endLine + 8)}${COMPRESSION_NOTE}`,
+        };
       }
 
       const updated = attempt.updated;

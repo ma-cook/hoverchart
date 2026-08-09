@@ -1,6 +1,6 @@
 import { sendToZen } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
-import { executeTool, resetEditTracker } from './toolExecutor';
+import { executeTool, resetEditTracker, refreshRepoWorkingCopies } from './toolExecutor';
 import { fetchFileContent } from '../githubRepoService';
 import { computeTools, computeSubAgentTools } from './toolProvider';
 import { initializeDefaultSkills, REGISTRY } from './skillManager';
@@ -587,6 +587,21 @@ export async function sendWithRetrieval({
     fileSizes: _fileSizes,
     sceneObjects,
   });
+
+  // F1: re-anchor the working copy to GitHub HEAD before the run starts. The
+  // content store persists in IndexedDB across sessions, so without a refresh
+  // the model can end up editing a stale or previously-corrupted copy (bad
+  // fuzzy edits from older harness versions survive a reload). Refreshing every
+  // repo entry makes read/edit/write and the final synthetic diffs reflect the
+  // true GitHub baseline. Failures keep existing entries and are non-fatal.
+  if (githubContext?.owner && githubContext?.repo) {
+    try {
+      const refreshed = await refreshRepoWorkingCopies({ githubContext });
+      for (const [p, c] of refreshed) originalFileContents.set(p, c);
+    } catch (err) {
+      console.warn(`[ToolRound] F1 refresh failed (continuing with stored copies):`, err.message);
+    }
+  }
 
   // Pre-activate architecture context so the model has the graph/community
   // tools and their instructions ready from round 1 — no list_skills /
