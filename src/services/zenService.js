@@ -959,6 +959,13 @@ RULES
 15. search_code returns line-level matches in the format file:line: code — use the line numbers to target read_file offsets.
 16. Check for AGENTS.md, .github/copilot-instructions.md, or README.md conventions before writing code that touches project structure.
 17. NEVER call write on an existing file — the write tool rejects paths that already exist in the repository. Always use edit(filePath, oldString, newString) for modifications, with oldString copied exactly from read_file output.
+18. NEVER output an entire existing file as a code block — a full-file block for an existing file is REJECTED (it would silently drop the rest of the file). Modify existing files only through the edit tool. If you must emit a change as text, use SEARCH/REPLACE markers covering ONLY the exact changed lines, in a code block labeled with the file path (e.g. \`\`\`jsx:src/components/UIOverlay.jsx):
+   <<<<<<< SEARCH
+   exact existing code to replace
+   =======
+   replacement code
+   >>>>>>> REPLACE
+   Each SEARCH block must match the current file exactly.
 `;
 
 function formatFileSize(chars) {

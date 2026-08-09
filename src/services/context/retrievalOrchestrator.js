@@ -64,8 +64,8 @@ You have explored enough. Now produce the code changes. If you need to read a fi
 
 Switch to PRODUCING CODE NOW:
   1. Prefer calling the "edit" tool with exact oldString/newString for the file you already located.
-  2. If an edit fails, correct the oldString and retry — or switch to outputting each changed file as a full markdown code block labeled \`\`\`<ext>:<filePath> so the system can capture it.
-  3. Output the final response as text containing the code blocks so your changes are recorded.`,
+  2. If an edit fails, correct the oldString (copy exact text from read_file) and retry. NEVER output an entire existing file as a code block — full-file blocks for existing files are rejected and would silently drop the rest of the file.
+  3. If you must emit changes as text, use SEARCH/REPLACE blocks covering ONLY the exact changed lines (<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE), labeled with the file path — never the whole file.`,
   };
 }
 
@@ -196,6 +196,11 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
   const rest = [...msgs.slice(2)];
 
   const lastReadByPath = new Map();
+  // B: record the window (start/end + message index) of every read_file call so
+  // stale read results are only stubbed when a LATER read actually covers the
+  // same region — a later read of a different region must not erase this
+  // content (it is the only source of that region).
+  const readWindowsByPath = new Map();
   // Files the model has attempted to edit/write — their reads must stay exact
   // so the edit tool can land oldString without lossy compression.
   const editTargetPaths = new Set();
@@ -206,7 +211,14 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
         if (tc.function?.name === 'read_file') {
           try {
             const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
-            if (args.path) lastReadByPath.set(args.path, i);
+            if (args.path) {
+              lastReadByPath.set(args.path, i);
+              const start = Math.max(1, parseInt(args.offset, 10) || 1);
+              const end = start + Math.min(parseInt(args.limit, 10) || 8000, 10000) - 1;
+              const list = readWindowsByPath.get(args.path);
+              if (list) list.push({ i, start, end });
+              else readWindowsByPath.set(args.path, [{ i, start, end }]);
+            }
           } catch { /* ignore */ }
         }
         if (tc.function?.name === 'edit' || tc.function?.name === 'write') {
@@ -237,8 +249,22 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
       try {
         const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
         if (args.path && lastReadByPath.get(args.path) > i && !editTargetPaths.has(normalizePath(args.path))) {
-          msg.content = `[Previously read: ${args.path} — ${msg.content.length} chars — see the later read_file above]`;
-          compressedCount++;
+          // B: only stub when a LATER read of the same path covers >= 80% of
+          // this window. If a later read hit a different region, this result is
+          // the only source of that content — stubbing it erases real context
+          // and forces a genuine re-read (which then looks like a stall).
+          const start = Math.max(1, parseInt(args.offset, 10) || 1);
+          const end = start + Math.min(parseInt(args.limit, 10) || 8000, 10000) - 1;
+          const reqLen = end - start + 1;
+          const laterWindows = (readWindowsByPath.get(args.path) || []).filter(w => w.i > i);
+          const covered = laterWindows.some(w => {
+            const overlap = Math.max(0, Math.min(end, w.end) - Math.max(start, w.start) + 1);
+            return overlap / reqLen >= 0.8;
+          });
+          if (covered) {
+            msg.content = `[Previously read: ${args.path} — ${msg.content.length} chars — see the later read_file above]`;
+            compressedCount++;
+          }
         }
       } catch { /* ignore */ }
     } else if (tc.function?.name === 'edit' && msg.content.length > 8000) {
@@ -647,7 +673,7 @@ export async function sendWithRetrieval({
         if (digest) {
           currentMessages = [...currentMessages, {
             role: 'user',
-            content: `📋 EXPLORATION DIGEST (synthesized from prior tool calls):\n\n${digest}\n\nUse this digest to locate your edit targets. Do NOT re-read these files.`,
+            content: `📋 EXPLORATION DIGEST (synthesized from prior tool calls):\n\n${digest}\n\nUse this digest to locate your edit targets. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files.`,
           }];
           console.warn(`[ToolRound] Fix 5: injected findings digest at round ${rounds + 1} (${digest.length} chars)`);
         }
@@ -681,7 +707,7 @@ export async function sendWithRetrieval({
           if (digest) {
             currentMessages = [...currentMessages, {
               role: 'user',
-              content: `📋 REFRESHED EXPLORATION DIGEST (round ${rounds + 1}):\n\n${digest}\n\nYou still have the edit/write tools — apply the changes now. Do NOT re-read these files.`,
+              content: `📋 REFRESHED EXPLORATION DIGEST (round ${rounds + 1}):\n\n${digest}\n\nYou still have the edit/write tools — apply the changes now. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files.`,
             }];
             console.warn(`[ToolRound] Fix 4: injected refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
           }
@@ -902,11 +928,11 @@ export async function sendWithRetrieval({
           const filePath = normalizePath(tc.arguments.path);
           const off = Math.max(1, parseInt(tc.arguments.offset, 10) || 1);
           const lim = Math.min(parseInt(tc.arguments.limit, 10) || 8000, 10000);
-          // R2: record the requested window so overlapping re-reads of the same
-          // content (even at slightly different limits) are later detected.
-          let ranges = fileReadRanges.get(filePath);
-          if (!ranges) { ranges = []; fileReadRanges.set(filePath, ranges); }
-          ranges.push({ start: off, end: off + lim - 1, round: rounds });
+          // A1: the read window is recorded later during duplicate detection
+          // (AFTER the coverage check) so a read is never compared against its
+          // own just-recorded range — recording it here made every read look
+          // like a duplicate, which falsely triggered read-stall and
+          // research-loop nudges.
           // Serve the requested range from the exact cached content FIRST so
           // re-reads return real text (needed for precise edit oldString).
           const fullCached = originalFileContents.get(filePath);
@@ -1023,10 +1049,17 @@ export async function sendWithRetrieval({
       const fp = normalizePath(tc.arguments.path);
       const start = Math.max(1, parseInt(tc.arguments.offset, 10) || 1);
       const end = start + Math.min(parseInt(tc.arguments.limit, 10) || 8000, 10000) - 1;
+      // A1: record the window AFTER the coverage check so the current read is
+      // not compared against its own range. Same-round overlapping re-reads of
+      // the same region are still detected because their range was recorded on
+      // an earlier iteration of this loop.
+      let ranges = fileReadRanges.get(fp);
+      if (!ranges) { ranges = []; fileReadRanges.set(fp, ranges); }
       if (isRangeCovered(fp, start, end)) {
         readDupCount++;
         fileDupCounts.set(fp, (fileDupCounts.get(fp) || 0) + 1);
       }
+      ranges.push({ start, end, round: rounds });
     }
     const allDuplicateReads = toolCalls.length > 0 && readDupCount >= Math.ceil(toolCalls.length / 2);
 
@@ -1127,7 +1160,7 @@ export async function sendWithRetrieval({
           if (digest) {
             currentMessages = [...currentMessages, {
               role: 'user',
-              content: `📋 REFRESHED FINDINGS DIGEST (round ${rounds + 1}):\n\n${digest}\n\nUse this to identify what remains. Do NOT re-read these files.`,
+              content: `📋 REFRESHED FINDINGS DIGEST (round ${rounds + 1}):\n\n${digest}\n\nUse this to identify what remains. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files.`,
             }];
             console.warn(`[ToolRound] Self-redirect: refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
           }
