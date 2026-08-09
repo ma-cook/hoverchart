@@ -1,6 +1,7 @@
 import { sendToZen } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { executeTool, resetEditTracker } from './toolExecutor';
+import { fetchFileContent } from '../githubRepoService';
 import { computeTools, computeSubAgentTools } from './toolProvider';
 import { initializeDefaultSkills, REGISTRY } from './skillManager';
 import { getContentStore } from './contentStore';
@@ -110,76 +111,58 @@ ${editsSoFar && editsSoFar.length > 0 ? `Changes already applied this run: ${edi
  * model receives digested context (not re-compressed noise) before being asked
  * to generate. Returns the synthesized summary text, or null on failure.
  */
-async function synthesizeFindingsDigest(currentMessages, originalFileContents, getContentStore, getBase64Store) {
-  // Step 1: extract the file paths the LLM has been looking at
-  const searchedPaths = [];
-  const readPaths = new Set();
+async function synthesizeFindingsDigest(currentMessages) {
+  // Digest the model's OWN accumulated read_file results — the exact content it
+  // has already seen — rather than re-reading the content store. This keeps the
+  // digest compact and faithful to what is already in context (re-dumping up to
+  // 25KB of raw file text only reinforced confusion, and the store may hold
+  // stale or re-chunked content). The digest is a memory aid: file + current
+  // line range + the lines the model was reading.
+  const callPathById = new Map();
   for (const m of currentMessages) {
-    if (m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        try {
-          const args = typeof tc.function?.arguments === 'string'
-            ? JSON.parse(tc.function.arguments)
-            : tc.function?.arguments;
-          if (tc.function?.name === 'read_file' && args?.path) readPaths.add(args.path);
-          if (tc.function?.name === 'search_code' && args?.pattern) searchedPaths.push(args.pattern);
-          if (tc.function?.name === 'file_outline' && args?.path) readPaths.add(args.path);
-        } catch { /* ignore */ }
-      }
+    if (m.role !== 'assistant' || !m.tool_calls) continue;
+    for (const tc of m.tool_calls) {
+      if (tc.function?.name !== 'read_file') continue;
+      try {
+        const args = typeof tc.function.arguments === 'string'
+          ? JSON.parse(tc.function.arguments)
+          : tc.function?.arguments;
+        if (args?.path) callPathById.set(tc.id, normalizePath(args.path));
+      } catch { /* ignore */ }
     }
   }
 
-  // Step 2: read the key files' FULL content from the content store
-  const DIGEST_FILE_BUDGET = 25000;
-  let budgetRemaining = DIGEST_FILE_BUDGET;
-  const fileContents = [];
-
-  // Prefer files the LLM explicitly read via read_file or file_outline
-  const candidates = Array.from(new Set([...readPaths, ...searchedPaths.flatMap(s =>
-    typeof s === 'string' && s.length > 2 ? [s] : []
-  )]));
-
-  for (const path of candidates) {
-    if (budgetRemaining <= 500) break;
-    // Check if already cached
-    if (originalFileContents?.has(path)) {
-      const content = originalFileContents.get(path);
-      const label = `\n=== ${path} ===\n`;
-      const available = budgetRemaining - label.length;
-      const snippet = content.length > available
-        ? content.slice(0, available) + `\n...[truncated]`
-        : content;
-      fileContents.push(label + snippet);
-      budgetRemaining -= label.length + snippet.length;
-      continue;
-    }
-    // Try to load from content store
-    try {
-      const store = getContentStore?.();
-      const b64Store = getBase64Store?.();
-      if (store?._hydrated && b64Store?._hydrated) {
-        const entry = store.getEntry(`repo:${path}`) || store.getEntry(`github:${path}`);
-        if (entry) {
-          const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
-          if (chunks.length > 0) {
-            const content = chunks.map(c => c.text).join('');
-            originalFileContents?.set(path, content);
-            const label = `\n=== ${path} ===\n`;
-            const available = budgetRemaining - label.length;
-            const snippet = content.length > available
-              ? content.slice(0, available) + `\n...[truncated]`
-              : content;
-            fileContents.push(label + snippet);
-            budgetRemaining -= label.length + snippet.length;
-          }
-        }
-      }
-    } catch { /* ignore */ }
+  const byPath = new Map(); // path -> { order, content }
+  let order = 0;
+  for (const m of currentMessages) {
+    if (m.role !== 'tool' || typeof m.content !== 'string') continue;
+    const path = callPathById.get(m.tool_call_id);
+    if (!path) continue;
+    // Keep the newest result for each path so repeated reads collapse to one.
+    byPath.set(path, { order: order++, content: m.content });
   }
 
-  if (fileContents.length === 0) return null;
+  if (byPath.size === 0) return null;
 
-  return fileContents.join('\n');
+  const DIGEST_BUDGET = 10000;
+  const parts = [];
+  let used = 0;
+  const sorted = [...byPath.entries()].sort((a, b) => a[1].order - b[1].order);
+  for (const [path, { content }] of sorted) {
+    if (used >= DIGEST_BUDGET) break;
+    const firstLine = content.split('\n')[0] || '';
+    const label = `\n=== ${path} ===\n${firstLine}\n`;
+    const available = DIGEST_BUDGET - used;
+    if (label.length >= available) break;
+    const snippet = content.length > available - label.length
+      ? content.slice(0, available - label.length) + `\n...[truncated]`
+      : content;
+    parts.push(label + snippet);
+    used += label.length + snippet.length;
+  }
+
+  if (parts.length === 0) return null;
+  return parts.join('\n');
 }
 
 function isTransientError(error) {
@@ -258,7 +241,11 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
           compressedCount++;
         }
       } catch { /* ignore */ }
-    } else if (tc.function?.name === 'edit' && msg.content.length > 300) {
+    } else if (tc.function?.name === 'edit' && msg.content.length > 8000) {
+      // Edit results carry the exact post-edit context block (lines around the
+      // change) that subsequent edits need to keep their oldString in sync.
+      // Only truncate genuinely huge responses; keep normal edit results intact
+      // so the model never has to re-read a file right after editing it.
       const hasSubsequent = rest.slice(i + 1).some(m => m.role === 'assistant');
       if (hasSubsequent) {
         const firstLine = msg.content.split('\n')[0] || '';
@@ -537,6 +524,16 @@ export async function sendWithRetrieval({
   const editedFilePaths = new Set();
   const originalFileContents = new Map();
   let lastCompressionRound = -COMPRESSION_INTERVAL;
+  // R2: overlap-aware read tracking. fileReadRanges records every read_file
+  // window (start/end lines + round) per normalized path so repeated reads of
+  // the same content — even with slightly different offsets — are detected.
+  // fileLastEditRound stamps when a file was last edited so a re-read AFTER an
+  // edit is never mis-flagged as a duplicate (line numbers legitimately shift).
+  const fileReadRanges = new Map();
+  const fileLastEditRound = new Map();
+  // C2: per-file count of duplicate-read rounds and the last round a targeted
+  // read-stall nudge was injected, to avoid spamming the same file.
+  const readStallNudgeRound = new Map();
 
   // Fix 2: track sub-agent spawns per task to enforce hard cap and dedupe prompts.
   const subAgentSpawnCount = { value: 0 };
@@ -775,8 +772,6 @@ export async function sendWithRetrieval({
     const totalTools = toolCalls.length;
     onToolProgress?.({ tool: 'starting', index: 0, total: totalTools, status: 'executing' });
 
-    const readFilesBefore = new Set(readFiles.keys());
-
     const runSubAgent = async ({ prompt, tools, systemPrompt, githubContext: ghCtx, fileTree: ft, depth: subDepth }) => {
       // Fix 2: enforce a hard cap on sub-agent spawns per task.
       if (subAgentSpawnCount.value >= MAX_SUBAGENT_SPAWNS_PER_TASK) {
@@ -870,85 +865,87 @@ export async function sendWithRetrieval({
       return subText;
     };
 
-      const toolPromises = toolCalls.map((tc, idx) => {
-      const toolStart = performance.now();
-      // Execution-time gate: never execute a tool that wasn't sent to the
-      // model this round. The model sometimes keeps calling tools that were
-      // stripped (search_code / list_files / etc.) because it saw them in
-      // earlier context; executing them would silently keep it in exploration
-      // mode. Return a synthetic "unavailable" result instead so it pivots.
-      if (!currentToolNames.has(tc.name)) {
-        console.warn(`[ToolRound] Blocking ${tc.name} — not in this round's available tools`);
-        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-        const generationHint = forceGenerationInjected
-          ? ' You are in GENERATION MODE: produce code changes now. Call "edit" (or "write" for a new file), or output code blocks as text.'
-          : '';
-        return Promise.resolve({
-          tc,
-          result: {
-            success: false,
-            content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}]`,
-          },
-          error: null,
-        });
-      }
-      if (tc.name === 'read_file' && tc.arguments?.path) {
-        const key = readKey(tc);
-        const filePath = normalizePath(tc.arguments.path);
-        // Serve the requested range from the exact cached content FIRST so
-        // re-reads return real text (needed for precise edit oldString), and
-        // never a "do not re-read" stub.
-        const fullCached = originalFileContents.get(filePath);
-        if (fullCached) {
-          const off = Math.max(1, parseInt(tc.arguments.offset, 10) || 1);
-          const lim = Math.min(parseInt(tc.arguments.limit, 10) || 8000, 10000);
-          const lines = fullCached.split('\n');
-          if (off <= lines.length) {
-            const endLine = Math.min(off + lim - 1, lines.length);
-            const sliced = lines.slice(off - 1, off - 1 + lim).map((l, i) => `${off + i}: ${l}`).join('\n');
-            console.log(`[ToolRound] Serving ${filePath} lines ${off}-${endLine} from cache (${fullCached.length} chars total)`);
-            onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-            globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cache-hit]', duration: 0 });
-            return Promise.resolve({
-              tc,
-              result: { success: true, content: `[Read ${filePath}: lines ${off}-${endLine} of ${lines.length}]\n${sliced}` },
-              error: null,
-            });
-          }
-        }
-
-        if (readFilesBefore.has(key)) {
-          const off = tc.arguments.offset || 1;
-          const lim = tc.arguments.limit || 2000;
-          console.warn(`[ToolRound] Round ${rounds + 1}: ${filePath} (offset=${off}) already read and not cached, skipping fetch`);
+      // F1: execute tool calls SEQUENTIALLY. Parallel (Promise.all) execution
+      // was corrupting edits: two `edit` calls to the same file in one round
+      // both read the same pre-edit content and both persisted — the last
+      // finisher won, silently dropping one change (which the model then
+      // "re-fixed" in a loop). Sequential execution serializes per file, so
+      // each edit sees the previous one's result and a same-round read after an
+      // edit serves the fresh content with current line numbers.
+      const toolResults = [];
+      for (let idx = 0; idx < toolCalls.length; idx++) {
+        const tc = toolCalls[idx];
+        const toolStart = performance.now();
+        // Execution-time gate: never execute a tool that wasn't sent to the
+        // model this round. The model sometimes keeps calling tools that were
+        // stripped (search_code / list_files / etc.) because it saw them in
+        // earlier context; executing them would silently keep it in exploration
+        // mode. Return a synthetic "unavailable" result instead so it pivots.
+        if (!currentToolNames.has(tc.name)) {
+          console.warn(`[ToolRound] Blocking ${tc.name} — not in this round's available tools`);
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-          globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cached]', duration: 0 });
-          return Promise.resolve({
+          const generationHint = forceGenerationInjected
+            ? ' You are in GENERATION MODE: produce code changes now. Call "edit" (or "write" for a new file), or output code blocks as text.'
+            : '';
+          toolResults.push({
             tc,
-            result: { success: true, content: `[Already loaded: ${filePath} lines ${off}-${off + lim - 1} — see prior tool response above.]` },
+            result: {
+              success: false,
+              content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}]`,
+            },
             error: null,
           });
+          continue;
         }
+        if (tc.name === 'read_file' && tc.arguments?.path) {
+          const key = readKey(tc);
+          const filePath = normalizePath(tc.arguments.path);
+          const off = Math.max(1, parseInt(tc.arguments.offset, 10) || 1);
+          const lim = Math.min(parseInt(tc.arguments.limit, 10) || 8000, 10000);
+          // R2: record the requested window so overlapping re-reads of the same
+          // content (even at slightly different limits) are later detected.
+          let ranges = fileReadRanges.get(filePath);
+          if (!ranges) { ranges = []; fileReadRanges.set(filePath, ranges); }
+          ranges.push({ start: off, end: off + lim - 1, round: rounds });
+          // Serve the requested range from the exact cached content FIRST so
+          // re-reads return real text (needed for precise edit oldString).
+          const fullCached = originalFileContents.get(filePath);
+          if (fullCached) {
+            const lines = fullCached.split('\n');
+            if (off <= lines.length) {
+              const endLine = Math.min(off + lim - 1, lines.length);
+              const sliced = lines.slice(off - 1, off - 1 + lim).map((l, i) => `${off + i}: ${l}`).join('\n');
+              console.log(`[ToolRound] Serving ${filePath} lines ${off}-${endLine} from cache (${fullCached.length} chars total)`);
+              onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+              globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cache-hit]', duration: 0 });
+              toolResults.push({
+                tc,
+                result: { success: true, content: `[Read ${filePath}: lines ${off}-${endLine} of ${lines.length}]\n${sliced}` },
+                error: null,
+              });
+              continue;
+            }
+          }
 
-        readFiles.set(key, true);
-        if (filePath && !originalFileContents.has(filePath)) {
-          const store = getContentStore();
-          const b64Store = getBase64Store();
-          if (store._hydrated && b64Store._hydrated) {
-            const entry = store.getEntry(`repo:${filePath}`) || store.getEntry(`github:${filePath}`);
-            if (entry) {
-              const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
-              if (chunks.length > 0) {
-                originalFileContents.set(filePath, chunks.map(c => c.text).join(''));
+          readFiles.set(key, true);
+          if (filePath && !originalFileContents.has(filePath)) {
+            const store = getContentStore();
+            const b64Store = getBase64Store();
+            if (store._hydrated && b64Store._hydrated) {
+              const entry = store.getEntry(`repo:${filePath}`) || store.getEntry(`github:${filePath}`);
+              if (entry) {
+                const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
+                if (chunks.length > 0) {
+                  originalFileContents.set(filePath, chunks.map(c => c.text).join(''));
+                }
               }
             }
           }
         }
-      }
-      console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
-      onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
-      return executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 }))
-        .then(result => {
+        console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
+        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
+        try {
+          const result = await executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 }));
           if (tc.name === 'read_file' && result._fullContent) {
             const fp = normalizePath(tc.arguments?.path);
             if (fp && !originalFileContents.has(fp)) {
@@ -964,9 +961,8 @@ export async function sendWithRetrieval({
             error: result.success ? null : new Error(result.content?.slice(0, 100)),
           });
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
-          return { tc, result: { success: result.success, content: result.content }, error: null };
-        })
-        .catch(error => {
+          toolResults.push({ tc, result: { success: result.success, content: result.content }, error: null });
+        } catch (error) {
           const toolDuration = Math.round(performance.now() - toolStart);
           globalMonitor.recordTool({
             toolName: tc.name,
@@ -977,17 +973,17 @@ export async function sendWithRetrieval({
           });
           console.warn(`[ToolRound] Tool ${tc.name} failed:`, error.message);
           onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'error' });
-          return { tc, result: { success: false, content: `Error: ${error.message}` }, error };
-        });
-    });
-
-    const toolResults = await Promise.all(toolPromises);
-
-    for (const { tc, result } of toolResults) {
-      if ((tc.name === 'edit' || tc.name === 'write') && result.success && tc.arguments?.filePath) {
-        originalFileContents.delete(normalizePath(tc.arguments.filePath));
+          toolResults.push({ tc, result: { success: false, content: `Error: ${error.message}` }, error });
+        }
       }
-    }
+
+      for (const { tc, result } of toolResults) {
+        if ((tc.name === 'edit' || tc.name === 'write') && result.success && tc.arguments?.filePath) {
+          const fp = normalizePath(tc.arguments.filePath);
+          originalFileContents.delete(fp);
+          fileLastEditRound.set(fp, rounds);
+        }
+      }
 
     const usefulCount = toolResults.filter(({ tc, result }) => isUsefulToolResult(result.content, tc.name)).length;
     const uselessCount = toolResults.length - usefulCount;
@@ -1002,9 +998,36 @@ export async function sendWithRetrieval({
       console.warn(`[ToolRound] Unhelpful streak: ${consecutiveUnhelpfulRounds}/${MAX_UNHELPFUL_ROUNDS}`);
     }
 
-    const readDupCount = toolCalls.filter(tc =>
-      tc.name === 'read_file' && readFilesBefore.has(readKey(tc))
-    ).length;
+    // R2: overlap-aware duplicate detection. A read_file is a duplicate when its
+    // requested window is >= 80% covered by a prior read of the same file that
+    // happened AFTER the file's last edit (line numbers legitimately shift
+    // after an edit, so those re-reads are NOT duplicates).
+    const isRangeCovered = (filePath, start, end) => {
+      const ranges = fileReadRanges.get(filePath);
+      if (!ranges) return false;
+      const lastEdit = fileLastEditRound.get(filePath) ?? -1;
+      const reqLen = end - start + 1;
+      if (reqLen <= 0) return false;
+      for (const r of ranges) {
+        if (r.round < lastEdit) continue;
+        const overlap = Math.max(0, Math.min(end, r.end) - Math.max(start, r.start) + 1);
+        if (overlap / reqLen >= 0.8) return true;
+      }
+      return false;
+    };
+
+    const fileDupCounts = new Map();
+    let readDupCount = 0;
+    for (const tc of toolCalls) {
+      if (tc.name !== 'read_file' || !tc.arguments?.path) continue;
+      const fp = normalizePath(tc.arguments.path);
+      const start = Math.max(1, parseInt(tc.arguments.offset, 10) || 1);
+      const end = start + Math.min(parseInt(tc.arguments.limit, 10) || 8000, 10000) - 1;
+      if (isRangeCovered(fp, start, end)) {
+        readDupCount++;
+        fileDupCounts.set(fp, (fileDupCounts.get(fp) || 0) + 1);
+      }
+    }
     const allDuplicateReads = toolCalls.length > 0 && readDupCount >= Math.ceil(toolCalls.length / 2);
 
     if (allDuplicateReads) {
@@ -1020,7 +1043,11 @@ export async function sendWithRetrieval({
 
     for (const { tc, result: toolResult } of toolResults) {
       if ((tc.name === 'edit' || tc.name === 'write') && tc.arguments?.filePath) {
-        editedFilePaths.add(tc.arguments.filePath);
+        // F2: store normalized paths so the synthetic-block generation below
+        // finds the matching repo:<path> entry even when the model passed a
+        // "./"-prefixed path. Un-normalized paths silently dropped the edited
+        // file from the response, so SpaceChat never recorded the change.
+        editedFilePaths.add(normalizePath(tc.arguments.filePath));
         // Fix 1: mark that the agent has transitioned from exploration → generation.
         if (toolResult.success) producedEdit = true;
       }
@@ -1033,6 +1060,25 @@ export async function sendWithRetrieval({
         tool_call_id: tc.id,
         content,
       });
+    }
+
+    // C2: when a specific file is being re-read round after round with no edit
+    // to it, inject a targeted advisory nudge pointing at the exact content
+    // already in context. Advisory only — every tool stays available.
+    for (const [fp, count] of fileDupCounts) {
+      if (editedFilePaths.has(fp)) continue;
+      const prevNudge = readStallNudgeRound.get(fp) ?? -Infinity;
+      if (count >= 1 && rounds - prevNudge >= 5) {
+        const ranges = fileReadRanges.get(fp) || [];
+        const last = ranges[ranges.length - 1];
+        const rangeHint = last ? `lines ${last.start}-${last.end}` : 'current content';
+        readStallNudgeRound.set(fp, rounds);
+        currentMessages = [...currentMessages, {
+          role: 'user',
+          content: `📌 READ-STALL HINT (round ${rounds + 1}): You have already read "${fp}" (${rangeHint}) and its current content is in the context above. Re-reading the same region yields no new information. Craft the exact oldString from the content already shown and call "edit" now; if a re-read is truly needed, read only the narrow slice around your target line.`,
+        }];
+        console.warn(`[ToolRound] C2: read-stall nudge for ${fp} at round ${rounds + 1}`);
+      }
     }
 
     // ── Self-redirect: research loops & confusion ──────────────────────────
@@ -1109,7 +1155,22 @@ export async function sendWithRetrieval({
       const modifiedContent = chunks.map(c => c.text).join('');
       if (!modifiedContent) continue;
       const ext = filePath.split('.').pop() || 'txt';
-      const originalContent = originalFileContents.get(filePath);
+      // A1: always try to emit a search/replace PATCH (diff), never a full-file
+      // rewrite. If the original content wasn't cached (e.g. the file was
+      // fetched for the first time during this run), fetch it from GitHub so we
+      // can diff against the true pre-edit state. A full-file block is only a
+      // last resort when no original can be obtained at all.
+      let originalContent = originalFileContents.get(filePath);
+      if (!originalContent && githubContext) {
+        try {
+          originalContent = await fetchFileContent(
+            githubContext.owner,
+            githubContext.repo,
+            filePath,
+            githubContext.token,
+          );
+        } catch { /* fall through to full-file block */ }
+      }
       if (originalContent && originalContent !== modifiedContent) {
         const patch = generateSearchReplacePatch(originalContent, modifiedContent, filePath);
         if (patch) {

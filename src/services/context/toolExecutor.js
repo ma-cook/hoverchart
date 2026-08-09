@@ -131,6 +131,11 @@ async function searchInWorker(rawPattern, codeStoreState, extra = {}) {
 
 const appliedEdits = new Map();
 
+// Last successful edit's 1-based line, keyed by normalized filePath. Used to
+// disambiguate exact matches that appear more than once: the model is most
+// likely continuing to work near its most recent edit in that file.
+const lastEditLines = new Map();
+
 async function persistFileContent(storeId, filePath, content) {
     const store = getContentStore();
     const base64Store = getBase64Store();
@@ -245,7 +250,10 @@ function blockAnchorMatch(content, oldString) {
   const lastLine = searchLines[searchLines.length - 1].trim();
   const contentLines = content.split('\n');
   const n = contentLines.length;
-  const maxExtra = Math.max(1, Math.floor(searchLines.length * 0.25));
+  // Tight span tolerance: a valid fuzzy match may extend at most 2 lines past
+  // the oldString's own length. The old 25%+1 allowance let a near-duplicate
+  // block elsewhere in the file match a span that included extra content.
+  const maxExtra = 2;
   // span = j - i + 1 must satisfy |span - searchLines.length| <= maxExtra,
   // i.e. j in [i + searchLines.length - maxExtra - 1, i + searchLines.length + maxExtra - 1].
   const jMinBase = searchLines.length - maxExtra - 1;
@@ -288,7 +296,11 @@ function blockAnchorMatch(content, oldString) {
     score = count > 0 ? score / count : 1;
     if (score > bestScore) { bestScore = score; best = c; }
   }
-  if (!best || bestScore < 0.65) return null;
+  // Tightened similarity floor (0.65 → 0.92): interior lines must be nearly
+  // identical, so a similar-but-different block cannot be substituted for the
+  // block the model actually located. This is the guard that stops corrupting
+  // edits from landing on the wrong duplicate of a fragment.
+  if (!best || bestScore < 0.92) return null;
   const start = contentLines.slice(0, best.startLine).join('\n').length + (best.startLine > 0 ? 1 : 0);
   const end = contentLines.slice(0, best.endLine + 1).join('\n').length;
   return { index: start, length: end - start };
@@ -332,9 +344,63 @@ function indentationFlexibleMatch(content, oldString) {
   return null;
 }
 
-function findMatch(content, oldString) {
+function offsetToLine(content, index) {
+  return content.slice(0, index).split('\n').length;
+}
+
+function findAllExactMatches(content, oldString) {
+  const matches = [];
+  let from = 0;
+  while (from <= content.length) {
+    const i = content.indexOf(oldString, from);
+    if (i === -1) break;
+    matches.push(i);
+    from = i + oldString.length;
+    if (matches.length > 50) break;
+  }
+  return matches;
+}
+
+function hasDistinctiveToken(s) {
+  return /[A-Za-z_]\w{5,}|['"`][^'"`\n]{6,}['"`]/.test(s);
+}
+
+/**
+ * Find the edit target. Exact matches are always preferred and safe. When an
+ * exact match exists but is ambiguous (appears in multiple places), we either
+ * pick the occurrence nearest the last successful edit in that file (locality
+ * bias) or reject the edit and report the candidate lines so the model can
+ * disambiguate — we never guess. Fuzzy strategies are only consulted when there
+ * is NO exact match, and only for multi-line oldStrings containing a
+ * distinctive token, with the tightened thresholds above. This combination is
+ * what stops tiny/hallucinated fragments from being fuzz-matched onto the wrong
+ * block and silently corrupting the file.
+ */
+function findMatch(content, oldString, { filePath } = {}) {
+  const exactMatches = findAllExactMatches(content, oldString);
+  if (exactMatches.length === 1) {
+    return { index: exactMatches[0], length: oldString.length, strategy: 'exact' };
+  }
+  if (exactMatches.length > 1) {
+    const lineNumbers = exactMatches.map(i => offsetToLine(content, i));
+    const lastLine = filePath ? lastEditLines.get(filePath) : undefined;
+    if (lastLine != null) {
+      let best = exactMatches[0];
+      let bestDist = Infinity;
+      for (const i of exactMatches) {
+        const d = Math.abs(offsetToLine(content, i) - lastLine);
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      return { index: best, length: oldString.length, strategy: 'exact' };
+    }
+    return { ambiguous: lineNumbers };
+  }
+
+  const nonEmptyLines = oldString.split('\n').filter(l => l.trim().length > 0);
+  if (nonEmptyLines.length < 3) return null;
+  if (!hasDistinctiveToken(oldString)) return null;
+
   const strategies = [
-    { name: 'exact', fn: (c, o) => { const i = c.indexOf(o); return i >= 0 ? { index: i, length: o.length } : null; } },
     { name: 'lineTrimmed', fn: lineTrimmedMatch },
     { name: 'blockAnchor', fn: blockAnchorMatch },
     { name: 'whitespaceNormalized', fn: whitespaceNormalizedMatch },
@@ -343,10 +409,8 @@ function findMatch(content, oldString) {
   for (const strategy of strategies) {
     const result = strategy.fn(content, oldString);
     if (result) {
-      if (strategy.name !== 'exact') {
-        console.log(`[Edit] Matched via ${strategy.name} strategy (index ${result.index}, length ${result.length})`);
-      }
-      return result;
+      console.log(`[Edit] Matched via ${strategy.name} strategy (index ${result.index}, length ${result.length})`);
+      return { index: result.index, length: result.length, strategy: strategy.name };
     }
   }
   return null;
@@ -753,7 +817,7 @@ export const CODE_GEN_TOOLS = [
     type: 'function',
     function: {
       name: 'edit',
-      description: 'Make a targeted edit to a file by replacing a string match. Line number prefixes (e.g. "10: code") from read_file output are automatically stripped before matching. The match is flexible — it handles whitespace differences, indentation changes, and uses fuzzy matching for larger blocks (first/last line anchors with similarity scoring). You MUST call read_file first before editing.',
+      description: 'Make a targeted edit to a file by replacing a string match. Line number prefixes (e.g. "10: code") from read_file output are automatically stripped before matching. Copy oldString EXACTLY from read_file output — exact matches are always applied and are the only option for short (<3 line) fragments. If oldString appears in multiple places, the edit is rejected so you can add more surrounding context. Fuzzy matching is only used for multi-line blocks and only when nothing matches exactly.',
       parameters: {
         type: 'object',
         properties: {
@@ -815,6 +879,7 @@ OUTPUT FORMAT:
 
 export function resetEditTracker() {
   appliedEdits.clear();
+  lastEditLines.clear();
 }
 
 export async function executeTool(name, args, githubContext, fileTree = [], { runSubAgent, depth = 0 } = {}) {
@@ -1315,9 +1380,10 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       let matchContent = loadContent();
 
       const attemptEdit = (content) => {
-        const match = findMatch(content, cleanedOldString);
+        const match = findMatch(content, cleanedOldString, { filePath });
         if (!match) return { match: null };
-        if (match.length > cleanedOldString.length * 4 && cleanedOldString.split('\n').length > 1) {
+        if (match.ambiguous) return { ambiguous: match };
+        if (match.strategy !== 'exact' && match.length > cleanedOldString.length * 2) {
           return { oversized: true, match };
         }
         const updated = content.slice(0, match.index) + newString + content.slice(match.index + match.length);
@@ -1348,6 +1414,14 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
 
+      if (attempt.ambiguous) {
+        const lines = attempt.ambiguous.ambiguous.join(', ');
+        return {
+          success: false,
+          content: `edit failed: oldString appears at ${attempt.ambiguous.ambiguous.length} locations in ${filePath} (lines ${lines}). Include more surrounding context in oldString to disambiguate which block you intend to change, or re-read the file and copy the exact current text.`,
+        };
+      }
+
       if (!attempt.match) {
         const firstLine = oldString.split('\n')[0].slice(0, 80);
         const cleanedFirstLine = cleanedOldString.split('\n')[0].slice(0, 80);
@@ -1369,7 +1443,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         return { success: false, content: `edit failed: oldString not found in ${filePath}.${hint}` };
       }
       if (attempt.oversized) {
-        return { success: false, content: `edit failed: matched span (${attempt.match.length} chars) is much larger than oldString (${cleanedOldString.length} chars). Re-read the file and provide more of the surrounding context in oldString.` };
+        return { success: false, content: `edit failed: fuzzy match span (${attempt.match.length} chars) is more than 2x the oldString (${cleanedOldString.length} chars). This usually means the oldString matched a larger block than intended. Re-read the file and provide more of the exact surrounding context in oldString.` };
       }
 
       const updated = attempt.updated;
@@ -1379,6 +1453,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const oldLines = cleanedOldString.split('\n');
       const newLines = newString.split('\n');
       const startLine = matchContent.slice(0, attempt.match.index).split('\n').length;
+      lastEditLines.set(filePath, startLine);
       const updatedLines = updated.split('\n');
       const contextBefore = 5;
       const contextAfter = 5;
@@ -1400,6 +1475,14 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         return { success: false, content: 'write requires "filePath" and "content" parameters' };
       }
       const existingFile = fileTree.some(f => f === filePath);
+      const storeId = `repo:${filePath}`;
+      const existsInStore = !!store.getEntry(storeId) || !!store.getEntry(`github:${filePath}`);
+      if (existingFile || existsInStore) {
+        return {
+          success: false,
+          content: `write rejected: "${filePath}" already exists in the repository. Use the edit tool (filePath/oldString/newString) to modify existing files, or pick a different path for a genuinely new file.`,
+        };
+      }
       if (!existingFile) {
         const parentDir = filePath.split('/').slice(0, -1).join('/');
         const parentExists = parentDir && fileTree.some(f => f.startsWith(parentDir + '/') || f === parentDir);
@@ -1407,7 +1490,6 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
           return { success: false, content: `Cannot create "${filePath}": parent directory does not exist in the repository. Use list_files to find the correct location, or check the FILE TREE section for valid paths.` };
         }
       }
-      const storeId = `repo:${filePath}`;
       await persistFileContent(storeId, filePath, content);
 
       const oversized = content.length > MAX_INDEXED_FILE_CHARS;

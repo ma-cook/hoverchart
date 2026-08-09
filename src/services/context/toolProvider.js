@@ -241,7 +241,7 @@ export const MODIFICATION_TOOLS = [
   }),
   new ToolDefinition({
     name: 'write',
-    description: 'Create a new file or completely overwrite an existing file. Use for NEW files only. For modifying existing files, use edit instead.',
+    description: 'Create a NEW file that does not already exist in the repository. The tool REJECTS paths that already exist — do not attempt it on existing files. For modifying existing files, use edit instead.',
     parameters: {
       filePath: { type: 'string', description: 'File path relative to repo root' },
       content: { type: 'string', description: 'The complete file content' },

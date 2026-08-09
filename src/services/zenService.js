@@ -949,7 +949,7 @@ RULES
 5. You MUST call read_file on every file BEFORE editing
 6. oldString in edit calls must be EXACT text from the file — including whitespace and indentation. If an edit fails to match, re-read the file and copy the exact current text; never guess or approximate.
 7. NEVER fabricate file paths, imports, or code structure. Verify with search_code or read_file
-8. Read files in LARGE chunks (8000+ lines per call). Use offset only for files longer than 8000 lines. You may re-read any section as often as needed — re-reads return the exact current content.
+8. Read files in LARGE chunks (8000+ lines per call). Use offset only for files longer than 8000 lines. Read each region ONCE — re-reading the same region returns the same content and wastes rounds. After an edit changes a file, re-read only the narrow slice around your next edit target if you need fresh line numbers.
 9. Use file_outline(path) first to see structure, then read_file for the full content
 10. After EVERY tool result, write a brief summary (1-3 sentences) of what you learned. NEVER send only tool_calls without text.
 11. If search_code returns "No matching files found", try a shorter/substring of the search term
@@ -958,6 +958,7 @@ RULES
 14. If a UI element is missing or a button does not appear (especially after a page refresh), find the condition that gates its rendering — search for the gate variable by name with search_code (e.g. is2DReady) — then trace how that variable is set: in-memory store state vs state restored on hydration. Fix the state/data flow, not the UI. The "is2DReady"/"graphs" fields live in diagramStore and are in-memory only; "latestMarkdownUrl" is restored on refresh and the hydration effect is what re-renders the buttons — verify that path before editing.
 15. search_code returns line-level matches in the format file:line: code — use the line numbers to target read_file offsets.
 16. Check for AGENTS.md, .github/copilot-instructions.md, or README.md conventions before writing code that touches project structure.
+17. NEVER call write on an existing file — the write tool rejects paths that already exist in the repository. Always use edit(filePath, oldString, newString) for modifications, with oldString copied exactly from read_file output.
 `;
 
 function formatFileSize(chars) {
