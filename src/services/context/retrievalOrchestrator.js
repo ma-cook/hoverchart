@@ -506,6 +506,19 @@ function generateSearchReplacePatch(original, modified, filePath) {
   return `\`\`\`${ext}:${filePath}\n${patchParts.join('\n\n')}\n\`\`\``;
 }
 
+// The model sometimes echoes a SEARCH/REPLACE block for a file back into its
+// final text AFTER the edit tool already applied the change. Those blocks often
+// use POST-edit content as the SEARCH side, so they cannot match the pre-edit
+// repo snapshot and would make applySearchReplace fail (leaving raw markers as
+// the proposed file). Remove any fenced block labeled `:${filePath}` so the
+// harness's canonical synthesized patch is the only block for the file.
+function stripModelCodeBlockForFile(text, filePath) {
+  if (!text) return text;
+  const escaped = filePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('```[a-zA-Z0-9_+#.-]*:' + escaped + '\\n[\\s\\S]*?```', 'g');
+  return text.replace(re, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 const FAILURE_PATTERNS = /^Error:|^File not found:|^No (matching|files) found|^Unknown tool|^search_code requires/i;
 
 function isUsefulToolResult(content, toolName) {
@@ -1354,7 +1367,6 @@ export async function sendWithRetrieval({
     const appliedEditRecords = getAppliedEditRecords();
     const syntheticBlocks = [];
     for (const filePath of editedFilePaths) {
-      if (finalText.includes(`:${filePath}\n`)) continue;
       const storeId = `repo:${filePath}`;
       const entry = store.getEntry(storeId);
       if (!entry) continue;
@@ -1384,6 +1396,9 @@ export async function sendWithRetrieval({
       if (originalContent && originalContent !== normalizedModified) {
         const patch = generateSearchReplacePatch(originalContent, normalizedModified, filePath);
         if (patch) {
+          // Remove the model's own block for this file (if any) so it cannot
+          // shadow the canonical patch or make the SEARCH fail to match.
+          finalText = stripModelCodeBlockForFile(finalText, filePath);
           syntheticBlocks.push(patch);
           continue;
         }

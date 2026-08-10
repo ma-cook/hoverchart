@@ -20,27 +20,40 @@ export function applySearchReplace(existingContent, llmOutput) {
 
   if (blocks.length === 0) return null;
 
-  const existingLines = existingContent.split('\n').length;
-  let result = existingContent;
+  // Reconcile line endings: the repo snapshot (csState.repoFileContents / GitHub
+  // fetch) can be CRLF while SEARCH blocks are LF-normalized (the read_file
+  // pipeline and the harness's synthesized patches strip \r\n). Normalize both
+  // sides so a hunk matches regardless of the snapshot's line endings.
+  const normalized = existingContent.replace(/\r\n/g, '\n');
+  const existingLines = normalized.split('\n').length;
+  let result = normalized;
   for (const { search, replace } of blocks) {
+    const normSearch = search.replace(/\r\n/g, '\n');
     // Refuse whole-file SEARCH blocks. When the model cannot or will not use the
     // edit tool it sometimes dumps an ENTIRE existing file as the SEARCH side,
     // which this function would otherwise silently splice over the real file,
     // deleting every unrelated line. A SEARCH block covering ~80%+ of the file
     // is a whole-file rewrite, not a targeted edit — reject it so the raw block
     // is kept for review instead of destroying code.
-    const searchLines = search.split('\n').length;
+    const searchLines = normSearch.split('\n').length;
     if (existingLines > 0 && searchLines / existingLines >= 0.8) {
       console.warn(`[Push] Refusing whole-file SEARCH block (${searchLines}/${existingLines} lines) — keep to the exact changed lines`);
       return null;
     }
-    const idx = result.indexOf(search);
+    const idx = result.indexOf(normSearch);
     if (idx === -1) {
       console.warn('[Push] SEARCH block did not match existing content');
       return null;
     }
-    result = result.slice(0, idx) + replace + result.slice(idx + search.length);
+    result = result.slice(0, idx) + replace + result.slice(idx + normSearch.length);
   }
+
+  // Preserve the original file's line endings: the repo snapshot (and GitHub
+  // fetch) can be CRLF while SEARCH/REPLACE hunks are LF-normalized. Emit the
+  // applied result in the file's dominant EOL so the pending diff and the pushed
+  // blob match the repo instead of showing a spurious full-file rewrite.
+  const eol = existingContent.includes('\r\n') ? '\r\n' : '\n';
+  if (eol === '\r\n') result = result.replace(/\n/g, '\r\n');
   return result;
 }
 

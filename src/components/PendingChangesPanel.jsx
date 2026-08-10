@@ -5,8 +5,8 @@ import { getGithubToken } from '../services/githubRepoService';
 import './PendingChangesPanel.css';
 
 function computeDiffLines(original, proposed) {
-  const origLines = (original || '').split('\n');
-  const propLines = (proposed || '').split('\n');
+  const origLines = (original || '').replace(/\r\n/g, '\n').split('\n');
+  const propLines = (proposed || '').replace(/\r\n/g, '\n').split('\n');
   const lines = [];
 
   let i = 0;
