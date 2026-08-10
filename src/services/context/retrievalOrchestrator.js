@@ -11,6 +11,7 @@ import { globalRouter } from './modelRouter';
 import { RagPipeline } from './ragPipeline';
 import { diffToHunks } from './diffUtils';
 import { joinChunks } from './chunkIndex';
+import { recordFileRead } from './toolState';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
@@ -1084,6 +1085,12 @@ export async function sendWithRetrieval({
             if (off <= lines.length) {
               const endLine = Math.min(off + lim - 1, lines.length);
               const sliced = lines.slice(off - 1, off - 1 + lim).map((l, i) => `${off + i}: ${l}`).join('\n');
+              // The edit tool's availability used to depend on filesReadCount(),
+              // but reads served from this cache bypassed executeTool (where the
+              // counter is incremented), leaving edit permanently unavailable in
+              // any session with a hydrated content store. Count cache hits too
+              // so the counter always reflects real reads.
+              recordFileRead();
               console.log(`[ToolRound] Serving ${filePath} lines ${off}-${endLine} from cache (${fullCached.length} chars total)`);
               onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
               globalMonitor.recordTool({ toolName: tc.name, args: tc.arguments, result: '[cache-hit]', duration: 0 });

@@ -20,8 +20,20 @@ export function applySearchReplace(existingContent, llmOutput) {
 
   if (blocks.length === 0) return null;
 
+  const existingLines = existingContent.split('\n').length;
   let result = existingContent;
   for (const { search, replace } of blocks) {
+    // Refuse whole-file SEARCH blocks. When the model cannot or will not use the
+    // edit tool it sometimes dumps an ENTIRE existing file as the SEARCH side,
+    // which this function would otherwise silently splice over the real file,
+    // deleting every unrelated line. A SEARCH block covering ~80%+ of the file
+    // is a whole-file rewrite, not a targeted edit — reject it so the raw block
+    // is kept for review instead of destroying code.
+    const searchLines = search.split('\n').length;
+    if (existingLines > 0 && searchLines / existingLines >= 0.8) {
+      console.warn(`[Push] Refusing whole-file SEARCH block (${searchLines}/${existingLines} lines) — keep to the exact changed lines`);
+      return null;
+    }
     const idx = result.indexOf(search);
     if (idx === -1) {
       console.warn('[Push] SEARCH block did not match existing content');

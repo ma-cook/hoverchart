@@ -1,7 +1,6 @@
 import useCodeStore from '../../stores/codeStore';
 import useDiagramStore from '../../stores/diagramStore';
 import { REGISTRY } from './skillManager';
-import { filesReadCount } from './toolState';
 
 class ToolDefinition {
   constructor({ name, description, parameters, availableWhen, required }) {
@@ -241,7 +240,6 @@ export const MODIFICATION_TOOLS = [
       newString: { type: 'string', description: 'The replacement string' },
     },
     required: ['filePath', 'oldString', 'newString'],
-    availableWhen: () => filesReadCount() > 0,
   }),
   new ToolDefinition({
     name: 'write',
