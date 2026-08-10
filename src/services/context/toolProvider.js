@@ -62,6 +62,17 @@ function hasImportGraph() {
   } catch { return false; }
 }
 
+export const CONTROL_TOOLS = [
+  new ToolDefinition({
+    name: 'set_mode',
+    description: 'Tell the harness which tool set to make available next round. "research" = all search/read/graph tools. "edit" = only edit, write, read_file, LSP verification tools, and set_mode. Call set_mode("edit") once you have located the exact text for every change you intend to make. If an edit needs more information or verification fails, call set_mode("research") to search again, then set_mode("edit") to resume editing.',
+    parameters: {
+      mode: { type: 'string', description: '"research" (all search/read tools) or "edit" (only edit/write/read_file + LSP verification)' },
+    },
+    required: ['mode'],
+  }),
+];
+
 export const NAVIGATION_TOOLS = [
   new ToolDefinition({
     name: 'quick_look',
@@ -279,9 +290,17 @@ export const SKILL_MANAGEMENT_TOOLS = [
 ];
 
 const ALL_TOOL_GROUPS = [
-  { group: 'always', tools: NAVIGATION_TOOLS },
+  { group: 'always', tools: [...CONTROL_TOOLS, ...NAVIGATION_TOOLS] },
   { group: 'conditional', tools: [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL] },
 ];
+
+// Whitelist for EDIT mode: the model can only modify files, read for exact
+// oldString / verification, verify symbols via LSP, and switch modes. All
+// search/list/graph/skill tools drop off until set_mode("research").
+const EDIT_MODE_TOOL_NAMES = new Set([
+  'edit', 'write', 'read_file', 'set_mode',
+  'get_lsp_definition', 'get_lsp_references', 'get_lsp_type_info', 'get_lsp_call_graph', 'get_lsp_overview',
+]);
 
 // read_file is intentionally NOT in this list — in force-generation mode the
 // LLM still needs read_file to get exact oldString for the edit tool and to
@@ -293,8 +312,8 @@ const EXPLORATION_TOOL_NAMES = new Set([
 ]);
 
 export function computeTools(opts = {}) {
-  const { excludeExplorationTools = false, excludeReadTool = false } = opts;
-  const always = [...SKILL_MANAGEMENT_TOOLS, ...NAVIGATION_TOOLS];
+  const { excludeExplorationTools = false, excludeReadTool = false, mode = 'research' } = opts;
+  const always = [...SKILL_MANAGEMENT_TOOLS, ...CONTROL_TOOLS, ...NAVIGATION_TOOLS];
   const conditional = [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL];
   const available = [];
 
@@ -323,6 +342,10 @@ export function computeTools(opts = {}) {
 
   if (excludeReadTool) {
     result = result.filter(t => t.function.name !== 'read_file');
+  }
+
+  if (mode === 'edit') {
+    result = result.filter(t => EDIT_MODE_TOOL_NAMES.has(t.function.name));
   }
 
   return result;
@@ -362,6 +385,6 @@ const SKILL_TO_TOOLS = new Map([
 ]);
 
 export function getToolByName(name) {
-  const all = [...NAVIGATION_TOOLS, ...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL, ...SKILL_MANAGEMENT_TOOLS];
+  const all = [...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL, ...SKILL_MANAGEMENT_TOOLS];
   return all.find(t => t.name === name);
 }

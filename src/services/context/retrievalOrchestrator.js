@@ -25,7 +25,11 @@ const MAX_TOOL_RETRIES = 2;
 // Sub-agents (task) are exempt because they legitimately run long.
 const TOOL_HARD_TIMEOUT_MS = 45_000;
 const NO_HARD_TIMEOUT_TOOLS = new Set(['task']);
-const COMPRESSION_INTERVAL = 12;
+const COMPRESSION_INTERVAL = 8;
+// A round that returns no text AND no tool calls is a provider stall, not a
+// finish. Retry a bounded number of times (with compaction + a nudge) so a
+// context overrun cannot silently end the run with no code produced.
+const MAX_EMPTY_COMPLETIONS = 2;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
@@ -65,7 +69,7 @@ function buildForceGenerationMessage(rounds, exploredCount) {
 You have explored enough. Now produce the code changes. If you need to read a file to get the exact oldString for an edit, you may — but prioritize calling "edit" over further exploration.
 
 Switch to PRODUCING CODE NOW:
-  1. Prefer calling the "edit" tool with exact oldString/newString for the file you already located.
+  1. Call set_mode("edit") to switch the harness to the editing tool set, then call "edit" with exact oldString/newString for the file you already located.
   2. If an edit fails, correct the oldString (copy exact text from read_file) and retry. NEVER output an entire existing file as a code block — full-file blocks for existing files are rejected and would silently drop the rest of the file.
   3. If you must emit changes as text, use SEARCH/REPLACE blocks covering ONLY the exact changed lines (<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE), labeled with the file path — never the whole file.`,
   };
@@ -94,7 +98,7 @@ function buildSelfRedirectMessage({ round, redirectCount, phase, editsSoFar }) {
     : `You still have all your tools — keep using them.
 
 1. Identify your next single concrete step from the user's original request.
-2. Do that step NOW with edit/write (read_file is only needed to capture an exact oldString).
+2. If you have located all the exact text you need, call set_mode("edit") to switch to the editing tool set, then do that step NOW with edit/write (read_file is only needed to capture an exact oldString).
 3. If intent is ambiguous, make a best-effort assumption, state it, and proceed. Ask at most one clarifying question — only after attempting the change.`;
   return {
     role: 'user',
@@ -190,7 +194,7 @@ function estimateMessagesSize(msgs) {
   return total;
 }
 
-async function compressMessages(msgs, { summarizerFn } = {}) {
+async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) {
   if (msgs.length <= 2) return msgs;
 
   const systemMsg = msgs[0];
@@ -371,6 +375,93 @@ async function compressMessages(msgs, { summarizerFn } = {}) {
       const filtered = rest.filter((_, i) => keepIndices.has(i));
       console.log(`[Compression] Dropped ${dropped} silent pairs, summarized ${summarized} old pairs`);
       result = [systemMsg, userMsg, ...filtered];
+    }
+  }
+
+  // Aggressive budget-driven compaction: used only when a normal pass could not
+  // bring the context under the harness cap. Walks the OLDEST pairs forward,
+  // keeping the most recent rounds and anything tied to an edit target intact,
+  // and summarizes / stubs / drops the rest until we fit under MAX_CONTEXT_CHARS.
+  if (forceHard && estimateMessagesSize(result) > MAX_CONTEXT_CHARS) {
+    const working = [...result];
+    const pairs = [];
+    for (let i = 0; i < working.length; i++) {
+      const msg = working[i];
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        const tools = [];
+        let j = i + 1;
+        while (j < working.length && working[j].role === 'tool') {
+          tools.push(working[j]);
+          j++;
+        }
+        pairs.push({ assistant: msg, tools, endIdx: j - 1 });
+        i = j - 1;
+      }
+    }
+    const measure = () => estimateMessagesSize(working.filter(Boolean));
+    let hardSkipped = 0;
+    const HARD_KEEP_LAST = 2;
+    for (let p = 0; p < pairs.length - HARD_KEEP_LAST; p++) {
+      const pair = pairs[p];
+      if (measure() <= MAX_CONTEXT_CHARS) break;
+      const pairHitsEditTarget = (pair.assistant.tool_calls || []).some(tc => {
+        if (tc.function?.name !== 'read_file' && tc.function?.name !== 'edit' && tc.function?.name !== 'write') return false;
+        try {
+          const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+          const path = args?.path || args?.filePath;
+          return !!path && editTargetPaths.has(normalizePath(path));
+        } catch { return false; }
+      });
+      if (pairHitsEditTarget) {
+        hardSkipped++;
+        continue;
+      }
+      const asstIdx = working.indexOf(pair.assistant);
+      if (asstIdx < 0) continue;
+      let replaced = false;
+      if (summarizerFn) {
+        const summary = await summarizerFn(pair.assistant, pair.tools);
+        if (summary) {
+          working[asstIdx].content = `[Previously: ${summary}]`;
+          working[asstIdx].tool_calls = undefined;
+          for (const tool of pair.tools) {
+            const tIdx = working.indexOf(tool);
+            if (tIdx >= 0) working[tIdx] = null;
+          }
+          replaced = true;
+        }
+      }
+      if (!replaced) {
+        for (const tool of pair.tools) {
+          const tIdx = working.indexOf(tool);
+          if (tIdx < 0 || typeof working[tIdx]?.content !== 'string') continue;
+          const name = (pair.assistant.tool_calls || []).find(t => t.id === tool.tool_call_id)?.function?.name || '';
+          const firstLine = working[tIdx].content.split('\n')[0] || '';
+          if (name === 'read_file') {
+            working[tIdx].content = `[Previously read: ${working[tIdx].content.length} chars — captured in EXPLORATION DIGEST]`;
+          } else if (SEARCH_TOOLS.has(name)) {
+            working[tIdx].content = `[Search results — ${working[tIdx].content.split('\n').length} lines]`;
+          } else if (name === 'edit' || name === 'write') {
+            working[tIdx].content = `[Edit applied — ${firstLine}]`;
+          } else {
+            working[tIdx].content = `[Tool result — ${working[tIdx].content.length} chars]`;
+          }
+        }
+        const hasEditOrWrite = (pair.assistant.tool_calls || []).some(t => t.function?.name === 'edit' || t.function?.name === 'write');
+        if (!hasEditOrWrite && (!pair.assistant.content || pair.assistant.content.length < 100)) {
+          working[asstIdx] = null;
+          for (const tool of pair.tools) {
+            const tIdx = working.indexOf(tool);
+            if (tIdx >= 0) working[tIdx] = null;
+          }
+        }
+      }
+      if (p % 5 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+    const compacted = working.filter(Boolean);
+    if (compacted.length !== result.length) {
+      console.log(`[Compression] Hard compaction: summarized/stubbed ${result.length - compacted.length} items (skipped ${hardSkipped} edit-target pairs)`);
+      result = compacted;
     }
   }
 
@@ -560,6 +651,13 @@ export async function sendWithRetrieval({
   let redirectCount = 0;
   let lastRedirectRound = -1;
   let consecutiveConfusionSignals = 0;
+  // Research/edit mode: the model drives this via set_mode(); the first
+  // successful edit/write auto-flips research → edit so search tools drop off
+  // until the model calls set_mode("research").
+  let currentMode = 'research';
+  let autoFlippedToEdit = false;
+  // Bounded retries when a round returns neither text nor tool calls.
+  let emptyCompletions = 0;
   // Names of tools actually sent to the model this round. Used by the
   // execution-time gate to block hallucinated calls to tools that are not in
   // the round's tool list.
@@ -634,6 +732,12 @@ export async function sendWithRetrieval({
     if (currentSize > MAX_CONTEXT_CHARS || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
       lastCompressionRound = rounds;
       currentMessages = await compressMessages(currentMessages, { summarizerFn: summarizeOldRound });
+      // Never send a context over the harness cap: if the normal pass could not
+      // bring it under, run the aggressive budget-driven compaction.
+      if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS) {
+        currentMessages = await compressMessages(currentMessages, { summarizerFn: summarizeOldRound, forceHard: true });
+        console.warn(`[ToolRound] Hard compaction: ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
+      }
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
     }
 
@@ -672,7 +776,7 @@ export async function sendWithRetrieval({
         if (digest) {
           currentMessages = [...currentMessages, {
             role: 'user',
-            content: `📋 EXPLORATION DIGEST (synthesized from prior tool calls):\n\n${digest}\n\nUse this digest to locate your edit targets. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files.`,
+            content: `📋 EXPLORATION DIGEST (synthesized from prior tool calls):\n\n${digest}\n\nUse this digest to locate your edit targets. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files. When your edit targets are clear, call set_mode("edit") to switch to the editing tool set.`,
           }];
           console.warn(`[ToolRound] Fix 5: injected findings digest at round ${rounds + 1} (${digest.length} chars)`);
         }
@@ -706,7 +810,7 @@ export async function sendWithRetrieval({
           if (digest) {
             currentMessages = [...currentMessages, {
               role: 'user',
-              content: `📋 REFRESHED EXPLORATION DIGEST (round ${rounds + 1}):\n\n${digest}\n\nYou still have the edit/write tools — apply the changes now. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files.`,
+              content: `📋 REFRESHED EXPLORATION DIGEST (round ${rounds + 1}):\n\n${digest}\n\nApply the changes now — if you are not already, call set_mode("edit") to switch to the editing tool set. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files.`,
             }];
             console.warn(`[ToolRound] Fix 4: injected refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
           }
@@ -729,7 +833,7 @@ export async function sendWithRetrieval({
     let sendFailed = false;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools({});
+        const availableTools = computeTools({ mode: currentMode });
         currentToolNames = new Set(availableTools.map(t => t.function.name));
         rawResult = await sendToZen({
           messages: currentMessages,
@@ -763,6 +867,26 @@ export async function sendWithRetrieval({
     console.log(`[ToolRound] Round ${rounds + 1} complete. Text: ${(text || '').length} chars (total: ${finalText.length}), Tool calls: ${toolCalls.length}`);
 
     if (toolCalls.length === 0) {
+      if (!text) {
+        emptyCompletions++;
+        if (emptyCompletions > MAX_EMPTY_COMPLETIONS) {
+          console.warn(`[ToolRound] ${emptyCompletions} consecutive empty completions — ending run`);
+          break;
+        }
+        // An empty completion is a provider stall, not a finish. Compact if the
+        // context is large, then re-nudge and retry so a context overrun cannot
+        // silently end the run with no code while there is still work to do.
+        console.warn(`[ToolRound] Empty completion (${emptyCompletions}/${MAX_EMPTY_COMPLETIONS}) — compacting and re-nudging`);
+        if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS * 0.6) {
+          currentMessages = await compressMessages(currentMessages, { summarizerFn: summarizeOldRound, forceHard: true });
+        }
+        currentMessages = [...currentMessages, {
+          role: 'user',
+          content: `[The model returned no text and no tool calls. Continue the task: apply the next change with edit/write, or if you are truly finished, respond with a summary of what you changed and what remains.]`,
+        }];
+        rounds++;
+        continue;
+      }
       break;
     }
 
@@ -912,11 +1036,31 @@ export async function sendWithRetrieval({
           const generationHint = forceGenerationInjected
             ? ' You are in GENERATION MODE: produce code changes now. Call "edit" (or "write" for a new file), or output code blocks as text.'
             : '';
+          const modeHint = currentMode === 'edit'
+            ? ` You are in EDIT mode (${[...currentToolNames].filter(n => n !== 'set_mode').join(', ')} available). Call set_mode("research") to use search/list tools again.`
+            : '';
           toolResults.push({
             tc,
             result: {
               success: false,
-              content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}]`,
+              content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}${modeHint}]`,
+            },
+            error: null,
+          });
+          continue;
+        }
+        if (tc.name === 'set_mode') {
+          const targetMode = tc.arguments?.mode === 'edit' ? 'edit' : 'research';
+          currentMode = targetMode;
+          autoFlippedToEdit = false;
+          console.warn(`[ToolRound] set_mode(${targetMode}) at round ${rounds + 1}`);
+          onToolProgress?.({ tool: 'set_mode', index: idx + 1, total: totalTools, status: 'done' });
+          const editToolList = 'edit, write, read_file, LSP verification (get_lsp_references/get_lsp_type_info/get_lsp_call_graph), set_mode';
+          toolResults.push({
+            tc,
+            result: {
+              success: true,
+              content: `[Mode set to "${targetMode}". ${targetMode === 'edit' ? `Available tools now: ${editToolList}. If you need to search the codebase again, call set_mode("research").` : 'All search, read, graph and editing tools are available again.'}]`,
             },
             error: null,
           });
@@ -978,6 +1122,11 @@ export async function sendWithRetrieval({
             }
           }
           if ((tc.name === 'edit' || tc.name === 'write') && result.success && tc.arguments?.filePath) {
+            if (currentMode !== 'edit') {
+              currentMode = 'edit';
+              autoFlippedToEdit = true;
+              console.warn(`[ToolRound] Auto-switched to EDIT mode after successful ${tc.name} (round ${rounds + 1})`);
+            }
             const fp = normalizePath(tc.arguments.filePath);
             if (fp && !preEditBaselines.has(fp) && originalFileContents.has(fp)) {
               preEditBaselines.set(fp, originalFileContents.get(fp));
@@ -1104,6 +1253,14 @@ export async function sendWithRetrieval({
       });
     }
 
+    if (autoFlippedToEdit) {
+      autoFlippedToEdit = false;
+      currentMessages = [...currentMessages, {
+        role: 'user',
+        content: `[Harness: your first successful edit switched the harness to EDIT mode. Available tools now: edit, write, read_file, LSP verification tools, set_mode. If you need to search or list files again, call set_mode("research").]`,
+      }];
+    }
+
     // C2: when a specific file is being re-read round after round with no edit
     // to it, inject a targeted advisory nudge pointing at the exact content
     // already in context. Advisory only — every tool stays available.
@@ -1117,7 +1274,7 @@ export async function sendWithRetrieval({
         readStallNudgeRound.set(fp, rounds);
         currentMessages = [...currentMessages, {
           role: 'user',
-          content: `📌 READ-STALL HINT (round ${rounds + 1}): You have already read "${fp}" (${rangeHint}) and its current content is in the context above. Re-reading the same region yields no new information. Craft the exact oldString from the content already shown and call "edit" now; if a re-read is truly needed, read only the narrow slice around your target line.`,
+          content: `📌 READ-STALL HINT (round ${rounds + 1}): You have already read "${fp}" (${rangeHint}) and its current content is in the context above. Re-reading the same region yields no new information. Craft the exact oldString from the content already shown and call "edit" now; if a re-read is truly needed, read only the narrow slice around your target line. When you are ready, call set_mode("edit") to switch to the editing tool set.`,
         }];
         console.warn(`[ToolRound] C2: read-stall nudge for ${fp} at round ${rounds + 1}`);
       }
@@ -1169,7 +1326,7 @@ export async function sendWithRetrieval({
           if (digest) {
             currentMessages = [...currentMessages, {
               role: 'user',
-              content: `📋 REFRESHED FINDINGS DIGEST (round ${rounds + 1}):\n\n${digest}\n\nUse this to identify what remains. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files.`,
+              content: `📋 REFRESHED FINDINGS DIGEST (round ${rounds + 1}):\n\n${digest}\n\nUse this to identify what remains. To craft an exact edit oldString, re-read only the narrow slice around the target line; do not re-read whole files. When your edit targets are set, call set_mode("edit") to switch to the editing tool set.`,
             }];
             console.warn(`[ToolRound] Self-redirect: refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
           }
