@@ -78,3 +78,49 @@ through to the raw-record echo.
   rewrite, append/EOF, top-of-file insert, delete-tail, middle insert, two separated regions, no
   change, ambiguous-anchor inserts) — all pass; plus a wrapper test of `generateSearchReplacePatch`
   (context lines, tiny search blocks, 362-line region not refused). Temp tests deleted.
+
+## Follow-up regression: edited-file diffs silently dropped from output
+
+### Problem
+
+New log evidence: the model made two **targeted** `edit` calls (both succeeded), yet the final
+response logged `src/components/UIOverlay.jsx: no net change after edits — skipping synthetic
+block` — no diff was emitted, so the applied edits vanished from the response and the model's prose
+read as a line-by-line "remove one line, add the next line" whole-file rewrite.
+
+Root cause: `originalFileContents` (retrievalOrchestrator.js) is used for **two conflicting roles** —
+(a) a read cache served on re-reads, and (b) the "true pre-edit baseline" the emission loop diffs
+against. After an edit, the end-of-round invalidation deletes the entry, but the next `read_file`
+re-populated it from the content store (`repo:`/`github:` entries, ~line 963 and ~976), which now
+holds the **post-edit** content. Emission then saw `originalContent === modifiedContent` → "no net
+change" → synthetic block skipped.
+
+Related same-round hole: if a round does `edit(file)` then `read_file(file)`, invalidation only ran
+at the *end* of the round, so the read was served stale **pre-edit** content — the model saw its own
+edit as missing and re-touched the file.
+
+### Changes (retrievalOrchestrator.js)
+
+1. **Immediate invalidation** right after an `edit`/`write` tool succeeds (`~line 980`): snapshot
+   the pre-edit baseline into a new `preEditBaselines` map (first edit only), then delete the read
+   cache entry and mark the file in `editedFilePaths`. Same-round reads now always hit the live
+   store, never stale cache.
+2. **Guard both cache re-population sites** (read pre-pass `~line 956` and post-execution
+   `~line 976`) with `!editedFilePaths.has(fp)` so post-edit store content can never re-enter
+   `originalFileContents`. After an edit, reads of that file execute `read_file` against the live
+   store (fresh content) instead of being served from cache.
+3. **Emission unchanged** except the baseline source: `originalContent = preEditBaselines.get(fp)
+   ?? originalFileContents.get(fp)` — the snapshot is the true GitHub-HEAD pre-edit baseline (seeded
+   by the F1 refresh at ~line 583 or the first pre-edit read), so `generateSearchReplacePatch`
+   emits the correct minimal diff without needing the GitHub fallback. The GitHub-fetch fallback
+   (`~line 1208`) and edit-record-hunks fallback remain as backstops.
+
+### Verify
+
+- ESLint: only the 6 pre-existing unused-var errors remain.
+- `npm run build` passes.
+- Node simulation of the map state transitions (7 cases: baseline→edit→same-round read→emission,
+  pre-edit read→edit, failed edit keeps cache, edit-before-any-read → GitHub fallback, double edit,
+  cross-round re-edit) — all pass. Temp test deleted.
+- Reminder: the original symptom session ran a stale deployed bundle; a redeploy is required for
+  this fix to take effect in production.

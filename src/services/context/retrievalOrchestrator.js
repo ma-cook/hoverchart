@@ -532,6 +532,7 @@ export async function sendWithRetrieval({
   let duplicateReadRounds = 0;
   const editedFilePaths = new Set();
   const originalFileContents = new Map();
+  const preEditBaselines = new Map();
   let lastCompressionRound = -COMPRESSION_INTERVAL;
   // R2: overlap-aware read tracking. fileReadRanges records every read_file
   // window (start/end lines + round) per normalized path so repeated reads of
@@ -952,7 +953,7 @@ export async function sendWithRetrieval({
           }
 
           readFiles.set(key, true);
-          if (filePath && !originalFileContents.has(filePath)) {
+          if (filePath && !originalFileContents.has(filePath) && !editedFilePaths.has(filePath)) {
             const store = getContentStore();
             const b64Store = getBase64Store();
             if (store._hydrated && b64Store._hydrated) {
@@ -972,8 +973,18 @@ export async function sendWithRetrieval({
           const result = await executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 }));
           if (tc.name === 'read_file' && result._fullContent) {
             const fp = normalizePath(tc.arguments?.path);
-            if (fp && !originalFileContents.has(fp)) {
+            if (fp && !originalFileContents.has(fp) && !editedFilePaths.has(fp)) {
               originalFileContents.set(fp, result._fullContent.replace(/\r\n/g, '\n'));
+            }
+          }
+          if ((tc.name === 'edit' || tc.name === 'write') && result.success && tc.arguments?.filePath) {
+            const fp = normalizePath(tc.arguments.filePath);
+            if (fp && !preEditBaselines.has(fp) && originalFileContents.has(fp)) {
+              preEditBaselines.set(fp, originalFileContents.get(fp));
+            }
+            if (fp) {
+              originalFileContents.delete(fp);
+              editedFilePaths.add(fp);
             }
           }
           const toolDuration = Math.round(performance.now() - toolStart);
@@ -1193,7 +1204,7 @@ export async function sendWithRetrieval({
       // can diff against the true pre-edit state. A full-file block is NEVER
       // emitted — if no original can be obtained, fall back to the exact hunks
       // recorded by the edit tool, and if even those are missing, skip the file.
-      let originalContent = originalFileContents.get(filePath);
+      let originalContent = preEditBaselines.get(filePath) ?? originalFileContents.get(filePath);
       if (!originalContent && githubContext) {
         try {
           originalContent = await fetchFileContent(
