@@ -27,6 +27,10 @@ const MAX_TOOL_RETRIES = 2;
 const TOOL_HARD_TIMEOUT_MS = 45_000;
 const NO_HARD_TIMEOUT_TOOLS = new Set(['task']);
 const COMPRESSION_INTERVAL = 8;
+// Compression calls the LLM once per summarized pair (each bounded by
+// SUMMARIZER_TIMEOUT_MS). Cap the hidden calls per pass so late-game compaction
+// degrades to local stubbing instead of multiplying provider round-trips.
+const MAX_SUMMARIZER_CALLS_PER_PASS = 2;
 // A round that returns no text AND no tool calls is a provider stall, not a
 // finish. Retry a bounded number of times (with compaction + a nudge) so a
 // context overrun cannot silently end the run with no code produced.
@@ -36,6 +40,12 @@ const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
 const MAX_EXPLORATION_ROUNDS = 24;
 const FORCE_GENERATION_AFTER_ROUND = 32;
+// Absolute backstop: hard cap on LLM rounds per task. The self-redirect nudges
+// below keep legitimate long plans working, but a stuck model (research loop,
+// repeated reads, no edits) must never be allowed to consume unbounded provider
+// time. On the final round a directive asks for any remaining edits + a summary,
+// then the run ends.
+const MAX_ROUNDS = 32;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
 const SUB_MAX_ROUNDS = 8;
 const SUB_MAX_CHARS = 60000;
@@ -47,12 +57,13 @@ const GENERATION_NUDGE_INTERVAL = 5;
 // Re-synthesize and re-inject the findings digest at this cadence so long plans
 // keep receiving digested (not re-compressed noise) context as rounds advance.
 const DIGEST_REFRESH_INTERVAL = 8;
-// ── Self-redirect (replaces the old absolute round cap) ─────────────────────
-// A user's plan can be arbitrarily large, so the run must never force-exit.
-// Instead, when the agent is locked in a research loop or visibly confused we
+// ── Self-redirect + hard round cap ─────────────────────────────────────────
+// A user's plan can be arbitrarily large, so the run normally keeps working
+// through it. When the agent is locked in a research loop or visibly confused we
 // inject a re-orienting nudge — keeping EVERY tool available — that escalates
 // each time, so a genuinely stuck run converges to a best-effort partial result
 // (via the model ending its own tool calls) rather than looping forever.
+// MAX_ROUNDS is the absolute backstop: the run hard-ends there regardless.
 const CONFUSION_SIGNAL_THRESHOLD = 3;
 const REDIRECT_ESCALATION_AFTER = 2;
 const CONFUSION_PATTERNS = /(\bnot sure\b|\bunsure\b|\bunclear\b|\bconfus\w*|\bdo not know\b|don['’]?t know\b|\bcan not find\b|can['’]?t find\b|could not find\b|couldn['’]?t find\b|\bneed more (information|context)\b|\bnot available\b|\bunable to (locate|find|determine)\b|i am (stuck|confused)|i['’]?m (stuck|confused)|\bdo not understand\b|\bdoes not know\b|doesn['’]?t know\b)/i;
@@ -343,6 +354,7 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) 
       }
     }
     if (summarizerFn) {
+      let summarizeCalls = 0;
       for (let p = 0; p < pairs.length - keepLast; p++) {
         const pair = pairs[p];
         const asstIdx = rest.indexOf(pair.assistant);
@@ -359,7 +371,9 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) 
           } catch { return false; }
         });
         if (hasToolCalls && !pairHitsEditTarget && pair.tools.length > 0 && pair.assistant.content?.length < 100) {
+          if (summarizeCalls >= MAX_SUMMARIZER_CALLS_PER_PASS) break;
           const summary = await summarizerFn(pair.assistant, pair.tools);
+          summarizeCalls++;
           if (summary) {
             pair.assistant.content = `[Previously: ${summary}]`;
             pair.assistant.tool_calls = undefined;
@@ -401,6 +415,7 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) 
     }
     const measure = () => estimateMessagesSize(working.filter(Boolean));
     let hardSkipped = 0;
+    let hardSummarizeCalls = 0;
     const HARD_KEEP_LAST = 2;
     for (let p = 0; p < pairs.length - HARD_KEEP_LAST; p++) {
       const pair = pairs[p];
@@ -420,9 +435,10 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) 
       const asstIdx = working.indexOf(pair.assistant);
       if (asstIdx < 0) continue;
       let replaced = false;
-      if (summarizerFn) {
+      if (summarizerFn && hardSummarizeCalls < MAX_SUMMARIZER_CALLS_PER_PASS) {
         const summary = await summarizerFn(pair.assistant, pair.tools);
         if (summary) {
+          hardSummarizeCalls++;
           working[asstIdx].content = `[Previously: ${summary}]`;
           working[asstIdx].tool_calls = undefined;
           for (const tool of pair.tools) {
@@ -670,6 +686,11 @@ export async function sendWithRetrieval({
   // until the model calls set_mode("research").
   let currentMode = 'research';
   let autoFlippedToEdit = false;
+  // Fix 2 (enforced): once the agent is clearly stuck in research (repeated
+  // read-stall nudges, a prior self-redirect, or exploration past the threshold)
+  // with no edits, the harness stops advising and forces EDIT mode — stripping
+  // search/list/graph tools from the next round so the model must edit or finish.
+  let forcedEditMode = false;
   // Bounded retries when a round returns neither text nor tool calls.
   let emptyCompletions = 0;
   // Names of tools actually sent to the model this round. Used by the
@@ -721,7 +742,7 @@ export async function sendWithRetrieval({
     try {
       // Bound the hidden summarizer call so a stalled provider can't freeze the
       // whole tool round — compression should degrade gracefully, not hang.
-      const SUMMARIZER_TIMEOUT_MS = 25_000;
+      const SUMMARIZER_TIMEOUT_MS = 8_000;
       let timer;
       const result = await Promise.race([
         sendToZen({
@@ -742,6 +763,19 @@ export async function sendWithRetrieval({
   };
 
   while (true) {
+    if (rounds >= MAX_ROUNDS) {
+      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached — ending run`);
+      break;
+    }
+    // Fix 1: final-round directive so the cap never truncates a run mid-edit —
+    // the last allowed round is told to finish any remaining edits + summarize.
+    const isFinalRound = rounds >= MAX_ROUNDS - 1;
+    if (isFinalRound) {
+      currentMessages = [...currentMessages, {
+        role: 'user',
+        content: `[Harness: ${MAX_ROUNDS}-round budget exhausted — this is the final round. Produce any remaining changes NOW with edit/write using exact oldString from the content above, then respond with a concise summary of what you changed (and what remains, if anything). Do not call more tools after applying your final change.]`,
+      }];
+    }
     const currentSize = estimateMessagesSize(currentMessages);
     if (currentSize > MAX_CONTEXT_CHARS || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
       lastCompressionRound = rounds;
@@ -1273,6 +1307,14 @@ export async function sendWithRetrieval({
       });
     }
 
+    // Fix 1: hard cap enforcement — after the final allowed round's tools are
+    // executed and results pushed, the run ends (next loop iteration would hit
+    // the `rounds >= MAX_ROUNDS` guard anyway).
+    if (isFinalRound) {
+      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached after final round — ending run`);
+      break;
+    }
+
     if (autoFlippedToEdit) {
       autoFlippedToEdit = false;
       currentMessages = [...currentMessages, {
@@ -1353,6 +1395,26 @@ export async function sendWithRetrieval({
         } catch (e) {
           console.warn(`[ToolRound] Self-redirect: digest refresh failed: ${e.message}`);
         }
+      }
+    }
+
+    // ── Fix 2 (enforced): break the research loop by forcing EDIT mode ──────
+    // The self-redirect nudge above keeps every tool available (advisory only),
+    // which lets a stubborn model keep re-reading forever. Once the agent has
+    // been flagged as stuck (prior self-redirect, two+ read-stall files, or
+    // exploration past the threshold) with no edits, actually flip the harness
+    // to EDIT mode: computeTools({ mode: 'edit' }) strips search/list/graph
+    // tools next round, so the model must either edit or finish.
+    if (!producedEdit && !forcedEditMode && currentMode === 'research') {
+      const stuck = redirectCount >= 1 || readStallNudgeRound.size >= 2 || rounds >= MAX_EXPLORATION_ROUNDS;
+      if (stuck) {
+        forcedEditMode = true;
+        currentMode = 'edit';
+        currentMessages = [...currentMessages, {
+          role: 'user',
+          content: `[Harness: research loop detected (repeated reads, no edits yet) — switching to EDIT MODE. Search/list/graph tools are removed from the next round. Available now: edit, write, read_file, LSP verification tools, set_mode. Produce your changes with exact oldString from the file content already shown above. Call set_mode("research") only if a specific edit truly needs more context.]`,
+        }];
+        console.warn(`[ToolRound] Fix 2: forced EDIT mode at round ${rounds + 1} (0 edits, research loop) — search tools stripped`);
       }
     }
 
