@@ -436,6 +436,15 @@ const UIOverlay = ({
   }, [lastCommitSha, currentSpaceId]);
 
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatWindows, setChatWindows] = useState([]);
+  const nextChatWindowIdRef = useRef(1);
+  const handleAddChat = useCallback(() => {
+    const id = nextChatWindowIdRef.current++;
+    setChatWindows((prev) => [...prev, id]);
+  }, []);
+  const handleCloseChat = useCallback((id) => {
+    setChatWindows((prev) => prev.filter((w) => w !== id));
+  }, []);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [recordingFormatOpen, setRecordingFormatOpen] = useState(false);
   const [runtimeScanUrl, setRuntimeScanUrl] = useState('');
@@ -2218,7 +2227,22 @@ const UIOverlay = ({
       </div>
 
       {/* Group chat window - pops out to the left of the right panel */}
-      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} />}
+      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={handleAddChat} />}
+
+      {/* Extra chat windows - each is an independent LLM chat */}
+      {!trialMode && chatWindows.map((id) => (
+        <SpaceChat
+          key={id}
+          windowId={id}
+          stackIndex={chatWindows.indexOf(id)}
+          spaceId={currentSpaceId}
+          user={user}
+          isOpen
+          onClose={() => handleCloseChat(id)}
+          onCreateObject={onCreateObject}
+          onDiagramGenerated={handleChatDiagramGenerated}
+        />
+      ))}
 
       
       {/* Unified progress toast — bottom-right, handles scan, render, and data loading */}

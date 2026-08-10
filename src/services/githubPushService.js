@@ -11,12 +11,17 @@ export { hasSearchReplaceMarkers };
 
 const SEARCH_BLOCK_REGEX = /<<<<<<<\s*SEARCH\n([\s\S]*?)=======\n([\s\S]*?)>>>>>>>\s*REPLACE/g;
 
-export function applySearchReplace(existingContent, llmOutput) {
+export function parseSearchReplaceBlocks(llmOutput) {
   const blocks = [];
   let match;
   while ((match = SEARCH_BLOCK_REGEX.exec(llmOutput)) !== null) {
     blocks.push({ search: match[1], replace: match[2] });
   }
+  return blocks;
+}
+
+export function applySearchReplace(existingContent, llmOutput) {
+  const blocks = parseSearchReplaceBlocks(llmOutput);
 
   if (blocks.length === 0) return null;
 

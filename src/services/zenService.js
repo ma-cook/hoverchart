@@ -657,8 +657,13 @@ export async function ensureRepoContentIndexed({ owner, repo, branch, token, fil
   }
 }
 
-export async function sendToZen({ messages, tools, onChunk, signal }) {
-  const { providerId, apiKey, selectedModel } = useLlmStore.getState();
+export async function sendToZen({ messages, tools, onChunk, signal, llmConfig }) {
+  const global = useLlmStore.getState();
+  const { providerId, apiKey, selectedModel } = llmConfig || {
+    providerId: global.providerId,
+    apiKey: global.apiKey,
+    selectedModel: global.selectedModel,
+  };
 
   if (!providerId || !apiKey || !selectedModel) {
     throw new Error('LLM not configured. Click the model button to set up a provider.');

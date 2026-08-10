@@ -1740,6 +1740,22 @@ body {
   line-height: 1;
 }
 
+.space-chat-new-window-btn {
+  background: none;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 4px;
+  color: rgba(255,255,255,0.7);
+  padding: 0 6px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.space-chat-new-window-btn:hover {
+  color: #fff;
+  border-color: rgba(255,255,255,0.5);
+}
+
 .space-chat-github-panel {
   padding: 8px 10px;
   border-bottom: 1px solid #e0e0e0;

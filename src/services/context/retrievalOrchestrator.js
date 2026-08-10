@@ -615,6 +615,7 @@ export async function sendWithRetrieval({
   fileTree,
   _fileSizes,
   sceneObjects,
+  llmConfig,
 }) {
   let currentMessages = [...messages];
   let finalText = '';
@@ -728,6 +729,7 @@ export async function sendWithRetrieval({
           ],
           tools: [],
           signal: null,
+          llmConfig,
         }),
         new Promise((_, reject) => {
           timer = setTimeout(() => reject(new Error('summary timed out after 25s')), SUMMARIZER_TIMEOUT_MS);
@@ -863,6 +865,7 @@ export async function sendWithRetrieval({
           messages: currentMessages,
           tools: availableTools,
           signal,
+          llmConfig,
           onChunk: (delta, fullText) => {
             const displayedText = finalText ? finalText + '\n\n' + fullText : fullText;
             onChunk?.(delta, stripRetrievalMarkers(displayedText));
@@ -975,7 +978,7 @@ export async function sendWithRetrieval({
       for (let subRound = 0; subRound < SUB_MAX_ROUNDS; subRound++) {
         let raw;
         try {
-          raw = await sendToZen({ messages: subMessages, tools, signal });
+          raw = await sendToZen({ messages: subMessages, tools, signal, llmConfig });
         } catch (e) {
           console.warn(`[SubAgent] Round ${subRound + 1} sendToZen failed:`, e.message);
           break;

@@ -22,7 +22,7 @@ import {
   getBranchRef,
   createBranchRef,
 } from '../services/githubIssuesService';
-import { listBranches, applySearchReplace, hasSearchReplaceMarkers } from '../services/githubPushService';
+import { listBranches, applySearchReplace, hasSearchReplaceMarkers, parseSearchReplaceBlocks } from '../services/githubPushService';
 import { diffToHunks, buildSearchReplaceBlock } from '../services/context/diffUtils';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
@@ -226,36 +226,71 @@ const SPACE_CHAT_MIN_WIDTH = 240;
 const SPACE_CHAT_MIN_HEIGHT = 200;
 const SPACE_CHAT_DEFAULT_WIDTH = 300;
 const SPACE_CHAT_DEFAULT_HEIGHT = 360;
+const SPACE_CHAT_STACK_H_OFFSET = 84;
+const SPACE_CHAT_STACK_V_OFFSET = 22;
 
 const MAX_PERSISTED_MESSAGES = 50;
 
-function loadPersistedMessages(spaceId, mode) {
+const chatStorageKey = (spaceId, suffix, windowId) =>
+  windowId > 0 ? `chat:${spaceId}:${suffix}:w${windowId}` : `chat:${spaceId}:${suffix}`;
+
+function loadPersistedMessages(spaceId, mode, windowId) {
   try {
-    const raw = localStorage.getItem(`chat:${spaceId}:${mode}`);
+    const raw = localStorage.getItem(chatStorageKey(spaceId, mode, windowId));
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
-function persistMessages(spaceId, mode, messages) {
+function persistMessages(spaceId, mode, messages, windowId) {
   try {
     const toSave = messages.slice(-MAX_PERSISTED_MESSAGES);
-    localStorage.setItem(`chat:${spaceId}:${mode}`, JSON.stringify(toSave));
+    localStorage.setItem(chatStorageKey(spaceId, mode, windowId), JSON.stringify(toSave));
   } catch { /* ignore */ }
 }
 
-function loadPersistedMode(spaceId) {
+function loadPersistedMode(spaceId, windowId) {
   try {
-    return localStorage.getItem(`chat:${spaceId}:mode`) || 'group';
+    return localStorage.getItem(chatStorageKey(spaceId, 'mode', windowId)) || 'group';
   } catch { return 'group'; }
 }
 
-function persistMode(spaceId, mode) {
+function persistMode(spaceId, mode, windowId) {
   try {
-    localStorage.setItem(`chat:${spaceId}:mode`, mode);
+    localStorage.setItem(chatStorageKey(spaceId, 'mode', windowId), mode);
   } catch { /* ignore */ }
 }
 
-const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGenerated }) => {
+function loadWindowLlm(windowId) {
+  const s = useLlmStore.getState();
+  if (windowId === 0) {
+    return { providerId: s.providerId, apiKey: s.apiKey, selectedModel: s.selectedModel };
+  }
+  let persisted = { providerId: null, apiKey: null, selectedModel: null };
+  try {
+    persisted = {
+      providerId: JSON.parse(localStorage.getItem(`llm:window:${windowId}:providerId`) || 'null'),
+      apiKey: JSON.parse(localStorage.getItem(`llm:window:${windowId}:apiKey`) || 'null'),
+      selectedModel: JSON.parse(localStorage.getItem(`llm:window:${windowId}:selectedModel`) || 'null'),
+    };
+  } catch { /* ignore */ }
+  return {
+    providerId: persisted.providerId || s.providerId || null,
+    apiKey: persisted.apiKey || s.apiKey || null,
+    selectedModel: persisted.selectedModel || s.selectedModel || null,
+  };
+}
+
+function persistWindowLlm(windowId, key, value) {
+  if (windowId === 0) return;
+  try {
+    localStorage.setItem(`llm:window:${windowId}:${key}`, JSON.stringify(value));
+  } catch { /* ignore */ }
+}
+
+const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGenerated, onAddChat, windowId = 0, stackIndex = windowId }) => {
+  const isPrimary = windowId === 0;
+  const stackBaseRight = 76 + (stackIndex * SPACE_CHAT_STACK_H_OFFSET);
+
   const [isExpanded, setIsExpanded] = useState(false);
   const [chatSize, setChatSize] = useState({ width: SPACE_CHAT_DEFAULT_WIDTH, height: SPACE_CHAT_DEFAULT_HEIGHT });
   const [userResized, setUserResized] = useState(false);
@@ -271,7 +306,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         if (resizing.edge === 'right' || resizing.edge === 'corner') {
           const newWidth = Math.max(SPACE_CHAT_MIN_WIDTH, resizing.startWidth + dx);
           next.width = newWidth;
-          next.userRight = 76 - dx;
+          next.userRight = stackBaseRight - dx;
         }
         if (resizing.edge === 'bottom' || resizing.edge === 'corner') {
           next.height = Math.max(SPACE_CHAT_MIN_HEIGHT, resizing.startHeight + dy);
@@ -289,7 +324,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       document.removeEventListener('mousemove', handleMove);
       document.removeEventListener('mouseup', handleUp);
     };
-  }, [resizing]);
+  }, [resizing, stackBaseRight]);
 
   const handleResizeStart = (edge, e) => {
     e.preventDefault();
@@ -317,9 +352,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [input, isExpanded]);
 
-  const [chatMode, setChatMode] = useState(() => loadPersistedMode(spaceId));
-  const [planMessages, setPlanMessages] = useState(() => loadPersistedMessages(spaceId, 'plan'));
-  const [codeMessages, setCodeMessages] = useState(() => loadPersistedMessages(spaceId, 'code'));
+  const [chatMode, setChatMode] = useState(() => loadPersistedMode(spaceId, windowId));
+  const [planMessages, setPlanMessages] = useState(() => loadPersistedMessages(spaceId, 'plan', windowId));
+  const [codeMessages, setCodeMessages] = useState(() => loadPersistedMessages(spaceId, 'code', windowId));
   const [streaming, setStreaming] = useState(false);
   const [llmError, setLlmError] = useState(null);
   const streamingRef = useRef('');
@@ -332,7 +367,46 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const selectedBranch = useCodeStore(s => s.selectedBranch);
   const branchStrategy = useCodeStore(s => s.branchStrategy);
   const techStack = useCodeStore(s => s.techStack);
-  const llmStore = useLlmStore();
+  const llmProviderId = useLlmStore(s => s.providerId);
+  const llmApiKey = useLlmStore(s => s.apiKey);
+  const llmSelectedModel = useLlmStore(s => s.selectedModel);
+  const llmSetProviderId = useLlmStore(s => s.setProviderId);
+  const llmSetApiKey = useLlmStore(s => s.setApiKey);
+  const llmSetSelectedModel = useLlmStore(s => s.setSelectedModel);
+
+  const [windowLlm, setWindowLlm] = useState(() => loadWindowLlm(windowId));
+
+  const setWindowProvider = useCallback((id) => {
+    setWindowLlm((prev) => ({ ...prev, providerId: id, selectedModel: null }));
+    if (isPrimary) {
+      llmSetProviderId(id);
+    } else {
+      persistWindowLlm(windowId, 'providerId', id);
+      persistWindowLlm(windowId, 'selectedModel', null);
+    }
+  }, [isPrimary, windowId, llmSetProviderId]);
+
+  const setWindowApiKey = useCallback((key) => {
+    setWindowLlm((prev) => ({ ...prev, apiKey: key }));
+    if (isPrimary) llmSetApiKey(key);
+    else persistWindowLlm(windowId, 'apiKey', key);
+  }, [isPrimary, windowId, llmSetApiKey]);
+
+  const setWindowSelectedModel = useCallback((model) => {
+    setWindowLlm((prev) => ({ ...prev, selectedModel: model }));
+    if (isPrimary) llmSetSelectedModel(model);
+    else persistWindowLlm(windowId, 'selectedModel', model);
+  }, [isPrimary, windowId, llmSetSelectedModel]);
+
+  useEffect(() => {
+    if (!isPrimary) return;
+    const s = useLlmStore.getState();
+    setWindowLlm((prev) =>
+      prev.providerId !== s.providerId || prev.apiKey !== s.apiKey || prev.selectedModel !== s.selectedModel
+        ? { providerId: s.providerId, apiKey: s.apiKey, selectedModel: s.selectedModel }
+        : prev
+    );
+  }, [isPrimary, llmProviderId, llmApiKey, llmSelectedModel]);
 
   useEffect(() => {
     useCodeStore.getState().setSpaceId(spaceId);
@@ -458,14 +532,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   }, [chatMode]);
 
   useEffect(() => {
-    const timer = setTimeout(() => persistMessages(spaceId, 'plan', planMessages), 1000);
+    const timer = setTimeout(() => persistMessages(spaceId, 'plan', planMessages, windowId), 1000);
     return () => clearTimeout(timer);
-  }, [spaceId, planMessages]);
+  }, [spaceId, planMessages, windowId]);
 
   useEffect(() => {
-    const timer = setTimeout(() => persistMessages(spaceId, 'code', codeMessages), 1000);
+    const timer = setTimeout(() => persistMessages(spaceId, 'code', codeMessages, windowId), 1000);
     return () => clearTimeout(timer);
-  }, [spaceId, codeMessages]);
+  }, [spaceId, codeMessages, windowId]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -506,7 +580,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     const zenMessages = await buildZenMessages({
       llmMessages: updatedMessages,
       sceneObjects,
-      modelId: llmStore.selectedModel,
+      modelId: windowLlm.selectedModel,
       signal: new AbortController().signal,
     });
 
@@ -530,6 +604,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       const planResponse = await sendWithRetrieval({
         messages: zenMessages,
         signal: abortController.signal,
+        llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel },
         githubContext,
         fileTree: useCodeStore.getState().repoFileTree || [],
         fileSizes: useCodeStore.getState().fileSizes,
@@ -636,7 +711,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, planMessages, spaceId, user, activePlanTextId]);
+  }, [input, streaming, planMessages, spaceId, user, activePlanTextId, windowLlm]);
 
   const handleCodeSend = useCallback(async () => {
     const text = input.trim();
@@ -735,6 +810,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       const codeResponse = await sendWithRetrieval({
         messages: codeGenMessages,
         signal: abortController.signal,
+        llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel },
         githubContext,
         fileTree: repoContext?.fileTree || [],
         fileSizes: useCodeStore.getState().fileSizes,
@@ -818,6 +894,20 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             return null;
           }
         };
+        const autoDiffToPatch = (existing, proposed, filePath) => {
+          const normExisting = existing.replace(/\r\n/g, '\n');
+          const normProposed = proposed.replace(/\r\n/g, '\n');
+          const hunks = diffToHunks(normExisting, normProposed);
+          if (hunks.length === 0) return { noChange: true };
+          const existingLines = normExisting.split('\n').length;
+          const changedLines = hunks.reduce((sum, h) => sum + h.oldString.split('\n').length, 0);
+          const isRewrite = existingLines > 0 && changedLines / existingLines >= 0.8;
+          if (isRewrite) return null;
+          const markers = buildSearchReplaceBlock(normExisting, normProposed, filePath);
+          const applied = markers ? applySearchReplace(existing, markers) : null;
+          return applied ? { code: applied } : null;
+        };
+
         for (const block of mergedBlocks) {
           if (!block.filePath || !block.code) {
             appliedBlocks.push(block);
@@ -833,6 +923,29 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               appliedBlocks.push({ ...block, code: applied, fullContent: true });
               continue;
             }
+            // applySearchReplace refused the block (whole-file SEARCH side, or a
+            // SEARCH block that did not match the current content). When the
+            // model dumps the ENTIRE file as the SEARCH side, the REPLACE side IS
+            // its intended full file — recover it by diffing against the current
+            // content into a minimal patch instead of keeping the marker blob.
+            const markerBlocks = parseSearchReplaceBlocks(block.code);
+            if (existing && markerBlocks.length === 1) {
+              const searchLines = markerBlocks[0].search.replace(/\r\n/g, '\n').split('\n').length;
+              const existingLines = existing.replace(/\r\n/g, '\n').split('\n').length;
+              const isWholeFileSearch = existingLines > 0 && searchLines / existingLines >= 0.8;
+              if (isWholeFileSearch) {
+                const patch = autoDiffToPatch(existing, markerBlocks[0].replace, block.filePath);
+                if (patch && patch.noChange) continue;
+                if (patch && patch.code) {
+                  appliedBlocks.push({ ...block, code: patch.code, fullContent: true });
+                  continue;
+                }
+                // Genuine restructure or failed diff — keep raw for review but
+                // flag it so the panel warns and push is blocked.
+                appliedBlocks.push({ ...block, rawWholeFile: true });
+                continue;
+              }
+            }
             console.warn(`[CodeSend] SEARCH/REPLACE did not match existing content for ${block.filePath} — keeping raw block for review`);
           } else if (isExisting) {
             // Full-file block for an existing file: the model ignored the
@@ -843,24 +956,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             // stays as a whole-file proposal for explicit review.
             const existing = await getExistingContent(block.filePath);
             if (existing) {
-              const normExisting = existing.replace(/\r\n/g, '\n');
-              const normProposed = block.code.replace(/\r\n/g, '\n');
-              const hunks = diffToHunks(normExisting, normProposed);
-              const existingLines = normExisting.split('\n').length;
-              const changedLines = hunks.reduce((sum, h) => sum + h.oldString.split('\n').length, 0);
-              const isRewrite = existingLines > 0 && changedLines / existingLines >= 0.8;
-              if (hunks.length > 0 && !isRewrite) {
-                const markers = buildSearchReplaceBlock(normExisting, normProposed, block.filePath);
-                const applied = markers ? applySearchReplace(existing, markers) : null;
-                if (applied) {
-                  appliedBlocks.push({ ...block, code: applied, fullContent: true });
-                  continue;
-                }
-                console.warn(`[CodeSend] Auto-diff of full-file block did not apply cleanly for ${block.filePath} — keeping raw block for review`);
-              } else if (hunks.length === 0) {
-                // No net change against the current content — nothing to propose.
+              const patch = autoDiffToPatch(existing, block.code, block.filePath);
+              if (patch && patch.noChange) continue;
+              if (patch && patch.code) {
+                appliedBlocks.push({ ...block, code: patch.code, fullContent: true });
                 continue;
               }
+              console.warn(`[CodeSend] Auto-diff of full-file block did not apply cleanly for ${block.filePath} — keeping raw block for review`);
             }
           }
           appliedBlocks.push(block);
@@ -880,7 +982,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               original: csState.repoFileContents?.[block.filePath] || null,
               proposed: block.code,
               fullContent: !!block.fullContent,
-              isWholeFileProposal: isExisting && !block.fullContent && !hasSearchReplaceMarkers(block.code),
+              isWholeFileProposal: isExisting && !block.fullContent && (block.rawWholeFile || !hasSearchReplaceMarkers(block.code)),
               action: isExisting ? 'modify' : 'create',
               request: text,
             };
@@ -934,7 +1036,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack]);
+  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack, windowLlm]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -950,7 +1052,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
 
   const handleModeSwitch = useCallback((mode) => {
     setChatMode(mode);
-    persistMode(spaceId, mode);
+    persistMode(spaceId, mode, windowId);
     setLlmError(null);
     setAuthError(null);
     setAssociatedCount(0);
@@ -959,7 +1061,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     if (mode === 'code' && !techStack) {
       setShowTechStackPrompt(true);
     }
-  }, [spaceId, techStack]);
+  }, [spaceId, techStack, windowId]);
 
   const handleCreatePlan = useCallback(async () => {
     let container = planContainer || await createPlanContainer(user, spaceId);
@@ -1030,8 +1132,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     setModelFetchError(null);
     try {
       const models = await fetchModels(pendingProviderId, key);
-      llmStore.setProviderId(pendingProviderId);
-      llmStore.setApiKey(key);
+      setWindowProvider(pendingProviderId);
+      setWindowApiKey(key);
       setProviderModels(models);
       setShowApiKeyInput(false);
       setShowProviderModal(false);
@@ -1048,12 +1150,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     } finally {
       setFetchingModels(false);
     }
-  }, [apiKeyInput, pendingProviderId]);
+  }, [apiKeyInput, pendingProviderId, setWindowProvider, setWindowApiKey]);
 
   const handleManualModelSubmit = () => {
     const model = manualModelInput.trim();
     if (model) {
-      llmStore.setSelectedModel(model);
+      setWindowSelectedModel(model);
     }
     setShowManualModelInput(false);
     setManualModelInput('');
@@ -1063,13 +1165,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   };
 
   const handleModelSelect = (modelId) => {
-    llmStore.setSelectedModel(modelId);
+    setWindowSelectedModel(modelId);
     setProviderModels([]);
     setShowModelDropdown(false);
   };
 
   const handleModelButtonClick = useCallback(async () => {
-    if (!llmStore.providerId || !llmStore.apiKey) {
+    if (!windowLlm.providerId || !windowLlm.apiKey) {
       setShowProviderModal(true);
       return;
     }
@@ -1080,7 +1182,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     setFetchingModels(true);
     setModelFetchError(null);
     try {
-      const models = await fetchModels(llmStore.providerId, llmStore.apiKey);
+      const models = await fetchModels(windowLlm.providerId, windowLlm.apiKey);
       setProviderModels(models);
       setShowModelDropdown(true);
     } catch (err) {
@@ -1089,7 +1191,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     } finally {
       setFetchingModels(false);
     }
-  }, [llmStore.providerId, llmStore.apiKey, showModelDropdown]);
+  }, [windowLlm.providerId, windowLlm.apiKey, showModelDropdown]);
 
   const handleGithubLogin = () => {
     window.location.href = getGithubOAuthUrl();
@@ -1300,7 +1402,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     <div
       className={`space-chat-window${isExpanded ? ' expanded' : ''}`}
       onClick={(e) => e.stopPropagation()}
-      style={isExpanded ? undefined : { width: chatSize.width, height: chatSize.height, ...(userResized && chatSize.userRight ? { right: chatSize.userRight } : {}) }}
+      style={isExpanded ? undefined : {
+        width: chatSize.width,
+        height: chatSize.height,
+        right: userResized && chatSize.userRight ? chatSize.userRight : stackBaseRight,
+        top: `calc(50% + ${stackIndex * SPACE_CHAT_STACK_V_OFFSET}px)`,
+      }}
     >
       <div className="space-chat-header">
         <div className="space-chat-mode-toggle">
@@ -1331,6 +1438,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               title="GitHub"
             >
               {githubConnected ? '◉' : '○'}
+            </button>
+          )}
+          {onAddChat && (
+            <button
+              className="space-chat-new-window-btn"
+              onClick={onAddChat}
+              title="New chat window"
+            >
+              +
             </button>
           )}
           <button
@@ -1635,7 +1751,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             {llmError && <div className="space-chat-error">{llmError}</div>}
             {authError && (
               <div className="space-chat-auth-error">
-                <span>Invalid API key for {llmStore.providerId ? PROVIDERS.find(p => p.id === llmStore.providerId)?.name || llmStore.providerId : 'provider'}</span>
+                <span>Invalid API key for {windowLlm.providerId ? PROVIDERS.find(p => p.id === windowLlm.providerId)?.name || windowLlm.providerId : 'provider'}</span>
                 <button
                   className="space-chat-auth-error-btn"
                   onClick={() => {
@@ -1739,8 +1855,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             onClick={() => setShowProviderModal(true)}
             disabled={streaming}
           >
-            {llmStore.providerId
-              ? PROVIDERS.find(p => p.id === llmStore.providerId)?.name || llmStore.providerId
+            {windowLlm.providerId
+              ? PROVIDERS.find(p => p.id === windowLlm.providerId)?.name || windowLlm.providerId
               : 'Provider'}
             <span className="space-chat-model-arrow">▼</span>
           </button>
@@ -1751,7 +1867,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           >
             {fetchingModels
               ? 'Loading…'
-              : llmStore.selectedModel || 'Model'}
+              : windowLlm.selectedModel || 'Model'}
             <span className="space-chat-model-arrow">▼</span>
           </button>
         </div>
@@ -1766,15 +1882,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               {PROVIDERS.map(p => (
                 <button
                   key={p.id}
-                  className={`space-chat-provider-option ${llmStore.providerId === p.id ? 'selected' : ''}`}
+                  className={`space-chat-provider-option ${windowLlm.providerId === p.id ? 'selected' : ''}`}
                     onClick={() => {
                     setPendingProviderId(p.id);
-                    setApiKeyInput(llmStore.providerId === p.id && llmStore.apiKey ? llmStore.apiKey : '');
+                    setApiKeyInput(windowLlm.providerId === p.id && windowLlm.apiKey ? windowLlm.apiKey : '');
                     setShowApiKeyInput(true);
                   }}
                 >
                   {p.name}
-                  {llmStore.providerId === p.id && llmStore.apiKey && <span className="space-chat-model-check">✓</span>}
+                  {windowLlm.providerId === p.id && windowLlm.apiKey && <span className="space-chat-model-check">✓</span>}
                 </button>
               ))}
             </div>
@@ -1832,11 +1948,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               {providerModels.map(m => (
                 <button
                   key={m.id}
-                  className={`space-chat-provider-option ${llmStore.selectedModel === m.id ? 'selected' : ''}`}
+                  className={`space-chat-provider-option ${windowLlm.selectedModel === m.id ? 'selected' : ''}`}
                   onClick={() => handleModelSelect(m.id)}
                 >
                   {m.name}
-                  {llmStore.selectedModel === m.id && <span className="space-chat-model-check">✓</span>}
+                  {windowLlm.selectedModel === m.id && <span className="space-chat-model-check">✓</span>}
                 </button>
               ))}
             </div>
