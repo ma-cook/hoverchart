@@ -9,12 +9,16 @@ import { getBase64Store } from './base64Store';
 import { globalMonitor } from './agentMonitor';
 import { globalRouter } from './modelRouter';
 import { RagPipeline } from './ragPipeline';
-import { diffToHunks } from './diffUtils';
+import { buildSearchReplaceBlock } from './diffUtils';
 import { joinChunks } from './chunkIndex';
 import { recordFileRead } from './toolState';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
+// A re-read only counts as a duplicate/stall when the covering read happened
+// within this many rounds. Large-file slice re-reads separated by many rounds of
+// genuine research are verification, not a loop.
+const DUPLICATE_RECENCY_ROUNDS = 4;
 const MAX_CONTEXT_CHARS = 120000;
 const MAX_TOOL_RESULT_CHARS = 30000;
 const TRUNCATION_WARNING = `\n\n[Output truncated at ${(MAX_TOOL_RESULT_CHARS).toLocaleString()} chars. Use read_file with offset/limit or refine your search to narrow results.]`;
@@ -486,40 +490,7 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) 
 }
 
 function generateSearchReplacePatch(original, modified, filePath) {
-  if (!original || !modified || original === modified) return null;
-  const hunks = diffToHunks(original, modified);
-  if (hunks.length === 0) return null;
-  const origLines = original.split('\n');
-  const blocks = hunks.map(h => {
-    const idx = original.indexOf(h.oldString);
-    let contextBefore = '';
-    let contextAfter = '';
-    if (idx !== -1) {
-      const lineBefore = original.slice(0, idx).split('\n').length;
-      contextBefore = lineBefore > 1 ? origLines[lineBefore - 2] : '';
-      const lineAfter = lineBefore - 1 + h.oldString.split('\n').length;
-      contextAfter = lineAfter < origLines.length ? origLines[lineAfter] : '';
-    }
-    return {
-      search: h.oldString,
-      replace: h.newString,
-      contextBefore,
-      contextAfter,
-    };
-  });
-  const ext = filePath.split('.').pop() || 'txt';
-  const patchParts = blocks.map(b => {
-    const lines = [];
-    if (b.contextBefore) lines.push(` ${b.contextBefore}`);
-    lines.push(`<<<<<<< SEARCH`);
-    lines.push(b.search);
-    lines.push(`=======`);
-    lines.push(b.replace);
-    lines.push(`>>>>>>> REPLACE`);
-    if (b.contextAfter) lines.push(` ${b.contextAfter}`);
-    return lines.join('\n');
-  });
-  return `\`\`\`${ext}:${filePath}\n${patchParts.join('\n\n')}\n\`\`\``;
+  return buildSearchReplaceBlock(original, modified, filePath);
 }
 
 // The model sometimes echoes a SEARCH/REPLACE block for a file back into its
@@ -691,6 +662,11 @@ export async function sendWithRetrieval({
   // with no edits, the harness stops advising and forces EDIT mode — stripping
   // search/list/graph tools from the next round so the model must edit or finish.
   let forcedEditMode = false;
+  // Last round that added genuinely new information from the codebase (a search
+  // that ran, or a read covering a not-yet-read range). Forced-edit (Fix 2) only
+  // fires after several consecutive rounds WITHOUT new info, so a legitimate
+  // deep investigation is never cut short mid-assessment.
+  let lastNewInfoRound = -Infinity;
   // Bounded retries when a round returns neither text nor tool calls.
   let emptyCompletions = 0;
   // Names of tools actually sent to the model this round. Used by the
@@ -1091,6 +1067,7 @@ export async function sendWithRetrieval({
             tc,
             result: {
               success: false,
+              blocked: true,
               content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}${modeHint}]`,
             },
             error: null,
@@ -1248,6 +1225,10 @@ export async function sendWithRetrieval({
       if (reqLen <= 0) return false;
       for (const r of ranges) {
         if (r.round < lastEdit) continue;
+        // Recency window: only a covering read from the last few rounds makes a
+        // re-read a "duplicate". Returning to the same range many rounds later
+        // (after other research in between) is legitimate verification.
+        if (rounds - r.round > DUPLICATE_RECENCY_ROUNDS) continue;
         const overlap = Math.max(0, Math.min(end, r.end) - Math.max(start, r.start) + 1);
         if (overlap / reqLen >= 0.8) return true;
       }
@@ -1270,6 +1251,8 @@ export async function sendWithRetrieval({
       if (isRangeCovered(fp, start, end)) {
         readDupCount++;
         fileDupCounts.set(fp, (fileDupCounts.get(fp) || 0) + 1);
+      } else {
+        lastNewInfoRound = rounds;
       }
       ranges.push({ start, end, round: rounds });
     }
@@ -1295,6 +1278,9 @@ export async function sendWithRetrieval({
         editedFilePaths.add(normalizePath(tc.arguments.filePath));
         // Fix 1: mark that the agent has transitioned from exploration → generation.
         if (toolResult.success) producedEdit = true;
+      }
+      if (toolResult.success && (tc.name === 'search_code' || tc.name === 'grep' || tc.name === 'list_files' || tc.name === 'task')) {
+        lastNewInfoRound = rounds;
       }
       let content = toolResult.content;
       if (content && content.length > MAX_TOOL_RESULT_CHARS) {
@@ -1357,7 +1343,7 @@ export async function sendWithRetrieval({
     if (CONFUSION_PATTERNS.test(text || '')) {
       consecutiveConfusionSignals++;
       console.warn(`[ToolRound] Confusion signal in round ${rounds + 1} text (${consecutiveConfusionSignals}/${CONFUSION_SIGNAL_THRESHOLD})`);
-    } else if (toolResults.some(({ tc, result: r }) => !r.success && RETRYABLE_TOOLS.has(tc.name))) {
+    } else if (toolResults.some(({ tc, result: r }) => !r.success && !r.blocked && RETRYABLE_TOOLS.has(tc.name))) {
       consecutiveConfusionSignals++;
       console.warn(`[ToolRound] Confusion signal: retryable tool failure in round ${rounds + 1} (${consecutiveConfusionSignals}/${CONFUSION_SIGNAL_THRESHOLD})`);
     } else {
@@ -1406,7 +1392,12 @@ export async function sendWithRetrieval({
     // to EDIT mode: computeTools({ mode: 'edit' }) strips search/list/graph
     // tools next round, so the model must either edit or finish.
     if (!producedEdit && !forcedEditMode && currentMode === 'research') {
-      const stuck = redirectCount >= 1 || readStallNudgeRound.size >= 2 || rounds >= MAX_EXPLORATION_ROUNDS;
+      // Progress gate: only force when the agent is genuinely stalled — flagged
+      // as stuck AND several rounds have passed without any new information
+      // (new-range reads, successful searches). A legitimate deep investigation
+      // that is still gathering context is never cut short mid-assessment.
+      const flaggedStuck = redirectCount >= 1 || readStallNudgeRound.size >= 2 || rounds >= MAX_EXPLORATION_ROUNDS;
+      const stuck = flaggedStuck && rounds - lastNewInfoRound >= 3;
       if (stuck) {
         forcedEditMode = true;
         currentMode = 'edit';

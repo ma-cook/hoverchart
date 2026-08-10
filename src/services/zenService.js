@@ -835,8 +835,8 @@ RULES
    =======
    replacement code
    >>>>>>> REPLACE
-   Each SEARCH block must match the current file exactly.
-`;
+   Each SEARCH block must match the current file exactly. If you DO output a full-file block for an existing file, the harness auto-diffs it into a minimal patch — and if your block diverges from the current content, it fails to apply and is left for manual review. Emitting whole files wastes context and still risks rejection, so always prefer the edit tool or narrow SEARCH/REPLACE hunks.
+ `;
 
 function formatFileSize(chars) {
   if (chars < 1024) return `${chars}B`;

@@ -114,3 +114,45 @@ export function diffToHunks(before, after) {
   flush();
   return hunks;
 }
+
+// Render minimal SEARCH/REPLACE hunks as a fenced, file-labeled code block.
+// Single source of truth for patch building — shared by retrievalOrchestrator
+// (synthesizing patches from edit/write tool results) and SpaceChat (converting
+// a model's full-file block into a targeted diff). Same format that
+// applySearchReplace (githubPushService) consumes.
+export function buildSearchReplaceBlock(original, modified, filePath) {
+  if (!original || !modified || original === modified) return null;
+  const hunks = diffToHunks(original, modified);
+  if (hunks.length === 0) return null;
+  const origLines = original.split('\n');
+  const blocks = hunks.map(h => {
+    const idx = original.indexOf(h.oldString);
+    let contextBefore = '';
+    let contextAfter = '';
+    if (idx !== -1) {
+      const lineBefore = original.slice(0, idx).split('\n').length;
+      contextBefore = lineBefore > 1 ? origLines[lineBefore - 2] : '';
+      const lineAfter = lineBefore - 1 + h.oldString.split('\n').length;
+      contextAfter = lineAfter < origLines.length ? origLines[lineAfter] : '';
+    }
+    return {
+      search: h.oldString,
+      replace: h.newString,
+      contextBefore,
+      contextAfter,
+    };
+  });
+  const ext = filePath.split('.').pop() || 'txt';
+  const patchParts = blocks.map(b => {
+    const lines = [];
+    if (b.contextBefore) lines.push(` ${b.contextBefore}`);
+    lines.push(`<<<<<<< SEARCH`);
+    lines.push(b.search);
+    lines.push(`=======`);
+    lines.push(b.replace);
+    lines.push(`>>>>>>> REPLACE`);
+    if (b.contextAfter) lines.push(` ${b.contextAfter}`);
+    return lines.join('\n');
+  });
+  return `\`\`\`${ext}:${filePath}\n${patchParts.join('\n\n')}\n\`\`\``;
+}

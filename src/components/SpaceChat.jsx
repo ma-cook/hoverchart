@@ -23,6 +23,7 @@ import {
   createBranchRef,
 } from '../services/githubIssuesService';
 import { listBranches, applySearchReplace, hasSearchReplaceMarkers } from '../services/githubPushService';
+import { diffToHunks, buildSearchReplaceBlock } from '../services/context/diffUtils';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
 import { saveDiagramDigest } from '../services/graphPersistence';
@@ -805,6 +806,18 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         // service can skip its own SEARCH/REPLACE pass.
         const repoFileTree = repoContext?.fileTree || [];
         const appliedBlocks = [];
+        const getExistingContent = async (filePath) => {
+          const cached = csState.repoFileContents?.[filePath];
+          if (cached) return cached;
+          const token = getGithubToken();
+          const owner = selectedRepo.owner?.login || selectedRepo.owner;
+          if (!token || !owner) return null;
+          try {
+            return await fetchFileContent(owner, selectedRepo.name, filePath, token);
+          } catch {
+            return null;
+          }
+        };
         for (const block of mergedBlocks) {
           if (!block.filePath || !block.code) {
             appliedBlocks.push(block);
@@ -814,24 +827,41 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           const existsInTree = repoFileTree.includes(block.filePath);
           const isExisting = existsInContents || existsInTree;
           if (isExisting && hasSearchReplaceMarkers(block.code)) {
-            let existing = csState.repoFileContents?.[block.filePath] || null;
-            if (!existing) {
-              const token = getGithubToken();
-              const owner = selectedRepo.owner?.login || selectedRepo.owner;
-              if (token && owner) {
-                try {
-                  existing = await fetchFileContent(owner, selectedRepo.name, block.filePath, token);
-                } catch {
-                  existing = null;
-                }
-              }
-            }
+            const existing = await getExistingContent(block.filePath);
             const applied = existing ? applySearchReplace(existing, block.code) : null;
             if (applied) {
               appliedBlocks.push({ ...block, code: applied, fullContent: true });
               continue;
             }
             console.warn(`[CodeSend] SEARCH/REPLACE did not match existing content for ${block.filePath} — keeping raw block for review`);
+          } else if (isExisting) {
+            // Full-file block for an existing file: the model ignored the
+            // "NEVER output an entire existing file" rule. Diff it against the
+            // current content and emit a minimal SEARCH/REPLACE patch instead of
+            // a whole-file proposal. Only a genuine restructure (>= 80% of the
+            // file changed) or a block that diverges from the current content
+            // stays as a whole-file proposal for explicit review.
+            const existing = await getExistingContent(block.filePath);
+            if (existing) {
+              const normExisting = existing.replace(/\r\n/g, '\n');
+              const normProposed = block.code.replace(/\r\n/g, '\n');
+              const hunks = diffToHunks(normExisting, normProposed);
+              const existingLines = normExisting.split('\n').length;
+              const changedLines = hunks.reduce((sum, h) => sum + h.oldString.split('\n').length, 0);
+              const isRewrite = existingLines > 0 && changedLines / existingLines >= 0.8;
+              if (hunks.length > 0 && !isRewrite) {
+                const markers = buildSearchReplaceBlock(normExisting, normProposed, block.filePath);
+                const applied = markers ? applySearchReplace(existing, markers) : null;
+                if (applied) {
+                  appliedBlocks.push({ ...block, code: applied, fullContent: true });
+                  continue;
+                }
+                console.warn(`[CodeSend] Auto-diff of full-file block did not apply cleanly for ${block.filePath} — keeping raw block for review`);
+              } else if (hunks.length === 0) {
+                // No net change against the current content — nothing to propose.
+                continue;
+              }
+            }
           }
           appliedBlocks.push(block);
         }
