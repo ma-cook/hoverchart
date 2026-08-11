@@ -829,8 +829,9 @@ RULES
 10. After EVERY tool result, write a brief summary (1-3 sentences) of what you learned. NEVER send only tool_calls without text.
 11. If search_code returns "No matching files found", try a shorter/substring of the search term
 12. Make the SMALLEST change that fixes the root cause. NEVER rewrite a whole file — use targeted edits. A diff that changes 5 lines is far better than one that changes 500.
-13. After an edit succeeds, re-read the edited lines to verify they are correct and consistent with the rest of the file.
+13. After an edit succeeds, re-read the edited lines to verify they are correct and consistent with the rest of the file. If your change touches a hydration/restore path (localStorage digest, storage URL fetch, store rehydration, or an effect that runs on page refresh), trace that flow end-to-end once after editing: which effect runs on reload, does it reach the store setter that gates the feature, and is the gate satisfied? Fix any dead code you find (data written into a persisted structure but never read back on load).
 14. If a UI element is missing or a button does not appear (especially after a page refresh), find the condition that gates its rendering — search for the gate variable by name with search_code (e.g. is2DReady) — then trace how that variable is set: in-memory store state vs state restored on hydration. Fix the state/data flow, not the UI. The "is2DReady"/"graphs" fields live in diagramStore and are in-memory only; "latestMarkdownUrl" is restored on refresh and the hydration effect is what re-renders the buttons — verify that path before editing.
+BEFORE editing, write your root-cause trace in 3-4 bullets: (a) the exact gate that hides the UI (file:line), (b) EVERY code path that can set that gate, each with file:line, (c) which path is failing in the reported scenario and the evidence for it. If you cannot name the gate and every restore path with file:line, keep reading files — do not edit yet. A missing button is almost always a data/restore bug, not a rendering bug.
 15. search_code returns line-level matches in the format file:line: code — use the line numbers to target read_file offsets.
 16. Check for AGENTS.md, .github/copilot-instructions.md, or README.md conventions before writing code that touches project structure.
 17. NEVER call write on an existing file — the write tool rejects paths that already exist in the repository. Always use edit(filePath, oldString, newString) for modifications, with oldString copied exactly from read_file output.
@@ -841,7 +842,9 @@ RULES
    replacement code
    >>>>>>> REPLACE
    Each SEARCH block must match the current file exactly. If you DO output a full-file block for an existing file, the harness auto-diffs it into a minimal patch — and if your block diverges from the current content, it fails to apply and is left for manual review. Emitting whole files wastes context and still risks rejection, so always prefer the edit tool or narrow SEARCH/REPLACE hunks.
- `;
+19. COMPLETENESS: when you add a field to any persisted or serialized structure (localStorage digest, API payload, storage URL record, database row), you MUST also add the corresponding read/restore on load in the SAME change. A field that is written but never read back is dead code and will be rejected by review.
+20. Prefer fixing the path that is actually failing over adding a new fallback. If you find a silent failure (a function that returns without setting the state the UI depends on, or swallows an error), the primary fix is to surface that failure (throw/reject) so the existing fallback paths can run — then add a new fallback only if a real gap remains.
+  `;
 
 function formatFileSize(chars) {
   if (chars < 1024) return `${chars}B`;
@@ -1082,7 +1085,7 @@ function buildRepoMap(repoContext, sceneObjects) {
   return parts.join('\n') || '(repo context not loaded — use list_files("") to browse)';
 }
 
-export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext }) {
+export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext, corrections = [] }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
 
   let projectNotes = '';
@@ -1103,5 +1106,17 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
 
   const systemMessage = { role: 'system', content: systemContent };
 
-  return [systemMessage, { role: 'user', content: userRequest }];
+  const messages = [systemMessage];
+  if (corrections.length > 0) {
+    // Feedback from the patch pipeline on the model's previous output. The code
+    // gen round is stateless (no conversation history), so rejected/auto-diffed
+    // proposals are fed back explicitly to let the model self-correct.
+    messages.push({
+      role: 'user',
+      content: `FEEDBACK ON YOUR PREVIOUS OUTPUT — fix these in your new answer:\n- ${corrections.join('\n- ')}`,
+    });
+  }
+  messages.push({ role: 'user', content: userRequest });
+
+  return messages;
 }

@@ -565,12 +565,16 @@ const UIOverlay = ({
     return () => clearTimeout(timer);
   }, [currentSpaceId, latestMarkdownUrl, is2DReady]);
 
-  // Fallback: if no stored markdown URL exists (upload failed, or the space was
-  // scanned before the storageUrl fix), restore the diagram graph context from
-  // the persisted digest so the 2D/analysis buttons and graph/community tools
-  // still work after a page refresh.
+  // Fallback: restore the diagram graph context from the persisted digest so
+  // the 2D/analysis buttons and graph/community tools still work after a page
+  // refresh. This runs whenever the graph is still missing after a grace period,
+  // regardless of latestMarkdownUrl — a stored markdown URL that fails to
+  // re-parse (hydrateStoreFromMarkdown now throws) or a missing URL (upload
+  // failed, or the space was scanned before the storageUrl fix) both land here.
+  // When a markdown URL exists, wait longer so the preferred markdown hydration
+  // path (2s timer + fetch + parse) gets to finish before the digest steps in.
   useEffect(() => {
-    if (!currentSpaceId || latestMarkdownUrl || useDiagramStore.getState().is2DReady) return;
+    if (!currentSpaceId || useDiagramStore.getState().is2DReady) return;
 
     const timer = setTimeout(async () => {
       if (useDiagramStore.getState().is2DReady) return;
@@ -582,7 +586,7 @@ const UIOverlay = ({
       } catch (err) {
         console.warn('[UIOverlay] Could not restore diagram graph from digest:', err);
       }
-    }, 2500);
+    }, latestMarkdownUrl ? 6000 : 2500);
 
     return () => clearTimeout(timer);
   }, [currentSpaceId, latestMarkdownUrl]);

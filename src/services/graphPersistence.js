@@ -13,7 +13,7 @@
 import useDiagramStore from '../stores/diagramStore';
 
 const STORAGE_PREFIX = 'diagramDigest_';
-const MAX_DIGEST_CHARS = 1000000;
+const MAX_DIGEST_CHARS = 4000000;
 
 function bytesToBase64(bytes) {
   let binary = '';
@@ -66,13 +66,16 @@ export async function saveDiagramDigest(spaceId) {
     if (!state.graphs || state.graphs.length === 0) return;
 
     const digest = {
-      v: 1,
+      v: 2,
       savedAt: Date.now(),
       graphs: serializeGraphs(state.graphs),
       hierarchy: serializeHierarchy(state.hierarchy),
       communities: state.communities || null,
       connectionTags: state.connectionTags
         ? [...state.connectionTags.entries()].map(([key, tags]) => [key, tags instanceof Set ? [...tags] : tags])
+        : null,
+      nodeToObjectIdMap: state.nodeToObjectIdMap
+        ? [...state.nodeToObjectIdMap.entries()]
         : null,
     };
 
@@ -85,7 +88,7 @@ export async function saveDiagramDigest(spaceId) {
       const compressed = bytesToBase64(await gzipString(serialized));
       const stored = JSON.stringify({ c: 1, s: compressed });
       if (stored.length > MAX_DIGEST_CHARS) {
-        console.warn(`[graphPersistence] Digest too large (${serialized.length} chars, ${stored.length} chars compressed) — skipping persistence`);
+        console.warn(`[graphPersistence] Digest too large even compressed (${serialized.length} chars -> ${stored.length} chars) — skipping persistence. The 2D/analysis buttons will NOT restore after a page refresh for this space.`);
         return;
       }
       localStorage.setItem(`${STORAGE_PREFIX}${spaceId}`, stored);
@@ -153,6 +156,10 @@ export async function rehydrateFromDigest(spaceId) {
       store.setConnectionTags(new Map(
         digest.connectionTags.map(([key, tags]) => [key, new Set(tags)])
       ));
+    }
+
+    if (digest.nodeToObjectIdMap) {
+      store.setNodeToObjectIdMap(new Map(digest.nodeToObjectIdMap));
     }
 
     const { detectAndStoreCommunities } = await import('./context/communityService');

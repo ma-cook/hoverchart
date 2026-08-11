@@ -79,13 +79,21 @@ export const processMethods = {
     const processedContent = this.stripFlowPathSyntax(content);
     const diagrams = this.processor.processMarkdown(processedContent);
 
-    if (!diagrams || diagrams.length === 0) return;
+    if (!diagrams || diagrams.length === 0) {
+      // Throw instead of silently returning: UIOverlay's hydration effect falls
+      // back to the persisted diagram digest in its catch block, so a silent
+      // return here would leave is2DReady false and hide the 2D / repository
+      // analysis buttons after a page refresh.
+      throw new Error('No Merfolk diagrams found in the stored markdown');
+    }
 
     const validGraphs = diagrams
       .filter((d) => !d.errors || d.errors.length === 0)
       .map((d) => d.graph);
 
-    if (validGraphs.length === 0) return;
+    if (validGraphs.length === 0) {
+      throw new Error('Stored markdown contained no valid Merfolk diagrams');
+    }
 
     // Build hierarchy from all graphs
     const allNodes = new Map();

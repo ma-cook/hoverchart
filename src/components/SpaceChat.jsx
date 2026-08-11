@@ -361,6 +361,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const streamingMsgKeyRef = useRef(0);
   const abortControllerRef = useRef(null);
   const rafPendingRef = useRef(false);
+  const correctionsRef = useRef([]);
 
   const githubConnected = useCodeStore(s => s.githubConnected);
   const selectedRepo = useCodeStore(s => s.selectedRepo);
@@ -794,6 +795,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         sceneObjects,
         techStack,
         repoContext,
+        corrections: correctionsRef.current,
       });
       const systemLen = codeGenMessages[0]?.content?.length || 0;
       console.log(`[CodeSend] Messages built. System message: ${systemLen} chars`);
@@ -908,6 +910,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           return applied ? { code: applied } : null;
         };
 
+        const corrections = [];
+
         for (const block of mergedBlocks) {
           if (!block.filePath || !block.code) {
             appliedBlocks.push(block);
@@ -943,10 +947,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                 // Genuine restructure or failed diff — keep raw for review but
                 // flag it so the panel warns and push is blocked.
                 appliedBlocks.push({ ...block, rawWholeFile: true });
+                corrections.push(`Your proposal for ${block.filePath} re-emitted the ENTIRE file as the SEARCH side and was kept for manual review — it cannot be pushed. Use the edit tool (read_file first for the exact oldString) or output a narrow SEARCH/REPLACE hunk covering ONLY the changed lines.`);
                 continue;
               }
             }
             console.warn(`[CodeSend] SEARCH/REPLACE did not match existing content for ${block.filePath} — keeping raw block for review`);
+            corrections.push(`Your SEARCH/REPLACE for ${block.filePath} did not match the current file content. Re-read the file with read_file and provide hunks that match the exact current text (copy oldString verbatim, line numbers are stripped automatically).`);
           } else if (isExisting) {
             // Full-file block for an existing file: the model ignored the
             // "NEVER output an entire existing file" rule. Diff it against the
@@ -963,10 +969,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                 continue;
               }
               console.warn(`[CodeSend] Auto-diff of full-file block did not apply cleanly for ${block.filePath} — keeping raw block for review`);
+              corrections.push(`Your full-file block for ${block.filePath} did not apply cleanly — it diverges from the current content and was kept for manual review. Use the edit tool with an exact oldString copied from read_file output, and verify each change applies.`);
             }
           }
           appliedBlocks.push(block);
         }
+
+        correctionsRef.current = corrections;
 
         const { count } = await associateCodeWithScene(appliedBlocks, spaceId, user);
         setAssociatedCount(count);
