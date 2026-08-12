@@ -841,7 +841,7 @@ BEFORE editing, write your root-cause trace in 3-4 bullets: (a) the exact gate t
    =======
    replacement code
    >>>>>>> REPLACE
-   Each SEARCH block must match the current file exactly. If you DO output a full-file block for an existing file, the harness auto-diffs it into a minimal patch — and if your block diverges from the current content, it fails to apply and is left for manual review. Emitting whole files wastes context and still risks rejection, so always prefer the edit tool or narrow SEARCH/REPLACE hunks.
+   Each SEARCH block must match the current file exactly and cover ONLY the lines you are changing — NEVER the whole file. A SEARCH block spanning ~80% or more of the file (or more than ~200 lines) is REJECTED outright and the proposal is kept for manual review, never applied. Emitting whole files wastes context and is always rejected, so always use the edit tool or narrow SEARCH/REPLACE hunks.
 19. COMPLETENESS: when you add a field to any persisted or serialized structure (localStorage digest, API payload, storage URL record, database row), you MUST also add the corresponding read/restore on load in the SAME change. A field that is written but never read back is dead code and will be rejected by review.
 20. Prefer fixing the path that is actually failing over adding a new fallback. If you find a silent failure (a function that returns without setting the state the UI depends on, or swallows an error), the primary fix is to surface that failure (throw/reject) so the existing fallback paths can run — then add a new fallback only if a real gap remains.
   `;
