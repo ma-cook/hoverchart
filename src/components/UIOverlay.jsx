@@ -542,6 +542,10 @@ const UIOverlay = ({
         if (!resp.ok) throw new Error(`markdown fetch failed: ${resp.status}`);
         const content = await resp.text();
         await markdownDiagramService.hydrateStoreFromMarkdown(content);
+        // Persist a complete digest backup now that hydration populated the
+        // store, so a later refresh can restore the 2D/analysis buttons even
+        // if the markdown URL later disappears or expires.
+        saveDiagramDigest(currentSpaceId);
       } catch (err) {
         console.warn('[UIOverlay] Could not hydrate 2D diagram from stored markdown:', err);
         // Fall back to the persisted digest so the 2D/analysis buttons and
@@ -576,20 +580,30 @@ const UIOverlay = ({
   useEffect(() => {
     if (!currentSpaceId || useDiagramStore.getState().is2DReady) return;
 
-    const timer = setTimeout(async () => {
-      if (useDiagramStore.getState().is2DReady) return;
+    let cancelled = false;
+    const attemptRestore = async () => {
+      if (cancelled || useDiagramStore.getState().is2DReady) return;
       try {
         const restored = await rehydrateFromDigest(currentSpaceId);
         if (restored) {
           console.log(`[UIOverlay] Restored diagram graph from digest for space ${currentSpaceId}`);
+          return;
         }
+        // No usable digest on the first attempt (e.g. the chat-scan write via
+        // setTimeout had not landed yet). Retry once shortly after so the
+        // 2D/analysis buttons still come back on refresh.
+        setTimeout(attemptRestore, 4000);
       } catch (err) {
         console.warn('[UIOverlay] Could not restore diagram graph from digest:', err);
       }
-    }, latestMarkdownUrl ? 6000 : 2500);
+    };
 
-    return () => clearTimeout(timer);
-  }, [currentSpaceId, latestMarkdownUrl]);
+    const timer = setTimeout(attemptRestore, latestMarkdownUrl ? 6000 : 2500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [currentSpaceId, latestMarkdownUrl, is2DReady]);
 
   // Add this handler function
   const handleCellBoundariesToggle = useCallback(() => {

@@ -34,7 +34,7 @@ function refuseWholeFileEdit(content, cleanedOldString, filePath) {
   if (oldLineCount > MAX_EDIT_OLD_LINES || oldLineCount / fileLineCount > MAX_EDIT_OLD_RATIO) {
     return {
       success: false,
-      content: `edit refused: oldString spans ${oldLineCount}/${fileLineCount} lines of ${filePath} — this is a whole-file rewrite, not a targeted edit. Make smaller, targeted edits (one function or block per edit call), copying oldString verbatim from read_file output. For changes spanning more than a few blocks, call "edit" multiple times.`,
+      content: `edit refused: oldString spans ${oldLineCount}/${fileLineCount} lines of ${filePath} — this is a whole-file rewrite, not a targeted edit. A file this large never fits fully in context, so a whole-file oldString means you are reconstructing from memory instead of editing real content. Read the exact region you need to change first with read_file("${filePath}", offset=<line>, limit=<50-200>) and copy its output verbatim as oldString. Make several small, targeted edits (one function or block per edit call) rather than one big one.`,
     };
   }
   return null;

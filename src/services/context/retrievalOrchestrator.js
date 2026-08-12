@@ -41,6 +41,41 @@ const MAX_SUMMARIZER_CALLS_PER_PASS = 2;
 const MAX_EMPTY_COMPLETIONS = 2;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
+const stripLineNumberPrefixes = (s) => s.split('\n').map(l => l.replace(/^\d+:\s*/, '')).join('\n');
+
+// Layer 1: concatenate every read_file/edit result the model has visibly seen
+// for a path — from earlier rounds (currentMessages) plus this round's already-
+// executed tool results — with line-number prefixes stripped. Used to refuse
+// edits whose oldString is not verifiably in context (a memory reconstruction).
+function collectSeenTextForPath(path, msgs, results) {
+  const callPathById = new Map();
+  for (const m of msgs) {
+    if (m.role !== 'assistant' || !m.tool_calls) continue;
+    for (const tc of m.tool_calls) {
+      const fn = tc.function?.name;
+      if (fn !== 'read_file' && fn !== 'edit') continue;
+      try {
+        const args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+        const p = normalizePath(fn === 'read_file' ? args?.path : args?.filePath);
+        if (p) callPathById.set(tc.id, p);
+      } catch { /* ignore */ }
+    }
+  }
+  const parts = [];
+  for (const m of msgs) {
+    if (m.role !== 'tool' || typeof m.content !== 'string') continue;
+    if (callPathById.get(m.tool_call_id) === path) parts.push(m.content);
+  }
+  for (const { tc, result } of results) {
+    if (!result?.success || typeof result.content !== 'string') continue;
+    const fn = tc.name;
+    if (fn !== 'read_file' && fn !== 'edit') continue;
+    const p = normalizePath(fn === 'read_file' ? tc.arguments?.path : tc.arguments?.filePath);
+    if (p === path) parts.push(result.content);
+  }
+  return stripLineNumberPrefixes(parts.join('\n'));
+}
+
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
 const MAX_EXPLORATION_ROUNDS = 24;
 const FORCE_GENERATION_AFTER_ROUND = 32;
@@ -1134,6 +1169,32 @@ export async function sendWithRetrieval({
             }
           }
         }
+        // Layer 1: prove-you-read-it. Large files never fully fit in context
+        // (tool results are truncated), so a whole-file oldString means the
+        // model is reconstructing from memory rather than editing real content.
+        // Refuse edits whose oldString is not verifiably present in the reads
+        // the model has actually seen for that file — forcing read_file with
+        // offset/limit + verbatim copy instead of a wasted reconstruction round.
+        if (tc.name === 'edit') {
+          let editArgs;
+          try { editArgs = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments; } catch { editArgs = tc.arguments; }
+          const editPath = normalizePath(editArgs?.filePath);
+          const rawOld = typeof editArgs?.oldString === 'string' ? editArgs.oldString : '';
+          const cleanedOld = stripLineNumberPrefixes(rawOld);
+          const oldLines = cleanedOld.split('\n').filter(l => l.trim());
+          // Short fragments are exact-matched against the full file by the edit
+          // tool itself, so they need no read-coverage requirement.
+          if (editPath && oldLines.length > 2) {
+            const seen = collectSeenTextForPath(editPath, currentMessages, toolResults);
+            if (!seen.includes(cleanedOld)) {
+              const refusal = `edit refused: your oldString does not appear in anything you have read for ${editPath} — you are reconstructing the file from memory (large files do not fully fit in context). Read the exact region first: read_file("${editPath}", offset=<line>, limit=<50-200>), then copy its output verbatim as oldString. Never re-emit the whole file.`;
+              console.warn(`[ToolRound] Layer 1: refused edit to ${editPath} (oldString not in visible reads, ${cleanedOld.length} chars)`);
+              onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+              toolResults.push({ tc, result: { success: false, content: refusal }, error: null });
+              continue;
+            }
+          }
+        }
         console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
         onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
         try {
@@ -1276,7 +1337,18 @@ export async function sendWithRetrieval({
       }
       let content = toolResult.content;
       if (content && content.length > MAX_TOOL_RESULT_CHARS) {
-        content = content.slice(0, MAX_TOOL_RESULT_CHARS) + TRUNCATION_WARNING;
+        const truncated = content.slice(0, MAX_TOOL_RESULT_CHARS);
+        if (tc.name === 'read_file') {
+          const fp = normalizePath(tc.arguments?.path);
+          const total = originalFileContents.get(fp);
+          const totalLines = total ? total.split('\n').length : null;
+          const visibleLines = truncated.split('\n').length;
+          const startLine = Math.max(1, parseInt(tc.arguments?.offset, 10) || 1);
+          const endLine = startLine + visibleLines - 2;
+          content = truncated + `\n\n[The read was truncated: you currently see ONLY lines ${startLine}-${endLine}${totalLines ? ` of ${totalLines} total` : ''}. This is NOT the whole file. To edit any other line you MUST read_file("${fp}", offset=<line>, limit=<50-200>) first and copy its exact text - never reconstruct the file.]`;
+        } else {
+          content = truncated + TRUNCATION_WARNING;
+        }
       }
       currentMessages.push({
         role: 'tool',

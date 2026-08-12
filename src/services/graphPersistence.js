@@ -13,7 +13,7 @@
 import useDiagramStore from '../stores/diagramStore';
 
 const STORAGE_PREFIX = 'diagramDigest_';
-const MAX_DIGEST_CHARS = 4000000;
+const MAX_DIGEST_CHARS = 4800000;
 
 function bytesToBase64(bytes) {
   let binary = '';
