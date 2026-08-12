@@ -44,12 +44,11 @@ const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
 const MAX_EXPLORATION_ROUNDS = 24;
 const FORCE_GENERATION_AFTER_ROUND = 32;
-// Absolute backstop: hard cap on LLM rounds per task. The self-redirect nudges
-// below keep legitimate long plans working, but a stuck model (research loop,
-// repeated reads, no edits) must never be allowed to consume unbounded provider
-// time. On the final round a directive asks for any remaining edits + a summary,
-// then the run ends.
-const MAX_ROUNDS = 32;
+// After the exploration budget is exceeded with zero edits, the model gets this
+// many rounds to respond to the advisory nudge before the harness force-switches
+// it to EDIT mode (stripping search tools). Research that keeps finding "new"
+// reads must not reset the transition clock forever.
+const MAX_EXPLORATION_GRACE_ROUNDS = 4;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
 const SUB_MAX_ROUNDS = 8;
 const SUB_MAX_CHARS = 60000;
@@ -67,7 +66,10 @@ const DIGEST_REFRESH_INTERVAL = 8;
 // inject a re-orienting nudge — keeping EVERY tool available — that escalates
 // each time, so a genuinely stuck run converges to a best-effort partial result
 // (via the model ending its own tool calls) rather than looping forever.
-// MAX_ROUNDS is the absolute backstop: the run hard-ends there regardless.
+// There is deliberately NO absolute round cap: cost protection comes from the
+// forced-EDIT-mode transition (past the exploration budget with zero edits, the
+// model is stripped of search tools and must edit or finish), not from a blunt
+// cutoff that truncates legitimate long plans mid-edit.
 const CONFUSION_SIGNAL_THRESHOLD = 3;
 const REDIRECT_ESCALATION_AFTER = 2;
 const CONFUSION_PATTERNS = /(\bnot sure\b|\bunsure\b|\bunclear\b|\bconfus\w*|\bdo not know\b|don['’]?t know\b|\bcan not find\b|can['’]?t find\b|could not find\b|couldn['’]?t find\b|\bneed more (information|context)\b|\bnot available\b|\bunable to (locate|find|determine)\b|i am (stuck|confused)|i['’]?m (stuck|confused)|\bdo not understand\b|\bdoes not know\b|doesn['’]?t know\b)/i;
@@ -741,19 +743,6 @@ export async function sendWithRetrieval({
   };
 
   while (true) {
-    if (rounds >= MAX_ROUNDS) {
-      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached — ending run`);
-      break;
-    }
-    // Fix 1: final-round directive so the cap never truncates a run mid-edit —
-    // the last allowed round is told to finish any remaining edits + summarize.
-    const isFinalRound = rounds >= MAX_ROUNDS - 1;
-    if (isFinalRound) {
-      currentMessages = [...currentMessages, {
-        role: 'user',
-        content: `[Harness: ${MAX_ROUNDS}-round budget exhausted — this is the final round. Produce any remaining changes NOW with edit/write using exact oldString from the content above, then respond with a concise summary of what you changed (and what remains, if anything). Do not call more tools after applying your final change.]`,
-      }];
-    }
     const currentSize = estimateMessagesSize(currentMessages);
     if (currentSize > MAX_CONTEXT_CHARS || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
       lastCompressionRound = rounds;
@@ -1296,14 +1285,6 @@ export async function sendWithRetrieval({
       });
     }
 
-    // Fix 1: hard cap enforcement — after the final allowed round's tools are
-    // executed and results pushed, the run ends (next loop iteration would hit
-    // the `rounds >= MAX_ROUNDS` guard anyway).
-    if (isFinalRound) {
-      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached after final round — ending run`);
-      break;
-    }
-
     if (autoFlippedToEdit) {
       autoFlippedToEdit = false;
       currentMessages = [...currentMessages, {
@@ -1395,12 +1376,14 @@ export async function sendWithRetrieval({
     // to EDIT mode: computeTools({ mode: 'edit' }) strips search/list/graph
     // tools next round, so the model must either edit or finish.
     if (!producedEdit && !forcedEditMode && currentMode === 'research') {
-      // Progress gate: only force when the agent is genuinely stalled — flagged
-      // as stuck AND several rounds have passed without any new information
-      // (new-range reads, successful searches). A legitimate deep investigation
-      // that is still gathering context is never cut short mid-assessment.
+      // Progress gate: below the exploration budget, only force when genuinely
+      // stalled — flagged as stuck AND several rounds without any new
+      // information — so a legitimate deep investigation is not cut short. Past
+      // the budget + grace window, research with zero edits IS the stall:
+      // new-range reads must not reset the transition clock forever, or a
+      // research loop could keep going indefinitely.
       const flaggedStuck = redirectCount >= 1 || readStallNudgeRound.size >= 2 || rounds >= MAX_EXPLORATION_ROUNDS;
-      const stuck = flaggedStuck && rounds - lastNewInfoRound >= 3;
+      const stuck = flaggedStuck && (rounds >= MAX_EXPLORATION_ROUNDS + MAX_EXPLORATION_GRACE_ROUNDS || rounds - lastNewInfoRound >= 3);
       if (stuck) {
         forcedEditMode = true;
         currentMode = 'edit';
