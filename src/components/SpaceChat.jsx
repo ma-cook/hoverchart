@@ -8,7 +8,7 @@ import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useLlmStore from '../stores/llmStore';
 import useDiagramStore from '../stores/diagramStore';
-import { PROVIDERS, fetchModels } from '../services/llmProviders';
+import { PROVIDERS, fetchModels, isFreeUsageLimit } from '../services/llmProviders';
 import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import {
@@ -702,7 +702,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     } catch (err) {
       if (err.name === 'AbortError') return;
       const msg = err.message || 'Failed to reach LLM. Check your connection.';
-      setLlmError(msg);
+      if (isFreeUsageLimit(err)) {
+        setLlmError('Free usage limit reached for Opencode Zen. This free tier is shared per-IP across hoverchart, so its daily budget is often exhausted. Switch to a paid provider in the model picker (Anthropic, Google, or Nvidia) for reliable use.');
+      } else {
+        setLlmError(msg);
+      }
       if (/401|auth|invalid api key/i.test(msg)) {
         setAuthError(msg);
       }
@@ -1035,7 +1039,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     } catch (err) {
       if (err.name === 'AbortError') return;
       const msg = err.message || 'Failed to reach LLM. Check your connection.';
-      setLlmError(msg);
+      if (isFreeUsageLimit(err)) {
+        setLlmError('Free usage limit reached for Opencode Zen. This free tier is shared per-IP across hoverchart, so its daily budget is often exhausted. Switch to a paid provider in the model picker (Anthropic, Google, or Nvidia) for reliable use.');
+      } else {
+        setLlmError(msg);
+      }
       if (/401|auth|invalid api key/i.test(msg)) {
         setAuthError(msg);
       }
@@ -1903,6 +1911,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                 </button>
               ))}
             </div>
+            {windowLlm.providerId === 'opencode-zen' && (
+              <div className="space-chat-provider-hint">
+                Opencode Zen's free models share a per-IP daily usage cap across hoverchart and can hit limits quickly. A paid provider (Anthropic, Google, or Nvidia) is recommended for reliable use.
+              </div>
+            )}
             <div className="space-chat-modal-actions">
               <button className="space-chat-modal-btn" onClick={() => setShowProviderModal(false)}>Cancel</button>
             </div>
@@ -1965,6 +1978,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                 </button>
               ))}
             </div>
+            {windowLlm.providerId === 'opencode-zen' && /free|-free$|-free\b/i.test(windowLlm.selectedModel || '') && (
+              <div className="space-chat-provider-hint">
+                Free Zen models share a per-IP daily usage cap across hoverchart and can hit limits quickly. A paid provider (Anthropic, Google, or Nvidia) is recommended for reliable use.
+              </div>
+            )}
             <div className="space-chat-modal-actions">
               <button className="space-chat-modal-btn" onClick={() => { setShowModelDropdown(false); setProviderModels([]); }}>Cancel</button>
             </div>

@@ -213,6 +213,12 @@ export function getProvider(id) {
   return PROVIDERS.find((p) => p.id === id);
 }
 
+export function isFreeUsageLimit(err) {
+  if (!err) return false;
+  if (err.providerErrorType === 'FreeUsageLimitError') return true;
+  return /FreeUsageLimitError|free usage (exceeded|limit)|add credits/i.test(err.message || '');
+}
+
 export async function fetchModels(providerId, apiKey) {
   const provider = getProvider(providerId);
   if (!provider) throw new Error(`Unknown provider: ${providerId}`);

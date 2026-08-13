@@ -1327,6 +1327,18 @@ body {
   word-break: break-word;
 }
 
+.space-chat-provider-hint {
+  color: #e0a04a;
+  font-size: 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(224, 160, 74, 0.1);
+  border: 1px solid rgba(224, 160, 74, 0.3);
+  border-radius: 6px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .space-chat-message.llm-assistant {
   flex-direction: row;
 }

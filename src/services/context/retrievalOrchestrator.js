@@ -997,6 +997,24 @@ export async function sendWithRetrieval({
         rounds++;
         continue;
       }
+      // Text with no tool calls is only a FINISH when the work is actually
+      // done. For a code-gen task with no edits yet and no code block in the
+      // reply, the text is almost always a preamble ("I'll investigate…") with
+      // the tool call the model forgot to emit — ending the run there silently
+      // produces no code. Re-nudge it to actually call tools; the MAX_ROUNDS
+      // cap and the final-round forcing message bound this loop.
+      const isCodeGenStall = taskType === 'code-gen'
+        && editedFilePaths.size === 0
+        && !/```/.test(text || '');
+      if (isCodeGenStall) {
+        console.warn(`[ToolRound] Code-gen prose-only round ${rounds + 1} (${(text || '').length} chars, no tool calls) — re-nudging to call tools`);
+        currentMessages = [...currentMessages, {
+          role: 'user',
+          content: `[You responded with text but called no tools. This is a code-generation task — you MUST call tools (search_code, read_file, file_outline, edit, write) to investigate and make changes. Do not describe a plan without executing it.]`,
+        }];
+        rounds++;
+        continue;
+      }
       break;
     }
 
