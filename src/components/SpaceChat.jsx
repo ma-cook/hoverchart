@@ -1035,9 +1035,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     } catch (err) {
       if (err.name === 'AbortError') return;
       const msg = err.message || 'Failed to reach LLM. Check your connection.';
-      setLlmError(msg);
-      if (/401|auth|invalid api key/i.test(msg)) {
-        setAuthError(msg);
+      if (/429|rate\s*limit|FreeUsageLimitError/i.test(msg)) {
+        setLlmError('LLM rate limit reached (429). Wait about a minute, then try again.');
+      } else {
+        setLlmError(msg);
+        if (/401|auth|invalid api key/i.test(msg)) {
+          setAuthError(msg);
+        }
       }
       setCodeMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
     } finally {

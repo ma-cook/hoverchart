@@ -230,8 +230,13 @@ function isTransientError(error) {
   if (msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET')) return true;
   if (msg.includes('ETIMEDOUT') || msg.includes('ENOTFOUND')) return true;
   if (msg.includes('500') || msg.includes('502') || msg.includes('503')) return true;
-  if (msg.includes('rate limit') || msg.includes('too many requests')) return true;
+  if (/rate\s*limit|too many requests/i.test(msg)) return true;
   return false;
+}
+
+function isRateLimitError(error) {
+  const msg = typeof error === 'string' ? error : (error?.message || error?.content || '');
+  return /429|rate\s*limit|too many requests|FreeUsageLimitError/i.test(msg);
 }
 
 function estimateMessagesSize(msgs) {
@@ -881,6 +886,7 @@ export async function sendWithRetrieval({
     const MAX_SEND_RETRIES = 2;
     let rawResult = null;
     let sendFailed = false;
+    let lastSendError = null;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
         const availableTools = computeTools({ mode: currentMode });
@@ -897,9 +903,13 @@ export async function sendWithRetrieval({
         });
         break;
       } catch (sendErr) {
+        lastSendError = sendErr;
         console.warn(`[ToolRound] Round ${rounds + 1} sendToZen failed (${sendAttempt + 1}/${MAX_SEND_RETRIES + 1}): ${sendErr.message}`);
         if (sendAttempt < MAX_SEND_RETRIES) {
-          await new Promise(r => setTimeout(r, 1000 * (sendAttempt + 1)));
+          const isRateLimit = isRateLimitError(sendErr);
+          const backoffMs = isRateLimit ? 15000 * (sendAttempt + 1) : 1000 * (sendAttempt + 1);
+          console.warn(`[ToolRound] Retrying in ${backoffMs}ms (${isRateLimit ? 'rate limit' : 'transient error'})`);
+          await new Promise(r => setTimeout(r, backoffMs));
         } else {
           sendFailed = true;
         }
@@ -907,6 +917,12 @@ export async function sendWithRetrieval({
     }
     if (sendFailed) {
       console.warn(`[ToolRound] Round ${rounds + 1}: all send attempts failed, breaking loop`);
+      // A rate limit that persists across every retry is not a model failure —
+      // surface it to the user (when nothing has been produced yet) instead of
+      // falling into the generic "no code generated" path.
+      if (isRateLimitError(lastSendError) && editedFilePaths.size === 0 && !finalText.trim()) {
+        throw new Error('LLM rate limit reached. Wait about a minute, then try again.');
+      }
       break;
     }
 
