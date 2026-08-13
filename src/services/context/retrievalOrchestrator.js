@@ -921,7 +921,7 @@ export async function sendWithRetrieval({
       // surface it to the user (when nothing has been produced yet) instead of
       // falling into the generic "no code generated" path.
       if (isRateLimitError(lastSendError) && editedFilePaths.size === 0 && !finalText.trim()) {
-        throw new Error('LLM rate limit reached. Wait about a minute, then try again.');
+        throw new Error('LLM rate limit reached (429) — free-tier usage limit hit. If it does not recover within a minute, the daily free quota is likely exhausted; wait for the reset or use a paid API key.');
       }
       break;
     }
