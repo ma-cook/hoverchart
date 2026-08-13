@@ -277,17 +277,8 @@ export async function sendToProvider({
 
       if (res.ok) break;
 
-      const retryable = res.status === 429 || res.status >= 500;
-      if (retryable && attempt < MAX_RETRIES - 1) {
-        let backoffMs;
-        if (res.status === 429) {
-          const retryAfter = parseInt(res.headers?.get?.('Retry-After') || '', 10);
-          backoffMs = retryAfter
-            ? Math.min(retryAfter * 1000, 60000)
-            : Math.min(1000 * Math.pow(2, attempt), 15000);
-        } else {
-          backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
-        }
+      if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
         console.warn(`[sendToProvider] ${provider.name} error ${res.status}, retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
         await new Promise(r => setTimeout(r, backoffMs));
         continue;
@@ -297,6 +288,7 @@ export async function sendToProvider({
       throw new Error(`${provider.name} error ${res.status}: ${errText}`);
     } catch (err) {
       clearTimeout(timeoutId);
+      if (err.name === 'AbortError') throw err;
       if (err.message?.startsWith(provider.name)) throw err;
       if (attempt < MAX_RETRIES - 1) {
         const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);

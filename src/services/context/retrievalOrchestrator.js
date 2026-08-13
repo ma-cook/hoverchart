@@ -79,6 +79,12 @@ function collectSeenTextForPath(path, msgs, results) {
 // ── Harness hard limits — prevent explore-forever / doom loops ───────────────
 const MAX_EXPLORATION_ROUNDS = 24;
 const FORCE_GENERATION_AFTER_ROUND = 32;
+// Absolute backstop: hard cap on LLM rounds per task. The self-redirect nudges
+// below keep legitimate long plans working, but a stuck model (research loop,
+// repeated reads, no edits) must never be allowed to consume unbounded provider
+// time. On the final round a directive asks for any remaining edits + a summary,
+// then the run ends.
+const MAX_ROUNDS = 32;
 // After the exploration budget is exceeded with zero edits, the model gets this
 // many rounds to respond to the advisory nudge before the harness force-switches
 // it to EDIT mode (stripping search tools). Research that keeps finding "new"
@@ -230,13 +236,8 @@ function isTransientError(error) {
   if (msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET')) return true;
   if (msg.includes('ETIMEDOUT') || msg.includes('ENOTFOUND')) return true;
   if (msg.includes('500') || msg.includes('502') || msg.includes('503')) return true;
-  if (/rate\s*limit|too many requests/i.test(msg)) return true;
+  if (msg.includes('rate limit') || msg.includes('too many requests')) return true;
   return false;
-}
-
-function isRateLimitError(error) {
-  const msg = typeof error === 'string' ? error : (error?.message || error?.content || '');
-  return /429|rate\s*limit|too many requests|FreeUsageLimitError/i.test(msg);
 }
 
 function estimateMessagesSize(msgs) {
@@ -783,6 +784,19 @@ export async function sendWithRetrieval({
   };
 
   while (true) {
+    if (rounds >= MAX_ROUNDS) {
+      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached — ending run`);
+      break;
+    }
+    // Final-round directive so the cap never truncates a run mid-edit — the
+    // last allowed round is told to finish any remaining edits + summarize.
+    const isFinalRound = rounds >= MAX_ROUNDS - 1;
+    if (isFinalRound) {
+      currentMessages = [...currentMessages, {
+        role: 'user',
+        content: `[Harness: ${MAX_ROUNDS}-round budget exhausted — this is the final round. Produce any remaining changes NOW with edit/write using exact oldString from the content above, then respond with a concise summary of what you changed (and what remains, if anything). Do not call more tools after applying your final change.]`,
+      }];
+    }
     const currentSize = estimateMessagesSize(currentMessages);
     if (currentSize > MAX_CONTEXT_CHARS || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
       lastCompressionRound = rounds;
@@ -886,7 +900,6 @@ export async function sendWithRetrieval({
     const MAX_SEND_RETRIES = 2;
     let rawResult = null;
     let sendFailed = false;
-    let lastSendError = null;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
         const availableTools = computeTools({ mode: currentMode });
@@ -903,13 +916,12 @@ export async function sendWithRetrieval({
         });
         break;
       } catch (sendErr) {
-        lastSendError = sendErr;
+        // A user-initiated abort must stop the run immediately — the signal is
+        // permanently aborted, so further retries could never succeed.
+        if (sendErr?.name === 'AbortError') throw sendErr;
         console.warn(`[ToolRound] Round ${rounds + 1} sendToZen failed (${sendAttempt + 1}/${MAX_SEND_RETRIES + 1}): ${sendErr.message}`);
         if (sendAttempt < MAX_SEND_RETRIES) {
-          const isRateLimit = isRateLimitError(sendErr);
-          const backoffMs = isRateLimit ? 15000 * (sendAttempt + 1) : 1000 * (sendAttempt + 1);
-          console.warn(`[ToolRound] Retrying in ${backoffMs}ms (${isRateLimit ? 'rate limit' : 'transient error'})`);
-          await new Promise(r => setTimeout(r, backoffMs));
+          await new Promise(r => setTimeout(r, 1000 * (sendAttempt + 1)));
         } else {
           sendFailed = true;
         }
@@ -917,12 +929,6 @@ export async function sendWithRetrieval({
     }
     if (sendFailed) {
       console.warn(`[ToolRound] Round ${rounds + 1}: all send attempts failed, breaking loop`);
-      // A rate limit that persists across every retry is not a model failure —
-      // surface it to the user (when nothing has been produced yet) instead of
-      // falling into the generic "no code generated" path.
-      if (isRateLimitError(lastSendError) && editedFilePaths.size === 0 && !finalText.trim()) {
-        throw new Error('LLM rate limit reached (429) — free-tier usage limit hit. If it does not recover within a minute, the daily free quota is likely exhausted; wait for the reset or use a paid API key.');
-      }
       break;
     }
 
@@ -1371,6 +1377,11 @@ export async function sendWithRetrieval({
         tool_call_id: tc.id,
         content,
       });
+    }
+
+    if (isFinalRound) {
+      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached after final round — ending run`);
+      break;
     }
 
     if (autoFlippedToEdit) {
