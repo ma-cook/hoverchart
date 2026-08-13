@@ -287,8 +287,13 @@ export async function sendToProvider({
       const errText = await res.text().catch(() => '');
       const err = new Error(`${provider.name} error ${res.status}: ${errText}`);
       err.status = res.status;
+      err.provider = provider.name;
       const retryAfter = res.headers.get('retry-after');
       if (retryAfter) err.retryAfterMs = Number(retryAfter) * 1000;
+      const typeMatch = errText.match(/\"type\":\s*\"([A-Za-z]+Error)\"/);
+      if (typeMatch) err.providerErrorType = typeMatch[1];
+      const retryAfterBody = errText.match(/\"retryAfter\"\s*:\s*(\d+)/);
+      if (retryAfterBody && !err.retryAfterMs) err.retryAfterMs = Number(retryAfterBody[1]) * 1000;
       throw err;
     } catch (err) {
       clearTimeout(timeoutId);

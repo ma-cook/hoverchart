@@ -900,6 +900,7 @@ export async function sendWithRetrieval({
     const MAX_SEND_RETRIES = 2;
     let rawResult = null;
     let sendFailed = false;
+    let sendFailedDailyCap = false;
     let rateLimitRetriesLeft = 1;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
@@ -928,6 +929,15 @@ export async function sendWithRetrieval({
         const isRateLimit = sendErr?.status === 429 || /rate limit|too many requests|429/i.test(sendErr?.message || '');
         console.warn(`[ToolRound] Round ${rounds + 1} sendToZen failed (${sendAttempt + 1}/${MAX_SEND_RETRIES + 1}): ${sendErr.message}`);
         if (isRateLimit) {
+          // FreeUsageLimitError is the opencode-zen free-tier DAILY cap (not a
+          // per-minute window). Its retry-after is hours away, so waiting 60s
+          // and retrying only burns another request against an exhausted quota.
+          if (sendErr?.providerErrorType === 'FreeUsageLimitError') {
+            console.warn(`[ToolRound] Free daily usage cap for ${sendErr.provider} reached — further requests will fail until the cap resets. Stopping this run.`);
+            sendFailed = true;
+            sendFailedDailyCap = true;
+            break;
+          }
           if (rateLimitRetriesLeft <= 0) {
             sendFailed = true;
             break;
@@ -946,6 +956,15 @@ export async function sendWithRetrieval({
       }
     }
     if (sendFailed) {
+      if (sendFailedDailyCap) {
+        finalText = (finalText ? finalText + '\n\n' : '') +
+          `[The daily free usage cap for the big-pickle model was reached during this task (provider error FreeUsageLimitError). ` +
+          `This is not a transient rate limit — the free tier allows roughly 200 requests / ~$0.30 of tokens per day per IP, and ` +
+          `the budget resets at local midnight. To continue working today: switch the model/provider to a paid option (e.g. an Anthropic, ` +
+          `OpenRouter, or Nvidia API key) in the model picker, or wait for the reset.]`;
+        console.warn(`[ToolRound] Round ${rounds + 1}: send failed due to free daily cap, stopping run`);
+        break;
+      }
       console.warn(`[ToolRound] Round ${rounds + 1}: all send attempts failed, breaking loop`);
       break;
     }
