@@ -124,7 +124,7 @@ You have explored enough. Now produce the code changes. If you need to read a fi
 Switch to PRODUCING CODE NOW:
   1. Call set_mode("edit") to switch the harness to the editing tool set, then call "edit" with exact oldString/newString for the file you already located.
   2. If an edit fails, correct the oldString (copy exact text from read_file) and retry. NEVER output an entire existing file as a code block — full-file blocks for existing files are rejected and would silently drop the rest of the file.
-  3. If you must emit changes as text, use SEARCH/REPLACE blocks covering ONLY the exact changed lines (<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE), labeled with the file path — never the whole file.`,
+  3. If you must emit changes as text, use SEARCH/REPLACE blocks covering ONLY the exact changed lines (<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE), labeled with the file path — never the whole file. Output ONE narrow SEARCH/REPLACE block per edit location (e.g. 3 edits -> 3 small blocks), never one giant block per file.`,
   };
 }
 
