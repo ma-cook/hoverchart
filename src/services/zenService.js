@@ -657,6 +657,48 @@ export async function ensureRepoContentIndexed({ owner, repo, branch, token, fil
   }
 }
 
+const MAX_LLM_REQUESTS_PER_MINUTE = 4;
+const RATE_WINDOW_MS = 60 * 1000;
+const requestTimestampsByProvider = new Map();
+
+function sleepAbortable(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason || new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort);
+  });
+}
+
+async function waitForRateLimit(providerId, signal) {
+  const now = Date.now();
+  const cutoff = now - RATE_WINDOW_MS;
+  const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
+
+  if (timestamps.length < MAX_LLM_REQUESTS_PER_MINUTE) {
+    timestamps.push(now);
+    requestTimestampsByProvider.set(providerId, timestamps);
+    return;
+  }
+
+  const waitMs = timestamps[0] + RATE_WINDOW_MS - now + 50;
+  console.warn(`[RateLimit] ${providerId} at ${MAX_LLM_REQUESTS_PER_MINUTE} requests/min — waiting ${Math.round(waitMs / 1000)}s`);
+  await sleepAbortable(waitMs, signal);
+
+  const refiltered = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > now - RATE_WINDOW_MS);
+  refiltered.push(Date.now());
+  requestTimestampsByProvider.set(providerId, refiltered);
+}
+
 export async function sendToZen({ messages, tools, onChunk, signal, llmConfig }) {
   const global = useLlmStore.getState();
   const { providerId, apiKey, selectedModel } = llmConfig || {
@@ -668,6 +710,8 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
   if (!providerId || !apiKey || !selectedModel) {
     throw new Error('LLM not configured. Click the model button to set up a provider.');
   }
+
+  await waitForRateLimit(providerId, signal);
 
   console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length} tools=${tools ? tools.length : 0}`);
 
