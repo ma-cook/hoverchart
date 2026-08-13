@@ -660,6 +660,25 @@ export async function ensureRepoContentIndexed({ owner, repo, branch, token, fil
 const MAX_LLM_REQUESTS_PER_MINUTE = 4;
 const RATE_WINDOW_MS = 60 * 1000;
 const requestTimestampsByProvider = new Map();
+const COOLDOWN_STORAGE_KEY = 'llmProviderCooldowns';
+
+function loadPersistedCooldowns() {
+  try {
+    return new Map(Object.entries(JSON.parse(localStorage.getItem(COOLDOWN_STORAGE_KEY) || '{}')));
+  } catch {
+    return new Map();
+  }
+}
+
+function persistCooldowns(map) {
+  try {
+    localStorage.setItem(COOLDOWN_STORAGE_KEY, JSON.stringify(Object.fromEntries(map)));
+  } catch {
+    /* storage may be unavailable — cooldown just won't survive reload */
+  }
+}
+
+const providerCooldownUntil = loadPersistedCooldowns();
 
 function sleepAbortable(ms, signal) {
   return new Promise((resolve, reject) => {
@@ -679,13 +698,27 @@ function sleepAbortable(ms, signal) {
   });
 }
 
+export function reportProviderRateLimited(providerId, retryAfterMs) {
+  const until = Date.now() + Math.max(retryAfterMs || 0, 60_000);
+  providerCooldownUntil.set(providerId, until);
+  persistCooldowns(providerCooldownUntil);
+  console.warn(`[RateLimit] ${providerId} cooldown until ${new Date(until).toLocaleTimeString()} (${Math.round((until - Date.now()) / 1000)}s)`);
+}
+
 async function waitForRateLimit(providerId, signal) {
   const now = Date.now();
+
+  const cooldown = providerCooldownUntil.get(providerId) || 0;
+  if (now < cooldown) {
+    console.warn(`[RateLimit] ${providerId} still cooling down — waiting ${Math.round((cooldown - now) / 1000)}s`);
+    await sleepAbortable(cooldown - now + 50, signal);
+  }
+
   const cutoff = now - RATE_WINDOW_MS;
   const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
 
   if (timestamps.length < MAX_LLM_REQUESTS_PER_MINUTE) {
-    timestamps.push(now);
+    timestamps.push(Date.now());
     requestTimestampsByProvider.set(providerId, timestamps);
     return;
   }
@@ -694,7 +727,7 @@ async function waitForRateLimit(providerId, signal) {
   console.warn(`[RateLimit] ${providerId} at ${MAX_LLM_REQUESTS_PER_MINUTE} requests/min — waiting ${Math.round(waitMs / 1000)}s`);
   await sleepAbortable(waitMs, signal);
 
-  const refiltered = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > now - RATE_WINDOW_MS);
+  const refiltered = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > Date.now() - RATE_WINDOW_MS);
   refiltered.push(Date.now());
   requestTimestampsByProvider.set(providerId, refiltered);
 }
@@ -715,15 +748,23 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
 
   console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length} tools=${tools ? tools.length : 0}`);
 
-  const result = await sendToProvider({
-    providerId,
-    apiKey,
-    model: selectedModel,
-    messages,
-    tools,
-    onChunk,
-    signal,
-  });
+  let result;
+  try {
+    result = await sendToProvider({
+      providerId,
+      apiKey,
+      model: selectedModel,
+      messages,
+      tools,
+      onChunk,
+      signal,
+    });
+  } catch (err) {
+    if (err?.status === 429 || /rate limit|too many requests/i.test(err?.message || '')) {
+      reportProviderRateLimited(providerId, err?.retryAfterMs);
+    }
+    throw err;
+  }
 
   if (tools && tools.length > 0) return result;
   return result.text;

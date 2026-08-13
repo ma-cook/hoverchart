@@ -51,35 +51,21 @@ router.post('/chat', async (req, res) => {
   }
 
   try {
-    const MAX_RETRIES = 3;
-    let upstream;
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 5 * 60 * 1000);
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const timeoutController = new AbortController();
-      const timeoutId = setTimeout(() => timeoutController.abort(), 5 * 60 * 1000);
-
-      try {
-        upstream = await fetch(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-          signal: timeoutController.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
-
-      if (upstream.status !== 429) break;
-
-      if (attempt < MAX_RETRIES) {
-        const backoffMs = Math.min(2000 * Math.pow(2, attempt), 16000);
-        console.log(`[proxy] 429 retry ${attempt + 1}/${MAX_RETRIES}, waiting ${backoffMs}ms`);
-        await new Promise(r => setTimeout(r, backoffMs));
-        upstream.body?.cancel?.();
-      }
-    }
+    const upstream = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: timeoutController.signal,
+    });
+    clearTimeout(timeoutId);
 
     res.status(upstream.status);
+
+    const retryAfter = upstream.headers.get('retry-after');
+    if (retryAfter) res.setHeader('Retry-After', retryAfter);
 
     const contentType = upstream.headers.get('content-type') || '';
     if (contentType.includes('text/event-stream')) {

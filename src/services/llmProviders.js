@@ -285,7 +285,11 @@ export async function sendToProvider({
       }
 
       const errText = await res.text().catch(() => '');
-      throw new Error(`${provider.name} error ${res.status}: ${errText}`);
+      const err = new Error(`${provider.name} error ${res.status}: ${errText}`);
+      err.status = res.status;
+      const retryAfter = res.headers.get('retry-after');
+      if (retryAfter) err.retryAfterMs = Number(retryAfter) * 1000;
+      throw err;
     } catch (err) {
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') throw err;

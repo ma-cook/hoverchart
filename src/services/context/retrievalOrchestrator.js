@@ -900,6 +900,7 @@ export async function sendWithRetrieval({
     const MAX_SEND_RETRIES = 2;
     let rawResult = null;
     let sendFailed = false;
+    let rateLimitRetriesLeft = 1;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
         const availableTools = computeTools({ mode: currentMode });
@@ -919,7 +920,24 @@ export async function sendWithRetrieval({
         // A user-initiated abort must stop the run immediately — the signal is
         // permanently aborted, so further retries could never succeed.
         if (sendErr?.name === 'AbortError') throw sendErr;
+
+        // Rate limits only clear when the provider's reset window expires —
+        // retrying in 1-2s is guaranteed to fail and only burns quota. Wait out
+        // the window (Retry-After if provided, else a safe default) and retry
+        // once; do not hammer the provider with repeated sends.
+        const isRateLimit = sendErr?.status === 429 || /rate limit|too many requests|429/i.test(sendErr?.message || '');
         console.warn(`[ToolRound] Round ${rounds + 1} sendToZen failed (${sendAttempt + 1}/${MAX_SEND_RETRIES + 1}): ${sendErr.message}`);
+        if (isRateLimit) {
+          if (rateLimitRetriesLeft <= 0) {
+            sendFailed = true;
+            break;
+          }
+          rateLimitRetriesLeft--;
+          const waitMs = Math.max(sendErr?.retryAfterMs || 0, 60_000);
+          console.warn(`[ToolRound] Rate limited — waiting ${Math.round(waitMs / 1000)}s for the window to reset`);
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
         if (sendAttempt < MAX_SEND_RETRIES) {
           await new Promise(r => setTimeout(r, 1000 * (sendAttempt + 1)));
         } else {
