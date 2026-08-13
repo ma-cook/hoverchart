@@ -34,7 +34,7 @@ const COMPRESSION_INTERVAL = 8;
 // Compression calls the LLM once per summarized pair (each bounded by
 // SUMMARIZER_TIMEOUT_MS). Cap the hidden calls per pass so late-game compaction
 // degrades to local stubbing instead of multiplying provider round-trips.
-const MAX_SUMMARIZER_CALLS_PER_PASS = 2;
+const MAX_SUMMARIZER_CALLS_PER_PASS = 1;
 // A round that returns no text AND no tool calls is a provider stall, not a
 // finish. Retry a bounded number of times (with compaction + a nudge) so a
 // context overrun cannot silently end the run with no code produced.

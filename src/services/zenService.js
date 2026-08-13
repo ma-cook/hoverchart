@@ -657,9 +657,11 @@ export async function ensureRepoContentIndexed({ owner, repo, branch, token, fil
   }
 }
 
-const MAX_LLM_REQUESTS_PER_MINUTE = 4;
+const MAX_LLM_REQUESTS_PER_MINUTE = 2;
+const MIN_REQUEST_INTERVAL_MS = 15 * 1000;
 const RATE_WINDOW_MS = 60 * 1000;
 const requestTimestampsByProvider = new Map();
+const lastRequestAtByProvider = new Map();
 const COOLDOWN_STORAGE_KEY = 'llmProviderCooldowns';
 
 const inFlightByProvider = new Map();
@@ -725,19 +727,27 @@ async function waitForRateLimit(providerId, signal) {
   const cutoff = now - RATE_WINDOW_MS;
   const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
 
-  if (timestamps.length < MAX_LLM_REQUESTS_PER_MINUTE) {
+  const lastAt = lastRequestAtByProvider.get(providerId) || 0;
+  const sinceLast = now - lastAt;
+
+  if (timestamps.length < MAX_LLM_REQUESTS_PER_MINUTE && sinceLast >= MIN_REQUEST_INTERVAL_MS) {
     timestamps.push(Date.now());
     requestTimestampsByProvider.set(providerId, timestamps);
+    lastRequestAtByProvider.set(providerId, Date.now());
     return;
   }
 
-  const waitMs = timestamps[0] + RATE_WINDOW_MS - now + 50;
-  console.warn(`[RateLimit] ${providerId} at ${MAX_LLM_REQUESTS_PER_MINUTE} requests/min — waiting ${Math.round(waitMs / 1000)}s`);
+  const waitMs = Math.max(
+    timestamps.length >= MAX_LLM_REQUESTS_PER_MINUTE ? timestamps[0] + RATE_WINDOW_MS - now + 50 : 0,
+    sinceLast < MIN_REQUEST_INTERVAL_MS ? MIN_REQUEST_INTERVAL_MS - sinceLast + 50 : 0
+  );
+  console.warn(`[RateLimit] ${providerId} pacing: ${timestamps.length}/${MAX_LLM_REQUESTS_PER_MINUTE} in window, spacing ${MIN_REQUEST_INTERVAL_MS / 1000}s — waiting ${Math.round(waitMs / 1000)}s`);
   await sleepAbortable(waitMs, signal);
 
   const refiltered = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > Date.now() - RATE_WINDOW_MS);
   refiltered.push(Date.now());
   requestTimestampsByProvider.set(providerId, refiltered);
+  lastRequestAtByProvider.set(providerId, Date.now());
 }
 
 export async function sendToZen({ messages, tools, onChunk, signal, llmConfig }) {
