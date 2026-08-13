@@ -1260,8 +1260,10 @@ export async function sendWithRetrieval({
           const cleanedOld = stripLineNumberPrefixes(rawOld);
           const oldLines = cleanedOld.split('\n').filter(l => l.trim());
           // Short fragments are exact-matched against the full file by the edit
-          // tool itself, so they need no read-coverage requirement.
-          if (editPath && oldLines.length > 2) {
+          // tool itself, so they need no read-coverage requirement. Only
+          // reconstruction-scale oldStrings (>50 lines) get the coverage check —
+          // keeping read verification without multiplying LLM requests per task.
+          if (editPath && oldLines.length > 50) {
             const seen = collectSeenTextForPath(editPath, currentMessages, toolResults);
             if (!seen.includes(cleanedOld)) {
               const refusal = `edit refused: your oldString does not appear in anything you have read for ${editPath} — you are reconstructing the file from memory (large files do not fully fit in context). Read the exact region first: read_file("${editPath}", offset=<line>, limit=<50-200>), then copy its output verbatim as oldString. Never re-emit the whole file.`;
@@ -1422,7 +1424,7 @@ export async function sendWithRetrieval({
           const visibleLines = truncated.split('\n').length;
           const startLine = Math.max(1, parseInt(tc.arguments?.offset, 10) || 1);
           const endLine = startLine + visibleLines - 2;
-          content = truncated + `\n\n[The read was truncated: you currently see ONLY lines ${startLine}-${endLine}${totalLines ? ` of ${totalLines} total` : ''}. This is NOT the whole file. To edit any other line you MUST read_file("${fp}", offset=<line>, limit=<50-200>) first and copy its exact text - never reconstruct the file.]`;
+          content = truncated + `\n\n[The read was truncated: you see lines ${startLine}-${endLine}${totalLines ? ` of ${totalLines} total` : ''}. If you need other lines, use read_file("${fp}", offset=<line>, limit=<50-200>).]`;
         } else {
           content = truncated + TRUNCATION_WARNING;
         }
