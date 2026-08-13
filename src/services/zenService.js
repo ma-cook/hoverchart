@@ -662,6 +662,14 @@ const RATE_WINDOW_MS = 60 * 1000;
 const requestTimestampsByProvider = new Map();
 const COOLDOWN_STORAGE_KEY = 'llmProviderCooldowns';
 
+const inFlightByProvider = new Map();
+
+export function getInFlightCount() {
+  let total = 0;
+  for (const count of inFlightByProvider.values()) total += count;
+  return total;
+}
+
 function loadPersistedCooldowns() {
   try {
     return new Map(Object.entries(JSON.parse(localStorage.getItem(COOLDOWN_STORAGE_KEY) || '{}')));
@@ -746,6 +754,13 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
 
   await waitForRateLimit(providerId, signal);
 
+  const inFlight = (inFlightByProvider.get(providerId) || 0) + 1;
+  inFlightByProvider.set(providerId, inFlight);
+  const totalInFlight = getInFlightCount();
+  if (inFlight > 1 || totalInFlight > 1) {
+    console.warn(`[Concurrency] sendToZen in-flight: provider=${providerId} same=${inFlight} total=${totalInFlight} — ${inFlight > 1 ? 'CONCURRENT LLM REQUESTS DETECTED' : 'parallel requests from different providers/windows'}`);
+  }
+
   console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length} tools=${tools ? tools.length : 0}`);
 
   let result;
@@ -764,6 +779,14 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
       reportProviderRateLimited(providerId, err?.retryAfterMs);
     }
     throw err;
+  } finally {
+    const after = (inFlightByProvider.get(providerId) || 0) - 1;
+    if (after <= 0) inFlightByProvider.delete(providerId);
+    else inFlightByProvider.set(providerId, after);
+    const totalAfter = getInFlightCount();
+    if (after > 0 || totalAfter > 0) {
+      console.warn(`[Concurrency] sendToZen finished: provider=${providerId} remaining same=${Math.max(0, after)} total=${totalAfter}`);
+    }
   }
 
   if (tools && tools.length > 0) return result;
