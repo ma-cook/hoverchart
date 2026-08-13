@@ -104,6 +104,7 @@ export const PROVIDERS = [
     name: 'Opencode Zen',
     chatEndpoint: 'https://opencode.ai/zen/v1/chat/completions',
     modelsEndpoint: 'https://opencode.ai/zen/v1/models',
+    direct: true,
     getHeaders: (apiKey) => ({
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -140,6 +141,7 @@ export const PROVIDERS = [
     name: 'Opencode Go',
     chatEndpoint: 'https://opencode.ai/zen/go/v1/chat/completions',
     modelsEndpoint: 'https://opencode.ai/zen/go/v1/models',
+    direct: true,
     getHeaders: (apiKey) => ({
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -228,6 +230,16 @@ export async function fetchModels(providerId, apiKey) {
   if (!url) return [];
 
   try {
+    if (provider.direct) {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return provider.parseModels(data);
+    }
     const payload = JSON.stringify({ url, headers });
     const res = await fetch(`${API_BASE}/api/llm/models`, {
       method: 'POST',
@@ -272,14 +284,25 @@ export async function sendToProvider({
       : timeoutController.signal;
 
     try {
-      const payload = JSON.stringify({ url, headers, body });
-      res = await fetch(`${API_BASE}/api/llm/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: await gzipBytes(payload),
-        signal: combinedSignal,
-      });
-      clearTimeout(timeoutId);
+      if (provider.direct) {
+        console.log(`[sendToProvider] ${provider.name} DIRECT (browser → ${url}) — bypassing proxy so requests egress from your IP, not the shared Cloud Run IP`);
+        res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: combinedSignal,
+        });
+        clearTimeout(timeoutId);
+      } else {
+        const payload = JSON.stringify({ url, headers, body });
+        res = await fetch(`${API_BASE}/api/llm/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: await gzipBytes(payload),
+          signal: combinedSignal,
+        });
+        clearTimeout(timeoutId);
+      }
 
       if (res.ok) break;
 
