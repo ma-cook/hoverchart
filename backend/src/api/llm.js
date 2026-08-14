@@ -50,6 +50,13 @@ router.post('/chat', async (req, res) => {
     return res.status(400).json({ error: 'Invalid or disallowed URL' });
   }
 
+  const startedAt = Date.now();
+  const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || 'unknown';
+  const host = (() => { try { return new URL(url).hostname; } catch { return 'unknown'; } })();
+  const model = body?.model || 'unknown';
+  const keyHint = String(headers?.authorization || '').slice(0, 12) || String(headers?.['x-api-key'] || '').slice(0, 12) || 'none';
+  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint}`);
+
   try {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), 5 * 60 * 1000);
