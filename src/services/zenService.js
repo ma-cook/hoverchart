@@ -715,6 +715,10 @@ export function reportProviderRateLimited(providerId, retryAfterMs) {
   console.warn(`[RateLimit] ${providerId} cooldown until ${new Date(until).toLocaleTimeString()} (${Math.round((until - Date.now()) / 1000)}s)`);
 }
 
+export function getProviderCooldownRemainingMs(providerId) {
+  return Math.max(0, (providerCooldownUntil.get(providerId) || 0) - Date.now());
+}
+
 async function waitForRateLimit(providerId, signal) {
   const now = Date.now();
 

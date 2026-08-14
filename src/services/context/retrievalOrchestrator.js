@@ -1,4 +1,4 @@
-import { sendToZen } from '../zenService';
+import { sendToZen, getProviderCooldownRemainingMs } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { executeTool, resetEditTracker, refreshRepoWorkingCopies, getAppliedEditRecords } from './toolExecutor';
 import { fetchFileContent } from '../githubRepoService';
@@ -92,6 +92,11 @@ const MAX_ROUNDS = 32;
 const MAX_EXPLORATION_GRACE_ROUNDS = 4;
 const MAX_SUBAGENT_SPAWNS_PER_TASK = 1;
 const SUB_MAX_ROUNDS = 8;
+// Per-spawn LLM request budget: a sub-agent can otherwise fire up to
+// SUB_MAX_ROUNDS sequential LLM calls inside ONE main round, blowing through
+// free-tier per-window rate caps before the visible round request even runs.
+// Bound the hidden burst.
+const SUB_MAX_LLM_CALLS = 3;
 const SUB_MAX_CHARS = 60000;
 const SUB_MAX_TOOL_CONTENT = 12000;
 const STUCK_EXPLORING_THRESHOLD = 10;
@@ -757,6 +762,14 @@ export async function sendWithRetrieval({
   });
 
   const summarizeOldRound = async (assistantMsg, toolMsgs) => {
+    // Skip the hidden LLM summarizer when the provider is already rate-limited —
+    // it would only burn another request against the same exhausted window.
+    // Compression degrades to the local drop/stub pass instead.
+    const providerId = llmConfig?.providerId;
+    if (providerId && getProviderCooldownRemainingMs(providerId) > 0) {
+      console.warn(`[Compression] Skipping LLM summarization for ${providerId} — rate limit cooldown active`);
+      return null;
+    }
     const toolSnippets = toolMsgs.map(t => (t.content || '').slice(0, 800)).join('\n---\n');
     const prompt = `Summarize what the assistant learned or accomplished in 1 sentence (max 50 words):\n\nAssistant: ${(assistantMsg.content || '(no text)').slice(0, 300)}\n\nTool results:\n${toolSnippets.slice(0, 2500)}`;
     try {
@@ -929,10 +942,15 @@ export async function sendWithRetrieval({
         const isRateLimit = sendErr?.status === 429 || /rate limit|too many requests|429/i.test(sendErr?.message || '');
         console.warn(`[ToolRound] Round ${rounds + 1} sendToZen failed (${sendAttempt + 1}/${MAX_SEND_RETRIES + 1}): ${sendErr.message}`);
         if (isRateLimit) {
-          // FreeUsageLimitError is the opencode-zen free-tier DAILY cap (not a
-          // per-minute window). Its retry-after is hours away, so waiting 60s
-          // and retrying only burns another request against an exhausted quota.
-          if (sendErr?.providerErrorType === 'FreeUsageLimitError') {
+          // A FreeUsageLimitError is only the true DAILY cap when opencode says
+          // so explicitly ("Free usage exceeded", "add credits") or the retry-after
+          // is hours away. A FreeUsageLimitError whose message is a plain rate
+          // limit ("Rate limit exceeded. Please try again later.") is TRANSIENT —
+          // wait out the window and retry once instead of stopping the run.
+          const retryAfterMs = sendErr?.retryAfterMs || 0;
+          const isDailyCap = /free usage exceeded|add credits|usage limit.*(?:reset|day|tomorrow)|daily (?:usage )?cap/i.test(sendErr?.message || '')
+            || retryAfterMs >= 60 * 60 * 1000;
+          if (sendErr?.providerErrorType === 'FreeUsageLimitError' && isDailyCap) {
             console.warn(`[ToolRound] Free daily usage cap for ${sendErr.provider} reached — further requests will fail until the cap resets. Stopping this run.`);
             sendFailed = true;
             sendFailedDailyCap = true;
@@ -943,8 +961,8 @@ export async function sendWithRetrieval({
             break;
           }
           rateLimitRetriesLeft--;
-          const waitMs = Math.max(sendErr?.retryAfterMs || 0, 60_000);
-          console.warn(`[ToolRound] Rate limited — waiting ${Math.round(waitMs / 1000)}s for the window to reset`);
+          const waitMs = Math.max(retryAfterMs, 60_000);
+          console.warn(`[ToolRound] Rate limited (transient) — waiting ${Math.round(waitMs / 1000)}s for the window to reset`);
           await new Promise(r => setTimeout(r, waitMs));
           continue;
         }
@@ -1076,7 +1094,7 @@ export async function sendWithRetrieval({
       // Fix 3: constants now declared at module scope (SUB_MAX_ROUNDS, SUB_MAX_CHARS,
       //        SUB_MAX_TOOL_CONTENT) with budgets large enough for an 80KB file.
       const subReadFiles = new Set();
-      for (let subRound = 0; subRound < SUB_MAX_ROUNDS; subRound++) {
+      for (let subRound = 0; subRound < Math.min(SUB_MAX_ROUNDS, SUB_MAX_LLM_CALLS); subRound++) {
         let raw;
         try {
           raw = await sendToZen({ messages: subMessages, tools, signal, llmConfig });

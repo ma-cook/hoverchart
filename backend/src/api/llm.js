@@ -38,6 +38,65 @@ function isAllowed(url) {
   }
 }
 
+// ── Global request throttle (per upstream host) ────────────────────────────
+// All clients/tabs share one Cloud Run egress IP, so every provider's per-IP
+// rate window is shared too. Serialize requests per host (max 1 in-flight, min
+// spacing between starts) and self-tune the spacing: back off on upstream 429s,
+// recover on success. This keeps the app under free-tier rate caps regardless
+// of client-side fan-out (tool rounds, sub-agents, compression summarizers).
+const LLM_MIN_INTERVAL_MS = Number(process.env.LLM_MIN_INTERVAL_MS) || 20_000;
+const LLM_MAX_INTERVAL_MS = Number(process.env.LLM_MAX_INTERVAL_MS) || 60_000;
+const LLM_QUEUE_MAX_WAIT_MS = Number(process.env.LLM_QUEUE_MAX_WAIT_MS) || 120_000;
+
+const hostThrottle = new Map();
+
+function getHostThrottle(host) {
+  let t = hostThrottle.get(host);
+  if (!t) {
+    t = { nextAllowedAt: 0, intervalMs: LLM_MIN_INTERVAL_MS, inFlight: 0 };
+    hostThrottle.set(host, t);
+  }
+  return t;
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function waitForThrottleSlot(host, res) {
+  const t = getHostThrottle(host);
+  const deadline = Date.now() + LLM_QUEUE_MAX_WAIT_MS;
+  while (true) {
+    if (t.inFlight < 1 && Date.now() >= t.nextAllowedAt) break;
+    if (Date.now() >= deadline) {
+      const retryAfterSec = Math.max(1, Math.ceil((t.nextAllowedAt - Date.now()) / 1000));
+      res.status(429).setHeader('Retry-After', String(retryAfterSec)).json({
+        error: 'Rate limit — request queue is full, retry after the current request completes',
+        retryAfter: retryAfterSec,
+      });
+      return false;
+    }
+    await sleep(200);
+  }
+  t.inFlight++;
+  return true;
+}
+
+function releaseThrottleSlot(host, { rateLimited }) {
+  const t = getHostThrottle(host);
+  t.inFlight = Math.max(0, t.inFlight - 1);
+  if (rateLimited) {
+    t.intervalMs = Math.min(t.intervalMs * 2, LLM_MAX_INTERVAL_MS);
+    console.warn(`[llm-proxy] ${host} throttle backed off to ${t.intervalMs}ms spacing`);
+  } else {
+    t.intervalMs = Math.max(LLM_MIN_INTERVAL_MS, Math.floor(t.intervalMs / 2));
+  }
+  t.nextAllowedAt = Date.now() + t.intervalMs;
+}
+
+let activeChatRequests = 0;
+let chatRequestTotal = 0;
+
 router.post('/chat', async (req, res) => {
   let parsed;
   try {
@@ -55,8 +114,13 @@ router.post('/chat', async (req, res) => {
   const host = (() => { try { return new URL(url).hostname; } catch { return 'unknown'; } })();
   const model = body?.model || 'unknown';
   const keyHint = String(headers?.authorization || '').slice(0, 12) || String(headers?.['x-api-key'] || '').slice(0, 12) || 'none';
-  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint}`);
+  chatRequestTotal++;
+  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
 
+  if (!(await waitForThrottleSlot(host, res))) return;
+
+  activeChatRequests++;
+  let upstreamRateLimited = false;
   try {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), 5 * 60 * 1000);
@@ -69,9 +133,20 @@ router.post('/chat', async (req, res) => {
     });
     clearTimeout(timeoutId);
 
+    const elapsedMs = Date.now() - startedAt;
+    const retryAfter = upstream.headers.get('retry-after');
+    const rateHeaders = {};
+    for (const [k, v] of upstream.headers.entries()) {
+      if (/ratelimit|retry|quota|throttl/i.test(k)) rateHeaders[k] = v;
+    }
+    if (upstream.status === 429) {
+      upstreamRateLimited = true;
+      console.warn(`[llm-proxy] 429 from ${host}: retryAfter=${retryAfter || 'none'} fullHeaders=${JSON.stringify([...upstream.headers.entries()])}`);
+    }
+    console.log(`[llm-proxy] RES ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} status=${upstream.status} elapsedMs=${elapsedMs} retryAfter=${retryAfter || 'none'} ratelimit=${JSON.stringify(rateHeaders)} total=${chatRequestTotal} active=${activeChatRequests}`);
+
     res.status(upstream.status);
 
-    const retryAfter = upstream.headers.get('retry-after');
     if (retryAfter) res.setHeader('Retry-After', retryAfter);
 
     const contentType = upstream.headers.get('content-type') || '';
@@ -120,10 +195,18 @@ router.post('/chat', async (req, res) => {
     } else {
       const text = await upstream.text();
       res.setHeader('Content-Type', contentType || 'application/json');
+      if (upstream.status >= 400) {
+        console.warn(`[llm-proxy] ERR response from upstream ${host}: status=${upstream.status} body=${text.slice(0, 500)}`);
+      }
       res.send(text);
     }
   } catch (err) {
-    res.status(502).json({ error: 'Proxy request failed', detail: err.message });
+    console.error(`[llm-proxy] upstream fetch failed: host=${host} err=${err.message}`);
+    if (!res.headersSent) res.status(502).json({ error: 'Proxy request failed', detail: err.message });
+  } finally {
+    activeChatRequests--;
+    releaseThrottleSlot(host, { rateLimited: upstreamRateLimited });
+    console.log(`[llm-proxy] DONE ${new Date().toISOString()} host=${host} model=${model} total=${chatRequestTotal} activeAfter=${activeChatRequests}`);
   }
 });
 
