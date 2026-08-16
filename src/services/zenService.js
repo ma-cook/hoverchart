@@ -657,8 +657,8 @@ export async function ensureRepoContentIndexed({ owner, repo, branch, token, fil
   }
 }
 
-const MAX_LLM_REQUESTS_PER_MINUTE = 2;
-const MIN_REQUEST_INTERVAL_MS = 15 * 1000;
+const MAX_LLM_REQUESTS_PER_MINUTE = 6;
+const MIN_REQUEST_INTERVAL_MS = 2 * 1000;
 const RATE_WINDOW_MS = 60 * 1000;
 const requestTimestampsByProvider = new Map();
 const lastRequestAtByProvider = new Map();

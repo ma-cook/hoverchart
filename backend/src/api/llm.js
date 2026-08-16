@@ -45,7 +45,7 @@ function isAllowed(url) {
 // spacing between starts) and self-tune the spacing: back off on upstream 429s,
 // recover on success. This keeps the app under free-tier rate caps regardless
 // of client-side fan-out (tool rounds, sub-agents, compression summarizers).
-const LLM_MIN_INTERVAL_MS = Number(process.env.LLM_MIN_INTERVAL_MS) || 20_000;
+const LLM_MIN_INTERVAL_MS = Number(process.env.LLM_MIN_INTERVAL_MS) || 2_000;
 const LLM_MAX_INTERVAL_MS = Number(process.env.LLM_MAX_INTERVAL_MS) || 60_000;
 const LLM_QUEUE_MAX_WAIT_MS = Number(process.env.LLM_QUEUE_MAX_WAIT_MS) || 120_000;
 
