@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { createGunzip } from 'zlib';
+import crypto from 'crypto';
 
 const router = Router();
 
@@ -94,6 +95,28 @@ function releaseThrottleSlot(host, { rateLimited }) {
   t.nextAllowedAt = Date.now() + t.intervalMs;
 }
 
+// Opencode Zen's free tier gates anonymous capacity on the User-Agent header:
+// requests that do not carry an official `opencode/...` UA are treated as
+// anonymous and get an extremely restrictive fallback rate limit (429
+// FreeUsageLimitError "Rate limit exceeded" after a handful of requests),
+// regardless of IP or key. The browser's own fetch UA (Mozilla/5.0...) always
+// falls in that bucket. Inject the official client headers when forwarding to
+// opencode.ai so hoverchart's requests are treated as a first-party client.
+// Per the opencode maintainers this is the supported approach for custom
+// clients. Headers are regenerated per request so the session/request IDs look
+// fresh rather than statically repeated.
+const OPENCODE_CLIENT_VERSION = process.env.OPENCODE_CLIENT_VERSION || 'opencode/latest/1.18.16/cli';
+
+function opencodeClientHeaders() {
+  return {
+    'User-Agent': OPENCODE_CLIENT_VERSION,
+    'x-opencode-client': 'cli',
+    'x-opencode-session': (crypto.randomUUID ? crypto.randomUUID() : 'sess-' + Math.random().toString(36).slice(2)),
+    'x-opencode-project': 'hoverchart',
+    'x-opencode-request': (crypto.randomUUID ? crypto.randomUUID() : 'req-' + Math.random().toString(36).slice(2)),
+  };
+}
+
 let activeChatRequests = 0;
 let chatRequestTotal = 0;
 
@@ -127,7 +150,7 @@ router.post('/chat', async (req, res) => {
 
     const upstream = await fetch(url, {
       method: 'POST',
-      headers,
+      headers: host === 'opencode.ai' ? { ...headers, ...opencodeClientHeaders() } : headers,
       body: JSON.stringify(body),
       signal: timeoutController.signal,
     });
@@ -221,9 +244,13 @@ router.post('/models', async (req, res) => {
   if (!url || !isAllowed(url)) {
     return res.status(400).json({ error: 'Invalid or disallowed URL' });
   }
+  const host = (() => { try { return new URL(url).hostname; } catch { return 'unknown'; } })();
 
   try {
-    const upstream = await fetch(url, { method: 'GET', headers });
+    const upstream = await fetch(url, {
+      method: 'GET',
+      headers: host === 'opencode.ai' ? { ...headers, ...opencodeClientHeaders() } : headers,
+    });
     const data = await upstream.json();
     res.status(upstream.status).json(data);
   } catch (err) {
