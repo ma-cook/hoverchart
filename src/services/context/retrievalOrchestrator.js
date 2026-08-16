@@ -20,6 +20,12 @@ const MAX_SAME_FILE_READS = 2;
 // genuine research are verification, not a loop.
 const DUPLICATE_RECENCY_ROUNDS = 4;
 const MAX_CONTEXT_CHARS = 120000;
+// Fix 2: headroom reserved above the compression target. The post-compression
+// digest (~5KB) and the current round's fresh reads otherwise push every send
+// back over MAX_CONTEXT_CHARS the moment compaction finishes, forcing the
+// next round to re-compact immediately (the death-spiral seen in the logs).
+const COMPRESSION_HEADROOM = 12000;
+const COMPRESSION_TARGET = MAX_CONTEXT_CHARS - COMPRESSION_HEADROOM;
 const MAX_TOOL_RESULT_CHARS = 30000;
 const TRUNCATION_WARNING = `\n\n[Output truncated at ${(MAX_TOOL_RESULT_CHARS).toLocaleString()} chars. Use read_file with offset/limit or refine your search to narrow results.]`;
 const RETRYABLE_TOOLS = new Set(['read_file', 'edit', 'write', 'search_code']);
@@ -99,7 +105,10 @@ const FORCE_GENERATION_AFTER_ROUND = 32;
 // repeated reads, no edits) must never be allowed to consume unbounded provider
 // time. On the final round a directive asks for any remaining edits + a summary,
 // then the run ends.
-const MAX_ROUNDS = 32;
+// Raised from 32 to 50: digest replacement + compression headroom now keep the
+// context under the cap, so a model that spends more rounds investigating a
+// large codebase is no longer clipped mid-search.
+const MAX_ROUNDS = 50;
 // After the exploration budget is exceeded with zero edits, the model gets this
 // many rounds to respond to the advisory nudge before the harness force-switches
 // it to EDIT mode (stripping search tools). Research that keeps finding "new"
@@ -201,7 +210,7 @@ ${editsSoFar && editsSoFar.length > 0 ? `Changes already applied this run: ${edi
 // tool results compression stubs away), this store survives compaction — so a
 // digest rebuilt from it is truthful: content marked "preserved in the
 // EXPLORATION DIGEST" really is recoverable from here.
-function buildPersistentReadStore({ originalFileContents, readWindowsByPath, editedFilePaths } = {}) {
+function buildPersistentReadStore({ originalFileContents, readWindowsByPath, editedFilePaths, maxWindowsPerFile = 3 } = {}) {
   const store = new Map(); // path -> { order, content }
   for (const [path, windows] of readWindowsByPath || []) {
     if (!windows || windows.length === 0) continue;
@@ -209,7 +218,9 @@ function buildPersistentReadStore({ originalFileContents, readWindowsByPath, edi
     const full = originalFileContents?.get(path);
     if (typeof full !== 'string' || full.length === 0) continue;
     const lines = full.split('\n');
-    const order = Math.min(...windows.map(w => (w.round ?? Infinity)));
+    // Fix 4: order by the MOST RECENT read (max round) so the digest reflects
+    // where the model is working NOW, not the oldest slices it read first.
+    const order = Math.max(...windows.map(w => (w.round ?? 0)));
     // Merge overlapping windows so repeated/overlapping reads don't double-spend
     // the digest budget (large files are often read in staggered slices).
     const merged = [];
@@ -218,18 +229,41 @@ function buildPersistentReadStore({ originalFileContents, readWindowsByPath, edi
       const end = Math.min(w.end, lines.length);
       if (start > end) continue;
       const last = merged[merged.length - 1];
-      if (last && start <= last.end + 1) last.end = Math.max(last.end, end);
-      else merged.push({ start, end });
+      if (last && start <= last.end + 1) {
+        last.end = Math.max(last.end, end);
+        last.round = Math.max(last.round, w.round ?? 0);
+      } else {
+        merged.push({ start, end, round: w.round ?? 0 });
+      }
     }
+    // Fix 4: keep only the most-recent merged windows per file, most recent
+    // first, so a fully-read file cannot dominate the digest budget with stale
+    // head slices (UIOverlay.jsx was read 24+ times across 32 rounds).
+    merged.sort((a, b) => b.round - a.round);
+    const kept = merged.slice(0, maxWindowsPerFile);
     const parts = [];
-    for (const w of merged) {
+    for (const w of kept) {
       const slice = lines.slice(w.start - 1, w.end).map((l, i) => `${w.start + i}: ${l}`).join('\n');
       parts.push(`lines ${w.start}-${w.end}:\n${slice}`);
     }
     if (parts.length === 0) continue;
-    store.set(path, { order: order === Infinity ? 0 : order, content: parts.join('\n') });
+    store.set(path, { order, content: parts.join('\n') });
   }
   return store;
+}
+
+// Fix 1: digests are regenerable (rebuilt from the persistent read store on
+// demand), so injecting a new one must REPLACE any prior digest messages rather
+// than append. Appended digests are standalone user messages — compression only
+// ever reclaims paired tool results, never user messages — so they pile up until
+// they alone exceed the context budget (19 post-compression digests + 3 Fix-5
+// digests ≈ 144KB by round 32 in the observed run).
+function upsertDigestMessage(currentMessages, content) {
+  const withoutOld = currentMessages.filter(m => {
+    if (m.role !== 'user' || typeof m.content !== 'string') return true;
+    return !/📋 .*DIGEST/.test(m.content);
+  });
+  return [...withoutOld, { role: 'user', content }];
 }
 
 async function synthesizeFindingsDigest(currentMessages, {
@@ -508,10 +542,12 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false, fileCon
   }
 
   // Aggressive budget-driven compaction: used only when a normal pass could not
-  // bring the context under the harness cap. Walks the OLDEST pairs forward,
-  // keeping the most recent rounds and anything tied to an edit target intact,
-  // and summarizes / stubs / drops the rest until we fit under MAX_CONTEXT_CHARS.
-  if (forceHard && estimateMessagesSize(result) > MAX_CONTEXT_CHARS) {
+  // bring the context under the target. Walks the OLDEST pairs forward, keeping
+  // the most recent rounds and anything tied to an edit target intact, and
+  // summarizes / stubs / drops the rest until we fit under COMPRESSION_TARGET
+  // (MAX_CONTEXT_CHARS - headroom, so the post-compression digest + fresh reads
+  // fit back under the harness cap instead of immediately over-running it).
+  if (forceHard && estimateMessagesSize(result) > COMPRESSION_TARGET) {
     const working = [...result];
     const pairs = [];
     for (let i = 0; i < working.length; i++) {
@@ -538,7 +574,7 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false, fileCon
     const SMALL_READ_KEEP_CHARS = 1500;
     for (let p = 0; p < pairs.length - HARD_KEEP_LAST; p++) {
       const pair = pairs[p];
-      if (measure() <= MAX_CONTEXT_CHARS) break;
+      if (measure() <= COMPRESSION_TARGET) break;
       const pairHitsEditTarget = (pair.assistant.tool_calls || []).some(tc => {
         if (tc.function?.name !== 'read_file' && tc.function?.name !== 'edit' && tc.function?.name !== 'write') return false;
         try {
@@ -666,6 +702,28 @@ function isUsefulToolResult(content, toolName) {
   if (FAILURE_PATTERNS.test(content.trim())) return false;
   if (toolName === 'search_code' && content.trim().split('\n').length < 1) return false;
   return true;
+}
+
+// P4: pick likely target files for the upfront file_outline seed. Only path-like
+// tokens mentioned in the user's own task messages count — never a blind scan
+// of the whole tree. Cap at 3 so the seed stays small (~2-5KB per outline).
+function extractCandidatePaths(messages) {
+  const src = (messages || [])
+    .filter(m => m.role === 'user' && typeof m.content === 'string')
+    .map(m => m.content)
+    .join('\n');
+  const seen = new Set();
+  const out = [];
+  const re = /(?:src|test|tests|app|lib|components|pages|config|scripts|backend|server|shared|utils?|hooks?|services?|core|public|assets)\/[A-Za-z0-9_./-]*\.(?:js|jsx|ts|tsx|mjs|cjs|vue|svelte|css|scss|html|json)/g;
+  for (const m of src.matchAll(re)) {
+    const p = normalizePath(m[0]);
+    if (p && !seen.has(p)) {
+      seen.add(p);
+      out.push(p);
+      if (out.length >= 3) break;
+    }
+  }
+  return out;
 }
 
 function readKey(tc) {
@@ -864,6 +922,47 @@ export async function sendWithRetrieval({
   const taskType = globalRouter.classifyTaskType(messages, computeTools());
   console.log(`[sendWithRetrieval] Classified task type: ${taskType}`);
 
+  // P4: seed structural outlines of likely target files BEFORE the first LLM
+  // call. Code-gen tasks routinely burn the opening rounds just discovering
+  // what to read; one file_outline per candidate path (~2-5KB, functions/classes
+  // + top-level structure) lets the model jump straight to reading the slices
+  // it needs. Only paths mentioned in the user's own task are considered — if
+  // none are mentioned, this is a harmless no-op.
+  if (taskType === 'code-gen') {
+    const candidatePaths = extractCandidatePaths(messages);
+    if (candidatePaths.length > 0) {
+      const outlineResults = [];
+      for (let i = 0; i < candidatePaths.length; i++) {
+        const path = candidatePaths[i];
+        try {
+          const r = await executeTool('file_outline', { path }, githubContext, fileTree, { runSubAgent: null, depth: 0 });
+          if (r?.success && isUsefulToolResult(r.content, 'file_outline')) {
+            outlineResults.push({ id: `p4-outline-${i}`, path, content: r.content });
+          } else {
+            console.warn(`[P4] file_outline(${path}) not useful: ${(r?.content || '').slice(0, 80)}`);
+          }
+        } catch (e) {
+          console.warn(`[P4] file_outline(${path}) failed: ${e.message}`);
+        }
+      }
+      if (outlineResults.length > 0) {
+        currentMessages = [...currentMessages, {
+          role: 'assistant',
+          content: null,
+          tool_calls: outlineResults.map(r => ({
+            id: r.id,
+            type: 'function',
+            function: { name: 'file_outline', arguments: JSON.stringify({ path: r.path }) },
+          })),
+        }];
+        for (const r of outlineResults) {
+          currentMessages.push({ role: 'tool', tool_call_id: r.id, content: r.content });
+        }
+        console.warn(`[P4] Seeded ${outlineResults.length} file_outline result(s) for: ${outlineResults.map(r => r.path).join(', ')}`);
+      }
+    }
+  }
+
   const mainInvocation = globalMonitor.startInvocation({
     agentName: 'sendWithRetrieval',
     inputs: { messageCount: messages.length, fileTreeSize: fileTree?.length },
@@ -925,37 +1024,46 @@ export async function sendWithRetrieval({
       }];
     }
     const currentSize = estimateMessagesSize(currentMessages);
-    if (currentSize > MAX_CONTEXT_CHARS || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
+    if (currentSize > COMPRESSION_TARGET || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
       lastCompressionRound = rounds;
+      const preCompressSize = estimateMessagesSize(currentMessages);
       currentMessages = await compressMessages(currentMessages, { summarizerFn: summarizeOldRound, fileContents: originalFileContents });
       // Never send a context over the harness cap: if the normal pass could not
-      // bring it under, run the aggressive hard pass.
-      if (estimateMessagesSize(currentMessages) > MAX_CONTEXT_CHARS) {
+      // bring it under, run the aggressive hard pass (which now targets
+      // COMPRESSION_TARGET so the injected digest + fresh reads fit back under
+      // the cap).
+      if (estimateMessagesSize(currentMessages) > COMPRESSION_TARGET) {
         currentMessages = await compressMessages(currentMessages, { summarizerFn: summarizeOldRound, forceHard: true, fileContents: originalFileContents });
         console.warn(`[ToolRound] Hard compaction: ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
       }
       console.log(`[ToolRound] Compressed to ${currentMessages.length} messages (${estimateMessagesSize(currentMessages)} chars)`);
+      // Fix 3: only re-inject a digest when compression actually reclaimed
+      // something — otherwise it would only re-bloat the context for no benefit.
+      const compressionReclaimed = estimateMessagesSize(currentMessages) < preCompressSize;
 
       // P1: never leave the model blind after compaction. Rebuild the digest from
       // the persistent read store (which survives stubbing) and re-inject it, so
       // content that was just stubbed is still available — without a re-read. A
-      // tighter budget keeps the re-injection from re-bloating the context.
-      try {
-        const digest = await synthesizeFindingsDigest(currentMessages, {
-          originalFileContents,
-          readWindowsByPath: fileReadRanges,
-          editedFilePaths,
-          budget: 6000,
-        });
-        if (digest) {
-          currentMessages = [...currentMessages, {
-            role: 'user',
-            content: `📋 REFRESHED EXPLORATION DIGEST (after compression, round ${rounds + 1}):\n\n${digest}\n\nThis digest is rebuilt from the full file cache and preserves the exact line-numbered content you have already read — it survives compaction. Craft edit oldStrings directly from it; re-read only narrow slices you have NOT seen. Apply your changes now.`,
-          }];
-          console.warn(`[ToolRound] P1: injected post-compression digest at round ${rounds + 1} (${digest.length} chars)`);
+      // tighter budget keeps the re-injection from re-bloating the context, and
+      // upsertDigestMessage REPLACES any prior digest so digests never pile up.
+      // Fix 3: skip the injection entirely when compression found nothing to
+      // reclaim — a digest would only re-bloat the context for no benefit. Also
+      // never inject if compression still could not fit under the cap.
+      if (compressionReclaimed && estimateMessagesSize(currentMessages) <= MAX_CONTEXT_CHARS) {
+        try {
+          const digest = await synthesizeFindingsDigest(currentMessages, {
+            originalFileContents,
+            readWindowsByPath: fileReadRanges,
+            editedFilePaths,
+            budget: 5000,
+          });
+          if (digest) {
+            currentMessages = upsertDigestMessage(currentMessages, `📋 REFRESHED EXPLORATION DIGEST (after compression, round ${rounds + 1}):\n\n${digest}\n\nThis digest is rebuilt from the full file cache and preserves the exact line-numbered content you have already read — it survives compaction. Craft edit oldStrings directly from it; re-read only narrow slices you have NOT seen. Apply your changes now.`);
+            console.warn(`[ToolRound] P1: injected post-compression digest at round ${rounds + 1} (${digest.length} chars)`);
+          }
+        } catch (e) {
+          console.warn(`[ToolRound] P1: post-compression digest failed: ${e.message}`);
         }
-      } catch (e) {
-        console.warn(`[ToolRound] P1: post-compression digest failed: ${e.message}`);
       }
     }
 
@@ -1009,10 +1117,7 @@ export async function sendWithRetrieval({
           editedFilePaths,
         });
         if (digest) {
-          currentMessages = [...currentMessages, {
-            role: 'user',
-            content: `📋 EXPLORATION DIGEST (synthesized from your reads):\n\n${digest}\n\nThis digest is rebuilt from the full file cache and preserves the exact line-numbered content you have already read — it survives compaction. Craft edit oldStrings directly from it; re-read only narrow slices you have NOT seen. When your edit targets are clear, call set_mode("edit") to switch to the editing tool set.`,
-          }];
+          currentMessages = upsertDigestMessage(currentMessages, `📋 EXPLORATION DIGEST (synthesized from your reads):\n\n${digest}\n\nThis digest is rebuilt from the full file cache and preserves the exact line-numbered content you have already read — it survives compaction. Craft edit oldStrings directly from it; re-read only narrow slices you have NOT seen. When your edit targets are clear, call set_mode("edit") to switch to the editing tool set.`);
           console.warn(`[ToolRound] Fix 5: injected findings digest at round ${rounds + 1} (${digest.length} chars)`);
         }
       } catch (e) {
@@ -1047,10 +1152,7 @@ export async function sendWithRetrieval({
             editedFilePaths,
           });
           if (digest) {
-            currentMessages = [...currentMessages, {
-              role: 'user',
-              content: `📋 REFRESHED EXPLORATION DIGEST (round ${rounds + 1}):\n\n${digest}\n\nApply the changes now — if you are not already, call set_mode("edit") to switch to the editing tool set. The digest preserves the exact line-numbered content you have read; craft oldStrings from it directly and re-read only narrow slices you have NOT seen.`,
-            }];
+            currentMessages = upsertDigestMessage(currentMessages, `📋 REFRESHED EXPLORATION DIGEST (round ${rounds + 1}):\n\n${digest}\n\nApply the changes now — if you are not already, call set_mode("edit") to switch to the editing tool set. The digest preserves the exact line-numbered content you have read; craft oldStrings from it directly and re-read only narrow slices you have NOT seen.`);
             console.warn(`[ToolRound] Fix 4: injected refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
           }
         } catch (e) {
@@ -1647,8 +1749,10 @@ export async function sendWithRetrieval({
     }
 
     // C2: when a specific file is being re-read round after round with no edit
-    // to it, inject a targeted advisory nudge pointing at the exact content
-    // already in context. Advisory only — every tool stays available.
+    // to it, inject a targeted nudge carrying the ACTUAL content already in the
+    // persistent read store (recency-first slices, capped so the nudge stays
+    // small), so the model can craft edit oldStrings inline without re-reading.
+    // Advisory only — every tool stays available.
     for (const [fp, count] of fileDupCounts) {
       if (editedFilePaths.has(fp)) continue;
       const prevNudge = readStallNudgeRound.get(fp) ?? -Infinity;
@@ -1656,10 +1760,23 @@ export async function sendWithRetrieval({
         const ranges = fileReadRanges.get(fp) || [];
         const last = ranges[ranges.length - 1];
         const rangeHint = last ? `lines ${last.start}-${last.end}` : 'current content';
+        let storeSlice = '';
+        try {
+          const store = buildPersistentReadStore({ originalFileContents, readWindowsByPath: fileReadRanges, editedFilePaths });
+          const entry = store.get(fp);
+          if (entry && entry.content) {
+            storeSlice = entry.content.length > 2500 ? entry.content.slice(0, 2500) + '\n…' : entry.content;
+          }
+        } catch (e) {
+          console.warn(`[ToolRound] C2: persistent-store slice failed: ${e.message}`);
+        }
         readStallNudgeRound.set(fp, rounds);
+        const sliceBlock = storeSlice
+          ? `\n\nExact content already in context for "${fp}" (recency-first):\n\`\`\`\n${storeSlice}\n\`\`\``
+          : '';
         currentMessages = [...currentMessages, {
           role: 'user',
-          content: `📌 READ-STALL HINT (round ${rounds + 1}): You have already read "${fp}" (${rangeHint}) and its content is preserved line-numbered in the EXPLORATION DIGEST above. Re-reading the same region yields no new information. Craft the exact oldString from that content and call "edit" now; if a re-read is truly needed, read only the narrow slice around your target line. When you are ready, call set_mode("edit") to switch to the editing tool set.`,
+          content: `📌 READ-STALL HINT (round ${rounds + 1}): You have already read "${fp}" (${rangeHint}) and its content is preserved line-numbered.${sliceBlock}\n\nRe-reading the same region yields no new information. The exact oldString you need is in the content above — craft it and call "edit" NOW. If a re-read is truly needed, read only the narrow slice around your target line. When you are ready, call set_mode("edit") to switch to the editing tool set.`,
         }];
         console.warn(`[ToolRound] C2: read-stall nudge for ${fp} at round ${rounds + 1}`);
       }
@@ -1713,10 +1830,7 @@ export async function sendWithRetrieval({
             editedFilePaths,
           });
           if (digest) {
-            currentMessages = [...currentMessages, {
-              role: 'user',
-              content: `📋 REFRESHED FINDINGS DIGEST (round ${rounds + 1}):\n\n${digest}\n\nThis digest preserves the exact line-numbered content you have read — use it to identify what remains and craft edit oldStrings directly. Re-read only narrow slices you have NOT seen. When your edit targets are set, call set_mode("edit") to switch to the editing tool set.`,
-            }];
+            currentMessages = upsertDigestMessage(currentMessages, `📋 REFRESHED FINDINGS DIGEST (round ${rounds + 1}):\n\n${digest}\n\nThis digest preserves the exact line-numbered content you have read — use it to identify what remains and craft edit oldStrings directly. Re-read only narrow slices you have NOT seen. When your edit targets are set, call set_mode("edit") to switch to the editing tool set.`);
             console.warn(`[ToolRound] Self-redirect: refreshed digest at round ${rounds + 1} (${digest.length} chars)`);
           }
         } catch (e) {
