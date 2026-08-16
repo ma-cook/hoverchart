@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'hoverchart-content-store';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_ENTRIES = 'contentEntries';
 const STORE_BASE64 = 'base64Chunks';
 const STORE_META = 'meta';
@@ -40,13 +40,16 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE_ENTRIES)) db.createObjectStore(STORE_ENTRIES);
       if (!db.objectStoreNames.contains(STORE_BASE64)) db.createObjectStore(STORE_BASE64);
       if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
-      if (e.oldVersion < 3) {
+      if (e.oldVersion < 4) {
         // v1/v2 stored chunks under colliding bare "chunk-N" ids, which let
-        // Base64Store return the WRONG file's text. Discard the stale cache;
-        // the next scan/population rebuilds it with globally unique chunk ids.
+        // Base64Store return the WRONG file's text. v3's clear only ran on the
+        // v2->v3 upgrade, so DBs already at v3 kept any corruption written after
+        // that migration (cross-wired chunks, wrong-file text). v4 re-runs the
+        // clear on the upgrade transaction to purge those. The next scan /
+        // population rebuilds everything with globally unique chunk ids.
         // v2's attempt to clear here used db.transaction() inside the upgrade
         // and threw "A version change transaction is running", so the stale
-        // data survived — v3 re-runs the clear on the upgrade transaction.
+        // data survived — always clear on the upgrade transaction itself.
         try {
           const tx = e.target.transaction;
           if (tx) {

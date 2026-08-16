@@ -16,6 +16,26 @@ const DEFAULT_READ_LINES = 8000;
 const MAX_READ_LINES = 10000;
 const MAX_HITS_PER_FILE = 5;
 
+// Anchor for read_file staleness. Entries persisted before this page load
+// (e.g. a content store hydrated from a previous session's IndexedDB) are
+// treated as stale: read_file re-fetches them from GitHub once, then
+// persistFileContent re-stamps lastUpdated so later reads are served locally.
+const SESSION_STAMP = Date.now();
+
+// A store entry is untrustworthy when its lastUpdated predates this page load
+// (cross-session staleness) or when the joined chunk text drifts from the
+// entry's totalChars — the signature of the legacy chunk-id collision bug
+// where chunks from one file were served under another entry's id (wrong-file
+// text like a lockfile's JSON for a source file), or of duplicated/missing
+// chunks. joinChunks is byte-exact on indexed chunks, so any drift >1% means
+// corruption; legitimate entries always rejoin to exactly totalChars.
+function storeReadSuspect(entry, joinedText) {
+  if (!entry || !joinedText) return true;
+  if ((entry.lastUpdated || 0) < SESSION_STAMP) return true;
+  const totalChars = entry.totalChars || joinedText.length;
+  return totalChars > 0 && Math.abs(joinedText.length - totalChars) / totalChars > 0.01;
+}
+
 // Whole-file rewrite guard for the edit tool. An oldString that covers the
 // bulk of a file (or more than an absolute line budget) means the model is
 // regenerating the file instead of making a targeted edit — refuse it so the
@@ -1143,12 +1163,34 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const altId = `github:${path}`;
 
       let fullContent = null;
+      let refetched = false;
+      let hadStoreEntry = false;
       const entry = store.getEntry(storeId) || store.getEntry(altId);
       if (entry) {
+        hadStoreEntry = true;
         const chunks = base64Store.getChunks(entry.chunks.map(c => c.id));
         if (chunks.length > 0) {
           await new Promise(r => setTimeout(r, 0));
           fullContent = joinChunks(chunks);
+        }
+        // Self-heal stale/corrupt entries: re-fetch once from GitHub (which
+        // persistFileContent re-stamps fresh, so later reads are served from
+        // the store). On fetch failure keep the store copy — stale beats nothing.
+        if (fullContent && storeReadSuspect(entry, fullContent) && githubContext) {
+          try {
+            const fresh = await withTimeout(
+              fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token, repoRefOf(githubContext)),
+              TOOL_TIMEOUT_MS,
+              `read_file(${path})`,
+            );
+            if (fresh) {
+              persistFileContent(storeId, path, fresh);
+              fullContent = fresh;
+              refetched = true;
+            }
+          } catch (err) {
+            console.warn(`[read_file] store entry suspect and GitHub re-fetch failed (serving store copy): ${err.message}`);
+          }
         }
       }
 
@@ -1161,9 +1203,10 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
           );
           if (fullContent) {
             persistFileContent(storeId, path, fullContent);
+            refetched = true;
           }
         } catch (err) {
-          return { success: false, content: `Error reading ${path}: ${err.message}` };
+          return { success: false, content: hadStoreEntry ? `Error re-fetching ${path} from GitHub: ${err.message}` : `Error reading ${path}: ${err.message}` };
         }
       }
 
@@ -1181,7 +1224,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const selectedLines = allLines.slice(startLine - 1, endLine);
       const numbered = selectedLines.map((line, i) => `${startLine + i}: ${line}`).join('\n');
-      const sectionLabel = `[Read ${path}: lines ${startLine}-${endLine} of ${totalLines}]`;
+      const sectionLabel = `[Read ${path}: lines ${startLine}-${endLine} of ${totalLines}]${refetched ? ' [fetched fresh from GitHub — store copy was stale]' : ''}`;
       const suffix = endLine < totalLines
         ? `\n\n(Use offset=${endLine + 1} to continue reading.)`
         : '\n\n(End of file)';

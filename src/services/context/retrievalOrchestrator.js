@@ -836,6 +836,12 @@ export async function sendWithRetrieval({
   let duplicateReadRounds = 0;
   const editedFilePaths = new Set();
   const originalFileContents = new Map();
+  // Stamp for each cached file: { source: 'store'|'github', lastUpdated }.
+  // 'store' entries are re-validated against the live store on every cache hit
+  // so a store refresh (F1 re-anchor, another tab/session, an edit's
+  // persistence) is never masked by the run's frozen cache. 'github' entries
+  // were fetched fresh this run and are served as-is.
+  const originalFileSource = new Map();
   const preEditBaselines = new Map();
   let lastCompressionRound = -COMPRESSION_INTERVAL;
   // R2: overlap-aware read tracking. fileReadRanges records every read_file
@@ -905,7 +911,10 @@ export async function sendWithRetrieval({
   if (githubContext?.owner && githubContext?.repo) {
     try {
       const refreshed = await refreshRepoWorkingCopies({ githubContext });
-      for (const [p, c] of refreshed) originalFileContents.set(p, c);
+      for (const [p, c] of refreshed) {
+        originalFileContents.set(p, c);
+        originalFileSource.set(p, { source: 'github', lastUpdated: null });
+      }
     } catch (err) {
       console.warn(`[ToolRound] F1 refresh failed (continuing with stored copies):`, err.message);
     }
@@ -1502,7 +1511,34 @@ export async function sendWithRetrieval({
           // research-loop nudges.
           // Serve the requested range from the exact cached content FIRST so
           // re-reads return real text (needed for precise edit oldString).
-          const fullCached = originalFileContents.get(filePath);
+          // But never let the cache mask a store refresh: re-validate store-
+          // sourced entries against the live store's lastUpdated (a pre-run F1
+          // re-anchor, another tab/session, or this run's own edit persistence
+          // all bump it), re-fill when it moved, and fall through to executeTool
+          // for a fresh fetch when the entry vanished. Entries stamped 'github'
+          // were fetched fresh this run and are served as-is.
+          let fullCached = originalFileContents.get(filePath);
+          if (fullCached) {
+            const src = originalFileSource.get(filePath);
+            if (src?.source === 'store') {
+              const store = getContentStore();
+              const cur = store.getEntry(`repo:${filePath}`) || store.getEntry(`github:${filePath}`);
+              if (!cur) {
+                originalFileContents.delete(filePath);
+                originalFileSource.delete(filePath);
+                fullCached = null;
+              } else if (cur.lastUpdated !== src.lastUpdated) {
+                const b64Store = getBase64Store();
+                const chunks = b64Store.getChunks(cur.chunks.map(c => c.id));
+                const fresh = chunks.length > 0 ? joinChunks(chunks).replace(/\r\n/g, '\n') : null;
+                if (fresh) {
+                  originalFileContents.set(filePath, fresh);
+                  originalFileSource.set(filePath, { source: 'store', lastUpdated: cur.lastUpdated });
+                  fullCached = fresh;
+                }
+              }
+            }
+          }
           if (fullCached) {
             const lines = fullCached.split('\n');
             if (off <= lines.length) {
@@ -1536,6 +1572,7 @@ export async function sendWithRetrieval({
                 const chunks = b64Store.getChunks(entry.chunks.map(c => c.id));
                 if (chunks.length > 0) {
                   originalFileContents.set(filePath, joinChunks(chunks).replace(/\r\n/g, '\n'));
+                  originalFileSource.set(filePath, { source: 'store', lastUpdated: entry.lastUpdated });
                 }
               }
             }
@@ -1579,8 +1616,13 @@ export async function sendWithRetrieval({
           const result = await executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 }));
           if (tc.name === 'read_file' && result._fullContent) {
             const fp = normalizePath(tc.arguments?.path);
-            if (fp && !originalFileContents.has(fp) && !editedFilePaths.has(fp)) {
+            // Overwrite the cache unconditionally (when not edited): read_file is
+            // now self-healing, so its _fullContent is the freshest text the run
+            // has for the file — never let a pre-filled store-sourced cache (or a
+            // stale earlier read) shadow it.
+            if (fp && !editedFilePaths.has(fp)) {
               originalFileContents.set(fp, result._fullContent.replace(/\r\n/g, '\n'));
+              originalFileSource.set(fp, { source: 'github', lastUpdated: null });
             }
           }
           if ((tc.name === 'edit' || tc.name === 'write') && result.success && tc.arguments?.filePath) {
@@ -1595,6 +1637,7 @@ export async function sendWithRetrieval({
             }
             if (fp) {
               originalFileContents.delete(fp);
+              originalFileSource.delete(fp);
               editedFilePaths.add(fp);
             }
           }
@@ -1627,6 +1670,7 @@ export async function sendWithRetrieval({
         if ((tc.name === 'edit' || tc.name === 'write') && result.success && tc.arguments?.filePath) {
           const fp = normalizePath(tc.arguments.filePath);
           originalFileContents.delete(fp);
+          originalFileSource.delete(fp);
           fileLastEditRound.set(fp, rounds);
         }
       }
