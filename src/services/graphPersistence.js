@@ -11,6 +11,7 @@
  */
 
 import useDiagramStore from '../stores/diagramStore';
+import { safeGetItem, safeRemoveItem, safeSetItem } from '../utils/safeLocalStorage';
 
 const STORAGE_PREFIX = 'diagramDigest_';
 const MAX_DIGEST_CHARS = 4800000;
@@ -91,12 +92,20 @@ export async function saveDiagramDigest(spaceId) {
         console.warn(`[graphPersistence] Digest too large even compressed (${serialized.length} chars -> ${stored.length} chars) — skipping persistence. The 2D/analysis buttons will NOT restore after a page refresh for this space.`);
         return;
       }
-      localStorage.setItem(`${STORAGE_PREFIX}${spaceId}`, stored);
-      console.log(`[graphPersistence] Saved compressed digest: ${serialized.length} chars -> ${stored.length} chars`);
+      const compressedOk = safeSetItem(`${STORAGE_PREFIX}${spaceId}`, stored);
+      if (compressedOk) {
+        console.log(`[graphPersistence] Saved compressed digest: ${serialized.length} chars -> ${stored.length} chars`);
+      } else {
+        console.warn(`[graphPersistence] Quota full — could not persist compressed digest for space ${spaceId}. The 2D/analysis buttons will not restore after a page refresh.`);
+      }
       return;
     }
 
-    localStorage.setItem(`${STORAGE_PREFIX}${spaceId}`, serialized);
+    const plainOk = safeSetItem(`${STORAGE_PREFIX}${spaceId}`, serialized);
+    if (!plainOk) {
+      console.warn(`[graphPersistence] Quota full — could not persist digest for space ${spaceId}. The 2D/analysis buttons will not restore after a page refresh.`);
+      return;
+    }
   } catch (e) {
     console.warn('[graphPersistence] save failed:', e.message);
   }
@@ -105,7 +114,7 @@ export async function saveDiagramDigest(spaceId) {
 export async function loadDiagramDigest(spaceId) {
   if (!spaceId) return null;
   try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}${spaceId}`);
+    const raw = safeGetItem(`${STORAGE_PREFIX}${spaceId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && parsed.c === 1) {
@@ -120,9 +129,7 @@ export async function loadDiagramDigest(spaceId) {
 
 export function clearDiagramDigest(spaceId) {
   if (!spaceId) return;
-  try {
-    localStorage.removeItem(`${STORAGE_PREFIX}${spaceId}`);
-  } catch { /* ignore */ }
+  safeRemoveItem(`${STORAGE_PREFIX}${spaceId}`);
 }
 
 /**
