@@ -1,41 +1,95 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { pushCodeToGitHub } from '../services/githubPushService';
 import { getGithubToken } from '../services/githubRepoService';
+import { diffToHunks } from '../services/context/diffUtils';
 import './PendingChangesPanel.css';
 
+// Real LCS-based diff (via diffToHunks in diffUtils): unchanged lines stay
+// aligned, so +N/-M reflect ACTUAL changed lines instead of the whole file.
+// The old naive walker advanced both pointers on every mismatch, so a single
+// insertion shifted every subsequent line and reported the entire file as
+// removed + re-added (e.g. +1899/-1885 for a 1-line change).
 function computeDiffLines(original, proposed) {
-  const origLines = (original || '').replace(/\r\n/g, '\n').split('\n');
-  const propLines = (proposed || '').replace(/\r\n/g, '\n').split('\n');
-  const lines = [];
+  const origContent = (original || '').replace(/\r\n/g, '\n');
+  const propContent = (proposed || '').replace(/\r\n/g, '\n');
+  const origLines = origContent.split('\n');
+  const hunks = diffToHunks(origContent, propContent);
 
-  let i = 0;
-  let j = 0;
-  while (i < origLines.length || j < propLines.length) {
-    if (i < origLines.length && j < propLines.length) {
-      if (origLines[i] === propLines[j]) {
-        lines.push({ type: 'same', text: origLines[i], origLine: i + 1, propLine: j + 1 });
-        i++;
-        j++;
-      } else {
-        lines.push({ type: 'remove', text: origLines[i], origLine: i + 1 });
-        lines.push({ type: 'add', text: propLines[j], propLine: j + 1 });
-        i++;
-        j++;
-      }
-    } else if (i < origLines.length) {
-      lines.push({ type: 'remove', text: origLines[i], origLine: i + 1 });
-      i++;
-    } else {
-      lines.push({ type: 'add', text: propLines[j], propLine: j + 1 });
-      j++;
+  const lines = [];
+  let origIdx = 0;
+  let propIdx = 0;
+  let searchPos = 0;
+
+  const emitSame = (upTo) => {
+    for (let k = origIdx; k < upTo; k++) {
+      lines.push({ type: 'same', text: origLines[k], origLine: k + 1, propLine: propIdx + 1 });
+      origIdx++;
+      propIdx++;
     }
+  };
+
+  for (const hunk of hunks) {
+    let pos = origContent.indexOf(hunk.oldString, searchPos);
+    if (pos === -1) pos = origContent.indexOf(hunk.oldString);
+    let startLine = 0;
+    for (let k = 0; k < pos; k++) {
+      if (origContent[k] === '\n') startLine++;
+    }
+    searchPos = pos + hunk.oldString.length;
+
+    if (startLine > origIdx) emitSame(startLine);
+    origIdx = startLine;
+
+    const oldJoined = hunk.oldString;
+    const newJoined = hunk.newString;
+    const oldLs = oldJoined === '' ? [] : oldJoined.split('\n');
+    const newLs = newJoined === '' ? [] : newJoined.split('\n');
+
+    // diffToHunks anchors pure insertions to a run of unchanged lines
+    // (oldString = the anchor, newString = anchor + inserted). Recover the
+    // insertion so those anchor lines render as unchanged instead of being
+    // counted as removed + re-added.
+    let emitRemove = oldLs;
+    let emitAdd = newLs;
+    let anchorLines = [];
+    let anchorFirst = false;
+    if (oldLs.length > 0 && newJoined.length > oldJoined.length) {
+      if (newJoined.startsWith(oldJoined)) {
+        anchorFirst = true; // newFile: ...anchor + inserted...
+        emitAdd = newJoined.slice(oldJoined.length).split('\n');
+        if (emitAdd[0] === '') emitAdd.shift();
+        anchorLines = oldLs;
+        emitRemove = [];
+      } else if (newJoined.endsWith(oldJoined)) {
+        anchorFirst = false; // newFile: ...inserted + anchor...
+        emitAdd = newJoined.slice(0, newJoined.length - oldJoined.length).split('\n');
+        if (emitAdd[emitAdd.length - 1] === '') emitAdd.pop();
+        anchorLines = oldLs;
+        emitRemove = [];
+      }
+    }
+    if (emitAdd.length === 1 && emitAdd[0] === '') emitAdd = [];
+
+    if (anchorFirst) {
+      for (const t of anchorLines) lines.push({ type: 'same', text: t, origLine: origIdx + 1, propLine: propIdx + 1 });
+      for (const t of emitAdd) lines.push({ type: 'add', text: t, propLine: propIdx + anchorLines.length + 1 });
+    } else {
+      for (const t of emitRemove) lines.push({ type: 'remove', text: t, origLine: origIdx + 1 });
+      for (const t of emitAdd) lines.push({ type: 'add', text: t, propLine: propIdx + 1 });
+      for (const t of anchorLines) lines.push({ type: 'same', text: t, origLine: origIdx + 1, propLine: propIdx + emitRemove.length + 1 });
+    }
+
+    origIdx += oldLs.length;
+    propIdx += newLs.length;
   }
+
+  emitSame(origLines.length);
   return lines;
 }
 
 function DiffView({ original, proposed }) {
-  const lines = computeDiffLines(original, proposed);
+  const lines = useMemo(() => computeDiffLines(original, proposed), [original, proposed]);
   const additions = lines.filter(l => l.type === 'add').length;
   const deletions = lines.filter(l => l.type === 'remove').length;
 
