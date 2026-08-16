@@ -664,12 +664,52 @@ const requestTimestampsByProvider = new Map();
 const lastRequestAtByProvider = new Map();
 const COOLDOWN_STORAGE_KEY = 'llmProviderCooldowns';
 
+// Hard cap on simultaneous in-flight LLM requests per provider. Compression
+// summarizers fire right on top of the main tool round, and a synchronized
+// burst (2-6 concurrent) is what trips the upstream free tier into 429s. This
+// cap serializes them so bursts stay bounded.
+const MAX_IN_FLIGHT_PER_PROVIDER = 2;
+
 const inFlightByProvider = new Map();
 
 export function getInFlightCount() {
   let total = 0;
   for (const count of inFlightByProvider.values()) total += count;
   return total;
+}
+
+export function getProviderRateLimitState(providerId) {
+  const cutoff = Date.now() - RATE_WINDOW_MS;
+  const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
+  return {
+    usedInWindow: timestamps.length,
+    maxPerWindow: MAX_LLM_REQUESTS_PER_MINUTE,
+    cooldownRemainingMs: Math.max(0, (providerCooldownUntil.get(providerId) || 0) - Date.now()),
+    inFlight: inFlightByProvider.get(providerId) || 0,
+    maxInFlight: MAX_IN_FLIGHT_PER_PROVIDER,
+  };
+}
+
+async function acquireInFlightSlot(providerId, signal) {
+  for (;;) {
+    const current = inFlightByProvider.get(providerId) || 0;
+    if (current < MAX_IN_FLIGHT_PER_PROVIDER) {
+      inFlightByProvider.set(providerId, current + 1);
+      return;
+    }
+    console.warn(`[Concurrency] ${providerId} at cap (${MAX_IN_FLIGHT_PER_PROVIDER} in-flight) — waiting for a slot (same=${current})`);
+    await sleepAbortable(200, signal);
+  }
+}
+
+function releaseInFlightSlot(providerId) {
+  const after = (inFlightByProvider.get(providerId) || 0) - 1;
+  if (after <= 0) inFlightByProvider.delete(providerId);
+  else inFlightByProvider.set(providerId, after);
+  const totalAfter = getInFlightCount();
+  if (after > 0 || totalAfter > 0) {
+    console.warn(`[Concurrency] sendToZen finished: provider=${providerId} remaining same=${Math.max(0, after)} total=${totalAfter}`);
+  }
 }
 
 function loadPersistedCooldowns() {
@@ -720,38 +760,37 @@ export function getProviderCooldownRemainingMs(providerId) {
 }
 
 async function waitForRateLimit(providerId, signal) {
-  const now = Date.now();
+  // Token-bucket loop: after EVERY wait, re-check the window before recording a
+  // request. The check-and-record block below is fully synchronous, so only one
+  // caller can claim a slot per event-loop turn — concurrent waiters can no
+  // longer all burst through together once the throttle lifts.
+  for (;;) {
+    const cooldown = providerCooldownUntil.get(providerId) || 0;
+    if (Date.now() < cooldown) {
+      console.warn(`[RateLimit] ${providerId} still cooling down — waiting ${Math.round((cooldown - Date.now()) / 1000)}s`);
+      await sleepAbortable(cooldown - Date.now() + 50, signal);
+      continue;
+    }
 
-  const cooldown = providerCooldownUntil.get(providerId) || 0;
-  if (now < cooldown) {
-    console.warn(`[RateLimit] ${providerId} still cooling down — waiting ${Math.round((cooldown - now) / 1000)}s`);
-    await sleepAbortable(cooldown - now + 50, signal);
+    const cutoff = Date.now() - RATE_WINDOW_MS;
+    const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
+
+    const sinceLast = Date.now() - (lastRequestAtByProvider.get(providerId) || 0);
+
+    if (timestamps.length < MAX_LLM_REQUESTS_PER_MINUTE && sinceLast >= MIN_REQUEST_INTERVAL_MS) {
+      timestamps.push(Date.now());
+      requestTimestampsByProvider.set(providerId, timestamps);
+      lastRequestAtByProvider.set(providerId, Date.now());
+      return;
+    }
+
+    const waitMs = Math.max(
+      timestamps.length >= MAX_LLM_REQUESTS_PER_MINUTE ? timestamps[0] + RATE_WINDOW_MS - Date.now() + 50 : 0,
+      sinceLast < MIN_REQUEST_INTERVAL_MS ? MIN_REQUEST_INTERVAL_MS - sinceLast + 50 : 0
+    );
+    console.warn(`[RateLimit] ${providerId} pacing: ${timestamps.length}/${MAX_LLM_REQUESTS_PER_MINUTE} in window, spacing ${MIN_REQUEST_INTERVAL_MS / 1000}s — waiting ${Math.round(waitMs / 1000)}s`);
+    await sleepAbortable(waitMs, signal);
   }
-
-  const cutoff = now - RATE_WINDOW_MS;
-  const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
-
-  const lastAt = lastRequestAtByProvider.get(providerId) || 0;
-  const sinceLast = now - lastAt;
-
-  if (timestamps.length < MAX_LLM_REQUESTS_PER_MINUTE && sinceLast >= MIN_REQUEST_INTERVAL_MS) {
-    timestamps.push(Date.now());
-    requestTimestampsByProvider.set(providerId, timestamps);
-    lastRequestAtByProvider.set(providerId, Date.now());
-    return;
-  }
-
-  const waitMs = Math.max(
-    timestamps.length >= MAX_LLM_REQUESTS_PER_MINUTE ? timestamps[0] + RATE_WINDOW_MS - now + 50 : 0,
-    sinceLast < MIN_REQUEST_INTERVAL_MS ? MIN_REQUEST_INTERVAL_MS - sinceLast + 50 : 0
-  );
-  console.warn(`[RateLimit] ${providerId} pacing: ${timestamps.length}/${MAX_LLM_REQUESTS_PER_MINUTE} in window, spacing ${MIN_REQUEST_INTERVAL_MS / 1000}s — waiting ${Math.round(waitMs / 1000)}s`);
-  await sleepAbortable(waitMs, signal);
-
-  const refiltered = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > Date.now() - RATE_WINDOW_MS);
-  refiltered.push(Date.now());
-  requestTimestampsByProvider.set(providerId, refiltered);
-  lastRequestAtByProvider.set(providerId, Date.now());
 }
 
 export async function sendToZen({ messages, tools, onChunk, signal, llmConfig }) {
@@ -766,45 +805,42 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
     throw new Error('LLM not configured. Click the model button to set up a provider.');
   }
 
-  await waitForRateLimit(providerId, signal);
+  await acquireInFlightSlot(providerId, signal);
 
-  const inFlight = (inFlightByProvider.get(providerId) || 0) + 1;
-  inFlightByProvider.set(providerId, inFlight);
+  const inFlight = inFlightByProvider.get(providerId) || 0;
   const totalInFlight = getInFlightCount();
   if (inFlight > 1 || totalInFlight > 1) {
-    console.warn(`[Concurrency] sendToZen in-flight: provider=${providerId} same=${inFlight} total=${totalInFlight} — ${inFlight > 1 ? 'CONCURRENT LLM REQUESTS DETECTED' : 'parallel requests from different providers/windows'}`);
+    console.warn(`[Concurrency] sendToZen in-flight: provider=${providerId} same=${inFlight} total=${totalInFlight} (cap ${MAX_IN_FLIGHT_PER_PROVIDER}/provider) — ${inFlight > 1 ? 'parallel same-provider requests (capped)' : 'parallel requests from different providers/windows'}`);
   }
 
-  console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length} tools=${tools ? tools.length : 0}`);
-
-  let result;
   try {
-    result = await sendToProvider({
-      providerId,
-      apiKey,
-      model: selectedModel,
-      messages,
-      tools,
-      onChunk,
-      signal,
-    });
-  } catch (err) {
-    if (err?.status === 429 || /rate limit|too many requests/i.test(err?.message || '')) {
-      reportProviderRateLimited(providerId, err?.retryAfterMs);
-    }
-    throw err;
-  } finally {
-    const after = (inFlightByProvider.get(providerId) || 0) - 1;
-    if (after <= 0) inFlightByProvider.delete(providerId);
-    else inFlightByProvider.set(providerId, after);
-    const totalAfter = getInFlightCount();
-    if (after > 0 || totalAfter > 0) {
-      console.warn(`[Concurrency] sendToZen finished: provider=${providerId} remaining same=${Math.max(0, after)} total=${totalAfter}`);
-    }
-  }
+    await waitForRateLimit(providerId, signal);
 
-  if (tools && tools.length > 0) return result;
-  return result.text;
+    console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length} tools=${tools ? tools.length : 0}`);
+
+    let result;
+    try {
+      result = await sendToProvider({
+        providerId,
+        apiKey,
+        model: selectedModel,
+        messages,
+        tools,
+        onChunk,
+        signal,
+      });
+    } catch (err) {
+      if (err?.status === 429 || /rate limit|too many requests/i.test(err?.message || '')) {
+        reportProviderRateLimited(providerId, err?.retryAfterMs);
+      }
+      throw err;
+    }
+
+    if (tools && tools.length > 0) return result;
+    return result.text;
+  } finally {
+    releaseInFlightSlot(providerId);
+  }
 }
 
 export async function buildZenMessages({ llmMessages, sceneObjects, modelId, signal }) {

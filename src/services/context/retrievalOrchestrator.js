@@ -1,4 +1,4 @@
-import { sendToZen, getProviderCooldownRemainingMs } from '../zenService';
+import { sendToZen, getProviderRateLimitState } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { executeTool, resetEditTracker, refreshRepoWorkingCopies, getAppliedEditRecords } from './toolExecutor';
 import { fetchFileContent } from '../githubRepoService';
@@ -468,7 +468,12 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) 
     const measure = () => estimateMessagesSize(working.filter(Boolean));
     let hardSkipped = 0;
     let hardSummarizeCalls = 0;
-    const HARD_KEEP_LAST = 2;
+    // Keep the last several tool rounds INTACT during hard compaction. Stubbing
+    // a just-read file forces the model to re-read it (wasting a whole round and
+    // growing context again — a self-reinforcing loop). Only the OLDEST pairs
+    // are eligible for summarization/stubbing.
+    const HARD_KEEP_LAST = 5;
+    const SMALL_READ_KEEP_CHARS = 1500;
     for (let p = 0; p < pairs.length - HARD_KEEP_LAST; p++) {
       const pair = pairs[p];
       if (measure() <= MAX_CONTEXT_CHARS) break;
@@ -507,7 +512,11 @@ async function compressMessages(msgs, { summarizerFn, forceHard = false } = {}) 
           const name = (pair.assistant.tool_calls || []).find(t => t.id === tool.tool_call_id)?.function?.name || '';
           const firstLine = working[tIdx].content.split('\n')[0] || '';
           if (name === 'read_file') {
-            working[tIdx].content = `[Previously read: ${working[tIdx].content.length} chars — captured in EXPLORATION DIGEST]`;
+            // Keep small reads intact — they cost little and stubbing them would
+            // force a re-read. Only the largest read payloads get stubbed.
+            if (working[tIdx].content.length >= SMALL_READ_KEEP_CHARS) {
+              working[tIdx].content = `[Previously read: ${working[tIdx].content.length} chars — captured in EXPLORATION DIGEST]`;
+            }
           } else if (SEARCH_TOOLS.has(name)) {
             working[tIdx].content = `[Search results — ${working[tIdx].content.split('\n').length} lines]`;
           } else if (name === 'edit' || name === 'write') {
@@ -762,13 +771,19 @@ export async function sendWithRetrieval({
   });
 
   const summarizeOldRound = async (assistantMsg, toolMsgs) => {
-    // Skip the hidden LLM summarizer when the provider is already rate-limited —
-    // it would only burn another request against the same exhausted window.
-    // Compression degrades to the local drop/stub pass instead.
+    // Skip the hidden LLM summarizer when the provider is rate-limited OR its
+    // request window is nearly exhausted — another summarizer call would only
+    // add load exactly when the provider is most throttled. Compression
+    // degrades to the local drop/stub pass instead.
     const providerId = llmConfig?.providerId;
-    if (providerId && getProviderCooldownRemainingMs(providerId) > 0) {
-      console.warn(`[Compression] Skipping LLM summarization for ${providerId} — rate limit cooldown active`);
-      return null;
+    if (providerId) {
+      const rl = getProviderRateLimitState(providerId);
+      const WINDOW_RESERVE = 2;
+      const windowNearlyFull = rl.usedInWindow >= rl.maxPerWindow - WINDOW_RESERVE;
+      if (rl.cooldownRemainingMs > 0 || windowNearlyFull) {
+        console.warn(`[Compression] Skipping LLM summarization for ${providerId} — ${rl.cooldownRemainingMs > 0 ? `rate limit cooldown active (${Math.round(rl.cooldownRemainingMs / 1000)}s)` : `rate window nearly full (${rl.usedInWindow}/${rl.maxPerWindow})`}`);
+        return null;
+      }
     }
     const toolSnippets = toolMsgs.map(t => (t.content || '').slice(0, 800)).join('\n---\n');
     const prompt = `Summarize what the assistant learned or accomplished in 1 sentence (max 50 words):\n\nAssistant: ${(assistantMsg.content || '(no text)').slice(0, 300)}\n\nTool results:\n${toolSnippets.slice(0, 2500)}`;
