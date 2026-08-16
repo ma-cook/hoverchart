@@ -657,9 +657,23 @@ export async function ensureRepoContentIndexed({ owner, repo, branch, token, fil
   }
 }
 
-const MAX_LLM_REQUESTS_PER_MINUTE = 6;
-const MIN_REQUEST_INTERVAL_MS = 2 * 1000;
+// Base (unthrottled) client-side pacing. These are SELF-IMPOSED guardrails, not
+// opencode limits — they keep the app under the upstream proxy's per-minute
+// allowance, which we only ever hit via request bursts. The real burst control
+// is MAX_IN_FLIGHT_PER_PROVIDER below; this window is deliberately generous and
+// only tightens ADAPTIVELY after the provider actually returns a 429.
+const BASE_MAX_LLM_REQUESTS_PER_MINUTE = 20;
+const BASE_MIN_REQUEST_INTERVAL_MS = 1 * 1000;
 const RATE_WINDOW_MS = 60 * 1000;
+
+// Reduced tier engaged for a few minutes after an upstream 429, escalating on
+// repeat hits so a genuinely throttled provider gets progressively more space.
+const THROTTLED_MAX_LLM_REQUESTS_PER_MINUTE = 8;
+const THROTTLED_MIN_REQUEST_INTERVAL_MS = 3 * 1000;
+const THROTTLED_MIN_FLOOR = 4;
+const THROTTLE_REDUCE_DURATION_MS = 5 * 60 * 1000;
+const THROTTLE_RESET_IDLE_MS = 30 * 60 * 1000;
+
 const requestTimestampsByProvider = new Map();
 const lastRequestAtByProvider = new Map();
 const COOLDOWN_STORAGE_KEY = 'llmProviderCooldowns';
@@ -668,7 +682,11 @@ const COOLDOWN_STORAGE_KEY = 'llmProviderCooldowns';
 // summarizers fire right on top of the main tool round, and a synchronized
 // burst (2-6 concurrent) is what trips the upstream free tier into 429s. This
 // cap serializes them so bursts stay bounded.
-const MAX_IN_FLIGHT_PER_PROVIDER = 2;
+const MAX_IN_FLIGHT_PER_PROVIDER = 3;
+
+// Adaptive throttle state: after a real 429 we run at a reduced rate for a
+// while, then recover. In-memory only (short-lived); cooldowns stay persisted.
+const providerThrottleState = new Map(); // providerId -> { hits, lastHitAt, reducedUntil }
 
 const inFlightByProvider = new Map();
 
@@ -678,12 +696,40 @@ export function getInFlightCount() {
   return total;
 }
 
+// Current effective pacing for a provider: the generous base rate normally, the
+// reduced throttled tier for a while after a real 429. Decays back to base once
+// the provider has been clean long enough.
+function getEffectiveRate(providerId) {
+  const st = providerThrottleState.get(providerId);
+  if (st && st.hits > 0 && Date.now() < st.reducedUntil) {
+    return {
+      maxPerMinute: Math.max(THROTTLED_MIN_FLOOR, THROTTLED_MAX_LLM_REQUESTS_PER_MINUTE - (st.hits - 1)),
+      minIntervalMs: THROTTLED_MIN_REQUEST_INTERVAL_MS,
+      throttled: true,
+      throttleHits: st.hits,
+    };
+  }
+  if (st && st.hits > 0 && Date.now() - st.lastHitAt > THROTTLE_RESET_IDLE_MS) {
+    providerThrottleState.delete(providerId);
+  }
+  return {
+    maxPerMinute: BASE_MAX_LLM_REQUESTS_PER_MINUTE,
+    minIntervalMs: BASE_MIN_REQUEST_INTERVAL_MS,
+    throttled: false,
+    throttleHits: 0,
+  };
+}
+
 export function getProviderRateLimitState(providerId) {
   const cutoff = Date.now() - RATE_WINDOW_MS;
   const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
+  const { maxPerMinute, minIntervalMs, throttled, throttleHits } = getEffectiveRate(providerId);
   return {
     usedInWindow: timestamps.length,
-    maxPerWindow: MAX_LLM_REQUESTS_PER_MINUTE,
+    maxPerWindow: maxPerMinute,
+    minIntervalMs,
+    throttled,
+    throttleHits,
     cooldownRemainingMs: Math.max(0, (providerCooldownUntil.get(providerId) || 0) - Date.now()),
     inFlight: inFlightByProvider.get(providerId) || 0,
     maxInFlight: MAX_IN_FLIGHT_PER_PROVIDER,
@@ -752,6 +798,13 @@ export function reportProviderRateLimited(providerId, retryAfterMs) {
   const until = Date.now() + Math.max(retryAfterMs || 0, 60_000);
   providerCooldownUntil.set(providerId, until);
   persistCooldowns(providerCooldownUntil);
+  // Engage the reduced throttled tier so subsequent requests pace more gently
+  // than the base rate until the provider proves it has recovered.
+  const st = providerThrottleState.get(providerId) || { hits: 0, lastHitAt: 0, reducedUntil: 0 };
+  st.hits += 1;
+  st.lastHitAt = Date.now();
+  st.reducedUntil = Date.now() + THROTTLE_REDUCE_DURATION_MS;
+  providerThrottleState.set(providerId, st);
   console.warn(`[RateLimit] ${providerId} cooldown until ${new Date(until).toLocaleTimeString()} (${Math.round((until - Date.now()) / 1000)}s)`);
 }
 
@@ -772,12 +825,15 @@ async function waitForRateLimit(providerId, signal) {
       continue;
     }
 
+    // Re-read the effective rate every iteration so the throttled tier engages
+    // and disengages as 429s arrive / the recovery window expires.
+    const { maxPerMinute, minIntervalMs, throttled, throttleHits } = getEffectiveRate(providerId);
     const cutoff = Date.now() - RATE_WINDOW_MS;
     const timestamps = (requestTimestampsByProvider.get(providerId) || []).filter(t => t > cutoff);
 
     const sinceLast = Date.now() - (lastRequestAtByProvider.get(providerId) || 0);
 
-    if (timestamps.length < MAX_LLM_REQUESTS_PER_MINUTE && sinceLast >= MIN_REQUEST_INTERVAL_MS) {
+    if (timestamps.length < maxPerMinute && sinceLast >= minIntervalMs) {
       timestamps.push(Date.now());
       requestTimestampsByProvider.set(providerId, timestamps);
       lastRequestAtByProvider.set(providerId, Date.now());
@@ -785,10 +841,11 @@ async function waitForRateLimit(providerId, signal) {
     }
 
     const waitMs = Math.max(
-      timestamps.length >= MAX_LLM_REQUESTS_PER_MINUTE ? timestamps[0] + RATE_WINDOW_MS - Date.now() + 50 : 0,
-      sinceLast < MIN_REQUEST_INTERVAL_MS ? MIN_REQUEST_INTERVAL_MS - sinceLast + 50 : 0
+      timestamps.length >= maxPerMinute ? timestamps[0] + RATE_WINDOW_MS - Date.now() + 50 : 0,
+      sinceLast < minIntervalMs ? minIntervalMs - sinceLast + 50 : 0
     );
-    console.warn(`[RateLimit] ${providerId} pacing: ${timestamps.length}/${MAX_LLM_REQUESTS_PER_MINUTE} in window, spacing ${MIN_REQUEST_INTERVAL_MS / 1000}s — waiting ${Math.round(waitMs / 1000)}s`);
+    const mode = throttled ? `throttled after 429 (hit ${throttleHits})` : 'normal';
+    console.warn(`[RateLimit] ${providerId} pacing: ${timestamps.length}/${maxPerMinute} in window (${mode}), spacing ${minIntervalMs / 1000}s — waiting ${Math.round(waitMs / 1000)}s`);
     await sleepAbortable(waitMs, signal);
   }
 }
