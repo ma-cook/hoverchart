@@ -10,6 +10,12 @@
 //   - whole-file rewrites are returned as a single full-content hunk (a real
 //     diff, never an echo of a model-supplied block).
 
+// Cap the LCS DP table to avoid catastrophic O(n*m) allocation for large
+// files. 2M entries ≈ 8 MB (Int32Array) — a safe main-thread budget.
+// Files exceeding this fall back to a simple prefix/suffix diff that still
+// produces valid SEARCH/REPLACE hunks without the allocation.
+const MAX_DP_ENTRIES = 2_000_000;
+
 function lineDiff(beforeLines, afterLines) {
   const n = beforeLines.length;
   const m = afterLines.length;
@@ -27,6 +33,28 @@ function lineDiff(beforeLines, afterLines) {
     }
   }
   return dp;
+}
+
+// Fallback diff for files too large for the O(n*m) LCS table. Finds the
+// common prefix/suffix and returns a single hunk covering the changed region.
+// Produces valid SEARCH/REPLACE hunks without the Int32Array allocation.
+function simpleDiff(beforeLines, afterLines) {
+  let prefixLen = 0;
+  const minLen = Math.min(beforeLines.length, afterLines.length);
+  while (prefixLen < minLen && beforeLines[prefixLen] === afterLines[prefixLen]) {
+    prefixLen++;
+  }
+  let suffixLen = 0;
+  while (
+    suffixLen < minLen - prefixLen &&
+    beforeLines[beforeLines.length - 1 - suffixLen] === afterLines[afterLines.length - 1 - suffixLen]
+  ) {
+    suffixLen++;
+  }
+  const oldLines = beforeLines.slice(prefixLen, beforeLines.length - suffixLen);
+  const newLines = afterLines.slice(prefixLen, afterLines.length - suffixLen);
+  if (oldLines.length === 0 && newLines.length === 0) return [];
+  return [{ oldString: oldLines.join('\n'), newString: newLines.join('\n') }];
 }
 
 function countOccurrences(lines, anchor) {
@@ -73,6 +101,9 @@ export function diffToHunks(before, after) {
   const afterLines = after.split('\n');
   if (beforeLines.length === 0 || afterLines.length === 0) {
     return [{ oldString: before, newString: after }];
+  }
+  if (beforeLines.length * afterLines.length > MAX_DP_ENTRIES) {
+    return simpleDiff(beforeLines, afterLines);
   }
   const dp = lineDiff(beforeLines, afterLines);
   const m = afterLines.length;

@@ -20,6 +20,14 @@ export class ContentStore {
     this.totalChunks = 0;
     this._hydrated = false;
     this._hydratePromise = null;
+    // Incremental persistence: ids of entries changed (or removed) since the
+    // last IndexedDB save. saveContentStore drains these on its debounce, so
+    // an edit only ever rewrites ONE entry's chunks instead of serializing and
+    // re-writing the entire store (4135+ chunk texts) on the main thread —
+    // that whole-store write was a multi-hundred-ms main-thread block firing
+    // ~2s after every edit, which froze the tab while the LLM streamed.
+    this._dirtyIds = new Set();
+    this._removedIds = new Set();
   }
 
   async _ensureHydrated() {
@@ -84,6 +92,8 @@ export class ContentStore {
 
     this.entries.set(id, entry);
     this.totalChunks += chunks.length;
+    this._dirtyIds.add(id);
+    this._removedIds.delete(id);
     this._persist();
   }
 
@@ -93,6 +103,8 @@ export class ContentStore {
       this._removeFromIndex(entry);
       this.totalChunks -= entry.chunks.length;
       this.entries.delete(id);
+      this._dirtyIds.delete(id);
+      this._removedIds.add(id);
       this._persist();
     }
   }
@@ -101,11 +113,14 @@ export class ContentStore {
     this.entries.clear();
     this.invertedIndex.clear();
     this.totalChunks = 0;
+    this._dirtyIds.clear();
+    this._removedIds.clear();
     clearContentStorePersistence().catch(() => {});
   }
 
   hydrate(serializedEntries, serializedInvertedIndex, totalChunks) {
-    this.clear();
+    this.entries.clear();
+    this.invertedIndex.clear();
     for (const [id, entry] of serializedEntries) {
       this.entries.set(id, entry);
     }
@@ -114,6 +129,10 @@ export class ContentStore {
     }
     this.totalChunks = totalChunks;
     this._hydrated = true;
+    // The entries were just read back from persistence (or were built in
+    // memory from a fresh scan) — no need to write them all back.
+    this._dirtyIds.clear();
+    this._removedIds.clear();
     this._persist();
   }
 
@@ -141,13 +160,15 @@ export class ContentStore {
           this.invertedIndex.get(keyword).add(chunk.id);
         }
       }
+      this._dirtyIds.add(id);
+      this._removedIds.delete(id);
     }
     this._hydrated = true;
     this._persist();
   }
 
   _persist() {
-    saveContentStore(this.entries, this.invertedIndex, this.totalChunks);
+    saveContentStore(this);
   }
 
   search(query, { maxChunks = 10, category = null, entryIds = null } = {}) {

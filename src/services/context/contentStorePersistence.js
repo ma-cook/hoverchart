@@ -2,12 +2,16 @@
  * contentStorePersistence.js
  *
  * IndexedDB persistence for ContentStore.
- * Serializes Maps/Sets to arrays for storage, hydrates back on load.
+ * Entries are stored per-key (entry:<id>) so a save only rewrites the entries
+ * that actually changed instead of re-serializing the whole corpus (chunk text
+ * lives inline in entries, so the old whole-store write was a multi-hundred-ms
+ * main-thread block firing ~2s after every edit). The inverted index is NOT
+ * persisted — it is rebuilt from entries on load.
  * Auto-saves after upserts (debounced).
  */
 
 const DB_NAME = 'hoverchart-content-store';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORE_ENTRIES = 'contentEntries';
 const STORE_BASE64 = 'base64Chunks';
 const STORE_META = 'meta';
@@ -40,11 +44,17 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE_ENTRIES)) db.createObjectStore(STORE_ENTRIES);
       if (!db.objectStoreNames.contains(STORE_BASE64)) db.createObjectStore(STORE_BASE64);
       if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
-      if (e.oldVersion < 4) {
+      if (e.oldVersion < 5) {
+        // v5 changes the on-disk layout: entries move from one giant "entries"
+        // aggregate key to individual "entry:<id>" keys, and the persisted
+        // invertedIndex is dropped (rebuilt on load). The old whole-store write
+        // serialized ~4000 chunk texts and committed one multi-MB value on the
+        // main thread ~2s after every edit — enough to freeze the tab while
+        // the model streamed. v5 clears so the layout migrates cleanly.
         // v1/v2 stored chunks under colliding bare "chunk-N" ids, which let
         // Base64Store return the WRONG file's text. v3's clear only ran on the
         // v2->v3 upgrade, so DBs already at v3 kept any corruption written after
-        // that migration (cross-wired chunks, wrong-file text). v4 re-runs the
+        // that migration (cross-wired chunks, wrong-file text). v4 re-ran the
         // clear on the upgrade transaction to purge those. The next scan /
         // population rebuilds everything with globally unique chunk ids.
         // v2's attempt to clear here used db.transaction() inside the upgrade
@@ -92,10 +102,36 @@ function txGet(storeName, key) {
   }));
 }
 
+function txGetAll(storeName) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  }));
+}
+
 function txPut(storeName, key, value) {
   return openDB().then(db => new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readwrite');
     tx.objectStore(storeName).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+/**
+ * Apply a batch of puts/deletes in a single transaction. ops are
+ * ['put', key, value] or ['delete', key].
+ */
+function txBatch(storeName, ops) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    for (const op of ops) {
+      if (op[0] === 'put') store.put(op[2], op[1]);
+      else store.delete(op[1]);
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   }));
@@ -110,61 +146,39 @@ function txClear(storeName) {
   }));
 }
 
-// --- Serialization helpers ---
-
-function serializeEntries(entriesMap) {
-  return Array.from(entriesMap.entries()).map(([id, entry]) => ({
-    id,
-    ...entry,
-  }));
-}
-
-function deserializeEntries(rows) {
-  const map = new Map();
-  for (const row of rows) {
-    const { id, ...entry } = row;
-    map.set(id, entry);
-  }
-  return map;
-}
-
-function serializeInvertedIndex(indexMap) {
-  return Array.from(indexMap.entries()).map(([keyword, chunkIdSet]) => ({
-    keyword,
-    chunkIds: Array.from(chunkIdSet),
-  }));
-}
-
-function deserializeInvertedIndex(rows) {
-  const map = new Map();
-  for (const row of rows) {
-    map.set(row.keyword, new Set(row.chunkIds));
-  }
-  return map;
-}
-
 // --- Public API ---
 
 let _saveTimer = null;
 const SAVE_DEBOUNCE_MS = 2000;
 
 /**
- * Save content store state to IndexedDB.
+ * Save changed content store entries to IndexedDB.
  * Debounced — multiple rapid calls within 2s collapse into one write.
+ * Only entries flagged dirty (and removals) are written, each under its own
+ * entry:<id> key, so an edit rewrites ONE entry's chunks instead of the whole
+ * corpus. The store drains its dirty/removed sets after a successful save.
  */
-export function saveContentStore(entries, invertedIndex, totalChunks) {
+export function saveContentStore(store) {
+  if (!store || !store._dirtyIds) return;
   if (_saveTimer) clearTimeout(_saveTimer);
   _saveTimer = setTimeout(async () => {
     try {
-      const entriesRows = serializeEntries(entries);
-      const indexRows = serializeInvertedIndex(invertedIndex);
+      const ops = [];
+      for (const id of store._dirtyIds) {
+        const entry = store.entries.get(id);
+        if (entry) ops.push(['put', `entry:${id}`, { id, ...entry }]);
+      }
+      for (const id of store._removedIds) {
+        ops.push(['delete', `entry:${id}`]);
+      }
+      if (ops.length) await txBatch(STORE_ENTRIES, ops);
       await Promise.all([
-        txPut(STORE_ENTRIES, 'entries', entriesRows),
-        txPut(STORE_ENTRIES, 'invertedIndex', indexRows),
-        txPut(STORE_META, 'totalChunks', totalChunks),
+        txPut(STORE_META, 'totalChunks', store.totalChunks),
         txPut(STORE_META, 'lastSaved', Date.now()),
       ]);
-      console.log(`[contentStorePersistence] Saved ${entriesRows.length} entries, ${indexRows.length} index keys, ${totalChunks} chunks`);
+      store._dirtyIds.clear();
+      store._removedIds.clear();
+      console.log(`[contentStorePersistence] Saved ${ops.filter(op => op[0] === 'put').length} entries, removed ${ops.filter(op => op[0] === 'delete').length}`);
     } catch (err) {
       console.warn('[contentStorePersistence] Save failed:', err.message);
     }
@@ -174,20 +188,34 @@ export function saveContentStore(entries, invertedIndex, totalChunks) {
 /**
  * Load content store state from IndexedDB.
  * Returns { entries, invertedIndex, totalChunks } or null if nothing saved.
+ * The inverted index is rebuilt from entry chunks (it is no longer persisted).
+ * Legacy v4 aggregate rows (no id field) are skipped.
  */
 export async function loadContentStore() {
   try {
-    const [entriesRows, indexRows, totalChunks] = await Promise.all([
-      txGet(STORE_ENTRIES, 'entries'),
-      txGet(STORE_ENTRIES, 'invertedIndex'),
-      txGet(STORE_META, 'totalChunks'),
-    ]);
-    if (!entriesRows || !indexRows) return null;
-    return {
-      entries: deserializeEntries(entriesRows),
-      invertedIndex: deserializeInvertedIndex(indexRows),
-      totalChunks: totalChunks || 0,
-    };
+    const rows = await txGetAll(STORE_ENTRIES);
+    const entries = new Map();
+    for (const row of rows) {
+      if (row && typeof row.id === 'string') {
+        const { id, ...entry } = row;
+        entries.set(id, entry);
+      }
+    }
+    if (entries.size === 0) return null;
+    const invertedIndex = new Map();
+    let totalChunks = 0;
+    for (const entry of entries.values()) {
+      totalChunks += entry.chunks.length;
+      for (const chunk of entry.chunks) {
+        for (const keyword of chunk.keywords) {
+          if (!invertedIndex.has(keyword)) {
+            invertedIndex.set(keyword, new Set());
+          }
+          invertedIndex.get(keyword).add(chunk.id);
+        }
+      }
+    }
+    return { entries, invertedIndex, totalChunks };
   } catch (err) {
     console.warn('[contentStorePersistence] Load failed:', err.message);
     return null;

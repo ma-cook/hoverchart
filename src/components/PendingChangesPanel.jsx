@@ -5,6 +5,8 @@ import { getGithubToken } from '../services/githubRepoService';
 import { diffToHunks } from '../services/context/diffUtils';
 import './PendingChangesPanel.css';
 
+const MAX_DIFF_LINES = 600;
+
 // Real LCS-based diff (via diffToHunks in diffUtils): unchanged lines stay
 // aligned, so +N/-M reflect ACTUAL changed lines instead of the whole file.
 // The old naive walker advanced both pointers on every mismatch, so a single
@@ -92,12 +94,19 @@ function DiffView({ original, proposed }) {
   const lines = useMemo(() => computeDiffLines(original, proposed), [original, proposed]);
   const additions = lines.filter(l => l.type === 'add').length;
   const deletions = lines.filter(l => l.type === 'remove').length;
+  const truncated = lines.length > MAX_DIFF_LINES;
+  const displayLines = truncated ? lines.slice(0, MAX_DIFF_LINES) : lines;
 
   return (
     <div style={{ fontSize: '11px', marginTop: '6px' }}>
       <div className="diff-stats">
         <span className="additions">+{additions}</span>
         <span className="deletions">-{deletions}</span>
+        {truncated && (
+          <span style={{ color: '#aaa', marginLeft: '8px' }}>
+            (showing {MAX_DIFF_LINES} of {lines.length} lines)
+          </span>
+        )}
       </div>
       <pre style={{
         background: 'rgba(0, 0, 0, 0.3)',
@@ -107,7 +116,7 @@ function DiffView({ original, proposed }) {
         overflowY: 'auto',
         margin: 0,
       }}>
-        {lines.map((line, idx) => (
+        {displayLines.map((line, idx) => (
           <div key={idx} className={`diff-line ${line.type}`}>
             {line.type === 'add' ? '+ ' : line.type === 'remove' ? '- ' : '  '}{line.text}
           </div>
