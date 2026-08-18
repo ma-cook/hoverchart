@@ -35,6 +35,8 @@ import {
   updatePlanText,
   generatePlanTitle,
 } from '../services/planService';
+import { createTicket, updateTicket, emitTicketCreated, emitTicketUpdated } from '../services/workflowService';
+import { buildWorkflowContext } from '../services/workflowCoordination';
 
 const getGuestId = () => {
   let guestId = sessionStorage.getItem('guestPresenceId');
@@ -737,6 +739,22 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     const currentStreamKey = `code-stream-${Date.now()}`;
     streamingMsgKeyRef.current = currentStreamKey;
 
+    // Create a workflow ticket for this LLM task
+    let workflowTicket = null;
+    try {
+      workflowTicket = await createTicket({
+        spaceId,
+        userId: user?.uid || user?.sub,
+        userName: user?.name || 'Anonymous',
+        userPicture: user?.picture || null,
+        promptPreview: text.slice(0, 120),
+        promptFull: text,
+      });
+      emitTicketCreated(workflowTicket);
+    } catch (ticketErr) {
+      console.warn('[CodeSend] Failed to create workflow ticket:', ticketErr.message);
+    }
+
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
@@ -794,12 +812,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       }
 
       console.log('[CodeSend] Building code gen messages...');
+      const workflowCtx = buildWorkflowContext(spaceId, user?.uid || user?.sub);
       const codeGenMessages = await buildCodeGenMessages({
         userRequest: text,
         sceneObjects,
         techStack,
         repoContext,
         corrections: correctionsRef.current,
+        workflowContext: workflowCtx,
       });
       const systemLen = codeGenMessages[0]?.content?.length || 0;
       console.log(`[CodeSend] Messages built. System message: ${systemLen} chars`);
@@ -1002,6 +1022,26 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           });
         csState.addPendingChanges(newChanges);
 
+        // Update workflow ticket with completed status and file diffs
+        if (workflowTicket) {
+          try {
+            const ticketDiffs = newChanges.map((c) => ({
+              filePath: c.filePath,
+              original: c.original,
+              proposed: c.proposed,
+              action: c.action,
+            }));
+            const updated = await updateTicket(workflowTicket.id, {
+              status: 'to_review',
+              filesTouched: newChanges.map((c) => c.filePath),
+              diffs: ticketDiffs,
+            });
+            emitTicketUpdated(updated);
+          } catch (ticketErr) {
+            console.warn('[CodeSend] Failed to update workflow ticket:', ticketErr.message);
+          }
+        }
+
         const modifiedCount = newChanges.filter(c => c.action === 'modify').length;
         const createdCount = newChanges.filter(c => c.action === 'create').length;
         const summary = `Generated ${mergedBlocks.length} file(s). ${modifiedCount} modified, ${createdCount} created. Review in the sidebar panel.`;
@@ -1035,6 +1075,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             streaming: false,
           }];
         });
+        // No file changes — mark ticket as committed (nothing to review)
+        if (workflowTicket) {
+          try {
+            const updated = await updateTicket(workflowTicket.id, { status: 'committed' });
+            emitTicketUpdated(updated);
+          } catch (ticketErr) {
+            console.warn('[CodeSend] Failed to update workflow ticket:', ticketErr.message);
+          }
+        }
       }
     } catch (err) {
       if (err.name === 'AbortError') return;

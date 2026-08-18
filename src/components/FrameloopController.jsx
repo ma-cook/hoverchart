@@ -18,7 +18,7 @@ function FrameloopController() {
 
   useEffect(() => {
     if (viewMode === '3d') {
-      set({ frameloop: 'demand' });
+      set({ frameloop: 'always' });
 
       // Pump a few extra frames to handle edge cases where the first frame
       // runs before React has flushed the visibility CSS change (so the GL

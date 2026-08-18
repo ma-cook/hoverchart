@@ -1,0 +1,358 @@
+/* ── Workflow Modal ─────────────────────────────────────────────── */
+
+.workflow-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workflow-modal {
+  background: linear-gradient(180deg, rgba(26, 26, 30, 0.97), rgba(18, 18, 22, 0.97));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.6);
+  width: min(720px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #e6e6e6;
+}
+
+/* Header */
+.workflow-modal-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.workflow-modal-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #f3f3f3;
+}
+
+.workflow-modal-count {
+  margin-left: 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.workflow-modal-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 120ms, color 120ms;
+}
+.workflow-modal-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* Tabs */
+.workflow-modal-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.workflow-modal-tab {
+  padding: 6px 14px;
+  border-radius: 6px;
+  background: none;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workflow-modal-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.8);
+}
+.workflow-modal-tab.active {
+  background: rgba(120, 160, 255, 0.15);
+  border-color: rgba(120, 160, 255, 0.4);
+  color: #cfe0ff;
+}
+
+.workflow-modal-tab-count {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.45);
+  min-width: 16px;
+  text-align: center;
+}
+.workflow-modal-tab.active .workflow-modal-tab-count {
+  background: rgba(120, 160, 255, 0.2);
+  color: #cfe0ff;
+}
+
+/* Body */
+.workflow-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.workflow-modal-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 13px;
+}
+
+/* ── Ticket Row ─────────────────────────────────────────────────── */
+
+.workflow-ticket-row {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 120ms, border-color 120ms;
+}
+.workflow-ticket-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.workflow-ticket-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Avatar */
+.workflow-ticket-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.workflow-ticket-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.workflow-ticket-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(120, 160, 255, 0.2);
+  color: #cfe0ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Info */
+.workflow-ticket-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.workflow-ticket-topline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-ticket-user {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6e6e6;
+}
+
+.workflow-ticket-time {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.workflow-ticket-preview {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 340px;
+  margin-top: 2px;
+}
+
+.workflow-ticket-files {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.workflow-ticket-file-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.5);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.workflow-ticket-file-more {
+  font-size: 10px;
+  padding: 1px 6px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* Status badge */
+.workflow-ticket-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 10px;
+  border: 1px solid;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Actions */
+.workflow-ticket-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.workflow-ticket-btn {
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, opacity 120ms;
+}
+.workflow-ticket-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workflow-ticket-btn-accept {
+  background: rgba(122, 220, 126, 0.15);
+  border-color: rgba(122, 220, 126, 0.5);
+  color: #7adc7e;
+}
+.workflow-ticket-btn-accept:hover:not(:disabled) {
+  background: rgba(122, 220, 126, 0.25);
+}
+
+.workflow-ticket-btn-reject {
+  background: rgba(244, 120, 100, 0.12);
+  border-color: rgba(244, 120, 100, 0.4);
+  color: #f47864;
+}
+.workflow-ticket-btn-reject:hover:not(:disabled) {
+  background: rgba(244, 120, 100, 0.22);
+}
+
+.workflow-ticket-chevron {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* Expanded details */
+.workflow-ticket-expanded {
+  padding: 0 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.workflow-ticket-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+  margin-top: 10px;
+}
+
+.workflow-ticket-prompt-text {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  line-height: 1.5;
+}
+
+.workflow-ticket-diff-file {
+  margin-top: 8px;
+}
+
+.workflow-ticket-diff-path {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 4px;
+}
+
+.workflow-ticket-no-diffs {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+  font-style: italic;
+  padding: 12px 0;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────── */
+
+.workflow-modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+.workflow-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.workflow-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+.workflow-modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .workflow-modal {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .workflow-ticket-preview {
+    max-width: 180px;
+  }
+}

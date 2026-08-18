@@ -1300,7 +1300,7 @@ function buildRepoMap(repoContext, sceneObjects) {
   return parts.join('\n') || '(repo context not loaded — use list_files("") to browse)';
 }
 
-export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext, corrections = [] }) {
+export async function buildCodeGenMessages({ userRequest, sceneObjects, techStack = '', repoContext, corrections = [], workflowContext = '' }) {
   const techStackSection = techStack || 'Not specified — use your best judgment.';
 
   let projectNotes = '';
@@ -1315,7 +1315,8 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{techStack}', techStackSection)
     .replace('{projectNotes}', projectNotes || '(none loaded — if the repo has AGENTS.md or README conventions, read them yourself)')
-    .replace('{repoMap}', repoMap);
+    .replace('{repoMap}', repoMap)
+    + (workflowContext ? `\n\n${workflowContext}` : '');
 
   console.log(`[buildCodeGenMessages] System prompt: ${systemContent.length} chars`);
 

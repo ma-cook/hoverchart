@@ -37,6 +37,8 @@ import CodeWorkspace from './CodeWorkspace';
 import PendingChangesPanel from './PendingChangesPanel';
 import RepoAnalysisOverlay from './RepoAnalysisOverlay';
 import RecordingFormatPrompt from './RecordingFormatPrompt';
+import WorkflowModal from './WorkflowModal';
+import useWorkflowStore from '../stores/workflowStore';
 import './RepoAnalysisOverlay.css';
 import './TopBar.css';
 import useEarthSettingsStore from '../stores/earthSettingsStore';
@@ -1672,6 +1674,14 @@ const UIOverlay = ({
                   i
                 </button>
               )}
+              <button
+                className="top-bar-btn workflow-btn"
+                onClick={() => useWorkflowStore.getState().toggleModal()}
+                title="Workflow — View LLM task tickets"
+                aria-label="Open workflow"
+              >
+                ☰
+              </button>
               <ObjectSearch />
             </>
           )}
@@ -2315,6 +2325,7 @@ const UIOverlay = ({
       )}
 
       <PendingChangesPanel />
+      <WorkflowModal />
     </>
   );
 };
