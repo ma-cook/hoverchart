@@ -247,23 +247,35 @@ const UIOverlay = ({
   const [latestMarkdownUrl, setLatestMarkdownUrl] = useState(null);
   const [lastCommitSha, setLastCommitSha] = useState(null);
   const lastGeneratedMarkdownBlobRef = useRef(null);
+  const lastGeneratedMarkdownTextRef = useRef(null);
 
-  const storeGeneratedMarkdown = useCallback((markdown) => {
+  const storeGeneratedMarkdown = useCallback((markdown, spaceId) => {
     if (lastGeneratedMarkdownBlobRef.current) {
       URL.revokeObjectURL(lastGeneratedMarkdownBlobRef.current);
     }
     if (!markdown) {
       lastGeneratedMarkdownBlobRef.current = null;
+      lastGeneratedMarkdownTextRef.current = null;
       setLastGeneratedMarkdownUrl(null);
+      if (spaceId) {
+        try { localStorage.removeItem(`diagramMarkdownText_${spaceId}`); } catch { /* ignore */ }
+      }
       return;
     }
+    lastGeneratedMarkdownTextRef.current = markdown;
     const blob = new Blob([markdown], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     lastGeneratedMarkdownBlobRef.current = url;
     setLastGeneratedMarkdownUrl(url);
+    if (spaceId) {
+      try { safeSetItem(`diagramMarkdownText_${spaceId}`, markdown); } catch { /* ignore */ }
+    }
   }, []);
 
   const fetchGeneratedMarkdown = useCallback(async () => {
+    if (lastGeneratedMarkdownTextRef.current) {
+      return lastGeneratedMarkdownTextRef.current;
+    }
     if (lastGeneratedMarkdownBlobRef.current) {
       try {
         const resp = await fetch(lastGeneratedMarkdownBlobRef.current);
@@ -367,7 +379,16 @@ const UIOverlay = ({
     setLatestMarkdownUrl(localUrl);
     const localSha = localStorage.getItem(`diagramCommitSha_${currentSpaceId}`) || null;
     setLastCommitSha(localSha);
-    storeGeneratedMarkdown(null);
+    const localMd = localStorage.getItem(`diagramMarkdownText_${currentSpaceId}`) || null;
+    if (localMd) {
+      lastGeneratedMarkdownTextRef.current = localMd;
+      const blob = new Blob([localMd], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      lastGeneratedMarkdownBlobRef.current = url;
+      setLastGeneratedMarkdownUrl(url);
+    } else {
+      storeGeneratedMarkdown(null);
+    }
 
     // Hydrate any missing pieces from Firestore (cross-device support)
     const needsBackendFetch = !localUrl || !localSha || !stored;
@@ -395,7 +416,7 @@ const UIOverlay = ({
   // storage URL is persisted and the hydration effect re-renders the 2D /
   // analysis buttons after a page refresh.
   const handleChatDiagramGenerated = useCallback(({ markdown, storageUrl, commitSha, repo }) => {
-    if (markdown) storeGeneratedMarkdown(markdown);
+    if (markdown) storeGeneratedMarkdown(markdown, currentSpaceId);
     if (repo) setCurrentDiagramRepo(repo);
     if (storageUrl) setLatestMarkdownUrl(storageUrl);
     if (commitSha) setLastCommitSha(commitSha);
@@ -713,7 +734,7 @@ const UIOverlay = ({
 
       // Update stored state
       setLastCommitSha(rescanResult.commitSha);
-      storeGeneratedMarkdown(rescanResult.mergedMarkdown);
+      storeGeneratedMarkdown(rescanResult.mergedMarkdown, currentSpaceId);
       // Deferred so the scan-complete state can paint before the digest
       // snapshot is serialized.
       setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
@@ -802,10 +823,16 @@ const UIOverlay = ({
       try {
         const response = await fetch(latestMarkdownUrl);
         const text = await response.text();
+        if (text.trimStart().startsWith('<!DOCTYPE') || text.trimStart().startsWith('<html')) {
+          alert('The stored markdown URL is no longer valid. Generate a new diagram to re-download.');
+          return;
+        }
         triggerDownload(text);
       } catch {
         alert('Failed to download markdown file.');
       }
+    } else {
+      alert('No markdown available. Generate a diagram first via the space chat.');
     }
   }, [fetchGeneratedMarkdown, latestMarkdownUrl, currentDiagramRepo]);
 
@@ -846,7 +873,7 @@ const UIOverlay = ({
 
       if (result.success) {
         setLastScannedUrl(url);
-        if (result.markdown) storeGeneratedMarkdown(result.markdown);
+        if (result.markdown) storeGeneratedMarkdown(result.markdown, currentSpaceId);
         // Deferred so the scan-complete state can paint before the digest
         // snapshot is serialized.
         setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
@@ -1003,7 +1030,7 @@ const UIOverlay = ({
       window._bulkDeleteInProgress = false;
       setIsDeleting(false);
       setCurrentDiagramRepo(null);
-      storeGeneratedMarkdown(null);
+      storeGeneratedMarkdown(null, currentSpaceId);
       setLatestMarkdownUrl(null);
       setLastCommitSha(null);
       setAnalysisOpen(false);
