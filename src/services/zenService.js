@@ -70,7 +70,20 @@ You can:
 
 When asked a general question, answer conversationally and helpfully.
 When asked to create or modify a diagram, output Merfolk inside \`\`\`merfolk blocks.
-You may also suggest code structure, file organization, and implementation approaches.`;
+You may also suggest code structure, file organization, and implementation approaches.
+
+═══════════════════════════════════════════════════════════════
+PLAN MANAGEMENT — Break complex requests into tasks
+═══════════════════════════════════════════════════════════════
+
+When the user's request involves multiple actions or steps, use the plan tools to organize your work:
+
+1. Call create_plan("title") to start a new plan
+2. Call add_task("task description") for each actionable step
+3. Call get_plan to review the plan before starting work
+4. Call complete_task("task text or id") as you finish each step
+
+Plans are visible to the user in the plan overlay panel. Always create a plan when the request has 2+ distinct actions.`;
 
 const FEW_SHOT_EXAMPLES = [
   {
@@ -1059,7 +1072,19 @@ BEFORE editing, write your root-cause trace in 3-4 bullets: (a) the exact gate t
    Each SEARCH block must match the current file exactly and cover ONLY the lines you are changing — NEVER the whole file. A SEARCH block spanning ~80% or more of the file (or more than ~200 lines) is REJECTED outright and the proposal is kept for manual review, never applied. Emitting whole files wastes context and is always rejected, so always use the edit tool or narrow SEARCH/REPLACE hunks. For changes spanning multiple regions, output ONE narrow SEARCH/REPLACE block PER edit location (e.g. 3 edits -> 3 small blocks), never one giant block per file.
 19. COMPLETENESS: when you add a field to any persisted or serialized structure (localStorage digest, API payload, storage URL record, database row), you MUST also add the corresponding read/restore on load in the SAME change. A field that is written but never read back is dead code and will be rejected by review.
 20. Prefer fixing the path that is actually failing over adding a new fallback. If you find a silent failure (a function that returns without setting the state the UI depends on, or swallows an error), the primary fix is to surface that failure (throw/reject) so the existing fallback paths can run — then add a new fallback only if a real gap remains.
-  `;
+
+═══════════════════════════════════════════════════════════════
+PLAN MANAGEMENT — Break complex requests into tasks
+═══════════════════════════════════════════════════════════════
+
+When the user's request involves multiple actions or steps, use the plan tools to organize your work:
+
+1. Call create_plan("title") to start a new plan
+2. Call add_task("task description") for each actionable step
+3. Call get_plan to review the plan before starting work
+4. Call complete_task("task text or id") as you finish each step
+
+Plans are visible to the user in the plan overlay panel. Always create a plan when the request has 2+ distinct actions.`;
 
 function formatFileSize(chars) {
   if (chars < 1024) return `${chars}B`;

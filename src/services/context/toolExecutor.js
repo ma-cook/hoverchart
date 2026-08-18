@@ -5,6 +5,9 @@ import { extractKeywords, chunkTextWithYield, MAX_INDEXED_FILE_CHARS, joinChunks
 import { getContentStoreWorker, getContentStoreWorkerHealth } from '../../workers/contentStoreWorkerClient';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
+import usePlanStore from '../../stores/planStore';
+import useAuthStore from '../../stores/authStore';
+import { createPlanApi, addTaskApi, completeTaskApi } from '../planApiService';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
 import { computeSubAgentTools } from './toolProvider';
 import { SKILL_MANAGEMENT_TOOL_DEFS } from './skillManager';
@@ -1775,6 +1778,74 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         console.warn(`[SubAgent] Sub-agent failed:`, err.message);
         return { success: false, content: `Sub-agent error: ${err.message}` };
       }
+    }
+
+    case 'create_plan': {
+      const title = args.title;
+      if (!title) return { success: false, content: 'create_plan requires a "title" parameter' };
+      try {
+        const planState = usePlanStore.getState();
+        const planData = await createPlanApi(planState.spaceId, title);
+        const plan = { id: planData.id, spaceId: planData.space_id, title: planData.title, createdAt: planData.created_at };
+        usePlanStore.getState()._setPlan(plan);
+        return { success: true, content: `Created plan "${plan.title}" (id: ${plan.id}). Add tasks with add_task.` };
+      } catch (err) {
+        return { success: false, content: `Failed to create plan: ${err.message}` };
+      }
+    }
+
+    case 'add_task': {
+      const text = args.text;
+      if (!text) return { success: false, content: 'add_task requires a "text" parameter' };
+      try {
+        const planState = usePlanStore.getState();
+        if (!planState.plan) return { success: false, content: 'No active plan. Call create_plan first.' };
+        const user = useAuthStore.getState().getUser();
+        const taskData = await addTaskApi(planState.plan.id, {
+          text,
+          userId: user?.uid || user?.sub || 'anonymous',
+          userName: user?.name || 'Anonymous',
+          userPicture: user?.picture || null,
+        });
+        usePlanStore.getState()._addTaskLocal(taskData);
+        return { success: true, content: `Added task: "${taskData.text}" (id: ${taskData.id})` };
+      } catch (err) {
+        return { success: false, content: `Failed to add task: ${err.message}` };
+      }
+    }
+
+    case 'complete_task': {
+      const taskRef = args.task;
+      if (!taskRef) return { success: false, content: 'complete_task requires a "task" parameter (text or id)' };
+      try {
+        const planState = usePlanStore.getState();
+        if (!planState.plan) return { success: false, content: 'No active plan.' };
+        const task = planState.tasks.find((t) => t.id === taskRef || t.text.includes(taskRef));
+        if (!task) return { success: false, content: `No matching task found for "${taskRef}". Use get_plan to see available tasks.` };
+        await completeTaskApi(planState.plan.id, task.id);
+        usePlanStore.getState().completeTask(task.id);
+        return { success: true, content: `Completed task: "${task.text}"` };
+      } catch (err) {
+        return { success: false, content: `Failed to complete task: ${err.message}` };
+      }
+    }
+
+    case 'get_plan': {
+      const planState = usePlanStore.getState();
+      const plan = planState.plan;
+      if (!plan) return { success: true, content: 'No active plan. Call create_plan to start one.' };
+      const tasks = planState.tasks;
+      const todoTasks = tasks.filter((t) => t.status === 'todo');
+      const completedTasks = tasks.filter((t) => t.status === 'completed');
+      let output = `Plan: "${plan.title}" (${tasks.length} tasks)\n`;
+      if (todoTasks.length > 0) {
+        output += `\nTo Do:\n${todoTasks.map((t, i) => `  ${i + 1}. ${t.text} (by ${t.userName})`).join('\n')}`;
+      }
+      if (completedTasks.length > 0) {
+        output += `\nCompleted:\n${completedTasks.map((t, i) => `  ${i + 1}. ${t.text} (by ${t.userName})`).join('\n')}`;
+      }
+      if (tasks.length === 0) output += '\nNo tasks yet. Use add_task to add one.';
+      return { success: true, content: output };
     }
 
     case 'list_skills':

@@ -32,11 +32,11 @@ import {
   findPlanTextObjects,
   createPlanContainer,
   createPlanTextObject,
-  updatePlanText,
   generatePlanTitle,
 } from '../services/planService';
 import { createTicket, updateTicket, emitTicketCreated, emitTicketUpdated } from '../services/workflowService';
 import { buildWorkflowContext } from '../services/workflowCoordination';
+import usePlanStore from '../stores/planStore';
 
 const getGuestId = () => {
   let guestId = sessionStorage.getItem('guestPresenceId');
@@ -416,6 +416,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   }, [spaceId]);
 
   useEffect(() => {
+    usePlanStore.getState().initSpace(spaceId);
+  }, [spaceId]);
+
+  useEffect(() => {
     const handleObjectsCleared = () => {
       setMessages([]);
       setPlanMessages([]);
@@ -668,12 +672,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
 
       const finalText = planResponse;
 
-      if (activePlanTextId) {
-        const textObj = useObjectsStore.getState().objects.find(o => o.id === activePlanTextId);
-        if (textObj) {
-          updatePlanText(textObj, finalText, user, spaceId);
-        }
-      }
+      // Plan tasks are managed via plan tools (create_plan, add_task, etc.)
+      // which write directly to the plan store. No need to save to text objects.
 
       const blocks = extractMerfolkBlocks(finalText);
 

@@ -38,6 +38,7 @@ import { router as storageRouter } from './api/storage.js';
 import { router as bulkRouter } from './api/bulk.js';
 import { router as updatesRouter } from './api/updates.js';
 import { router as usersRouter } from './api/users.js';
+import { router as plansRouter } from './api/plans.js';
 
 app.use('/api/users', authenticate, usersRouter);
 app.use('/api/spaces', authenticate, spacesRouter);
@@ -48,6 +49,7 @@ app.use('/api/organizations', authenticate, organizationsRouter);
 app.use('/api/storage', authenticate, storageRouter);
 app.use('/api/bulk', authenticate, bulkRouter);
 app.use('/api/updates', authenticate, updatesRouter);
+app.use('/api/plans', authenticate, plansRouter);
 
 // LLM proxy (no app auth needed — provider API key passed by client)
 import { llmRouter } from './api/llm.js';
@@ -60,10 +62,12 @@ app.use('/api/zen', authenticate, zenRouter);
 // WebSocket
 import { registerChatHandlers } from './ws/chat.js';
 import { registerSignalingHandlers } from './ws/signaling.js';
+import { registerPlanHandlers } from './ws/plans.js';
 
 io.on('connection', (socket) => {
   registerChatHandlers(io, socket);
   registerSignalingHandlers(io, socket);
+  registerPlanHandlers(io, socket);
 });
 
 // Start

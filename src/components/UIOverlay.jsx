@@ -38,7 +38,9 @@ import PendingChangesPanel from './PendingChangesPanel';
 import RepoAnalysisOverlay from './RepoAnalysisOverlay';
 import RecordingFormatPrompt from './RecordingFormatPrompt';
 import WorkflowModal from './WorkflowModal';
+import PlanModal from './PlanModal';
 import useWorkflowStore from '../stores/workflowStore';
+import usePlanStore from '../stores/planStore';
 import './RepoAnalysisOverlay.css';
 import './TopBar.css';
 import useEarthSettingsStore from '../stores/earthSettingsStore';
@@ -1682,6 +1684,14 @@ const UIOverlay = ({
               >
                 ☰
               </button>
+              <button
+                className="top-bar-btn plan-btn"
+                onClick={() => usePlanStore.getState().togglePanel()}
+                title="Plan — View LLM task plan"
+                aria-label="Open plan"
+              >
+                ☑
+              </button>
               <ObjectSearch />
             </>
           )}
@@ -2326,6 +2336,7 @@ const UIOverlay = ({
 
       <PendingChangesPanel />
       <WorkflowModal />
+      <PlanModal />
     </>
   );
 };

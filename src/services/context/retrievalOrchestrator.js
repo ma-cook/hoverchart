@@ -108,7 +108,8 @@ const FORCE_GENERATION_AFTER_ROUND = 32;
 // Raised from 32 to 50: digest replacement + compression headroom now keep the
 // context under the cap, so a model that spends more rounds investigating a
 // large codebase is no longer clipped mid-search.
-const MAX_ROUNDS = 50;
+// UNLIMITED: removed hard round cap — the model now stops when it produces
+// final text without tool calls, so no artificial ceiling is needed.
 // After the exploration budget is exceeded with zero edits, the model gets this
 // many rounds to respond to the advisory nudge before the harness force-switches
 // it to EDIT mode (stripping search tools). Research that keeps finding "new"
@@ -1019,19 +1020,6 @@ export async function sendWithRetrieval({
   };
 
   while (true) {
-    if (rounds >= MAX_ROUNDS) {
-      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached — ending run`);
-      break;
-    }
-    // Final-round directive so the cap never truncates a run mid-edit — the
-    // last allowed round is told to finish any remaining edits + summarize.
-    const isFinalRound = rounds >= MAX_ROUNDS - 1;
-    if (isFinalRound) {
-      currentMessages = [...currentMessages, {
-        role: 'user',
-        content: `[Harness: ${MAX_ROUNDS}-round budget exhausted — this is the final round. Produce any remaining changes NOW with edit/write using exact oldString from the content above, then respond with a concise summary of what you changed (and what remains, if anything). Do not call more tools after applying your final change.]`,
-      }];
-    }
     const currentSize = estimateMessagesSize(currentMessages);
     if (currentSize > COMPRESSION_TARGET || (currentSize > MAX_CONTEXT_CHARS * 0.6 && (rounds - lastCompressionRound) >= COMPRESSION_INTERVAL)) {
       lastCompressionRound = rounds;
@@ -1777,11 +1765,6 @@ export async function sendWithRetrieval({
         tool_call_id: tc.id,
         content,
       });
-    }
-
-    if (isFinalRound) {
-      console.warn(`[ToolRound] Hard cap (${MAX_ROUNDS} rounds) reached after final round — ending run`);
-      break;
     }
 
     if (autoFlippedToEdit) {

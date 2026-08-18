@@ -263,6 +263,38 @@ export const SUB_AGENT_TOOL = [
   }),
 ];
 
+export const PLAN_TOOLS = [
+  new ToolDefinition({
+    name: 'create_plan',
+    description: 'Create a new task plan. Use this when the user\'s request has multiple actions or steps. Call this first, then add_task for each step.',
+    parameters: {
+      title: { type: 'string', description: 'Short title for the plan (e.g. "Refactor auth module")' },
+    },
+    required: ['title'],
+  }),
+  new ToolDefinition({
+    name: 'add_task',
+    description: 'Add a task to the active plan. Call create_plan first if no plan exists.',
+    parameters: {
+      text: { type: 'string', description: 'Description of the task to add' },
+    },
+    required: ['text'],
+  }),
+  new ToolDefinition({
+    name: 'complete_task',
+    description: 'Mark a task as completed. You can pass the task text (partial match) or the task ID.',
+    parameters: {
+      task: { type: 'string', description: 'Task text (partial match) or task ID to complete' },
+    },
+    required: ['task'],
+  }),
+  new ToolDefinition({
+    name: 'get_plan',
+    description: 'View the current active plan and its tasks. Use this to check what tasks exist and which are done.',
+    parameters: {},
+  }),
+];
+
 export const SKILL_MANAGEMENT_TOOLS = [
   new ToolDefinition({
     name: 'list_skills',
@@ -288,16 +320,18 @@ export const SKILL_MANAGEMENT_TOOLS = [
 ];
 
 const ALL_TOOL_GROUPS = [
-  { group: 'always', tools: [...CONTROL_TOOLS, ...NAVIGATION_TOOLS] },
+  { group: 'always', tools: [...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...PLAN_TOOLS] },
   { group: 'conditional', tools: [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL] },
 ];
 
 // Whitelist for EDIT mode: the model can only modify files, read for exact
 // oldString / verification, verify symbols via LSP, and switch modes. All
 // search/list/graph/skill tools drop off until set_mode("research").
+// Plan tools are always available in every mode.
 const EDIT_MODE_TOOL_NAMES = new Set([
   'edit', 'write', 'read_file', 'set_mode',
   'get_lsp_definition', 'get_lsp_references', 'get_lsp_type_info', 'get_lsp_call_graph', 'get_lsp_overview',
+  'create_plan', 'add_task', 'complete_task', 'get_plan',
 ]);
 
 // read_file is intentionally NOT in this list — in force-generation mode the
@@ -311,7 +345,7 @@ const EXPLORATION_TOOL_NAMES = new Set([
 
 export function computeTools(opts = {}) {
   const { excludeExplorationTools = false, excludeReadTool = false, mode = 'research' } = opts;
-  const always = [...SKILL_MANAGEMENT_TOOLS, ...CONTROL_TOOLS, ...NAVIGATION_TOOLS];
+  const always = [...SKILL_MANAGEMENT_TOOLS, ...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...PLAN_TOOLS];
   const conditional = [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL];
   const available = [];
 
@@ -383,6 +417,6 @@ const SKILL_TO_TOOLS = new Map([
 ]);
 
 export function getToolByName(name) {
-  const all = [...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL, ...SKILL_MANAGEMENT_TOOLS];
+  const all = [...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL, ...PLAN_TOOLS, ...SKILL_MANAGEMENT_TOOLS];
   return all.find(t => t.name === name);
 }

@@ -28,6 +28,7 @@ export { default as usePipelineStore } from './pipelineStore.js';
 export { default as useCodeStore } from './codeStore.js';
 export { default as useLlmStore } from './llmStore.js';
 export { default as useWorkflowStore } from './workflowStore.js';
+export { default as usePlanStore } from './planStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';

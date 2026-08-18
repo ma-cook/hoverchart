@@ -1,0 +1,266 @@
+/* ── Plan Panel (left side) ─────────────────────────────────────── */
+
+.plan-panel {
+  position: fixed;
+  top: 64px;
+  left: 8px;
+  width: 380px;
+  max-height: calc(100vh - 80px);
+  background: linear-gradient(180deg, rgba(26, 26, 30, 0.97), rgba(18, 18, 22, 0.97));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #e6e6e6;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+/* Header */
+.plan-panel-header {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.plan-panel-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f3f3f3;
+}
+
+.plan-panel-count {
+  margin-left: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.plan-panel-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 120ms, color 120ms;
+}
+.plan-panel-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* Plan title */
+.plan-panel-plan-title {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+/* Tabs */
+.plan-panel-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.plan-panel-tab {
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: none;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.plan-panel-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.8);
+}
+.plan-panel-tab.active {
+  background: rgba(120, 160, 255, 0.15);
+  border-color: rgba(120, 160, 255, 0.4);
+  color: #cfe0ff;
+}
+
+.plan-panel-tab-count {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.45);
+  min-width: 16px;
+  text-align: center;
+}
+.plan-panel-tab.active .plan-panel-tab-count {
+  background: rgba(120, 160, 255, 0.2);
+  color: #cfe0ff;
+}
+
+/* Body */
+.plan-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 8px;
+  min-height: 60px;
+}
+
+.plan-panel-empty {
+  padding: 30px 16px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 12px;
+}
+
+/* ── Task Row ─────────────────────────────────────────────────── */
+
+.plan-task-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 120ms, border-color 120ms;
+}
+.plan-task-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.plan-task-checkbox {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms, border-color 120ms;
+  padding: 0;
+  color: transparent;
+  font-size: 11px;
+}
+.plan-task-checkbox:hover {
+  border-color: rgba(120, 160, 255, 0.6);
+  background: rgba(120, 160, 255, 0.1);
+}
+.plan-task-checkbox.checked {
+  background: rgba(122, 220, 126, 0.2);
+  border-color: rgba(122, 220, 126, 0.5);
+  color: #7adc7e;
+}
+
+.plan-task-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-task-text {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.4;
+  word-break: break-word;
+  display: block;
+}
+.plan-task-text.completed {
+  text-decoration: line-through;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* Attribution */
+.plan-task-attribution {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.plan-task-avatar-img {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.plan-task-avatar-fallback {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(120, 160, 255, 0.2);
+  color: #cfe0ff;
+  font-size: 8px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.plan-task-user {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.plan-task-delete {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-top: 2px;
+  transition: background 120ms, color 120ms;
+}
+.plan-task-delete:hover {
+  background: rgba(244, 120, 100, 0.15);
+  color: #f47864;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────── */
+
+.plan-panel-body::-webkit-scrollbar {
+  width: 5px;
+}
+.plan-panel-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.plan-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+.plan-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Responsive ─────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .plan-panel {
+    width: calc(100vw - 16px);
+    left: 8px;
+    right: 8px;
+  }
+}

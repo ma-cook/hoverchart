@@ -25,7 +25,6 @@ export default function WorkflowModal() {
 
   const [activeTab, setActiveTab] = useState(null);
 
-  // Fetch tickets when modal opens or space changes
   useEffect(() => {
     if (!isOpen || !spaceId) return;
     let cancelled = false;
@@ -43,7 +42,6 @@ export default function WorkflowModal() {
     return () => { cancelled = true; };
   }, [isOpen, spaceId, setTickets, setIsLoading]);
 
-  // Subscribe to real-time updates
   useEffect(() => {
     if (!spaceId) return;
     const unsub = subscribeToTickets(spaceId, {
@@ -57,11 +55,6 @@ export default function WorkflowModal() {
 
   const handleClose = useCallback(() => setModalOpen(false), [setModalOpen]);
 
-  const handleBackdropClick = useCallback((e) => {
-    if (e.target === e.currentTarget) handleClose();
-  }, [handleClose]);
-
-  // Handle Escape key
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e) => { if (e.key === 'Escape') handleClose(); };
@@ -74,45 +67,43 @@ export default function WorkflowModal() {
   const filtered = activeTab ? tickets.filter((t) => t.status === activeTab) : tickets;
 
   return (
-    <div className="workflow-modal-backdrop" onClick={handleBackdropClick}>
-      <div className="workflow-modal">
-        <div className="workflow-modal-header">
-          <h2 className="workflow-modal-title">Workflow</h2>
-          <span className="workflow-modal-count">{tickets.length} ticket{tickets.length !== 1 ? 's' : ''}</span>
-          <button className="workflow-modal-close" onClick={handleClose} title="Close">
-            {'\u2715'}
-          </button>
-        </div>
+    <div className="workflow-panel">
+      <div className="workflow-panel-header">
+        <h2 className="workflow-panel-title">Workflow</h2>
+        <span className="workflow-panel-count">{tickets.length} ticket{tickets.length !== 1 ? 's' : ''}</span>
+        <button className="workflow-panel-close" onClick={handleClose} title="Close">
+          {'\u2715'}
+        </button>
+      </div>
 
-        <div className="workflow-modal-tabs">
-          {TABS.map((tab) => {
-            const count = tab.key ? tickets.filter((t) => t.status === tab.key).length : tickets.length;
-            return (
-              <button
-                key={tab.key || 'all'}
-                className={`workflow-modal-tab ${activeTab === tab.key ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.key)}
-              >
-                {tab.label}
-                <span className="workflow-modal-tab-count">{count}</span>
-              </button>
-            );
-          })}
-        </div>
+      <div className="workflow-panel-tabs">
+        {TABS.map((tab) => {
+          const count = tab.key ? tickets.filter((t) => t.status === tab.key).length : tickets.length;
+          return (
+            <button
+              key={tab.key || 'all'}
+              className={`workflow-panel-tab ${activeTab === tab.key ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+              <span className="workflow-panel-tab-count">{count}</span>
+            </button>
+          );
+        })}
+      </div>
 
-        <div className="workflow-modal-body">
-          {isLoading && tickets.length === 0 && (
-            <div className="workflow-modal-empty">Loading tickets...</div>
-          )}
-          {!isLoading && filtered.length === 0 && (
-            <div className="workflow-modal-empty">
-              {activeTab ? `No ${TABS.find((t) => t.key === activeTab)?.label.toLowerCase()} tickets.` : 'No workflow tickets yet.'}
-            </div>
-          )}
-          {filtered.map((ticket) => (
-            <WorkflowTicketRow key={ticket.id} ticket={ticket} />
-          ))}
-        </div>
+      <div className="workflow-panel-body">
+        {isLoading && tickets.length === 0 && (
+          <div className="workflow-panel-empty">Loading tickets...</div>
+        )}
+        {!isLoading && filtered.length === 0 && (
+          <div className="workflow-panel-empty">
+            {activeTab ? `No ${TABS.find((t) => t.key === activeTab)?.label.toLowerCase()} tickets.` : 'No workflow tickets yet.'}
+          </div>
+        )}
+        {filtered.map((ticket) => (
+          <WorkflowTicketRow key={ticket.id} ticket={ticket} />
+        ))}
       </div>
     </div>
   );
