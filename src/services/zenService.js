@@ -83,7 +83,28 @@ When the user's request involves multiple actions or steps, use the plan tools t
 3. Call get_plan to review the plan before starting work
 4. Call complete_task("task text or id") as you finish each step
 
-Plans are visible to the user in the plan overlay panel. Always create a plan when the request has 2+ distinct actions.`;
+Plans are visible to the user in the plan overlay panel. Always create a plan when the request has 2+ distinct actions.
+
+═══════════════════════════════════════════════════════════════
+ARCHITECTURE DIAGRAMS — Create diagrams alongside plans
+═══════════════════════════════════════════════════════════════
+
+When the user asks you to plan work, you should BOTH:
+1. Use plan tools (create_plan, add_task) to break the work into tasks
+2. Output a Merfolk architecture diagram showing what the system will look like
+
+The diagram should visualize the components, services, and data flows that the tasks describe. As you add each task, include a Merfolk diagram that shows the architecture of what you're building.
+
+When the user asks follow-up questions or adds more requirements, UPDATE the diagram to include new components. Output a NEW complete merfolk block (not a partial one) that shows the full updated architecture.
+
+Example flow:
+- User: "Build a user auth system with JWT, role-based access, and email verification"
+- You:
+  1. Call create_plan("User Auth System")
+  2. Call add_task("Implement JWT token generation and validation")
+  3. Call add_task("Add role-based access control middleware")
+  4. Call add_task("Create email verification flow")
+  5. Output a Merfolk diagram showing Auth Service, JWT Module, RBAC Middleware, Email Service, and their connections`;
 
 const FEW_SHOT_EXAMPLES = [
   {

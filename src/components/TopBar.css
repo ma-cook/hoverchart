@@ -306,3 +306,68 @@ body .top-bar + .menu-button-container {
     min-width: 200px;
   }
 }
+
+/* Top bar dropdown menu (used by templates, etc.) */
+.top-bar-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: rgba(22, 22, 26, 0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 8px;
+  min-width: 240px;
+  z-index: 2000;
+}
+
+.top-bar-dropdown .config-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.top-bar-dropdown .config-group label {
+  font-size: 12px;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.top-bar-dropdown .config-group select,
+.top-bar-dropdown .config-group input {
+  width: 110px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e6e6e6;
+  font-size: 12px;
+  outline: none;
+}
+
+.top-bar-dropdown .config-group select:focus,
+.top-bar-dropdown .config-group input:focus {
+  border-color: rgba(120, 160, 255, 0.5);
+}
+
+.top-bar-dropdown .create-template-button {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(120, 160, 255, 0.4);
+  background: rgba(120, 160, 255, 0.15);
+  color: #cfe0ff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.top-bar-dropdown .create-template-button:hover {
+  background: rgba(120, 160, 255, 0.28);
+}

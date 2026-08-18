@@ -27,13 +27,6 @@ import { diffToHunks, buildSearchReplaceBlock } from '../services/context/diffUt
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
 import { uploadMarkdownToStorage } from '../services/storageService';
 import { saveDiagramDigest } from '../services/graphPersistence';
-import {
-  findPlanContainer,
-  findPlanTextObjects,
-  createPlanContainer,
-  createPlanTextObject,
-  generatePlanTitle,
-} from '../services/planService';
 import { createTicket, updateTicket, emitTicketCreated, emitTicketUpdated } from '../services/workflowService';
 import { buildWorkflowContext } from '../services/workflowCoordination';
 import usePlanStore from '../stores/planStore';
@@ -449,16 +442,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const [pendingProviderId, setPendingProviderId] = useState(null);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [authError, setAuthError] = useState(null);
-  const [showTechStackPrompt, setShowTechStackPrompt] = useState(false);
-  const [techStackInput, setTechStackInput] = useState('');
   const [pushNotification, setPushNotification] = useState(null);
   const [associatedCount, setAssociatedCount] = useState(0);
   const [scanProgress, setScanProgress] = useState(null);
-  const [planContainer, setPlanContainer] = useState(null);
-  const [activePlanTextId, setActivePlanTextId] = useState(null);
-  const [planTextObjects, setPlanTextObjects] = useState([]);
-  const [showNewPlanPrompt, setShowNewPlanPrompt] = useState(false);
-  const [planTitleInput, setPlanTitleInput] = useState('');
 
   const llmMessages = chatMode === 'plan' ? planMessages : codeMessages;
 
@@ -517,26 +503,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       setHasMore(false);
     }
   }, [spaceId, chatMode, hasMore, loadingMore]);
-
-  useEffect(() => {
-    if (chatMode !== 'plan') return;
-    const container = findPlanContainer();
-    setPlanContainer(container);
-    if (container) {
-      const plans = findPlanTextObjects(container.id);
-      setPlanTextObjects(plans);
-      setActivePlanTextId(current => {
-        if (current && plans.some(p => p.id === current)) return current;
-        if (plans.length > 0) return plans[plans.length - 1].id;
-        return null;
-      });
-      if (plans.length === 0) {
-        setShowNewPlanPrompt(true);
-      }
-    } else {
-      setShowNewPlanPrompt(true);
-    }
-  }, [chatMode]);
 
   useEffect(() => {
     const timer = setTimeout(() => persistMessages(spaceId, 'plan', planMessages, windowId), 1000);
@@ -718,7 +684,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, planMessages, spaceId, user, activePlanTextId, windowLlm]);
+  }, [input, streaming, planMessages, spaceId, user, windowLlm]);
 
   const handleCodeSend = useCallback(async () => {
     const text = input.trim();
@@ -1123,28 +1089,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     setAuthError(null);
     setAssociatedCount(0);
     setPushNotification(null);
-
-    if (mode === 'code' && !techStack) {
-      setShowTechStackPrompt(true);
-    }
-  }, [spaceId, techStack, windowId]);
-
-  const handleCreatePlan = useCallback(async () => {
-    let container = planContainer || await createPlanContainer(user, spaceId);
-    if (!container) return;
-    const existingPlans = findPlanTextObjects(container.id);
-    const title = planTitleInput.trim() || generatePlanTitle(existingPlans.length);
-    const result = await createPlanTextObject(container, title, user, spaceId);
-    setActivePlanTextId(result.textObj.id);
-    setPlanContainer(result.container);
-    setPlanTextObjects(prev => [...prev, result.textObj]);
-    setShowNewPlanPrompt(false);
-    setPlanTitleInput('');
-  }, [planContainer, user, spaceId, planTitleInput]);
-
-  const handlePlanSelect = useCallback((e) => {
-    setActivePlanTextId(e.target.value);
-  }, []);
+  }, [spaceId, windowId]);
 
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -1179,17 +1124,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       .catch(() => setAvailableBranches([]))
       .finally(() => setBranchFetching(false));
   }, [showBranchPrompt, branchStrategy, selectedRepo]);
-
-  const handleTechStackSubmit = () => {
-    const stack = techStackInput.trim();
-    if (stack) {
-      useCodeStore.getState().setTechStack(stack, 'user');
-    } else {
-      useCodeStore.getState().setTechStack('Let the LLM decide what tech stack is best for this architecture', 'llm');
-    }
-    setShowTechStackPrompt(false);
-    setTechStackInput('');
-  };
 
   const handleApiKeySubmit = useCallback(async () => {
     const key = apiKeyInput.trim();
@@ -1542,68 +1476,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         </>
       )}
 
-      {showTechStackPrompt && (
-        <div className="space-chat-modal-overlay" onClick={() => {}}>
-          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
-            <div className="space-chat-modal-title">Select Tech Stack</div>
-            <div className="space-chat-modal-body">
-              <p>What language/framework should the code use?</p>
-              <input
-                className="space-chat-modal-input"
-                type="text"
-                placeholder="e.g., React + TypeScript, Python + FastAPI, Go"
-                value={techStackInput}
-                onChange={e => setTechStackInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleTechStackSubmit(); }}
-                autoFocus
-              />
-              <div className="space-chat-modal-actions">
-                <button className="space-chat-modal-btn" onClick={() => { useCodeStore.getState().setTechStack('', 'llm'); setShowTechStackPrompt(false); }}>
-                  Let LLM decide
-                </button>
-                <button className="space-chat-modal-btn primary" onClick={handleTechStackSubmit}>
-                  Confirm
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showNewPlanPrompt && chatMode === 'plan' && (
-        <div className="space-chat-modal-overlay" onClick={() => {}}>
-          <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
-            <div className="space-chat-modal-title">
-              {planContainer ? 'New Plan' : 'Start Planning'}
-            </div>
-            <div className="space-chat-modal-body">
-              <p>
-                {planContainer
-                  ? 'Enter a title for your new plan'
-                  : 'Create your first architecture plan?'}
-              </p>
-              <input
-                className="space-chat-modal-input"
-                type="text"
-                placeholder={generatePlanTitle(planTextObjects.length)}
-                value={planTitleInput}
-                onChange={e => setPlanTitleInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleCreatePlan(); }}
-                autoFocus
-              />
-              <div className="space-chat-modal-actions">
-                <button className="space-chat-modal-btn" onClick={() => setShowNewPlanPrompt(false)}>
-                  Cancel
-                </button>
-                <button className="space-chat-modal-btn primary" onClick={handleCreatePlan}>
-                  {planContainer ? 'Create' : 'Start Planning'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {showBranchPrompt && (
         <div className="space-chat-modal-overlay" onClick={() => {}}>
           <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
@@ -1808,7 +1680,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                     {techStack ? (
                       <>Tech stack: {techStack}</>
                     ) : (
-                      <>I&apos;ll ask about your tech stack first.</>
+                      <>Tech stack will be auto-detected from your codebase.</>
                     )}
                   </>
                 )}
@@ -1891,31 +1763,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
 
       {(chatMode === 'plan' || chatMode === 'code') && (
         <div className="space-chat-model-bar">
-          {chatMode === 'plan' && (
-            <>
-              <button
-                className="space-chat-plan-new-btn"
-                onClick={() => setShowNewPlanPrompt(true)}
-                disabled={streaming}
-                title="New Plan"
-              >
-                + Plan
-              </button>
-              {planTextObjects.length > 0 && (
-                <select
-                  className="space-chat-plan-select"
-                  value={activePlanTextId || ''}
-                  onChange={handlePlanSelect}
-                >
-                  {planTextObjects.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.merfolkData?.title || p.headerText || 'Plan'}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </>
-          )}
           <button
             className="space-chat-model-btn"
             onClick={() => setShowProviderModal(true)}

@@ -23,7 +23,6 @@ import {
   fetchRepositories as fetchGithubRepositories,
   isGithubAuthenticated as checkGithubAuth,
   getGithubOAuthUrl,
-  scanRepositoryAndGenerateDiagram,
   rescanRepositoryForChanges,
 } from '../services/githubRepoService';
 import {
@@ -237,7 +236,6 @@ const UIOverlay = ({
   spaceType = 'diagram', // Space type - 'diagram' or 'earth'
 }) => {
   // Use UI overlay store
-  const [selectedRepo, setSelectedRepo] = useState(null);
   const [repositories, setRepositories] = useState([]);
   const [showRepos, setShowRepos] = useState(false);
   const [isGithubAuthenticated, setIsGithubAuthenticated] = useState(false);
@@ -464,17 +462,11 @@ const UIOverlay = ({
   const isUploadingModel = useUIOverlayStore(
     (state) => state.getUIOverlay('main').isUploadingModel
   );
-  const isProcessingMarkdown = useUIOverlayStore(
-    (state) => state.getUIOverlay('main').isProcessingMarkdown
-  );
   const isRecording = useUIOverlayStore(
     (state) => state.getUIOverlay('main').isRecording
   );
   const setIsUploadingModel = useUIOverlayStore(
     (state) => state.setIsUploadingModel
-  );
-  const setIsProcessingMarkdown = useUIOverlayStore(
-    (state) => state.setIsProcessingMarkdown
   );
   const setIsRecording = useCallback(
     (val) => useUIOverlayStore.getState().setIsRecording('main', val),
@@ -500,9 +492,6 @@ const UIOverlay = ({
 
   // Model upload functionality
   const modelFileInputRef = useRef(null);
-
-  // Markdown upload functionality
-  const markdownFileInputRef = useRef(null);
 
   // CSV upload functionality
   const csvFileInputRef = useRef(null);
@@ -630,80 +619,6 @@ const UIOverlay = ({
     }
   };
 
-  // Function to scan repository and generate Merfolk diagram
-  const fetchAppJsxFromRepo = async (repo) => {
-    try {
-      diagramIsBeingGenerated.current = true;
-      setScanProgress({ isScanning: true, progress: 0, stage: 'Starting...' });
-      
-      const result = await scanRepositoryAndGenerateDiagram(
-        repo,
-        onCreateObject,
-        user,
-        currentSpaceId,
-        uploadMarkdownToStorage,
-        markdownDiagramService,
-        (progress, stage) => {
-          setScanProgress({ isScanning: true, progress, stage });
-        }
-      );
-      
-      setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
-      
-      // Show notification instead of alert
-      if (result.success) {
-        setCurrentDiagramRepo(repo);
-        if (result.markdown) storeGeneratedMarkdown(result.markdown);
-        // Deferred so the scan-complete state can paint before the digest
-        // snapshot is serialized.
-        setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
-        // Fire-and-forget: chunk/index the repo corpus + diagram markdown off
-        // the main thread (repoFileContents is sent in bounded batches).
-        populateContentStoreWorker(result.repoFileContents, result.markdown);
-        // Keep the raw repoFileContents map in the code store + IndexedDB so
-        // search fallbacks and future rescans can merge against the full corpus
-        // at the scanned commit instead of dropping/overwriting it.
-        useCodeStore.getState().setRepoFileContents(result.repoFileContents || null);
-        if (currentSpaceId && result.repoFileContents && Object.keys(result.repoFileContents).length > 0) {
-          saveRepoFileContents(currentSpaceId, result.repoFileContents).catch((err) =>
-            console.warn('[UIOverlay] save repoFileContents failed:', err.message)
-          );
-        }
-        if (result.storageUrl) {
-          setLatestMarkdownUrl(result.storageUrl);
-        }
-        if (result.commitSha) setLastCommitSha(result.commitSha);
-        if (result.contentIndex) useCodeStore.getState().setContentIndex(result.contentIndex);
-        if (result.fileSizes) useCodeStore.getState().setFileSizes(result.fileSizes);
-        if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
-        if (result.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(result.fileIndexByPath);
-        if (result.importIndexByFile) useCodeStore.getState().setImportIndexByFile(result.importIndexByFile);
-
-        // Persist diagram metadata via API
-        if (currentSpaceId) {
-          const payload = { diagramRepo: repo };
-          if (result.storageUrl) payload.markdownStorageUrl = result.storageUrl;
-          if (result.commitSha) payload.diagramCommitSha = result.commitSha;
-          api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
-        }
-
-        setNotification({
-          show: true,
-          message: `Diagram created! Generated: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`
-        });
-        
-        // Auto-hide after 2 seconds
-        setTimeout(() => {
-          setNotification({ show: false, message: '' });
-        }, 2000);
-      }
-    } catch (error) {
-      console.error('Error generating diagram from repository:', error);
-      setScanProgress({ isScanning: false, progress: 0, stage: '' });
-      throw error;
-    }
-  };
-  
   // Rescan: check for new commits and only process changed files
   const handleRescan = async (repo) => {
     try {
@@ -1184,61 +1099,6 @@ const UIOverlay = ({
     [user, currentSpaceId, onCreateObject, setIsUploadingModel]
   );
 
-  const handleMarkdownUpload = useCallback(() => {
-    if (markdownFileInputRef.current) {
-      markdownFileInputRef.current.click();
-    }
-  }, []);
-
-  const handleMarkdownFileSelect = useCallback(
-    async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) {
-        return;
-      }
-
-      setIsProcessingMarkdown(true);
-      diagramIsBeingGenerated.current = true;
-
-      try {
-        const result = await markdownDiagramService.processMarkdownFile(
-          file,
-          onCreateObject,
-          currentSpaceId,
-          user
-        );
-
-        if (result.success) {
-          // Objects and connections are rendered immediately
-          // But wait for database save to complete before showing completion message
-          if (result.savePromise) {
-         
-            await result.savePromise;
-          }
-
-          alert(
-            `Successfully processed ${result.diagramCount} diagram(s) and created ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections!`
-          );
-        } else {
-          alert(
-            'No 3D objects were created. Please check that your Merfolk syntax is correct.'
-          );
-        }
-      } catch (error) {
-        alert(
-          `Failed to process markdown file: ${error.message}. Please check the file format and try again.`
-        );
-      } finally {
-        setIsProcessingMarkdown(false);
-        // Reset file input
-        if (markdownFileInputRef.current) {
-          markdownFileInputRef.current.value = '';
-        }
-      }
-    },
-    [onCreateObject, currentSpaceId, user, setIsProcessingMarkdown]
-  );
-
   // CSV upload handlers
   const handleCsvUpload = useCallback(() => {
     if (csvFileInputRef.current) {
@@ -1692,6 +1552,111 @@ const UIOverlay = ({
               >
                 ☑
               </button>
+
+              {spaceType !== 'earth' && spaceType !== 'github_control_panel' && (
+                <div style={{ position: 'relative', display: 'inline-flex' }}>
+                  <button
+                    className={`top-bar-btn ${templateOpen ? 'active' : ''}`}
+                    onClick={() => toggleTemplate('main')}
+                    title="Templates"
+                    aria-label="Templates"
+                  >
+                    ◇
+                  </button>
+                  {templateOpen && (
+                    <div className="top-bar-dropdown">
+                      <div className="template-config">
+                        <div className="config-group">
+                          <label>Object Type:</label>
+                          <select
+                            value={templateConfig.objectType}
+                            onChange={(e) => handleTemplateConfigChange('objectType', e.target.value)}
+                          >
+                            <option value="cube">Cube</option>
+                            <option value="tetrahedron">Tetrahedron</option>
+                            <option value="dodecahedron">Dodecahedron</option>
+                            <option value="plane">Plane</option>
+                            <option value="text">Text</option>
+                          </select>
+                        </div>
+                        <div className="config-group">
+                          <label>Number of Objects:</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={templateConfig.numberOfObjects}
+                            onChange={(e) => handleTemplateConfigChange('numberOfObjects', parseInt(e.target.value))}
+                          />
+                        </div>
+                        <div className="config-group">
+                          <label>Distance Between:</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={templateConfig.distance}
+                            onChange={(e) => handleTemplateConfigChange('distance', parseInt(e.target.value))}
+                          />
+                        </div>
+                        <div className="config-group">
+                          <label>Template Shape:</label>
+                          <select
+                            value={templateConfig.templateShape}
+                            onChange={(e) => handleTemplateConfigChange('templateShape', e.target.value)}
+                          >
+                            <option value="plane">Plane</option>
+                            <option value="sphere">Sphere</option>
+                            <option value="cube">Cube</option>
+                          </select>
+                        </div>
+                        <div className="config-group">
+                          <label>Orientation:</label>
+                          <select
+                            value={templateConfig.orientation}
+                            onChange={(e) => handleTemplateConfigChange('orientation', e.target.value)}
+                          >
+                            <option value="horizontal">Horizontal</option>
+                            <option value="vertical">Vertical</option>
+                          </select>
+                        </div>
+                        <button className="create-template-button" onClick={createTemplate}>
+                          Create Template
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button
+                className="top-bar-btn"
+                onClick={handleDownloadMarkdown}
+                disabled={!lastGeneratedMarkdownUrl && !latestMarkdownUrl}
+                title={lastGeneratedMarkdownUrl || latestMarkdownUrl ? 'Download generated diagram markdown' : 'No diagram generated yet'}
+              >
+                ⤓
+              </button>
+
+              <div style={{ position: 'relative', display: 'inline-flex' }}>
+                <button
+                  className="top-bar-btn"
+                  onClick={handleCsvUpload}
+                  disabled={isProcessingCsv}
+                  title="Upload CSV to create a 3D data visualization"
+                  aria-label="Upload CSV"
+                >
+                  {isProcessingCsv ? '…' : '⊞'}
+                </button>
+                <input
+                  ref={csvFileInputRef}
+                  type="file"
+                  accept=".csv"
+                  style={{ display: 'none' }}
+                  onChange={handleCsvFileSelect}
+                />
+              </div>
+
               <ObjectSearch />
             </>
           )}
@@ -1728,208 +1693,6 @@ const UIOverlay = ({
               </div>
             )}
          
-          {/* Template Section */}{' '}
-          {spaceType !== 'earth' && spaceType !== 'github_control_panel' && (
-          <>
-          <div className="template-section">
-            <button
-              className="template-toggle-button"
-              onClick={() => toggleTemplate('main')}
-            >
-              Templates {templateOpen ? '▼' : '▶'}
-            </button>
-
-            {templateOpen && (
-              <div className="template-dropdown">
-                <div className="template-config">
-                  <div className="config-group">
-                    <label>Object Type:</label>{' '}
-                    <select
-                      value={templateConfig.objectType}
-                      onChange={(e) =>
-                        handleTemplateConfigChange('objectType', e.target.value)
-                      }
-                    >
-                      <option value="cube">Cube</option>
-                      <option value="tetrahedron">Tetrahedron</option>
-                      <option value="dodecahedron">Dodecahedron</option>
-                      <option value="plane">Plane</option>
-                      <option value="text">Text</option>
-                    </select>
-                  </div>
-                  <div className="config-group">
-                    <label>Number of Objects:</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="50"
-                      value={templateConfig.numberOfObjects}
-                      onChange={(e) =>
-                        handleTemplateConfigChange(
-                          'numberOfObjects',
-                          parseInt(e.target.value)
-                        )
-                      }
-                    />
-                  </div>
-                  <div className="config-group">
-                    <label>Distance Between:</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={templateConfig.distance}
-                      onChange={(e) =>
-                        handleTemplateConfigChange(
-                          'distance',
-                          parseInt(e.target.value)
-                        )
-                      }
-                    />
-                  </div>{' '}
-                  <div className="config-group">
-                    <label>Template Shape:</label>
-                    <select
-                      value={templateConfig.templateShape}
-                      onChange={(e) =>
-                        handleTemplateConfigChange(
-                          'templateShape',
-                          e.target.value
-                        )
-                      }
-                    >
-                      <option value="plane">Plane</option>
-                      <option value="sphere">Sphere</option>
-                      <option value="cube">Cube</option>
-                    </select>
-                  </div>
-                  <div className="config-group">
-                    <label>Orientation:</label>
-                    <select
-                      value={templateConfig.orientation}
-                      onChange={(e) =>
-                        handleTemplateConfigChange(
-                          'orientation',
-                          e.target.value
-                        )
-                      }
-                    >
-                      <option value="horizontal">Horizontal</option>
-                      <option value="vertical">Vertical</option>
-                    </select>
-                  </div>
-                  <button
-                    className="create-template-button"
-                    onClick={createTemplate}
-                  >
-                    Create Template
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-          {/* Markdown Upload Section */}
-          <div className="markdown-section">
-            <button
-              className="markdown-upload-button"
-              onClick={handleMarkdownUpload}
-              disabled={isProcessingMarkdown}
-              title="Upload Markdown with Merfolk diagrams"
-            >
-              {isProcessingMarkdown ? 'Processing...' : 'Upload Markdown'}
-            </button>
-            {/* Hidden file input for markdown upload */}
-            <input
-              ref={markdownFileInputRef}
-              type="file"
-              accept=".md,.markdown"
-              style={{ display: 'none' }}
-              onChange={handleMarkdownFileSelect}
-            />
-            <button
-              className="markdown-upload-button"
-              onClick={handleDownloadMarkdown}
-              disabled={!lastGeneratedMarkdownUrl && !latestMarkdownUrl}
-              title={lastGeneratedMarkdownUrl || latestMarkdownUrl ? 'Download the latest generated diagram markdown' : 'No diagram generated yet'}
-              style={{
-                opacity: lastGeneratedMarkdownUrl || latestMarkdownUrl ? 1 : 0.45,
-                cursor: lastGeneratedMarkdownUrl || latestMarkdownUrl ? 'pointer' : 'not-allowed',
-              }}
-            >
-              Download Markdown
-            </button>
-          </div>
-          {/* CSV Upload Section */}
-          <div className="markdown-section">
-            <button
-              className="markdown-upload-button"
-              onClick={handleCsvUpload}
-              disabled={isProcessingCsv}
-              title="Upload CSV to create a 3D data visualization"
-            >
-              {isProcessingCsv ? 'Processing...' : 'Upload CSV'}
-            </button>
-            <input
-              ref={csvFileInputRef}
-              type="file"
-              accept=".csv"
-              style={{ display: 'none' }}
-              onChange={handleCsvFileSelect}
-            />
-          </div>
-          {/* GitHub repo section */}
-          {isGithubAuthenticated ? (
-            <div className="github-repos-dropdown">
-              <button
-                className="repos-toggle-button"
-                onClick={() => {
-                  if (!showRepos) {
-                    fetchRepositories(); // Fetch repositories only when opening the dropdown
-                  }
-                  setShowRepos((prev) => !prev); // Toggle visibility
-                }}
-              >
-                {showRepos ? 'Hide Repositories' : 'Show Repositories'}
-              </button>
-              {showRepos && (
-                <ul className="github-repos-list">
-                  {repositories.map((repo) => (
-                    <li key={repo.id} onClick={() => setSelectedRepo(repo)}>
-                      {repo.name}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ) : (
-            <button
-              className="github-login-button"
-              onClick={() => (window.location.href = getGithubOAuthUrl())}
-            >
-              Connect to GitHub
-            </button>
-          )}
-          {/* Popup for selected repository */}
-          {selectedRepo && (
-            <div className="popup-overlay">
-              <div className="popup-content">
-                <p>Create diagram for {selectedRepo.name}</p>
-                <button
-                  onClick={async () => {
-                    try {
-                      await fetchAppJsxFromRepo(selectedRepo);
-                      setSelectedRepo(null);
-                    } catch (error) {
-                      alert(`Failed to create diagram: ${error.message}`);
-                    }
-                  }}
-                >
-                  Yes
-                </button>
-                <button onClick={() => setSelectedRepo(null)}>No</button>
-              </div>
-            </div>
-          )}
           {/* Runtime Website Scanner section */}
           {user && (
             <div className="runtime-scan-section">
@@ -1970,8 +1733,6 @@ const UIOverlay = ({
                 </p>
               )}
             </div>
-          )}
-          </>
           )}
           {/* Github Control Panel Section */}
           {spaceType === 'github_control_panel' && (
