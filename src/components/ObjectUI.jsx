@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useRef, useLayoutEffect } from 'react';
 import { Html } from '@react-three/drei';
 import ColorPicker from './ColorPicker';
-import { useRef } from 'react';
-import { useFrame, useThree } from '@react-three/fiber'; // <-- New import
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useColorPickerStore } from '../stores';
 
@@ -39,7 +38,17 @@ const ObjectUI = React.memo(
       state.isColorPickerOpen(pickerId)
     );
 
-    const { camera } = useThree(); // <-- Get camera from Three.js context
+    // Initialize position immediately on mount to avoid 1-frame flash at origin
+    const { camera } = useThree();
+    useLayoutEffect(() => {
+      if (groupRef.current && followTarget?.current) {
+        followTarget.current.getWorldPosition(groupRef.current.position);
+        groupRef.current.quaternion.copy(camera.quaternion);
+        if (!lastPosition.current) lastPosition.current = new THREE.Vector3();
+        lastPosition.current.copy(groupRef.current.position);
+      }
+    }, [followTarget, camera]);
+
     useFrame(({ camera }) => {
       if (groupRef.current && followTarget?.current) {
         // Get the target's world position (reuse pre-allocated vector)

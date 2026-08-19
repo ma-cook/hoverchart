@@ -105,7 +105,7 @@ export const connectionMethods = {
         sourceObjectId !== targetObjectId
       ) {
         if (existingConnectionPairs.has(`${sourceObjectId}|${targetObjectId}`)) {
-          return;
+          continue;
         }
 
         let connectionText = '';
@@ -131,7 +131,7 @@ export const connectionMethods = {
         }
 
         if (!sourceObject || !targetObject) {
-          return;
+          continue;
         }
 
         const CUBE_FACES = ['front', 'back', 'left', 'right', 'top', 'bottom'];
