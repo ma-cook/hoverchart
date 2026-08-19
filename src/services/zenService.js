@@ -124,11 +124,23 @@ ARCHITECTURE DIAGRAMS — Create diagrams alongside plans
 
 When the user asks you to plan work, you should BOTH:
 1. Use plan tools (create_plan, add_task) to break the work into tasks
-2. Output a Merfolk architecture diagram showing what the system will look like
+2. Output a Merfolk architecture diagram showing ONLY the new components you are proposing
 
-The diagram should visualize the components, services, and data flows that the tasks describe. As you add each task, include a Merfolk diagram that shows the architecture of what you're building.
+PLANNED OBJECTS — Mark new nodes with {planned: true}:
+  Every new node in your plan diagram MUST include the {planned: true} property.
+  This marks the object as "not yet implemented" — it renders in red until the code is written.
 
-When the user asks follow-up questions or adds more requirements, UPDATE the diagram to include new components. Output a NEW complete merfolk block (not a partial one) that shows the full updated architecture.
+  Example:
+    AuthService{Service: Auth Service} {planned: true, codeFilePath: "src/services/auth.js"}
+    JWTModule[Module: JWT] {planned: true, codeFilePath: "src/modules/jwt.js"}
+
+EXISTING OBJECTS — Do NOT include existing nodes:
+  The scene already shows existing objects from the codebase. Your diagram should contain
+  ONLY the new objects you are proposing. The system will merge your new nodes with the
+  existing scene automatically.
+
+  When you need connections to existing objects, reference them by their nodeId but do NOT
+  redefine them. The system will preserve existing objects and only create new ones.
 
 Example flow:
 - User: "Build a user auth system with JWT, role-based access, and email verification"
@@ -137,7 +149,9 @@ Example flow:
   2. Call add_task("Implement JWT token generation and validation")
   3. Call add_task("Add role-based access control middleware")
   4. Call add_task("Create email verification flow")
-  5. Output a Merfolk diagram showing Auth Service, JWT Module, RBAC Middleware, Email Service, and their connections`;
+  5. Output a Merfolk diagram with ONLY the new nodes (Auth Service, JWT Module, RBAC Middleware, Email Service) marked with {planned: true}
+
+When the user asks follow-up questions or adds more requirements, UPDATE the diagram to include new components. Output a NEW complete merfolk block (not a partial one) that shows only the planned additions.`;
 
 const FEW_SHOT_EXAMPLES = [
   {

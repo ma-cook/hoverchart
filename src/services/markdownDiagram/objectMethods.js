@@ -242,12 +242,16 @@ export const objectMethods = {
           const cellCoords = getCellCoordinates(data.position);
           const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
+          const isPlanned = data.extraData.planned === true;
+          const intendedColor = data.extraData.color || '#4a90e2';
+          const objectColor = isPlanned ? '#ef5350' : intendedColor;
+
           const objectData = {
             id: objectId,
             type: data.type,
             position: data.position,
             scale: data.extraData.scale || [1, 1, 1],
-            color: data.extraData.color || '#4a90e2',
+            color: objectColor,
             cellId: cellId,
             createdAt: Date.now(),
             ...(data.type === 'dodecahedron'
@@ -307,6 +311,7 @@ export const objectMethods = {
               htmlElements: data.extraData.htmlElements || '',
               cssClasses: data.extraData.cssClasses || '',
               jsxRefs: data.extraData.jsxRefs || '',
+              ...(isPlanned && { planned: true, originalColor: intendedColor }),
               ...(data.extraData.merfolkData || {}),
             },
           };
@@ -324,7 +329,7 @@ export const objectMethods = {
             size: data.extraData.scale || [1, 1, 1],
             scale: data.extraData.scale || [1, 1, 1],
             type: data.type,
-            color: data.extraData.color || '#4a90e2',
+            color: objectColor,
             content: data.extraData.headerText || '',
             createdAt: Date.now(),
             cellId: cellId,
@@ -366,6 +371,7 @@ export const objectMethods = {
               htmlElements: data.extraData.htmlElements || '',
               cssClasses: data.extraData.cssClasses || '',
               jsxRefs: data.extraData.jsxRefs || '',
+              ...(isPlanned && { planned: true, originalColor: intendedColor }),
               ...(data.extraData.merfolkData || {}),
             },
           };
