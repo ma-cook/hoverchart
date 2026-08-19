@@ -957,6 +957,38 @@ export const positionMethods = {
       groupedByType.get(groupKey).push(nodeId);
     }
 
+    // ── 1b. Community-based grouping for ungrouped components ─────────────
+    // If community assignments are available (from Louvain detection),
+    // group ungrouped components by their community to create spatial clusters.
+    const communityAssignments = context.communityAssignments || null;
+    if (communityAssignments && ungroupedComponents.length >= 3) {
+      const communityGroups = new Map(); // communityId → [nodeId, …]
+      const orphanComponents = [];
+
+      ungroupedComponents.forEach(nodeId => {
+        const commId = communityAssignments.get(nodeId);
+        if (commId !== undefined) {
+          if (!communityGroups.has(commId)) communityGroups.set(commId, []);
+          communityGroups.get(commId).push(nodeId);
+        } else {
+          orphanComponents.push(nodeId);
+        }
+      });
+
+      // Only use community groups with 2+ members
+      communityGroups.forEach((nodes, commId) => {
+        if (nodes.length >= 2) {
+          groupedByType.set(`community_${commId}`, nodes);
+        } else {
+          orphanComponents.push(nodes[0]);
+        }
+      });
+
+      // Replace ungrouped list with only true orphans
+      ungroupedComponents.length = 0;
+      ungroupedComponents.push(...orphanComponents);
+    }
+
     // ── 2. Unified scale calculation for all grouped nodes ────────────────
     const calculateNodeScaleFromChildren = (nodeId) => {
       const children = context.parentChildMap.get(nodeId) || new Set();

@@ -10,6 +10,7 @@ import { runTypeScriptAnalysis } from './typescriptAnalyzer';
 import { clearAllCellCaches } from './cellObjectCache';
 import { reportMemoryPressureOnce } from '../utils/memoryMonitor';
 import { joinChunks } from './context/chunkIndex';
+import { detectCommunities } from './context/communityDetection';
 import { safeSetItem } from '../utils/safeLocalStorage';
 
 // GitHub API base URL
@@ -1537,6 +1538,61 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // tiny changed-file list). Full scans detect automatically.
     const repoType = options.repoType || await detectRepoType(owner, repoName, token, structure);
     console.log(`🔍 Detected repo type: ${repoType}`);
+
+    // ── Entry point detection for vanilla repos ──────────────────────────
+    // Read package.json main/module field, fall back to common filenames.
+    let detectedEntryPoint = null;
+    const isVanillaRepo = repoType === 'vanilla' || repoType === 'python' || repoType === 'vue';
+    if (isVanillaRepo) {
+      try {
+        const pkgContent = await fetchFileContent(owner, repoName, 'package.json', token);
+        if (pkgContent) {
+          const pkg = JSON.parse(pkgContent);
+          const mainField = pkg.main || pkg.module || pkg.exports?.['.']?.import || pkg.exports?.['.']?.require;
+          if (mainField) {
+            // Resolve relative path (strip leading ./)
+            const resolved = mainField.replace(/^\.\//, '');
+            // Check if the file exists in the structure
+            const entryExists = structure.some(f => f.path === resolved || f.path.endsWith(`/${resolved}`));
+            if (entryExists) {
+              detectedEntryPoint = resolved;
+              console.log(`🎯 Entry point from package.json: ${detectedEntryPoint}`);
+            }
+          }
+        }
+      } catch {
+        // package.json missing or unparseable — fall through to filename detection
+      }
+
+      // Fallback: detect by common entry-point filenames
+      if (!detectedEntryPoint) {
+        const ENTRY_POINT_CANDIDATES = [
+          'src/index.ts', 'src/main.ts', 'src/app.ts', 'src/index.js', 'src/main.js', 'src/app.js',
+          'index.ts', 'main.ts', 'app.ts', 'index.js', 'main.js', 'app.js',
+          'src/index.tsx', 'src/main.tsx', 'src/App.tsx',
+          'index.tsx', 'main.tsx',
+        ];
+        for (const candidate of ENTRY_POINT_CANDIDATES) {
+          if (structure.some(f => f.path === candidate)) {
+            detectedEntryPoint = candidate;
+            console.log(`🎯 Entry point from filename: ${detectedEntryPoint}`);
+            break;
+          }
+        }
+      }
+
+      // Last resort: use first index/main file found in structure
+      if (!detectedEntryPoint) {
+        const indexFile = structure.find(f => {
+          const name = f.path.split('/').pop();
+          return name === 'index.ts' || name === 'index.js' || name === 'main.ts' || name === 'main.js';
+        });
+        if (indexFile) {
+          detectedEntryPoint = indexFile.path;
+          console.log(`🎯 Entry point from structure scan: ${detectedEntryPoint}`);
+        }
+      }
+    }
 
     // Fetch tsconfig.json for path alias resolution (L1 improvement)
     let moduleResolver = null;
@@ -3556,19 +3612,25 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     // ── Vanilla / Python / Vue post-processing: convert inter-module imports to connections ──
     // Each file container that imports another known file container gets a
     // directed 'imports' connection so the 3D diagram shows module dependencies.
+    // Connections are typed: dashed for internal imports, solid for re-exports.
     if (repoType === 'vanilla' || repoType === 'python' || repoType === 'vue') {
       const knownContainers = new Set(fileFunctions.keys());
       moduleImportRelationships.forEach((importedFiles, sourceFile) => {
         if (!knownContainers.has(sourceFile)) return;
         importedFiles.forEach((targetFile) => {
           if (!knownContainers.has(targetFile)) return;
+          // Determine connection type: solid for re-exports (barrel files),
+          // dashed for regular imports
+          const isBarrelFile = sourceFile === 'index' || sourceFile === 'index.ts' || sourceFile === 'index.js';
+          const connType = isBarrelFile ? 'dataflow' : 'controlflow';
+          const label = isBarrelFile ? 're-exports' : 'imports';
           if (!functionCallRelationships.has(sourceFile)) {
             functionCallRelationships.set(sourceFile, new Set());
           }
           functionCallRelationships.get(sourceFile).add({
             target: targetFile,
-            label: 'imports',
-            type: 'utility',
+            label,
+            type: connType,
           });
         });
       });
@@ -3848,6 +3910,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       interfaceUsages,
       fileSizes,
       richTypes: tsRichTypes || new Map(),
+      entryPoint: detectedEntryPoint,
     });
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
@@ -3967,6 +4030,8 @@ const generateMerfolkMarkdown = ({
   interfaceUsages = new Map(),
   fileSizes = new Map(),
   richTypes = new Map(),
+  moduleImportRelationships = new Map(),
+  entryPoint = null,
 }) => {
   const isVanilla = repoType === 'vanilla' || repoType === 'python' || repoType === 'vue';
   const isNextjs = repoType === 'nextjs';
@@ -4520,9 +4585,11 @@ const generateMerfolkMarkdown = ({
   // so each .js utility file appears as a parent cube with its functions as children.
   // ── Vanilla root entry-point ──────────────────────────────────────────────────
   // For vanilla repos, emit a root Component (dodecahedron) that represents
-  // the package entry-point.  All file containers become child Components
-  // inside it so the hierarchy builder creates a proper tree.
+  // the package entry-point.  Files are connected via BFS import tree
+  // (depth-based hierarchy) instead of flat root→all.
   let vanillaRootId = null;
+  let bfsTree = null;
+  let communityContainers = null;
   if (isVanilla && fileFunctions.size > 0) {
     vanillaRootId = `${sanitizeNodeId(repoName)}_root`;
     const finalRootId = uniqueNodeId(vanillaRootId);
@@ -4530,9 +4597,164 @@ const generateMerfolkMarkdown = ({
       console.warn(`ℹ️ Renamed duplicate "${vanillaRootId}" → "${finalRootId}" (Vanilla root)`);
       vanillaRootId = finalRootId;
     }
-    markdown += `\n%% Entry-point root\n`;
-    markdown += `${vanillaRootId}{Component: ${repoName}}\n`;
-    markdown += `{\n  codeFilePath: ""\n}\n`;
+
+    // Resolve entry point basename from the detected path
+    const entryBasename = entryPoint ? entryPoint.split('/').pop().replace(/\.[^.]+$/, '') : null;
+    const entryNodeId = entryBasename && fileFunctions.has(entryBasename)
+      ? fileFunctions.get(entryBasename).nodeId
+      : null;
+
+    // Use entry-point node as root if available, otherwise create synthetic root
+    if (entryNodeId) {
+      vanillaRootId = entryNodeId;
+      console.log(`🎯 Using entry point "${entryNodeId}" as hierarchy root`);
+    } else {
+      markdown += `\n%% Entry-point root\n`;
+      markdown += `${vanillaRootId}{Component: ${repoName}}\n`;
+      markdown += `{\n  codeFilePath: "${entryPoint || ''}"\n}\n`;
+    }
+
+    // ── BFS import tree from entry point ───────────────────────────────────
+    // Build depth-based hierarchy: entry → level 1 imports → level 2 imports, etc.
+    const MAX_BFS_DEPTH = 8;
+    const importGraph = new Map();
+    // Build bidirectional adjacency for community detection, but BFS uses forward only
+    const forwardGraph = new Map();
+
+    fileFunctions.forEach((info, name) => {
+      const imports = moduleImportRelationships.get(name) || new Set();
+      const fileImports = new Set();
+      imports.forEach(imp => {
+        if (fileFunctions.has(imp)) fileImports.add(imp);
+      });
+      forwardGraph.set(name, fileImports);
+      // Bidirectional for community detection
+      if (!importGraph.has(name)) importGraph.set(name, new Set());
+      fileImports.forEach(imp => {
+        if (!importGraph.has(imp)) importGraph.set(imp, new Set());
+        importGraph.get(name).add(imp);
+        importGraph.get(imp).add(name);
+      });
+    });
+
+    // BFS from entry point to assign depth levels
+    const depthMap = new Map();
+    const parentMap = new Map();
+    if (entryBasename && forwardGraph.has(entryBasename)) {
+      const queue = [{ node: entryBasename, depth: 0 }];
+      depthMap.set(entryBasename, 0);
+      while (queue.length > 0) {
+        const { node, depth } = queue.shift();
+        if (depth >= MAX_BFS_DEPTH) continue;
+        const imports = forwardGraph.get(node) || new Set();
+        imports.forEach(imp => {
+          if (!depthMap.has(imp)) {
+            depthMap.set(imp, depth + 1);
+            parentMap.set(imp, node);
+            queue.push({ node: imp, depth: depth + 1 });
+          }
+        });
+      }
+    }
+
+    // Files not reachable from entry point
+    const unlinkedFiles = [];
+    fileFunctions.forEach((info, name) => {
+      if (!depthMap.has(name)) {
+        unlinkedFiles.push(name);
+      }
+    });
+
+    console.log(`📊 BFS tree: ${depthMap.size} files reached, ${unlinkedFiles.length} unlinked, max depth ${Math.max(...[...depthMap.values()], 0)}`);
+
+    // ── Louvain community detection on import graph ─────────────────────────
+    // Find clusters of tightly-coupled files for grouping
+    if (importGraph.size >= 3) {
+      // Convert to the format expected by detectCommunities: { nodes: Map, connections: Map }
+      const communityGraph = { nodes: new Map(), connections: new Map() };
+      let edgeId = 0;
+      importGraph.forEach((neighbors, nodeId) => {
+        communityGraph.nodes.set(nodeId, { type: 'component', id: nodeId });
+        neighbors.forEach(neighborId => {
+          if (nodeId < neighborId) { // Avoid duplicate edges
+            communityGraph.connections.set(`edge_${edgeId++}`, {
+              source: nodeId,
+              target: neighborId,
+              type: 'dependency',
+            });
+          }
+        });
+      });
+
+      const communityAssignments = detectCommunities([communityGraph], {
+        minCommunitySize: 3,
+        maxCommunities: 20,
+        resolution: 1.2,
+      });
+
+      // Group files by community
+      const communities = new Map();
+      communityAssignments.forEach((commId, nodeId) => {
+        if (!communities.has(commId)) communities.set(commId, []);
+        communities.get(commId).push(nodeId);
+      });
+
+      // Only keep communities with 3+ files (skip tiny ones)
+      const significantCommunities = new Map();
+      communities.forEach((files, commId) => {
+        if (files.length >= 3) {
+          significantCommunities.set(commId, files);
+        }
+      });
+
+      if (significantCommunities.size > 0) {
+        communityContainers = new Map();
+        markdown += `\n%% Import-based communities (${significantCommunities.size} clusters)\n`;
+
+        significantCommunities.forEach((files, commId) => {
+          // Derive community name from common path prefix
+          const paths = files.map(f => {
+            const fi = fileFunctions.get(f);
+            return fi?.filePath || f;
+          });
+          const commonPrefix = paths.reduce((a, b) => {
+            const aParts = a.split('/');
+            const bParts = b.split('/');
+            let i = 0;
+            while (i < aParts.length && i < bParts.length && aParts[i] === bParts[i]) i++;
+            return aParts.slice(0, i).join('/');
+          }, paths[0]);
+          const commName = commonPrefix.split('/').pop() || `Cluster ${commId}`;
+
+          const commNodeId = `community_${commId}`;
+          markdown += `${commNodeId}{Component: "${commName}"}\n`;
+          markdown += `{\n  codeFilePath: "${commonPrefix}/"\n}\n`;
+          communityContainers.set(commId, { nodeId: commNodeId, name: commName, files });
+
+          // Connect files to their community container
+          files.forEach(f => {
+            const fi = fileFunctions.get(f);
+            if (fi?.nodeId) {
+              markdown += `${commNodeId} --> ${fi.nodeId} : "module"\n`;
+            }
+          });
+        });
+
+        // Connect community containers to root
+        communityContainers.forEach((comm) => {
+          if (vanillaRootId && comm.nodeId !== vanillaRootId) {
+            markdown += `${vanillaRootId} --> ${comm.nodeId} : "cluster"\n`;
+          }
+        });
+
+        console.log(`📦 Created ${significantCommunities.size} community containers`);
+      } else {
+        console.log(`📦 No significant communities found (all < 3 files)`);
+      }
+    }
+
+    // Store BFS data for connection emission
+    bfsTree = { depthMap, parentMap, unlinkedFiles, entryBasename };
   }
 
   // Helper: build merfolk properties block for a file node, including content index fields
@@ -4673,13 +4895,40 @@ const generateMerfolkMarkdown = ({
       });
     });
 
-    // Vanilla: nest every file container inside the root entry-point
-    // Use SOLID arrows (-->) so the hierarchy builder creates parent-child
-    // WITHOUT adding them to internalComponentChildren.  This routes the
-    // file-container nodes through the descending-hierarchy positioning
-    // branch (depthOffset + grid) instead of the tight 3D-grid branch
-    // that clusters internal components at the parent's position.
-    if (vanillaRootId) {
+    // Vanilla: BFS import tree hierarchy
+    // Connect files based on import depth from entry point instead of flat root→all.
+    // Files in communities are already connected to their community container above.
+    if (vanillaRootId && bfsTree) {
+      markdown += '\n%% Vanilla hierarchy (BFS import tree)\n';
+
+      const communityFileSet = new Set();
+      if (communityContainers) {
+        communityContainers.forEach(comm => {
+          comm.files.forEach(f => communityFileSet.add(f));
+        });
+      }
+
+      // Connect files not in any community via BFS tree
+      fileFunctions.forEach((fileInfo, name) => {
+        const fileNodeId = fileInfo.nodeId;
+        if (!fileNodeId) return;
+
+        // Skip files already in a community container
+        if (communityFileSet.has(name)) return;
+
+        const parentName = bfsTree.parentMap.get(name);
+        if (parentName) {
+          const parentNodeInfo = fileFunctions.get(parentName);
+          if (parentNodeInfo?.nodeId) {
+            markdown += `${parentNodeInfo.nodeId} --> ${fileNodeId} : "imports"\n`;
+          }
+        } else if (name !== bfsTree.entryBasename) {
+          // Unlinked file — connect to root as fallback
+          markdown += `${vanillaRootId} --> ${fileNodeId} : "module"\n`;
+        }
+      });
+    } else if (vanillaRootId) {
+      // Fallback: flat root→all (no BFS data available)
       markdown += '\n%% Vanilla hierarchy (root → file containers)\n';
       fileFunctions.forEach((fileInfo) => {
         const fileNodeId = fileInfo.nodeId;

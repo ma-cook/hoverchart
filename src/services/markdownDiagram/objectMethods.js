@@ -73,6 +73,7 @@ export const objectMethods = {
         // Use the worker-computed ungrouped list so container creation
         // uses the same set of nodes that was positioned as "ungrouped".
         ungroupedComponents: precomputedLayout.ungroupedComponents || [],
+        communityAssignments: useDiagramStore.getState().communityAssignments || null,
       };
     } else {
       // ── Main-thread fallback (original code path) ────────────────────────
@@ -97,6 +98,7 @@ export const objectMethods = {
         nodePositions,
         nodeScales,
         processedNodes,
+        communityAssignments: useDiagramStore.getState().communityAssignments || null,
       };
 
       // Process root nodes
