@@ -10,6 +10,7 @@ const TABS = [
   { key: 'in_progress', label: 'In Progress' },
   { key: 'to_review', label: 'To Review' },
   { key: 'committed', label: 'Committed' },
+  { key: 'merged', label: 'Merged' },
 ];
 
 export default function WorkflowModal() {

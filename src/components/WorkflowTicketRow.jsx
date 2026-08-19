@@ -8,6 +8,7 @@ const STATUS_STYLES = {
   in_progress: { color: '#f3a85c', bg: 'rgba(243,168,92,0.12)', border: 'rgba(243,168,92,0.4)', label: 'In Progress' },
   to_review: { color: '#6ab9f5', bg: 'rgba(106,185,245,0.12)', border: 'rgba(106,185,245,0.4)', label: 'To Review' },
   committed: { color: '#7adc7e', bg: 'rgba(122,220,126,0.12)', border: 'rgba(122,220,126,0.4)', label: 'Committed' },
+  merged: { color: '#4caf50', bg: 'rgba(76,175,80,0.12)', border: 'rgba(76,175,80,0.4)', label: 'Merged' },
   rejected: { color: '#f47864', bg: 'rgba(244,120,100,0.12)', border: 'rgba(244,120,100,0.4)', label: 'Rejected' },
 };
 

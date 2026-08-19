@@ -8,6 +8,7 @@ import {
   updateTaskStatus,
 } from './pipelineTaskService';
 import { repositionAllTasks } from './repoContainerService';
+import { rescanAfterMerge } from './mergeRescanService';
 import {
   getRepoInfo,
   getBranchRef,
@@ -143,7 +144,10 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
           mergeCommitSha: immediate.data.merge_commit_sha,
         });
         const taskRepoSlug = task.merfolkData?.repoSlug;
-        if (taskRepoSlug) repositionAllTasks(taskRepoSlug);
+        if (taskRepoSlug) {
+          repositionAllTasks(taskRepoSlug);
+          rescanAfterMerge(taskRepoSlug, spaceId).catch(() => {});
+        }
         return true;
       }
       if (immediate.data.state === 'closed') {
@@ -176,6 +180,7 @@ async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
         const taskRepoSlug = task.merfolkData?.repoSlug;
         if (taskRepoSlug) {
           repositionAllTasks(taskRepoSlug);
+          rescanAfterMerge(taskRepoSlug, spaceId).catch(() => {});
         }
         resolve(true);
         return;
@@ -322,6 +327,7 @@ export async function reconcilePendingTasks(spaceOwnerId, spaceId, tasks, owner,
   });
 
   const repoSlugsToReposition = new Set();
+  const repoSlugsToRescan = new Set();
   for (const task of pending) {
     const prNumber = task.merfolkData.githubPrNumber;
     const prCheck = await getPullRequest(token, owner, repo, prNumber);
@@ -331,13 +337,19 @@ export async function reconcilePendingTasks(spaceOwnerId, spaceId, tasks, owner,
       await updateTaskStatus(spaceOwnerId, spaceId, task.id, cellId, TASK_STATUS.MERGED, {
         mergeCommitSha: prCheck.data.merge_commit_sha,
       });
-      if (task.merfolkData?.repoSlug) repoSlugsToReposition.add(task.merfolkData.repoSlug);
+      if (task.merfolkData?.repoSlug) {
+        repoSlugsToReposition.add(task.merfolkData.repoSlug);
+        repoSlugsToRescan.add(task.merfolkData.repoSlug);
+      }
     } else if (prCheck.data.state === 'closed') {
       await updateTaskStatus(spaceOwnerId, spaceId, task.id, cellId, TASK_STATUS.CLOSED);
     }
   }
   for (const slug of repoSlugsToReposition) {
     repositionAllTasks(slug);
+  }
+  for (const slug of repoSlugsToRescan) {
+    rescanAfterMerge(slug, spaceId).catch(() => {});
   }
 }
 

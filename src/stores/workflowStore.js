@@ -15,7 +15,7 @@ import { create } from 'zustand';
  *   userPicture: string | null,
  *   promptPreview: string,
  *   promptFull: string,
- *   status: 'in_progress' | 'to_review' | 'committed' | 'rejected',
+ *   status: 'in_progress' | 'to_review' | 'committed' | 'merged' | 'rejected',
  *   filesTouched: string[],
  *   diffs: Array<{ filePath: string, original: string | null, proposed: string, action: string }>,
  *   createdAt: string,
