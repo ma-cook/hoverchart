@@ -3,6 +3,7 @@ import { onSocket, emitSocket } from '../api-client';
 import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
 import { sendWithRetrieval, getContentStore, waitForContentStoreHydration } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
+import { enrichPlanMerfolk } from '../services/planMerfolkEnricher';
 import { extractCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
@@ -656,7 +657,21 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       });
 
       if (blocks.length > 0) {
-        const rendered = await renderMerfolkToScene(blocks, spaceId, user);
+        let enrichedBlocks = blocks;
+        if (selectedRepo && selectedBranch) {
+          const repoContext = {
+            owner: selectedRepo.owner?.login || selectedRepo.owner,
+            repo: selectedRepo.name,
+            branch: selectedBranch,
+            token: getGithubToken(),
+            fileTree: useCodeStore.getState().repoFileTree || [],
+            fileContents: useCodeStore.getState().repoFileContents || {},
+          };
+          enrichedBlocks = await Promise.all(
+            blocks.map((block) => enrichPlanMerfolk(block, repoContext)),
+          );
+        }
+        const rendered = await renderMerfolkToScene(enrichedBlocks, spaceId, user);
         if (rendered) {
           setPlanMessages((prev) =>
             prev.map(m =>
@@ -665,6 +680,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                 : m
             )
           );
+          const enrichedMarkdown = enrichedBlocks
+            .map((block) => '```merfolk\n' + block + '\n```')
+            .join('\n\n');
+          onDiagramGenerated?.({
+            markdown: enrichedMarkdown,
+            repo: selectedRepo,
+          });
         }
       }
     } catch (err) {
@@ -684,7 +706,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, planMessages, spaceId, user, windowLlm]);
+  }, [input, streaming, planMessages, spaceId, user, windowLlm, selectedRepo, selectedBranch, onDiagramGenerated]);
 
   const handleCodeSend = useCallback(async () => {
     const text = input.trim();

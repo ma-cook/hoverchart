@@ -39,9 +39,36 @@ FACE CONNECTIONS — Target specific face of a 3D object:
   Cubes: front, back, top, bottom, left, right
   Dodecahedrons: face_0 through face_11
 
-NODE PROPERTIES — Inline customization:
+NODE PROPERTIES — Inline customization and metadata:
   App{Component: Main Application} {color: "blue", scale: "2,1,1"}
   DataService[Function: Data Processing] {color: "#4CAF50"}
+
+Every node that maps to a real source file SHOULD include these metadata properties:
+  App{Component: MyApp} {codeFilePath: "src/App.jsx", fileSize: "3200"}
+  validateEmail[Function: validateEmail] {codeFilePath: "src/utils/validation.js", fileSize: "1450"}
+  authStore[[Store: authStore]] {codeFilePath: "src/stores/authStore.ts", fileSize: "2100", storeProperties: "user, token, login, logout"}
+  useAuth[Hook: useAuth] {codeFilePath: "src/hooks/useAuth.js", fileSize: "890", typescriptType: "{user: User, login: fn}"}
+
+FILE CONTAINER NODES — Group internal functions under their parent file:
+  Each source file gets a container node (suffix _file) that wraps its exports:
+  validation_file[Function: validation] {codeFilePath: "src/utils/validation.js", exports: "validateEmail,validatePassword", fileSize: "1450"}
+  validation_file -.-> validateEmail : "contains"
+  validation_file -.-> validatePassword : "contains"
+
+  App_file[Function: App] {codeFilePath: "src/App.jsx", exports: "default", fileSize: "3200", htmlElements: "div,button", cssClasses: "app-container,header"}
+  App_file -.-> App : "contains"
+
+COMPONENT INTERNAL FUNCTIONS — Extract helpers defined inside components:
+  handleClick[Function: handleClick] {codeFilePath: "src/components/App.jsx"}
+  handleSubmit[Function: handleSubmit] {codeFilePath: "src/components/App.jsx"}
+  App -.-> handleClick : "event handler"
+  App -.-> handleSubmit : "event handler"
+
+DETAILED CONNECTION LABELS — Include specific data in connection labels:
+  App --> authStore : "user, token, login(), logout()"    (store usage with property names)
+  App --> useAuth : "{user, isAuthenticated, logout}"      (hook return destructuring)
+  App --> Sidebar : "theme, onNavigate, isOpen"            (props flow with prop names)
+  App --> apiClient : "get, post, delete"                  (service method calls)
 
 FLOW PATHS — Named sequences through multiple nodes:
   flowpath "name" : A --> B --> C --> D
@@ -56,6 +83,12 @@ DIAGRAM RULES:
 2. Every node should have at least one connection.
 3. Use --> as the default connection type.
 4. Generate as many nodes as needed to fully represent the architecture.
+5. Include codeFilePath property on every node that maps to a real source file.
+6. Generate file container nodes (suffix _file) for each source file, with "contains" arrows to its exported functions/components.
+7. Include component-internal functions (event handlers, render helpers) as separate nodes with dashed "contains" arrows to their parent component.
+8. Use specific labels showing actual prop names, store properties, and hook return values instead of generic "uses"/"renders".
+9. When the repo's file tree is available via tools, cross-reference node names against actual files and include accurate file sizes and export lists.
+10. Every file container node should include fileSize and exports properties.
 
 ═══════════════════════════════════════════════════════════════
 CAPABILITIES
@@ -303,30 +336,50 @@ flowpath "File Upload" : MessagePanel --> uploadFile --> FileService --> Message
 graph3d "React Component Library"
 
 %% ── Root ──────────────────────────────────────────
-App{Component: Component Library}
+App{Component: Component Library} {codeFilePath: "src/App.jsx", fileSize: "1850"}
+App_file[Function: App] {codeFilePath: "src/App.jsx", exports: "default", fileSize: "1850", htmlElements: "div", cssClasses: "library-root"}
+App_file -.-> App : "contains"
 
 %% ── Core Components ───────────────────────────────
-Button{Component: Button}
-Modal{Component: Modal}
-DataTable{Component: DataTable}
-Form{Component: Form}
-Toast{Component: Toast}
-Dropdown{Component: Dropdown}
+Button{Component: Button} {codeFilePath: "src/components/Button.tsx", fileSize: "2400", htmlElements: "button,span", cssClasses: "btn,btn-primary,btn-disabled"}
+Modal{Component: Modal} {codeFilePath: "src/components/Modal.tsx", fileSize: "3100", htmlElements: "div,button", cssClasses: "modal-overlay,modal-content,modal-close"}
+DataTable{Component: DataTable} {codeFilePath: "src/components/DataTable.tsx", fileSize: "4200", htmlElements: "table,thead,tbody,tr,td,th,input", cssClasses: "data-table,sortable-header,cell"}
+Form{Component: Form} {codeFilePath: "src/components/Form.tsx", fileSize: "2800", htmlElements: "form,input,button,label", cssClasses: "form-group,form-error,form-submit"}
+Toast{Component: Toast} {codeFilePath: "src/components/Toast.tsx", fileSize: "1200", htmlElements: "div,span", cssClasses: "toast,toast-success,toast-error"}
+Dropdown{Component: Dropdown} {codeFilePath: "src/components/Dropdown.tsx", fileSize: "1900", htmlElements: "div,ul,li,button", cssClasses: "dropdown,dropdown-menu,dropdown-item"}
+
+%% ── Component Internal Functions ──────────────────
+handleClick[Function: handleClick] {codeFilePath: "src/components/Button.tsx"}
+handleOverlayClick[Function: handleOverlayClick] {codeFilePath: "src/components/Modal.tsx"}
+handleSort[Function: handleSort] {codeFilePath: "src/components/DataTable.tsx"}
+validateField[Function: validateField] {codeFilePath: "src/components/Form.tsx"}
+Button -.-> handleClick : "event handler"
+Modal -.-> handleOverlayClick : "event handler"
+DataTable -.-> handleSort : "event handler"
+Form -.-> validateField : "event handler"
 
 %% ── Hooks ─────────────────────────────────────────
-useTheme[Hook: useTheme]
-useForm[Hook: useForm]
-useModal[Hook: useModal]
-useTableData[Hook: useTableData]
+useTheme[Hook: useTheme] {codeFilePath: "src/hooks/useTheme.ts", fileSize: "680", typescriptType: "{theme: Theme, toggleTheme: fn}"}
+useForm[Hook: useForm] {codeFilePath: "src/hooks/useForm.ts", fileSize: "1200", typescriptType: "{values, errors, handleChange, handleSubmit}"}
+useModal[Hook: useModal] {codeFilePath: "src/hooks/useModal.ts", fileSize: "420", typescriptType: "{isOpen, open, close}"}
+useTableData[Hook: useTableData] {codeFilePath: "src/hooks/useTableData.ts", fileSize: "1800", typescriptType: "{data, sort, filter, pagination}"}
 
 %% ── State Stores ──────────────────────────────────
-ThemeStore[[Store: Theme Store]]
-FormStore[[Store: Form Store]]
+ThemeStore[[Store: Theme Store]] {codeFilePath: "src/stores/themeStore.ts", fileSize: "520", storeProperties: "theme, mode, setTheme, toggleMode"}
+FormStore[[Store: Form Store]] {codeFilePath: "src/stores/formStore.ts", fileSize: "780", storeProperties: "fields, dirty, submitting, validate, submit"}
 
 %% ── Utility Functions ─────────────────────────────
-formatDate[Function: formatDate]
-validateInput[Function: validateInput]
-debounce[Function: debounce]
+formatDate[Function: formatDate] {codeFilePath: "src/utils/format.ts", fileSize: "340"}
+validateInput[Function: validateInput] {codeFilePath: "src/utils/validate.ts", fileSize: "890"}
+debounce[Function: debounce] {codeFilePath: "src/utils/debounce.ts", fileSize: "210"}
+
+%% ── Utility File Containers ───────────────────────
+format_file[Function: format] {codeFilePath: "src/utils/format.ts", exports: "formatDate,formatCurrency,formatNumber", fileSize: "1200"}
+format_file -.-> formatDate : "contains"
+validate_file[Function: validate] {codeFilePath: "src/utils/validate.ts", exports: "validateInput,validateEmail,validateRequired", fileSize: "1800"}
+validate_file -.-> validateInput : "contains"
+debounce_file[Function: debounce] {codeFilePath: "src/utils/debounce.ts", exports: "default", fileSize: "210"}
+debounce_file -.-> debounce : "contains"
 
 %% ── External Libraries ────────────────────────────
 ReactLib<Library: React>
@@ -340,28 +393,27 @@ App --> Form : "exports"
 App --> Toast : "exports"
 App --> Dropdown : "exports"
 
-%% ── Components use hooks ──────────────────────────
-Button -.-> useTheme : "reads theme"
-Modal -.-> useModal : "manages state"
-DataTable -.-> useTableData : "fetches data"
-Form -.-> useForm : "manages form"
-Toast -.-> useTheme : "reads theme"
+%% ── Components use hooks with destructured values ─
+Button -.-> useTheme : "{theme, toggleTheme}"
+Modal -.-> useModal : "{isOpen, close}"
+DataTable -.-> useTableData : "{data, sort, filter}"
+Form -.-> useForm : "{values, errors, handleChange, handleSubmit}"
+Toast -.-> useTheme : "{theme}"
 
-%% ── Hooks connect to stores ───────────────────────
-useTheme --> ThemeStore : "reads/writes"
-useForm --> FormStore : "reads/writes"
-useTableData --> ThemeStore : "reads theme"
+%% ── Hooks connect to stores with properties ───────
+useTheme --> ThemeStore : "theme, mode, setTheme()"
+useForm --> FormStore : "fields, dirty, validate()"
+useTableData --> ThemeStore : "theme"
 
 %% ── Functions used by components ──────────────────
-Form --> validateInput : "validates"
-DataTable --> formatDate : "formats cells"
-DataTable --> debounce : "search debounce"
+Form --> validateInput : "validates email, required fields"
+DataTable --> formatDate : "formats date cells"
+DataTable --> debounce : "search input debounce"
 
 %% ── Component composition ─────────────────────────
-Modal *--> Button : "contains cancel"
-Modal *--> Button : "contains confirm"
-Form *--> Button : "contains submit"
-Dropdown *--> Button : "triggers"
+Modal *--> Button : "cancel, confirm"
+Form *--> Button : "submit"
+Dropdown *--> Button : "trigger"
 
 %% ── Library dependencies ──────────────────────────
 Button --> ReactLib : "uses"
