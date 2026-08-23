@@ -8,6 +8,6 @@ export { stripRetrievalMarkers } from './retrievalProtocol';
 export { sendWithRetrieval } from './retrievalOrchestrator';
 export { AgentListener } from './agentListener';
 export { AgentMonitor, globalMonitor } from './agentMonitor';
-export { RagPipeline, RagStage } from './ragPipeline';
+export { RagPipeline } from './ragPipeline';
 export { SequentialWorkflow, ParallelWorkflow, MapReduceWorkflow, LoopWorkflow, ConditionalWorkflow, WorkflowContext, runWorkflow, createWorkflowStep } from './workflow';
 export { ModelRouter, globalRouter } from './modelRouter';

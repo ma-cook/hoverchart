@@ -66,6 +66,67 @@ const clearConnectionCache = (spaceId, connectionId) => {
   }
 };
 
+// Defensive normalization for rows returned by GET /connections.
+// The canonical client shape is denormalized:
+//   { id, cellId, start: { objectId, ... }, end: { ... }, lineStyle|styleType, ... }
+// Older/un-patched backends return the raw Postgres row instead
+// (start_obj/end_obj ids + start_data/end_data JSON). Without this,
+// ConnectionsRenderer filters every such row out (missing start.objectId)
+// and no lines ever render.
+export function normalizeConnectionRow(conn) {
+  if (!conn || typeof conn !== 'object') return conn;
+  let c = conn;
+  const needsNormalize =
+    (!c.start || !c.end) &&
+    (c.start_data !== undefined || c.end_data !== undefined || c.startData !== undefined || c.endData !== undefined);
+  if (needsNormalize) {
+    // Top-level snake_case → camelCase (shallow; nested endpoint data handled below)
+    const out = { ...c };
+    for (const [snake, camel] of [
+      ['cell_id', 'cellId'],
+      ['space_id', 'spaceId'],
+      ['line_style', 'lineStyle'],
+      ['start_obj', 'startObj'],
+      ['end_obj', 'endObj'],
+      ['start_data', 'startData'],
+      ['end_data', 'endData'],
+      ['created_at', 'createdAt'],
+      ['updated_at', 'lastUpdated'],
+    ]) {
+      if (out[snake] !== undefined && out[camel] === undefined) out[camel] = out[snake];
+    }
+
+    const unwrap = (data) => {
+      let d = data;
+      if (typeof d === 'string') {
+        try { d = JSON.parse(d); } catch { return undefined; }
+      }
+      return d && typeof d === 'object' ? { ...d } : undefined;
+    };
+
+    const parsedStart = out.startData != null ? unwrap(out.startData) : undefined;
+    const parsedEnd = out.endData != null ? unwrap(out.endData) : undefined;
+    if (!out.start && parsedStart) out.start = parsedStart;
+    if (!out.end && parsedEnd) out.end = parsedEnd;
+    // Degenerate rows may carry only the id columns — synthesize minimal
+    // endpoints so client filters (start?.objectId) still pass.
+    if (!out.start && out.startObj != null) out.start = {};
+    if (!out.end && out.endObj != null) out.end = {};
+    if (out.start && out.start.objectId == null && out.startObj != null) out.start.objectId = String(out.startObj);
+    if (out.end && out.end.objectId == null && out.endObj != null) out.end.objectId = String(out.endObj);
+
+    c = out;
+  }
+  // Backfill objectId even for already-camel shapes missing it
+  if (c.start && c.start.objectId == null && c.startObj != null) {
+    c = { ...c, start: { ...c.start, objectId: String(c.startObj) } };
+  }
+  if (c.end && c.end.objectId == null && c.endObj != null) {
+    c = { ...c, end: { ...c.end, objectId: String(c.endObj) } };
+  }
+  return c;
+}
+
 /**
  * Fast shallow comparison for connection data
  * More efficient than JSON.stringify for change detection
@@ -243,7 +304,8 @@ export const subscribeToConnections = (
       if (response == null) {
         return; // 304 — nothing changed, skip the diff entirely
       }
-      const connections = Array.isArray(response) ? response : (response.connections || []);
+      const rawConnections = Array.isArray(response) ? response : (response.connections || []);
+      const connections = rawConnections.map(normalizeConnectionRow);
       const seenKeys = new Set();
 
       // Process incoming connections

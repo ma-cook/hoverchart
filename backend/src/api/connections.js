@@ -3,6 +3,54 @@ import pool from '../db.js';
 
 export const router = Router({ mergeParams: true });
 
+function toCamel(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(toCamel);
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const camel = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    result[camel] = value && typeof value === 'object' && !(value instanceof Date) ? toCamel(value) : value;
+  }
+  return result;
+}
+
+// The client renders connections from a denormalized shape:
+//   { id, cellId, start: { objectId, face, type, ... }, end: { ... }, styleType|lineStyle }
+// The database stores the normalized columns (start_obj/end_obj ids +
+// start_data/end_data JSON). Denormalize here so API responses match what
+// the frontend expects — otherwise ConnectionsRenderer filters every
+// DB-loaded connection out (missing start.objectId) and no lines render.
+function denormalizeConnection(row) {
+  const conn = toCamel(row);
+  if (!conn || typeof conn !== 'object') return conn;
+
+  let startData = conn.startData;
+  let endData = conn.endData;
+  // node-pg returns jsonb as objects, but be defensive about strings
+  if (typeof startData === 'string') { try { startData = JSON.parse(startData); } catch { startData = undefined; } }
+  if (typeof endData === 'string') { try { endData = JSON.parse(endData); } catch { endData = undefined; } }
+
+  if (conn.start === undefined && startData && typeof startData === 'object') {
+    conn.start = toCamel(startData);
+  }
+  if (conn.end === undefined && endData && typeof endData === 'object') {
+    conn.end = toCamel(endData);
+  }
+  // Degenerate rows may carry only the id columns — synthesize minimal
+  // endpoints so client filters (start?.objectId) still pass.
+  if (conn.start === undefined && conn.startObj !== undefined) conn.start = {};
+  if (conn.end === undefined && conn.endObj !== undefined) conn.end = {};
+  // The *_obj id columns are authoritative — backfill objectId if the
+  // embedded endpoint data predates it or was saved without it.
+  if (conn.start && !conn.start.objectId && conn.startObj !== undefined) {
+    conn.start.objectId = String(conn.startObj);
+  }
+  if (conn.end && !conn.end.objectId && conn.endObj !== undefined) {
+    conn.end.objectId = String(conn.endObj);
+  }
+  return conn;
+}
+
 router.get('/', async (req, res) => {
   const { spaceId } = req.params;
   const { cell_id } = req.query;
@@ -32,7 +80,7 @@ router.get('/', async (req, res) => {
         [spaceId]
       );
     }
-    res.json(result.rows);
+    res.json(result.rows.map(denormalizeConnection));
   } catch (err) {
     console.error('List connections error:', err);
     res.status(500).json({ error: 'Failed to list connections' });
@@ -76,7 +124,7 @@ router.post('/', async (req, res) => {
        conn.start_data, conn.end_data, conn.line_style || 'straight',
        conn.color || '#000000', conn.text, conn.metadata || {}]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(denormalizeConnection(result.rows[0]));
   } catch (err) {
     console.error('Upsert connection error:', err);
     res.status(500).json({ error: 'Failed to upsert connection' });
@@ -108,7 +156,7 @@ router.patch('/:id', async (req, res) => {
       [...values, spaceId, cell_id, id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Connection not found' });
-    res.json(result.rows[0]);
+    res.json(denormalizeConnection(result.rows[0]));
   } catch (err) {
     console.error('Update connection error:', err);
     res.status(500).json({ error: 'Failed to update connection' });
