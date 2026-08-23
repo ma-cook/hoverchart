@@ -483,11 +483,17 @@ const UIOverlay = ({
   const isUploadingModel = useUIOverlayStore(
     (state) => state.getUIOverlay('main').isUploadingModel
   );
+  const isProcessingMarkdown = useUIOverlayStore(
+    (state) => state.getUIOverlay('main').isProcessingMarkdown
+  );
   const isRecording = useUIOverlayStore(
     (state) => state.getUIOverlay('main').isRecording
   );
   const setIsUploadingModel = useUIOverlayStore(
     (state) => state.setIsUploadingModel
+  );
+  const setIsProcessingMarkdown = useUIOverlayStore(
+    (state) => state.setIsProcessingMarkdown
   );
   const setIsRecording = useCallback(
     (val) => useUIOverlayStore.getState().setIsRecording('main', val),
@@ -513,6 +519,9 @@ const UIOverlay = ({
 
   // Model upload functionality
   const modelFileInputRef = useRef(null);
+
+  // Markdown upload functionality
+  const markdownFileInputRef = useRef(null);
 
   // CSV upload functionality
   const csvFileInputRef = useRef(null);
@@ -1126,6 +1135,68 @@ const UIOverlay = ({
     [user, currentSpaceId, onCreateObject, setIsUploadingModel]
   );
 
+  // Markdown upload handlers
+  const handleMarkdownUpload = useCallback(() => {
+    if (markdownFileInputRef.current) {
+      markdownFileInputRef.current.click();
+    }
+  }, []);
+
+  const handleMarkdownFileSelect = useCallback(
+    async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      setIsProcessingMarkdown(true);
+      diagramIsBeingGenerated.current = true;
+
+      try {
+        const result = await markdownDiagramService.processMarkdownFile(
+          file,
+          onCreateObject,
+          currentSpaceId,
+          user
+        );
+
+        if (result.success) {
+          // Objects and connections are rendered immediately
+          // But wait for database save to complete before showing completion message
+          if (result.savePromise) {
+            await result.savePromise;
+          }
+
+          setNotification({
+            show: true,
+            message: `Successfully processed ${result.diagramCount} diagram(s) and created ${result.objectsCreated} 3D objects with ${result.connectionsCreated} connections!`,
+          });
+          setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+        } else {
+          setNotification({
+            show: true,
+            message: 'No 3D objects were created. Please check that your Merfolk syntax is correct.',
+          });
+          setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+        }
+      } catch (error) {
+        console.error('Failed to process markdown file:', error);
+        setNotification({
+          show: true,
+          message: `Failed to process markdown file: ${error.message}. Please check the file format and try again.`,
+        });
+        setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+      } finally {
+        setIsProcessingMarkdown(false);
+        // Reset file input
+        if (markdownFileInputRef.current) {
+          markdownFileInputRef.current.value = '';
+        }
+      }
+    },
+    [onCreateObject, currentSpaceId, user, setIsProcessingMarkdown]
+  );
+
   // CSV upload handlers
   const handleCsvUpload = useCallback(() => {
     if (csvFileInputRef.current) {
@@ -1664,6 +1735,25 @@ const UIOverlay = ({
               >
                 ⤓
               </button>
+
+              <div style={{ position: 'relative', display: 'inline-flex' }}>
+                <button
+                  className="top-bar-btn"
+                  onClick={handleMarkdownUpload}
+                  disabled={isProcessingMarkdown}
+                  title="Upload Markdown with Merfolk diagrams"
+                  aria-label="Upload Markdown"
+                >
+                  {isProcessingMarkdown ? '…' : 'M'}
+                </button>
+                <input
+                  ref={markdownFileInputRef}
+                  type="file"
+                  accept=".md,.markdown"
+                  style={{ display: 'none' }}
+                  onChange={handleMarkdownFileSelect}
+                />
+              </div>
 
               <div style={{ position: 'relative', display: 'inline-flex' }}>
                 <button
