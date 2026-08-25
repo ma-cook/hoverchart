@@ -6,6 +6,7 @@ import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 import { getSmoothedFrameTime } from '../utils/renderWorkScheduler';
+import importPerf from '../utils/importPerf';
 
 // Reusable vectors to avoid GC pressure
 const _cameraPos = new THREE.Vector3();
@@ -121,6 +122,9 @@ const LODManager = ({ enabled = true }) => {
     const objects = objectsRef.current;
     if (!objects || objects.length === 0) return;
 
+    importPerf.mark(`lodDeferred: serializing ${objects.length} objects for worker`);
+    const t0 = performance.now();
+
     // Serialise just the data the worker needs
     const serialised = objects.map(obj => ({
       id: String(obj.id),
@@ -132,6 +136,7 @@ const LODManager = ({ enabled = true }) => {
     const worker = getSpatialIndexWorker();
     worker.syncObjects(serialised).then(() => {
       workerSyncedRef.current = true;
+      importPerf.mark(`lodDeferred: worker sync done in ${Math.round(performance.now() - t0)}ms`);
     }).catch(() => { /* worker unavailable — sync fallback will run */ });
   }, [deferredPassTick]);
 
@@ -160,6 +165,9 @@ const LODManager = ({ enabled = true }) => {
       return;
     }
 
+    importPerf.mark(`containment: pass begin (${objects.length} objs, containersKey=${containersKey.slice(0, 40)})`);
+    const t0 = performance.now();
+
     // --- Try worker path first ---
     if (workerSyncedRef.current) {
       const worker = getSpatialIndexWorker();
@@ -173,6 +181,7 @@ const LODManager = ({ enabled = true }) => {
         }
         initializedRef.current = true;
         needsImmediateUpdateRef.current = true;
+        importPerf.mark(`containment: worker result applied in ${Math.round(performance.now() - t0)}ms (${relationships.length} rels)`);
       }).catch(() => {
         // Worker failed — fall through to sync path
         computeContainmentSync(objects);
