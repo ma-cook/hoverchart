@@ -291,14 +291,15 @@ export const containerMethods = {
 
     // Track containers per cell like regular objects (objectMethods does this
     // at creation).  Without it, unloadCellsBatch never finds containers in
-    // objectsByCell, so they are NOT removed from the store on unload — a
+    // objectsByCell, so they are NOT removed from the store on unload - a
     // later reload then re-adds the cached copy, creating duplicate IDs that
     // freeze renderProgress below 100%.
-    for (const cube of newCubes) {
-      if (cube.cellId) {
-        useSpatialManagerStore.getState().trackObjectInCell(cube.id, cube.cellId);
-      }
-    }
+    // PERF FIX: single batched tracking call instead of one Map clone per cube.
+    useSpatialManagerStore.getState().trackObjectsInCellBatch?.(
+      newCubes
+        .filter((cube) => cube.cellId)
+        .map((cube) => ({ objectId: cube.id, cellId: cube.cellId }))
+    );
   },
 
   /**

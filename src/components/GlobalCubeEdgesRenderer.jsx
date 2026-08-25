@@ -4,6 +4,7 @@ import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
+import { bulkImportState } from '../utils/bulkImportState';
 
 extend({ LineShaderMaterial });
 
@@ -95,6 +96,20 @@ const tempVec = new THREE.Vector3();
 const tempMatrix = new THREE.Matrix4();
 const tempColor = new THREE.Color();
 
+// Mark only [offset, offset+count) of an attribute dirty for GPU upload.
+// Uses whichever update-range API the installed three.js version exposes;
+// falls back to a full upload when neither exists (still correct, just slower).
+function applyUpdateRange(attr, offset, count) {
+  attr.needsUpdate = true;
+  if (typeof attr.addUpdateRange === 'function') {
+    if (typeof attr.clearUpdateRanges === 'function') attr.clearUpdateRanges();
+    attr.addUpdateRange(offset, count);
+  } else if (attr.updateRange) {
+    attr.updateRange.offset = offset;
+    attr.updateRange.count = count;
+  }
+}
+
 // Global map for real-time cube transforms - Cube components update this during drag
 // This allows GlobalCubeEdgesRenderer to read positions without expensive scene traversal
 export const cubeTransformMap = new Map(); // Map<cubeId, { position: [x,y,z], scale: [x,y,z] }>
@@ -164,9 +179,6 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
 
   // Calculate total number of line instances needed
   const totalEdges = filteredCubes.length * EDGES_PER_CUBE;
-  
-  // Track cube IDs to detect actual changes, not just length
-  const cubeIds = useMemo(() => filteredCubes.map(c => c.id).join(','), [filteredCubes]);
 
   // FLICKER FIX: Use a grow-only capacity (power-of-2) so the instancedMesh
   // is NOT destroyed/recreated on every progressive-mount batch.  Instead the
@@ -232,12 +244,59 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     }
   }, [material, size.width, size.height]);
 
-  // Mark for full update when cubes array changes (ID set or prop reference)
+  // Mark for full update when the filtered set changes — but only when the
+  // change is NOT append-only.  PERF FIX: during progressive mounting every
+  // batch appends a few cubes and previously this effect wiped the dirty-check
+  // maps and forced a full O(N) rebuild + full GPU re-upload EVERY frame.
+  // Append-only prop changes keep all incremental state; newly appended items
+  // are absent from lastPositionsRef, so the frame-loop dirty checks pick
+  // them up automatically - nothing to invalidate here.
+  const prevFilteredRef = useRef(null);
+  // True while appended items have not yet been written to the GPU
+  // attributes; keeps the frame loop alive even when culling is off.
+  const hasPendingAppendsRef = useRef(false);
   useEffect(() => {
+    const prev = prevFilteredRef.current;
+    prevFilteredRef.current = filteredCubes;
+    if (
+      prev !== null &&
+      !needsFullUpdateRef.current &&
+      filteredCubes.length >= prev.length
+    ) {
+      let appendOnly = true;
+      for (let i = 0; i < prev.length; i++) {
+        if (filteredCubes[i] !== prev[i]) {
+          appendOnly = false;
+          break;
+        }
+      }
+      if (appendOnly) {
+        hasPendingAppendsRef.current = true;
+        return;
+      }
+    }
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
     visibilityRef.current.clear();
-  }, [cubeIds, filteredCubes]);
+  }, [filteredCubes]);
+
+  // Capacity growth swaps the geometry (fresh zero-filled buffers) — the new
+  // buffers need a complete edge write AND fresh identity instance matrices.
+  useEffect(() => {
+    needsFullUpdateRef.current = true;
+  }, [geometry]);
+
+  // Set identity instance matrices ONCE per mesh allocation.  PERF FIX: the
+  // previous code re-ran this O(capacity) loop (262k setMatrixAt calls at
+  // scale) inside useFrame on every full update.
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || !geometry) return;
+    for (let i = 0; i < capacity; i++) {
+      mesh.setMatrixAt(i, IDENTITY_MATRIX);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [geometry, capacity]);
 
   // Function to check if a cube is visible in the camera frustum
   const isCubeVisible = useCallback((position, scale) => {
@@ -300,14 +359,23 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
 
     const hasActiveTransforms = cubeTransformMap.size > 0;
     const needsInitialSetup = needsFullUpdateRef.current;
-    // Only perform frustum culling when cube count exceeds threshold
-    const enableCulling = filteredCubes.length > cullingThreshold;
+    // Only perform frustum culling when cube count exceeds threshold.
+    // PERF FIX: suspend per-cube frustum sweeps entirely while a bulk import
+    // is streaming objects in (camera is typically idle then); culling
+    // resumes and converges once mounting settles.
+    const enableCulling =
+      filteredCubes.length > cullingThreshold && !bulkImportState.active;
 
     // PERFORMANCE: Early exit when no transforms are active, initial setup is
     // done, AND frustum culling is disabled. When culling IS enabled we must
     // periodically re-evaluate because the camera may have rotated — edges
     // zeroed-out for off-screen cubes need to be restored when back in view.
-    if (!hasActiveTransforms && !needsInitialSetup && !enableCulling) {
+    if (
+      !hasActiveTransforms &&
+      !needsInitialSetup &&
+      !enableCulling &&
+      !hasPendingAppendsRef.current
+    ) {
       return;
     }
 
@@ -347,7 +415,10 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     if (isWasmReady()) {
       _ensureCubeWasmBuffers(count);
 
-      let anyChanged = needsInitialSetup;
+      // PERF: track the FIRST dirty cube index so only the changed tail/range
+      // is copied into the GPU attributes (partial updateRange upload), not
+      // all N×12 edges every frame.
+      let minDirty = needsInitialSetup ? 0 : Infinity;
       for (let i = 0; i < count; i++) {
         const cube = filteredCubes[i];
         const cubeId = cube.id?.toString();
@@ -363,7 +434,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
           const wasVisible = visibilityRef.current.get(cubeId);
           if (wasVisible === undefined || wasVisible !== isVisible) {
             visibilityRef.current.set(cubeId, isVisible);
-            anyChanged = true;
+            if (i < minDirty) minDirty = i;
           }
         }
 
@@ -378,7 +449,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
             sx: scale[0], sy: scale[1], sz: scale[2],
             color,
           });
-          anyChanged = true;
+          if (i < minDirty) minDirty = i;
         }
 
         // Fill flat input buffers
@@ -390,7 +461,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
         _cubeWasmVisible[i] = (enableCulling && !isVisible) ? 0 : 1;
       }
 
-      if (anyChanged) {
+      if (minDirty !== Infinity) {
         fillEdgeBuffers(
           _cubeWasmPositions.subarray(0, count * 3),
           _cubeWasmScales.subarray(0, count * 3),
@@ -401,10 +472,15 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
           EDGES_PER_CUBE,
         );
 
-        const totalF = count * EDGES_PER_CUBE * 3;
-        instanceStart.array.set(getScratchStartView(totalF));
-        instanceEnd.array.set(getScratchEndView(totalF));
-        instanceColor.array.set(getScratchColorView(totalF));
+        const startF = minDirty * EDGES_PER_CUBE * 3;
+        const endF = count * EDGES_PER_CUBE * 3;
+        const lenF = endF - startF;
+        instanceStart.array.set(getScratchStartView(endF).subarray(startF), startF);
+        instanceEnd.array.set(getScratchEndView(endF).subarray(startF), startF);
+        instanceColor.array.set(getScratchColorView(endF).subarray(startF), startF);
+        applyUpdateRange(instanceStart, startF, lenF);
+        applyUpdateRange(instanceEnd, startF, lenF);
+        applyUpdateRange(instanceColor, startF, lenF);
         needsUpdate = true;
       }
     } else {
@@ -459,19 +535,11 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     }
 
     if (needsUpdate) {
-      instanceStart.needsUpdate = true;
-      instanceEnd.needsUpdate = true;
-      instanceColor.needsUpdate = true;
-
-      // Set identity matrices for all instances (only on full update)
-      if (needsFullUpdateRef.current) {
-        for (let i = 0; i < capacity; i++) {
-          meshRef.current.setMatrixAt(i, IDENTITY_MATRIX);
-        }
-        meshRef.current.instanceMatrix.needsUpdate = true;
-        needsFullUpdateRef.current = false;
-      }
+      // Instance matrices were already set to identity once per mesh
+      // allocation (see effect above) — nothing per-frame here anymore.
+      needsFullUpdateRef.current = false;
     }
+    hasPendingAppendsRef.current = false;
   });
 
   if (!geometry || capacity === 0) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
@@ -102,7 +102,23 @@ const LODManager = ({ enabled = true }) => {
   const workerBusyRef = useRef(false);
   const workerSyncedRef = useRef(false);
 
+  // PERF FIX: coalesce per-flush storms into ONE deferred pass. During a
+  // 92k-object import the store flushes every ~100ms; serialising ALL objects
+  // for the worker + rebuilding containersKey on every flush was O(N) work
+  // repeated per flush (quadratic cumulative). A trailing debounce collapses
+  // that into a single pass shortly after the last flush lands, and also
+  // absorbs rapid user edits after the import settles.
+  const [deferredPassTick, setDeferredPassTick] = useState(0);
   useEffect(() => {
+    if (!objects || objects.length === 0) return;
+    const t = setTimeout(() => setDeferredPassTick(v => v + 1), 400);
+    return () => clearTimeout(t);
+  }, [objects]);
+
+  useEffect(() => {
+    // Runs once on mount and again 400ms after the last store flush — reads
+    // via objectsRef so it never re-runs per individual property change.
+    const objects = objectsRef.current;
     if (!objects || objects.length === 0) return;
 
     // Serialise just the data the worker needs
@@ -117,11 +133,12 @@ const LODManager = ({ enabled = true }) => {
     worker.syncObjects(serialised).then(() => {
       workerSyncedRef.current = true;
     }).catch(() => { /* worker unavailable — sync fallback will run */ });
-  }, [objects]);
+  }, [deferredPassTick]);
 
   // Stable key that only changes when container STRUCTURE changes (not positions/scales).
   // This prevents the O(N²) spatial containment scan from re-running on every object move.
   const containersKey = useMemo(() => {
+    const objects = objectsRef.current;
     if (!objects || objects.length === 0) return '';
     const containerParts = objects
       .filter(obj => obj.merfolkData?.isContainer || obj.merfolkData?.isParent || obj.merfolkData?.parentId)
@@ -131,7 +148,8 @@ const LODManager = ({ enabled = true }) => {
     // Include objects.length so the effect re-runs when objects load,
     // even if none have container metadata (containersKey would stay '' otherwise)
     return `${objects.length}:${containerParts}`;
-  }, [objects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recomputed on deferred ticks only
+  }, [deferredPassTick]);
 
   // Initialize parent-child relationships when container STRUCTURE changes.
   // Tries the worker first (off-main-thread O(N×containers) scan), falls back

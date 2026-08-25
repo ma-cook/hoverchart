@@ -1064,7 +1064,11 @@ export async function precomputePathsBatch(requests, objects) {
     const requestsById = new Map(requests.map(r => [r.id, r]));
 
     // Populate the main-thread precomputed map.
-    precomputedResults.clear();
+    // PERF FIX: do NOT clear the map per batch.  Results are keyed by
+    // positions + connection ids, so stale entries simply stop being hit;
+    // wiping here threw away every earlier batch's results during imports,
+    // forcing O(C*N) recomputation once mounting settled.  Real object
+    // moves still invalidate via invalidatePathfindingCaches().
     for (const res of results) {
       const req = requestsById.get(res.id);
       if (!req) continue;

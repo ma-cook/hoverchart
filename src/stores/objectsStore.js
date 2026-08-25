@@ -6,6 +6,7 @@ import {
   deleteObjectFromSpatialCell,
 } from '../services/spatialObjectsService';
 import useConnectionStore from './connectionStore';
+import { bulkImportState } from '../utils/bulkImportState';
 import { getCellCoordinates, removeConnectionFromAllCells } from '../services/spatialPartitioning';
 import { deleteConnection } from '../services/connectionsService';
 
@@ -135,6 +136,16 @@ const useObjectsStore = createWithEqualityFn(
           filteredObjects.some((obj) => !currentIds.has(obj.id?.toString()));
 
         if (idsChanged) {
+          set({ objects: filteredObjects, _isUpdating: false });
+          return;
+        }
+
+        // PERF FIX: while a bulk import streams in, skip the O(N) hash-diff.
+        // Every import flush carries genuinely new objects (idsChanged above
+        // would fire anyway), so hashing all 92k objects per flush is pure
+        // overhead. Broadcast/remote updates don't run during imports, so
+        // nothing meaningful can be dropped here.
+        if (bulkImportState.active) {
           set({ objects: filteredObjects, _isUpdating: false });
           return;
         }

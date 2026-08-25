@@ -427,6 +427,21 @@ const Cube = ({
   // Reset selection states when cube is deselected
   useEffect(() => {
     if (!selected) {
+      // PERF FIX: freshly-mounted cubes (the import hot path) have all-default
+      // UI state — nothing to reset.  Previously every mount fired ~12 store
+      // writes here; each used to clone the whole cubes Map / Sets and notify
+      // every mounted Cube.  Store-side no-op guards make the remaining
+      // writes cheap, and skipping the block entirely avoids even the calls.
+      const c = cube;
+      const needsReset =
+        !c ||
+        c.selectedFace != null ||
+        c.selectedIndicator != null ||
+        c.showTransform ||
+        c.showHeaderTextStyleUI ||
+        c.activeTextFace != null;
+      if (!needsReset) return;
+
       setCubeSelectedFace(id, null);
       setCubeSelectedIndicator(id, null);
       setCubeShowTransform(id, false);
@@ -442,6 +457,7 @@ const Cube = ({
     }
   }, [
     selected,
+    cube,
     id,
     setCubeSelectedFace,
     setCubeSelectedIndicator,

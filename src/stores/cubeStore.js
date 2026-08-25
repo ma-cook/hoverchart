@@ -1,4 +1,5 @@
 import { createWithEqualityFn } from 'zustand/traditional';
+import importPerf from '../utils/importPerf';
 
 // Selector cache to avoid creating new selector functions on every render
 const selectorCache = new Map();
@@ -61,6 +62,16 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
 
   // Actions
   createCube: (cubeId, initialState = {}) => {
+    if (!importPerf.enabled) return get()._createCubeImpl(cubeId, initialState);
+    importPerf.begin('createCube');
+    try {
+      return get()._createCubeImpl(cubeId, initialState);
+    } finally {
+      importPerf.end('createCube');
+    }
+  },
+
+  _createCubeImpl: (cubeId, initialState = {}) => {
     set((state) => {
       const newCubes = new Map(state.cubes);
       newCubes.set(cubeId, {
@@ -96,19 +107,51 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
         isScaleModified: false, // Add scale modification tracking
         ...initialState,
       });
-      return { cubes: newCubes, _unmodifiedVersion: state._unmodifiedVersion + 1 };
+      // PERF FIX: do NOT bump _unmodifiedVersion here.  Creating a cube never
+      // changes the unmodified status of EXISTING cubes; consumers that need
+      // to learn about the new cube already re-run per mount batch via the
+      // cubes-array identity.  The old bump forced a full O(mounted-cubes)
+      // rebuild of unmodifiedCubeIds + instanced refilters on EVERY mount.
+      return { cubes: newCubes };
     });
   },
 
   updateCube: (cubeId, updates) => {
+    if (!importPerf.enabled) return get()._updateCubeImpl(cubeId, updates);
+    importPerf.begin('updateCube');
+    try {
+      return get()._updateCubeImpl(cubeId, updates);
+    } finally {
+      importPerf.end('updateCube');
+    }
+  },
+
+  _updateCubeImpl: (cubeId, updates) => {
     set((state) => {
-      const newCubes = new Map(state.cubes);
-      const existing = newCubes.get(cubeId);
-      if (existing) {
-        newCubes.set(cubeId, { ...existing, ...updates });
+      const existing = state.cubes.get(cubeId);
+      if (!existing) return state;
+
+      // PERF FIX: no-op detection BEFORE cloning the Map.  During imports
+      // thousands of freshly-mounted cubes fire reset-selection writes that
+      // are semantically no-ops; previously each one cloned the ENTIRE cubes
+      // Map and notified every mounted Cube's subscriptions — O(mounted) per
+      // write, ~7 writes per mount, i.e. the main quadratic freeze driver.
+      // Returning `state` itself makes zustand skip merge + notify entirely.
+      let changed = false;
+      for (const k in updates) {
+        if (!Object.is(existing[k], updates[k])) {
+          changed = true;
+          break;
+        }
       }
+      if (!changed) return state;
+
+      const newCubes = new Map(state.cubes);
+      newCubes.set(cubeId, { ...existing, ...updates });
+
       const relevantKeys = ['faceColors', 'faceTexts', 'headerText'];
-      const hasRelevantChange = existing && relevantKeys.some(k => k in updates);
+      const hasRelevantChange =
+        relevantKeys.some((k) => k in updates && !Object.is(existing[k], updates[k]));
       return {
         cubes: newCubes,
         _unmodifiedVersion: hasRelevantChange
@@ -182,6 +225,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
 
   selectCube: (cubeId) => {
     set((state) => {
+      if (state.selectedCubes.has(cubeId)) return state; // PERF: no-op guard
       const newSelected = new Set(state.selectedCubes);
       newSelected.add(cubeId);
       return { selectedCubes: newSelected };
@@ -190,6 +234,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
 
   deselectCube: (cubeId) => {
     set((state) => {
+      if (!state.selectedCubes.has(cubeId)) return state; // PERF: no-op guard
       const newSelected = new Set(state.selectedCubes);
       newSelected.delete(cubeId);
       return { selectedCubes: newSelected };
@@ -202,6 +247,8 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
 
   setTransformingCube: (cubeId, isTransforming) => {
     set((state) => {
+      // PERF: no-op guard — avoids Set clone + notify during mount storms
+      if (state.transformingCubes.has(cubeId) === isTransforming) return state;
       const newTransforming = new Set(state.transformingCubes);
       if (isTransforming) {
         newTransforming.add(cubeId);
@@ -261,11 +308,13 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
 
   setCubeIsScaleModified: (cubeId, isModified) => {
     set((state) => {
-      const newCubes = new Map(state.cubes);
-      const existing = newCubes.get(cubeId);
-      if (existing) {
-        newCubes.set(cubeId, { ...existing, isScaleModified: isModified });
+      const existing = state.cubes.get(cubeId);
+      // PERF: no-op guard
+      if (!existing || Object.is(existing.isScaleModified, isModified)) {
+        return state;
       }
+      const newCubes = new Map(state.cubes);
+      newCubes.set(cubeId, { ...existing, isScaleModified: isModified });
       return { cubes: newCubes };
     });
   },

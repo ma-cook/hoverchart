@@ -18,6 +18,8 @@ import GlobalOctahedronLowLODRenderer from './GlobalOctahedronLowLODRenderer';
 import AtlasTextSprite from './AtlasTextSprite';
 import { useCubeStore, useSpatialManagerStore } from '../stores';
 import { acquireBudget, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
+import importPerf from '../utils/importPerf';
+import { beginBulkImport, endBulkImportIfIdle } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
 
@@ -282,13 +284,13 @@ const ObjectsRenderer = React.memo(({
   // every progress report.
   const getMountableTotal = () => allIdsSetRef.current.size;
 
-  // Stable key for the loaded-cell set.  Subscribing via the selector lets the
-  // mount effect below re-run the moment a cell loads (or unloads) so objects
-  // that were skipped while their cell was unloaded get re-queued — even when
-  // objects.length and visibleObjectIds haven't changed.
-  const loadedCellsKey = useSpatialManagerStore((s) =>
-    Array.from(s.loadedCells).sort().join(',')
-  );
+  // Stable key for the loaded-cell set.  PERF FIX: subscribe to the cheap
+  // monotonic loadedCellsVersion counter instead of sorting+joining the whole
+  // cell set on every store notification (O(N log N) → O(1) per flush).
+  // The mount effect below re-runs the moment a cell loads (or unloads) so
+  // objects that were skipped while their cell was unloaded get re-queued -
+  // even when objects.length and visibleObjectIds haven't changed.
+  const loadedCellsKey = useSpatialManagerStore((s) => s.loadedCellsVersion);
 
   // ─── Shared progressive-mount pump ──────────────────────────────────
   // Both the mount effect and the 2D→3D resume effect schedule this via
@@ -343,6 +345,9 @@ const ObjectsRenderer = React.memo(({
               getMountableTotal(),
               mountedIdsRef.current.size
             );
+            // Release deferred subsystems (frustum sweeps, connection
+            // pathfinding) once mounting has fully settled.
+            endBulkImportIfIdle(0);
             pendingRef.current = [];
             pendingHeadRef.current = 0;
             rafIdRef.current = null;
@@ -361,6 +366,7 @@ const ObjectsRenderer = React.memo(({
         const objectById = idToObjectRef.current;
         let added = 0;
         let head = pendingHeadRef.current;
+        importPerf.begin('mountBatch');
         while (head < pending.length && added < budget) {
           const id = pending[head];
           head++;
@@ -376,8 +382,13 @@ const ObjectsRenderer = React.memo(({
           }
         }
         pendingHeadRef.current = head;
+        importPerf.end('mountBatch');
 
         if (added > 0) {
+          // Signal bulk-import mode so expensive per-frame subsystems
+          // (frustum sweeps in the global renderers, connection pathfinding)
+          // defer work until the queue drains.
+          beginBulkImport();
           setMountedVersion((v) => v + 1);
           // Report progress to the store (throttled)
           const now = Date.now();
@@ -661,6 +672,34 @@ const ObjectsRenderer = React.memo(({
     return unmodifiedCubeIdsRef.current;
   }, [unmodifiedVersion, mountedVersion]);
 
+  // NAMED-CUBE FAST PATH: headerText-only cubes stay instanced (see
+  // isCubeUnmodified) and their names are drawn by these shared billboards,
+  // mirroring the container-header pattern.  A cube that leaves the
+  // unmodified set (selected or genuinely edited) is skipped here because
+  // its mounted <Cube> renders its own interactive label instead.
+  const namedCubeLabels = useMemo(() => {
+    void mountedVersion; // invalidation: cubeArrRef content changes bump it
+    const out = [];
+    for (const obj of cubeArrRef.current) {
+      if (!obj.headerText) continue;
+      if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) continue;
+      if (!unmodifiedCubeIds.has(obj.id)) continue;
+      if (selectedId === obj.id) continue;
+      const halfHeight = (obj.scale?.[1] || 1) * 5;
+      out.push({
+        id: obj.id,
+        label: obj.headerText,
+        textStyle: obj.textStyle,
+        position: [
+          obj.position[0],
+          obj.position[1] + halfHeight + 5,
+          obj.position[2],
+        ],
+      });
+    }
+    return out;
+  }, [mountedVersion, unmodifiedCubeIds, selectedId]);
+
   // Click handler for the instanced full-LOD renderer — selects the cube,
   // which promotes it to a full <Cube> component on next render.
   const handleInstancedCubeClick = useMemo(() => {
@@ -856,6 +895,23 @@ const ObjectsRenderer = React.memo(({
             depthTest: false,
             depthWrite: false,
             isContainerHeader: true,
+          }}
+          billboard={true}
+          visible={true}
+          renderOrder={25}
+          scale={1}
+        />
+      ))}
+
+      {/* Names for instanced-rendered (headerText-only) cubes */}
+      {namedCubeLabels.map((header) => (
+        <AtlasTextSprite
+          key={`instanced-name-${header.id}`}
+          text={header.label}
+          position={header.position}
+          style={{
+            ...(header.textStyle || {}),
+            isHeaderText: true,
           }}
           billboard={true}
           visible={true}

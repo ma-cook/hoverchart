@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useCallback } from 'react';
+import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useCubeStore } from '../stores';
@@ -36,19 +36,18 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  * this transparent hitbox) instead of mounting a heavy per-cube <Cube>
  * React component.
  *
+ * NAMED-CUBE FAST PATH: cubes whose only customisation is a headerText
+ * (name) now count as unmodified — they stay instanced and their name is
+ * rendered by the shared billboard bucket in ObjectsRenderer (see
+ * namedCubeLabels).  Only faceColors / faceTexts force a full <Cube>.
+ *
  * @param {string} cubeId
  * @param {Map} cubesMap - cubeStore.cubes Map
  * @param {string} [objectHeaderText] - headerText from the object's store data (objectsStore).
- *   When non-empty the cube has a visible name label and must be rendered via a full <Cube>
- *   component so the AtlasTextSprite can mount.  Instanced rendering has no text layer.
+ *   No longer disqualifying: named-but-unedited cubes remain instanced.
  * @returns {boolean}
  */
 export function isCubeUnmodified(cubeId, cubesMap, objectHeaderText, objectData) {
-  // Cubes with a name in the object data are never "unmodified" — they need
-  // an individual <Cube> component so their header text (name label) renders
-  // at FULL LOD.  The instanced renderer has no text layer.
-  if (objectHeaderText) return false;
-
   // Check the object's own stored data for face colors/texts before falling
   // back to cubeStore.  On page load the cubeStore is empty for cubes that
   // were never selected, so the objects-array data is the only source of truth.
@@ -62,9 +61,9 @@ export function isCubeUnmodified(cubeId, cubesMap, objectHeaderText, objectData)
     state.faceColors && Object.keys(state.faceColors).length > 0;
   const hasFaceTexts =
     state.faceTexts && Object.keys(state.faceTexts).length > 0;
-  const hasHeaderText = state.headerText && state.headerText.length > 0;
 
-  return !hasFaceColors && !hasFaceTexts && !hasHeaderText;
+  // headerText alone does NOT disqualify — see named-cube fast path above.
+  return !hasFaceColors && !hasFaceTexts;
 }
 
 /**
@@ -116,7 +115,8 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
           }
         }
 
-        // Only unmodified cubes (cubes with names are excluded — they use individual <Cube> for text)
+        // Only unmodified cubes (named-but-unedited cubes stay instanced;
+        // their names render via the shared billboard label bucket)
         if (!isCubeUnmodified(cube.id, cubesMap, cube.headerText, cube)) return false;
 
         // Skip selected cubes — they need the full component
@@ -141,25 +141,51 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     const capacityRef = useRef(0);
     if (count > capacityRef.current) {
       capacityRef.current = Math.max(
-        16,
+        32768,
         2 ** Math.ceil(Math.log2(Math.max(1, count)))
       );
     }
     const capacity = capacityRef.current;
 
-    // Track structural changes
-    const cubeIds = useMemo(
-      () => instancedCubes.map((c) => c.id).join(','),
-      [instancedCubes]
-    );
-
-    // Mark for full update when the set changes
-    useMemo(() => {
+    // Zero unused instance slots once per mesh allocation (key={capacity}
+    // remount gives a fresh buffer). Keeps stale slots invisible without an
+    // O(capacity) sweep inside useFrame on every full update.
+    useEffect(() => {
+      const mesh = meshRef.current;
+      if (!mesh || capacity <= count) return;
+      for (let i = count; i < capacity; i++) {
+        mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [capacity]);
+    // Append-aware invalidation: keep incremental state when the filtered
+    // set grows by appending (progressive mounting); full rebuild otherwise.
+    // New tail items are absent from the dirty-check map, so per-frame
+    // changed-detection writes them, and hasPendingAppendsRef keeps the
+    // frame loop alive until that pass has run.
+    const prevFilteredRef = useRef(null);
+    const hasPendingAppendsRef = useRef(false);
+    useEffect(() => {
+      const prev = prevFilteredRef.current;
+      prevFilteredRef.current = instancedCubes;
+      if (
+        prev !== null &&
+        !needsFullUpdateRef.current &&
+        instancedCubes.length >= prev.length
+      ) {
+        let appendOnly = true;
+        for (let pfx = 0; pfx < prev.length; pfx++) {
+          if (instancedCubes[pfx] !== prev[pfx]) { appendOnly = false; break; }
+        }
+        if (appendOnly) {
+          hasPendingAppendsRef.current = true;
+          return;
+        }
+      }
       needsFullUpdateRef.current = true;
       lastDataRef.current.clear();
-      // Intentional: useMemo as side-effect trigger keyed on cubeIds
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cubeIds]);
+    }, [instancedCubes]);
 
     // Sync transforms every frame
     useFrame(() => {
@@ -172,8 +198,13 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
       const hasActiveTransforms = cubeTransformMap.size > 0;
       const needsInitialSetup = needsFullUpdateRef.current;
 
-      if (!hasActiveTransforms && !needsInitialSetup) return;
+      if (
+        !hasActiveTransforms &&
+        !needsInitialSetup &&
+        !hasPendingAppendsRef.current
+      ) return;
 
+      hasPendingAppendsRef.current = false;
       let needsUpdate = needsInitialSetup;
       const idMap = [];
 
@@ -217,12 +248,6 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
 
       indexToCubeIdRef.current = idMap;
 
-      // Zero-out unused instances
-      if (needsInitialSetup) {
-        for (let i = count; i < capacity; i++) {
-          mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
-        }
-      }
 
       if (needsUpdate) {
         mesh.instanceMatrix.needsUpdate = true;

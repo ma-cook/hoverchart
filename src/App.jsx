@@ -522,17 +522,10 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
     isLookingUpPublicSpace,
   ]);
 
-  // Create stable key for loaded cells to prevent infinite subscription loop
-  const loadedCellsKey = useMemo(() => {
-    if (
-      !loadedCells ||
-      !Array.isArray(loadedCells) ||
-      loadedCells.length === 0
-    ) {
-      return '';
-    }
-    return Array.from(loadedCells).sort().join(',');
-  }, [loadedCells]);
+  // Create stable key for loaded cells to prevent infinite subscription loop.
+  // PERF FIX: use the cheap monotonic version counter from the store instead
+  // of sorting+joining every loaded cell id on each change.
+  const loadedCellsKey = useSpatialManagerStore((s) => s.loadedCellsVersion);
 
   // Note: Connections are now fully handled by useConnections hook
 
@@ -1122,6 +1115,9 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
       objects.length > 0 &&
       !hasRetroTrackedRef.current
     ) {
+      // PERF FIX: collect entries and track in ONE batch — the old loop
+      // cloned the whole objectsByCell map once per object.
+      const entries = [];
       objects.forEach((obj) => {
         if (
           obj.position &&
@@ -1135,11 +1131,13 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
             z: Math.floor((obj.position[2] || 0) / CELL_SIZE),
           };
 
-          const cellId = `${cellCoords.x},${cellCoords.y},${cellCoords.z}`;
-
-          trackObjectInCell(obj.id.toString(), cellId);
+          entries.push({
+            objectId: obj.id.toString(),
+            cellId: `${cellCoords.x},${cellCoords.y},${cellCoords.z}`,
+          });
         }
       });
+      useSpatialManagerStore.getState().trackObjectsInCellBatch?.(entries);
 
       hasRetroTrackedRef.current = true; // Mark that we've done the initial tracking
     }

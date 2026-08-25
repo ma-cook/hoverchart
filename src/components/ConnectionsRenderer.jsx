@@ -17,6 +17,7 @@ import {
   precomputePathsBatch,
   isWorkerBusy,
 } from '../utils/pathfindingUtils';
+import { bulkImportState } from '../utils/bulkImportState';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
 import { saveConnection } from '../services/connectionsService';
@@ -1206,7 +1207,10 @@ const ConnectionsRenderer = ({
     // Connections already have correct positions from createConnectionsFromDiagram.
     // Return cached results (or treat all as batched) to avoid O(C*N) blocking.
     // Also skip while the worker is computing — cache will be populated soon.
-    if (window._connectionUpdateSkip || isWorkerBusy()) {
+    // During bulk operations (repo scan / progressive import), suppress
+    // expensive pathfinding.  bulkImportState covers the progressive-mount
+    // pump without needing manual flag management at every entry point.
+    if (window._connectionUpdateSkip || bulkImportState.active || isWorkerBusy()) {
       if (cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0) {
         return cacheRef;
       }

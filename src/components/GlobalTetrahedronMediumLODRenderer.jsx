@@ -82,16 +82,49 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
   // Grow-only capacity (power-of-2) to avoid instancedMesh remounts
   const capacityRef = useRef(0);
   if (count > capacityRef.current) {
-    capacityRef.current = Math.max(16, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
+    capacityRef.current = Math.max(32768, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
   }
   const capacity = capacityRef.current;
 
-  const tetraIds = useMemo(() => mediumTetrahedrons.map(t => t.id).join(','), [mediumTetrahedrons]);
-
+  // Zero unused instance slots once per mesh allocation (key={capacity}
+  // remount gives a fresh buffer). Keeps stale slots invisible without an
+  // O(capacity) sweep inside useFrame on every full update.
   useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || capacity <= count) return;
+    for (let i = count; i < capacity; i++) {
+      mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capacity]);
+  // Append-aware invalidation: keep incremental state when the filtered
+  // set grows by appending (progressive mounting); full rebuild otherwise.
+  // New tail items are absent from the dirty-check map, so per-frame
+  // changed-detection writes them, and hasPendingAppendsRef keeps the
+  // frame loop alive until that pass has run.
+  const prevFilteredRef = useRef(null);
+  const hasPendingAppendsRef = useRef(false);
+  useEffect(() => {
+    const prev = prevFilteredRef.current;
+    prevFilteredRef.current = mediumTetrahedrons;
+    if (
+      prev !== null &&
+      !needsFullUpdateRef.current &&
+      mediumTetrahedrons.length >= prev.length
+    ) {
+      let appendOnly = true;
+      for (let pfx = 0; pfx < prev.length; pfx++) {
+        if (mediumTetrahedrons[pfx] !== prev[pfx]) { appendOnly = false; break; }
+      }
+      if (appendOnly) {
+        hasPendingAppendsRef.current = true;
+        return;
+      }
+    }
     needsFullUpdateRef.current = true;
     lastDataRef.current.clear();
-  }, [tetraIds]);
+  }, [mediumTetrahedrons]);
 
   useFrame(() => {
     const mesh = meshRef.current;
@@ -103,8 +136,13 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
     const hasActiveTransforms = tetrahedronTransformMap.size > 0;
     const needsInitialSetup = needsFullUpdateRef.current;
 
-    if (!hasActiveTransforms && !needsInitialSetup) return;
+    if (
+      !hasActiveTransforms &&
+      !needsInitialSetup &&
+      !hasPendingAppendsRef.current
+    ) return;
 
+    hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;
     const idMap = [];
 
@@ -150,11 +188,6 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
 
     indexToTetraIdRef.current = idMap;
 
-    if (needsInitialSetup) {
-      for (let i = count; i < capacity; i++) {
-        mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
-      }
-    }
 
     if (needsUpdate) {
       mesh.instanceMatrix.needsUpdate = true;

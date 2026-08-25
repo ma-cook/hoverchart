@@ -40,11 +40,22 @@ const diagLoadedCells = (label, loadedCells) => {
   }
 };
 
+/** Set equality helper for the loadedCells no-op guards. */
+const setsEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b || a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+};
+
 // Version marker
 
 const useSpatialManagerStore = create((set, get) => ({
   // State
   loadedCells: new Set(),
+  // PERF: cheap monotonic counter replacing sort/join "keys" derived from
+  // loadedCells — consumers subscribe to this instead of hashing the set.
+  loadedCellsVersion: 0,
   currentCellCoords: { x: 0, y: 0, z: 0 },
   cameraCellCoords: { x: 0, y: 0, z: 0 },
   isInitialized: false,
@@ -75,21 +86,26 @@ const useSpatialManagerStore = create((set, get) => ({
 
   // Actions
   setLoadedCells: (cells) => {
-    set({ loadedCells: new Set(cells) });
+    const state = get();
+    const newSet = new Set(cells);
+    if (setsEqual(newSet, state.loadedCells)) return; // no-op guard
+    set({ loadedCells: newSet, loadedCellsVersion: state.loadedCellsVersion + 1 });
   },
 
   addLoadedCell: (cellId) => {
     const state = get();
+    if (state.loadedCells.has(cellId)) return;
     const newSet = new Set(state.loadedCells);
     newSet.add(cellId);
-    set({ loadedCells: newSet });
+    set({ loadedCells: newSet, loadedCellsVersion: state.loadedCellsVersion + 1 });
   },
 
   removeLoadedCell: (cellId) => {
     const state = get();
+    if (!state.loadedCells.has(cellId)) return;
     const newSet = new Set(state.loadedCells);
     newSet.delete(cellId);
-    set({ loadedCells: newSet });
+    set({ loadedCells: newSet, loadedCellsVersion: state.loadedCellsVersion + 1 });
   },
 
   setCurrentCellCoords: (coords) => {
@@ -160,6 +176,29 @@ const useSpatialManagerStore = create((set, get) => ({
       }
       set({ objectsByCell: newMap });
     }
+  },
+
+  // PERF FIX: batch variant — ONE Map copy + ONE notification per flush.
+  // The per-object path cloned the whole objectsByCell map once per object,
+  // which was O(N×cells) cumulative while an import streamed objects in.
+  trackObjectsInCellBatch: (entries) => {
+    if (!Array.isArray(entries) || entries.length === 0) return;
+    const state = get();
+    const newMap = new Map(state.objectsByCell);
+    for (let i = 0; i < entries.length; i++) {
+      const { objectId, cellId } = entries[i];
+      if (!objectId || !cellId) continue;
+      const objIdStr = objectId.toString();
+      let cellSet = newMap.get(cellId);
+      if (!cellSet) {
+        cellSet = new Set();
+        newMap.set(cellId, cellSet);
+      }
+      cellSet.add(objIdStr);
+    }
+    // One publish per flush regardless of membership deltas — mirrors the
+    // notify-per-object semantics of the old path at O(1) cost.
+    set({ objectsByCell: newMap });
   },
 
   // Helper method to efficiently determine which cells need loading
@@ -313,7 +352,7 @@ const useSpatialManagerStore = create((set, get) => ({
           ...currentState.loadedCells,
           ...newCellIds,
         ]);
-        set({ loadedCells: newLoadedCells });
+        set({ loadedCells: newLoadedCells, loadedCellsVersion: currentState.loadedCellsVersion + 1 });
         diagLoadedCells('loadCellsBatch', newLoadedCells);
 
         // Check if any objects were cached for these newly loaded cells
@@ -437,6 +476,7 @@ const useSpatialManagerStore = create((set, get) => ({
           if (get().initializationGen !== startGen) return;
           set({
             loadedCells: cellsToLoad,
+            loadedCellsVersion: get().loadedCellsVersion + 1,
             currentCellCoords: { x: 0, y: 0, z: 0 },
             isInitialized: true,
           });
@@ -618,7 +658,7 @@ const useSpatialManagerStore = create((set, get) => ({
       // Remove cells from loaded set
       const newLoadedCells = new Set(state.loadedCells);
       cellsToUnloadNow.forEach((cellId) => newLoadedCells.delete(cellId));
-      set({ loadedCells: newLoadedCells });
+      set({ loadedCells: newLoadedCells, loadedCellsVersion: state.loadedCellsVersion + 1 });
       diagLoadedCells('unloadCellsBatch', newLoadedCells);
     }
   },
@@ -846,6 +886,7 @@ const useSpatialManagerStore = create((set, get) => ({
 
     set({
       loadedCells: new Set(),
+      loadedCellsVersion: state.loadedCellsVersion + 1,
       currentCellCoords: { x: 0, y: 0, z: 0 },
       cameraCellCoords: { x: 0, y: 0, z: 0 },
       isInitialized: false,

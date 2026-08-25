@@ -4,6 +4,21 @@ import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
+import { bulkImportState } from '../utils/bulkImportState';
+
+// Mark only [offset, offset+count) of an attribute dirty for GPU upload.
+// Uses whichever update-range API the installed three.js version exposes;
+// falls back to a full upload when neither exists (still correct, just slower).
+function applyUpdateRange(attr, offset, count) {
+  attr.needsUpdate = true;
+  if (typeof attr.addUpdateRange === 'function') {
+    if (typeof attr.clearUpdateRanges === 'function') attr.clearUpdateRanges();
+    attr.addUpdateRange(offset, count);
+  } else if (attr.updateRange) {
+    attr.updateRange.offset = offset;
+    attr.updateRange.count = count;
+  }
+}
 
 extend({ LineShaderMaterial });
 
@@ -115,8 +130,6 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
 
   const totalEdges = filteredOctahedrons.length * EDGES_PER_OCTAHEDRON;
 
-  const octahedronIds = useMemo(() => filteredOctahedrons.map(t => t.id).join(','), [filteredOctahedrons]);
-
   const capacityRef = useRef(0);
   if (totalEdges > capacityRef.current) {
     capacityRef.current = Math.max(128, 2 ** Math.ceil(Math.log2(Math.max(1, totalEdges))));
@@ -162,11 +175,52 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
     }
   }, [material, size.width, size.height]);
 
+  // Mark for full update when the filtered set changes - but only when the
+  // change is NOT append-only. PERF FIX: during progressive mounting every
+  // batch appends items and previously this effect wiped the dirty-check
+  // maps and forced a full O(N) rebuild + full GPU re-upload EVERY frame.
+  const prevFilteredRef = useRef(null);
+  // True while appended items have not yet been written to the GPU
+  // attributes; keeps the frame loop alive even when culling is off.
+  const hasPendingAppendsRef = useRef(false);
   useEffect(() => {
+    const prev = prevFilteredRef.current;
+    prevFilteredRef.current = filteredOctahedrons;
+    if (
+      prev !== null &&
+      !needsFullUpdateRef.current &&
+      filteredOctahedrons.length >= prev.length
+    ) {
+      let appendOnly = true;
+      for (let i = 0; i < prev.length; i++) {
+        if (filteredOctahedrons[i] !== prev[i]) { appendOnly = false; break; }
+      }
+      if (appendOnly) {
+        // New tail items are absent from lastPositionsRef, so frame-loop
+        // dirty checks pick them up automatically.
+        hasPendingAppendsRef.current = true;
+        return;
+      }
+    }
     needsFullUpdateRef.current = true;
     lastPositionsRef.current.clear();
     visibilityRef.current.clear();
-  }, [octahedronIds, filteredOctahedrons]);
+  }, [filteredOctahedrons]);
+
+  // Capacity growth swaps the geometry (fresh zero-filled buffers).
+  useEffect(() => {
+    needsFullUpdateRef.current = true;
+  }, [geometry]);
+
+  // Identity instance matrices ONCE per mesh allocation (O(capacity)).
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || !geometry) return;
+    for (let i = 0; i < capacity; i++) {
+      mesh.setMatrixAt(i, IDENTITY_MATRIX);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [geometry, capacity]);
 
   const isOctahedronVisible = useCallback((position, scale) => {
     const maxScale = Math.max(scale[0], scale[1], scale[2]);
@@ -212,9 +266,15 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
 
     const hasActiveTransforms = octahedronTransformMap.size > 0;
     const needsInitialSetup = needsFullUpdateRef.current;
-    const enableCulling = filteredOctahedrons.length > cullingThreshold;
+    const enableCulling =
+      filteredOctahedrons.length > cullingThreshold && !bulkImportState.active;
 
-    if (!hasActiveTransforms && !needsInitialSetup && !enableCulling) {
+    if (
+      !hasActiveTransforms &&
+      !needsInitialSetup &&
+      !enableCulling &&
+      !hasPendingAppendsRef.current
+    ) {
       return;
     }
 
@@ -245,7 +305,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
     if (isWasmReady()) {
       _ensureOctaWasmBuffers(count);
 
-      let anyChanged = needsInitialSetup;
+      let minDirty = needsInitialSetup ? 0 : Infinity;
       for (let i = 0; i < count; i++) {
         const octa = filteredOctahedrons[i];
         const octaId = octa.id?.toString();
@@ -260,7 +320,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
           const wasVisible = visibilityRef.current.get(octaId);
           if (wasVisible === undefined || wasVisible !== isVisible) {
             visibilityRef.current.set(octaId, isVisible);
-            anyChanged = true;
+            if (i < minDirty) minDirty = i;
           }
         }
 
@@ -274,7 +334,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
             sx: scale[0], sy: scale[1], sz: scale[2],
             color,
           });
-          anyChanged = true;
+          if (i < minDirty) minDirty = i;
         }
 
         const pi = i * 3;
@@ -285,7 +345,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
         _octaWasmVisible[i] = (enableCulling && !isVisible) ? 0 : 1;
       }
 
-      if (anyChanged) {
+      if (minDirty !== Infinity) {
         fillEdgeBuffers(
           _octaWasmPositions.subarray(0, count * 3),
           _octaWasmScales.subarray(0, count * 3),
@@ -296,10 +356,15 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
           EDGES_PER_OCTAHEDRON,
         );
 
-        const totalF = count * EDGES_PER_OCTAHEDRON * 3;
-        instanceStart.array.set(getScratchStartView(totalF));
-        instanceEnd.array.set(getScratchEndView(totalF));
-        instanceColor.array.set(getScratchColorView(totalF));
+        const startF = minDirty * EDGES_PER_OCTAHEDRON * 3;
+        const endF = count * EDGES_PER_OCTAHEDRON * 3;
+        const lenF = endF - startF;
+        instanceStart.array.set(getScratchStartView(endF).subarray(startF), startF);
+        instanceEnd.array.set(getScratchEndView(endF).subarray(startF), startF);
+        instanceColor.array.set(getScratchColorView(endF).subarray(startF), startF);
+        applyUpdateRange(instanceStart, startF, lenF);
+        applyUpdateRange(instanceEnd, startF, lenF);
+        applyUpdateRange(instanceColor, startF, lenF);
         needsUpdate = true;
       }
     } else {
@@ -351,18 +416,11 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
     }
 
     if (needsUpdate) {
-      instanceStart.needsUpdate = true;
-      instanceEnd.needsUpdate = true;
-      instanceColor.needsUpdate = true;
-
-      if (needsFullUpdateRef.current) {
-        for (let i = 0; i < capacity; i++) {
-          meshRef.current.setMatrixAt(i, IDENTITY_MATRIX);
-        }
-        meshRef.current.instanceMatrix.needsUpdate = true;
-        needsFullUpdateRef.current = false;
-      }
+      // Identity instance matrices were set once per mesh allocation
+      // (see effect above) - nothing per-frame here anymore.
+      needsFullUpdateRef.current = false;
     }
+    hasPendingAppendsRef.current = false;
   });
 
   if (!geometry || capacity === 0) {

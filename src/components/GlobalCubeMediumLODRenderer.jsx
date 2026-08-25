@@ -66,18 +66,49 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
   // Grow-only capacity (power-of-2) to avoid instancedMesh remounts
   const capacityRef = useRef(0);
   if (count > capacityRef.current) {
-    capacityRef.current = Math.max(16, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
+    capacityRef.current = Math.max(32768, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
   }
   const capacity = capacityRef.current;
 
-  // Track cube IDs to detect structural changes
-  const cubeIds = useMemo(() => mediumCubes.map(c => c.id).join(','), [mediumCubes]);
-
-  // Mark for full update when the set of medium cubes changes
+  // Zero unused instance slots once per mesh allocation (key={capacity}
+  // remount gives a fresh buffer). Keeps stale slots invisible without an
+  // O(capacity) sweep inside useFrame on every full update.
   useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || capacity <= count) return;
+    for (let i = count; i < capacity; i++) {
+      mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capacity]);
+  // Append-aware invalidation: keep incremental state when the filtered
+  // set grows by appending (progressive mounting); full rebuild otherwise.
+  // New tail items are absent from the dirty-check map, so per-frame
+  // changed-detection writes them, and hasPendingAppendsRef keeps the
+  // frame loop alive until that pass has run.
+  const prevFilteredRef = useRef(null);
+  const hasPendingAppendsRef = useRef(false);
+  useEffect(() => {
+    const prev = prevFilteredRef.current;
+    prevFilteredRef.current = mediumCubes;
+    if (
+      prev !== null &&
+      !needsFullUpdateRef.current &&
+      mediumCubes.length >= prev.length
+    ) {
+      let appendOnly = true;
+      for (let pfx = 0; pfx < prev.length; pfx++) {
+        if (mediumCubes[pfx] !== prev[pfx]) { appendOnly = false; break; }
+      }
+      if (appendOnly) {
+        hasPendingAppendsRef.current = true;
+        return;
+      }
+    }
     needsFullUpdateRef.current = true;
     lastDataRef.current.clear();
-  }, [cubeIds]);
+  }, [mediumCubes]);
 
   // Sync transforms every frame (handles drag + position changes)
   useFrame(() => {
@@ -92,8 +123,13 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
     const needsInitialSetup = needsFullUpdateRef.current;
 
     // Early exit when nothing to update
-    if (!hasActiveTransforms && !needsInitialSetup) return;
+    if (
+      !hasActiveTransforms &&
+      !needsInitialSetup &&
+      !hasPendingAppendsRef.current
+    ) return;
 
+    hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;
     const idMap = [];
 
@@ -144,13 +180,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
 
     indexToCubeIdRef.current = idMap;
 
-    // Zero-out unused instances beyond count (if capacity > count)
-    if (needsInitialSetup) {
-      for (let i = count; i < capacity; i++) {
-        mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
-      }
-    }
-
+  
     if (needsUpdate) {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) {

@@ -65,16 +65,49 @@ const GlobalOctahedronLowLODRenderer = React.memo(({ octahedrons = [], onInstanc
 
   const capacityRef = useRef(0);
   if (count > capacityRef.current) {
-    capacityRef.current = Math.max(16, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
+    capacityRef.current = Math.max(32768, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
   }
   const capacity = capacityRef.current;
 
-  const octaIds = useMemo(() => lowOctahedrons.map(t => t.id).join(','), [lowOctahedrons]);
-
+  // Zero unused instance slots once per mesh allocation (key={capacity}
+  // remount gives a fresh buffer). Keeps stale slots invisible without an
+  // O(capacity) sweep inside useFrame on every full update.
   useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || capacity <= count) return;
+    for (let i = count; i < capacity; i++) {
+      mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capacity]);
+  // Append-aware invalidation: keep incremental state when the filtered
+  // set grows by appending (progressive mounting); full rebuild otherwise.
+  // New tail items are absent from the dirty-check map, so per-frame
+  // changed-detection writes them, and hasPendingAppendsRef keeps the
+  // frame loop alive until that pass has run.
+  const prevFilteredRef = useRef(null);
+  const hasPendingAppendsRef = useRef(false);
+  useEffect(() => {
+    const prev = prevFilteredRef.current;
+    prevFilteredRef.current = lowOctahedrons;
+    if (
+      prev !== null &&
+      !needsFullUpdateRef.current &&
+      lowOctahedrons.length >= prev.length
+    ) {
+      let appendOnly = true;
+      for (let pfx = 0; pfx < prev.length; pfx++) {
+        if (lowOctahedrons[pfx] !== prev[pfx]) { appendOnly = false; break; }
+      }
+      if (appendOnly) {
+        hasPendingAppendsRef.current = true;
+        return;
+      }
+    }
     needsFullUpdateRef.current = true;
     lastDataRef.current.clear();
-  }, [octaIds]);
+  }, [lowOctahedrons]);
 
   useFrame(() => {
     const mesh = meshRef.current;
@@ -86,8 +119,13 @@ const GlobalOctahedronLowLODRenderer = React.memo(({ octahedrons = [], onInstanc
     const hasActiveTransforms = octahedronTransformMap.size > 0;
     const needsInitialSetup = needsFullUpdateRef.current;
 
-    if (!hasActiveTransforms && !needsInitialSetup) return;
+    if (
+      !hasActiveTransforms &&
+      !needsInitialSetup &&
+      !hasPendingAppendsRef.current
+    ) return;
 
+    hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;
     const idMap = [];
 
@@ -128,11 +166,6 @@ const GlobalOctahedronLowLODRenderer = React.memo(({ octahedrons = [], onInstanc
 
     indexToOctaIdRef.current = idMap;
 
-    if (needsInitialSetup) {
-      for (let i = count; i < capacity; i++) {
-        mesh.setMatrixAt(i, ZERO_SCALE_MATRIX);
-      }
-    }
 
     if (needsUpdate) {
       mesh.instanceMatrix.needsUpdate = true;

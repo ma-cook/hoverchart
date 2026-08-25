@@ -83,18 +83,37 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
     });
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
-  // Track cube IDs to detect structural changes
-  const filteredCubeIds = useMemo(() => filteredCubes.map(c => c.id).join(','), [filteredCubes]);
-
-  // Mark for full update when the set of cubes changes
+  // Append-aware invalidation: keep incremental state when the filtered
+  // set grows by appending (progressive mounting); full rebuild otherwise.
+  // New tail items are absent from the dirty-check map, so per-frame
+  // changed-detection writes them, and hasPendingAppendsRef keeps the
+  // frame loop alive until that pass has run.
+  const prevFilteredRef = useRef(null);
+  const hasPendingAppendsRef = useRef(false);
   useEffect(() => {
+    const prev = prevFilteredRef.current;
+    prevFilteredRef.current = filteredCubes;
+    if (
+      prev !== null &&
+      !needsFullUpdateRef.current &&
+      filteredCubes.length >= prev.length
+    ) {
+      let appendOnly = true;
+      for (let pfx = 0; pfx < prev.length; pfx++) {
+        if (filteredCubes[pfx] !== prev[pfx]) { appendOnly = false; break; }
+      }
+      if (appendOnly) {
+        hasPendingAppendsRef.current = true;
+        return;
+      }
+    }
     needsFullUpdateRef.current = true;
-  }, [filteredCubeIds]);
+  }, [filteredCubes]);
 
   // Power-of-2 grow-only capacity (6 faces per cube max)
   const maxPossible = filteredCubes.length * 6;
   if (maxPossible > lastCapacityRef.current) {
-    lastCapacityRef.current = Math.max(64, 2 ** Math.ceil(Math.log2(Math.max(1, maxPossible))));
+    lastCapacityRef.current = Math.max(32768, 2 ** Math.ceil(Math.log2(Math.max(1, maxPossible))));
   }
   const capacity = lastCapacityRef.current;
 
@@ -104,8 +123,13 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
 
     const hasActiveTransforms = cubeTransformMap.size > 0;
     const needsInitialSetup = needsFullUpdateRef.current;
-    if (!hasActiveTransforms && !needsInitialSetup) return;
+    if (
+      !hasActiveTransforms &&
+      !needsInitialSetup &&
+      !hasPendingAppendsRef.current
+    ) return;
 
+    hasPendingAppendsRef.current = false;
     const cubeStoreState = useCubeStore.getState();
     let idx = 0;
 

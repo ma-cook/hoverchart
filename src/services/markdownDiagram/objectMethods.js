@@ -322,8 +322,8 @@ export const objectMethods = {
           // in ObjectsRenderer handles per-frame rendering costs.
           storeBatch.push(objectData);
 
-          // Track all objects per cell so spatial manager can unload them
-          useSpatialManagerStore.getState().trackObjectInCell(objectId, cellId);
+          // Cell tracking is batched at flush time (trackObjectsInCellBatch)
+          // instead of cloning the whole objectsByCell map once per object.
 
           const objectForSave = {
             id: objectId,
@@ -438,6 +438,12 @@ export const objectMethods = {
             addToAllCellObjects(cellId, objects);
           }
 
+          // PERF FIX: one batched tracking call per flush instead of one
+          // Map clone per object inside the creation loop.
+          useSpatialManagerStore.getState().trackObjectsInCellBatch?.(
+            storeBatch.map((obj) => ({ objectId: obj.id, cellId: obj.cellId }))
+          );
+
           storeBatch = [];
         }
       }
@@ -465,6 +471,11 @@ export const objectMethods = {
       for (const [cellId, objects] of byCell) {
         addToAllCellObjects(cellId, objects);
       }
+
+      // PERF FIX: batched cell tracking for the final partial flush.
+      useSpatialManagerStore.getState().trackObjectsInCellBatch?.(
+        storeBatch.map((obj) => ({ objectId: obj.id, cellId: obj.cellId }))
+      );
 
       storeBatch = [];
     }
