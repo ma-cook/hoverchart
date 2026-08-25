@@ -513,6 +513,9 @@ export const connectionMethods = {
             `📡 [BulkImport] Sending chunk ${index}/${total} (${objSlice.length} objects, ${connSlice.length} connections)`
           );
         }
+        // PERF: api-client stringifies non-string bodies; passing the payload
+        // pre-serialized here would double-encode it, so send the object and
+        // let the client do the single JSON.stringify pass.
         return api.post('/api/bulk/import', chunkPayload);
       }
 
@@ -539,7 +542,7 @@ export const connectionMethods = {
       for (let i = 0; i < objects.length; i++) {
         const size = serializedObjects[i].length;
         if (objChunk.length > 0 && objChunkSize + size > MAX_OBJECTS_PER_CHUNK) {
-          chunks.push({ objects: objChunk, connections: [] });
+          chunks.push({ objects: objChunk, connections: [], objectsSize: objChunkSize });
           objChunk = [];
           objChunkSize = 0;
         }
@@ -547,16 +550,17 @@ export const connectionMethods = {
         objChunkSize += size;
       }
       if (objChunk.length > 0) {
-        chunks.push({ objects: objChunk, connections: [] });
+        chunks.push({ objects: objChunk, connections: [], objectsSize: objChunkSize });
       }
 
       // Greedily fill each object chunk with as many connections as fit.
       let connIdx = 0;
       for (const chunk of chunks) {
         if (connIdx >= connections.length) break;
-        let used =
-          spaceIdOverhead +
-          chunk.objects.reduce((s, o) => s + JSON.stringify(o).length, 0);
+        // PERF: reuse the size computed while packing — re-running
+        // JSON.stringify over every object here was a full extra
+        // serialization pass across the whole payload.
+        let used = spaceIdOverhead + chunk.objectsSize;
         while (
           connIdx < connections.length &&
           used + serializedConnections[connIdx].length <= MAX_PAYLOAD_SIZE

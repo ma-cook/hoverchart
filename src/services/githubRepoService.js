@@ -10,7 +10,7 @@ import { runTypeScriptAnalysis } from './typescriptAnalyzer';
 import { clearAllCellCaches } from './cellObjectCache';
 import { reportMemoryPressureOnce } from '../utils/memoryMonitor';
 import { joinChunks } from './context/chunkIndex';
-import { detectCommunities } from './context/communityDetection';
+import { detectCommunitiesSync } from './context/communityDetection';
 import { safeSetItem } from '../utils/safeLocalStorage';
 
 // GitHub API base URL
@@ -4686,7 +4686,7 @@ const generateMerfolkMarkdown = ({
         });
       });
 
-      const communityAssignments = detectCommunities([communityGraph], {
+      const communityAssignments = detectCommunitiesSync([communityGraph], {
         minCommunitySize: 3,
         maxCommunities: 20,
         resolution: 1.2,

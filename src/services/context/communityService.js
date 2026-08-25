@@ -38,8 +38,8 @@ export async function detectAndStoreCommunities() {
 
   const startTime = performance.now();
 
-  // Detect communities
-  const assignments = detectCommunities(graphs);
+  // Detect communities (async — yields periodically to keep the UI responsive)
+  const assignments = await detectCommunities(graphs);
 
   // Generate summaries
   const connectionTags = store.connectionTags;
