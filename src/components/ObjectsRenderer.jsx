@@ -15,9 +15,10 @@ import GlobalCubeLowLODRenderer from './GlobalCubeLowLODRenderer';
 import GlobalDodecahedronLowLODRenderer from './GlobalDodecahedronLowLODRenderer';
 import GlobalTetrahedronLowLODRenderer from './GlobalTetrahedronLowLODRenderer';
 import GlobalOctahedronLowLODRenderer from './GlobalOctahedronLowLODRenderer';
-import AtlasTextSprite from './AtlasTextSprite';
+import InstancedAtlasText from './InstancedAtlasText';
 import { useCubeStore, useSpatialManagerStore } from '../stores';
 import { acquireBudget, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
+import { getCellCoordinates } from '../services/spatialPartitioning';
 import importPerf from '../utils/importPerf';
 import { beginBulkImport, endBulkImportIfIdle } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
@@ -42,6 +43,15 @@ function getProgressiveBudget() {
 
 /** Below this object count, skip progressive mounting entirely (instant mount). */
 const PROGRESSIVE_THRESHOLD = 40;
+
+/**
+ * Objects beyond this many cells from the camera don't get individual
+ * <ObjectRenderer> elements (saving ~90k React fibers + subscriptions).
+ * Their visual is handled entirely by the Global* instanced renderers
+ * (edges, faces, medium/low LOD shapes).  Selection and click still work
+ * via the instanced renderer hit-test path.
+ */
+const MOUNT_RADIUS_CELLS = 2;
 
 /**
  * ObjectsRenderer - Renders all objects with optimized batching
@@ -609,6 +619,50 @@ const ObjectsRenderer = React.memo(({
     [mountedVersion]
   );
 
+  // ─── Proximity-gated ObjectRenderer list ────────────────────────────
+  // At 90k+ objects, creating a React fiber per ObjectRenderer costs ~200MB
+  // of React internals + 90k useLODStore subscriptions.  The Global*
+  // instanced renderers (edges, faces, LOD) handle distant objects visually;
+  // ObjectRenderer elements are only needed for nearby + selected + types
+  // without a Global* fallback (plane, text, model).
+  //
+  // The filter runs once per cell boundary crossing (loadedCellsKey) and
+  // per selection change — NOT per frame.  Camera position is read live
+  // but only the cell coordinates matter for the gate.
+  const proximalObjects = useMemo(() => {
+    const camPos = camera?.position;
+    if (!camPos || progressiveVisibleObjects.length === 0) {
+      return progressiveVisibleObjects;
+    }
+    const camCell = getCellCoordinates([camPos.x, camPos.y, camPos.z]);
+    const r = MOUNT_RADIUS_CELLS;
+    const out = [];
+    for (let i = 0; i < progressiveVisibleObjects.length; i++) {
+      const obj = progressiveVisibleObjects[i];
+      // Always include the selected object
+      if (obj.id === selectedId) { out.push(obj); continue; }
+      // Always include types without a Global* renderer fallback
+      if (obj.type === 'plane' || obj.type === 'text' || obj.type === 'model') {
+        out.push(obj); continue;
+      }
+      // Cell-distance proximity gate
+      const pos = obj.position;
+      if (pos) {
+        const objCell = getCellCoordinates(
+          Array.isArray(pos) ? pos : [pos.x || 0, pos.y || 0, pos.z || 0]
+        );
+        const dx = Math.abs(objCell.x - camCell.x);
+        const dy = Math.abs(objCell.y - camCell.y);
+        const dz = Math.abs(objCell.z - camCell.z);
+        if (dx <= r && dy <= r && dz <= r) {
+          out.push(obj);
+        }
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progressiveVisibleObjects, selectedId, loadedCellsKey]);
+
   // Floating header labels above group containers.  Positions are computed
   // from the LIVE object refs at render time — position updates mutate
   // objects in place, so capturing coordinates at mount time would go stale.
@@ -620,12 +674,13 @@ const ObjectsRenderer = React.memo(({
       const halfHeight = (obj.scale?.[1] || 1) * 5;
       return {
         id: obj.id,
-        label: obj.merfolkData.groupLabel,
+        text: obj.merfolkData.groupLabel,
         position: [
           obj.position[0],
           obj.position[1] + halfHeight + 50,
           obj.position[2],
         ],
+        textStyle: { fontSize: 8.0, color: '#000000', bold: true },
       };
     });
   }, [mountedVersion]);
@@ -688,7 +743,7 @@ const ObjectsRenderer = React.memo(({
       const halfHeight = (obj.scale?.[1] || 1) * 5;
       out.push({
         id: obj.id,
-        label: obj.headerText,
+        text: obj.headerText,
         textStyle: obj.textStyle,
         position: [
           obj.position[0],
@@ -706,9 +761,14 @@ const ObjectsRenderer = React.memo(({
     return (cubeId) => handleObjectClick(cubeId);
   }, [handleObjectClick]);
 
-  // Render individual objects (progressively mounted to prevent freezes).
+  // Render individual objects — PROXIMITY-GATED.
   //
-  // SCALE FIX: element REUSE.  The mounted list is append-ordered, so each
+  // At 90k+ objects, creating a React fiber per ObjectRenderer costs ~200MB
+  // of React internals + 90k useLODStore subscriptions.  The proximalObjects
+  // list above filters to nearby + selected + fallback-type objects only.
+  // The Global* instanced renderers handle distant objects visually.
+  //
+  // SCALE FIX: element REUSE.  The proximal list is append-ordered, so each
   // batch only appends a handful of genuinely new elements at the tail.
   // Elements are reused whenever the object reference at an index is
   // unchanged (React then skips unchanged children entirely thanks to
@@ -726,7 +786,7 @@ const ObjectsRenderer = React.memo(({
   // semantics), otherwise children would render stale props.
   const renderedDepsSigRef = useRef(null);
   const renderedObjects = useMemo(() => {
-    const arr = progressiveVisibleObjects;
+    const arr = proximalObjects;
     const depSig = [
       selectedId,
       handleObjectClick,
@@ -814,7 +874,7 @@ const ObjectsRenderer = React.memo(({
     renderedSourcesRef.current = arr;
     return out;
   }, [
-    progressiveVisibleObjects,
+    proximalObjects,
     selectedId,
     handleObjectClick,
     handleObjectMove,
@@ -883,42 +943,19 @@ const ObjectsRenderer = React.memo(({
       <GlobalOctahedronLowLODRenderer octahedrons={octahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       
       {/* Render floating header labels above group containers */}
-      {containerHeaders.map((header) => (
-        <AtlasTextSprite
-          key={`container-header-${header.id}`}
-          text={header.label}
-          position={header.position}
-          style={{
-            fontSize: 8.0,
-            color: '#000000',
-            bold: true,
-            depthTest: false,
-            depthWrite: false,
-            isContainerHeader: true,
-          }}
-          billboard={true}
-          visible={true}
-          renderOrder={25}
-          scale={1}
-        />
-      ))}
+      <InstancedAtlasText
+        labels={containerHeaders}
+        renderOrder={25}
+        scale={1}
+        depthTest={false}
+      />
 
       {/* Names for instanced-rendered (headerText-only) cubes */}
-      {namedCubeLabels.map((header) => (
-        <AtlasTextSprite
-          key={`instanced-name-${header.id}`}
-          text={header.label}
-          position={header.position}
-          style={{
-            ...(header.textStyle || {}),
-            isHeaderText: true,
-          }}
-          billboard={true}
-          visible={true}
-          renderOrder={25}
-          scale={1}
-        />
-      ))}
+      <InstancedAtlasText
+        labels={namedCubeLabels}
+        renderOrder={25}
+        scale={1}
+      />
       
       {/* Render all individual objects */}
       {renderedObjects}

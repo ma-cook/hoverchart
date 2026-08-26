@@ -76,6 +76,7 @@ const InstancedAtlasText = ({
   onLabelClick,
   renderOrder = 20,
   scale = 0.45,
+  depthTest = true,
 }) => {
   const atlas = useMemo(() => getGlobalTextAtlas(), []);
   const { gl } = useThree();
@@ -116,6 +117,9 @@ const InstancedAtlasText = ({
         fontSize: fontSizeRaw * 10,
         color: label.textStyle?.color || 'black',
         underline: label.textStyle?.underline || false,
+        bold: label.textStyle?.bold || false,
+        italic: label.textStyle?.italic || false,
+        fontFamily: label.textStyle?.fontFamily || 'Arial, sans-serif',
       });
       atlasEntries.push(entry);
     }
@@ -152,6 +156,9 @@ const InstancedAtlasText = ({
           fontSize: fontSizeRaw * 10,
           color: label.textStyle?.color || 'black',
           underline: label.textStyle?.underline || false,
+          bold: label.textStyle?.bold || false,
+          italic: label.textStyle?.italic || false,
+          fontFamily: label.textStyle?.fontFamily || 'Arial, sans-serif',
         }),
       });
     }
@@ -180,6 +187,7 @@ const InstancedAtlasText = ({
           maxDistance={maxDistance}
           onLabelClick={onLabelClick}
           renderOrder={renderOrder}
+          depthTest={depthTest}
         />
       ))}
     </>
@@ -196,7 +204,7 @@ const InstancedAtlasText = ({
  * fixup, and per-instance click events.
  */
 const PageInstancedMesh = React.memo(
-  ({ atlas, texture, items, maxDistance, onLabelClick, renderOrder }) => {
+  ({ atlas, texture, items, maxDistance, onLabelClick, renderOrder, depthTest }) => {
     const meshRef = useRef();
     const maxDistanceSq = maxDistance * maxDistance;
     const lastUpdateRef = useRef(0);
@@ -233,10 +241,10 @@ const PageInstancedMesh = React.memo(
           fragmentShader: FRAGMENT_SHADER,
           transparent: true,
           depthWrite: false,
-          depthTest: true,
+          depthTest,
           side: THREE.DoubleSide,
         }),
-      [texture]
+      [texture, depthTest]
     );
 
     // ----- initialise instance matrices on mount -----
