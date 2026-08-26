@@ -171,7 +171,7 @@ export const objectMethods = {
     const nodeEntries = Array.from(nodePositions);
     let objectsCreated = 0;
     let storeBatch = [];
-    let prevObjectCount = existingObjects.length;
+    let pendingAllObjects = [];
 
     for (let i = 0; i < nodeEntries.length; i += OBJECT_BATCH_SIZE) {
       const batch = nodeEntries.slice(i, i + OBJECT_BATCH_SIZE);
@@ -416,16 +416,9 @@ export const objectMethods = {
       if (storeBatch.length >= STORE_FLUSH_SIZE ||
           i + OBJECT_BATCH_SIZE >= nodeEntries.length) {
         if (storeBatch.length > 0) {
-          const currentObjects = useObjectsStore.getState().objects;
-          const updated = currentObjects.length === prevObjectCount
-            ? [...currentObjects, ...storeBatch]
-            : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
-          useObjectsStore.getState().setObjects(updated);
-          prevObjectCount = updated.length;
-
-          // Cache ALL created objects in allCellObjects so unload/reload and
-          // cell-load hydration work even before the Cloud Function finishes
-          // persisting them.
+          // Cell tracking (cheap) runs incrementally.  The store flush is
+          // deferred to after the creation loop — the old pattern spread the
+          // entire growing array on every flush, causing O(N²) copies.
           const byCell = new Map();
           for (const obj of storeBatch) {
             if (obj.cellId) {
@@ -437,29 +430,17 @@ export const objectMethods = {
           for (const [cellId, objects] of byCell) {
             addToAllCellObjects(cellId, objects);
           }
-
-          // PERF FIX: one batched tracking call per flush instead of one
-          // Map clone per object inside the creation loop.
           useSpatialManagerStore.getState().trackObjectsInCellBatch?.(
             storeBatch.map((obj) => ({ objectId: obj.id, cellId: obj.cellId }))
           );
-
+          pendingAllObjects.push(...storeBatch);
           storeBatch = [];
         }
       }
     }
 
-    // Flush any remaining batch
+    // Cell tracking for any remaining batch (no store flush yet)
     if (storeBatch.length > 0) {
-      const currentObjects = useObjectsStore.getState().objects;
-      const updated = currentObjects.length === prevObjectCount
-        ? [...currentObjects, ...storeBatch]
-        : [...currentObjects.slice(0, prevObjectCount), ...currentObjects.slice(prevObjectCount), ...storeBatch];
-      useObjectsStore.getState().setObjects(updated);
-      prevObjectCount = updated.length;
-
-      // Cache the final partial batch too (previously this was never added
-      // to allCellObjects, so those objects could not survive unload/reload).
       const byCell = new Map();
       for (const obj of storeBatch) {
         if (obj.cellId) {
@@ -471,13 +452,19 @@ export const objectMethods = {
       for (const [cellId, objects] of byCell) {
         addToAllCellObjects(cellId, objects);
       }
-
-      // PERF FIX: batched cell tracking for the final partial flush.
       useSpatialManagerStore.getState().trackObjectsInCellBatch?.(
         storeBatch.map((obj) => ({ objectId: obj.id, cellId: obj.cellId }))
       );
-
+      pendingAllObjects.push(...storeBatch);
       storeBatch = [];
+    }
+
+    // Single O(N) store flush — one array copy for all N created objects
+    // instead of ~N/1000 copies that previously accumulated to O(N²).
+    if (pendingAllObjects.length > 0) {
+      const currentObjects = useObjectsStore.getState().objects;
+      const updated = [...currentObjects, ...pendingAllObjects];
+      useObjectsStore.getState().setObjects(updated);
     }
 
     // ── Apply position updates in a single pass ──────────────────────

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { octahedronTransformMap } from './GlobalOctahedronEdgesRenderer';
+import { isPickingSuppressed } from './PickGate';
 
 const _buildOctagonGeometry = () => {
   const S = 10;
@@ -124,6 +125,9 @@ const GlobalOctahedronLowLODRenderer = React.memo(({ octahedrons = [], onInstanc
       !needsInitialSetup &&
       !hasPendingAppendsRef.current
     ) return;
+
+    // Defer full O(N) rebuilds during camera motion.
+    if (needsInitialSetup && isPickingSuppressed()) return;
 
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { dodecahedronTransformMap } from './GlobalDodecahedronEdgesRenderer';
+import { isPickingSuppressed } from './PickGate';
 
 // Low-poly sphere to approximate dodecahedron silhouette at medium distance
 // Radius 8 matches edge renderer bounds (PHI * 5 ≈ 8.09)
@@ -115,6 +116,9 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [], on
       !needsInitialSetup &&
       !hasPendingAppendsRef.current
     ) return;
+
+    // Defer full O(N) rebuilds during camera motion.
+    if (needsInitialSetup && isPickingSuppressed()) return;
 
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;

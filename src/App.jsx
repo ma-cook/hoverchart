@@ -19,6 +19,7 @@ import RepoGrid from './components/RepoGrid';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
 import FrameloopController from './components/FrameloopController';
+import PickGate from './components/PickGate';
 import HandsRenderer from './components/HandsRenderer';
 
 // Hook imports
@@ -1647,6 +1648,7 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
     <>
       <FrameTicker />
       <FrameloopController />
+      <PickGate />
       <LODManager enabled={useLOD} />
       <HeaderBillboardManager />
       {viewMode === '3d' && <ConnectionAnimationManager />}

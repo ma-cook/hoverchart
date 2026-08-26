@@ -32,7 +32,8 @@ const DEFAULT_OPTIONS = {
 };
 
 const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
-const NODES_BETWEEN_YIELDS = 2048;
+const NODES_BETWEEN_YIELDS = 16384;
+const SWEEPS_BETWEEN_YIELDS = 5;
 
 /**
  * Build adjacency structures from the merfolk graphs.
@@ -122,6 +123,7 @@ function* louvainCore(nodeIds, adjacency, totalWeight, opts) {
   // (that was ~100k short-lived Maps per sweep at 97k nodes → GC storms).
   const neighborWeights = new Map();
   let nodesSinceYield = 0;
+  let sweepsSinceYield = 0;
 
   for (let iter = 0; iter < opts.maxIterations; iter++) {
     let improved = false;
@@ -184,8 +186,13 @@ function* louvainCore(nodeIds, adjacency, totalWeight, opts) {
     }
 
     if (!improved) break;
-    // Let rendering/pump frames run between sweeps on large graphs.
-    yield 'yield';
+    // Let rendering/pump frames run between sweeps on large graphs,
+    // but not every sweep — the per-node yields above already keep the
+    // thread alive.
+    if (++sweepsSinceYield >= SWEEPS_BETWEEN_YIELDS) {
+      sweepsSinceYield = 0;
+      yield 'yield';
+    }
   }
 
   // Reindex communities to 0..k-1

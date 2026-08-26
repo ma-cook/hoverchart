@@ -602,37 +602,51 @@ export const connectionMethods = {
       serializedObjects.length = 0;
       serializedConnections.length = 0;
 
-      let allResults = [];
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        try {
-          importPerf.mark(`bulkImport: POST chunk ${i + 1}/${chunks.length} (${chunk.objects.length} objs, ${chunk.connections.length} conns)`);
-          const t0 = performance.now();
-          const result = await postChunk(
-            chunk.objects,
-            chunk.connections,
-            i + 1,
-            chunks.length
-          );
-          importPerf.mark(`bulkImport: chunk ${i + 1} done in ${Math.round(performance.now() - t0)}ms`);
-          allResults.push(result);
-        } catch (error) {
-          console.warn(
-            `⚠️ [BulkImport] Chunk ${i + 1}/${chunks.length} failed, falling back to client for remaining connections:`,
-            error
-          );
-          const remainingConnections = chunk.connections.concat(
-            chunks.slice(i + 1).flatMap((c) => c.connections)
-          );
-          return this._backgroundSaveConnections(
-            remainingConnections,
-            currentSpaceId,
-            user
-          );
+      // Post chunks with bounded concurrency instead of sequentially.
+      // Chunks are independent (no ordering dependency), so parallelism
+      // cuts wall-clock time from N × RTT to ceil(N/C) × RTT.
+      const MAX_PARALLEL_POSTS = 4;
+      const chunkResults = new Array(chunks.length).fill(null);
+      let nextChunkIdx = 0;
+      let firstError = null;
+
+      const postWorker = async () => {
+        while (nextChunkIdx < chunks.length && !firstError) {
+          const i = nextChunkIdx++;
+          const chunk = chunks[i];
+          try {
+            importPerf.mark(`bulkImport: POST chunk ${i + 1}/${chunks.length} (${chunk.objects.length} objs, ${chunk.connections.length} conns)`);
+            const t0 = performance.now();
+            const result = await postChunk(
+              chunk.objects, chunk.connections, i + 1, chunks.length
+            );
+            importPerf.mark(`bulkImport: chunk ${i + 1} done in ${Math.round(performance.now() - t0)}ms`);
+            chunkResults[i] = result;
+          } catch (error) {
+            if (!firstError) firstError = { index: i, chunk, error };
+          }
         }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(MAX_PARALLEL_POSTS, chunks.length) }, () => postWorker())
+      );
+
+      if (firstError) {
+        const { index: failIdx, chunk: failChunk, error } = firstError;
+        console.warn(
+          `\u26a0\ufe0f [BulkImport] Chunk ${failIdx + 1}/${chunks.length} failed, falling back to client for remaining connections:`,
+          error
+        );
+        const remainingConnections = failChunk.connections.concat(
+          chunks.slice(failIdx + 1).flatMap((c) => c.connections)
+        );
+        return this._backgroundSaveConnections(
+          remainingConnections, currentSpaceId, user
+        );
       }
 
-      return { success: true, chunks: allResults };
+      return { success: true, chunks: chunkResults };
     } catch (error) {
       console.error('❌ [BulkImport] Bulk import failed:', error);
 

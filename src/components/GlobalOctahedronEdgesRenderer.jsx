@@ -5,6 +5,7 @@ import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 import { bulkImportState } from '../utils/bulkImportState';
+import { isPickingSuppressed } from './PickGate';
 
 // Mark only [offset, offset+count) of an attribute dirty for GPU upload.
 // Uses whichever update-range API the installed three.js version exposes;
@@ -277,6 +278,9 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
     ) {
       return;
     }
+
+    // Defer full O(N) rebuilds during camera motion.
+    if (needsInitialSetup && isPickingSuppressed()) return;
 
     if (enableCulling && !hasActiveTransforms && !needsInitialSetup) {
       cullingFrameCounterRef.current++;

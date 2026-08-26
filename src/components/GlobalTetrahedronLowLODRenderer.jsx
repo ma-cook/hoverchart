@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
+import { isPickingSuppressed } from './PickGate';
 
 // 2D triangle geometry to represent tetrahedrons at LOW LOD
 // Larger than full-detail to remain visible at extreme distance
@@ -121,6 +122,9 @@ const GlobalTetrahedronLowLODRenderer = React.memo(({ tetrahedrons = [], onInsta
       !needsInitialSetup &&
       !hasPendingAppendsRef.current
     ) return;
+
+    // Defer full O(N) rebuilds during camera motion.
+    if (needsInitialSetup && isPickingSuppressed()) return;
 
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
+import { isPickingSuppressed } from './PickGate';
 
 const CUBE_SIZE = 5;
 
@@ -128,6 +129,9 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       !needsInitialSetup &&
       !hasPendingAppendsRef.current
     ) return;
+
+    // Defer full O(N) rebuilds during camera motion.
+    if (needsInitialSetup && isPickingSuppressed()) return;
 
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;

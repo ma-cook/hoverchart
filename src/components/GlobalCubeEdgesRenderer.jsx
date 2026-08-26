@@ -5,6 +5,7 @@ import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 import { bulkImportState } from '../utils/bulkImportState';
+import { isPickingSuppressed } from './PickGate';
 
 extend({ LineShaderMaterial });
 
@@ -378,6 +379,9 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     ) {
       return;
     }
+
+    // Defer full O(N) rebuilds during camera motion.
+    if (needsInitialSetup && isPickingSuppressed()) return;
 
     // Throttle frustum-culling-only frames (no transforms, no initial setup)
     // to every N frames to reduce CPU cost.

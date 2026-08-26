@@ -44,11 +44,12 @@ const FRAME_TIME_THROTTLE_MS = 24; // ~42fps
  */
 const LODManager = ({ enabled = true }) => {
   const { camera } = useThree();
-  const lastUpdateTimeRef = useRef(0);
-  const lastCameraPositionRef = useRef(new THREE.Vector3());
-  const initializedRef = useRef(false);
-  const needsImmediateUpdateRef = useRef(false);
-  const prevObjectCountRef = useRef(0);
+const lastUpdateTimeRef = useRef(0);
+const lastCameraPositionRef = useRef(new THREE.Vector3());
+const initializedRef = useRef(false);
+const needsImmediateUpdateRef = useRef(false);
+const prevObjectCountRef = useRef(0);
+const posMapCacheRef = useRef({ objects: null, map: null });
 
   // Transition queue: Map<objectId, { level, distanceSq }>.
   // Holds pending LOD upgrades that will be drained at a budgeted rate per frame.
@@ -433,11 +434,17 @@ const LODManager = ({ enabled = true }) => {
     // Build sortable array with distance to current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);
 
-    // Build a quick position lookup from the objects array (avoids O(N) find per entry)
-    const posMap = new Map();
-    for (const obj of objects) {
-      if (obj.position) posMap.set(obj.id, obj.position);
+    // Position lookup cached per objects-array identity. Rebuilding this Map
+    // over ~100k objects every frame while the upgrade queue is non-empty
+    // was O(N) per frame during navigation.
+    if (posMapCacheRef.current.objects !== objects || !posMapCacheRef.current.map) {
+      const map = new Map();
+      for (const obj of objects) {
+        if (obj.position) map.set(obj.id, obj.position);
+      }
+      posMapCacheRef.current = { objects, map };
     }
+    const posMap = posMapCacheRef.current.map;
 
     const entries = [];
     for (const [objectId, data] of queue) {

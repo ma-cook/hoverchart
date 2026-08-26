@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
+import { isPickingSuppressed } from './PickGate';
 
 // Custom tetrahedron geometry matching the full-detail Tetrahedron.jsx vertices exactly.
 // TETRAHEDRON_SIZE = 5:
@@ -141,6 +142,9 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
       !needsInitialSetup &&
       !hasPendingAppendsRef.current
     ) return;
+
+    // Defer full O(N) rebuilds during camera motion.
+    if (needsInitialSetup && isPickingSuppressed()) return;
 
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;

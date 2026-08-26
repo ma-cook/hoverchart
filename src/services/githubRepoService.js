@@ -12,6 +12,7 @@ import { reportMemoryPressureOnce } from '../utils/memoryMonitor';
 import { joinChunks } from './context/chunkIndex';
 import { detectCommunitiesSync } from './context/communityDetection';
 import { safeSetItem } from '../utils/safeLocalStorage';
+import importPerf from '../utils/importPerf';
 
 // GitHub API base URL
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -42,6 +43,16 @@ const sleep = (ms, signal) => new Promise((r, reject) => {
 
 const GITHUB_API_HEADERS = { Accept: 'application/vnd.github.v3+json' };
 
+// TEMPORARY PERF STATS (?perf) — network counters for repo-scan baseline runs.
+const githubFetchStats = {
+  apiRequests: 0,
+  cdnRequests: 0,
+  rateLimitedResponses: 0,
+  rateLimitSleepMs: 0,
+  bytesFetched: 0,
+};
+export const getGithubFetchStats = () => ({ ...githubFetchStats });
+
 /**
  * Wrapper around fetch that retries on 429 (rate-limit) and 403 (abuse)
  * with exponential backoff + jitter.  All other errors propagate immediately.
@@ -50,6 +61,7 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
   const { signal } = options;
   for (let attempt = 1; attempt <= retries; attempt++) {
     if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+    githubFetchStats.apiRequests += 1;
     const response = await fetch(url, options);
     if (response.ok) return response;
     if ((response.status === 429 || response.status === 403) && attempt < retries) {
@@ -57,7 +69,9 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
       const baseDelay = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000 * Math.pow(2, attempt);
       const jitter = Math.random() * 1000;
       const delay = Math.min(baseDelay + jitter, 10_000);
-      console.warn(`⏳ GitHub API rate-limited (${response.status}), retrying in ${Math.round(delay)}ms…`);
+      githubFetchStats.rateLimitedResponses += 1;
+      githubFetchStats.rateLimitSleepMs += Math.round(delay);
+      console.warn(`? GitHub API rate-limited (${response.status}), retrying in ${Math.round(delay)}ms.`);
       await sleep(delay, signal);
       continue;
     }
@@ -65,6 +79,12 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
     throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
   }
 }
+
+// One-line snapshot of the network counters for [perf] marks.
+const fetchStatsLine = () =>
+  `api=${githubFetchStats.apiRequests} cdn=${githubFetchStats.cdnRequests} ` +
+  `rateLimited=${githubFetchStats.rateLimitedResponses} sleepMs=${githubFetchStats.rateLimitSleepMs} ` +
+  `bytes=${(githubFetchStats.bytesFetched / 1048576).toFixed(1)}MB`;
 
 // When set to a commit SHA, `fetchFileContent` reads files from the
 // raw.githubusercontent.com CDN instead of the GitHub Contents API,
@@ -155,7 +175,12 @@ export const fetchFileContent = async (owner, repoName, filePath, token, ref) =>
     try {
       const res = await fetch(rawUrl, { signal: rawT.signal });
       rawT.clear();
-      if (res.ok) return await res.text();
+      if (res.ok) {
+        const text = await res.text();
+        githubFetchStats.cdnRequests += 1;
+        githubFetchStats.bytesFetched += text.length;
+        return text;
+      }
     } catch {
       rawT.clear();
       // network error — fall through to API
@@ -181,7 +206,9 @@ export const fetchFileContent = async (owner, repoName, filePath, token, ref) =>
     }
 
     // Get the raw text content
-    return await response.text();
+    const apiText = await response.text();
+    githubFetchStats.bytesFetched += apiText.length;
+    return apiText;
   } catch (error) {
     apiT.clear();
     if (error.name === 'AbortError') {
@@ -320,30 +347,28 @@ export const fetchRepositoryStructure = async (owner, repoName, token) => {
     if (treeData.truncated) {
       console.warn('Repository tree was truncated (>100k items), fetching sub-trees...');
       const dirs = items.filter(i => i.type === 'tree');
-      for (const dir of dirs) {
-        const subUrl = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/trees/${dir.sha}?recursive=1`;
-        const subResponse = await fetchWithRetry(subUrl, {
-          headers: {
-            Authorization: `token ${token}`,
-            ...GITHUB_API_HEADERS,
-          },
-        });
-        if (subResponse.ok) {
+      // Fetch sub-trees concurrently instead of sequentially.
+      const subTreeResults = await Promise.all(
+        dirs.map(async (dir) => {
+          const subUrl = `${GITHUB_API_BASE}/repos/${owner}/${repoName}/git/trees/${dir.sha}?recursive=1`;
+          const subResponse = await fetchWithRetry(subUrl, {
+            headers: {
+              Authorization: `token ${token}`,
+              ...GITHUB_API_HEADERS,
+            },
+          });
+          if (!subResponse.ok) return [];
           const subData = await subResponse.json();
-          for (const subItem of (subData.tree || [])) {
-            if (subItem.type === 'blob') {
-              const fileType = getFileTypeFromPath(subItem.path);
-              if (fileType) {
-                structure.push({
-                  path: subItem.path,
-                  name: subItem.path.split('/').pop(),
-                  type: fileType,
-                });
-              }
-            }
-          }
-        }
-      }
+          return (subData.tree || [])
+            .filter(subItem => subItem.type === 'blob' && getFileTypeFromPath(subItem.path))
+            .map(subItem => ({
+              path: subItem.path,
+              name: subItem.path.split('/').pop(),
+              type: getFileTypeFromPath(subItem.path),
+            }));
+        })
+      );
+      for (const subItems of subTreeResults) structure.push(...subItems);
     }
 
     return structure;
@@ -1504,6 +1529,7 @@ const traverseVueSource = (
  */
 export const generateMerfolkFromRepository = async (owner, repoName, options = {}) => {
   const { onProgress } = options;
+  importPerf.mark(`scan: START ${owner}/${repoName}`);
   try {
     const token = localStorage.getItem('github_token');
     if (!token) {
@@ -1520,6 +1546,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       // Fetch entire repository structure
       structure = await fetchRepositoryStructure(owner, repoName, token);
     }
+    importPerf.mark(`scan: structure done (${structure.length} files | ${fetchStatsLine()})`);
 
     // Log structure breakdown
     const shaderFiles = structure.filter(f => f.type === 'shader');
@@ -3519,6 +3546,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     let fetchIdx = 0;
 
     let fetchedCount = 0;
+    importPerf.mark(`scan: fetching ${filesToProcess.length} files (concurrency ${Math.min(MAX_CONCURRENCY, filesToProcess.length)})`);
 
     const fetchWorker = async () => {
       while (fetchIdx < filesToProcess.length) {
@@ -3536,8 +3564,10 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
 
     const poolSize = Math.min(MAX_CONCURRENCY, filesToProcess.length);
     await Promise.all(Array.from({ length: poolSize }, () => fetchWorker()));
+    importPerf.mark(`scan: fetched ${fetchedCount}/${filesToProcess.length} files (${fetchStatsLine()})`);
 
     const PROCESS_YIELD_EVERY = 10;
+    importPerf.mark('scan: AST parsing starting');
     for (let idx = 0; idx < fetched.length; idx++) {
       const entry = fetched[idx];
       if (!entry) continue;
@@ -3554,6 +3584,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
         reportMemoryPressureOnce('repo scan');
       }
     }
+    importPerf.mark(`scan: AST parsing done (${fetched.length} files)`);
 
     // ── L1 Post-scan: Resolve path aliases and barrel chains ───────────────
     // Reclassify aliased imports that were misclassified as external libraries
@@ -3731,7 +3762,9 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
             } catch { /* ignore */ }
           }
 
+          importPerf.mark('scan: L2 TypeScript analysis starting');
           const tsAnalysis = await runTypeScriptAnalysis(tsSourceFiles, tsconfigForTS);
+          importPerf.mark('scan: L2 TypeScript analysis done');
           if (tsAnalysis) {
             componentPropTypes = tsAnalysis.componentPropTypes;
             hookReturnTypes = tsAnalysis.hookReturnTypes;
@@ -3912,6 +3945,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       richTypes: tsRichTypes || new Map(),
       entryPoint: detectedEntryPoint,
     });
+    importPerf.mark(`scan: markdown generated (${merfolkResult.length} chars | ${fetchStatsLine()})`);
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
     console.log(`📝 Generated Merfolk markdown (${merfolkResult.length} chars):\n${merfolkResult.substring(0, 3000)}`);
@@ -5640,6 +5674,7 @@ export const scanRepositoryAndGenerateDiagram = async (
     }
     
     if (onProgress) onProgress(60, 'Processing markdown...');
+    importPerf.mark(`scan: complete, handing off to processMarkdownFile (${fetchStatsLine()})`);
 
     // Create a File from the markdown for processing
     const markdownBlob = new Blob([merfolkMarkdown], {
