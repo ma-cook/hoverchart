@@ -5659,13 +5659,9 @@ export const scanRepositoryAndGenerateDiagram = async (
       user
     );
 
-    // Detect communities after graph is populated
-    try {
-      const { detectAndStoreCommunities } = await import('./context/communityService');
-      await detectAndStoreCommunities();
-    } catch (commErr) {
-      console.warn('[scanRepository] Community detection failed:', commErr.message);
-    }
+    // NOTE: community detection is NOT run here - processMarkdownFile
+    // already awaits detectAndStoreCommunities() internally, and a second
+    // full pass doubled a very long silent phase on huge diagrams.
 
     // ── LSP enrichment (async, non-blocking) ────────────────────────────
     // Connect to the LSP service and enrich the diagram with accurate

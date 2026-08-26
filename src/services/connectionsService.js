@@ -27,6 +27,9 @@ const POLL_BACKOFF_FACTOR = 1.5;
 // Consecutive no-change polls at the max backoff before we stop polling
 // entirely until a local write, tab refocus, or cell change wakes us.
 const HARD_IDLE_STREAK = 2;
+// Max loaded cells sent in one connections query. Keeps each request fast
+// on very large diagrams where hundreds of cells may be loaded.
+const CONNECTION_CELLS_PER_REQUEST = 12;
 
 const connectionPollWakes = new Set();
 export const wakeConnectionPolling = () => {
@@ -295,16 +298,29 @@ export const subscribeToConnections = (
     let anythingChanged = false;
     let fetchFailed = false;
     try {
-      const params = {};
-      if (effectiveCells.length > 0) {
-        params.cell_id = effectiveCells;
+      // Fetch connections in small cell batches. A single request carrying
+      // every loaded cell makes the backend query slow enough that the
+      // gateway kills it, and the error response arrives without CORS
+      // headers (surfacing as a CORS failure in the browser). Cells are
+      // disjoint across batches, so results concatenate without duplicates.
+      const cellBatches = [];
+      for (let i = 0; i < effectiveCells.length; i += CONNECTION_CELLS_PER_REQUEST) {
+        cellBatches.push(effectiveCells.slice(i, i + CONNECTION_CELLS_PER_REQUEST));
       }
 
-      const response = await api.get(`/api/spaces/${spaceId}/connections`, { params });
-      if (response == null) {
-        return; // 304 — nothing changed, skip the diff entirely
+      const rawConnections = [];
+      for (const batch of cellBatches) {
+        if (!isActive || document.hidden || _subscriptionsPaused) return;
+        const response = await api.get(`/api/spaces/${spaceId}/connections`, {
+          params: { cell_id: batch },
+        });
+        if (response == null) continue; // 304 - nothing changed for these cells
+        if (Array.isArray(response)) {
+          rawConnections.push(...response);
+        } else if (Array.isArray(response.connections)) {
+          rawConnections.push(...response.connections);
+        }
       }
-      const rawConnections = Array.isArray(response) ? response : (response.connections || []);
       const connections = rawConnections.map(normalizeConnectionRow);
       const seenKeys = new Set();
 
