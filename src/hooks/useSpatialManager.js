@@ -116,6 +116,10 @@ export const useSpatialManager = ({
       const controls = cameraRef.current.orbitControls;
       let lastCellCoords = null;
       let debounceTimer = null;
+      let lastCellUpdateTime = 0;
+      // Throttle: minimum ms between cell-boundary crossings.  Prevents
+      // rapid-fire cascades when the camera pans quickly across many cells.
+      const CELL_UPDATE_THROTTLE_MS = 200;
 
       const handleCameraMove = () => {
         // BUGFIX: Use the orbit controls TARGET (the point being looked at)
@@ -142,18 +146,24 @@ export const useSpatialManager = ({
         ]);
         useSpatialManagerStore.getState().setCameraCellCoords(camCellCoords);
 
-        // Only trigger update when crossing cell boundaries
+        // Only trigger update when crossing cell boundaries (throttled)
         if (
           !lastCellCoords ||
           currentCellCoords.x !== lastCellCoords.x ||
           currentCellCoords.y !== lastCellCoords.y ||
           currentCellCoords.z !== lastCellCoords.z
         ) {
+          const now = performance.now();
+          if (now - lastCellUpdateTime < CELL_UPDATE_THROTTLE_MS) {
+            return; // Throttled — skip this boundary crossing
+          }
+
           // Clear any existing debounce timer
           if (debounceTimer) {
             clearTimeout(debounceTimer);
           }
 
+          lastCellUpdateTime = now;
           // Call immediately without debounce
           updateCameraPosition(
             { x: currentPos.x, y: currentPos.y, z: currentPos.z },

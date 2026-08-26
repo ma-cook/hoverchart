@@ -598,7 +598,8 @@ export const subscribeToSpatialObjects = (
   userId,
   spaceId,
   loadedCells,
-  callback
+  callback,
+  getCells  // optional: () => string[] — reads loadedCells live from the store
 ) => {
   if (!spaceId) return () => {};
 
@@ -657,7 +658,14 @@ export const subscribeToSpatialObjects = (
     let fetchFailed = false;
     let totalAdds = 0;
     let totalRemoves = 0;
+    let currentCells = [];
     try {
+      // Read cells live from the store on each poll so cell changes
+      // are picked up without tearing down/recreating the subscription.
+      currentCells = getCells
+        ? getCells()
+        : safeCells;
+
       const ownerIdFromUrl = window.currentSpaceOwner;
 
       if (isAnonymous && !ownerIdFromUrl) {
@@ -675,7 +683,7 @@ export const subscribeToSpatialObjects = (
       }
       window.currentSpaceOwner = ownerUserId;
 
-      if (safeCells.length === 0) {
+      if (currentCells.length === 0) {
         return;
       }
 
@@ -687,7 +695,7 @@ export const subscribeToSpatialObjects = (
       let objects = [];
       try {
         objects = await api.get(`/api/spaces/${spaceId}/objects`, {
-          params: { cell_id: safeCells },
+          params: { cell_id: currentCells },
         });
         if (objects == null) {
           return;
@@ -717,7 +725,7 @@ export const subscribeToSpatialObjects = (
         objectsByCell.get(obj.cellId).push(obj);
       }
 
-      for (const cellKey of safeCells) {
+      for (const cellKey of currentCells) {
         if (!cellKey || typeof cellKey !== 'string') {
           continue;
         }
@@ -880,6 +888,16 @@ export const subscribeToSpatialObjects = (
           });
         }
       }
+
+      // Clean up tracking for cells that are no longer loaded
+      if (getCells) {
+        const currentSet = new Set(currentCells);
+        for (const cellKey of previousCellObjectIds.keys()) {
+          if (!currentSet.has(cellKey)) {
+            previousCellObjectIds.delete(cellKey);
+          }
+        }
+      }
     } catch (error) {
       console.error('Error polling spatial objects:', error);
     } finally {
@@ -893,7 +911,7 @@ export const subscribeToSpatialObjects = (
         console.warn(`[diag][objPoller #${instanceId}] HIGH-RATE: ${pollsInWindow} polls in <30s (changed=${anythingChanged} fetchFailed=${fetchFailed} live=${liveObjPollers.size})`, new Error().stack?.split('\n').slice(1, 3).join('\n'));
       }
       if (window.__POLL_DIAG) {
-        console.log(`[diag][objPoller #${instanceId}] poll changed=${anythingChanged} adds=${totalAdds} removes=${totalRemoves} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${safeCells.length} cacheSize=${objectsCache.size} live=${liveObjPollers.size}`);
+        console.log(`[diag][objPoller #${instanceId}] poll changed=${anythingChanged} adds=${totalAdds} removes=${totalRemoves} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${currentCells.length} cacheSize=${objectsCache.size} live=${liveObjPollers.size}`);
       }
       if (anythingChanged) {
         pollDelay = POLL_INTERVAL_FAST_MS;

@@ -253,7 +253,8 @@ export const subscribeToConnections = (
   userId,
   spaceId,
   callback,
-  loadedCells = []
+  loadedCells = [],
+  getCells  // optional: () => string[] — reads loadedCells live from the store
 ) => {
   if (!spaceId) return () => {};
 
@@ -298,14 +299,20 @@ export const subscribeToConnections = (
     let anythingChanged = false;
     let fetchFailed = false;
     try {
+      // Read cells live from the store on each poll so cell changes
+      // are picked up without tearing down/recreating the subscription.
+      const currentCells = getCells
+        ? getCells()
+        : effectiveCells;
+
       // Fetch connections in small cell batches. A single request carrying
       // every loaded cell makes the backend query slow enough that the
       // gateway kills it, and the error response arrives without CORS
       // headers (surfacing as a CORS failure in the browser). Cells are
       // disjoint across batches, so results concatenate without duplicates.
       const cellBatches = [];
-      for (let i = 0; i < effectiveCells.length; i += CONNECTION_CELLS_PER_REQUEST) {
-        cellBatches.push(effectiveCells.slice(i, i + CONNECTION_CELLS_PER_REQUEST));
+      for (let i = 0; i < currentCells.length; i += CONNECTION_CELLS_PER_REQUEST) {
+        cellBatches.push(currentCells.slice(i, i + CONNECTION_CELLS_PER_REQUEST));
       }
 
       const rawConnections = [];

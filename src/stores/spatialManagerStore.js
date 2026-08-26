@@ -655,10 +655,14 @@ const useSpatialManagerStore = create((set, get) => ({
           error
         );
       }
-      // Remove cells from loaded set
+      // Remove cells from loaded set.
+      // FIX: Don't bump loadedCellsVersion here — loadCellsBatch (which runs
+      // after unload) will do a single bump.  This halves the subscription
+      // restart cascade on cell boundary crossings.  The subscription poll
+      // reads loadedCells live, so unloaded cells are handled by the next poll.
       const newLoadedCells = new Set(state.loadedCells);
       cellsToUnloadNow.forEach((cellId) => newLoadedCells.delete(cellId));
-      set({ loadedCells: newLoadedCells, loadedCellsVersion: state.loadedCellsVersion + 1 });
+      set({ loadedCells: newLoadedCells });
       diagLoadedCells('unloadCellsBatch', newLoadedCells);
     }
   },

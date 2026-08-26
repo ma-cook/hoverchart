@@ -58,7 +58,7 @@ import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkSched
 
 import { signInUser } from './services/authService';
 import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
-import { subscribeToSpatialObjects, clearAllObjectCaches, seedObjectsCache } from './services/spatialObjectsService';
+import { subscribeToSpatialObjects, clearAllObjectCaches, seedObjectsCache, wakeSpatialPolling } from './services/spatialObjectsService';
 import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning';
 import { hasAnyPendingObjects, getAllCellObjectsForCells } from './services/cellObjectCache';
 import { setGuestPresence } from './services/presenceService';
@@ -345,6 +345,10 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
   // Track objects in transition between cells to prevent flicker
   const transitioningObjectsRef = useRef(new Set()); // Set of object IDs currently transitioning
 
+// Persistent ID Set for O(1) duplicate checks in batch-added callback.
+// Avoids rebuilding new Set(prev.map(o => o.id)) — O(N) — on every Firebase snapshot.
+const existingIdsRef = useRef(new Set());
+
   // Make transitioningObjectsRef available globally for cleanup
   useEffect(() => {
     window.transitioningObjectsRef = transitioningObjectsRef;
@@ -537,6 +541,7 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
       useObjectsStore.getState().resetObjects();
       useConnectionStore.getState().resetConnections();
       useSpatialManagerStore.getState().resetSpatialManager();
+      existingIdsRef.current.clear(); // Reset persistent ID Set for new space
     }
     previousSpaceIdRef.current = effectiveSpaceId;
   }, [effectiveSpaceId]);
@@ -687,7 +692,13 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
 
               const validObjects = [];
               const updatedObjects = new Map(); // Track updates to existing objects
-              const existingIds = new Set(prev.map(o => o.id));
+              // PERF: Use persistent ref instead of rebuilding Set from all prev objects.
+              // On first call or after full replacement, seed from prev.
+              let existingIds = existingIdsRef.current;
+              if (existingIds.size === 0 && prev.length > 0) {
+                existingIds = new Set(prev.map(o => o.id));
+                existingIdsRef.current = existingIds;
+              }
 
               for (const item of change.changes) {
                 // Check deletion blacklist
@@ -801,6 +812,8 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
                 removeIds.add(item.id.toString());
               }
               if (removeIds.size > 0) {
+                // Also remove from persistent ID Set
+                for (const id of removeIds) existingIdsRef.current.delete(id);
                 return prev.filter(obj => !removeIds.has(obj.id.toString()));
               }
               return prev;
@@ -1084,6 +1097,12 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
             }, 0);
           }
         }
+      },
+      // getCells: reads loadedCells live from the store on each poll,
+      // avoiding full subscription teardown/recreate on cell changes.
+      () => {
+        const cells = useSpatialManagerStore.getState().loadedCells;
+        return cells ? Array.from(cells) : [];
       }
     );
 
@@ -1099,13 +1118,23 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
     effectiveSpaceId,
     canViewSpace,
     isSpatialInitialized,
-    loadedCellsKey, // Use stable key to prevent infinite loop but still update on cell changes
+    // loadedCellsKey REMOVED: the subscription reads cells live via getCells
+    // callback, so no teardown/recreate is needed on cell changes.
     setObjects,
     publicSpaceId, // Include to re-run when public space changes
     currentSpaceOwner, // Include to re-run when owner is resolved
     // Note: Excluding other dependencies to prevent infinite loops
     // draggingObjectsRef, lastUpdateRef, trackObjectInCell, transformingObjectsRef, untrackObjectInCell, user
   ]);
+
+  // When cells change, wake the pollers so they pick up new/removed cells
+  // immediately instead of waiting for the next scheduled poll.
+  useEffect(() => {
+    if (loadedCellsKey > 0) {
+      wakeSpatialPolling();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedCellsKey]);
 
   // Retroactively track existing objects when spatial manager becomes initialized
   const hasRetroTrackedRef = useRef(false);

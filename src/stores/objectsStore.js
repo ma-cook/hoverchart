@@ -798,10 +798,14 @@ const useObjectsStore = createWithEqualityFn(
       const state = get();
       if (!Array.isArray(state.objects)) return;
 
+      // PERF: Fast-path — if nothing is unloaded, skip the O(N) filter entirely.
+      // This is the common case during normal navigation (cell loads, not unloads).
+      if (!window._unloadedObjects || window._unloadedObjects.size === 0) return;
+
       // Filter out any objects that belong to unloaded cells
       const filteredObjects = state.objects.filter((obj) => {
         const objId = obj.id?.toString();
-        const shouldKeep = !window._unloadedObjects?.has(objId);
+        const shouldKeep = !window._unloadedObjects.has(objId);
         return shouldKeep;
       });
 

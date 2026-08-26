@@ -19,8 +19,10 @@ const selectConnectionHookState = (state) => ({
 import {
   subscribeToConnections,
   saveConnection,
+  wakeConnectionPolling,
 } from '../services/connectionsService';
 import { getIsInitialLoading } from '../utils/loadingState';
+import useSpatialManagerStore from '../stores/spatialManagerStore';
 
 /**
  * Custom hook to manage connections using the simplified Zustand store
@@ -30,6 +32,9 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
   // PERFORMANCE OPTIMIZATION: Module-level selector + shallow equality
   const { connections, addConnection, updateConnection, removeConnection, getConnection } = 
     useConnectionStore(selectConnectionHookState, shallow);
+
+  // Track cell changes via the cheap monotonic version counter
+  const loadedCellsKey = useSpatialManagerStore((s) => s.loadedCellsVersion);
 
   // Track subscription cleanup and debouncing
   const subscriptionCleanupRef = useRef(null);
@@ -215,15 +220,20 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     // For anonymous users without user.uid, still allow connection loading
     const effectiveUserId = user?.uid || null;
 
-    // Check if subscription needs to be updated
+    // Check if subscription needs to be updated (user/space changes only —
+    // cell changes are handled by the getCells callback reading live from store)
     const lastSub = lastSubscriptionRef.current;
-    const cellsChanged =
-      JSON.stringify(stableLoadedCells.sort()) !==
-      JSON.stringify((lastSub.loadedCells || []).sort());
     const userChanged = lastSub.userId !== effectiveUserId;
     const spaceChanged = lastSub.spaceId !== currentSpaceId;
     const initialLoadingJustFinished =
       !getIsInitialLoading() && lastSub.wasInitialLoading;
+
+    // getCells: reads loadedCells live from the store on each poll,
+    // avoiding full subscription teardown/recreate on cell changes.
+    const getCells = () => {
+      const cells = useSpatialManagerStore.getState().loadedCells;
+      return cells ? Array.from(cells) : [];
+    };
 
     // Always create initial subscription for the first set of cells, regardless of loading state
     if (
@@ -239,7 +249,8 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
         effectiveUserId,
         currentSpaceId,
         enhancedConnectionCallback,
-        stableLoadedCells
+        stableLoadedCells,
+        getCells
       );
 
       subscriptionCleanupRef.current = cleanup;
@@ -252,9 +263,8 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       return;
     }
 
-    // After initial loading, only restart if something actually changed
+    // After initial loading, only restart if user/space actually changed
     if (
-      !cellsChanged &&
       !userChanged &&
       !spaceChanged &&
       !initialLoadingJustFinished &&
@@ -278,7 +288,8 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
       effectiveUserId,
       currentSpaceId,
       enhancedConnectionCallback,
-      stableLoadedCells
+      stableLoadedCells,
+      getCells
     );
 
     // Store cleanup function
@@ -302,12 +313,22 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
         subscriptionCleanupRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     user?.uid,
     currentSpaceId,
-    stableLoadedCells,
+    // stableLoadedCells REMOVED: the subscription reads cells live via
+    // getCells callback, so no teardown/recreate is needed on cell changes.
     enhancedConnectionCallback,
   ]);
+
+  // When cells change, wake the connection poller so it picks up new/removed
+  // cells immediately instead of waiting for the next scheduled poll.
+  useEffect(() => {
+    if (loadedCellsKey > 0) {
+      wakeConnectionPolling();
+    }
+  }, [loadedCellsKey]);
 
   // Handle spatial cell changes for connection loading/unloading
   useEffect(() => {
