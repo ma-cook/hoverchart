@@ -597,6 +597,11 @@ export const connectionMethods = {
         chunks.push(chunk);
       }
 
+      // PERF: the serialized strings were only needed for chunk sizing —
+      // release them (~tens of MB at 97k objects) before the network phase.
+      serializedObjects.length = 0;
+      serializedConnections.length = 0;
+
       let allResults = [];
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];

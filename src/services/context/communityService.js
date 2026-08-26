@@ -46,10 +46,10 @@ export async function detectAndStoreCommunities() {
 
   importPerf.mark(`community: detection done in ${Math.round(performance.now() - startTime)}ms`);
 
-  // Generate summaries
+  // Generate summaries (async/cooperative — see communitySummarizer)
   const t1 = performance.now();
   const connectionTags = store.connectionTags;
-  const summaries = summarizeCommunities(graphs, assignments, connectionTags);
+  const summaries = await summarizeCommunities(graphs, assignments, connectionTags);
   importPerf.mark(`community: summaries done in ${Math.round(performance.now() - t1)}ms`);
 
   // Store in diagramStore

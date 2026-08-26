@@ -24,17 +24,21 @@ const NODE_TYPE_LABELS = {
   api: 'API',
 };
 
+const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 /**
  * Analyze a single community and extract its characteristics.
  *
  * @param {Set<number>} nodeIndices - Indices of nodes in this community
  * @param {Map<string, number>} nodeIndexMap - nodeId → global index
- * @param {Array} allNodes - Array of [nodeId, nodeData] from all graphs
+ * @param {Map<string, object>} nodeDataMap - nodeId → node data (built ONCE by
+ *   summarizeCommunities; the old code did allNodes.find() per node, which
+ *   was O(N²) across the full run — minutes of frozen tab at 97k nodes)
  * @param {Array} allConnections - Array of connection objects
  * @param {Map<string, Set<string>>} connectionTags - flow path tags
  * @returns {object} Community analysis
  */
-function analyzeCommunity(nodeIndices, nodeIndexMap, allNodes, allConnections, connectionTags) {
+function analyzeCommunity(nodeIndices, nodeIndexMap, nodeDataMap, allConnections, connectionTags) {
   const indexToNodeId = new Map();
   for (const [nodeId, idx] of nodeIndexMap) indexToNodeId.set(idx, nodeId);
 
@@ -51,7 +55,7 @@ function analyzeCommunity(nodeIndices, nodeIndexMap, allNodes, allConnections, c
     if (!nodeId) continue;
     nodeIds.push(nodeId);
 
-    const nodeData = allNodes.find(([id]) => id === nodeId)?.[1];
+    const nodeData = nodeDataMap.get(nodeId);
     if (nodeData) {
       const type = (nodeData.type || 'unknown').toLowerCase();
       nodeTypes[type] = (nodeTypes[type] || 0) + 1;
@@ -192,26 +196,33 @@ function formatSummary(communityId, name, analysis) {
 /**
  * Generate summaries for all detected communities.
  *
+ * PERF: async + cooperative — yields between communities and during the
+ * merge passes so a 97k-node graph can't stall rendering. The heavy lifting
+ * is now linear: nodeDataMap replaces the old per-node allNodes.find() scan
+ * (O(N²) → O(N)).
+ *
  * @param {Array<{ nodes: Map, connections: Map }>} graphs - from diagramStore
  * @param {Map<string, number>} communityAssignments - nodeId → communityId
  * @param {Map<string, Set<string>>} [connectionTags] - flow path tags
- * @returns {Array<object>} Array of CommunitySummary objects, sorted by size descending
+ * @returns {Promise<Array<object>>} Community summaries, sorted by size descending
  */
-export function summarizeCommunities(graphs, communityAssignments, connectionTags) {
+export async function summarizeCommunities(graphs, communityAssignments, connectionTags) {
   if (!communityAssignments || communityAssignments.size === 0) return [];
 
-  // Merge all nodes and build index
-  const allNodes = [];
+  // Merge all nodes and build indexes (one pass)
   const allConnections = [];
   const nodeIndexMap = new Map();
+  const nodeDataMap = new Map();
   let globalIdx = 0;
+  let merged = 0;
 
   for (const graph of graphs) {
     if (!graph?.nodes) continue;
     for (const [nodeId, nodeData] of graph.nodes) {
       if (!nodeIndexMap.has(nodeId)) {
         nodeIndexMap.set(nodeId, globalIdx++);
-        allNodes.push([nodeId, nodeData]);
+        nodeDataMap.set(nodeId, nodeData);
+        if (++merged % 8192 === 0) await yieldToBrowser();
       }
     }
     if (graph?.connections) {
@@ -223,6 +234,7 @@ export function summarizeCommunities(graphs, communityAssignments, connectionTag
         }
       }
     }
+    await yieldToBrowser();
   }
 
   // Group nodes by community
@@ -236,7 +248,10 @@ export function summarizeCommunities(graphs, communityAssignments, connectionTag
   // Analyze and format each community
   const summaries = [];
   for (const [commId, nodeIndices] of communities) {
-    const analysis = analyzeCommunity(nodeIndices, nodeIndexMap, allNodes, allConnections, connectionTags);
+    // Yield between communities — each pass touches every connection once,
+    // so large community sets still add up on huge graphs.
+    await yieldToBrowser();
+    const analysis = analyzeCommunity(nodeIndices, nodeIndexMap, nodeDataMap, allConnections, connectionTags);
     const name = nameCommunity(analysis);
     const summary = formatSummary(commId, name, analysis);
 
