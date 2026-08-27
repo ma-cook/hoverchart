@@ -1207,16 +1207,49 @@ const ConnectionsRenderer = ({
     // During bulk operations (repo scan / progressive import), suppress
     // expensive pathfinding.  bulkImportState covers the progressive-mount
     // pump without needing manual flag management at every entry point.
+    //
+    // HOWEVER: the selected connection and its flow-path siblings must ALWAYS
+    // route to individualConnections so the yellow (selected) / orange
+    // (flow-path highlighted) interactive lines render even while the mount
+    // pump or pathfinding worker keeps this gate active.  Otherwise clicking a
+    // connection in a large (e.g. 97k-object) scene never shows a highlight.
     if (window._connectionUpdateSkip || bulkImportState.active || isWorkerBusy()) {
+      // Always surface the user-requested highlights regardless of bulk state.
+      const highlightedSet = highlightedFlowPathIds;
+      const highlighted = [];
+      const deferred = [];
+      for (const conn of (progressiveConnections || [])) {
+        if (
+          conn.id === selectedConnection ||
+          (highlightedSet && highlightedSet.has(conn.id))
+        ) {
+          highlighted.push(conn);
+        } else {
+          deferred.push(conn);
+        }
+      }
+
       if (cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0) {
+        if (highlighted.length === 0) {
+          return cacheRef;
+        }
+        const baseIds = new Set(cacheRef.individualConnections.map(c => c.id));
+        const extras = highlighted.filter(c => !baseIds.has(c.id));
+        if (extras.length > 0) {
+          return {
+            ...cacheRef,
+            individualConnections: [...cacheRef.individualConnections, ...extras],
+          };
+        }
         return cacheRef;
       }
-      // No cache yet — treat all as batched (straight lines, no intersection checks)
+      // No cache yet — treat non-highlighted as batched (straight lines,
+      // no intersection checks), but always render highlighted individually.
       return {
-        batchedConnections: progressiveConnections || [],
+        batchedConnections: deferred,
         textConnections: [],
         curvedConnections: [],
-        individualConnections: [],
+        individualConnections: highlighted,
       };
     }
 
