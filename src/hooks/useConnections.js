@@ -201,6 +201,9 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
         // Handle the remove event normally
         connectionCallback(event);
+      } else if (event && event.type === 'modified' && event.connection) {
+        // Update the connection in the store (addConnection handles upsert)
+        addConnection(event.connection);
       } else {
         // Handle other events normally
         connectionCallback(event);
