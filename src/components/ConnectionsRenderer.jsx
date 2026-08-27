@@ -891,7 +891,7 @@ Connection.displayName = 'Connection';
  */
 const ConnectionsRenderer = ({
   objects,
-  visibleObjectIds,
+  visibleObjectIds: _visibleObjectIds,
   onLineStyleChange,
   onLineColorChange,
   onConnectionClick,
@@ -950,29 +950,27 @@ const ConnectionsRenderer = ({
     return (hash ^ (pathfindingObjects.length * 17)) >>> 0;
   }, [pathfindingObjects]);
 
-  // Filter connections to only show those where both endpoint objects are visible
+  // Filter connections to only show those where both endpoint objects are loaded
   const objectVisibleConnections = useMemo(() => {
     if (!connections?.length) return [];
 
-    // Use visibleObjectIds if it has items, otherwise fall back to availableObjectIds
-    const visibleIds = (visibleObjectIds && visibleObjectIds.size > 0) ? visibleObjectIds : availableObjectIds;
-
+    // Use availableObjectIds (all loaded objects) so connections render even
+    // when one endpoint is off-screen.  visibleObjectIds (frustum-culled)
+    // was filtering out valid connections.
     return connections.filter((connection) => {
       const startId = connection.start?.objectId?.toString();
       const endId = connection.end?.objectId?.toString();
       return (
-        startId && endId && visibleIds.has(startId) && visibleIds.has(endId)
+        startId && endId && availableObjectIds.has(startId) && availableObjectIds.has(endId)
       );
     });
-  }, [connections, visibleObjectIds, availableObjectIds]);
+  }, [connections, availableObjectIds]);
 
   // Get connections for the focused object (when connections are globally hidden)
   const focusedConnections = useMemo(() => {
     if (!focusedObjectId || connectionsVisible || !connections?.length) return [];
     
     const focusedIdStr = focusedObjectId.toString();
-    // Use visibleObjectIds if it has items, otherwise fall back to availableObjectIds
-    const visibleIds = (visibleObjectIds && visibleObjectIds.size > 0) ? visibleObjectIds : availableObjectIds;
     
     return connections.filter((connection) => {
       const startId = connection.start?.objectId?.toString();
@@ -981,12 +979,12 @@ const ConnectionsRenderer = ({
       // Connection must involve the focused object
       const involvesFocused = startId === focusedIdStr || endId === focusedIdStr;
       
-      // Both endpoints must be visible/loaded
-      const bothVisible = startId && endId && visibleIds.has(startId) && visibleIds.has(endId);
+      // Both endpoints must be loaded (use availableObjectIds, not frustum-culled set)
+      const bothLoaded = startId && endId && availableObjectIds.has(startId) && availableObjectIds.has(endId);
       
-      return involvesFocused && bothVisible;
+      return involvesFocused && bothLoaded;
     });
-  }, [focusedObjectId, connectionsVisible, connections, visibleObjectIds, availableObjectIds]);
+  }, [focusedObjectId, connectionsVisible, connections, availableObjectIds]);
 
   // When flow-path highlighting is active, include all highlighted connections
   // regardless of the focus filter — they may span objects beyond the focused one.
@@ -994,14 +992,13 @@ const ConnectionsRenderer = ({
     if (!highlightedFlowPathIds?.size || !connections?.length) return [];
     // Respect spatial availability (don't render connections to unloaded objects)
     // but bypass the focusedObjectId filter so off-focus segments become visible.
-    const visibleIds = (visibleObjectIds && visibleObjectIds.size > 0) ? visibleObjectIds : availableObjectIds;
     return connections.filter(conn => {
       if (!highlightedFlowPathIds.has(conn.id)) return false;
       const startId = conn.start?.objectId?.toString();
       const endId = conn.end?.objectId?.toString();
-      return startId && endId && visibleIds.has(startId) && visibleIds.has(endId);
+      return startId && endId && availableObjectIds.has(startId) && availableObjectIds.has(endId);
     });
-  }, [highlightedFlowPathIds, connections, visibleObjectIds, availableObjectIds]);
+  }, [highlightedFlowPathIds, connections, availableObjectIds]);
 
   // Determine which connections to consider for rendering.
   // When a flow-path is highlighted, merge its connections into the culling set

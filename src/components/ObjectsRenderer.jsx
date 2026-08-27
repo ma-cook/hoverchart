@@ -543,7 +543,7 @@ const ObjectsRenderer = React.memo(({
     // to survive across visibleObjectIds changes. Only the unmount effect below
     // cancels it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleObjectIds, objects.length, loadedCellsKey]);
+  }, [visibleObjectIds, objects, loadedCellsKey]);
 
   // PERF: When switching back from 2D → 3D, restart the progressive mount
   // pump if it was suspended with pending items.  The shared pump handles
