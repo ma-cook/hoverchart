@@ -1252,9 +1252,9 @@ const UIOverlay = ({
     toggleMenu('main');
   };
 
-  // Track whether the user has explicitly toggled visibility so auto-show doesn't override them
+  // Track whether the user has explicitly toggled visibility.
   const userHasManuallyToggled = useRef(false);
-  // Suppress auto-show when a diagram was auto-generated (GitHub scan, markdown upload, etc.)
+  // Track when a diagram was auto-generated (GitHub scan, markdown upload, etc.)
   const diagramIsBeingGenerated = useRef(false);
 
   const handleArrowClick = () => {
@@ -1263,20 +1263,11 @@ const UIOverlay = ({
     toggleConnectionsVisible();
   };
 
-  // Auto-show connections when there are 100 or fewer (on startup or after a GitHub scan)
-  // Skip auto-show when a diagram was auto-generated or the space already has one,
-  // and ALSO skip for shared / public spaces — visitors should land with the same
-  // "connections off by default" view as authenticated users.
-  useEffect(() => {
-    if (userHasManuallyToggled.current) return;
-    if (diagramIsBeingGenerated.current) return;
-    if (latestMarkdownUrl) return;
-    if (window.publicAccessSpace) return;
-    if (connectionCount > 0 && connectionCount <= CONNECTION_RENDER_THRESHOLD && !connectionsVisible) {
-      toggleConnectionsVisible();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionCount, latestMarkdownUrl]);
+  // Connection lines are intentionally NOT auto-shown. They only appear when the
+  // user explicitly clicks the "show all connection lines" button
+  // (handleArrowClick -> toggleConnectionsVisible). The previous auto-show effect
+  // fired during progressive connection loading (count passing through the <=100
+  // window) and turned connections on at startup, which we do not want.
 
   // Pinned webcam overlay
   const pinnedWebcamPlaneId = useUIOverlayStore((state) => state.pinnedWebcamPlaneId);

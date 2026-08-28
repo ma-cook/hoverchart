@@ -23,7 +23,8 @@ const tempProjectionMatrix = new THREE.Matrix4();
 const tempSphere = new THREE.Sphere();
 
 // Base cube edges in local space (12 edges × 2 points = 24 points × 3 coords = 72 values)
-const BASE_CUBE_EDGES = [
+// Exported so ContainerEdgesRenderer can reuse the identical geometry.
+export const BASE_CUBE_EDGES = [
   // Bottom face edges (4 edges)
   [-CUBE_SIZE, -CUBE_SIZE, -CUBE_SIZE],
   [-CUBE_SIZE, -CUBE_SIZE, CUBE_SIZE],
@@ -53,7 +54,7 @@ const BASE_CUBE_EDGES = [
   [CUBE_SIZE, CUBE_SIZE, CUBE_SIZE],
 ];
 
-const EDGES_PER_CUBE = 12;
+export const EDGES_PER_CUBE = 12;
 const IDENTITY_MATRIX = new THREE.Matrix4();
 
 // ---------------------------------------------------------------------------
@@ -150,16 +151,23 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
   
-  // Filter cubes based on LOD level - only render edges for FULL LOD cubes
-  // Grouping containers are excluded from LOD and always render
+  // Filter cubes based on LOD level - only render edges for FULL LOD cubes.
+  // Grouping containers are EXCLUDED here — they have no LOD and are rendered by
+  // ContainerEdgesRenderer in a separate, LOD-independent instanced mesh.  This
+  // prevents LOD changes / non-container mount-unmount (which force a full
+  // rebuild of this shared mesh) from also rebuilding the container edges.
   const filteredCubes = useMemo(() => {
-    if (!lodEnabled) return cubes;
-    
+    if (!lodEnabled) {
+      return cubes.filter(cube =>
+        cube.merfolkData?.isContainer !== true && cube.merfolkData?.isRepoContainer !== true
+      );
+    }
+
     return cubes.filter(cube => {
-      // Grouping containers are excluded from LOD - always render
+      // Grouping containers are rendered separately by ContainerEdgesRenderer
       const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
       if (isGroupingContainer) {
-        return true;
+        return false;
       }
       
       const isParent = parentIds.has(cube.id);

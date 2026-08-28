@@ -2,6 +2,7 @@ import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import ObjectRenderer from './ObjectRenderer';
 import GlobalCubeEdgesRenderer from './GlobalCubeEdgesRenderer';
+import ContainerEdgesRenderer from './ContainerEdgesRenderer';
 import GlobalDodecahedronEdgesRenderer from './GlobalDodecahedronEdgesRenderer';
 import GlobalTetrahedronEdgesRenderer from './GlobalTetrahedronEdgesRenderer';
 import GlobalOctahedronEdgesRenderer from './GlobalOctahedronEdgesRenderer';
@@ -908,6 +909,9 @@ const ObjectsRenderer = React.memo(({
     <>
       {/* PERFORMANCE: Render all cube edges in a single draw call */}
       <GlobalCubeEdgesRenderer cubes={cubeObjects} defaultLineWidth={1} />
+
+      {/* Container edges rendered separately - no LOD, so they never rebuild on LOD changes */}
+      <ContainerEdgesRenderer cubes={cubeObjects} defaultLineWidth={1} />
       
       {/* PERFORMANCE: Render all colored cube faces in a single draw call */}
       <GlobalCubeFaceRenderer cubes={cubeObjects} />
