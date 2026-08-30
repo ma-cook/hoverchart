@@ -207,12 +207,12 @@ export const SpacesTable = React.memo(
                     </td>
                     <td style={tdStyles}>
                       <div style={{ display: 'flex', alignItems: 'center' }}>
-                        {space.isPublic ||
-                        (space.sharedWith &&
-                          (space.sharedWith.includes('everyone') ||
-                            space.sharedWith === 'everyone'))
+                        {space.is_public ||
+                        (space.shared_with &&
+                          (space.shared_with.includes('everyone') ||
+                            space.shared_with === 'everyone'))
                           ? 'Open'
-                          : space.sharedWith && space.sharedWith.length > 0
+                          : space.shared_with && space.shared_with.length > 0
                           ? 'Shared'
                           : 'Private'}
                         <button
