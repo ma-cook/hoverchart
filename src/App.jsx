@@ -60,7 +60,7 @@ import { signInUser } from './services/authService';
 import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
 import { subscribeToSpatialObjects, clearAllObjectCaches, seedObjectsCache, wakeSpatialPolling } from './services/spatialObjectsService';
 import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning';
-import { hasAnyPendingObjects, getAllCellObjectsForCells } from './services/cellObjectCache';
+import { hasAnyPendingObjects, getAllCellObjectsForCells, clearAllCellCaches } from './services/cellObjectCache';
 import { setGuestPresence } from './services/presenceService';
 import { getPublicSpaceMetadata } from './services/spacesService';
 import { setIsInitialLoading as setGlobalInitialLoading } from './utils/loadingState';
@@ -538,6 +538,7 @@ const existingIdsRef = useRef(new Set());
   useEffect(() => {
     if (previousSpaceIdRef.current && previousSpaceIdRef.current !== effectiveSpaceId) {
       clearAllObjectCaches();
+      clearAllCellCaches();
       useObjectsStore.getState().resetObjects();
       useConnectionStore.getState().resetConnections();
       useSpatialManagerStore.getState().resetSpatialManager();
@@ -593,8 +594,8 @@ const existingIdsRef = useRef(new Set());
         // are already in the store (from createObjectsFromDiagram), but objects
         // for cells loaded during camera movement may not be in Firebase yet
         // (Cloud Function still pending). Merge in any cached objects.
-        if (hasAnyPendingObjects() && loadedCells.length > 0) {
-          const cachedObjects = getAllCellObjectsForCells(loadedCells);
+        if (hasAnyPendingObjects(effectiveSpaceId) && loadedCells.length > 0) {
+          const cachedObjects = getAllCellObjectsForCells(effectiveSpaceId, loadedCells);
           if (cachedObjects.length > 0) {
             // Deduplicate by a Set of known IDs
             const knownIds = new Set(initialObjects.map(o => o.id?.toString()));

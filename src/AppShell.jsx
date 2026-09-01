@@ -9,6 +9,7 @@ import useCodeStore from './stores/codeStore';
 import useConnectionStore from './stores/connectionStore';
 import useSpatialManagerStore from './stores/spatialManagerStore';
 import { getContentStore } from './services/context/contentStore';
+import { clearAllCellCaches } from './services/cellObjectCache';
 
 const AppShell = () => {
   const [activeView, setActiveView] = useState('landing'); // 'landing' | 'diagram'
@@ -48,6 +49,7 @@ const AppShell = () => {
     useDiagramStore.getState().clear();
     useCodeStore.getState().reset();
     useSpatialManagerStore.getState().resetSpatialManager();
+    clearAllCellCaches();
     try { getContentStore().clear(); } catch { /* singleton may not exist */ }
     window.history.pushState({}, '', window.location.pathname);
     window.isTrialMode = false;
@@ -74,6 +76,7 @@ const AppShell = () => {
         useDiagramStore.getState().clear();
         useCodeStore.getState().reset();
         useSpatialManagerStore.getState().resetSpatialManager();
+        clearAllCellCaches();
         try { getContentStore().clear(); } catch { /* singleton may not exist */ }
         setActiveView('landing');
         setSpaceContext(null);

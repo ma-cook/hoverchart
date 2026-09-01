@@ -252,7 +252,7 @@ export const containerMethods = {
     }
 
     if (containerCubes.length > 0) {
-      this.hydrateContainerCubes(containerCubes);
+      this.hydrateContainerCubes(context.spaceId, containerCubes);
     }
   },
 
@@ -264,10 +264,11 @@ export const containerMethods = {
    * in allCellObjects so unload/reload and cell-load hydration work before the
    * bulk import finishes persisting them.
    */
-  hydrateContainerCubes(containerCubes) {
+  hydrateContainerCubes(spaceId, containerCubes) {
     if (!containerCubes || containerCubes.length === 0) return;
 
-    // Cache ALL created containers (loaded + unloaded) in allCellObjects.
+    // Cache ALL created containers (loaded + unloaded) in allCellObjects —
+    // namespaced by spaceId so they can never hydrate into another space.
     const byCell = new Map();
     for (const cube of containerCubes) {
       if (cube.cellId) {
@@ -277,7 +278,7 @@ export const containerMethods = {
       }
     }
     for (const [cellId, objects] of byCell) {
-      addToAllCellObjects(cellId, objects);
+      addToAllCellObjects(spaceId, cellId, objects);
     }
 
     // Push every container into the store, deduping against existing objects
@@ -460,7 +461,7 @@ export const containerMethods = {
 
     allObjectsToSave.push(containerForSave);
 
-    this.hydrateContainerCubes([containerCube]);
+    this.hydrateContainerCubes(context.spaceId, [containerCube]);
   },
 
   /**
@@ -733,7 +734,8 @@ export const containerMethods = {
   async createContainerCubesAtPositions(
     containerDimensions,
     graphNodes,
-    allObjectsToSave
+    allObjectsToSave,
+    spaceId
   ) {
     const containerCubes = [];
 
@@ -820,7 +822,7 @@ export const containerMethods = {
     }
 
     if (containerCubes.length > 0) {
-      this.hydrateContainerCubes(containerCubes);
+      this.hydrateContainerCubes(spaceId, containerCubes);
     }
   },
 };

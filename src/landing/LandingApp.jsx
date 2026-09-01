@@ -9,6 +9,7 @@ import LandingScene from './LandingScene';
 import useSceneStore from '../stores/sceneStore';
 import useAuthStore from '../stores/authStore';
 import { api } from '../api-client';
+import { clearAllCellCaches } from '../services/cellObjectCache';
 
 import { CreateSpacePopup } from './components/CreateSpacePopup';
 import { ShareSpacePopup } from './components/ShareSpacePopup';
@@ -262,6 +263,9 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       try {
         setIsDeleting(true);
         await api.delete(`/api/spaces/${spaceId}`);
+        // Drop cached cell→object entries for the deleted space so its objects
+        // can never be re-hydrated into a subsequently opened space.
+        clearAllCellCaches();
         await fetchUserSpaces();
       } catch (error) {
         console.error('Error deleting space:', error);

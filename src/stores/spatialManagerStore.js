@@ -357,7 +357,9 @@ const useSpatialManagerStore = create((set, get) => ({
 
         // Check if any objects were cached for these newly loaded cells
         // (e.g. during diagram creation before the Cloud Function completes).
-        const cachedObjects = getAllCellObjectsForCells(newCellIds);
+        // Namespaced by currentSpaceId so cached objects from another space
+        // (e.g. a deleted one) can never be hydrated into this space.
+        const cachedObjects = getAllCellObjectsForCells(currentSpaceId, newCellIds);
         if (cachedObjects.length > 0) {
           useObjectsStore.getState().setObjects((prev) => {
             // Dedup against the store: a cached object can already be present
@@ -493,6 +495,7 @@ const useSpatialManagerStore = create((set, get) => ({
           // doesn't help because their cells are already "loaded" (so
           // getCellsNeedingLoad skips them and loadCellsBatch never runs).
           const cachedObjects = getAllCellObjectsForCells(
+            currentSpaceId,
             Array.from(cellsToLoad)
           );
           if (cachedObjects.length > 0) {

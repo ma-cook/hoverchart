@@ -74,6 +74,7 @@ export const objectMethods = {
         // uses the same set of nodes that was positioned as "ungrouped".
         ungroupedComponents: precomputedLayout.ungroupedComponents || [],
         communityAssignments: useDiagramStore.getState().communityAssignments || null,
+        spaceId: currentSpaceId,
       };
     } else {
       // ── Main-thread fallback (original code path) ────────────────────────
@@ -99,6 +100,7 @@ export const objectMethods = {
         nodeScales,
         processedNodes,
         communityAssignments: useDiagramStore.getState().communityAssignments || null,
+        spaceId: currentSpaceId,
       };
 
       // Process root nodes
@@ -428,7 +430,7 @@ export const objectMethods = {
             }
           }
           for (const [cellId, objects] of byCell) {
-            addToAllCellObjects(cellId, objects);
+            addToAllCellObjects(currentSpaceId, cellId, objects);
           }
           useSpatialManagerStore.getState().trackObjectsInCellBatch?.(
             storeBatch.map((obj) => ({ objectId: obj.id, cellId: obj.cellId }))
@@ -450,7 +452,7 @@ export const objectMethods = {
         }
       }
       for (const [cellId, objects] of byCell) {
-        addToAllCellObjects(cellId, objects);
+        addToAllCellObjects(currentSpaceId, cellId, objects);
       }
       useSpatialManagerStore.getState().trackObjectsInCellBatch?.(
         storeBatch.map((obj) => ({ objectId: obj.id, cellId: obj.cellId }))
@@ -512,7 +514,8 @@ export const objectMethods = {
     await this.createContainerCubesAtPositions(
       containerDimensions,
       graph.nodes,
-      allObjectsToSave
+      allObjectsToSave,
+      currentSpaceId
     );
 
     await new Promise(r => setTimeout(r, 0));
