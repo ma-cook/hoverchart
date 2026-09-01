@@ -891,7 +891,7 @@ Connection.displayName = 'Connection';
  */
 const ConnectionsRenderer = ({
   objects,
-  visibleObjectIds: _visibleObjectIds,
+  visibleObjectIds,
   onLineStyleChange,
   onLineColorChange,
   onConnectionClick,
@@ -950,21 +950,32 @@ const ConnectionsRenderer = ({
     return (hash ^ (pathfindingObjects.length * 17)) >>> 0;
   }, [pathfindingObjects]);
 
+  // Fast pre-cull set for the bulk connection pipeline.  Prefer the virtualizer-
+  // capped visibleObjectIds (frustum/limit culled) so only connections whose
+  // endpoints are currently being displayed flow into the expensive pathfinding
+  // pipeline.  Fall back to availableObjectIds (all loaded objects) when the
+  // virtualizer set is empty (e.g. before the camera mounts).  The focused and
+  // flow-path subsets below deliberately keep using availableObjectIds so
+  // off-screen connected objects still render for those specific cases.
+  const visibleIds = useMemo(() => {
+    if (visibleObjectIds && visibleObjectIds.size > 0) return visibleObjectIds;
+    return availableObjectIds;
+  }, [visibleObjectIds, availableObjectIds]);
+
   // Filter connections to only show those where both endpoint objects are loaded
   const objectVisibleConnections = useMemo(() => {
     if (!connections?.length) return [];
 
-    // Use availableObjectIds (all loaded objects) so connections render even
-    // when one endpoint is off-screen.  visibleObjectIds (frustum-culled)
-    // was filtering out valid connections.
+    // Use visibleObjectIds when populated (fast frustum-culled gate), falling
+    // back to availableObjectIds (all loaded objects) otherwise.
     return connections.filter((connection) => {
       const startId = connection.start?.objectId?.toString();
       const endId = connection.end?.objectId?.toString();
       return (
-        startId && endId && availableObjectIds.has(startId) && availableObjectIds.has(endId)
+        startId && endId && visibleIds.has(startId) && visibleIds.has(endId)
       );
     });
-  }, [connections, availableObjectIds]);
+  }, [connections, visibleIds]);
 
   // Get connections for the focused object (when connections are globally hidden)
   const focusedConnections = useMemo(() => {
@@ -979,7 +990,9 @@ const ConnectionsRenderer = ({
       // Connection must involve the focused object
       const involvesFocused = startId === focusedIdStr || endId === focusedIdStr;
       
-      // Both endpoints must be loaded (use availableObjectIds, not frustum-culled set)
+      // Both endpoints must be loaded. Uses availableObjectIds (not the fast
+      // frustum-culled visibleIds set) so focused connections still render
+      // when an endpoint is off-screen.
       const bothLoaded = startId && endId && availableObjectIds.has(startId) && availableObjectIds.has(endId);
       
       return involvesFocused && bothLoaded;

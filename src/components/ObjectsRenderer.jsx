@@ -150,6 +150,14 @@ const ObjectsRenderer = React.memo(({
   const octahedronArrRef = useRef([]);
   const containerObjsRef = useRef([]); // containers needing floating labels
   const unmodifiedCubeIdsRef = useRef(new Set());
+  // Per-object cell-coordinate cache for the proximity gate.  Computing
+  // getCellCoordinates (Array.isArray + Number.isFinite + object alloc) for
+  // every mounted object on EVERY mount batch was O(N) heavy math per batch —
+  // the dominant freeze cost once ~90k objects are mounted.  Caching the cell
+  // per object id turns each re-run of the proximity filter into cheap integer
+  // compares; a cell is recomputed only when the object's position REFERENCE
+  // changes (rare; positions normally mutate in place).
+  const objectCellCacheRef = useRef(new Map());
   // Throttle for the drain-time safety scan (previously ran over ALL objects
   // every time the pending queue emptied mid-import).
   const lastSafetyScanRef = useRef(0);
@@ -233,6 +241,8 @@ const ObjectsRenderer = React.memo(({
       octahedronArrRef.current = dropGone(octahedronArrRef.current);
       containerObjsRef.current = dropGone(containerObjsRef.current);
       for (const id of removedNow) unmodifiedCubeIdsRef.current.delete(id);
+      // Drop cached proximity-gate cells for removed objects to avoid leaks.
+      for (const id of removedNow) objectCellCacheRef.current.delete(id);
     }
 
     allIdsSetRef.current = nextIds;
@@ -543,8 +553,15 @@ const ObjectsRenderer = React.memo(({
     // NOTE: No cleanup that cancels rafIdRef here — we want the mounting loop
     // to survive across visibleObjectIds changes. Only the unmount effect below
     // cancels it.
+    //
+    // PERF: Depend on objects.length (not the objects array reference). During
+    // a bulk import the store fast-path (objectsStore) installs a NEW array
+    // reference on every poll even when nothing changed; re-running this O(N)
+    // scan over all objects per poll froze the UI mid-import. The store-sync
+    // effect above already reconciles the mounted collections on every real
+    // [objects] change; this effect only needs to fire when the count grows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleObjectIds, objects, loadedCellsKey]);
+  }, [visibleObjectIds, objects.length, loadedCellsKey]);
 
   // PERF: When switching back from 2D → 3D, restart the progressive mount
   // pump if it was suspended with pending items.  The shared pump handles
@@ -627,9 +644,13 @@ const ObjectsRenderer = React.memo(({
   // ObjectRenderer elements are only needed for nearby + selected + types
   // without a Global* fallback (plane, text, model).
   //
-  // The filter runs once per cell boundary crossing (loadedCellsKey) and
-  // per selection change — NOT per frame.  Camera position is read live
-  // but only the cell coordinates matter for the gate.
+  // The filter re-runs once per mount batch (progressiveVisibleObjects is a
+  // fresh slice per mountedVersion) so newly-mounted objects appear, plus on
+  // cell boundary crossing (loadedCellsKey) and selection change.  PERF: each
+  // re-run re-uses the per-object cell cache (objectCellCacheRef) so it only
+  // pays cheap integer compares — getCellCoordinates math runs once per object
+  // ever, not once per batch.  This removes the O(N)-heavy-math-per-batch that
+  // froze the UI while ~90k objects streamed in.
   const proximalObjects = useMemo(() => {
     const camPos = camera?.position;
     if (!camPos || progressiveVisibleObjects.length === 0) {
@@ -637,6 +658,7 @@ const ObjectsRenderer = React.memo(({
     }
     const camCell = getCellCoordinates([camPos.x, camPos.y, camPos.z]);
     const r = MOUNT_RADIUS_CELLS;
+    const cellCache = objectCellCacheRef.current;
     const out = [];
     for (let i = 0; i < progressiveVisibleObjects.length; i++) {
       const obj = progressiveVisibleObjects[i];
@@ -646,12 +668,27 @@ const ObjectsRenderer = React.memo(({
       if (obj.type === 'plane' || obj.type === 'text' || obj.type === 'model') {
         out.push(obj); continue;
       }
-      // Cell-distance proximity gate
+      // Cell-distance proximity gate (cached per object id).
       const pos = obj.position;
       if (pos) {
-        const objCell = getCellCoordinates(
-          Array.isArray(pos) ? pos : [pos.x || 0, pos.y || 0, pos.z || 0]
-        );
+        let objCell = null;
+        if (cellCache.has(obj.id)) {
+          const entry = cellCache.get(obj.id);
+          if (entry.posRef === pos) {
+            objCell = entry.cell;
+          } else {
+            // Position reference changed — recompute and refresh the cache.
+            objCell = getCellCoordinates(
+              Array.isArray(pos) ? pos : [pos.x || 0, pos.y || 0, pos.z || 0]
+            );
+            cellCache.set(obj.id, { posRef: pos, cell: objCell });
+          }
+        } else {
+          objCell = getCellCoordinates(
+            Array.isArray(pos) ? pos : [pos.x || 0, pos.y || 0, pos.z || 0]
+          );
+          cellCache.set(obj.id, { posRef: pos, cell: objCell });
+        }
         const dx = Math.abs(objCell.x - camCell.x);
         const dy = Math.abs(objCell.y - camCell.y);
         const dz = Math.abs(objCell.z - camCell.z);

@@ -141,12 +141,16 @@ const useObjectsStore = createWithEqualityFn(
         }
 
         // PERF FIX: while a bulk import streams in, skip the O(N) hash-diff.
-        // Every import flush carries genuinely new objects (idsChanged above
-        // would fire anyway), so hashing all 92k objects per flush is pure
-        // overhead. Broadcast/remote updates don't run during imports, so
-        // nothing meaningful can be dropped here.
+        // idsChanged above is the branch that actually grows the array (new
+        // objects) — that returns early with a fresh reference, which is the
+        // only thing the renderer needs to know about.  Reaching here means the
+        // ID set is UNCHANGED, so this poll carries no new objects; blindly
+        // installing a new `objects` array reference would restart the
+        // ObjectsRenderer's O(N) scans on every poll and freeze the UI mid-
+        // import.  Broadcast/remote updates don't run during imports, so
+        // nothing meaningful can be dropped here — just clear the updating flag.
         if (bulkImportState.active) {
-          set({ objects: filteredObjects, _isUpdating: false });
+          set({ _isUpdating: false });
           return;
         }
 
