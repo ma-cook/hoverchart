@@ -14,16 +14,26 @@ import useSceneStore from '../stores/sceneStore';
  *   – one frame on window resize (Camera/OrderHeader re-position)
  *   – subsequent frames while CustomCamera's lerp is still converging
  * It restores "always" on unmount so the diagram app keeps its continuous loop.
+ *
+ * Note: R3F's CanvasImpl re-applies its `frameloop` prop (SharedCanvas passes
+ * "always") on every canvas re-render via a deps-less configure() effect,
+ * which would silently restart the perpetual render loop. The effect below
+ * therefore re-asserts "never" whenever the store drifts away from it, so a
+ * single re-assertion settles the loop instead of letting it spin at display
+ * refresh rate for the whole visit.
  */
 function LandingRenderController() {
   const set = useThree((s) => s.set);
   const invalidate = useThree((s) => s.invalidate);
+  const frameloop = useThree((s) => s.frameloop);
   const landingScrollVersion = useSceneStore((s) => s.landingScrollVersion);
 
   useEffect(() => {
-    set({ frameloop: 'never' });
+    if (frameloop !== 'never') {
+      set({ frameloop: 'never' });
+    }
     return () => set({ frameloop: 'always' });
-  }, [set]);
+  }, [frameloop, set]);
 
   useEffect(() => {
     invalidate();
