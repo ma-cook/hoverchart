@@ -210,25 +210,34 @@ const PageInstancedMesh = React.memo(
     const lastUpdateRef = useRef(0);
     const atlasVersionRef = useRef(atlas.version);
 
-    // ----- geometry (unit quad + per-instance UV attribute) -----
+    // ----- grow-only capacity (mirrors GlobalCubeEdgesRenderer) -----
+    // The `items` array is rebuilt (append-ordered) on every progressive-mount
+    // batch and every atlas resize.  Rebuilding the geometry + re-running
+    // setMatrixAt over ALL items each time was O(N) per batch → O(N²) across a
+    // large diagram import, freezing the main thread around 30-50% progress.
+    // Instead we allocate once at a power-of-2 capacity and only write the
+    // newly-appended tail.
+    const capacityRef = useRef(0);
+    if (items.length > capacityRef.current) {
+      capacityRef.current = Math.max(
+        64,
+        2 ** Math.ceil(Math.log2(Math.max(1, items.length)))
+      );
+    }
+    const capacity = capacityRef.current;
+
+    // ----- geometry (unit quad + per-instance UV attribute, capacity-sized) -----
     const geometry = useMemo(() => {
       const geo = new THREE.PlaneGeometry(1, 1);
 
-      const uvArr = new Float32Array(items.length * 4);
-      for (let i = 0; i < items.length; i++) {
-        const { uvs } = items[i];
-        uvArr[i * 4 + 0] = uvs.u;
-        uvArr[i * 4 + 1] = uvs.v;
-        uvArr[i * 4 + 2] = uvs.uWidth;
-        uvArr[i * 4 + 3] = uvs.vHeight;
-      }
+      const uvArr = new Float32Array(capacity * 4);
       geo.setAttribute(
         'instanceUV',
         new THREE.InstancedBufferAttribute(uvArr, 4)
       );
 
       return geo;
-    }, [items]);
+    }, [capacity]);
 
     // ----- material (custom shader) -----
     const material = useMemo(
@@ -247,24 +256,52 @@ const PageInstancedMesh = React.memo(
       [texture, depthTest]
     );
 
-    // ----- initialise instance matrices on mount -----
+    // ----- incrementally initialise UVs + matrices for appended items -----
+    // writtenCountRef tracks how many items have been written into the CURRENT
+    // geometry; it resets when capacity grows (which swaps in a zero-filled
+    // buffer that needs a complete rewrite).
+    const writtenCountRef = useRef(0);
+    const writtenCapacityRef = useRef(0);
+    const prevLengthRef = useRef(0);
     useEffect(() => {
-      if (!meshRef.current) return;
+      if (writtenCapacityRef.current !== capacity) {
+        writtenCountRef.current = 0;
+        writtenCapacityRef.current = capacity;
+      }
+      // Items removed (rare, unload-time) shift subsequent indices, breaking the
+      // tail-append assumption.  Fall back to a single O(N) full rewrite of the
+      // current geometry so UVs/matrices stay correctly indexed.
+      if (items.length < prevLengthRef.current) {
+        writtenCountRef.current = 0;
+      }
+      prevLengthRef.current = items.length;
+      const mesh = meshRef.current;
+      if (!mesh) return;
 
-      for (let i = 0; i < items.length; i++) {
-        const { label, displayWidth, displayHeight } = items[i];
+      const start = writtenCountRef.current;
+      const uvAttr = geometry.getAttribute('instanceUV');
+      for (let i = start; i < items.length; i++) {
+        const { label, displayWidth, displayHeight, uvs } = items[i];
+        uvAttr.setXYZW(i, uvs.u, uvs.v, uvs.uWidth, uvs.vHeight);
+
         const pos = label.position;
-
         _tempPosition.set(pos[0], pos[1], pos[2]);
         _tempQuaternion.identity();
         _tempScale.set(displayWidth, displayHeight, 1);
         _tempMatrix.compose(_tempPosition, _tempQuaternion, _tempScale);
 
-        meshRef.current.setMatrixAt(i, _tempMatrix);
+        mesh.setMatrixAt(i, _tempMatrix);
       }
 
-      meshRef.current.instanceMatrix.needsUpdate = true;
-    }, [items]);
+      if (items.length > start) {
+        uvAttr.needsUpdate = true;
+        mesh.instanceMatrix.needsUpdate = true;
+        writtenCountRef.current = items.length;
+      }
+      if (mesh.count !== items.length) {
+        mesh.count = items.length;
+      }
+    }, [items, capacity, geometry]);
 
     // ----- per-frame: billboard, distance culling, UV fixup -----
     useFrame(({ camera }) => {
@@ -356,8 +393,9 @@ const PageInstancedMesh = React.memo(
 
     return (
       <instancedMesh
+        key={capacity}
         ref={meshRef}
-        args={[geometry, material, items.length]}
+        args={[geometry, material, capacity]}
         renderOrder={renderOrder}
         onClick={handleClick}
         frustumCulled={false}
