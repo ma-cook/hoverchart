@@ -974,6 +974,14 @@ function precomputeCacheKey(startPos, endPos, startConnId, endConnId) {
   return `${rs.join(',')}|${re.join(',')}|${startConnId}|${endConnId}`;
 }
 
+/** True once the pathfinding worker has delivered results into the
+ *  main-thread precomputed cache.  Lets renderers distinguish a warm cache
+ *  (the sync fallback is cheap) from a cold one (every miss pays the full
+ *  O(objects) checkLineIntersection pass). */
+export function hasPrecomputedPathCache() {
+  return precomputedResults.size > 0;
+}
+
 /**
  * Look up a worker-precomputed result.
  *

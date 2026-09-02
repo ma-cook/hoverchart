@@ -16,6 +16,7 @@ import {
   computeConnectionPath,
   precomputePathsBatch,
   isWorkerBusy,
+  hasPrecomputedPathCache,
 } from '../utils/pathfindingUtils';
 import { bulkImportState } from '../utils/bulkImportState';
 import { calculateMidpoint } from '../utils/positionUtils';
@@ -1047,8 +1048,30 @@ const ConnectionsRenderer = ({
   const CONNECTION_MOUNT_BUDGET_MOVING = 2;
   /** Below this count, skip progressive mounting entirely (instant mount). */
   const CONNECTION_PROGRESSIVE_THRESHOLD = 120;
+  /**
+   * Above this many mounted connections, refuse to run the synchronous
+   * checkLineIntersection fallback while the worker-precomputed cache is cold.
+   * A cold full pass is O(connections × blocking objects) on the main thread —
+   * the mid-import freeze.  The worker dispatch warms precomputedResults
+   * asynchronously; once warm (workerWarmVersion bump) the full pass runs with
+   * cheap cache hits.
+   */
+  const CONNECTION_SYNC_FALLBACK_LIMIT = 300;
+  /**
+   * How long the worker precompute effect waits after the bulk-import gate
+   * clears before dispatching the settling batch of requests.
+   */
+  const DISPATCH_SETTLE_CHECK_MS = 500;
   const mountedConnIdsRef = useRef(new Set());
   const [mountedConnIds, setMountedConnIds] = useState(() => new Set());
+  // Bumped after each pathfinding-worker batch populates the precomputed cache.
+  // Lets the categorization memo re-run once the cache is warm so it can do the
+  // full pass with cheap cache hits instead of the synchronous per-connection
+  // O(objects) fallback (which the cold-set guard below suppresses).
+  const [workerWarmVersion, setWorkerWarmVersion] = useState(0);
+  // One-shot timer that fires the settling worker dispatch after the bulk-import
+  // gate clears (streaming mounts make the object layout too volatile to bother).
+  const dispatchSettleTimerRef = useRef(null);
   const pendingConnsRef = useRef([]);
   const connRafIdRef = useRef(null);
   // BUGFIX: Keep a ref to the latest frustum-culled set so the rAF callback
@@ -1212,6 +1235,9 @@ const ConnectionsRenderer = ({
   const { batchedConnections, textConnections, curvedConnections, individualConnections } = useMemo(() => {
     const inputsRef = lastCategorizationInputsRef.current;
     const cacheRef = lastCategorizationRef.current;
+    // Invalidation only: worker rounds bump this so a cold-set-guarded pass
+    // re-runs (and correctly categorizes) once the precomputed cache is warm.
+    void workerWarmVersion;
 
     // During bulk operations (repo scan), suppress expensive pathfinding.
     // Connections already have correct positions from createConnectionsFromDiagram.
@@ -1226,7 +1252,22 @@ const ConnectionsRenderer = ({
     // (flow-path highlighted) interactive lines render even while the mount
     // pump or pathfinding worker keeps this gate active.  Otherwise clicking a
     // connection in a large (e.g. 97k-object) scene never shows a highlight.
-    if (window._connectionUpdateSkip || bulkImportState.active || isWorkerBusy()) {
+    //
+    // COLD-SET GUARD: also stay on the fast path while the progressive set is
+    // large AND the worker-precomputed cache is cold.  Falling through in that
+    // state runs checkLineIntersection (O(objects) per connection) synchronously
+    // for EVERY connection — a multi-hundred-ms main-thread block at ~30-50%
+    // import progress.  hasPrecomputedPathCache() is true after the first worker
+    // round lands (and is cleared by invalidatePathfindingCaches on real object
+    // moves), and workerWarmVersion re-runs this memo once warm so the full pass
+    // executes with cheap cache hits.
+    if (
+      window._connectionUpdateSkip ||
+      bulkImportState.active ||
+      isWorkerBusy() ||
+      (progressiveConnections.length > CONNECTION_SYNC_FALLBACK_LIMIT &&
+        !hasPrecomputedPathCache())
+    ) {
       // Always surface the user-requested highlights regardless of bulk state.
       const highlightedSet = highlightedFlowPathIds;
       const highlighted = [];
@@ -1395,46 +1436,83 @@ const ConnectionsRenderer = ({
     };
     
     return result;
-  }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, objectPositions, pathfindingObjects]);
+  }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, objectPositions, pathfindingObjects, workerWarmVersion]);
 
   // WORKER: Fire-and-forget batch dispatch to the pathfinding Web Worker.
   // Populates a module-level precomputed cache that `computeConnectionPath`
-  // checks on subsequent renders.  NO React state is updated — results are
-  // picked up passively the next time a useMemo re-runs for any reason.
+  // checks on subsequent renders.  The promise resolution bumps
+  // workerWarmVersion so the categorization memo (which depends on it) re-runs
+  // and executes the full pass with warm cache hits.
   useEffect(() => {
     if (!progressiveConnections?.length || !pathfindingObjects?.length) return;
 
-    // Build an objectId → obj map for resolving face positions.
-    const pfObjectsById = new Map();
-    for (const obj of pathfindingObjects) {
-      if (obj?.id) pfObjectsById.set(obj.id.toString(), obj);
-    }
+    const dispatchPrecompute = () => {
+      // Build an objectId → obj map for resolving face positions.
+      const pfObjectsById = new Map();
+      for (const obj of pathfindingObjects) {
+        if (obj?.id) pfObjectsById.set(obj.id.toString(), obj);
+      }
 
-    const requests = [];
-    for (const conn of progressiveConnections) {
-      const startPos = resolveEndpointPosition(conn.start, pfObjectsById, pathfindingObjects);
-      const endPos = resolveEndpointPosition(conn.end, pfObjectsById, pathfindingObjects);
-      if (!startPos || !endPos) continue;
-      requests.push({
-        id: conn.id,
-        startPos: Array.isArray(startPos) ? startPos : [startPos.x, startPos.y, startPos.z],
-        endPos:   Array.isArray(endPos)   ? endPos   : [endPos.x, endPos.y, endPos.z],
-        startConnId: conn.start?.objectId?.toString() || '',
-        endConnId:   conn.end?.objectId?.toString()   || '',
+      const requests = [];
+      for (const conn of progressiveConnections) {
+        const startPos = resolveEndpointPosition(conn.start, pfObjectsById, pathfindingObjects);
+        const endPos = resolveEndpointPosition(conn.end, pfObjectsById, pathfindingObjects);
+        if (!startPos || !endPos) continue;
+        requests.push({
+          id: conn.id,
+          startPos: Array.isArray(startPos) ? startPos : [startPos.x, startPos.y, startPos.z],
+          endPos:   Array.isArray(endPos)   ? endPos   : [endPos.x, endPos.y, endPos.z],
+          startConnId: conn.start?.objectId?.toString() || '',
+          endConnId:   conn.end?.objectId?.toString()   || '',
+        });
+      }
+
+      if (requests.length === 0) return;
+
+      const serializedObjects = pathfindingObjects.map(obj => ({
+        id: obj.id,
+        type: obj.type,
+        position: obj.position,
+        scale: obj.scale,
+      }));
+
+      // Serializing the whole object layout (above) is O(N) on the main thread
+      // and results would be stale against a still-growing layout, so this path
+      // mainly runs once mounting has settled (see the gate below).
+      precomputePathsBatch(requests, serializedObjects).then(() => {
+        setWorkerWarmVersion((v) => v + 1);
       });
+    };
+
+    // While the progressive-mount pump is streaming objects in, the layout is
+    // too volatile to precompute against, and serializing all N objects per
+    // flush would itself cost a synchronous O(N) block per store flush.  Skip
+    // dispatch and arm a self-re-arming check to fire once the bulk-import gate
+    // clears so the settled set still gets precomputed.
+    if (bulkImportState.active) {
+      if (dispatchSettleTimerRef.current === null) {
+        const checkSettle = () => {
+          dispatchSettleTimerRef.current = null;
+          if (bulkImportState.active) {
+            dispatchSettleTimerRef.current = setTimeout(checkSettle, DISPATCH_SETTLE_CHECK_MS);
+          } else {
+            dispatchPrecompute();
+          }
+        };
+        dispatchSettleTimerRef.current = setTimeout(checkSettle, DISPATCH_SETTLE_CHECK_MS);
+      }
+      return;
     }
 
-    if (requests.length === 0) return;
+    // Steady-state: dispatch immediately.
+    dispatchPrecompute();
 
-    const serializedObjects = pathfindingObjects.map(obj => ({
-      id: obj.id,
-      type: obj.type,
-      position: obj.position,
-      scale: obj.scale,
-    }));
-
-    // Fire-and-forget — no .then / state update needed
-    precomputePathsBatch(requests, serializedObjects);
+    return () => {
+      if (dispatchSettleTimerRef.current !== null) {
+        clearTimeout(dispatchSettleTimerRef.current);
+        dispatchSettleTimerRef.current = null;
+      }
+    };
   }, [progressiveConnections, pathfindingObjects]);
 
   // Combine all straight connections for batched line rendering

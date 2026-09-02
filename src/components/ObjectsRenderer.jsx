@@ -46,6 +46,17 @@ function getProgressiveBudget() {
 const PROGRESSIVE_THRESHOLD = 40;
 
 /**
+ * How long the mount pump must be idle before the bulk-import deferral gate
+ * (bulkImportState.active) is released.  During a streaming import the pending
+ * queue drains transiently between store flushes; releasing the gate each time
+ * lets the Global* frustum sweeps and — worse — the synchronous connection
+ * pathfinding categorization burst on the main thread (the mid-import freeze).
+ * Debouncing keeps the gate asserted for the whole stream and releases once
+ * mounting has truly settled.
+ */
+const SETTLE_IDLE_MS = 800;
+
+/**
  * Objects beyond this many cells from the camera don't get individual
  * <ObjectRenderer> elements (saving ~90k React fibers + subscriptions).
  * Their visual is handled entirely by the Global* instanced renderers
@@ -124,6 +135,14 @@ const ObjectsRenderer = React.memo(({
   const rafIdRef = useRef(null);
   // Throttle render-progress store writes — only update every ~500ms
   const lastProgressReportRef = useRef(0);
+  // Timestamp of the last progressive-mount activity (a batch mounted or the
+  // queue repopulated).  Feeds the debounced bulk-import gate release so
+  // transient queue drains between store flushes don't flip the gate off
+  // mid-import (which releases connection pathfinding synchronously).
+  const lastMountActivityRef = useRef(0);
+  // One-shot timer that releases the gate at the end of the idle window even
+  // when no further store flush lands (the rAF pump has already terminated).
+  const settleTimerRef = useRef(null);
   // BUGFIX: Keep a ref to the latest visibleObjectIds so the rAF callback
   // checks against the current set, not a stale closure capture.
   const visibleObjectIdsRef = useRef(visibleObjectIds);
@@ -367,8 +386,28 @@ const ObjectsRenderer = React.memo(({
               mountedIdsRef.current.size
             );
             // Release deferred subsystems (frustum sweeps, connection
-            // pathfinding) once mounting has fully settled.
-            endBulkImportIfIdle(0);
+            // pathfinding) only once the pump has been idle for the settling
+            // window.  During a streaming import the queue drains transiently
+            // between store flushes; releasing the gate each time would let
+            // connection pathfinding burst synchronously (the mid-import
+            // freeze at ~30-50% progress).  Debouncing keeps the gate on for
+            // the whole stream.  If the stream has truly stopped, a one-shot
+            // timer releases the gate after the remaining idle time.
+            if (Date.now() - lastMountActivityRef.current >= SETTLE_IDLE_MS) {
+              if (settleTimerRef.current !== null) {
+                clearTimeout(settleTimerRef.current);
+                settleTimerRef.current = null;
+              }
+              endBulkImportIfIdle(0);
+            } else if (settleTimerRef.current === null) {
+              settleTimerRef.current = setTimeout(() => {
+                settleTimerRef.current = null;
+                endBulkImportIfIdle(0);
+              }, Math.max(
+                SETTLE_IDLE_MS - (Date.now() - lastMountActivityRef.current),
+                0
+              ));
+            }
             pendingRef.current = [];
             pendingHeadRef.current = 0;
             rafIdRef.current = null;
@@ -408,8 +447,15 @@ const ObjectsRenderer = React.memo(({
         if (added > 0) {
           // Signal bulk-import mode so expensive per-frame subsystems
           // (frustum sweeps in the global renderers, connection pathfinding)
-          // defer work until the queue drains.
+          // defer work until the queue drains.  Note: the mount effect also
+          // asserts this synchronously when new IDs are queued — this re-assert
+          // keeps it held across batches.
           beginBulkImport();
+          if (settleTimerRef.current !== null) {
+            clearTimeout(settleTimerRef.current);
+            settleTimerRef.current = null;
+          }
+          lastMountActivityRef.current = Date.now();
           setMountedVersion((v) => v + 1);
           // Report progress to the store (throttled)
           const now = Date.now();
@@ -479,6 +525,19 @@ const ObjectsRenderer = React.memo(({
       }
       return;
     }
+
+    // New mounting work — assert the bulk-import gate SYNCHRONOUSLY (not via
+    // the next pump rAF).  Without this, a store flush commit re-renders
+    // ConnectionsRenderer while the gate is still off (the previous transient
+    // drain cleared it), and that render runs the full connection pathfinding
+    // categorization synchronously — the mid-import freeze.  Also stamp mount
+    // activity so the debounced gate release below stays armed.
+    beginBulkImport();
+    if (settleTimerRef.current !== null) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+    lastMountActivityRef.current = Date.now();
 
     // 3. Sort new objects by distance to camera (closest first).
     //    Uses the persistent id→object map maintained by the sync effect
@@ -582,6 +641,10 @@ const ObjectsRenderer = React.memo(({
     return () => {
       if (rafIdRef.current) {
         cancelAnimationFrame(rafIdRef.current);
+      }
+      if (settleTimerRef.current !== null) {
+        clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
       }
     };
   }, []);
