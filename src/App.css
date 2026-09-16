@@ -2233,42 +2233,62 @@ body {
 }
 
 /* ── CodeWorkspace ──────────────────────────────────────────────────── */
-.code-workspace-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
+/* Code viewer popup windows — SpaceChat-style draggable/resizable panels.
+   The centered full-screen overlay was replaced by multiple cascading popups
+   (see CodeWorkspace.jsx). Header/pre/code styles are reused as-is below. */
+.code-window {
+  min-width: 240px;
+  min-height: 200px;
 }
 
-.code-workspace-panel {
+.code-window .code-workspace-file-info {
+  min-width: 0;
+}
+
+.code-window .code-workspace-file-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.code-window-body {
+  flex: 1;
+  min-height: 0;
   background: #1e1e1e;
-  border-radius: 8px;
-  width: 80vw;
-  max-width: 900px;
-  height: 70vh;
-  max-height: 600px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   overflow: hidden;
 }
 
-.code-workspace-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  background: #2d2d2d;
-  border-bottom: 1px solid #3c3c3c;
+.code-window-body .code-workspace-pre {
+  height: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  white-space: pre;
+  overflow: auto;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.25) transparent;
+}
+
+.code-window-body .code-workspace-pre::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.code-window-body .code-workspace-pre::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.25);
+  border-radius: 4px;
 }
 
 .code-workspace-file-info {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .code-workspace-language-tag {
@@ -2279,33 +2299,13 @@ body {
   font-size: 11px;
   font-family: Consolas, "Courier New", monospace;
   text-transform: uppercase;
+  flex-shrink: 0;
 }
 
 .code-workspace-file-path {
   color: #999;
-  font-size: 13px;
+  font-size: 12px;
   font-family: Consolas, "Courier New", monospace;
-}
-
-.code-workspace-close {
-  background: none;
-  border: none;
-  color: #999;
-  cursor: pointer;
-  font-size: 18px;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.code-workspace-close:hover {
-  background: #3c3c3c;
-  color: #fff;
-}
-
-.code-workspace-body {
-  flex: 1;
-  overflow: auto;
-  padding: 0;
 }
 
 .code-workspace-pre {

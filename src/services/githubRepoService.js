@@ -5,6 +5,7 @@
 import { parse } from '@babel/parser';
 import { api } from '../api-client';
 import { scanPythonWithTreeSitter, scanWithTreeSitter } from './treeSitterScanner';
+import { computeSymbolRanges, languageFromFilePath } from './symbolRanges';
 import { createModuleResolver, resolveBarrelChains } from './moduleResolver';
 import { runTypeScriptAnalysis } from './typescriptAnalyzer';
 import { clearAllCellCaches } from './cellObjectCache';
@@ -3909,9 +3910,20 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       }
     }
 
+    // Capture raw file contents so the ContentStore can be populated with the
+    // full repo corpus — this also lets markdown emission attach per-symbol
+    // startLine/endLine ranges for the code viewer.
+    const repoFileContents = {};
+    for (const entry of fetched) {
+      if (entry && entry.file && entry.fileContent && !repoFileContents[entry.file.path]) {
+        repoFileContents[entry.file.path] = entry.fileContent;
+      }
+    }
+
     // Generate Merfolk markdown
     const merfolkResult = generateMerfolkMarkdown({
       repoName,
+      repoFileContents,
       elements,
       componentFunctions,
       componentFuncDisplayNames,
@@ -3992,15 +4004,6 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     const importGraph = importGraphLines.join('\n');
     console.log(`🔗 Import graph: ${importGraphLines.length} files with imports, ${importGraph.length} chars`);
 
-    // Capture raw file contents so the ContentStore can be populated with the
-    // full repo corpus — this gives search_code / grep a real full-text index.
-    const repoFileContents = {};
-    for (const entry of fetched) {
-      if (entry && entry.file && entry.fileContent && !repoFileContents[entry.file.path]) {
-        repoFileContents[entry.file.path] = entry.fileContent;
-      }
-    }
-
     // Release the massive fetched array (all file contents) so GC can reclaim it.
     // It's no longer needed after TS analysis and markdown generation.
     fetched.length = 0;
@@ -4034,6 +4037,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
  */
 const generateMerfolkMarkdown = ({
   repoName,
+  repoFileContents = {},
   elements,
   componentFunctions,
   componentFuncDisplayNames,
@@ -4341,6 +4345,44 @@ const generateMerfolkMarkdown = ({
     return '';
   };
 
+  // ── Per-symbol line ranges ─────────────────────────────────────────────
+  // Prefer explicit ranges recorded by the tree-sitter scanner; otherwise
+  // derive ranges from the raw file contents (best-effort matcher) per file
+  // and memoize, so the code viewer can slice exactly this symbol's code.
+  const _rangesByFile = new Map(); // filePath -> Map<name, {startLine, endLine}>
+
+  const computeFileRanges = (filePath) => {
+    if (_rangesByFile.has(filePath)) return _rangesByFile.get(filePath);
+    const content = repoFileContents?.[filePath] || '';
+    const ranges = content
+      ? computeSymbolRanges(content, languageFromFilePath(filePath))
+      : new Map();
+    _rangesByFile.set(filePath, ranges);
+    return ranges;
+  };
+
+  const getSymbolRange = (name, filePath) => {
+    if (!name) return null;
+    for (const [, info] of fileFunctions) {
+      if (info.ranges?.has(name)) return info.ranges.get(name);
+    }
+    if (filePath) {
+      const r = computeFileRanges(filePath).get(name);
+      if (r) return r;
+    }
+    return null;
+  };
+
+  // Append `startLine` / `endLine` to a props array when a reliable range can
+  // be resolved for the symbol. Keeps emitter call sites terse.
+  const pushRangeProps = (props, name, filePath) => {
+    const range = getSymbolRange(name, filePath);
+    if (range?.startLine != null && range?.endLine != null) {
+      props.push(`  startLine: ${range.startLine}`);
+      props.push(`  endLine: ${range.endLine}`);
+    }
+  };
+
   // Add components (no internal functions nested - they'll be connected via arrows)
   // Components that have internal hooks with the same name get _file suffix
   if (elements.components.length > 0) {
@@ -4357,7 +4399,10 @@ const generateMerfolkMarkdown = ({
       const compPath = getFilePath(comp);
       const typeInfo = richTypes.get(comp);
       const props = [];
-      if (compPath) props.push(`  codeFilePath: "${compPath}"`);
+      if (compPath) {
+        props.push(`  codeFilePath: "${compPath}"`);
+        pushRangeProps(props, comp, compPath);
+      }
       if (typeInfo?.typeString) props.push(`  typescriptType: "${typeInfo.typeString.replace(/"/g, '\\"').slice(0, 150)}"`);
       if (props.length > 0) {
         markdown += `{\n${props.join('\n')}\n}\n`;
@@ -4397,8 +4442,13 @@ const generateMerfolkMarkdown = ({
         console.warn(`ℹ️ Renamed duplicate "${func}" → "${finalId}" (Function)`);
       }
       const fPath = getFilePath(func);
-      markdown += fPath
-        ? `${finalId}[Function: ${func}]{codeFilePath: "${fPath}"}\n`
+      const fProps = [];
+      if (fPath) {
+        fProps.push(`codeFilePath: "${fPath}"`);
+        pushRangeProps(fProps, func, fPath);
+      }
+      markdown += fProps.length > 0
+        ? `${finalId}[Function: ${func}]{${fProps.join(', ')}}\n`
         : `${finalId}[Function: ${func}]\n`;
     });
   }
@@ -4414,7 +4464,10 @@ const generateMerfolkMarkdown = ({
       const hPath = getFilePath(hook);
       const typeInfo = richTypes.get(hook);
       const props = [];
-      if (hPath) props.push(`codeFilePath: "${hPath}"`);
+      if (hPath) {
+        props.push(`codeFilePath: "${hPath}"`);
+        pushRangeProps(props, hook, hPath);
+      }
       if (typeInfo?.typeString) props.push(`typescriptType: "${typeInfo.typeString.replace(/"/g, '\\"').slice(0, 150)}"`);
       if (props.length > 0) {
         markdown += `${finalId}[Function: ${hook}]{${props.join(', ')}}\n`;
@@ -4441,8 +4494,13 @@ const generateMerfolkMarkdown = ({
     elements.services.forEach((service) => {
       const finalId = uniqueNodeId(service);
       const sPath = getFilePath(service);
-      markdown += sPath
-        ? `${finalId}[Function: ${service}]{codeFilePath: "${sPath}"}\n`
+      const sProps = [];
+      if (sPath) {
+        sProps.push(`codeFilePath: "${sPath}"`);
+        pushRangeProps(sProps, service, sPath);
+      }
+      markdown += sProps.length > 0
+        ? `${finalId}[Function: ${service}]{${sProps.join(', ')}}\n`
         : `${finalId}[Function: ${service}]\n`;
     });
   }
@@ -4458,7 +4516,10 @@ const generateMerfolkMarkdown = ({
       const stPath = getFilePath(store);
       const typeInfo = richTypes.get(store);
       const props = [];
-      if (stPath) props.push(`codeFilePath: "${stPath}"`);
+      if (stPath) {
+        props.push(`codeFilePath: "${stPath}"`);
+        pushRangeProps(props, store, stPath);
+      }
       if (typeInfo?.typeString) props.push(`typescriptType: "${typeInfo.typeString.replace(/"/g, '\\"').slice(0, 150)}"`);
       if (typeInfo?.properties) {
         const propNames = typeInfo.properties.slice(0, 5).map(p => p.name).join(', ');
@@ -4486,8 +4547,13 @@ const generateMerfolkMarkdown = ({
       }
       const finalId = uniqueNodeId(util);
       const uPath = getFilePath(util);
-      markdown += uPath
-        ? `${finalId}[Function: ${util}]{codeFilePath: "${uPath}"}\n`
+      const uProps = [];
+      if (uPath) {
+        uProps.push(`codeFilePath: "${uPath}"`);
+        pushRangeProps(uProps, util, uPath);
+      }
+      markdown += uProps.length > 0
+        ? `${finalId}[Function: ${util}]{${uProps.join(', ')}}\n`
         : `${finalId}[Function: ${util}]\n`;
     });
   }
@@ -4498,8 +4564,13 @@ const generateMerfolkMarkdown = ({
     elements.classes.forEach((cls) => {
       const finalId = uniqueNodeId(cls);
       const cPath = getFilePath(cls);
-      markdown += cPath
-        ? `${finalId}[[Class: ${cls}]]{codeFilePath: "${cPath}"}\n`
+      const cProps = [];
+      if (cPath) {
+        cProps.push(`codeFilePath: "${cPath}"`);
+        pushRangeProps(cProps, cls, cPath);
+      }
+      markdown += cProps.length > 0
+        ? `${finalId}[[Class: ${cls}]]{${cProps.join(', ')}}\n`
         : `${finalId}[[Class: ${cls}]]\n`;
     });
   }
@@ -4510,8 +4581,13 @@ const generateMerfolkMarkdown = ({
     elements.constants.forEach((cnst) => {
       const finalId = uniqueNodeId(cnst);
       const coPath = getFilePath(cnst);
-      markdown += coPath
-        ? `${finalId}[Constant: ${cnst}]{codeFilePath: "${coPath}"}\n`
+      const coProps = [];
+      if (coPath) {
+        coProps.push(`codeFilePath: "${coPath}"`);
+        pushRangeProps(coProps, cnst, coPath);
+      }
+      markdown += coProps.length > 0
+        ? `${finalId}[Constant: ${cnst}]{${coProps.join(', ')}}\n`
         : `${finalId}[Constant: ${cnst}]\n`;
     });
   }
@@ -4522,8 +4598,13 @@ const generateMerfolkMarkdown = ({
     elements.variables.forEach((v) => {
       const finalId = uniqueNodeId(v);
       const vPath = getFilePath(v);
-      markdown += vPath
-        ? `${finalId}[Variable: ${v}]{codeFilePath: "${vPath}"}\n`
+      const vProps = [];
+      if (vPath) {
+        vProps.push(`codeFilePath: "${vPath}"`);
+        pushRangeProps(vProps, v, vPath);
+      }
+      markdown += vProps.length > 0
+        ? `${finalId}[Variable: ${v}]{${vProps.join(', ')}}\n`
         : `${finalId}[Variable: ${v}]\n`;
     });
   }
@@ -4536,8 +4617,13 @@ const generateMerfolkMarkdown = ({
     elements.interfaces.forEach((iface) => {
       const finalId = uniqueNodeId(iface);
       const iPath = getFilePath(iface);
-      markdown += iPath
-        ? `${finalId}[[Interface: ${iface}]]{codeFilePath: "${iPath}"}\n`
+      const iProps = [];
+      if (iPath) {
+        iProps.push(`codeFilePath: "${iPath}"`);
+        pushRangeProps(iProps, iface, iPath);
+      }
+      markdown += iProps.length > 0
+        ? `${finalId}[[Interface: ${iface}]]{${iProps.join(', ')}}\n`
         : `${finalId}[[Interface: ${iface}]]\n`;
     });
   }
@@ -4571,8 +4657,13 @@ const generateMerfolkMarkdown = ({
       }
       const displayName = componentFuncDisplayNames.get(func) || func;
       const cfPath = getFilePath(func);
-      markdown += cfPath
-        ? `${finalId}[Function: ${displayName}]{codeFilePath: "${cfPath}"}\n`
+      const cfProps = [];
+      if (cfPath) {
+        cfProps.push(`codeFilePath: "${cfPath}"`);
+        pushRangeProps(cfProps, func, cfPath);
+      }
+      markdown += cfProps.length > 0
+        ? `${finalId}[Function: ${displayName}]{${cfProps.join(', ')}}\n`
         : `${finalId}[Function: ${displayName}]\n`;
     });
 
@@ -4919,8 +5010,13 @@ const generateMerfolkMarkdown = ({
           if (!nodeIds.has(funcName)) {
             const finalFuncId = uniqueNodeId(funcName);
             const ffPath = getFilePath(funcName);
-            markdown += ffPath
-              ? `${finalFuncId}[Function: ${funcName}]{codeFilePath: "${ffPath}"}\n`
+            const ffProps = [];
+            if (ffPath) {
+              ffProps.push(`codeFilePath: "${ffPath}"`);
+              pushRangeProps(ffProps, funcName, ffPath);
+            }
+            markdown += ffProps.length > 0
+              ? `${finalFuncId}[Function: ${funcName}]{${ffProps.join(', ')}}\n`
               : `${finalFuncId}[Function: ${funcName}]\n`;
           }
           const resolvedFunc = renamedIds.get(funcName) || funcName;
@@ -5386,15 +5482,25 @@ const generateMerfolkMarkdown = ({
     errorBoundaries.forEach(boundaryName => {
       const finalId = uniqueNodeId(boundaryName);
       const ebPath = getFilePath(boundaryName);
-      markdown += ebPath
-        ? `${finalId}[Boundary: ${boundaryName}]{codeFilePath: "${ebPath}"}\n`
+      const ebProps = [];
+      if (ebPath) {
+        ebProps.push(`codeFilePath: "${ebPath}"`);
+        pushRangeProps(ebProps, boundaryName, ebPath);
+      }
+      markdown += ebProps.length > 0
+        ? `${finalId}[Boundary: ${boundaryName}]{${ebProps.join(', ')}}\n`
         : `${finalId}[Boundary: ${boundaryName}]\n`;
     });
     suspenseBoundaries.forEach(boundaryId => {
       const finalId = uniqueNodeId(boundaryId);
       const sbPath = getFilePath(boundaryId);
-      markdown += sbPath
-        ? `${finalId}[Boundary: Suspense]{codeFilePath: "${sbPath}"}\n`
+      const sbProps = [];
+      if (sbPath) {
+        sbProps.push(`codeFilePath: "${sbPath}"`);
+        pushRangeProps(sbProps, boundaryId, sbPath);
+      }
+      markdown += sbProps.length > 0
+        ? `${finalId}[Boundary: Suspense]{${sbProps.join(', ')}}\n`
         : `${finalId}[Boundary: Suspense]\n`;
     });
 
@@ -5455,8 +5561,13 @@ const generateMerfolkMarkdown = ({
         console.warn(`ℹ️ Renamed duplicate "${ifaceName}" → "${finalId}" (Interface)`);
       }
       const siPath = fileFunctions.get(sourceFile)?.filePath || '';
-      markdown += siPath
-        ? `${finalId}[[Interface: ${ifaceName}]]{codeFilePath: "${siPath}"}\n`
+      const siProps = [];
+      if (siPath) {
+        siProps.push(`codeFilePath: "${siPath}"`);
+        pushRangeProps(siProps, ifaceName, siPath);
+      }
+      markdown += siProps.length > 0
+        ? `${finalId}[[Interface: ${ifaceName}]]{${siProps.join(', ')}}\n`
         : `${finalId}[[Interface: ${ifaceName}]]\n`;
     });
 

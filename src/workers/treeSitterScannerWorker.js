@@ -232,10 +232,21 @@ function collectDottedSegments(node) {
  * language-agnostic.
  */
 function summariseQueryMatches(query, tree) {
-  const classes   = new Set();
-  const functions = new Set();
+  // Maps keep Set-like dedup semantics while also carrying the 1-based line
+  // range of each symbol so per-symbol code can be sliced from the file later.
+  const classes   = new Map();
+  const functions = new Map();
   const libraries = new Set();
   const modules   = new Set();
+
+  const recordRange = (map, text, cap) => {
+    if (!map.has(text)) {
+      map.set(text, {
+        startLine: cap.node.startPosition.row + 1,
+        endLine: cap.node.endPosition.row + 1,
+      });
+    }
+  };
 
   const matches = query.matches(tree.rootNode);
   for (const m of matches) {
@@ -245,11 +256,11 @@ function summariseQueryMatches(query, tree) {
 
       switch (cap.name) {
         case 'class':
-          classes.add(text);
+          recordRange(classes, text, cap);
           break;
 
         case 'function':
-          functions.add(text);
+          recordRange(functions, text, cap);
           break;
 
         case 'import.dotted': {
@@ -306,8 +317,8 @@ function summariseQueryMatches(query, tree) {
   }
 
   return {
-    classes: [...classes],
-    functions: [...functions],
+    classes: [...classes.entries()].map(([name, range]) => ({ name, ...range })),
+    functions: [...functions.entries()].map(([name, range]) => ({ name, ...range })),
     imports: {
       libraries: [...libraries],
       modules: [...modules],

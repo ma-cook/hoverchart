@@ -148,19 +148,17 @@ async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
   return allConnectionsToSave.length > 0 || allObjectsToSave.length > 0;
 }
 
-async function associateCodeWithScene(codeBlocks, spaceId, user) {
-  if (!codeBlocks || codeBlocks.length === 0) return 0;
-
-  const spatialPartitioning = await import('../services/spatialPartitioning');
-  const getCellCoordinates = spatialPartitioning.getCellCoordinates;
-  const getCellId = spatialPartitioning.getCellId;
-  const { saveObjectToCell } = await import('../services/spatialObjectsService');
+async function associateCodeWithScene(codeBlocks, _spaceId, _user) {
+  if (!codeBlocks || codeBlocks.length === 0) return { count: 0 };
 
   const objectsStore = useObjectsStore.getState();
   const objects = objectsStore.objects;
   let associatedCount = 0;
-  const newTextObjects = [];
 
+  // Attach generated code to the matching scene object via associateCodeWithObject,
+  // which makes the object's `</>` code button light up. Code is no longer
+  // spawned as floating 3D text objects — the multi-window CodeWorkspace popups
+  // render it instead (see CodeWorkspace.jsx / openCodeWindow in the code store).
   for (const block of codeBlocks) {
     if (block.nodeId) {
       const target = objects.find(o =>
@@ -173,53 +171,11 @@ async function associateCodeWithScene(codeBlocks, spaceId, user) {
           filePath: block.filePath,
         });
         associatedCount++;
-
-        const textId = `code-text-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        const belowPosition = [
-          (target.position?.[0] || 0),
-          (target.position?.[1] || 0) - 15,
-          (target.position?.[2] || 0),
-        ];
-        const cellCoords = getCellCoordinates(belowPosition);
-        const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
-
-        const textObject = {
-          id: textId,
-          type: 'text',
-          position: belowPosition,
-          scale: [30, 20, 1],
-          cellId,
-          createdAt: Date.now(),
-          text: block.code,
-          textStyle: {
-            fontSize: 16,
-            color: '#d4d4d4',
-            fontWeight: 'normal',
-            fontFamily: 'Consolas, "Courier New", monospace',
-          },
-          metadata: {
-            code: block.code,
-            codeLanguage: block.language,
-            codeFilePath: block.filePath,
-          },
-          merfolkData: {
-            parentObjectId: target.id,
-          },
-        };
-
-        newTextObjects.push(textObject);
       }
     }
   }
 
-  if (newTextObjects.length > 0) {
-    objectsStore.setObjects(current => [...current, ...newTextObjects]);
-    await Promise.all(newTextObjects.map(obj =>
-      saveObjectToCell(user?.uid || user, spaceId, obj).catch(() => {})
-    ));
-  }
-
-  return { count: associatedCount, newTextObjects };
+  return { count: associatedCount };
 }
 
 

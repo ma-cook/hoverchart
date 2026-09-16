@@ -10,6 +10,7 @@ import ObjectUI from './ObjectUI';
 import FaceUI from './FaceUI';
 import HeaderInput from './HeaderInput';
 import TextStyleUI from './TextStyleUI';
+import { useObjectHasCode } from '../hooks/useObjectHasCode';
 import FaceTextInput from './FaceTextInput';
 import isEqual from 'lodash/isEqual';
 import { faces, getFaceIndicatorProps } from './cubeHelpers';
@@ -199,7 +200,7 @@ const Cube = ({
 
   // Repo container state — must be declared before handleSceneClick
   const isRepoContainer = objectData?.merfolkData?.isRepoContainer === true;
-  const hasCode = objectData?.metadata?.code != null;
+  const hasCode = useObjectHasCode(objectData);
   const pipelineIsRunning = usePipelineStore((state) => state.isRunning);
   const repoSlug = objectData?.merfolkData?.repoSlug;
 

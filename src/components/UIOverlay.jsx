@@ -497,26 +497,69 @@ const UIOverlay = ({
   const handleLayoutChange = useCallback((id, nextLayout) => {
     setChatWindowLayouts((prev) => ({ ...prev, [id]: nextLayout }));
   }, []);
-  const handleAddChat = useCallback((fromWindowId = 0) => {
-    const id = nextChatWindowIdRef.current++;
-    const prev = chatWindowLayouts[fromWindowId] || defaultChatLayout;
-    let x = prev.x + prev.width + SPACE_CHAT_GAP;
-    let y = prev.y;
+
+  const cascadeWindowLayout = useCallback((fromLayout) => {
+    let x = fromLayout.x + fromLayout.width + SPACE_CHAT_GAP;
+    let y = fromLayout.y;
     if (x + SPACE_CHAT_DEFAULT_WIDTH > window.innerWidth - CHAT_BOUNDS_MARGIN) {
       x = CHAT_BOUNDS_LEFT;
-      y = prev.y + prev.height + SPACE_CHAT_GAP;
+      y = fromLayout.y + fromLayout.height + SPACE_CHAT_GAP;
     }
     const maxY = window.innerHeight - CHAT_BOUNDS_MARGIN - SPACE_CHAT_DEFAULT_HEIGHT;
     if (y > maxY) y = maxY;
-    const layout = {
+    return {
       x,
       y: Math.max(CHAT_BOUNDS_TOP, y),
       width: SPACE_CHAT_DEFAULT_WIDTH,
       height: SPACE_CHAT_DEFAULT_HEIGHT,
     };
+  }, []);
+
+  const handleAddChat = useCallback((fromWindowId = 0) => {
+    const id = nextChatWindowIdRef.current++;
+    const prev = chatWindowLayouts[fromWindowId] || defaultChatLayout;
+    const layout = cascadeWindowLayout(prev);
     setChatWindowLayouts((prevLayouts) => ({ ...prevLayouts, [id]: layout }));
     setChatWindows((prev) => [...prev, id]);
-  }, [chatWindowLayouts]);
+  }, [chatWindowLayouts, cascadeWindowLayout]);
+
+  // Cascade code-viewer popups into the same chain as chat windows: each new
+  // code window docks next to the most recently opened one (or the last chat
+  // window when no code window has a layout yet) using identical wrap math.
+  const codeWindows = useCodeStore((s) => s.codeWindows);
+  useEffect(() => {
+    if (codeWindows.length === 0) return;
+    const store = useCodeStore.getState();
+    const sortedCode = [...codeWindows].sort((a, b) => a.createdAt - b.createdAt);
+    const sortedChat = [...chatWindows].sort((a, b) => a - b);
+
+    let anchor = null;
+    for (const w of [...sortedCode].reverse()) {
+      if (store.codeWindowLayouts[w.id]) {
+        anchor = store.codeWindowLayouts[w.id];
+        break;
+      }
+    }
+    if (!anchor) {
+      for (const id of [...sortedChat].reverse()) {
+        if (chatWindowLayouts[id]) {
+          anchor = chatWindowLayouts[id];
+          break;
+        }
+      }
+    }
+    if (!anchor) anchor = defaultChatLayout;
+
+    for (const w of sortedCode) {
+      if (store.codeWindowLayouts[w.id]) {
+        anchor = store.codeWindowLayouts[w.id];
+        continue;
+      }
+      const next = cascadeWindowLayout(anchor);
+      anchor = next;
+      store.setCodeWindowLayout(w.id, next);
+    }
+  }, [codeWindows, chatWindows, chatWindowLayouts, cascadeWindowLayout]);
   const handleCloseChat = useCallback((id) => {
     setChatWindows((prev) => prev.filter((w) => w !== id));
     setChatWindowLayouts((prev) => {

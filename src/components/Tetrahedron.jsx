@@ -31,6 +31,7 @@ const shallowObjEqual = (a, b) => {
   return true;
 };
 import TextStyleUI from './TextStyleUI';
+import { useObjectHasCode } from '../hooks/useObjectHasCode';
 
 import InstancedLine from './InstancedLine';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
@@ -227,7 +228,7 @@ const Tetrahedron = ({
     useCallback((state) => getObjectById(state, id), [id])
   );
 
-  const hasCode = objectData?.metadata?.code != null;
+  const hasCode = useObjectHasCode(objectData);
 
   // Extract properties with defaults
   const position = React.useMemo(

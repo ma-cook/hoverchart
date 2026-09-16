@@ -18,6 +18,7 @@ import { calculateAxisSnap } from '../utils/snappingUtils'; // Import snapping u
 
 const EMPTY_CONNECTIONS = [];
 import SnapLineIndicator from './SnapLineIndicator'; // Import snap line indicator
+import { useObjectHasCode } from '../hooks/useObjectHasCode';
 // Import unified utilities
 import { useDebouncedUpdate } from '../hooks/useDebouncedUpdate';
 import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
@@ -205,7 +206,7 @@ const Sphere = React.memo(
 
     // PERFORMANCE: O(1) index lookup instead of O(C) filter. Shallow equality prevents
     // re-renders when this dodecahedron's connections haven't changed.
-    const hasCode = objectData?.metadata?.code != null;
+    const hasCode = useObjectHasCode(objectData);
 
     const connections = useConnectionStore(
       useCallback(
@@ -1288,6 +1289,7 @@ const Sphere = React.memo(
               showTransform={dodecahedron?.showTransform}
               showHeader={dodecahedron?.showHeader}
               followTarget={contentRef}
+              objectId={id}
               hasCode={hasCode}
               onCodeToggle={onCodeToggle}
             />

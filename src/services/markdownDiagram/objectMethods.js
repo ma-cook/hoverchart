@@ -332,6 +332,8 @@ export const objectMethods = {
             merfolkData: {
               nodeId: data.nodeId,
               codeFilePath: data.extraData.codeFilePath || '',
+              startLine: data.extraData.startLine != null ? Number(data.extraData.startLine) : undefined,
+              endLine: data.extraData.endLine != null ? Number(data.extraData.endLine) : undefined,
               exports: data.extraData.exports || '',
               htmlElements: data.extraData.htmlElements || '',
               cssClasses: data.extraData.cssClasses || '',
@@ -402,6 +404,8 @@ export const objectMethods = {
             merfolkData: {
               nodeId: data.nodeId,
               codeFilePath: data.extraData.codeFilePath || '',
+              startLine: data.extraData.startLine != null ? Number(data.extraData.startLine) : undefined,
+              endLine: data.extraData.endLine != null ? Number(data.extraData.endLine) : undefined,
               exports: data.extraData.exports || '',
               htmlElements: data.extraData.htmlElements || '',
               cssClasses: data.extraData.cssClasses || '',

@@ -82,6 +82,11 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   pushStatus: 'idle',
   expandedView: false,
   activeCodeObjectId: null,
+  // Multi-window code viewer state (replaces the singleton overlay). Each
+  // entry is a popup window id -> its cascaded layout, keyed separately so
+  // drag/resize updates don't churn the window list itself.
+  codeWindows: [],
+  codeWindowLayouts: {},
   repoFileTree: null,
   repoFileContents: null,
   contentIndex: null,
@@ -338,6 +343,44 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setActiveCodeObjectId: (id) => set({ activeCodeObjectId: id }),
 
+  openCodeWindow: (objectId) => {
+    const state = get();
+    // If a code window for this object is already open, just re-open it on
+    // top — never stack exact duplicates of the same symbol.
+    const existing = state.codeWindows.find((w) => w.objectId === objectId);
+    if (existing) {
+      set({
+        codeWindows: [
+          existing,
+          ...state.codeWindows.filter((w) => w.id !== existing.id),
+        ],
+      });
+      return existing.id;
+    }
+    const id = `cw-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    set({
+      codeWindows: [...state.codeWindows, { id, objectId, createdAt: Date.now() }],
+    });
+    return id;
+  },
+
+  closeCodeWindow: (windowId) => set((state) => ({
+    codeWindows: state.codeWindows.filter((w) => w.id !== windowId),
+    codeWindowLayouts: Object.fromEntries(
+      Object.entries(state.codeWindowLayouts).filter(([id]) => id !== windowId)
+    ),
+  })),
+
+  setCodeWindowLayout: (windowId, layout) => {
+    const state = get();
+    if (!state.codeWindowLayouts[windowId]) {
+      set({ codeWindowLayouts: { ...state.codeWindowLayouts, [windowId]: layout } });
+      return;
+    }
+    const next = { ...state.codeWindowLayouts[windowId], ...layout };
+    set({ codeWindowLayouts: { ...state.codeWindowLayouts, [windowId]: next } });
+  },
+
   addPendingChange: (change) => set((state) => ({
     pendingChanges: [...state.pendingChanges, { ...change, status: change.status || 'pending' }],
   })),
@@ -385,6 +428,8 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       techStackSource: null,
       pushStatus: 'idle',
       activeCodeObjectId: null,
+      codeWindows: [],
+      codeWindowLayouts: {},
       repoFileTree: null,
       repoFileContents: null,
       contentIndex: null,

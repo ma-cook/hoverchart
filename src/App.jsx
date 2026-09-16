@@ -1670,11 +1670,10 @@ const existingIdsRef = useRef(new Set());
   // Read view mode from store — '3d' or '2d'
   const viewMode = useUIOverlayStore((s) => s.viewMode);
 
-  // Handle code toggle from ObjectUI — sets active code object and opens expanded view
+  // Handle code toggle from ObjectUI — opens a resizable code window for the object
   const handleCodeToggle = useCallback((objectId) => {
-    const codeStore = useCodeStore.getState();
-    codeStore.setActiveCodeObjectId(objectId);
-    codeStore.setExpandedView(true);
+    if (!objectId) return;
+    useCodeStore.getState().openCodeWindow(objectId);
   }, []);
 
   // Memoize scene content to keep the same JSX reference across re-renders

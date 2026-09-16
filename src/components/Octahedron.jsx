@@ -6,6 +6,7 @@ import { useFaceIndicatorStore } from '../stores';
 import AtlasTextSprite from './AtlasTextSprite';
 import ObjectUI from './ObjectUI';
 import HeaderInput from './HeaderInput';
+import { useObjectHasCode } from '../hooks/useObjectHasCode';
 
 const arraysEqual = (a, b) => {
   if (a === b) return true;
@@ -192,7 +193,7 @@ const Octahedron = ({
     useCallback((state) => getObjectById(state, id), [id])
   );
 
-  const hasCode = objectData?.metadata?.code != null;
+  const hasCode = useObjectHasCode(objectData);
 
   const position = React.useMemo(
     () => objectData?.position || [0, 0, 0],

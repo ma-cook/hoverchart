@@ -9,7 +9,7 @@ import { useColorPickerStore } from '../stores';
 const _tempVec3 = new THREE.Vector3();
 
 const ObjectUI = React.memo(
-  ({
+  ({ objectId,
     onTransformToggle,
     onHeaderToggle,
     onResizeToggle,
@@ -131,7 +131,7 @@ const ObjectUI = React.memo(
       { name: 'code', icon: '</>', active: false, disabled: !hasCode,
         onClick: () => {
           console.log('Code button clicked');
-          onCodeToggle?.();
+          onCodeToggle?.(objectId);
         },
       },
       { name: 'color', icon: '🎨' }, // <-- New color tool
@@ -162,7 +162,7 @@ const ObjectUI = React.memo(
           onResizeToggle();
           break;
         case 'code':
-          onCodeToggle?.();
+          onCodeToggle?.(objectId);
           break;
         case 'color':
           console.log('Opening color picker with pickerId:', pickerId);

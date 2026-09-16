@@ -48,6 +48,19 @@ const isPrivate = (name) => name.startsWith('_') && !name.startsWith('__');
 const isDunder  = (name) => name.startsWith('__') && name.endsWith('__');
 
 /**
+ * Record the 1-based line range of a symbol on its file container entry so
+ * downstream markdown emission / code-view can slice the symbol's own code.
+ * Keyed by the raw symbol name (matches how getFilePath() looks up members).
+ */
+const setSymbolRange = (fileFunctions, fileName, rawName, { startLine, endLine }) => {
+  if (!startLine || !endLine) return;
+  const info = fileFunctions.get(fileName);
+  if (!info) return;
+  if (!info.ranges) info.ranges = new Map();
+  info.ranges.set(rawName, { startLine, endLine });
+};
+
+/**
  * Resolve the container "type" used for grouping a file's symbols, based on
  * folder-convention flags from `analyzeFile()`. General enough across
  * languages — folder names like `services/`, `models/`, `workers/` mean the
@@ -136,10 +149,11 @@ export const scanWithTreeSitter = async (
 
   // ── Classes ────────────────────────────────────────────────────────────
   for (const className of symbols.classes) {
-    if (isPrivate(className)) continue;
-    const id = sanitizeNodeId(className);
+    if (isPrivate(className?.name)) continue;
+    const id = sanitizeNodeId(className.name);
     ensureContainer();
     fileFunctions.get(fileName).functions.add(id);
+    if (className.startLine) setSymbolRange(fileFunctions, fileName, className.name, className);
     if (containerType === 'backend' || containerType === 'service') {
       if (!foundItems.services.has(id)) {
         foundItems.services.add(id);
@@ -155,11 +169,12 @@ export const scanWithTreeSitter = async (
 
   // ── Functions ──────────────────────────────────────────────────────────
   for (const funcName of symbols.functions) {
-    if (isPrivate(funcName) || isDunder(funcName)) continue;
-    if (importedNames.has(funcName)) continue;
-    const id = sanitizeNodeId(funcName);
+    if (isPrivate(funcName?.name) || isDunder(funcName?.name)) continue;
+    if (importedNames.has(funcName.name)) continue;
+    const id = sanitizeNodeId(funcName.name);
     ensureContainer();
     fileFunctions.get(fileName).functions.add(id);
+    if (funcName.startLine) setSymbolRange(fileFunctions, fileName, funcName.name, funcName);
     if (!foundItems.utilities.has(id)) {
       foundItems.utilities.add(id);
       elements.utilities.push(id);
