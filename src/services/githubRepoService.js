@@ -4011,7 +4011,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
     return { markdown: merfolkResult, contentIndex, fileSizes, importGraph, fileIndexByPath, importIndexByFile, repoFileContents };
   } catch (error) {
     console.error('Error generating Merfolk from repository:', error);
-    return { markdown: `%% ${repoName} Repository Analysis\n\n%% Error: Unable to analyze repository\n`, contentIndex: '', fileSizes: new Map(), fileIndexByPath: new Map(), importIndexByFile: new Map(), repoFileContents: {} };
+    throw error;
   }
 };
 

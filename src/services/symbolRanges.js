@@ -186,10 +186,10 @@ export function computeSymbolRanges(source, language) {
 
   // Locate offset of every line so brace matching can run against the full
   // source (line-start offset alone doesn't reveal what precedes it).
-  const lineStarts = [];
-  const lineStartRe = /^/gm;
-  let m;
-  while ((m = lineStartRe.exec(source)) !== null) lineStarts.push(m.index);
+  const lineStarts = [0];
+  for (let i = 0; i < source.length; i++) {
+    if (source.charCodeAt(i) === 10) lineStarts.push(i + 1);
+  }
 
   for (let i = 0; i < lineStarts.length; i++) {
     const lineStr = source.slice(lineStarts[i], endOfLine(source, lineStarts[i]));

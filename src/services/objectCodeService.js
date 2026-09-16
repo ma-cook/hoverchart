@@ -54,7 +54,7 @@ export function getCodeForObject(objectData) {
   }
 
   const contentStore = getContentStore();
-  const entry = contentStore.get(`${CONTENT_ID_PREFIX}${filePath}`);
+  const entry = contentStore.getEntry(`${CONTENT_ID_PREFIX}${filePath}`);
   if (entry?.chunks?.length > 0) {
     return sliceRange(joinChunks(entry.chunks), range.startLine, range.endLine);
   }
@@ -79,5 +79,5 @@ export function objectHasCode(objectData, codeStoreState) {
     return true;
   }
   const contentStore = getContentStore();
-  return !!contentStore.get(`${CONTENT_ID_PREFIX}${filePath}`);
+  return !!contentStore.getEntry(`${CONTENT_ID_PREFIX}${filePath}`);
 }
