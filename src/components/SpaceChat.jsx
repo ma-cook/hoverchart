@@ -1346,6 +1346,21 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         if (result.importGraph) useCodeStore.getState().setImportGraph(result.importGraph);
         if (result.fileIndexByPath) useCodeStore.getState().setFileIndexByPath(result.fileIndexByPath);
         if (result.importIndexByFile) useCodeStore.getState().setImportIndexByFile(result.importIndexByFile);
+        // Write the scan's own fetched file bodies into the code store right
+        // away and persist them — do NOT wait on the fetchRepoContext
+        // enrichment below, so a failed/slow re-fetch can never leave objects
+        // with "no code associated" even though the scan already fetched every
+        // file. This also lights up the object `</>` buttons immediately.
+        if (result.repoFileContents && Object.keys(result.repoFileContents).length > 0) {
+          useCodeStore.getState().setRepoFileContents(result.repoFileContents);
+          import('../services/context/contentStorePersistence.js')
+            .then((m) => m.saveRepoFileContents(spaceId, result.repoFileContents))
+            .catch((err) => console.warn('[scan] persist repoFileContents failed:', err.message));
+        }
+        // Index the repo corpus off the main thread immediately (independent of
+        // fetchRepoContext) so ContentStore `repo:` entries land for the code
+        // button fallback. populateContentStoreWorker self-catches errors.
+        populateContentStoreWorker(result.repoFileContents, result.markdown);
         // Deferred so the scan-complete state can paint before the digest
         // snapshot (graphs + hierarchy + communities) is serialized.
         setTimeout(() => saveDiagramDigest(spaceId), 0);
@@ -1374,12 +1389,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           fetchRepoContext(token, owner, repoName, branch)
             .then(ctx => {
               const applyContext = async () => {
-                useCodeStore.getState().setRepoContext(ctx.fileTree, ctx.fileContents);
+                // Prefer the scan's own (more complete) file bodies — matching
+                // what populateContentStoreWorker just indexed — so the code
+                // viewer and chat context never regress to a partial refetch.
+                const scanned = useCodeStore.getState().repoFileContents;
+                useCodeStore.getState().setRepoContext(
+                  ctx.fileTree,
+                  scanned && Object.keys(scanned).length > 0 ? scanned : ctx.fileContents
+                );
                 window._connectionUpdateSkip = false;
-                // Fire-and-forget: populate content store in background via worker.
-                // repoFileContents is sent in bounded batches so the main thread
-                // is never blocked by a single large structured clone.
-                populateContentStoreWorker(result.repoFileContents, result.markdown);
               };
               const waitForMount = () => {
                 const progress = useDiagramStore.getState().renderProgress;

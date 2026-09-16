@@ -1,5 +1,6 @@
 import { chunkText, extractKeywords, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
 import { saveContentStore, loadContentStore, clearContentStorePersistence } from './contentStorePersistence';
+import { notifyRepoContentChanged } from './repoContentSignal';
 
 export const ContentCategory = {
   REPO_FILE: 'repo_file',
@@ -42,6 +43,7 @@ export class ContentStore {
         console.log(`[ContentStore] Hydrated from IndexedDB: ${this.entries.size} entries, ${this.totalChunks} chunks`);
       }
       this._hydrated = true;
+      notifyRepoContentChanged();
     })();
     return this._hydratePromise;
   }
@@ -95,6 +97,7 @@ export class ContentStore {
     this._dirtyIds.add(id);
     this._removedIds.delete(id);
     this._persist();
+    notifyRepoContentChanged();
   }
 
   remove(id) {
@@ -106,6 +109,7 @@ export class ContentStore {
       this._dirtyIds.delete(id);
       this._removedIds.add(id);
       this._persist();
+      notifyRepoContentChanged();
     }
   }
 
@@ -116,6 +120,7 @@ export class ContentStore {
     this._dirtyIds.clear();
     this._removedIds.clear();
     clearContentStorePersistence().catch(() => {});
+    notifyRepoContentChanged();
   }
 
   hydrate(serializedEntries, serializedInvertedIndex, totalChunks) {
@@ -134,6 +139,7 @@ export class ContentStore {
     this._dirtyIds.clear();
     this._removedIds.clear();
     this._persist();
+    notifyRepoContentChanged();
   }
 
   /**
@@ -165,6 +171,7 @@ export class ContentStore {
     }
     this._hydrated = true;
     this._persist();
+    notifyRepoContentChanged();
   }
 
   _persist() {

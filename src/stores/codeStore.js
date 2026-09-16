@@ -1,6 +1,8 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import { safeSetItem, safeRemoveItem } from '../utils/safeLocalStorage';
+import { joinChunks } from '../services/context/chunkIndex';
+import { getContentStore, waitForContentStoreHydration } from '../services/context/contentStore';
 
 const SPACE_SCOPED_KEYS = ['selectedRepo', 'selectedBranch', 'branchStrategy', 'techStack', 'techStackSource', 'contentIndex', 'importGraph', 'repoFileTree', 'fileSizes', 'fileIndexByPath', 'importIndexByFile'];
 
@@ -120,12 +122,18 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
     import('../services/context/contentStorePersistence.js')
       .then((m) => m.loadRepoFileContents(spaceId))
       .then((contents) => {
-        if (contents && get()._spaceId === spaceId) {
-          set({ repoFileContents: contents });
-          console.log(`[codeStore] Restored repoFileContents (${Object.keys(contents).length} files) from IndexedDB`);
+        if (contents && Object.keys(contents).length > 0) {
+          if (get()._spaceId === spaceId) {
+            set({ repoFileContents: contents });
+            console.log(`[codeStore] Restored repoFileContents (${Object.keys(contents).length} files) from IndexedDB`);
+          }
+        } else if (get()._spaceId === spaceId) {
+          rebuildRepoFileContentsFromContentStore(spaceId);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (get()._spaceId === spaceId) rebuildRepoFileContentsFromContentStore(spaceId);
+      });
     // fileIndexByPath, repoFileTree, contentIndex, importGraph, fileSizes and
     // importIndexByFile are all too large for localStorage. Restore them from
     // IndexedDB; if nothing was ever migrated, fall back to the legacy
@@ -445,6 +453,40 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 export function getFileIndexEntry(filePath) {
   const map = useCodeStore.getState().fileIndexByPath;
   return map?.get(filePath) || null;
+}
+
+/**
+ * Rebuild the repoFileContents map from the ContentStore's chunked `repo:`
+ * entries when the per-space IndexedDB snapshot is missing (e.g. spaces
+ * scanned before repoFileContents was persisted). joinChunks reconstructs each
+ * file byte-for-byte; long loops yield so a large corpus never blocks paint.
+ */
+export async function rebuildRepoFileContentsFromContentStore(spaceId) {
+  try {
+    const store = getContentStore();
+    await waitForContentStoreHydration();
+    if (useCodeStore.getState()._spaceId !== spaceId) return;
+    const current = useCodeStore.getState().repoFileContents;
+    if (current && Object.keys(current).length > 0) return;
+
+    const contents = {};
+    let count = 0;
+    for (const [id, entry] of store.entries) {
+      if (!id.startsWith('repo:')) continue;
+      const filePath = id.slice(5);
+      if (!filePath) continue;
+      const text = joinChunks(entry.chunks);
+      if (text) contents[filePath] = text;
+      count++;
+      if (count % 50 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+    if (Object.keys(contents).length > 0 && useCodeStore.getState()._spaceId === spaceId) {
+      useCodeStore.setState({ repoFileContents: contents });
+      console.log(`[codeStore] Rebuilt repoFileContents (${Object.keys(contents).length} files) from ContentStore repo: entries`);
+    }
+  } catch {
+    /* non-fatal: falls back to on-demand GitHub refetch */
+  }
 }
 
 export function getFileImports(filePath) {
