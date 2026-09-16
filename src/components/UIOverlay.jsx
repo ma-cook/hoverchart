@@ -2,6 +2,7 @@ import { useUIOverlayStore, useDiagramStore, useSpatialManagerStore } from '../s
 import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
+import useChatArchiveStore from '../stores/chatArchiveStore';
 import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import {
   uploadModelToStorage,
@@ -516,12 +517,18 @@ const UIOverlay = ({
   }, []);
 
   const handleAddChat = useCallback((fromWindowId = 0) => {
-    const id = nextChatWindowIdRef.current++;
+    // Never mint an id that collides with an open window or an archived
+    // window that may be reopened from the archive bar below the top bar.
+    const archivedIds = useChatArchiveStore.getState().archivedIds(currentSpaceId);
+    const used = new Set([...chatWindows, ...archivedIds]);
+    let id = nextChatWindowIdRef.current;
+    while (used.has(id)) id++;
+    nextChatWindowIdRef.current = id + 1;
     const prev = chatWindowLayouts[fromWindowId] || defaultChatLayout;
     const layout = cascadeWindowLayout(prev);
     setChatWindowLayouts((prevLayouts) => ({ ...prevLayouts, [id]: layout }));
     setChatWindows((prev) => [...prev, id]);
-  }, [chatWindowLayouts, cascadeWindowLayout]);
+  }, [currentSpaceId, chatWindows, chatWindowLayouts, cascadeWindowLayout]);
 
   // Cascade code-viewer popups into the same chain as chat windows: each new
   // code window docks next to the most recently opened one (or the last chat
@@ -567,7 +574,41 @@ const UIOverlay = ({
       delete next[id];
       return next;
     });
-  }, []);
+    // Surface closed chat windows that were actually used (provider configured
+    // or interacted with) as numbered icons below the top bar so the user can
+    // reopen them.
+    if (currentSpaceId && id > 0 &&
+        useChatArchiveStore.getState().isSignificant(currentSpaceId, id)) {
+      useChatArchiveStore.getState().archiveWindow(currentSpaceId, id);
+    }
+  }, [currentSpaceId]);
+
+  // Reopen an archived chat window from the numbered icon bar. Its messages and
+  // per-window LLM config are persisted under the same windowId, so reopening
+  // after a close (or even a reload) restores the exact conversation.
+  const handleOpenArchivedChat = useCallback((id) => {
+    if (!currentSpaceId) return;
+    const archive = useChatArchiveStore.getState();
+    archive.unarchiveWindow(currentSpaceId, id);
+    if (chatWindows.includes(id)) return;
+    const lastId = chatWindows[chatWindows.length - 1];
+    const anchor = (lastId != null && chatWindowLayouts[lastId]) || defaultChatLayout;
+    const layout = cascadeWindowLayout(anchor);
+    setChatWindowLayouts((prev) => ({ ...prev, [id]: layout }));
+    setChatWindows((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, [currentSpaceId, chatWindows, chatWindowLayouts, cascadeWindowLayout]);
+
+  // Keep the archive store's cached list in sync with the current space so the
+  // numbered icon bar below the top bar reflects the persisted archive.
+  useEffect(() => {
+    if (!currentSpaceId) return;
+    useChatArchiveStore.getState().refresh(currentSpaceId);
+  }, [currentSpaceId]);
+
+  const archivedChatWindows = useChatArchiveStore(
+    (s) => s.archivedBySpace[currentSpaceId] || []
+  );
+
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [recordingFormatOpen, setRecordingFormatOpen] = useState(false);
   const [showOrgManager, setShowOrgManager] = useState(false);
@@ -1877,6 +1918,28 @@ const UIOverlay = ({
           />
         }
       />
+
+      {/* Closed-but-used chat windows: numbered space-chat icons centered just
+          below the top bar. Click to reopen that window's archived chat. */}
+      {!trialMode && archivedChatWindows.length > 0 && (
+        <div className="chat-archive-bar" onClick={(e) => e.stopPropagation()}>
+          {archivedChatWindows.map((windowId) => (
+            <button
+              key={windowId}
+              className="chat-archive-icon"
+              onClick={() => handleOpenArchivedChat(windowId)}
+              title={`Reopen space chat ${windowId}`}
+              aria-label={`Reopen space chat ${windowId}`}
+            >
+              💬
+              <span className="chat-archive-number" aria-hidden="true">
+                {windowId}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <RecordingFormatPrompt
         open={recordingFormatOpen}
         onSelect={handleFormatSelect}

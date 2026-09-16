@@ -29,6 +29,7 @@ export { default as useCodeStore } from './codeStore.js';
 export { default as useLlmStore } from './llmStore.js';
 export { default as useWorkflowStore } from './workflowStore.js';
 export { default as usePlanStore } from './planStore.js';
+export { default as useChatArchiveStore } from './chatArchiveStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';

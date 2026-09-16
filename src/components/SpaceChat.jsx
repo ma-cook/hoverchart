@@ -8,6 +8,7 @@ import { extractCodeBlocks } from '../services/codeExtractor';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useLlmStore from '../stores/llmStore';
+import useChatArchiveStore from '../stores/chatArchiveStore';
 import useDiagramStore from '../stores/diagramStore';
 import { PROVIDERS, fetchModels, isFreeUsageLimit } from '../services/llmProviders';
 import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
@@ -396,6 +397,28 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
 
   const [windowLlm, setWindowLlm] = useState(() => loadWindowLlm(windowId));
 
+  // Mark this window as "significant" so that, if it's closed, UIOverlay will
+  // archive it and surface a numbered icon below the top bar to reopen it.
+  const markSignificant = useCallback(() => {
+    if (windowId <= 0 || !spaceId) return;
+    useChatArchiveStore.getState().markSignificant(spaceId, windowId);
+  }, [spaceId, windowId]);
+
+  // A window is already significant if it carries its own persisted provider
+  // config or plan/code messages — e.g. it was reopened from an archive after a
+  // reload, where the in-session significance flags were lost.
+  useEffect(() => {
+    if (windowId <= 0 || !spaceId) return;
+    try {
+      const hasOwnProvider = localStorage.getItem(`llm:window:${windowId}:providerId`) !== null;
+      const hasOwnApiKey = localStorage.getItem(`llm:window:${windowId}:apiKey`) !== null;
+      const hasMessages =
+        loadPersistedMessages(spaceId, 'plan', windowId).length > 0 ||
+        loadPersistedMessages(spaceId, 'code', windowId).length > 0;
+      if (hasOwnProvider || hasOwnApiKey || hasMessages) markSignificant();
+    } catch { /* ignore */ }
+  }, [spaceId, windowId, markSignificant]);
+
   const setWindowProvider = useCallback((id) => {
     setWindowLlm((prev) => ({ ...prev, providerId: id, selectedModel: null }));
     if (isPrimary) {
@@ -404,19 +427,22 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       persistWindowLlm(windowId, 'providerId', id);
       persistWindowLlm(windowId, 'selectedModel', null);
     }
-  }, [isPrimary, windowId, llmSetProviderId]);
+    markSignificant();
+  }, [isPrimary, windowId, llmSetProviderId, markSignificant]);
 
   const setWindowApiKey = useCallback((key) => {
     setWindowLlm((prev) => ({ ...prev, apiKey: key }));
     if (isPrimary) llmSetApiKey(key);
     else persistWindowLlm(windowId, 'apiKey', key);
-  }, [isPrimary, windowId, llmSetApiKey]);
+    markSignificant();
+  }, [isPrimary, windowId, llmSetApiKey, markSignificant]);
 
   const setWindowSelectedModel = useCallback((model) => {
     setWindowLlm((prev) => ({ ...prev, selectedModel: model }));
     if (isPrimary) llmSetSelectedModel(model);
     else persistWindowLlm(windowId, 'selectedModel', model);
-  }, [isPrimary, windowId, llmSetSelectedModel]);
+    markSignificant();
+  }, [isPrimary, windowId, llmSetSelectedModel, markSignificant]);
 
   useEffect(() => {
     if (!isPrimary) return;
@@ -568,12 +594,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       emitSocket('chat:message', { spaceId, text });
       setInput('');
       isNearBottomRef.current = true;
+      markSignificant();
     } catch (err) {
       console.warn('[chat] Failed to send message:', err.message);
     } finally {
       setSending(false);
     }
-  }, [input, spaceId, user]);
+  }, [input, spaceId, user, markSignificant]);
 
   const handlePlanSend = useCallback(async () => {
     const text = input.trim();
@@ -586,6 +613,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     const userMessage = { role: 'user', content: text };
     const updatedMessages = [...planMessages, userMessage];
     setPlanMessages(updatedMessages);
+    markSignificant();
 
     // Warm the content-store worker (off the main thread) before tools run.
     // Include any cached repo contents so search_code/grep can scan the repo.
@@ -751,7 +779,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, planMessages, spaceId, user, windowLlm, selectedRepo, selectedBranch, onDiagramGenerated]);
+  }, [input, streaming, planMessages, spaceId, user, windowLlm, selectedRepo, selectedBranch, onDiagramGenerated, markSignificant]);
 
   const handleCodeSend = useCallback(async () => {
     const text = input.trim();
@@ -764,6 +792,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     const userMessage = { role: 'user', content: text };
     const updatedMessages = [...codeMessages, userMessage];
     setCodeMessages(updatedMessages);
+    markSignificant();
 
     const sceneObjects = useObjectsStore.getState().objects;
 
@@ -1135,7 +1164,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack, windowLlm]);
+  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack, windowLlm, markSignificant]);
 
   const handleKeyDown = useCallback(
     (e) => {
