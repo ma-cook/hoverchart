@@ -31,6 +31,11 @@ import { saveDiagramDigest } from '../services/graphPersistence';
 import { createTicket, updateTicket, emitTicketCreated, emitTicketUpdated } from '../services/workflowService';
 import { buildWorkflowContext } from '../services/workflowCoordination';
 import usePlanStore from '../stores/planStore';
+import {
+  isEncryptedSecret,
+  readStoredSecret,
+  persistStoredSecret,
+} from '../utils/encryptedStorage';
 
 const getGuestId = () => {
   let guestId = sessionStorage.getItem('guestPresenceId');
@@ -268,9 +273,10 @@ function loadWindowLlm(windowId) {
   }
   let persisted = { providerId: null, apiKey: null, selectedModel: null };
   try {
+    const rawApiKey = JSON.parse(localStorage.getItem(`llm:window:${windowId}:apiKey`) || 'null');
     persisted = {
       providerId: JSON.parse(localStorage.getItem(`llm:window:${windowId}:providerId`) || 'null'),
-      apiKey: JSON.parse(localStorage.getItem(`llm:window:${windowId}:apiKey`) || 'null'),
+      apiKey: isEncryptedSecret(rawApiKey) ? null : rawApiKey,
       selectedModel: JSON.parse(localStorage.getItem(`llm:window:${windowId}:selectedModel`) || 'null'),
     };
   } catch { /* ignore */ }
@@ -283,6 +289,10 @@ function loadWindowLlm(windowId) {
 
 function persistWindowLlm(windowId, key, value) {
   if (windowId === 0) return;
+  if (key === 'apiKey') {
+    persistStoredSecret(`llm:window:${windowId}:apiKey`, value);
+    return;
+  }
   try {
     localStorage.setItem(`llm:window:${windowId}:${key}`, JSON.stringify(value));
   } catch { /* ignore */ }
@@ -461,6 +471,18 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         : prev
     );
   }, [isPrimary, llmProviderId, llmApiKey, llmSelectedModel]);
+
+  useEffect(() => {
+    if (isPrimary) return;
+    let cancelled = false;
+    readStoredSecret(`llm:window:${windowId}:apiKey`)
+      .then((key) => {
+        if (cancelled || key == null || key === '') return;
+        setWindowLlm((prev) => (prev.apiKey ? prev : { ...prev, apiKey: key }));
+      })
+      .catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, [isPrimary, windowId]);
 
   useEffect(() => {
     useCodeStore.getState().setSpaceId(spaceId);
