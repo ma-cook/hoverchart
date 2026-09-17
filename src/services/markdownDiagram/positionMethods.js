@@ -13,6 +13,7 @@ import {
   OBJECT_TYPE_DODECAHEDRON,
   OBJECT_TYPE_OCTAHEDRON,
   DEFAULT_CONTAINER_SIZE,
+  DEFAULT_SPHERE_SIZE,
   BASE_DODECAHEDRON_RADIUS,
   JUNCTION_MARKER_SCALE,
 } from './constants.js';
@@ -41,28 +42,103 @@ export const positionMethods = {
     const componentYOffset = 0;
 
     if (level === 0) {
-      const rootArray = Array.from(rootNodes);
-      const rootIndex = rootArray.indexOf(nodeId);
+      // Root objects are packed on a size-aware grid so the gap between any
+      // two neighbouring roots reflects their actual rendered size: a parent
+      // with many internal functions (large dodecahedron) gets wide clearance
+      // while a parent with no internal functions packs tightly against its
+      // neighbours instead of floating on a fixed-spacing grid.
+      const entries = this.getRootGridEntries(
+        rootNodes,
+        graphNodes,
+        parentChildMap,
+        internalComponentChildren
+      );
 
-      if (rootArray.length === 1) {
+      const entryIndex = entries.findIndex((e) => e.nodeId === nodeId);
+      if (entries.length <= 1 || entryIndex === -1) {
         return [
           basePosition[0],
           basePosition[1] + componentYOffset,
           basePosition[2],
         ];
-      } else {
-        const gridSize = Math.ceil(Math.sqrt(rootArray.length));
-        const row = Math.floor(rootIndex / gridSize);
-        const col = rootIndex % gridSize;
-
-        const spacing = 250;
-
-        return [
-          basePosition[0] + (col - (gridSize - 1) / 2) * spacing,
-          basePosition[1] + componentYOffset,
-          basePosition[2] + (row - (gridSize - 1) / 2) * spacing,
-        ];
       }
+
+      const gridSize = Math.ceil(Math.sqrt(entries.length));
+      const rows = gridSize;
+
+      // Largest rendered radius per row (drives the gap between cells).
+      const maxRadiusInRow = [];
+      for (let r = 0; r < rows; r++) {
+        let maxR = 0;
+        for (let c = 0; c < gridSize; c++) {
+          const i = r * gridSize + c;
+          if (i >= entries.length) break;
+          if (entries[i].radius > maxR) maxR = entries[i].radius;
+        }
+        maxRadiusInRow.push(maxR);
+      }
+
+      const levelFactor = 0.15;
+      const baseMinGap = 30;
+      const gapForRow = (r) =>
+        Math.max(baseMinGap, maxRadiusInRow[r] * 0.5 * levelFactor);
+      const gapBetweenRows = (a, b) =>
+        Math.max(
+          baseMinGap,
+          Math.max(maxRadiusInRow[a], maxRadiusInRow[b]) * 0.5 * levelFactor
+        );
+
+      // Pack cells within each row: spacing(i, i-1) = r_i + r_{i-1} + gap,
+      // then centre the row on basePosition[0].
+      const rowCellsX = [];
+      const rowCenterOffset = [];
+      for (let r = 0; r < rows; r++) {
+        const cellsX = [];
+        const gap = gapForRow(r);
+        for (let c = 0; c < gridSize; c++) {
+          const i = r * gridSize + c;
+          if (i >= entries.length) break;
+          if (c === 0) {
+            cellsX.push(0);
+          } else {
+            const prev = entries[r * gridSize + c - 1];
+            cellsX.push(cellsX[c - 1] + prev.radius + entries[i].radius + gap);
+          }
+        }
+        rowCellsX.push(cellsX);
+        const first = entries[r * gridSize];
+        const last = entries[r * gridSize + cellsX.length - 1];
+        rowCenterOffset.push(
+          (0 - first.radius + (cellsX[cellsX.length - 1] + last.radius)) / 2
+        );
+      }
+
+      // Stack rows on Z (tallest object in each row), centring the whole
+      // block on basePosition so the hierarchy stays around its origin.
+      const rowCenterZ = [0];
+      for (let r = 1; r < rows; r++) {
+        rowCenterZ.push(
+          rowCenterZ[r - 1] +
+            maxRadiusInRow[r - 1] +
+            maxRadiusInRow[r] +
+            gapBetweenRows(r - 1, r)
+        );
+      }
+      const blockCenterZ =
+        (rowCenterZ[0] -
+          maxRadiusInRow[0] +
+          rowCenterZ[rows - 1] +
+          maxRadiusInRow[rows - 1]) /
+        2;
+
+      const row = Math.floor(entryIndex / gridSize);
+      const col = entryIndex % gridSize;
+
+      return [
+        basePosition[0] + rowCellsX[row][col] - rowCenterOffset[row],
+        basePosition[1] + componentYOffset,
+        basePosition[2] + rowCenterZ[row] - blockCenterZ,
+      ];
     } else {
       const isInternalComponent =
         nodeType === 'component' && internalComponentChildren.has(nodeId);
@@ -243,6 +319,77 @@ export const positionMethods = {
         }
       }
     }
+  },
+
+  /**
+   * Root nodes that actually occupy a level-0 grid slot, with each one's
+   * rendered radius. Every other root type (services, stores, functions,
+   * utilities, etc.) is re-positioned into a group container by
+   * positionGroupedNodes, so reserving them a slot would scatter the real
+   * hierarchy across a sparse grid. Mirrors the skip predicates used in
+   * positionNodeHierarchy.
+   */
+  getRootGridEntries(rootNodes, graphNodes, parentChildMap, internalComponentChildren) {
+    const entries = [];
+    for (const nodeId of rootNodes) {
+      const node = graphNodes.get(nodeId);
+      if (!node) continue;
+
+      const nodeType = (node.type || '').toLowerCase().trim();
+      const isPlacedAtRoot =
+        nodeType === NODE_TYPE_COMPONENT ||
+        nodeType === NODE_TYPE_PERSON ||
+        nodeType === NODE_TYPE_BOUNDARY ||
+        nodeType === NODE_TYPE_JUNCTION;
+      if (!isPlacedAtRoot) continue;
+
+      if (
+        nodeType === NODE_TYPE_COMPONENT &&
+        internalComponentChildren &&
+        internalComponentChildren.has(nodeId)
+      ) {
+        continue;
+      }
+
+      entries.push({
+        nodeId,
+        radius: this.getRootGridRadius(
+          nodeId,
+          nodeType,
+          parentChildMap,
+          graphNodes,
+          internalComponentChildren
+        ),
+      });
+    }
+    return entries;
+  },
+
+  /**
+   * Rendered radius of a root object used for dynamic spacing — the
+   * dodecahedron hull size for components (derived from its child scale),
+   * or a small placeholder for the tiny non-component root objects.
+   */
+  getRootGridRadius(
+    nodeId,
+    nodeType,
+    parentChildMap,
+    graphNodes,
+    internalComponentChildren
+  ) {
+    if (nodeType === NODE_TYPE_COMPONENT) {
+      const scaleResult = this.calculateDodecahedronScale(
+        nodeId,
+        parentChildMap,
+        graphNodes,
+        internalComponentChildren || new Set(),
+        0
+      );
+      return BASE_DODECAHEDRON_RADIUS * Math.max(...scaleResult.nodeScale);
+    }
+    if (nodeType === NODE_TYPE_JUNCTION) return 3;
+    if (nodeType === NODE_TYPE_PERSON) return DEFAULT_SPHERE_SIZE;
+    return 12;
   },
 
   /**

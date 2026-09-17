@@ -400,7 +400,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   // Mark this window as "significant" so that, if it's closed, UIOverlay will
   // archive it and surface a numbered icon below the top bar to reopen it.
   const markSignificant = useCallback(() => {
-    if (windowId <= 0 || !spaceId) return;
+    if (windowId < 0 || !spaceId) return;
     useChatArchiveStore.getState().markSignificant(spaceId, windowId);
   }, [spaceId, windowId]);
 
@@ -408,7 +408,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   // config or plan/code messages — e.g. it was reopened from an archive after a
   // reload, where the in-session significance flags were lost.
   useEffect(() => {
-    if (windowId <= 0 || !spaceId) return;
+    if (windowId < 0 || !spaceId) return;
     try {
       const hasOwnProvider = localStorage.getItem(`llm:window:${windowId}:providerId`) !== null;
       const hasOwnApiKey = localStorage.getItem(`llm:window:${windowId}:apiKey`) !== null;

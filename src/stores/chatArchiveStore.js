@@ -19,7 +19,7 @@ function loadArchived(spaceId) {
   try {
     const raw = localStorage.getItem(archiveKey(spaceId));
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((id) => Number.isInteger(id) && id > 0) : [];
+    return Array.isArray(list) ? list.filter((id) => Number.isInteger(id) && id >= 0) : [];
   } catch {
     return [];
   }
@@ -59,7 +59,7 @@ const useChatArchiveStore = createWithEqualityFn((set, get) => ({
   },
 
   markSignificant: (spaceId, windowId) => {
-    if (!spaceId || !windowId || windowId <= 0) return;
+    if (!spaceId || windowId == null || windowId < 0) return;
     set((s) => {
       if (s.significantBySpace[spaceId]?.[windowId]) return s;
       return {
@@ -72,12 +72,12 @@ const useChatArchiveStore = createWithEqualityFn((set, get) => ({
   },
 
   isSignificant: (spaceId, windowId) => {
-    if (!spaceId || !windowId) return false;
+    if (!spaceId || windowId == null || windowId < 0) return false;
     return !!(get().significantBySpace[spaceId]?.[windowId]);
   },
 
   archiveWindow: (spaceId, windowId) => {
-    if (!spaceId || !windowId || windowId <= 0) return;
+    if (!spaceId || windowId == null || windowId < 0) return;
     set((s) => {
       const current = s.archivedBySpace[spaceId] !== undefined ? s.archivedBySpace[spaceId] : loadArchived(spaceId);
       if (current.includes(windowId)) return s;
@@ -88,7 +88,7 @@ const useChatArchiveStore = createWithEqualityFn((set, get) => ({
   },
 
   unarchiveWindow: (spaceId, windowId) => {
-    if (!spaceId || !windowId) return;
+    if (!spaceId || windowId == null || windowId < 0) return;
     set((s) => {
       const current = s.archivedBySpace[spaceId] !== undefined ? s.archivedBySpace[spaceId] : loadArchived(spaceId);
       const next = current.filter((id) => id !== windowId);

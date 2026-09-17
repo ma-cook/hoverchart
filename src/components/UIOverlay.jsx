@@ -576,10 +576,20 @@ const UIOverlay = ({
     });
     // Surface closed chat windows that were actually used (provider configured
     // or interacted with) as numbered icons below the top bar so the user can
-    // reopen them.
-    if (currentSpaceId && id > 0 &&
+    // reopen them. The primary window (id 0) is included now too.
+    if (currentSpaceId && id >= 0 &&
         useChatArchiveStore.getState().isSignificant(currentSpaceId, id)) {
       useChatArchiveStore.getState().archiveWindow(currentSpaceId, id);
+    }
+  }, [currentSpaceId]);
+
+  // Close the primary chat window (id 0, toggled via chatOpen) and archive it
+  // like the extra windows so it shows as a numbered icon below the top bar.
+  const handleClosePrimaryChat = useCallback(() => {
+    setChatOpen(false);
+    if (currentSpaceId &&
+        useChatArchiveStore.getState().isSignificant(currentSpaceId, 0)) {
+      useChatArchiveStore.getState().archiveWindow(currentSpaceId, 0);
     }
   }, [currentSpaceId]);
 
@@ -590,6 +600,10 @@ const UIOverlay = ({
     if (!currentSpaceId) return;
     const archive = useChatArchiveStore.getState();
     archive.unarchiveWindow(currentSpaceId, id);
+    if (id === 0) {
+      setChatOpen(true);
+      return;
+    }
     if (chatWindows.includes(id)) return;
     const lastId = chatWindows[chatWindows.length - 1];
     const anchor = (lastId != null && chatWindowLayouts[lastId]) || defaultChatLayout;
@@ -597,6 +611,43 @@ const UIOverlay = ({
     setChatWindowLayouts((prev) => ({ ...prev, [id]: layout }));
     setChatWindows((prev) => (prev.includes(id) ? prev : [...prev, id]));
   }, [currentSpaceId, chatWindows, chatWindowLayouts, cascadeWindowLayout]);
+
+  // The space-chat icon opens/closes ALL chat windows as one unit: the primary
+  // chat plus every archived chat window. Opening reopens each archived window
+  // (cascading layouts so they don't stack), closing archives the primary and
+  // all currently-open extras that were significant.
+  const handleToggleAllChats = useCallback(() => {
+    if (!currentSpaceId) return;
+    const anyOpen = chatOpen || chatWindows.length > 0;
+    if (anyOpen) {
+      setChatOpen(false);
+      chatWindows.forEach((id) => handleCloseChat(id));
+      if (useChatArchiveStore.getState().isSignificant(currentSpaceId, 0)) {
+        useChatArchiveStore.getState().archiveWindow(currentSpaceId, 0);
+      }
+      return;
+    }
+    const archive = useChatArchiveStore.getState();
+    const archived = archive.archivedIds(currentSpaceId);
+    setChatOpen(true);
+    archived.forEach((id) => archive.unarchiveWindow(currentSpaceId, id));
+    if (archived.length === 0) return;
+    setChatWindowLayouts((prevLayouts) => {
+      const next = { ...prevLayouts };
+      let anchor = chatWindowLayouts[0] || defaultChatLayout;
+      for (const id of archived) {
+        if (id === 0) continue;
+        const layout = cascadeWindowLayout(anchor);
+        next[id] = layout;
+        anchor = layout;
+      }
+      return next;
+    });
+    setChatWindows((prev) => {
+      const toAdd = archived.filter((id) => id !== 0 && !prev.includes(id));
+      return [...prev, ...toAdd];
+    });
+  }, [currentSpaceId, chatOpen, chatWindows, chatWindowLayouts, handleCloseChat, cascadeWindowLayout]);
 
   // Keep the archive store's cached list in sync with the current space so the
   // numbered icon bar below the top bar reflects the persisted archive.
@@ -1923,17 +1974,19 @@ const UIOverlay = ({
           below the top bar. Click to reopen that window's archived chat. */}
       {!trialMode && archivedChatWindows.length > 0 && (
         <div className="chat-archive-bar" onClick={(e) => e.stopPropagation()}>
-          {archivedChatWindows.map((windowId) => (
+          {[...archivedChatWindows]
+            .sort((a, b) => (a === 0 ? -1 : b === 0 ? 1 : a - b))
+            .map((windowId, index) => (
             <button
               key={windowId}
               className="chat-archive-icon"
               onClick={() => handleOpenArchivedChat(windowId)}
-              title={`Reopen space chat ${windowId}`}
-              aria-label={`Reopen space chat ${windowId}`}
+              title={`Reopen space chat ${index + 1}`}
+              aria-label={`Reopen space chat ${index + 1}`}
             >
               💬
               <span className="chat-archive-number" aria-hidden="true">
-                {windowId}
+                {index + 1}
               </span>
             </button>
           ))}
@@ -2315,16 +2368,16 @@ const UIOverlay = ({
                     setChatTooltipVisible((v) => !v);
                     return;
                   }
-                  setChatOpen((prev) => !prev);
+                  handleToggleAllChats();
                 }}
                 title={chatLocked ? 'login to access the chat window' : 'Toggle Space Chat'}
                 style={
                   chatLocked
                     ? undefined
                     : {
-                        background: chatOpen ? 'rgba(74,144,217,0.2)' : undefined,
-                        borderColor: chatOpen ? '#4a90d9' : undefined,
-                        color: chatOpen ? '#4a90d9' : undefined,
+                        background: (chatOpen || chatWindows.length > 0) ? 'rgba(74,144,217,0.2)' : undefined,
+                        borderColor: (chatOpen || chatWindows.length > 0) ? '#4a90d9' : undefined,
+                        color: (chatOpen || chatWindows.length > 0) ? '#4a90d9' : undefined,
                       }
                 }
               >
@@ -2336,7 +2389,7 @@ const UIOverlay = ({
       </div>
 
       {/* Group chat window - opens at the top-left of the chat area */}
-      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={() => setChatOpen(false)} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} layout={chatWindowLayouts[0] || defaultChatLayout} onLayoutChange={(next) => handleLayoutChange(0, next)} />}
+      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={handleClosePrimaryChat} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} layout={chatWindowLayouts[0] || defaultChatLayout} onLayoutChange={(next) => handleLayoutChange(0, next)} />}
 
       {/* Extra chat windows - each is an independent LLM chat */}
       {!trialMode && chatWindows.map((id) => (
