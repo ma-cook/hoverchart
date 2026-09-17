@@ -1,9 +1,9 @@
 import pool from '../db.js';
 
-const rooms = new Map();
+const rooms = new Map(); // spaceId -> Map<userId, member object>
 
 export function registerSignalingHandlers(io, socket) {
-  socket.on('signaling:join', async ({ spaceId }) => {
+  socket.on('signaling:join', async ({ spaceId, displayName, photoUrl, isGuest }) => {
     if (!spaceId) return;
     const userId = socket.user?.sub || socket.guest?.sub;
     if (!userId) return;
@@ -11,23 +11,34 @@ export function registerSignalingHandlers(io, socket) {
     socket.join(`space:${spaceId}`);
     socket.spaceId = spaceId;
 
-    if (!rooms.has(spaceId)) rooms.set(spaceId, new Set());
-    rooms.get(spaceId).add(userId);
+    // Build a full member object (mirrors client field names: userId,
+    // displayName, photoURL, isGuest) so presence chips render real avatars and
+    // initials instead of a bare "?" fallback.
+    const member = {
+      userId,
+      displayName: displayName || socket.user?.name || (socket.isGuest ? 'Guest' : socket.guest?.name) || 'Guest',
+      photoURL: photoUrl || socket.user?.picture || socket.guest?.picture || null,
+      isGuest: !!isGuest || !!socket.isGuest,
+      online: true,
+    };
+
+    if (!rooms.has(spaceId)) rooms.set(spaceId, new Map());
+    rooms.get(spaceId).set(userId, member);
 
     try {
-      socket.userData = { displayName: socket.user?.name || socket.guest?.name || 'Anonymous', photoUrl: socket.user?.picture || null, isGuest: !!socket.guest };
+      socket.userData = { displayName: member.displayName, photoUrl: member.photoURL, isGuest: member.isGuest };
       await pool.query(
         `INSERT INTO user_presence (space_id, user_id, display_name, photo_url, is_guest, online, last_seen)
          VALUES ($1, $2, $3, $4, $5, true, NOW())
          ON CONFLICT (space_id, user_id)
          DO UPDATE SET online = true, last_seen = NOW(), display_name = $3, photo_url = $4, is_guest = $5`,
-        [spaceId, userId, socket.userData.displayName, socket.userData.photoUrl, socket.userData.isGuest]
+        [spaceId, userId, member.displayName, member.photoURL, member.isGuest]
       );
     } catch (err) {
       console.error('Presence join error:', err);
     }
 
-    const members = Array.from(rooms.get(spaceId));
+    const members = Array.from(rooms.get(spaceId).values());
     io.to(`space:${spaceId}`).emit('signaling:members', members);
   });
 
@@ -63,7 +74,7 @@ export function registerSignalingHandlers(io, socket) {
       } catch (err) {
         console.error('Presence disconnect error:', err);
       }
-      const members = rooms.has(spaceId) ? Array.from(rooms.get(spaceId)) : [];
+      const members = rooms.has(spaceId) ? Array.from(rooms.get(spaceId).values()) : [];
       io.to(`space:${spaceId}`).emit('signaling:members', members);
     }
   });

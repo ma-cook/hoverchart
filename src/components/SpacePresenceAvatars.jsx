@@ -22,9 +22,11 @@ const getInitials = (displayName) => {
 const Avatar = ({ user }) => {
   const [imgError, setImgError] = useState(false);
 
+  const displayName = user.displayName || user.name;
+  const photoURL = user.photoURL || user.picture;
   const tooltipLabel = user.isGuest
     ? 'Guest'
-    : user.displayName || 'User';
+    : displayName || 'User';
 
   const style = {
     width: 32,
@@ -50,16 +52,16 @@ const Avatar = ({ user }) => {
     <div style={style} title={tooltipLabel}>
       {user.isGuest ? (
         'G'
-      ) : user.photoURL && !imgError ? (
+      ) : photoURL && !imgError ? (
         <img
-          src={user.photoURL}
+          src={photoURL}
           alt={tooltipLabel}
           referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
       ) : (
-        getInitials(user.displayName)
+        getInitials(displayName)
       )}
     </div>
   );
