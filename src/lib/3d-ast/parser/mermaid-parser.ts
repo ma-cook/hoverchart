@@ -334,13 +334,24 @@ export class MermaidParser {
         const type = this.parseNodeType(typeStr);
         const geometry = this.parseGeometry(line);
 
-        // Check if there's a property block starting on this line or the next
+        // The node token may be followed by an inline property block
+        // (`App[Function: App]{codeFilePath: "src/App.jsx"}`) or a multi-line
+        // block starting on the next line. Inline props are matched ONLY in the
+        // text AFTER the matched declaration token: curly-bracket declarations
+        // like `Foo{Component: Bar}` are themselves wrapped in braces, so a
+        // whole-line scan would mistake the declaration for a property block
+        // and never consume the real `{...}` block emitted on the lines below.
         let properties: Record<string, any> = {};
+        const remainder = line.substring(match[0].length);
+        const remainingText = remainder.trim();
 
-        // Check if current line has inline properties
-        const inlinePropsMatch = line.match(/\s*\{(.+)\}\s*$/);
+        // Inline property block — props must end the line (optionally followed
+        // by an explicit-containment `in <parent>` suffix).
+        const inlinePropsMatch = remainingText.match(
+          /^\{(.*)\}\s*(?:in\b.*)?$/
+        );
         if (inlinePropsMatch) {
-          properties = this.parseProperties(inlinePropsMatch[1]);
+          properties = this.parseInlineBlockProps(inlinePropsMatch[1]);
         } else {
           // Check if next line starts a property block
           properties = this.parseMultiLineProperties();
@@ -350,8 +361,10 @@ export class MermaidParser {
         // Consumed only AFTER the matched node token so label text containing
         // " in " is never misinterpreted.
         let parentId: string | undefined;
-        const remainder = line.substring(match[0].length).trim();
-        const parentMatch = remainder.match(
+        const afterProps = inlinePropsMatch
+          ? remainingText.substring(inlinePropsMatch[0].length).trim()
+          : remainingText;
+        const parentMatch = afterProps.match(
           /^in\s+(?:<([A-Za-z0-9_/.\- ]+)>|([A-Za-z0-9_/.\-]+))/
         );
         if (parentMatch) {
@@ -723,31 +736,10 @@ export class MermaidParser {
           break;
         }
 
-        // Parse property line
-        if (line.includes(':')) {
-          const [key, ...valueParts] = line.split(':');
-          const value = valueParts.join(':').trim();
-
-          if (key && value) {
-            // Handle different value types
-            let parsedValue: any = value.replace(/['"]/g, '');
-
-            // Try to parse as number
-            if (!isNaN(Number(parsedValue))) {
-              parsedValue = Number(parsedValue);
-            }
-
-            // Try to parse as array (simple format like [0, 0, 0])
-            if (typeof parsedValue === 'string' && parsedValue.startsWith('[') && parsedValue.endsWith(']')) {
-              try {
-                parsedValue = JSON.parse(parsedValue);
-              } catch (e) {
-                // Keep as string if JSON parsing fails
-              }
-            }
-
-            properties[key.trim()] = parsedValue;
-          }
+        if (line.length > 0) {
+          // Same robust parser as inline props: handles quoted values that
+          // contain `:`, `,` or nested braces (e.g. typescriptType strings).
+          Object.assign(properties, this.parseInlineBlockProps(line));
         }
 
         this.currentLine++;

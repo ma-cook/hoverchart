@@ -175,6 +175,9 @@ export const objectMethods = {
 
     // Collect position updates for existing objects during rescan (reprocessed merged markdown)
     const positionUpdates = new Map();
+    // Collect code-association updates (codeFilePath/line ranges) discovered by
+    // a rescan for objects that existed before a code path was emitted.
+    const merfolkDataUpdates = new Map();
 
     const nodeEntries = Array.from(nodePositions);
     let objectsCreated = 0;
@@ -240,8 +243,30 @@ export const objectMethods = {
           }
 
           if (existingNodeIdMap.has(data.nodeId)) {
-            nodeToObjectIdMap.set(data.nodeId, existingNodeIdMap.get(data.nodeId));
-            positionUpdates.set(existingNodeIdMap.get(data.nodeId), data.position);
+            const existingId = existingNodeIdMap.get(data.nodeId);
+            nodeToObjectIdMap.set(data.nodeId, existingId);
+            positionUpdates.set(existingId, data.position);
+
+            // The reprocessed (rescan) markdown may now carry a code path for
+            // a node whose object was created before that association existed.
+            // Attach it so re-scanning a codebase wires new code to existing
+            // objects instead of leaving them with an empty codeFilePath.
+            if (data.extraData?.codeFilePath) {
+              merfolkDataUpdates.set(existingId, {
+                codeFilePath: data.extraData.codeFilePath,
+                startLine: data.extraData.startLine != null
+                  ? Number(data.extraData.startLine)
+                  : undefined,
+                endLine: data.extraData.endLine != null
+                  ? Number(data.extraData.endLine)
+                  : undefined,
+                exports: data.extraData.exports || '',
+                htmlElements: data.extraData.htmlElements || '',
+                cssClasses: data.extraData.cssClasses || '',
+                jsxRefs: data.extraData.jsxRefs || '',
+              });
+            }
+
             continue;
           }
 
@@ -504,26 +529,40 @@ export const objectMethods = {
       useObjectsStore.getState().setObjects(updated);
     }
 
-    // ── Apply position updates in a single pass ──────────────────────
-    if (positionUpdates.size > 0) {
+    // ── Apply position + code-association updates in a single pass ─────
+    if (positionUpdates.size > 0 || merfolkDataUpdates.size > 0) {
       const currentObjects = useObjectsStore.getState().objects;
+      const updatesToSave = [];
       for (let i = 0; i < currentObjects.length; i++) {
         const obj = currentObjects[i];
-        if (positionUpdates.has(obj.id)) {
-          currentObjects[i] = { ...obj, position: positionUpdates.get(obj.id) };
+        const newPos = positionUpdates.get(obj.id);
+        const mPatch = merfolkDataUpdates.get(obj.id);
+        if (!newPos && !mPatch) continue;
+
+        let updated = obj;
+        if (newPos) {
+          updated = { ...updated, position: newPos };
         }
+        if (mPatch) {
+          updated = {
+            ...updated,
+            merfolkData: {
+              ...(updated.merfolkData || {}),
+              ...mPatch,
+            },
+          };
+        }
+        currentObjects[i] = updated;
+        updatesToSave.push(updated);
       }
       useObjectsStore.getState().setObjects(currentObjects);
 
-      // Persist position updates for existing objects that were repositioned
-      for (const [objId, newPos] of positionUpdates) {
-        const updated = currentObjects.find(o => o.id === objId);
-        if (updated) {
-          allObjectsToSave.push({
-            ...updated,
-            position: newPos,
-          });
-        }
+      // Persist position/metadata updates for existing objects that were updated
+      for (const updated of updatesToSave) {
+        allObjectsToSave.push({
+          ...updated,
+          position: updated.position,
+        });
       }
 
       await new Promise(r => setTimeout(r, 0));
