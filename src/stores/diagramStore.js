@@ -1,9 +1,45 @@
 import { createWithEqualityFn } from 'zustand/traditional';
 
+/**
+ * Build a nodeId → { codeFilePath, startLine, endLine } index from parsed
+ * digram graphs. The code viewer/hasCode gates rely on this so an object can
+ * resolve its source even when the object's own merfolkData.codeFilePath was
+ * saved empty (e.g. objects created by scans before the parser fix, or symbols
+ * the scanner did not emit a codeFilePath block for) — the freshly-parsed graph
+ * node still carries the association.
+ */
+function buildNodeCodeIndex(graphs) {
+  if (!graphs) return null;
+  const index = new Map();
+  for (const g of graphs) {
+    if (!g?.nodes) continue;
+    for (const [nodeId, node] of g.nodes) {
+      const metadata = node?.metadata || {};
+      const codeFilePath = metadata.codeFilePath || node?.codeFilePath || '';
+      if (codeFilePath) {
+        index.set(nodeId, {
+          codeFilePath,
+          startLine:
+            metadata.startLine != null
+              ? Number(metadata.startLine)
+              : undefined,
+          endLine: metadata.endLine != null ? Number(metadata.endLine) : undefined,
+        });
+      }
+    }
+  }
+  return index.size > 0 ? index : null;
+}
+
 const useDiagramStore = createWithEqualityFn((set) => ({
   // Aggregated graph data from all parsed Merfolk diagrams
   // Each entry: { nodes: Map<nodeId, nodeData>, connections: Map<edgeId, connectionData> }
   graphs: null,
+
+  // nodeId → { codeFilePath, startLine, endLine } derived from the current
+  // graphs (see buildNodeCodeIndex). Lets objects resolve code associations by
+  // their merfolkData.nodeId even when the persisted object lacks a code path.
+  nodeCodeIndex: null,
 
   // Hierarchy relationships from the layout pass
   // { parentChildMap: Map, childParentMap: Map, rootNodes: Set, internalComponentChildren: Set }
@@ -46,7 +82,11 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   isLspEnriching: false,
 
   setGraphs(graphs) {
-    set({ graphs, is2DReady: !!graphs });
+    set({
+      graphs,
+      is2DReady: !!graphs,
+      nodeCodeIndex: buildNodeCodeIndex(graphs),
+    });
   },
 
   setHierarchy(hierarchy) {
@@ -118,6 +158,7 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   clear() {
     set({
       graphs: null,
+      nodeCodeIndex: null,
       hierarchy: null,
       nodeToObjectIdMap: null,
       connectionTags: null,

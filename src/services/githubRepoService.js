@@ -3920,10 +3920,34 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
       }
     }
 
+    // Reverse lookup: symbol name → containing file path. Top-level components
+    // are discovered in the JSX/TS passes and recorded in `componentToFile`
+    // (and/or share the basename of their containing file in `fileFunctions`),
+    // but they are never added to fileFunctions[].functions — so emitting a
+    // codeFilePath block for them failed. Resolving here lets the markdown
+    // emitter attach a code association to every component the same way it does
+    // for functions/hooks/services.
+    const symbolToFilePath = new Map();
+    for (const [compName, compFileName] of componentToFile) {
+      if (symbolToFilePath.has(compName)) continue;
+      const entry = fileFunctions.get(compFileName);
+      if (entry?.filePath) symbolToFilePath.set(compName, entry.filePath);
+    }
+    for (const [fileName, info] of fileFunctions) {
+      if (!info?.filePath) continue;
+      // Components that share their containing file's basename (App ↔ App.jsx)
+      if (!symbolToFilePath.has(fileName)) symbolToFilePath.set(fileName, info.filePath);
+      // Every function/hook/service/store recorded in this file
+      for (const fnName of info.functions) {
+        if (!symbolToFilePath.has(fnName)) symbolToFilePath.set(fnName, info.filePath);
+      }
+    }
+
     // Generate Merfolk markdown
     const merfolkResult = generateMerfolkMarkdown({
       repoName,
       repoFileContents,
+      symbolToFilePath,
       elements,
       componentFunctions,
       componentFuncDisplayNames,
@@ -4038,6 +4062,7 @@ export const generateMerfolkFromRepository = async (owner, repoName, options = {
 const generateMerfolkMarkdown = ({
   repoName,
   repoFileContents = {},
+  symbolToFilePath = new Map(),
   elements,
   componentFunctions,
   componentFuncDisplayNames,
@@ -4339,6 +4364,8 @@ const generateMerfolkMarkdown = ({
   const getFilePath = (name) => {
     const parent = childToParentMap.get(name);
     if (parent?.filePath) return parent.filePath;
+    const indexed = symbolToFilePath.get(name);
+    if (indexed) return indexed;
     for (const [, info] of fileFunctions) {
       if (info.functions.has(name)) return info.filePath;
     }
