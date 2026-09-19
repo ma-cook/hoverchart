@@ -82,6 +82,59 @@ After an initial scan the app records the commit SHA. When the rescan button is 
 5. Merges new nodes and connections into the existing diagram without duplicating existing elements
 6. Processes only the new section to create additional 3D objects
 
+### How LLMs Use the Merfolk File to Gain Codebase-Wide Context
+
+The Merfolk markdown is the single artifact that gives LLM copilots and agents a compact, navigable mental model of the **entire repository** — not just the file the user is looking at. It is treated as a *map*, while the actual source text lives in a separate layer.
+
+#### 1. It is a self-describing architecture map
+
+For every element the scanner extracts, the file lists a node (`{Component: Name}`, `[Function: Name]`, `[[Store: Name]]`, `((Service: Name))`, `[Hook: Name]`, `<Library: Name>`) plus machine-readable properties, and an edge (`-->`, `-.->`, `..>`, `*-->`, `==`) with a human-readable label for each relationship:
+
+```merfolk
+App{Component: App} {
+  codeFilePath: "src/App.jsx"
+  startLine: 1
+  endLine: 40
+  exports: default
+  typescriptType: "React.FC"
+}
+App --> AppShell : "renders"
+```
+
+Three properties are what make the map *actionable* for an LLM:
+- **`codeFilePath`** — which file a symbol lives in.
+- **`startLine` / `endLine`** — the exact range of that symbol inside the file.
+- **Edge labels + hierarchy** — *what* the components/functions/stores do and *how they connect*, regardless of which file they're in.
+
+#### 2. The map is pre-loaded into the agent's context
+
+The agent never has to discover the codebase from scratch. When the repo is scanned, the backend stores the markdown in cloud object storage, mirrors it to IndexedDB as a `merfolk:diagram` entry, and keeps a URL on the space record. At chat time the system prompt carries summaries derived from that map:
+
+- **REPOSITORY MAP** — a pre-loaded block built from the hydrated graph and the scan's symbol index: `COMPONENT INDEX` (component → file), `GRAPH SUMMARY` (node counts, roots, top connections), `FILE TREE`, `SYMBOL INDEX` (file → exports/functions/CSS classes/HTML elements), and `IMPORT GRAPH`.
+- **MERFOLK DIAGRAM EXCERPT** — the `architecture-map` skill injects the first ~3,000 characters of the raw diagram straight into the prompt so the model sees the real topology and syntax.
+- **ARCHITECTURAL COMMUNITIES** — cluster summaries produced by running graph clustering over the Merfolk graph, so the LLM can reason about subsystems (auth, billing, rendering, …) instead of individual files.
+- **MERFOLK DIAGRAM SYNTAX REFERENCE** — the plan/code-gen system prompt includes the grammar itself, so the LLM can author or modify the map (rendering new nodes/edges into the 3D scene) as part of an answer.
+
+#### 3. The map routes the agent to the *exact* source line
+
+The map avoids dumping the whole corpus into the prompt. Instead, graph/community tools answer structural questions from the hydrated Merfolk graph and hand the agent a precise pointer:
+
+- `getNodeInfo`, `getDependencies`, `findPath`, `getNeighborhood`, `searchNodes` resolve each node to its `merfolkData.codeFilePath` and reply with `→ Use read_file("<path>") to see the full content.`
+- `searchCommunities` / `getCommunityInfo` return subsystem summaries from community detection.
+
+So an agent answering "why does checkout still charge tax after the coupon is applied?" can follow: `CouponConfig` → `applyCartTotals` → its `codeFilePath` + line range → `read_file()` on that exact file, then `grep`/`search_code` outward. The Merfolk graph gives it repository-wide awareness first; file contents are fetched on demand.
+
+#### 4. Two layers: architect's map vs. engineer's source
+
+| | Architecture map | Source text |
+|---|---|---|
+| Artifact | Generated Merfolk markdown + hydrated graph | `repoFileContents` and ContentStore `repo:<path>` entries |
+| Stored as | Cloud object storage URL, `merfolk:diagram` in IndexedDB, `diagramStore.graphs` in memory | IndexedDB snapshots / content-store chunks |
+| Role | "What exists, where it lives, what it connects to" — navigation, layout, subsystem boundaries | Exact code — edit targets, imports, implementation details |
+| Injected via | REPOSITORY MAP, `MERFOLK DIAGRAM (excerpt)`, graph/community tools | `read_file`, `quick_look`, `search_code`, `grep` tool results |
+
+Because the Merfolk file carries per-symbol `codeFilePath` + `startLine`/`endLine`, the two layers stay linked: an LLM can jump from any node in the architectural map straight to the precise lines of real source, then zoom back out to the map for the next hop — keeping full-codebase awareness inside a small, focused prompt.
+
 ## Performance Optimisations
 
 ### Rendering
