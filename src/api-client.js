@@ -1,4 +1,5 @@
 import { safeSetItem, safeGetItem, safeRemoveItem } from './utils/safeLocalStorage';
+import { io } from 'socket.io-client';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const WS_URL = import.meta.env.VITE_WS_URL || API_BASE;
@@ -133,14 +134,15 @@ let socket = null;
 let socketCallbacks = new Map();
 
 export function getSocket() {
-  if (socket?.connected) return socket;
+  if (socket) return socket;
   loadTokens();
   if (!accessToken) return null;
 
-  const { io } = window.__SOCKET_IO__ || {};
-  if (!io) return null;
+  const globalIo = window.__SOCKET_IO__?.io;
+  const ioImpl = globalIo || io;
+  if (!ioImpl) return null;
 
-  socket = io(WS_URL, {
+  socket = ioImpl(WS_URL, {
     auth: { token: accessToken },
     transports: ['websocket'],
     reconnection: true,

@@ -67,6 +67,7 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
               picture: payload.picture,
               displayName: payload.name,
               photoURL: payload.picture,
+              isGuest: payload.isGuest === true,
             },
             isAuthReady: true,
           },

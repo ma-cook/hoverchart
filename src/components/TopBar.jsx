@@ -15,7 +15,7 @@ const getInitials = (displayName) => {
 const Avatar = ({ user }) => {
   const [imgError, setImgError] = useState(false);
 
-  const displayName = user.displayName || user.name;
+  const displayName = user.displayName || user.name || user.email;
   const photoURL = user.photoURL || user.picture;
   const tooltipLabel = user.isGuest ? 'Guest' : displayName || 'User';
 

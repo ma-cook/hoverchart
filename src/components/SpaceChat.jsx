@@ -550,12 +550,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       liveKeysRef.current.add(msg.id);
     });
 
-      emitSocket('chat:join', { spaceId });
+    const joinChat = () => emitSocket('chat:join', { spaceId });
+    const unsubConnect = onSocket('connect', joinChat);
+    joinChat();
 
     return () => {
       emitSocket('chat:leave', { spaceId });
       unsubHistory();
       unsubMessage();
+      unsubConnect();
       setMessages([]);
       liveKeysRef.current = new Set();
     };
