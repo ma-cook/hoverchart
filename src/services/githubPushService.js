@@ -4,7 +4,8 @@ import {
   createBranchRef,
   multiFileCommit,
 } from './githubIssuesService';
-import { fetchFileContent, getGithubToken } from './githubRepoService';
+import { fetchFileContent } from './githubRepoService';
+import { githubProxyRequest } from './githubApiProxy';
 import { hasSearchReplaceMarkers } from './codeExtractor';
 
 export { hasSearchReplaceMarkers };
@@ -62,15 +63,14 @@ export function applySearchReplace(existingContent, llmOutput) {
   return result;
 }
 
-export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, token, commitMessage) {
+export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, _token, commitMessage) {
   const { selectedRepo, selectedBranch } = useCodeStore.getState();
 
   const finalOwner = owner || useCodeStore.getState().repoOwner || selectedRepo?.owner?.login;
   const finalRepo = repoName || useCodeStore.getState().repoName || selectedRepo?.name;
   const finalBranch = branchName || selectedBranch || 'main';
-  const finalToken = token || useCodeStore.getState().githubToken || getGithubToken();
 
-  if (!finalToken || !finalOwner || !finalRepo) {
+  if (!finalOwner || !finalRepo) {
     return { success: false, pushed: 0, errors: [{ error: 'GitHub not connected or no repo selected' }], merged: {} };
   }
 
@@ -85,7 +85,7 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
     for (const block of blocks) {
       if (!block.filePath || !block.code) continue;
 
-      let existingContent = await fetchFileContent(finalOwner, finalRepo, block.filePath, finalToken);
+      let existingContent = await fetchFileContent(finalOwner, finalRepo, block.filePath);
 
       if (!existingContent) {
         const cs = useCodeStore.getState();
@@ -149,7 +149,7 @@ export async function pushCodeToGitHub(codeBlocks, owner, repoName, branchName, 
       ? `${commitMessage}\n\n${fileList}\nGenerated via Hoverchart`
       : `Code update: ${fileList}\n\nUpdated via Hoverchart`;
 
-    const result = await multiFileCommit(finalToken, finalOwner, finalRepo, finalBranch, files, message);
+    const result = await multiFileCommit(undefined, finalOwner, finalRepo, finalBranch, files, message);
 
     if (result.ok) {
       useCodeStore.getState().setPushStatus('success');
@@ -192,16 +192,10 @@ export async function connectRepo(token, repo) {
   return { ok: false, error: 'Could not find any branch in repository' };
 }
 
-export async function listBranches(token, owner, repo) {
-  const response = await fetch(
-    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?per_page=100`,
-    {
-      headers: {
-        Authorization: `token ${token}`,
-        Accept: 'application/vnd.github.v3+json',
-      },
-    }
-  );
+export async function listBranches(_token, owner, repo) {
+  const response = await githubProxyRequest(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`, {
+    query: { per_page: 100 },
+  });
 
   if (!response.ok) {
     return { ok: false, data: null, error: `${response.status}: ${response.statusText}` };

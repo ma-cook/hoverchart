@@ -1,0 +1,23 @@
+# hoverchart-scanner
+# Dedicated Cloud Run service for background repository scans. The single-file
+# bundle inlines the shared frontend scan core + express/pg/storage; only the
+# three runtime packages (web-tree-sitter, tree-sitter-wasms, typescript) are
+# external and resolved from the image's node_modules.
+# Build context = repo root (gcloud builds submit . / cloudbuild-scanner.yaml).
+FROM node:20-slim AS build
+WORKDIR /repo
+COPY backend/package*.json ./backend/
+RUN cd backend && npm ci
+COPY backend/ ./backend/
+COPY src/ ./src/
+RUN cd backend && npm run build:scanner
+
+FROM node:20-slim AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+COPY backend/package*.json ./
+RUN npm ci --omit=dev
+COPY --from=build /repo/backend/dist/scanner.mjs ./scanner.mjs
+COPY --from=build /repo/backend/dist/scanner.mjs.map ./scanner.mjs.map
+EXPOSE 8080
+CMD ["node", "--enable-source-maps", "scanner.mjs"]

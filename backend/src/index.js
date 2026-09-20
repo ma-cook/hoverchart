@@ -39,6 +39,8 @@ import { router as bulkRouter } from './api/bulk.js';
 import { router as updatesRouter } from './api/updates.js';
 import { router as usersRouter } from './api/users.js';
 import { router as plansRouter } from './api/plans.js';
+import { router as githubRouter } from './api/github.js';
+import { router as scanJobsRouter } from './api/scanJobs.js';
 
 app.use('/api/users', authenticate, usersRouter);
 app.use('/api/spaces', authenticate, spacesRouter);
@@ -50,6 +52,8 @@ app.use('/api/storage', authenticate, storageRouter);
 app.use('/api/bulk', authenticate, bulkRouter);
 app.use('/api/updates', authenticate, updatesRouter);
 app.use('/api/plans', authenticate, plansRouter);
+app.use('/api/github', authenticate, githubRouter);
+app.use('/api/scan-jobs', authenticate, scanJobsRouter);
 
 // LLM proxy (no app auth needed — provider API key passed by client)
 import { llmRouter } from './api/llm.js';
@@ -63,6 +67,10 @@ app.use('/api/zen', authenticate, zenRouter);
 import { registerChatHandlers } from './ws/chat.js';
 import { registerSignalingHandlers } from './ws/signaling.js';
 import { registerPlanHandlers } from './ws/plans.js';
+
+// Background-scan orchestration (main API is the always-on service)
+import { startScanSteward } from './workers/scanSteward.js';
+import { startRetentionSweep } from './workers/retentionSweep.js';
 
 io.on('connection', (socket) => {
   registerChatHandlers(io, socket);
@@ -78,6 +86,8 @@ async function start() {
   httpServer.listen(PORT, () => {
     console.log(`Hoverchart API listening on port ${PORT}`);
   });
+  startScanSteward();
+  startRetentionSweep();
 }
 
 start().catch((err) => {

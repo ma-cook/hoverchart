@@ -3,6 +3,26 @@ import pool from '../db.js';
 
 export const router = Router();
 
+/**
+ * API-shape mapping: the frontend reads/writes camelCase for the diagram
+ * persistence fields, while the DB (and the scanner worker) use snake_case.
+ * Emitting both keeps the row backward-compatible for any snake_case readers.
+ */
+export function serializeSpace(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    markdownStorageUrl: row.markdown_storage_url,
+    diagramCommitSha: row.diagram_commit_sha,
+    diagramRepo: row.diagram_repo,
+  };
+}
+
+// Accept either case from clients; the DB column + scanner worker use snake_case.
+function pick(req, camel, snake) {
+  return req.body[camel] !== undefined ? req.body[camel] : req.body[snake];
+}
+
 router.get('/', async (req, res) => {
   const userId = req.user.sub;
   try {
@@ -12,7 +32,7 @@ router.get('/', async (req, res) => {
        ORDER BY updated_at DESC`,
       [userId, JSON.stringify([userId])]
     );
-    res.json(result.rows);
+    res.json(result.rows.map(serializeSpace));
   } catch (err) {
     console.error('List spaces error:', err);
     res.status(500).json({ error: 'Failed to list spaces' });
@@ -29,7 +49,7 @@ router.post('/', async (req, res) => {
        VALUES ($1, $2, $3, $4) RETURNING *`,
       [userId, name, is_public || false, metadata || {}]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(serializeSpace(result.rows[0]));
   } catch (err) {
     console.error('Create space error:', err);
     res.status(500).json({ error: 'Failed to create space' });
@@ -44,7 +64,7 @@ router.get('/:id', async (req, res) => {
       [req.params.id, userId, JSON.stringify([userId])]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Space not found' });
-    res.json(result.rows[0]);
+    res.json(serializeSpace(result.rows[0]));
   } catch (err) {
     console.error('Get space error:', err);
     res.status(500).json({ error: 'Failed to get space' });
@@ -53,7 +73,15 @@ router.get('/:id', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   const userId = req.user.sub;
-  const { name, is_public, shared_with, metadata } = req.body;
+  const {
+    name,
+    is_public,
+    shared_with,
+    metadata,
+    markdown_storage_url = pick(req, 'markdownStorageUrl', 'markdown_storage_url'),
+    diagram_commit_sha = pick(req, 'diagramCommitSha', 'diagram_commit_sha'),
+    diagram_repo = pick(req, 'diagramRepo', 'diagram_repo'),
+  } = req.body;
   try {
     const result = await pool.query(
       `UPDATE spaces SET
@@ -61,13 +89,16 @@ router.patch('/:id', async (req, res) => {
         is_public = COALESCE($2, is_public),
         shared_with = COALESCE($3, shared_with),
         metadata = COALESCE($4, metadata),
+        markdown_storage_url = COALESCE($5, markdown_storage_url),
+        diagram_commit_sha = COALESCE($6, diagram_commit_sha),
+        diagram_repo = COALESCE($7, diagram_repo),
         updated_at = NOW()
-       WHERE id = $5 AND owner_id = $6
+       WHERE id = $8 AND owner_id = $9
        RETURNING *`,
-      [name, is_public, shared_with, metadata, req.params.id, userId]
+      [name, is_public, shared_with, metadata, markdown_storage_url, diagram_commit_sha, diagram_repo, req.params.id, userId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Space not found or not owner' });
-    res.json(result.rows[0]);
+    res.json(serializeSpace(result.rows[0]));
   } catch (err) {
     console.error('Update space error:', err);
     res.status(500).json({ error: 'Failed to update space' });

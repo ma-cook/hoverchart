@@ -71,5 +71,5 @@ if (enabled && typeof window !== 'undefined') {
   } catch { /* unsupported browser */ }
 }
 
-window.__importPerf = api;
+if (typeof window !== 'undefined') window.__importPerf = api;
 export default api;

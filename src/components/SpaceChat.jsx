@@ -19,11 +19,13 @@ import {
   getGithubOAuthUrl,
   fetchRepositories,
   fetchFileContent,
+  refreshGithubConnection,
 } from '../services/githubRepoService';
 import {
   getBranchRef,
   createBranchRef,
 } from '../services/githubIssuesService';
+import { githubProxyRequest } from '../services/githubApiProxy';
 import { listBranches, applySearchReplace, hasSearchReplaceMarkers, parseSearchReplaceBlocks } from '../services/githubPushService';
 import { diffToHunks, buildSearchReplaceBlock } from '../services/context/diffUtils';
 import { scanRepositoryAndGenerateDiagram } from '../services/githubRepoService';
@@ -647,7 +649,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         owner: selectedRepo.owner?.login || selectedRepo.owner,
         repo: selectedRepo.name,
         branch: selectedBranch,
-        token: getGithubToken(),
+        token: null,
         commitSha: getSpaceCommitSha(spaceId),
       } : null;
 
@@ -739,7 +741,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             owner: selectedRepo.owner?.login || selectedRepo.owner,
             repo: selectedRepo.name,
             branch: selectedBranch,
-            token: getGithubToken(),
+            token: null,
             fileTree: useCodeStore.getState().repoFileTree || [],
             fileContents: useCodeStore.getState().repoFileContents || {},
           };
@@ -855,23 +857,20 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               .catch((err) => console.warn('[CodeSend] populateContentStoreWorker failed:', err));
           }
         } else {
-          const token = getGithubToken();
-          if (token) {
-            const owner = selectedRepo.owner?.login || selectedRepo.owner;
-            const repoName = selectedRepo.name;
-            const branchName = selectedBranch;
-            console.log(_cs.repoFileTree
-              ? '[CodeSend] Cached tree present but contents empty — refetching repo context from GitHub...'
-              : '[CodeSend] Fetching repo context from GitHub...');
-            repoContext = await fetchRepoContext(token, owner, repoName, branchName);
-            useCodeStore.getState().setRepoContext(repoContext.fileTree, repoContext.fileContents);
-            console.log(`[CodeSend] Fetched: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
-            // Rebuild + persist the search corpus (IndexedDB) so search_code has
-            // full-text to scan even when no scan has run yet. Fire-and-forget.
-            if (Object.keys(repoContext.fileContents).length > 0) {
-              populateContentStoreWorker(repoContext.fileContents, null)
-                .catch((err) => console.warn('[CodeSend] populateContentStoreWorker failed:', err));
-            }
+          const owner = selectedRepo.owner?.login || selectedRepo.owner;
+          const repoName = selectedRepo.name;
+          const branchName = selectedBranch;
+          console.log(_cs.repoFileTree
+            ? '[CodeSend] Cached tree present but contents empty — refetching repo context from GitHub...'
+            : '[CodeSend] Fetching repo context from GitHub...');
+          repoContext = await fetchRepoContext(owner, repoName, branchName);
+          useCodeStore.getState().setRepoContext(repoContext.fileTree, repoContext.fileContents);
+          console.log(`[CodeSend] Fetched: ${repoContext.fileTree.length} files, ${Object.keys(repoContext.fileContents).length} contents`);
+          // Rebuild + persist the search corpus (IndexedDB) so search_code has
+          // full-text to scan even when no scan has run yet. Fire-and-forget.
+          if (Object.keys(repoContext.fileContents).length > 0) {
+            populateContentStoreWorker(repoContext.fileContents, null)
+              .catch((err) => console.warn('[CodeSend] populateContentStoreWorker failed:', err));
           }
         }
       }
@@ -893,7 +892,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         owner: selectedRepo.owner?.login || selectedRepo.owner,
         repo: selectedRepo.name,
         branch: selectedBranch,
-        token: getGithubToken(),
+        token: null,
         commitSha: getSpaceCommitSha(spaceId),
       } : null;
 
@@ -976,11 +975,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         const getExistingContent = async (filePath) => {
           const cached = csState.repoFileContents?.[filePath];
           if (cached) return cached;
-          const token = getGithubToken();
           const owner = selectedRepo.owner?.login || selectedRepo.owner;
-          if (!token || !owner) return null;
+          if (!owner) return null;
           try {
-            return await fetchFileContent(owner, selectedRepo.name, filePath, token);
+            return await fetchFileContent(owner, selectedRepo.name, filePath);
           } catch {
             return null;
           }
@@ -1199,6 +1197,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     if (isAuth !== githubConnected) {
       useCodeStore.getState().setGithubConnected(isAuth);
     }
+    // Authoritative sync with the server-side token record (pushes a stale
+    // github_login marker back to false when the token was revoked).
+    refreshGithubConnection().catch(() => {});
   }, [githubConnected]);
 
   useEffect(() => {
@@ -1209,11 +1210,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     if (!repo) return;
     const owner = repo.owner?.login || repo.owner;
     const repoName = repo.name;
-    const token = getGithubToken();
-    if (!token) return;
 
     setBranchFetching(true);
-    listBranches(token, owner, repoName)
+    listBranches(undefined, owner, repoName)
       .then(branches => {
         setAvailableBranches(branches || []);
         if (branches?.length > 0) {
@@ -1297,10 +1296,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   };
 
   const handleFetchRepos = async () => {
-    const token = getGithubToken();
-    if (!token) return;
+    if (!isGithubAuthenticated()) return;
     try {
-      const reposData = await fetchRepositories(token);
+      const reposData = await fetchRepositories();
       setRepos(reposData);
     } catch { /* ignore */ }
   };
@@ -1384,43 +1382,40 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         });
         setTimeout(() => setPushNotification(null), highMemory ? 10000 : 5000);
 
-        const token = getGithubToken();
-        if (token) {
-          const owner = repo.owner?.login || repo.owner;
-          const repoName = repo.name;
-          const branch = selectedBranch || repo.default_branch || 'main';
-          fetchRepoContext(token, owner, repoName, branch)
-            .then(ctx => {
-              const applyContext = async () => {
-                // Prefer the scan's own (more complete) file bodies — matching
-                // what populateContentStoreWorker just indexed — so the code
-                // viewer and chat context never regress to a partial refetch.
-                const scanned = useCodeStore.getState().repoFileContents;
-                useCodeStore.getState().setRepoContext(
-                  ctx.fileTree,
-                  scanned && Object.keys(scanned).length > 0 ? scanned : ctx.fileContents
-                );
-                window._connectionUpdateSkip = false;
-              };
-              const waitForMount = () => {
-                const progress = useDiagramStore.getState().renderProgress;
-                const connProgress = useDiagramStore.getState().connectionsProgress;
-                const objectsDone = !progress || progress.mounted >= progress.total;
-                const connectionsDone = !connProgress || connProgress.mounted >= connProgress.total;
-                if (objectsDone && connectionsDone) {
-                  applyContext();
-                } else {
-                  requestIdleCallback(waitForMount);
-                }
-              };
-              if (typeof requestIdleCallback === 'function') {
-                requestIdleCallback(waitForMount);
+        const owner = repo.owner?.login || repo.owner;
+        const repoName = repo.name;
+        const branch = selectedBranch || repo.default_branch || 'main';
+        fetchRepoContext(owner, repoName, branch)
+          .then(ctx => {
+            const applyContext = async () => {
+              // Prefer the scan's own (more complete) file bodies — matching
+              // what populateContentStoreWorker just indexed — so the code
+              // viewer and chat context never regress to a partial refetch.
+              const scanned = useCodeStore.getState().repoFileContents;
+              useCodeStore.getState().setRepoContext(
+                ctx.fileTree,
+                scanned && Object.keys(scanned).length > 0 ? scanned : ctx.fileContents
+              );
+              window._connectionUpdateSkip = false;
+            };
+            const waitForMount = () => {
+              const progress = useDiagramStore.getState().renderProgress;
+              const connProgress = useDiagramStore.getState().connectionsProgress;
+              const objectsDone = !progress || progress.mounted >= progress.total;
+              const connectionsDone = !connProgress || connProgress.mounted >= connProgress.total;
+              if (objectsDone && connectionsDone) {
+                applyContext();
               } else {
-                setTimeout(waitForMount, 100);
+                requestIdleCallback(waitForMount);
               }
-            })
-            .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message, err.stack));
-        }
+            };
+            if (typeof requestIdleCallback === 'function') {
+              requestIdleCallback(waitForMount);
+            } else {
+              setTimeout(waitForMount, 100);
+            }
+          })
+          .catch(err => console.warn('[scan] fetchRepoContext failed:', err.message, err.stack));
       } else {
         window._connectionUpdateSkip = false;
         setScanProgress(null);
@@ -1438,15 +1433,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const handleCreateNewRepo = async () => {
     const name = newRepoName.trim();
     if (!name) return;
-    const token = getGithubToken();
-    if (!token) return;
+    if (!isGithubAuthenticated()) return;
     try {
-      const res = await fetch('https://api.github.com/user/repos', {
+      const res = await githubProxyRequest('/user/repos', {
         method: 'POST',
-        headers: {
-          Authorization: `token ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ name, private: false, auto_init: true }),
       });
       if (!res.ok) throw new Error(`Failed to create repo: ${res.status}`);
@@ -1469,9 +1459,6 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     if (!repo) return;
     const owner = repo.owner?.login || repo.owner;
     const repoName = repo.name;
-    const token = getGithubToken();
-    if (!token) return;
-
     const strategy = branchStrategy;
     let branch = 'main';
 
@@ -1479,9 +1466,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       const newBranch = branchNameInput.trim();
       if (!newBranch) return;
       try {
-        const mainRef = await getBranchRef(token, owner, repoName, repo.default_branch || 'main');
+        const mainRef = await getBranchRef(undefined, owner, repoName, repo.default_branch || 'main');
         const sha = mainRef.data?.object?.sha;
-        if (sha) await createBranchRef(token, owner, repoName, newBranch, sha);
+        if (sha) await createBranchRef(undefined, owner, repoName, newBranch, sha);
         branch = newBranch;
       } catch (err) {
         setPushNotification({ type: 'error', message: `Failed to create branch: ${err.message}` });

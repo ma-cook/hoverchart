@@ -22,19 +22,18 @@ import {
   mergePullRequest,
   getPullRequest,
 } from './githubIssuesService';
+import { isGithubAuthenticated } from './githubRepoService';
 
 const POLL_INTERVAL_MS = 30_000;
 
-function getGithubToken() {
-  return localStorage.getItem('github_token');
-}
-
 async function processTask(spaceOwnerId, spaceId, task, owner, repo) {
-  const token = getGithubToken();
-  if (!token) {
-    console.error('[pipelineOrchestrator] No GitHub token found');
+  if (!isGithubAuthenticated()) {
+    console.error('[pipelineOrchestrator] GitHub not connected');
     return false;
   }
+
+  // Token is server-only; the proxy authenticates for us.
+  const token = undefined;
 
   const store = usePipelineStore.getState();
   const objectId = task.id;
@@ -315,8 +314,7 @@ export function resumePipeline() {
  * GitHub auto-merges a PR while hoverchart isn't actively polling.
  */
 export async function reconcilePendingTasks(spaceOwnerId, spaceId, tasks, owner, repo) {
-  const token = getGithubToken();
-  if (!token || !owner || !repo) return;
+  if (!isGithubAuthenticated() || !owner || !repo) return;
 
   const pending = (tasks || []).filter((t) => {
     const s = t.merfolkData?.status;
@@ -330,7 +328,7 @@ export async function reconcilePendingTasks(spaceOwnerId, spaceId, tasks, owner,
   const repoSlugsToRescan = new Set();
   for (const task of pending) {
     const prNumber = task.merfolkData.githubPrNumber;
-    const prCheck = await getPullRequest(token, owner, repo, prNumber);
+    const prCheck = await getPullRequest(undefined, owner, repo, prNumber);
     if (!prCheck.ok) continue;
     const cellId = task.cellId || '0,0,0';
     if (prCheck.data.merged) {

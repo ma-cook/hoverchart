@@ -32,6 +32,7 @@ import { useGlobalClickHandler } from '../hooks/useGlobalClickHandler';
 import { getStatusColor, getStatusLabel } from '../services/pipelineTaskService';
 import { toggleTaskExpansion } from '../services/repoContainerService';
 import { revertCommit } from '../services/githubIssuesService';
+import { isGithubAuthenticated } from '../services/githubRepoService';
 
 const EMPTY_CONNECTIONS = [];
 
@@ -2386,10 +2387,9 @@ const TextObject = React.memo(
                       disabled={!merfolkData?.mergeCommitSha}
                       onClick={async (e) => {
                         e.stopPropagation();
-                        const token = localStorage.getItem('github_token');
                         const repoSlug = merfolkData?.repoSlug;
-                        if (!token || !repoSlug) {
-                          console.error('[TextObject] Revert failed: missing token or repoSlug');
+                        if (!isGithubAuthenticated() || !repoSlug) {
+                          console.error('[TextObject] Revert failed: GitHub not connected or no repoSlug');
                           return;
                         }
                         const [owner, repo] = repoSlug.split('/');
@@ -2397,7 +2397,7 @@ const TextObject = React.memo(
                           console.error('[TextObject] Revert failed: invalid repoSlug format');
                           return;
                         }
-                        const result = await revertCommit(token, owner, repo, merfolkData.mergeCommitSha);
+                        const result = await revertCommit(undefined, owner, repo, merfolkData.mergeCommitSha);
                         if (!result.ok) {
                           console.error('[TextObject] Revert failed:', result.error);
                         }

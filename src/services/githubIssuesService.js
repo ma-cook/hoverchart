@@ -1,19 +1,29 @@
-const GITHUB_API = 'https://api.github.com';
+import { githubProxyRequest } from './githubApiProxy';
 
 function enc(s) {
   return encodeURIComponent(s);
 }
 
+/**
+ * GitHub API choke point. All endpoints are proxied through the backend
+ * (/api/github/fetch) which authenticates with the user's server-stored token —
+ * `token` is accepted for call-site compatibility but never reaches GitHub.
+ */
 async function githubFetch(token, url, options = {}) {
-  const response = await fetch(`${GITHUB_API}${url}`, {
-    ...options,
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  const qIndex = url.indexOf('?');
+  const path = qIndex === -1 ? url : url.slice(0, qIndex);
+  const query = qIndex === -1 ? '' : url.slice(qIndex + 1);
+
+  let response;
+  try {
+    response = await githubProxyRequest(path, {
+      method: options.method || 'GET',
+      query,
+      body: options.body,
+    });
+  } catch (error) {
+    return { ok: false, data: null, error: `GitHub proxy failed: ${error.message}`, status: 0 };
+  }
 
   if (!response.ok) {
     const error = await response.text().catch(() => response.statusText);
@@ -234,12 +244,8 @@ export async function enableAutoMerge(token, pullRequestNodeId, mergeMethod = 'S
       }
     }
   `;
-  const response = await fetch(`${GITHUB_API}/graphql`, {
+  const response = await githubProxyRequest('/graphql', {
     method: 'POST',
-    headers: {
-      Authorization: `bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
     body: JSON.stringify({
       query,
       variables: { prId: pullRequestNodeId, method: mergeMethod },

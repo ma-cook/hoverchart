@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { pushCodeToGitHub } from '../services/githubPushService';
-import { getGithubToken } from '../services/githubRepoService';
 import { diffToHunks } from '../services/context/diffUtils';
 import './PendingChangesPanel.css';
 
@@ -148,13 +147,12 @@ export default function PendingChangesPanel() {
     if (accepted.length === 0) return;
 
     const state = useCodeStore.getState();
-    const token = state.githubToken || getGithubToken();
     const owner = state.repoOwner || state.selectedRepo?.owner?.login;
     const repoName = state.repoName || state.selectedRepo?.name;
     const branch = state.selectedBranch || 'main';
 
-    if (!token || !owner || !repoName) {
-      setPushError('GitHub token missing — reconnect your repo to enable push.');
+    if (!owner || !repoName) {
+      setPushError('GitHub not connected — reconnect your repo to enable push.');
       return;
     }
 
@@ -172,7 +170,7 @@ export default function PendingChangesPanel() {
 
       const requestSummary = (accepted.map(c => c.request).find(Boolean) || 'Code update').split('\n')[0].slice(0, 120);
 
-      const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branch, token, requestSummary);
+      const result = await pushCodeToGitHub(codeBlocks, owner, repoName, branch, undefined, requestSummary);
 
       if (result.success) {
         const updatedContents = { ...(state.repoFileContents || {}) };

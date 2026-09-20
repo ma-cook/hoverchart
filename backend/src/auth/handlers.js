@@ -2,6 +2,8 @@ import { Router } from 'express';
 import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import pool from '../db.js';
+import { authenticate, optionalAuth } from './middleware.js';
+import { encryptSecret, decryptSecret } from '../security/crypto.js';
 
 export const router = Router();
 
@@ -162,9 +164,17 @@ router.post('/code', async (req, res) => {
 });
 
 // POST /api/auth/github/token
-router.post('/github/token', async (req, res) => {
+// Exchanges the GitHub OAuth code server-side and stores the resulting access
+// token encrypted at rest, bound to the authenticated user. The token is never
+// returned to the browser (server-only). Requires a real (non-guest) session
+// — the GitHub surfaces live behind the login wall, so guests are rejected.
+router.post('/github/token', optionalAuth, async (req, res) => {
   try {
-    const { code, redirectUri } = req.body;
+    if (!req.user || req.user.isGuest) {
+      return res.status(401).json({ error: 'GitHub requires a signed-in account' });
+    }
+
+    const { code, redirect_uri, redirectUri } = req.body;
     if (!code) return res.status(400).json({ error: 'code required' });
 
     const response = await fetch('https://github.com/login/oauth/access_token', {
@@ -174,7 +184,7 @@ router.post('/github/token', async (req, res) => {
         client_id: process.env.GITHUB_CLIENT_ID,
         client_secret: process.env.GITHUB_CLIENT_SECRET,
         code,
-        ...(redirectUri && { redirect_uri: redirectUri }),
+        ...(redirect_uri || redirectUri ? { redirect_uri: redirect_uri || redirectUri } : {}),
       }),
     });
 
@@ -183,9 +193,69 @@ router.post('/github/token', async (req, res) => {
       return res.status(400).json({ error: 'Failed to get GitHub token', details: data });
     }
 
-    res.json({ access_token: data.access_token });
+    let login = null;
+    try {
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          Authorization: `Bearer ${data.access_token}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+      const userData = await userRes.json();
+      login = userData.login || null;
+    } catch {
+      // login is best-effort; storing the token still succeeds
+    }
+
+    await pool.query(
+      `INSERT INTO github_tokens (owner_id, encrypted_token, github_login)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (owner_id) DO UPDATE SET
+         encrypted_token = EXCLUDED.encrypted_token,
+         github_login = COALESCE(EXCLUDED.github_login, github_tokens.github_login),
+         token_version = github_tokens.token_version + 1,
+         updated_at = NOW()`,
+      [req.user.sub, encryptSecret(data.access_token), login]
+    );
+
+    res.json({ status: 'connected', github_login: login });
   } catch (err) {
     console.error('GitHub token error:', err);
     res.status(500).json({ error: 'GitHub token exchange failed' });
+  }
+});
+
+// DELETE /api/auth/github/token
+// Disconnects GitHub: revokes the stored token at GitHub (when possible) and
+// removes the local record. Callers are authenticated sessions.
+router.delete('/github/token', authenticate, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT encrypted_token FROM github_tokens WHERE owner_id = $1',
+      [req.user.sub]
+    );
+    if (rows.length > 0) {
+      try {
+        const token = decryptSecret(rows[0].encrypted_token);
+        const basic = Buffer.from(
+          `${process.env.GITHUB_CLIENT_ID}:${process.env.GITHUB_CLIENT_SECRET}`
+        ).toString('base64');
+        await fetch(`https://api.github.com/applications/${process.env.GITHUB_CLIENT_ID}/token`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Basic ${basic}`,
+            Accept: 'application/vnd.github.v3+json',
+          },
+          body: JSON.stringify({ access_token: token }),
+        }).catch(() => {});
+      } catch {
+        // best-effort revoke
+      }
+      await pool.query('DELETE FROM github_tokens WHERE owner_id = $1', [req.user.sub]);
+    }
+    res.json({ disconnected: true });
+  } catch (err) {
+    console.error('GitHub disconnect error:', err);
+    res.status(500).json({ error: 'Failed to disconnect GitHub' });
   }
 });

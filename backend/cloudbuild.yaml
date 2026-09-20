@@ -32,3 +32,6 @@ steps:
       - '--set-secrets=GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest'
       - '--set-secrets=GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest'
       - '--set-secrets=GCS_BUCKET=GCS_BUCKET:latest'
+      - '--set-secrets=ENCRYPTION_KEY=ENCRYPTION_KEY:latest'
+      - '--set-secrets=SCAN_INTERNAL_KEY=SCAN_INTERNAL_KEY:latest'
+      - '--set-secrets=SCANNER_SERVICE_URL=SCANNER_SERVICE_URL:latest'

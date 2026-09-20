@@ -1,0 +1,30 @@
+serviceAccount: projects/$PROJECT_ID/serviceAccounts/hoverchart-api-sa@$PROJECT_ID.iam.gserviceaccount.com
+options:
+  logging: CLOUD_LOGGING_ONLY
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/hoverchart-scanner', '-f', 'backend/Dockerfile.scanner', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/hoverchart-scanner']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'hoverchart-scanner'
+      - '--image=gcr.io/$PROJECT_ID/hoverchart-scanner'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--no-allow-unauthenticated'
+      - '--min-instances=0'
+      - '--max-instances=4'
+      - '--concurrency=1'
+      - '--cpu=4'
+      - '--memory=4Gi'
+      - '--timeout=3600'
+      - '--service-account=hoverchart-scanner-sa@$PROJECT_ID.iam.gserviceaccount.com'
+      - '--add-cloudsql-instances=$PROJECT_ID:us-central1:volscape'
+      - '--set-secrets=DATABASE_URL=DATABASE_URL:latest'
+      - '--set-secrets=ENCRYPTION_KEY=ENCRYPTION_KEY:latest'
+      - '--set-secrets=GCS_BUCKET=GCS_BUCKET:latest'
+      - '--set-secrets=SCAN_INTERNAL_KEY=SCAN_INTERNAL_KEY:latest'

@@ -208,8 +208,8 @@ function sanitizeNodeId(name) {
 
 export async function enrichPlanMerfolk(merfolkContent, repoContext) {
   if (!merfolkContent || !repoContext) return merfolkContent;
-  const { owner, repo, token, fileTree, fileContents } = repoContext;
-  if (!owner || !repo || !token) return merfolkContent;
+  const { owner, repo, fileTree, fileContents } = repoContext;
+  if (!owner || !repo) return merfolkContent;
 
   const nodes = parseNodes(merfolkContent);
   const existingNodeIds = new Set(nodes.map((n) => n.nodeId));
@@ -228,7 +228,7 @@ export async function enrichPlanMerfolk(merfolkContent, repoContext) {
     let content = fileContents?.[filePath];
     if (!content) {
       try {
-        content = await fetchFileContent(owner, repo, filePath, token);
+        content = await fetchFileContent(owner, repo, filePath);
       } catch {
         continue;
       }

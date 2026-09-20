@@ -1,14 +1,10 @@
-import { rescanRepositoryForChanges } from './githubRepoService';
+import { rescanRepositoryForChanges, isGithubAuthenticated } from './githubRepoService';
 import { uploadMarkdownToStorage } from './storageService';
 import { markdownDiagramService } from './markdownDiagramService';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useAuthStore from '../stores/authStore';
 import useWorkflowStore from '../stores/workflowStore';
-
-function getGithubToken() {
-  return localStorage.getItem('github_token');
-}
 
 /**
  * Create an onCreateObject callback compatible with processMarkdownFile.
@@ -33,9 +29,8 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
   if (!repoSlug || !spaceId) return;
 
   try {
-    const token = getGithubToken();
-    if (!token) {
-      console.warn('[mergeRescan] No GitHub token — skipping background rescan');
+    if (!isGithubAuthenticated()) {
+      console.warn('[mergeRescan] GitHub not connected — skipping background rescan');
       return;
     }
 

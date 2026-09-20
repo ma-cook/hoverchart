@@ -16,6 +16,7 @@ export default defineConfig({
     sourcemap: 'hidden',
     chunkSizeWarningLimit: 1600,
     rollupOptions: {
+      external: ['typescript'],
       output: {
         manualChunks: {
           'three-vendor': ['three', 'three-stdlib'],

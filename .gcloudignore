@@ -1,7 +1,10 @@
 node_modules/
 .git/
 .github/
-/src
 /public
+/dist
+/native
+/lsp-service
+/.firebase
 *.md
 .env*

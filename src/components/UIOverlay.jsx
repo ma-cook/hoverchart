@@ -7,6 +7,7 @@ import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
 import {
   uploadModelToStorage,
   uploadMarkdownToStorage,
+  fetchStoredMarkdown,
 } from '../services/storageService';
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
@@ -25,6 +26,7 @@ import {
   isGithubAuthenticated as checkGithubAuth,
   getGithubOAuthUrl,
   rescanRepositoryForChanges,
+  refreshGithubConnection,
 } from '../services/githubRepoService';
 import {
   scanWebsiteAndGenerateDiagram,
@@ -259,6 +261,7 @@ const UIOverlay = ({
   const [lastCommitSha, setLastCommitSha] = useState(null);
   const lastGeneratedMarkdownBlobRef = useRef(null);
   const lastGeneratedMarkdownTextRef = useRef(null);
+  const backgroundJobRef = useRef(null);
 
   const storeGeneratedMarkdown = useCallback((markdown, spaceId) => {
     if (lastGeneratedMarkdownBlobRef.current) {
@@ -754,9 +757,8 @@ const UIOverlay = ({
       if (useDiagramStore.getState().is2DReady) return;
 
       try {
-        const resp = await fetch(latestMarkdownUrl);
-        if (!resp.ok) throw new Error(`markdown fetch failed: ${resp.status}`);
-        const content = await resp.text();
+        const content = await fetchStoredMarkdown(latestMarkdownUrl);
+        if (!content) throw new Error('empty markdown');
         await markdownDiagramService.hydrateStoreFromMarkdown(content);
         // Persist a complete digest backup now that hydration populated the
         // store, so a later refresh can restore the 2D/analysis buttons even
@@ -828,14 +830,13 @@ const UIOverlay = ({
 
   // Function to fetch repositories using the GitHub service
   const fetchRepositories = async () => {
-    const token = localStorage.getItem('github_token');
-    if (!token) {
+    if (!checkGithubAuth()) {
       alert('Please log in to GitHub first.');
       return;
     }
 
     try {
-      const repos = await fetchGithubRepositories(token);
+      const repos = await fetchGithubRepositories();
       setRepositories(repos);
     } catch (error) {
       console.error('Error fetching repositories:', error);
@@ -862,8 +863,7 @@ const UIOverlay = ({
       let existingMarkdown = await fetchGeneratedMarkdown();
       if (!existingMarkdown && latestMarkdownUrl) {
         try {
-          const resp = await fetch(latestMarkdownUrl);
-          existingMarkdown = await resp.text();
+          existingMarkdown = await fetchStoredMarkdown(latestMarkdownUrl);
         } catch {
           console.warn('Could not fetch existing markdown from storage');
         }
@@ -1003,6 +1003,108 @@ const UIOverlay = ({
     }
   };
 
+  // Background scan: the heavy repository scan runs server-side (dedicated
+  // scanner Cloud Run service). We only enqueue the job, poll its status, then
+  // hydrate from the uploaded markdown once it lands.
+  const hydrateBackgroundResult = useCallback(async (job) => {
+    const markdown = await fetchStoredMarkdown(job.markdown_storage_url);
+    if (!markdown) throw new Error('Background scan finished but produced no markdown');
+
+    storeGeneratedMarkdown(markdown, currentSpaceId);
+    if (job.markdown_storage_url) {
+      setLatestMarkdownUrl(job.markdown_storage_url);
+    }
+    setNotification({ show: true, message: `Background scan complete: ${job.objects_created ?? 0} nodes, ${job.connections_created ?? 0} connections` });
+    setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+
+    if (currentSpaceId) {
+      const payload = { diagramRepo: currentDiagramRepo };
+      if (job.markdown_storage_url) payload.markdownStorageUrl = job.markdown_storage_url;
+      api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
+    }
+
+    diagramIsBeingGenerated.current = true;
+    await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
+    setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
+  }, [currentSpaceId, currentDiagramRepo, storeGeneratedMarkdown]);
+
+  const pollBackgroundJob = useCallback(async (jobId) => {
+    let cancelled = false;
+    backgroundJobRef.current = { cancelled: () => cancelled };
+    const tick = async (delay) => {
+      if (cancelled) return;
+      let job;
+      try {
+        job = await api.get(`/api/scan-jobs/${jobId}`);
+      } catch (err) {
+        console.warn('[UIOverlay] background scan poll failed:', err.message);
+        setTimeout(() => tick(Math.min(delay * 1.5, 15000)), 4000);
+        return;
+      }
+      if (!job || cancelled) return;
+      if (['done', 'failed', 'cancelled'].includes(job.status)) {
+        backgroundJobRef.current = null;
+        setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
+        if (job.status === 'done') {
+          try {
+            await hydrateBackgroundResult(job);
+          } catch (err) {
+            console.error('Background scan hydrate failed:', err);
+            setNotification({ show: true, message: `Background scan done but hydration failed: ${err.message}` });
+            setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+          }
+        } else {
+          setNotification({
+            show: true,
+            message: job.status === 'cancelled'
+              ? 'Background scan cancelled'
+              : `Background scan failed: ${job.error || 'unknown error'}`,
+          });
+          setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+        }
+        return;
+      }
+      setScanProgress({ isScanning: true, progress: job.progress || 0, stage: job.stage || `Background scan (${job.status})...` });
+      setTimeout(() => tick(Math.min(delay * 1.5, 15000)), delay);
+    };
+    tick(2000);
+  }, [hydrateBackgroundResult]);
+
+  const handleBackgroundScan = useCallback(async (repo) => {
+    if (!repo) return;
+    if (!user?.uid || user.isGuest) {
+      setNotification({ show: true, message: 'Background scans require a signed-in account' });
+      setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+      return;
+    }
+
+    // If a background job is already running, this button cancels it.
+    if (backgroundJobRef.current) {
+      if (backgroundJobRef.current.cancelled) {
+        backgroundJobRef.current.cancelled();
+        backgroundJobRef.current = null;
+        setScanProgress({ isScanning: false, progress: 0, stage: '' });
+      }
+      return;
+    }
+
+    try {
+      setScanProgress({ isScanning: true, progress: 1, stage: 'Queuing background scan...' });
+      const job = await api.post('/api/scan-jobs', {
+        spaceId: currentSpaceId,
+        repoOwner: repo.owner?.login || repo.owner,
+        repoName: repo.name,
+        branch: repo.default_branch || null,
+      });
+      await pollBackgroundJob(job.id);
+    } catch (err) {
+      console.error('Background scan start failed:', err);
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
+      setNotification({ show: true, message: `Could not start background scan: ${err.message}` });
+      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+    }
+  }, [currentSpaceId, user, pollBackgroundJob]);
+
   // Download the latest generated markdown file
   const handleDownloadMarkdown = useCallback(async () => {
     const repoName = currentDiagramRepo?.name || 'diagram';
@@ -1104,8 +1206,8 @@ const UIOverlay = ({
 
   // Handle GitHub OAuth callback
   useEffect(() => {
-    handleGithubCallback().then((token) => {
-      if (token) {
+    handleGithubCallback().then((result) => {
+      if (result && result.status === 'connected') {
         setIsGithubAuthenticated(true);
         fetchRepositories();
         alert('GitHub login successful!');
@@ -1113,9 +1215,11 @@ const UIOverlay = ({
     });
   }, []);
 
-  // Check for existing GitHub token on mount
+  // Check for existing GitHub connection on mount (authoritative sync with the
+  // server-side token record, plus the optimistic marker).
   useEffect(() => {
     setIsGithubAuthenticated(checkGithubAuth());
+    refreshGithubConnection().catch(() => {});
   }, []);
 
   const handleRecordClick = useCallback(async () => {
@@ -1804,6 +1908,22 @@ const UIOverlay = ({
                 aria-label="Rescan repository"
               >
                 ⟳
+              </button>
+
+              <button
+                className="top-bar-btn background-scan"
+                onClick={() => handleBackgroundScan(currentDiagramRepo)}
+                disabled={!currentDiagramRepo || (scanProgress.isScanning && !backgroundJobRef.current)}
+                title={
+                  backgroundJobRef.current
+                    ? 'Cancel background scan'
+                    : currentDiagramRepo?.name
+                      ? `Background-scan ${currentDiagramRepo.name} on the server`
+                      : 'No repo scanned yet'
+                }
+                aria-label="Start background scan"
+              >
+                BG
               </button>
 
               {is2DReady && (

@@ -19,10 +19,23 @@ const TS_CDN_URL = 'https://cdn.jsdelivr.net/npm/typescript@5.5.4/lib/typescript
 
 /**
  * Dynamically load the TypeScript compiler module.
- * Uses fetch + blob URL to avoid Vite/Rollup static analysis.
+ *
+ * Node (background scanner): `import` the installed `typescript` package.
+ * Browser: fetch + blob URL to avoid Vite/Rollup static analysis.
  */
 async function loadTypeScript() {
   if (tsModule) return tsModule;
+
+  if (globalThis?.process?.versions?.node) {
+    try {
+      const mod = await import(/* @vite-ignore */ 'typescript');
+      tsModule = mod.default || mod;
+      return tsModule;
+    } catch (err) {
+      console.warn('[TSAnalyzer] Failed to load TypeScript:', err.message);
+      return null;
+    }
+  }
 
   try {
     const response = await fetch(TS_CDN_URL);

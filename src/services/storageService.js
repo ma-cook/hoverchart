@@ -82,3 +82,25 @@ export const uploadMarkdownToStorage = async (markdown, userId, spaceId, fileNam
     console.log('Markdown upload is ' + progress + '% done');
   });
 };
+
+/**
+ * Fetches stored diagram markdown text. The backend storage routes live behind
+ * `authenticate`, so any URL pointing at our /api/storage endpoints must carry
+ * the Bearer access token. Accepts a full/fetchable URL, a our-own full
+ * same-origin URL (from storageService), or a bare rel path (`uploads/...`,
+ * as produced by background scans).
+ */
+export const fetchStoredMarkdown = async (urlOrPath) => {
+  if (!urlOrPath) return null;
+  let url = urlOrPath;
+  if (url.startsWith('uploads/')) {
+    url = `${window.location.origin}/api/storage/${url}`;
+  }
+  const ourEndpoint = url.includes('/api/storage/uploads/');
+  const { accessToken } = loadTokens();
+  const resp = await fetch(url, {
+    headers: ourEndpoint && accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  });
+  if (!resp.ok) throw new Error(`Markdown fetch failed: ${resp.status}`);
+  return resp.text();
+};

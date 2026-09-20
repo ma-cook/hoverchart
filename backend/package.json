@@ -5,7 +5,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "migrate": "node src/migrate.js"
+    "migrate": "node src/migrate.js",
+    "start:scanner": "node --enable-source-maps src/scanner/serviceApp.js",
+    "start:scanner:dist": "node --enable-source-maps dist/scanner.mjs",
+    "build:scanner": "node scripts/build-scanner.mjs"
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -18,6 +21,13 @@
     "cors": "^2.8.5",
     "uuid": "^10.0.0",
     "puppeteer-core": "^23.0.0",
-    "@sparticuz/chromium": "^131.0.0"
+    "@sparticuz/chromium": "^131.0.0",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.20.8",
+    "typescript": "^5.5.4",
+    "@babel/parser": "^7.28.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0"
   }
 }
