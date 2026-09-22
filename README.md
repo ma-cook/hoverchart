@@ -133,7 +133,7 @@ So an agent answering "why does checkout still charge tax after the coupon is ap
 | Role | "What exists, where it lives, what it connects to" — navigation, layout, subsystem boundaries | Exact code — edit targets, imports, implementation details |
 | Injected via | REPOSITORY MAP, `MERFOLK DIAGRAM (excerpt)`, graph/community tools | `read_file`, `quick_look`, `search_code`, `grep` tool results |
 
-Because the Merfolk file carries per-symbol `codeFilePath` + `startLine`/`endLine`, the two layers stay linked: an LLM can jump from any node in the architectural map straight to the precise lines of real source, then zoom back out to the map for the next hop — keeping full-codebase awareness inside a small, focused prompt.
+Because the Merfolk file carries per-symbol `codeFilePath` + `startLine`/`endLine`, the two layers stay linked: an LLM can jump from any node in the architectural map straight to the precise lines of real source, then zoom back out to the map for the next hop, keeping full-codebase awareness inside a small, focused prompt.
 
 ## Performance Optimisations
 

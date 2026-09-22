@@ -33,11 +33,13 @@ jobs:
           echo "REGION=${{ secrets.GCP_REGION || 'us-central1' }}" >> "$GITHUB_ENV"
 
       # One-shot provisioning is idempotent, so every push is a safe no-op once
-      # the resources exist. The OIDC runner SA must be able to modify project
-      # IAM + Secret Manager (e.g. roles/resourcemanager.projectIamAdmin,
-      # roles/iam.serviceAccountAdmin, roles/secretmanager.admin); otherwise the
-      # first run fails with a clear gcloud permission error and scripts/
-      # deploy/00-setup-scanner-sa.ps1 remains the fallback.
+      # the resources exist. This job runs gcloud AS the OIDC runner SA
+      # (${{ secrets.GCP_SERVICE_ACCOUNT }}); it must be granted
+      # roles/secretmanager.admin, roles/iam.serviceAccountAdmin,
+      # roles/resourcemanager.projectIamAdmin, roles/run.admin and
+      # roles/cloudbuild.builds.editor ONCE via
+      # scripts/deploy/00b-grant-ci-sa.ps1. A pipeline cannot grant itself IAM,
+      # so that single bootstrap is required before the first run.
       - name: Ensure ENCRYPTION_KEY (only if missing/invalid)
         run: |
           set -eu
